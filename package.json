@@ -1,0 +1,22 @@
+{
+  "name": "surety",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Surety: an evidence-gated delivery engine for AI coding agents",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @surety/engine",
+    "typecheck": "npm run typecheck --workspace @surety/engine",
+    "test": "npm run test:unit && npm run test:acceptance",
+    "test:unit": "node scripts/run-tests.mjs unit",
+    "test:acceptance": "node scripts/run-tests.mjs acceptance",
+    "check:roles": "node scripts/check-role-boundary.mjs",
+    "check:d1": "node scripts/d1-consistency.mjs"
+  }
+}

@@ -471,3 +471,17 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 > Detailed design settles architecture in cross-reviewed prose and contract precision in Verifier-owned acceptance tests written before implementation. A design document is complete when no open item is architecture-level and every contract-level item is a test.
 
 ---
+
+## E21. Who builds M1 (decided by Sean, 2026-10-01: O13)
+
+**Gap.** The resolution note (§4) named Astra as Verifier, writing each slice's acceptance tests before the Builder implements it, with Claude Code as Builder. Astra approved building M1 and delivered the acceptance plan, a trace matrix of 74 rows. The executable tests do not exist yet.
+
+**Decision (O13).** In Sean's words: "Astra will not be building this project. Claude will." Claude performs the M1 build.
+
+**How it is applied.** The Verifier role passes to Claude along with the Builder role. The independence rule (Section 5.1) is kept by separation, not by using a different model, as Section 5.5 already allows: the Verifier, the Builder and the Reviewer are separate sessions that never share context; each writes only its own paths; a script checks those paths before every merge; and the acceptance suite's exit status is the judgment. Astra's acceptance plan remains the inventory of what must be tested, and the rule that tests are written before implementation is unchanged. Sean may still ask Astra for a cross-review at any point. `docs/spec/M1-build-spec.md` section 4 carries the working procedure.
+
+**Open to correction.** If the decision was meant to keep Astra as author of the executable tests and change only who implements, the Verifier row in the build specification's role table changes back to Astra and nothing else does.
+
+**Consequences elsewhere.** The resolution note §4 and the acceptance plan's "Owner: Astra, acting as Verifier" line are read with this entry. Neither file is edited.
+
+---

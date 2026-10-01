@@ -1,0 +1,118 @@
+#!/usr/bin/env node
+// Test runner. The exit status is the judgment (E8). Owner-only file: it is
+// part of the acceptance execution path (F §5.2).
+//
+// Usage: node scripts/run-tests.mjs unit
+//        node scripts/run-tests.mjs acceptance [--slice <n>]
+//
+// It always builds first, so a stale dist/ is never what gets tested, and it
+// runs one test file at a time. For the acceptance suite it refuses to report
+// success when that would claim more than was observed (acceptance plan §5):
+//   - a file is not named <row>-<slug>.test.mjs for a row in ROWS;
+//   - a file is not listed under any slice in manifest.json, or a listed file
+//     is missing, or a slice in range lists nothing;
+//   - any test was skipped or marked todo;
+//   - a file that ran contains no passing test;
+//   - full run (no --slice): any row in ROWS has no file.
+// --slice n runs exactly the files listed for slices 1..n.
+// Exit 0 pass, 1 fail, 2 usage error.
+
+import { spawnSync } from 'node:child_process';
+import { globSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
+import { run } from 'node:test';
+import { spec } from 'node:test/reporters';
+import { fileURLToPath } from 'node:url';
+
+// The acceptance rows of docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3.
+// Adding or removing a row is the owner's decision (build spec §9).
+const ROWS = Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`);
+const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const usage = () => {
+  console.error('usage: run-tests.mjs unit | acceptance [--slice <n>]');
+  process.exit(2);
+};
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+
+const [suite, ...rest] = process.argv.slice(2);
+if (suite !== 'unit' && suite !== 'acceptance') usage();
+if (suite === 'unit' && rest.length > 0) usage();
+let slice = null;
+if (suite === 'acceptance' && rest.length > 0) {
+  if (rest.length !== 2 || rest[0] !== '--slice' || !/^[1-9]\d*$/.test(rest[1])) usage();
+  slice = Number(rest[1]);
+}
+
+const dir = `packages/engine/test/${suite}`;
+let files = globSync(`${dir}/**/*.test.mjs`, { cwd: root }).sort();
+
+if (suite === 'acceptance') {
+  const manifest = JSON.parse(readFileSync(join(root, dir, 'manifest.json'), 'utf8'));
+  const rowOf = (file) => /^(M\d{2})-[a-z0-9-]+\.test\.mjs$/.exec(basename(file))?.[1];
+  const list = (paths) => `\n  ${paths.join('\n  ')}`;
+
+  const misnamed = files.filter((f) => !ROWS.includes(rowOf(f)));
+  if (misnamed.length > 0) fail(`acceptance: not named <row>-<slug>.test.mjs for a known row:${list(misnamed)}`);
+
+  const byName = new Map(files.map((f) => [basename(f), f]));
+  const allListed = Object.values(manifest.slices).flat();
+  const absent = allListed.filter((name) => !byName.has(name));
+  if (absent.length > 0) fail(`acceptance: listed in manifest.json but not present:${list(absent)}`);
+  const unlisted = files.filter((f) => !allListed.includes(basename(f)));
+  if (unlisted.length > 0) fail(`acceptance: present but not listed under any slice in manifest.json:${list(unlisted)}`);
+
+  if (slice === null) {
+    const covered = new Set(files.map(rowOf));
+    const missing = ROWS.filter((r) => !covered.has(r));
+    if (missing.length > 0) {
+      fail(`acceptance: ${missing.length} of ${ROWS.length} rows have no test file (first ${missing[0]}, last ${missing.at(-1)}). A missing row is not a pass.`);
+    }
+  } else {
+    const selected = [];
+    for (let n = 1; n <= slice; n++) {
+      const names = manifest.slices[String(n)] ?? [];
+      if (names.length === 0) fail(`acceptance: manifest.json lists no files for slice ${n}.`);
+      selected.push(...names);
+    }
+    files = [...new Set(selected)].map((name) => byName.get(name));
+  }
+}
+
+if (files.length === 0) fail(`${suite}: no test files found`);
+
+const build = spawnSync('npm', ['run', 'build', '--silent'], { cwd: root, stdio: 'inherit' });
+if (build.status !== 0) fail('build failed; nothing was tested.');
+
+const counts = { failed: 0, skipped: 0, todo: 0 };
+const passedIn = new Map(files.map((f) => [join(root, f), 0]));
+const stream = run({ files: [...passedIn.keys()], concurrency: false, timeout: TEST_TIMEOUT_MS });
+stream.on('test:fail', (t) => {
+  if (t.todo !== undefined) counts.todo++;
+  else counts.failed++;
+});
+stream.on('test:pass', (t) => {
+  if (t.skip !== undefined) counts.skipped++;
+  else if (t.todo !== undefined) counts.todo++;
+  // A file with no tests is itself reported as one passing test named after its path.
+  else if (t.details?.type !== 'suite' && t.name !== t.file && passedIn.has(t.file)) {
+    passedIn.set(t.file, passedIn.get(t.file) + 1);
+  }
+});
+const report = stream.compose(spec);
+report.pipe(process.stdout);
+await new Promise((resolve) => report.on('end', resolve));
+
+if (counts.failed > 0) fail(`${suite}: ${counts.failed} failed.`);
+if (suite === 'acceptance') {
+  if (counts.skipped > 0 || counts.todo > 0) {
+    fail(`acceptance: skipped=${counts.skipped} todo=${counts.todo}. A skip is not a pass.`);
+  }
+  const empty = [...passedIn].filter(([, n]) => n === 0).map(([f]) => relative(root, f));
+  if (empty.length > 0) fail(`acceptance: no passing test in:\n  ${empty.join('\n  ')}`);
+}
+console.log(`${suite}: ${files.length} file(s) passed.`);

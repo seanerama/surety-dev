@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Engine homes are runtime state and never belong in a repository (D1 §1.6).
+.surety-home/
+*.db
+*.db-wal
+*.db-shm
+
+# Test output
+test-results/
+*.log
