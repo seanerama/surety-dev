@@ -10,7 +10,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { isHarness, listBarriers, releaseBarrier } from '../testing/seam.js';
+import { seamDescribe, seamRoute } from '../testing/seam.js';
 import { checkTarget, checkToken, readJsonBody } from './boundary.js';
 
 interface Reply {
@@ -29,12 +29,12 @@ interface Request {
   awaitingContinue: boolean;
 }
 
-// A matched route. Reads and harness routes are not audited. A refusal route
-// is audited here. A command is prepared here (body read and checked; a
-// failure is audited here) and then runs in the store, which commits its
-// audit record with it.
+// A matched route. A direct route (a read, or a route the seam provides) is
+// answered by its handler and not audited. A refusal route is audited here. A
+// command is prepared here (body read and checked; a failure is audited here)
+// and then runs in the store, which commits its audit record with it.
 type Route =
-  | { kind: 'read' | 'harness'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
+  | { kind: 'direct'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
   | { kind: 'refuse'; refusal: Refusal }
   | { kind: 'command'; name: string; args: (body: unknown) => unknown };
 
@@ -97,40 +97,10 @@ export function createApiServer(state: EngineState): http.Server {
     if (s[0] !== 'v1') return null;
 
     if (s.length === 2 && s[1] === 'health' && get) {
-      return { kind: 'read', restricted: true, handler: async () => ({ status: 200, body: { mode: state.mode } }) };
+      return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: { mode: state.mode } }) };
     }
     if (s.length === 2 && s[1] === 'engine' && get) {
-      return { kind: 'read', restricted: true, handler: async () => ({ status: 200, body: engineInfo(state) }) };
-    }
-
-    if (s[1] === 'harness' && isHarness()) {
-      if (s.length === 3 && s[2] === 'barriers' && get) {
-        return { kind: 'harness', restricted: true, handler: async () => ({ status: 200, body: { barriers: listBarriers() } }) };
-      }
-      if (s.length === 5 && s[2] === 'barriers' && s[4] === 'release' && post) {
-        return {
-          kind: 'harness',
-          restricted: true,
-          handler: async (r) => {
-            await body(r);
-            releaseBarrier(decodeSegment(s[3]!) ?? s[3]!);
-            return { status: 200, body: { barriers: listBarriers() } };
-          },
-        };
-      }
-      if (s.length === 4 && s[2] === 'fixtures' && s[3] === 'project' && post) {
-        return {
-          kind: 'harness',
-          handler: async (r) => ({
-            status: 201,
-            body: await store().call('harness.command', { name: 'fixture.project', args: await body(r), actor: r.actor }),
-          }),
-        };
-      }
-      if (s.length === 3 && s[2] === 'faults' && post) {
-        return { kind: 'harness', handler: async (r) => ({ status: 200, body: { armed: await store().call('harness.arm_fault', await body(r)) } }) };
-      }
-      return null;
+      return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: engineInfo(state) }) };
     }
 
     if (s[1] === 'projects' && s.length >= 4) {
@@ -139,7 +109,7 @@ export function createApiServer(state: EngineState): http.Server {
       const rest = s.slice(3);
       if (rest.length === 1 && rest[0] === 'policy') {
         if (get) {
-          return { kind: 'read', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
+          return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
         }
         if (post) return { kind: 'command', name: 'project.policy_submit', args: (b) => ({ project, body: b }) };
       }
@@ -164,6 +134,13 @@ export function createApiServer(state: EngineState): http.Server {
       if (rest[0] === 'releases') return { kind: 'refuse', refusal: unsupported('Releases') };
     }
     return null;
+  }
+
+  // A request no production route matched is offered to the seam, which
+  // answers only in harness mode (SEAM.md §7).
+  function offerToSeam(r: Request, segments: string[]): Route | null {
+    const offered = seamRoute(r.method, segments, { body: () => body(r), store, actor: r.actor });
+    return offered === null ? null : { kind: 'direct', restricted: offered.restricted, handler: offered.handler };
   }
 
   async function audit(actor: Actor, method: string, path: string, status: number): Promise<Refusal | null> {
@@ -222,7 +199,9 @@ export function createApiServer(state: EngineState): http.Server {
       return refuseAudited(err);
     }
 
-    const route = match(method, target.path.split('/').slice(1));
+    const segments = target.path.split('/').slice(1);
+    const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
+    const route = match(method, segments) ?? offerToSeam(r, segments);
     const restricted = route !== null && route.kind !== 'refuse' && route.kind !== 'command' && route.restricted === true;
     if (state.mode !== 'full' && !restricted) {
       refuse(
@@ -233,7 +212,6 @@ export function createApiServer(state: EngineState): http.Server {
       return;
     }
     if (!route) return refuseAudited(notFound(target.path));
-    const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
 
     switch (route.kind) {
       case 'refuse':
@@ -286,14 +264,13 @@ export function createApiServer(state: EngineState): http.Server {
 }
 
 function engineInfo(state: EngineState) {
-  return {
+  return seamDescribe({
     version: ENGINE_VERSION,
     incarnation: state.lock.incarnation_id,
     mode: state.mode,
-    harness: isHarness(),
     // No backend is qualified in M1; the scripted adapter arrives in slice 2.
     backends: [],
     config: inspectEngineConfig(state.config),
     startup: { step: state.step, completed: [...state.completed], failed: state.failed },
-  };
+  });
 }

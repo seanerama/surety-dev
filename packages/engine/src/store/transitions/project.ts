@@ -1,8 +1,6 @@
-// Project transitions: the harness fixture installer, pause and resume (D1
-// §8.4, §11.4), and the project policy command, whose valid changes commit
-// through the journaled git path that slice 3 builds.
-
-import { isAbsolute } from 'node:path';
+// Project transitions: creation, pause and resume (D1 §8.4, §11.4), and the
+// project policy command, whose valid changes commit through the journaled
+// git path that slice 3 builds.
 
 import { validatePolicySubmission } from '../../config/project-policy.js';
 import { newId } from '../../ids.js';
@@ -24,31 +22,17 @@ export function getProject(tx: Tx, project: string): ProjectRow {
   return row;
 }
 
-const FIXTURE_FIELDS = ['name', 'tier', 'dev_repo_path', 'integration_branch'] as const;
+export interface NewProject {
+  name: string;
+  tier: string;
+  dev_repo_path: string;
+  integration_branch: string;
+}
 
-// Harness only (SEAM.md §7): a registered project on an existing repository,
-// labelled as test setup on its project.created event.
-export function installFixtureProject(tx: Tx, body: unknown): { project: { id: string } } {
-  const b = (typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
-  for (const key of Object.keys(b)) {
-    if (!(FIXTURE_FIELDS as readonly string[]).includes(key)) {
-      throw new Refusal(400, 'unknown_field', `"${key}" is not a fixture project field.`, `Send only ${FIXTURE_FIELDS.join(', ')}.`, { field: key });
-    }
-  }
-  const invalid = (field: string, why: string) =>
-    new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the fixture request.', { field });
-  const str = (field: string) => {
-    const v = b[field];
-    if (typeof v !== 'string' || v.length === 0) throw invalid(field, 'must be a non-empty string');
-    return v;
-  };
-  const name = str('name');
-  const tier = str('tier');
-  if (!['T1', 'T2', 'T3'].includes(tier)) throw invalid('tier', 'must be T1, T2 or T3');
-  const repo = str('dev_repo_path');
-  if (!isAbsolute(repo)) throw invalid('dev_repo_path', 'must be an absolute path');
-  const branch = str('integration_branch');
-
+// A registered project on an existing repository. `label` is added to the
+// payload of its project.created event; the fixture installer labels the
+// projects it creates as test setup (SEAM.md §7). Returns the project id.
+export function createProject(tx: Tx, project: NewProject, label: Record<string, unknown>): string {
   const id = newId('proj_');
   const management = { mode: 'live', health: 'unknown', triage_policy: 'manual' };
   tx.db
@@ -57,9 +41,9 @@ export function installFixtureProject(tx: Tx, body: unknown): { project: { id: s
          "baseline_state", "registration_state", "management", "paused", "seq_counters")
        VALUES (?, ?, ?, ?, ?, ?, 'idea', 'registered', ?, 0, '{}')`,
     )
-    .run(id, tx.at, name, tier, repo, branch, JSON.stringify(management));
-  tx.emit('project.created', { project: id }, { test_fixture: true, name, tier, dev_repo_path: repo, integration_branch: branch });
-  return { project: { id } };
+    .run(id, tx.at, project.name, project.tier, project.dev_repo_path, project.integration_branch, JSON.stringify(management));
+  tx.emit('project.created', { project: id }, { ...label, ...project });
+  return id;
 }
 
 // Pause sets the flag the scheduler's select step skips on; resume clears it.

@@ -7,7 +7,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import { EXIT, serve } from './engine.js';
 import { ENGINE_VERSION } from './index.js';
-import { type BarrierSpec, parseBarrierFlag } from './testing/seam.js';
+import { configureHarness } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -24,10 +24,12 @@ if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
 }
 
-// Harness flags are accepted only together with --harness (SEAM.md §1).
+// Harness flags are accepted only together with --harness (SEAM.md §1). The
+// command line parses them and hands them to the seam (SEAM.md §7); a
+// migrations directory reaches the engine as an ordinary parameter.
 let harness = false;
 let migrationsDir: string | null = null;
-const barriers: BarrierSpec[] = [];
+const barrierValues: string[] = [];
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
@@ -40,16 +42,15 @@ for (let i = 0; i < args.length; i++) {
     if (flag === '--harness-migrations') {
       migrationsDir = isAbsolute(value) ? value : resolve(value);
     } else {
-      const spec = parseBarrierFlag(value, barriers.length);
-      if (!spec) usage(`unknown barrier or action in ${flag} ${value}`);
-      if (barriers.some((b) => b.name === spec.name)) usage(`barrier ${spec.name} is armed twice`);
-      barriers.push(spec);
+      barrierValues.push(value);
     }
   } else {
     usage(`unknown flag ${flag}`);
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
+const harnessProblem = configureHarness(harness, barrierValues);
+if (harnessProblem !== null) usage(harnessProblem);
 
 const home = process.env.SURETY_HOME;
 if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
@@ -59,4 +60,4 @@ try {
   usage('SURETY_HOME does not exist');
 }
 
-await serve({ home, harness, migrationsDir, barriers });
+await serve({ home, migrationsDir });

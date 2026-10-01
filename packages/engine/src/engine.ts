@@ -15,7 +15,6 @@ import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
 import { Refusal } from './refusal.js';
 import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
-import { type BarrierSpec, configureMain } from './testing/seam.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, failed: 1 } as const;
 
@@ -41,9 +40,7 @@ export interface EngineState {
 
 export interface ServeOptions {
   home: string;
-  harness: boolean;
   migrationsDir: string | null;
-  barriers: BarrierSpec[];
 }
 
 // One JSON refusal line on stderr, then exit (SEAM.md §1).
@@ -87,7 +84,6 @@ export async function serve(opts: ServeOptions): Promise<void> {
   }
   if (token === null) throw new Error('api.token was neither found nor created');
 
-  const seam = configureMain(opts.harness, opts.barriers);
   const state: EngineState = {
     config,
     lock,
@@ -133,7 +129,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
 
   // 3. store: open, migrate, record the incarnation
   state.step = 'store';
-  const store = new StoreClient(paths.store, opts.migrationsDir ?? DEFAULT_MIGRATIONS_DIR, seam);
+  const store = new StoreClient(paths.store, opts.migrationsDir ?? DEFAULT_MIGRATIONS_DIR);
   state.store = store;
   try {
     await store.call('open', { lock });

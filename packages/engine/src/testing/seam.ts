@@ -1,49 +1,65 @@
-// The engine side of the test seam (build spec §8, SEAM.md §7). Production
-// code reaches harness behaviour only through this module. Outside harness
-// mode every call here is a no-op and nothing can be armed.
+// The engine side of the test seam (build spec §8, SEAM.md §7). Every
+// harness-only behaviour lives in this folder, and production code reaches it
+// only by importing this module and calling its functions at the points where
+// the harness has a hook: the command line hands over the --harness flags; the
+// API server offers a request no production route matched and its engine
+// description; the store worker offers an operation it does not know and a
+// message channel; the migration runner and the event writer reach their
+// barrier and fault points. Outside harness mode every function here does
+// nothing, or refuses, by its own check.
 //
 // The module runs in two threads. The main thread owns the barrier registry
 // that GET /v1/harness/barriers reports and releases; the store worker reaches
 // barriers and fault points. They share one SharedArrayBuffer so a paused
 // worker can block synchronously inside its transaction until released.
 
+import type { Database } from 'better-sqlite3';
+
 import { Refusal } from '../refusal.js';
+import type { StoreClient } from '../store/client.js';
+import type { Actor } from '../store/transitions/tx.js';
+import { installFixtureProject } from './fixtures.js';
 
-export const BARRIER_NAMES = ['migration.before_commit'] as const;
-export type BarrierAction = 'pause' | 'kill';
-export type BarrierState = 'armed' | 'waiting' | 'released' | 'fired';
+const BARRIER_NAMES = ['migration.before_commit'] as const;
+type BarrierAction = 'pause' | 'kill';
+type BarrierState = 'armed' | 'waiting' | 'released' | 'fired';
 
-export interface BarrierSpec {
+interface BarrierSpec {
   name: string;
   action: BarrierAction;
   slot: number;
 }
 
+// What the store worker needs to know of the seam, passed in its workerData.
 export interface SeamInit {
   harness: boolean;
   barriers: BarrierSpec[];
   shared: SharedArrayBuffer | null;
 }
 
-export type Fault = { point: 'before_event'; event_type: string } | { point: 'audit_write' };
+type Fault = { point: 'before_event'; event_type: string } | { point: 'audit_write' };
 
-export class InjectedFault extends Error {
+// A failure the seam injects. It is not a Refusal, so the transaction it
+// interrupts rolls back and is reported like any other store failure.
+class InjectedFault extends Error {
   constructor(what: string) {
     super(`injected fault: ${what}`);
   }
 }
 
 let init: SeamInit = { harness: false, barriers: [], shared: null };
-let notify: ((name: string, state: BarrierState) => void) | null = null;
+let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
 
-export const isHarness = (): boolean => init.harness;
+type SeamMessage = { seam: 'barrier'; name: string; state: BarrierState };
 
-// ---- startup flags -----------------------------------------------------------
+const notFound = (what: string) => new Refusal(404, 'not_found', `${what} exists only in harness mode.`, 'Start the engine with --harness.');
 
-// Parse `--harness-barrier name=action` values. Returns null for an unknown
-// barrier or action, which the command line treats as a usage error.
-export function parseBarrierFlag(value: string, slot: number): BarrierSpec | null {
+// ---- command line (main thread) ---------------------------------------------
+
+// Parse `--harness-barrier name=action`. Returns null for an unknown barrier
+// or action.
+function parseBarrier(value: string, slot: number): BarrierSpec | null {
   const at = value.lastIndexOf('=');
   if (at <= 0) return null;
   const name = value.slice(0, at);
@@ -53,28 +69,46 @@ export function parseBarrierFlag(value: string, slot: number): BarrierSpec | nul
   return { name, action, slot };
 }
 
-// ---- main thread: the barrier registry --------------------------------------
-
 const registry = new Map<string, { spec: BarrierSpec; state: BarrierState }>();
 
-export function configureMain(harness: boolean, barriers: BarrierSpec[]): SeamInit {
+// The command line's --harness flag and --harness-barrier values. Returns a
+// usage problem to report, or null. Called once, before the engine starts.
+export function configureHarness(harness: boolean, barrierValues: string[]): string | null {
+  const barriers: BarrierSpec[] = [];
+  for (const value of barrierValues) {
+    const spec = parseBarrier(value, barriers.length);
+    if (!spec) return `unknown barrier or action in --harness-barrier ${value}`;
+    if (barriers.some((b) => b.name === spec.name)) return `barrier ${spec.name} is armed twice`;
+    barriers.push(spec);
+  }
+  if (!harness && barriers.length > 0) return '--harness-barrier is accepted only with --harness';
   const shared = harness && barriers.length > 0 ? new SharedArrayBuffer(4 * barriers.length) : null;
   init = { harness, barriers: harness ? barriers : [], shared };
+  registry.clear();
   for (const spec of init.barriers) registry.set(spec.name, { spec, state: 'armed' });
+  return null;
+}
+
+// ---- store client (main thread) ---------------------------------------------
+
+// The seam's part of the store worker's startup data.
+export function seamWorkerData(): SeamInit {
   return init;
 }
 
-// The worker reports a barrier it reached.
-export function barrierReached(name: string, state: BarrierState): void {
-  const entry = registry.get(name);
-  if (entry && entry.state !== 'released') entry.state = state;
+// A message from the store worker that is not a reply to a store call.
+export function seamMessage(message: unknown): void {
+  const m = message as Partial<SeamMessage> | null;
+  if (!init.harness || m?.seam !== 'barrier' || typeof m.name !== 'string') return;
+  const entry = registry.get(m.name);
+  if (entry && entry.state !== 'released' && (m.state === 'waiting' || m.state === 'fired')) entry.state = m.state;
 }
 
-export function listBarriers(): { name: string; action: BarrierAction; state: BarrierState }[] {
+function listBarriers(): { name: string; action: BarrierAction; state: BarrierState }[] {
   return [...registry.values()].map(({ spec, state }) => ({ name: spec.name, action: spec.action, state }));
 }
 
-export function releaseBarrier(name: string): void {
+function releaseBarrier(name: string): void {
   const entry = registry.get(name);
   if (!entry) throw new Refusal(404, 'not_found', `No barrier named "${name}" is armed.`, 'Arm it at startup with --harness-barrier.', { barrier: name });
   if (entry.spec.action !== 'pause' || entry.state !== 'waiting') {
@@ -89,11 +123,98 @@ export function releaseBarrier(name: string): void {
   Atomics.notify(cells, entry.spec.slot);
 }
 
-// ---- store worker: barriers and faults --------------------------------------
+// ---- API server (main thread) -----------------------------------------------
 
-export function configureWorker(given: SeamInit, report: (name: string, state: BarrierState) => void): void {
+// What a seam route needs from the server for the request it was offered.
+export interface SeamRequestHooks {
+  // Reads the JSON body; this is when `100 Continue` is sent.
+  body: () => Promise<unknown>;
+  store: () => StoreClient;
+  actor: Actor;
+}
+
+export interface SeamRoute {
+  // Answers while the engine is still in restricted mode.
+  restricted: boolean;
+  handler: () => Promise<{ status: number; body: unknown }>;
+}
+
+// Store operations the seam's routes run in the worker (seamStoreOp).
+const OP_FIXTURE_PROJECT = 'harness.fixture_project';
+const OP_ARM_FAULT = 'harness.arm_fault';
+
+const decodeSegment = (segment: string): string => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+// The /v1/harness/... routes (SEAM.md §7), offered a request no production
+// route matched. They pass the same Host and token checks as every route and
+// write no api.act event. null: not a seam route, which outside harness mode
+// is every request.
+export function seamRoute(method: string, segments: string[], hooks: SeamRequestHooks): SeamRoute | null {
+  if (!init.harness || segments[0] !== 'v1' || segments[1] !== 'harness') return null;
+  const s = segments.slice(2);
+  const get = method === 'GET' || method === 'HEAD';
+  const post = method === 'POST';
+  if (s.length === 1 && s[0] === 'barriers' && get) {
+    return { restricted: true, handler: async () => ({ status: 200, body: { barriers: listBarriers() } }) };
+  }
+  if (s.length === 3 && s[0] === 'barriers' && s[2] === 'release' && post) {
+    return {
+      restricted: true,
+      handler: async () => {
+        await hooks.body();
+        releaseBarrier(decodeSegment(s[1]!));
+        return { status: 200, body: { barriers: listBarriers() } };
+      },
+    };
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'project' && post) {
+    return {
+      restricted: false,
+      handler: async () => {
+        const body = await hooks.body();
+        return { status: 201, body: await hooks.store().call(OP_FIXTURE_PROJECT, { body, actor: hooks.actor }) };
+      },
+    };
+  }
+  if (s.length === 1 && s[0] === 'faults' && post) {
+    return {
+      restricted: false,
+      handler: async () => {
+        const body = await hooks.body();
+        return { status: 200, body: { armed: await hooks.store().call(OP_ARM_FAULT, body) } };
+      },
+    };
+  }
+  return null;
+}
+
+// GET /v1/engine reports whether the engine is in harness mode.
+export function seamDescribe<T extends object>(info: T): T & { harness: boolean } {
+  return { ...info, harness: init.harness };
+}
+
+// ---- store worker -----------------------------------------------------------
+
+export function configureWorker(given: SeamInit, send: (message: unknown) => void): void {
   init = given;
-  notify = report;
+  post = send;
+}
+
+// A store operation the worker does not know. Outside harness mode, or for an
+// operation the seam does not define either, it is refused as unknown.
+export function seamStoreOp(op: string, args: unknown, store: () => Database): unknown {
+  if (init.harness && op === OP_FIXTURE_PROJECT) {
+    const a = args as { body: unknown; actor: Actor };
+    return installFixtureProject(store(), a.actor, a.body);
+  }
+  if (init.harness && op === OP_ARM_FAULT) return armFault(args);
+  throw new Error(`unknown store op ${op}`);
 }
 
 // A named point the engine pauses at until released, or kills itself at.
@@ -102,17 +223,17 @@ export function barrier(name: string): void {
   const spec = init.barriers.find((b) => b.name === name);
   if (!spec) return;
   if (spec.action === 'kill') {
-    notify?.(name, 'fired');
+    post?.({ seam: 'barrier', name, state: 'fired' });
     process.kill(process.pid, 'SIGKILL');
     return;
   }
-  notify?.(name, 'waiting');
+  post?.({ seam: 'barrier', name, state: 'waiting' });
   const cells = new Int32Array(init.shared!);
   while (Atomics.load(cells, spec.slot) === 0) Atomics.wait(cells, spec.slot, 0);
 }
 
-export function armFault(fault: unknown): Fault {
-  if (!init.harness) throw new Refusal(404, 'not_found', 'Fault injection exists only in harness mode.', 'Start the engine with --harness.');
+function armFault(fault: unknown): Fault {
+  if (!init.harness) throw notFound('Fault injection');
   const f = fault as Partial<Record<string, unknown>> | null;
   let parsed: Fault | null = null;
   if (f && f.point === 'before_event' && typeof f.event_type === 'string' && f.event_type.length > 0 && Object.keys(f).length === 2) {

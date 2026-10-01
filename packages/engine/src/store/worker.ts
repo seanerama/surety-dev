@@ -8,12 +8,12 @@ import Database from 'better-sqlite3';
 
 import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
-import { InjectedFault, armFault, configureWorker, type SeamInit } from '../testing/seam.js';
+import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
 import { projectPolicy } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { liftToFull, recordIncarnation, schedulerStarted } from './transitions/engine.js';
-import { installFixtureProject, setPaused, submitPolicy } from './transitions/project.js';
+import { setPaused, submitPolicy } from './transitions/project.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 
 export interface WorkerData {
@@ -24,11 +24,11 @@ export interface WorkerData {
 
 export type Request = { id: number; op: string; args: unknown };
 export type Reply = { id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> };
-export type BarrierMessage = { barrier: string; state: 'waiting' | 'fired' };
 
 const data = workerData as WorkerData;
 const port = parentPort!;
-configureWorker(data.seam, (name, state) => port.postMessage({ barrier: name, state: state as BarrierMessage['state'] }));
+// Messages that are not replies (they carry no `id`) belong to the seam.
+configureWorker(data.seam, (message) => port.postMessage(message));
 
 let db: Database.Database | null = null;
 const store = (): Database.Database => {
@@ -42,11 +42,6 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => unknown> = {
   'project.pause': (tx, a: { project: string }) => setPaused(tx, { project: a.project, paused: true }),
   'project.resume': (tx, a: { project: string }) => setPaused(tx, { project: a.project, paused: false }),
   'project.policy_submit': (tx, a: { project: string; body: unknown }) => submitPolicy(tx, a),
-};
-
-// Harness setup commands: transitions without an audit record (SEAM.md §7).
-const HARNESS_COMMANDS: Record<string, (tx: Tx, args: any) => unknown> = {
-  'fixture.project': (tx, body: unknown) => installFixtureProject(tx, body),
 };
 
 const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
@@ -109,12 +104,6 @@ const OPS: Record<string, (args: any) => unknown> = {
   },
   'engine.full': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => liftToFull(tx, a.incarnation)),
   'engine.started': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => schedulerStarted(tx, a.incarnation)),
-  'harness.command': (a: { name: string; args: unknown; actor: Actor }) => {
-    const command = HARNESS_COMMANDS[a.name];
-    if (!command) throw new Error(`unknown harness command ${a.name}`);
-    return transact(store(), a.actor, (tx) => command(tx, a.args));
-  },
-  'harness.arm_fault': (fault: unknown) => armFault(fault),
   close: () => {
     db?.close();
     db = null;
@@ -125,11 +114,11 @@ port.on('message', (msg: Request) => {
   let reply: Reply;
   try {
     const op = OPS[msg.op];
-    if (!op) throw new Error(`unknown store op ${msg.op}`);
-    reply = { id: msg.id, ok: true, value: op(msg.args) };
+    // An operation the store does not define is offered to the seam, which
+    // refuses it as unknown outside harness mode.
+    reply = { id: msg.id, ok: true, value: op ? op(msg.args) : seamStoreOp(msg.op, msg.args, store) };
   } catch (err) {
-    const refusal = err instanceof InjectedFault ? storeError(err) : asRefusal(err);
-    reply = { id: msg.id, ok: false, refusal: refusal.toWire() };
+    reply = { id: msg.id, ok: false, refusal: asRefusal(err).toWire() };
   }
   port.postMessage(reply);
 });

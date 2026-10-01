@@ -4,8 +4,8 @@
 import { Worker } from 'node:worker_threads';
 
 import { Refusal, storeError } from '../refusal.js';
-import { barrierReached, type SeamInit } from '../testing/seam.js';
-import type { BarrierMessage, Reply, WorkerData } from './worker.js';
+import { seamMessage, seamWorkerData } from '../testing/seam.js';
+import type { Reply, WorkerData } from './worker.js';
 
 const QUEUE_LIMIT = 256;
 
@@ -15,12 +15,12 @@ export class StoreClient {
   private nextId = 1;
   private dead: Error | null = null;
 
-  constructor(file: string, migrationsDir: string, seam: SeamInit) {
-    const data: WorkerData = { file, migrationsDir, seam };
+  constructor(file: string, migrationsDir: string) {
+    const data: WorkerData = { file, migrationsDir, seam: seamWorkerData() };
     this.worker = new Worker(new URL('./worker.js', import.meta.url), { workerData: data });
-    this.worker.on('message', (msg: Reply | BarrierMessage) => {
-      if ('barrier' in msg) {
-        barrierReached(msg.barrier, msg.state);
+    this.worker.on('message', (msg: Reply | { id?: undefined }) => {
+      if (typeof msg.id !== 'number') {
+        seamMessage(msg);
         return;
       }
       const waiter = this.pending.get(msg.id);
