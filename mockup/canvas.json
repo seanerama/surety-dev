@@ -1,0 +1,17 @@
+{"v":3,"createdOnFiles":{"v":1,"at":"2026-09-30T23:45:00Z"},"title":"Surety UI Mockup","launch":{"view":"canvas"},"pages":[],
+"boards":{
+"Main.dc.html":{"x":0,"y":0,"w":1440,"h":900,"title":"Projects","is_interactive":true},
+"Overview.dc.html":{"x":1520,"y":0,"w":1440,"h":900,"title":"Project overview","is_interactive":true},
+"Attention.dc.html":{"x":3040,"y":0,"w":1440,"h":900,"title":"Attention queue","is_interactive":true},
+"Build.dc.html":{"x":4560,"y":0,"w":1440,"h":900,"title":"Build","is_interactive":true},
+"Gate.dc.html":{"x":0,"y":1300,"w":1440,"h":900,"title":"Gate detail","is_interactive":true},
+"Environments.dc.html":{"x":1520,"y":1300,"w":1440,"h":900,"title":"Environments and releases","is_interactive":true},
+"Managed.dc.html":{"x":3040,"y":1300,"w":1440,"h":900,"title":"Managed","is_interactive":true},
+"Settings.dc.html":{"x":4560,"y":1300,"w":1440,"h":900,"title":"Settings","is_interactive":true}
+},
+"order":["Main.dc.html","Overview.dc.html","Attention.dc.html","Build.dc.html","Gate.dc.html","Environments.dc.html","Managed.dc.html","Settings.dc.html"],
+"notes":{
+"t1":{"x":0,"y":-280,"text":"Operate: what is happening, what waits on you, what happens if you press this","kind":"title1","maxW":6000},
+"t2":{"x":0,"y":1020,"text":"Assure: gates, environments, the mechanic, and policy","kind":"title1","maxW":6000}
+},
+"designSystems":[]}

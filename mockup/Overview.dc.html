@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>meet-proxy: project overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.obs{color:#1B2430}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:11px 16px;font-size:15px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:20px 24px}
+.stamp{font-size:12px;color:#4B5563}
+.crow{display:grid;grid-template-columns:90px 90px minmax(0,1.3fr) minmax(0,1.6fr) 96px;gap:16px;align-items:center;padding:11px 0;border-top:1px solid #C9D1C4;font-size:15px}
+.fact{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px;padding:8px 0;border-top:1px solid #DCE2D9;font-size:14px}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Project" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div style="margin-top:6px;font-weight:700">meet-proxy</div>
+<div class="k">T2 Standard, spec v3, phase 2 of 4</div>
+</div>
+<a href="Overview.dc.html" class="on">Overview</a>
+<a href="Attention.dc.html">Attention <span class="num" style="float:right;background:#5A3FB5;color:#F6F8F4;border-radius:10px;padding:0 8px;font-size:13px">3</span></a>
+<a href="Build.dc.html">Build</a>
+<a href="Gate.dc.html">Gates</a>
+<a href="Environments.dc.html">Environments</a>
+<a href="Managed.dc.html">Managed</a>
+<a href="Settings.dc.html">Settings</a>
+<div style="flex-grow:1"></div>
+<a href="Main.dc.html">All projects</a>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:26px 36px;background:#EBE6F8;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Now</div>
+<div class="disp you" style="font-size:54px">Waiting on you</div>
+</div>
+<p style="margin:0;font-size:17px;line-height:1.45;max-width:62ch">Production rollout of <strong>v1.4.0</strong> is partial: 2 of 3 hosts updated, observed <strong class="ser">Degraded</strong>. The engine reconciled the operation at 09:16 and is holding. Choose retry or roll back to v1.3.0.</p>
+<a href="Attention.dc.html" class="btn">Decide rollout</a>
+</section>
+<div style="padding:24px 36px;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:20px;min-height:0">
+<div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+<div class="panel" style="padding-bottom:6px">
+<div style="display:flex;justify-content:space-between;align-items:baseline">
+<h2 class="h">Candidates</h2>
+<span class="k">Nominated revisions only. Working revisions are in Build.</span>
+</div>
+<div class="crow" style="border-top:0;padding-top:12px;padding-bottom:6px">
+<div class="k">Candidate</div><div class="k">Revision</div><div class="k">Progress</div><div class="k">Gate</div><div class="k">Nominated</div>
+</div>
+<div class="crow">
+<div style="font-weight:700">c-0421</div><div class="num">a71c9d4</div>
+<div>Developing, stage 6 of 7</div>
+<div><a href="Gate.dc.html">Alpha gate not satisfied</a><div class="k">1 failed, 1 stale, 1 skipped, 1 finding undispositioned</div></div>
+<div class="k num">38 m ago</div>
+</div>
+<div class="crow">
+<div style="font-weight:700">c-0417</div><div class="num">8f3a21c</div>
+<div>Go-live approved, v1.4.0</div>
+<div><span class="ser">Production rollout partial</span><div class="k">Operation op-7731 reconciled, awaiting your decision</div></div>
+<div class="k num">2 d ago</div>
+</div>
+<div class="crow">
+<div style="font-weight:700">c-0412</div><div class="num">5d0e77b</div>
+<div>Beta Deployed</div>
+<div class="k">Superseded by c-0417 in staging</div>
+<div class="k num">6 d ago</div>
+</div>
+<div class="crow">
+<div style="font-weight:700">c-0399</div><div class="num">19c4f02</div>
+<div>Live, v1.3.0</div>
+<div class="k">Last verified production deployment</div>
+<div class="k num">19 d ago</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px">
+<div class="panel">
+<h2 class="h">Alpha</h2>
+<div class="k" style="margin-bottom:6px">Local container</div>
+<div class="fact"><span class="k">Last verified</span><span>c-0421 build 3, 41 m ago</span></div>
+<div class="fact"><span class="k">Attempted</span><span>None in progress</span></div>
+<div class="fact"><span class="k">Observed</span><span><span class="dot" style="background:#1F7A4D"></span><span class="good" style="font-weight:700">Healthy</span> <span class="stamp">20 s ago</span></span></div>
+</div>
+<div class="panel">
+<h2 class="h">Staging</h2>
+<div class="k" style="margin-bottom:6px">Tailscale host, delivery repo private</div>
+<div class="fact"><span class="k">Last verified</span><span>c-0417, v1.4.0, 07:48 today</span></div>
+<div class="fact"><span class="k">Attempted</span><span>None in progress</span></div>
+<div class="fact"><span class="k">Observed</span><span><span class="dot" style="background:#1F7A4D"></span><span class="good" style="font-weight:700">Healthy</span> <span class="stamp">20 s ago</span></span></div>
+</div>
+<div class="panel">
+<h2 class="h">Production</h2>
+<div class="k" style="margin-bottom:6px">AWS, 3 hosts</div>
+<div class="fact"><span class="k">Last verified</span><span>c-0399, v1.3.0, 19 d ago</span></div>
+<div class="fact"><span class="k">Attempted</span><span class="ser">c-0417, v1.4.0, partial: hosts a, b updated; host c <span class="unk" style="padding:1px 6px;border-radius:3px">Unknown</span></span></div>
+<div class="fact"><span class="k">Observed</span><span><span class="dot" style="background:#B3410B"></span><span class="ser" style="font-weight:700">Degraded</span> error rate 2.1% over 5 min <span class="stamp">20 s ago</span></span></div>
+</div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+<div class="panel">
+<h2 class="h">Baseline</h2>
+<div class="fact" style="border-top:0"><span class="k">Spec</span><span>v3, approved by you 2026-09-12</span></div>
+<div class="fact"><span class="k">Architecture</span><span>v2, approved by you 2026-09-14</span></div>
+<div class="fact"><span class="k">Roadmap</span><span>v2, phase 2 of 4, stages 4 to 7</span></div>
+<div class="fact"><span class="k">Requirements</span><span class="num">31 approved. 19 verified, 12 pending in later phases.</span></div>
+</div>
+<div class="panel">
+<h2 class="h">Management</h2>
+<div class="fact" style="border-top:0"><span class="k">Mode</span><span>Live Managed since 2026-09-20</span></div>
+<div class="fact"><span class="k">Health</span><span><span class="dot" style="background:#8A5A0F"></span><span class="warn" style="font-weight:700">Degraded</span> telemetry lag 6 min</span></div>
+<div class="fact"><span class="k">Triage</span><span>Manual. 2 issues await you.</span></div>
+<div class="fact"><span class="k">Filing</span><span class="num">4 of 10 today, 0 urgent</span></div>
+</div>
+<div class="panel">
+<h2 class="h">Spend</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px">
+<div><div class="disp num" style="font-size:34px">$18.40</div><div class="k">today, verified</div></div>
+<div><div class="disp num" style="font-size:34px">$6.10</div><div class="k">on c-0421 so far</div></div>
+</div>
+<div style="margin-top:12px;height:10px;border-radius:5px;background:#DCE2D9;overflow:hidden;display:flex">
+<div style="width:61%;background:#2F5FA8"></div><div style="width:2px;background:#F6F8F4"></div>
+<div style="width:22%;background:#6B8DBF"></div><div style="width:2px;background:#F6F8F4"></div>
+<div style="width:11%;background:#A9BEDC"></div>
+</div>
+<div class="k" style="margin-top:6px">Builder 61%, Verifier 22%, Reviewer 11%, other 6%. Codex tokens with unknown price are listed separately in Settings.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

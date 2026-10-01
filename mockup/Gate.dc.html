@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>meet-proxy: Alpha gate for c-0421</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:10px 14px;font-size:15px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:18px 22px}
+.stamp{font-size:12px;color:#4B5563}
+.in{display:grid;grid-template-columns:36px minmax(0,1fr);gap:14px;align-items:start;padding:12px 0;border-top:1px solid #C9D1C4}
+.st{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.chk{display:grid;grid-template-columns:70px minmax(0,1fr) 110px 150px;gap:12px;padding:7px 0;border-top:1px solid #DCE2D9;font-size:14px;align-items:center}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Project" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div style="margin-top:6px;font-weight:700">meet-proxy</div>
+<div class="k">T2 Standard, spec v3, phase 2 of 4</div>
+</div>
+<a href="Overview.dc.html">Overview</a>
+<a href="Attention.dc.html">Attention <span class="num" style="float:right;background:#5A3FB5;color:#F6F8F4;border-radius:10px;padding:0 8px;font-size:13px">3</span></a>
+<a href="Build.dc.html">Build</a>
+<a href="Gate.dc.html" class="on">Gates</a>
+<a href="Environments.dc.html">Environments</a>
+<a href="Managed.dc.html">Managed</a>
+<a href="Settings.dc.html">Settings</a>
+<div style="flex-grow:1"></div>
+<a href="Main.dc.html">All projects</a>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Gate verdict" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#F3E9E3;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Alpha gate, c-0421, a71c9d4, pv-19 proposed</div>
+<div class="disp ser" style="font-size:44px">Not satisfied</div>
+</div>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:66ch">Computed by the engine 38 s ago from recorded inputs only. Four things stand between this candidate and Alpha: AC-14 fails, AC-09 is stale, UI-03 did not run, and finding F-212 has no disposition. The Reviewer's candidate-level sign-off is also outstanding.</p>
+<a href="Attention.dc.html" class="btn">2 of these wait on you</a>
+</section>
+<div style="padding:20px 36px;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;min-height:0;overflow:hidden">
+<div class="panel" style="padding-top:8px">
+<div class="in" style="border-top:0">
+<div class="st" style="background:#F3E9E3;color:#B3410B">1</div>
+<div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Required checks at a71c9d4</strong><span class="k num">17 required: 14 passed, 1 failed, 1 stale, 1 skipped, 0 missing</span></div>
+<div class="k" style="margin-top:2px">Judged by exit status of each check process, spawned by the engine. Only passed satisfies.</div>
+<div class="chk" style="margin-top:6px"><span class="num">AC-14</span><span>Export completes within 2 s on 10k rows</span><span class="ser" style="font-weight:700">Failed, exit 1</span><span class="k">direct runner, 1 m ago</span></div>
+<div class="chk"><span class="num">AC-09</span><span>Session cookie carries Secure and HttpOnly flags</span><span class="warn" style="font-weight:700">Stale</span><span class="k">passed at pv-18, re-run due</span></div>
+<div class="chk"><span class="num">UI-03</span><span>Checkout flow completes in a real browser</span><span class="warn" style="font-weight:700">Skipped</span><span class="k">runner reported not executed</span></div>
+<div class="chk"><span class="num">14 more</span><span>Including sensitivity-floor checks for authentication (AC-07 to AC-10)</span><span class="good" style="font-weight:700">Passed</span><span class="k">pv-19, 1 m ago</span></div>
+</div>
+</div>
+<div class="in">
+<div class="st" style="background:#EBE6F8;color:#3F2A8C">2</div>
+<div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Findings</strong><span class="k num">0 blocking, 1 nonblocking without disposition</span></div>
+<div class="chk" style="margin-top:6px"><span class="num">F-212</span><span>CSV export returns 500 on an organisation with no records. Workaround: export with a filter.</span><span>Medium</span><span><a href="Attention.dc.html">Needs your disposition</a></span></div>
+<div class="k" style="margin-top:6px">Severity proposed by the Verifier. Lowering it below Medium would not change this gate; raising it to High would make it blocking.</div>
+</div>
+</div>
+<div class="in">
+<div class="st" style="background:#EDF0EA;color:#4B5563">3</div>
+<div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Sign-offs required at T2</strong><span class="k">Reviewer, candidate level</span></div>
+<div style="font-size:14px;margin-top:4px">Not yet recorded for a71c9d4. The Reviewer runs in a fresh session after the Verifier's checks complete, on the other backend (Codex) by project policy.</div>
+</div>
+</div>
+<div class="in">
+<div class="st" style="background:#EDF0EA;color:#4B5563">4</div>
+<div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Deployment verification</strong><span class="k">Runs after deploy to Alpha</span></div>
+<div style="font-size:14px;margin-top:4px">Identity: the container must report a71c9d4. Behavior: AC-01 (home page renders a report list) and AC-12 (export downloads a CSV) run against the deployed instance. The deploy tool's own success message does not count.</div>
+</div>
+</div>
+<div class="in">
+<div class="st" style="background:#EDF0EA;color:#4B5563">5</div>
+<div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Human approvals</strong><span class="k">None required at Alpha for T2</span></div>
+<div style="font-size:14px;margin-top:4px">Architecture v2 and phase plan v2 are already approved. No High finding is claiming the Alpha exception.</div>
+</div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div class="panel">
+<h2 class="h">Protected path since you last reviewed it</h2>
+<div class="k" style="margin-top:2px">pv-17 was the last version a human reviewed, at the v1.4.0 go-live.</div>
+<div class="chk" style="grid-template-columns:60px minmax(0,1fr);margin-top:8px"><span class="num">pv-18</span><span><strong>Tightening.</strong> Added AC-16, streaming export emits a header row on an empty set. Approved by the Reviewer against spec requirement R-22, 2 d ago.</span></div>
+<div class="chk" style="grid-template-columns:60px minmax(0,1fr)"><span class="num">pv-19</span><span><strong class="ser">Loosening, proposed.</strong> AC-14 timeout 2 s to 5 s. Classified loosening by the engine; <a href="Attention.dc.html">waiting on you</a>.</span></div>
+<div class="k" style="margin-top:8px">The Builder cannot edit any of this. Objections arrive as proposals from the Verifier in a fresh session.</div>
+</div>
+<div class="panel">
+<h2 class="h">What satisfies this gate</h2>
+<ol style="margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.55">
+<li>AC-14 passes, or pv-19 is approved and AC-14 re-runs and passes.</li>
+<li>AC-09 re-runs at the current protected version.</li>
+<li>UI-03 runs. The browser runner is unavailable on this host; Settings can point it at the Tailscale runner.</li>
+<li>F-212 receives a disposition. Fix keeps it open until verified.</li>
+<li>The Reviewer records a sign-off for a71c9d4.</li>
+</ol>
+<div class="k" style="margin-top:8px">No approval, reclassification, or budget outcome turns a non-passed required check into a pass.</div>
+</div>
+<div class="panel">
+<h2 class="h">Evidence record</h2>
+<div style="font-size:14px;line-height:1.5;margin-top:6px">Gate record g-5531. Source revision a71c9d4. Protected version pv-18 in force, pv-19 proposed. Runner: direct, this host. Captured output for every check is attached. Verification report from the Verifier is attached as a <span class="claim">claim</span> and is not an input to the computation.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

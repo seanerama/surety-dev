@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Surety: all projects</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.obs{color:#1B2430}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:11px 16px;font-size:15px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:20px 24px}
+.stamp{font-size:12px;color:#4B5563}
+.prow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr) 120px;gap:20px;align-items:center;padding:16px 0;border-top:1px solid #C9D1C4;text-decoration:none;color:#1B2430}
+.prow:hover{background:#EDF0EA;color:#1B2430}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Surety" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div class="k" style="margin-top:4px">Evidence-gated delivery for AI coding agents</div>
+</div>
+<a href="Main.dc.html" class="on">All projects</a>
+<a href="Settings.dc.html">Engine settings</a>
+<div style="flex-grow:1"></div>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally, loopback only<br>Version 0.1.0, up 6 d 4 h<br>Backends qualified: Claude Code 2.1.281, Codex 0.154.0</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:26px 36px;background:#EBE6F8;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Now, across all projects</div>
+<div class="disp you" style="font-size:54px">1 waits on you</div>
+</div>
+<p style="margin:0;font-size:17px;line-height:1.45;max-width:62ch">meet-proxy has three decisions queued. The oldest is past its target and was escalated by email at 08:14. Two projects are running unattended work within budget.</p>
+<a href="Attention.dc.html" class="btn">Open meet-proxy decisions</a>
+</section>
+<div style="padding:28px 36px;display:flex;flex-direction:column;gap:24px;min-height:0">
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:24px">
+<h1 class="h" style="font-size:28px">Projects</h1>
+<div style="display:flex;gap:10px">
+<a href="Overview.dc.html" class="btn2">Adopt an existing repository</a>
+<a href="Overview.dc.html" class="btn2">New project from an idea</a>
+</div>
+</div>
+<div class="panel" style="padding:4px 24px 8px">
+<div class="prow" style="border-top:0;padding-bottom:8px">
+<div class="k">Project</div><div class="k">Lifecycle</div><div class="k">Now</div><div class="k">Execution</div><div class="k">Spend today</div>
+</div>
+<a href="Overview.dc.html" class="prow">
+<div><div style="font-weight:700;font-size:17px">meet-proxy</div><div class="k">T2 Standard, phase 2 of 4</div></div>
+<div><div>Live Managed</div><div class="k">v1.3.0 last verified in production</div></div>
+<div><div class="you" style="font-weight:700">Waiting on you, 3 items</div><div class="k">Oldest 1 d 2 h, past target</div></div>
+<div><div><span class="dot" style="background:#2F5FA8"></span>Running: Builder, stage 6</div><div class="k">r-1193, 11 m 42 s, active 8 s ago</div></div>
+<div class="num"><div>$18.40</div><div class="k">plus 310k tokens unknown cost</div></div>
+</a>
+<a href="Overview.dc.html" class="prow">
+<div><div style="font-weight:700;font-size:17px">relationship-crm</div><div class="k">T2 Standard, phase 1 of 3</div></div>
+<div><div>Developing</div><div class="k">Walking skeleton, stage 2 of 3</div></div>
+<div><div>Ready</div><div class="k">No decision pending</div></div>
+<div><div><span class="dot" style="background:#2F5FA8"></span>Running: Verifier, stage 2</div><div class="k">r-1190, 4 m 10 s, active 2 s ago</div></div>
+<div class="num"><div>$4.20</div><div class="k">verified</div></div>
+</a>
+<a href="Overview.dc.html" class="prow">
+<div><div style="font-weight:700;font-size:17px">inkwell-ai</div><div class="k">T1 Prototype, phase 3 of 3</div></div>
+<div><div>Beta Deployed</div><div class="k">Delivery repository private</div></div>
+<div><div>Idle</div><div class="k">Last run 3 d ago</div></div>
+<div><div><span class="dot" style="background:#9AA39B"></span>Nothing running</div><div class="k">Dispatch paused by you</div></div>
+<div class="num"><div>$0.00</div><div class="k">measured zero, no dispatch</div></div>
+</a>
+<a href="Overview.dc.html" class="prow">
+<div><div style="font-weight:700;font-size:17px">verity-console</div><div class="k">T2 Standard, adopted, scoped baseline</div></div>
+<div><div>Developing</div><div class="k">Conformance phase, 38 descriptive requirements unconfirmed</div></div>
+<div><div class="unk" style="display:inline-block;padding:2px 8px;border-radius:3px">Unknown</div><div class="k">Engine cannot read the clone: path missing since 07:02</div></div>
+<div><div><span class="dot" style="background:#9AA39B"></span>Nothing running</div><div class="k">Refused: workspace unreadable</div></div>
+<div class="num"><div>$0.00</div><div class="k">measured zero, no dispatch</div></div>
+</a>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px">
+<div class="panel">
+<h2 class="h">Ledger today</h2>
+<div class="disp num" style="font-size:40px;margin-top:8px">$22.60</div>
+<div class="k">Verified spend across 4 projects</div>
+<div style="margin-top:10px;font-size:14px">Codex ran 310k billable tokens with no price reported. That is recorded as unknown, bounded by tokens and time, and is not in the figure above.</div>
+</div>
+<div class="panel">
+<h2 class="h">Backends</h2>
+<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:15px">
+<div><span class="dot" style="background:#1F7A4D"></span>Claude Code 2.1.281, one-shot and session, qualified 2026-09-24</div>
+<div><span class="dot" style="background:#1F7A4D"></span>Codex 0.154.0, one-shot in contained workspace, qualified 2026-09-24</div>
+<div><span class="dot" style="background:#9AA39B"></span>Codex session mode: not qualified, refused for any role</div>
+</div>
+</div>
+<div class="panel">
+<h2 class="h">Engine</h2>
+<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:15px">
+<div>Scheduler: one tick every 60 s, next in 46 s</div>
+<div>Leases held: 2 (r-1193, r-1190)</div>
+<div>Records: 1.2 GB in the runtime store, last backup 02:00</div>
+<div>Out-of-band repository changes detected: 0</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

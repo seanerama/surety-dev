@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>meet-proxy: attention queue</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:11px 16px;font-size:15px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:20px 24px}
+.stamp{font-size:12px;color:#4B5563}
+.opt{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;align-items:start;padding:12px 0;border-top:1px solid #DCE2D9}
+.opt .c{font-size:14px;line-height:1.45}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Project" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div style="margin-top:6px;font-weight:700">meet-proxy</div>
+<div class="k">T2 Standard, spec v3, phase 2 of 4</div>
+</div>
+<a href="Overview.dc.html">Overview</a>
+<a href="Attention.dc.html" class="on">Attention <span class="num" style="float:right;background:#F6F8F4;color:#1B2430;border-radius:10px;padding:0 8px;font-size:13px">3</span></a>
+<a href="Build.dc.html">Build</a>
+<a href="Gate.dc.html">Gates</a>
+<a href="Environments.dc.html">Environments</a>
+<a href="Managed.dc.html">Managed</a>
+<a href="Settings.dc.html">Settings</a>
+<div style="flex-grow:1"></div>
+<a href="Main.dc.html">All projects</a>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#EBE6F8;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Now</div>
+<div class="disp you" style="font-size:44px">3 decisions</div>
+</div>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:62ch">Each item says what you are deciding, what each answer does, and what stays blocked until you answer. Items 2 and 3 are independent and can be answered together.</p>
+<div class="k">Targets: rollout 30 min, findings 1 d, check corrections 1 d</div>
+</section>
+<div style="padding:22px 36px;display:flex;flex-direction:column;gap:16px;min-height:0;overflow:hidden">
+<div class="panel" style="border:2px solid #5A3FB5">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:20px">
+<h2 class="h" style="font-size:24px">Production rollout of v1.4.0 is partial. Retry or roll back?</h2>
+<span class="k num">Raised 14 m ago. Target 30 min.</span>
+</div>
+<div class="k" style="margin-top:4px">Candidate c-0417, revision 8f3a21c, operation op-7731, production. Blocked while unanswered: all production operations, go-live of any later candidate.</div>
+<div style="margin-top:10px;font-size:15px;line-height:1.45">Hosts a and b report v1.4.0 and pass the behavioral check. Host c has sent no heartbeat since 09:04 and is recorded Unknown. Observed error rate 2.1% over 5 min, up from 0.3% before the rollout. The engine reconciled op-7731 at 09:16: no deploy command will be repeated until you choose.</div>
+<div class="opt" style="margin-top:10px">
+<button class="btn">Roll back to v1.3.0</button>
+<div class="c">Deploys the v1.3.0 artifact last verified in production to all three hosts as a new operation, runs identity and behavioral checks, then records recovery. Migration 0042 is reversible per the recorded recovery plan. v1.4.0 stays Beta Deployed; production's last verified stays v1.3.0.</div>
+</div>
+<div class="opt">
+<button class="btn2">Retry on host c only</button>
+<div class="c">Re-attempts op-7731 on host c after a fresh reconciliation read. If host c cannot be reached, the operation stays partial and this item returns.</div>
+</div>
+<div class="opt">
+<a href="Environments.dc.html" style="font-size:15px">Evidence: host states, error-rate series, recovery plan, op-7731 record</a>
+<div class="c k">Observed by the engine. No agent claim is included in this item.</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="panel">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+<h2 class="h">Medium finding on c-0421: defer or fix?</h2>
+<span class="k num">3 h ago</span>
+</div>
+<div class="k" style="margin-top:4px">Finding F-212, candidate c-0421, Alpha gate. Blocked: the Alpha gate for c-0421.</div>
+<div style="margin-top:8px;font-size:14px;line-height:1.45">Verifier found CSV export returns a 500 on an organisation with no records. Non-core feature, workaround exists (export with a filter). Proposed severity Medium; a Medium deferral needs you.</div>
+<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+<button class="btn">Fix in this candidate</button>
+<button class="btn2">Defer to phase 3</button>
+<button class="btn2">Accept the risk</button>
+</div>
+<div class="k" style="margin-top:8px">Fix keeps the finding open until verified. Defer links an issue and re-asks at the next gate. Accept records your risk decision.</div>
+</div>
+<div class="panel" style="border:1px solid #B3410B">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+<h2 class="h">Loosen acceptance check AC-14?</h2>
+<span class="ser num" style="font-size:13px;font-weight:700">1 d 2 h ago, past target, escalated 08:14</span>
+</div>
+<div class="k" style="margin-top:4px">Protected version pv-19 proposed. Blocked: Alpha gate for c-0421 until AC-14 passes or this is decided.</div>
+<div style="margin-top:8px;font-size:14px;line-height:1.45">Builder objected that AC-14 (export completes within 2 s on 10k rows) fails on the Alpha container's slower disk. Verifier drafted a widening to 5 s. The engine classified this as <strong>loosening</strong>, so only you may approve it. The Reviewer's note: <span class="claim">the spec's acceptance criterion says "promptly" and names no number.</span></div>
+<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+<button class="btn">Approve 5 s</button>
+<button class="btn2">Keep 2 s</button>
+<button class="btn2">Send to spec change</button>
+</div>
+<div class="k" style="margin-top:8px">Approve records pv-19 and re-runs affected checks. Keep leaves pv-18 in force. Spec change opens a change request against spec v3.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>meet-proxy: build</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:10px 14px;font-size:15px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:20px 24px}
+.stamp{font-size:12px;color:#4B5563}
+.srow{display:grid;grid-template-columns:70px minmax(0,1.6fr) minmax(0,1fr) 150px;gap:16px;align-items:center;padding:10px 0;border-top:1px solid #C9D1C4;font-size:15px}
+.fact{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid #DCE2D9;font-size:14px}
+.tail{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;color:#DCE2D9;background:#1B2430;border-radius:4px;padding:12px 14px;white-space:pre-wrap;margin:0}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Project" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div style="margin-top:6px;font-weight:700">meet-proxy</div>
+<div class="k">T2 Standard, spec v3, phase 2 of 4</div>
+</div>
+<a href="Overview.dc.html">Overview</a>
+<a href="Attention.dc.html">Attention <span class="num" style="float:right;background:#5A3FB5;color:#F6F8F4;border-radius:10px;padding:0 8px;font-size:13px">3</span></a>
+<a href="Build.dc.html" class="on">Build</a>
+<a href="Gate.dc.html">Gates</a>
+<a href="Environments.dc.html">Environments</a>
+<a href="Managed.dc.html">Managed</a>
+<a href="Settings.dc.html">Settings</a>
+<div style="flex-grow:1"></div>
+<a href="Main.dc.html">All projects</a>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#E3EAF2;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Now</div>
+<div class="disp" style="font-size:44px;color:#2F5FA8">Running</div>
+</div>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:62ch">Builder is on stage 6, "Export service and CSV endpoint", in run r-1193. Last activity 8 seconds ago. When the Builder returns its result, the engine validates the diff, commits, nominates a candidate, and runs the Alpha gate.</p>
+<a href="Attention.dc.html" class="btn2">3 decisions wait on you</a>
+</section>
+<div style="padding:22px 36px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;min-height:0;overflow:hidden">
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div class="panel" style="padding-bottom:4px">
+<div style="display:flex;justify-content:space-between;align-items:baseline">
+<h2 class="h">Phase 2: export and reporting</h2>
+<span class="k">Phase plan v2, prepared against spec v3, revision 5d0e77b</span>
+</div>
+<div class="srow" style="border-top:0;padding-bottom:4px"><div class="k">Stage</div><div class="k">Goal</div><div class="k">Status</div><div class="k">Verification</div></div>
+<div class="srow"><div class="num">4</div><div>Report data model and migration 0042</div><div><span class="dot" style="background:#1F7A4D"></span>Integrated</div><div class="k">Stage verified, pv-18</div></div>
+<div class="srow"><div class="num">5</div><div>Report queries and caching</div><div><span class="dot" style="background:#1F7A4D"></span>Integrated</div><div class="k">Stage verified, pv-18</div></div>
+<div class="srow" style="background:#E3EAF2;margin:0 -24px;padding:10px 24px"><div class="num" style="font-weight:700">6</div><div style="font-weight:700">Export service and CSV endpoint</div><div><span class="dot" style="background:#2F5FA8"></span>Building, r-1193</div><div class="k">Alpha gate at nomination</div></div>
+<div class="srow"><div class="num">7</div><div>Scheduled report delivery by email</div><div><span class="dot" style="background:#9AA39B"></span>Planned</div><div class="k">Sensitive area: irreversible external action</div></div>
+</div>
+<div class="panel">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px">
+<h2 class="h">Run r-1193: Builder, stage 6</h2>
+<div style="display:flex;gap:8px">
+<button class="btn2">Pause dispatch</button>
+<button class="btn2">Stop run</button>
+<button class="btn2">Abandon run</button>
+</div>
+</div>
+<div class="k" style="margin-top:4px">Pause lets this run finish and dispatches nothing new. Stop ends it now and keeps the workspace as a checkpoint. Abandon ends it and discards the workspace. Each records usage and releases the lease.</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;margin-top:10px">
+<div class="fact" style="border-top:0"><span class="k">Backend</span><span>Claude Code 2.1.281, one-shot, claude-opus-5-5</span></div>
+<div class="fact" style="border-top:0"><span class="k">Elapsed</span><span class="num">11 m 42 s, deadline 45 m</span></div>
+<div class="fact"><span class="k">Workspace</span><span>Isolated worktree from a71c9d4, 2 checkpoints</span></div>
+<div class="fact"><span class="k">Last activity</span><span class="num">8 s ago, turn 23 of 80</span></div>
+<div class="fact"><span class="k">Capabilities</span><span>Edit workspace, run developer tests, read dependencies. No git, no network, no deploy.</span></div>
+<div class="fact"><span class="k">Budget</span><span class="num">412k billable of 1.5M. Context in use 1.9M including cache reads.</span></div>
+</div>
+<div style="margin-top:10px;height:8px;border-radius:4px;background:#DCE2D9;overflow:hidden"><div style="width:27%;height:100%;background:#2F5FA8"></div></div>
+<pre class="tail" style="margin-top:12px">[11:40] Read src/export/csv.ts
+[11:40] Edit src/export/csv.ts: handle empty result set, emit header row
+[11:41] Bash: npm test -- export (developer tests, Builder-owned)
+[11:41]   12 passed, 0 failed
+[11:42] Edit src/export/service.ts: stream rows, 10k row fixture
+[11:42] Checkpoint requested: "empty-set handling and streaming"</pre>
+<div class="k" style="margin-top:6px">Output tail is captured by the engine from the process. Developer test results are the Builder's evidence, not acceptance.</div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div class="panel">
+<h2 class="h">Lineage since c-0421</h2>
+<div class="fact" style="border-top:0"><span class="k">Nominated</span><span class="num">a71c9d4, 38 m ago, Alpha gate not satisfied</span></div>
+<div class="fact"><span class="k">Working</span><span class="num">3 revisions since: 2 checkpoints, 1 engine commit (AC-16 added, pv-18)</span></div>
+<div class="fact"><span class="k">Next nomination</span><span>When r-1193 returns and the diff validates. Stage 6 ends with Alpha gate at pv-19 or pv-18, depending on your AC-14 decision.</span></div>
+</div>
+<div class="panel">
+<h2 class="h">Roadmap v2</h2>
+<div class="fact" style="border-top:0"><span class="k">Phase 1</span><span><span class="good">Complete.</span> Walking skeleton reached Alpha and Beta. 6 requirements verified.</span></div>
+<div class="fact"><span class="k">Phase 2</span><span>Export and reporting, stages 4 to 7. 9 requirements, 5 verified.</span></div>
+<div class="fact"><span class="k">Phase 3</span><span>Sharing and permissions. 10 requirements pending. Authorization is a sensitive area.</span></div>
+<div class="fact"><span class="k">Phase 4</span><span>Billing. 6 requirements pending. Payments floor applies.</span></div>
+<div class="k" style="margin-top:8px">Pending requirements are shown as pending, never as failed or passed. Replanning runs at each phase boundary in a fresh Architect session.</div>
+</div>
+<div class="panel">
+<h2 class="h">Verification cadence</h2>
+<div style="font-size:14px;line-height:1.5;margin-top:6px">T2: Verifier runs at the end of every build stage and once per candidate before any deployment gate. Phase verification runs at the phase 2 boundary before the Architect replans phase 3.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

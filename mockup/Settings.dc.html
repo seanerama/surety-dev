@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>meet-proxy: settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&amp;family=Barlow+Condensed:wght@600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8ECE6;font-family:'Atkinson Hyperlegible',system-ui,sans-serif;color:#1B2430;-webkit-font-smoothing:antialiased}
+a{color:#5A3FB5}a:hover{color:#3F2A8C}
+.nav a{color:#1B2430;text-decoration:none;display:block;padding:9px 12px;border-radius:4px;font-size:15px}
+.nav a:hover{background:#DCE2D9}
+.nav a.on{background:#1B2430;color:#F6F8F4}
+.disp{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:-0.01em;line-height:.95}
+.h{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:0}
+.k{font-size:13px;color:#4B5563}
+.num{font-variant-numeric:tabular-nums}
+.claim{color:#5F6B66;font-style:italic}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:3px;border:1px solid #C9D1C4;color:#4B5563;background:#F6F8F4;white-space:nowrap}
+.unk{background:repeating-linear-gradient(45deg,#D5DAD2 0 6px,#EDF0EA 6px 12px);color:#4B5563}
+.good{color:#1F7A4D}.warn{color:#8A5A0F}.ser{color:#B3410B}.crit{color:#9F1239}.you{color:#3F2A8C}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:-1px}
+button{font:inherit;cursor:pointer}
+.btn{background:#5A3FB5;color:#F6F8F4;border:0;border-radius:4px;padding:12px 18px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#3F2A8C;color:#F6F8F4}
+.btn2{background:#F6F8F4;color:#1B2430;border:1px solid #AEB7AA;border-radius:4px;padding:8px 12px;font-size:14px;text-decoration:none;display:inline-block}
+.btn2:hover{background:#DCE2D9;color:#1B2430}
+.btn:focus-visible,.btn2:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #5A3FB5;outline-offset:2px}
+.panel{background:#F6F8F4;border-radius:6px;padding:18px 22px}
+.stamp{font-size:12px;color:#4B5563}
+.rrow{display:grid;grid-template-columns:130px 150px 190px 110px minmax(0,1fr);gap:12px;align-items:center;padding:8px 0;border-top:1px solid #DCE2D9;font-size:14px}
+.trow{display:grid;grid-template-columns:150px 90px 130px 120px minmax(0,1fr);gap:12px;align-items:center;padding:8px 0;border-top:1px solid #DCE2D9;font-size:14px}
+.fact{display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid #DCE2D9;font-size:14px;align-items:center}
+select,input{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #AEB7AA;border-radius:4px;background:#FFFFFF;color:#1B2430}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:grid;grid-template-columns:208px minmax(0,1fr);box-sizing:border-box;overflow:hidden">
+<nav class="nav" aria-label="Project" style="padding:22px 14px;border-right:1px solid #C9D1C4;display:flex;flex-direction:column;gap:2px;background:#EDF0EA;box-sizing:border-box">
+<div style="padding:0 12px 18px">
+<div class="disp" style="font-size:30px">Surety</div>
+<div style="margin-top:6px;font-weight:700">meet-proxy</div>
+<div class="k">T2 Standard, spec v3, phase 2 of 4</div>
+</div>
+<a href="Overview.dc.html">Overview</a>
+<a href="Attention.dc.html">Attention <span class="num" style="float:right;background:#5A3FB5;color:#F6F8F4;border-radius:10px;padding:0 8px;font-size:13px">3</span></a>
+<a href="Build.dc.html">Build</a>
+<a href="Gate.dc.html">Gates</a>
+<a href="Environments.dc.html">Environments</a>
+<a href="Managed.dc.html">Managed</a>
+<a href="Settings.dc.html" class="on">Settings</a>
+<div style="flex-grow:1"></div>
+<a href="Main.dc.html">All projects</a>
+<div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
+</nav>
+<main style="display:flex;flex-direction:column;min-width:0">
+<section aria-label="Settings" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#EDF0EA;border-bottom:1px solid #C9D1C4">
+<div>
+<div class="k">Project policy</div>
+<div class="disp" style="font-size:44px">Settings</div>
+</div>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:62ch">Everything here is above the mandatory floor. A change that widens authority or raises a budget asks you to confirm and is recorded with the policy revision. Secrets are stored as references; the engine resolves them at dispatch and no value is ever shown here.</p>
+<span class="k">Policy revision 12, changed 2026-09-27</span>
+</section>
+<div style="padding:20px 36px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;min-height:0;overflow:hidden">
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div class="panel" style="padding-bottom:6px">
+<div style="display:flex;justify-content:space-between;align-items:baseline"><h2 class="h">Roles</h2><span class="k">Builder and Reviewer are on different backends by policy</span></div>
+<div class="rrow" style="border-top:0;padding-top:10px;padding-bottom:2px"><span class="k">Role</span><span class="k">Backend</span><span class="k">Model</span><span class="k">Mode</span><span class="k">Capabilities</span></div>
+<div class="rrow"><span>Vision</span><span>Claude Code</span><span>claude-sonnet-5-5</span><span>Session</span><span class="k">Write idea record only</span></div>
+<div class="rrow"><span>Spec Writer</span><span>Claude Code</span><span>claude-opus-5-5</span><span>Session</span><span class="k">Propose spec and diffs</span></div>
+<div class="rrow"><span>Architect</span><span>Claude Code</span><span>claude-opus-5-5</span><span>One-shot</span><span class="k">ADRs, roadmap, phase plans</span></div>
+<div class="rrow"><span>Builder</span><span>Claude Code</span><span>claude-opus-5-5</span><span>One-shot</span><span class="k">Edit workspace, developer tests</span></div>
+<div class="rrow"><span>Verifier</span><span>Codex</span><span>Codex default</span><span>One-shot, contained</span><span class="k">Author checks, read source</span></div>
+<div class="rrow"><span>Reviewer</span><span>Codex</span><span>Codex default</span><span>One-shot, contained</span><span class="k">Findings, sign-off, approve tightening</span></div>
+<div class="rrow"><span>Release Operator</span><span>Engine</span><span class="k">No model</span><span class="k">Deterministic</span><span class="k">Export, publish, deploy via scoped capabilities</span></div>
+<div class="rrow"><span>Mechanic</span><span>Claude Code</span><span>claude-haiku-4-5</span><span>One-shot</span><span class="k">Read telemetry, file issues</span></div>
+</div>
+<div class="panel" style="padding-bottom:6px">
+<div style="display:flex;justify-content:space-between;align-items:baseline"><h2 class="h">Backend trust table</h2><span class="k">Absence refuses. A new version is refused until qualified against the real binary.</span></div>
+<div class="trow" style="border-top:0;padding-top:10px;padding-bottom:2px"><span class="k">Backend</span><span class="k">Version</span><span class="k">Mode</span><span class="k">Qualified</span><span class="k">Containment</span></div>
+<div class="trow"><span>Claude Code</span><span class="num">2.1.281</span><span>One-shot</span><span class="good">2026-09-24</span><span class="k">Tool allowlist plus explicit denial of delegation and scheduling tools; constructed environment</span></div>
+<div class="trow"><span>Claude Code</span><span class="num">2.1.281</span><span>Session</span><span class="good">2026-09-24</span><span class="k">Same, with idle timeout 20 min</span></div>
+<div class="trow"><span>Codex</span><span class="num">0.154.0</span><span>One-shot</span><span class="good">2026-09-24</span><span class="k">Disposable workspace, credential allowlist, post-run invariants; network denial not provable, acknowledged</span></div>
+<div class="trow"><span>Codex</span><span class="num">0.154.0</span><span>Session</span><span class="ser">Not qualified</span><span class="k">Refused for every role</span></div>
+<div class="trow"><span>Codex</span><span class="num">0.158.0</span><span>Any</span><span class="unk" style="padding:2px 8px;border-radius:3px;text-align:center">Not in table</span><span class="k">Installed on this host, refused until a qualification run is recorded</span></div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div class="panel">
+<h2 class="h">Autonomy and triage</h2>
+<div class="fact" style="border-top:0"><label for="auto" class="k">Autonomy</label><select id="auto"><option>Supervised: plans within baseline proceed, deployments wait</option><option>Manual: every transition waits</option><option>Autonomous within floor</option></select></div>
+<div class="fact"><label for="arch" class="k">Architecture approval</label><select id="arch"><option>Human (T2 default)</option><option>Automated under prototype policy</option></select></div>
+<div class="fact"><label for="triage" class="k">Mechanic triage</label><select id="triage"><option>Manual (default)</option><option>Gated: engine checks, human for sensitive or out-of-baseline</option></select></div>
+<div class="fact"><label for="skel" class="k">Phase-one Beta</label><select id="skel"><option>Required (T2 default)</option><option>Off</option></select></div>
+</div>
+<div class="panel">
+<h2 class="h">Budgets</h2>
+<div class="fact" style="border-top:0"><label for="run" class="k">Per run, billable</label><span><input id="run" value="1,500,000 tokens" style="width:170px"> <span class="k">cache reads shown separately</span></span></div>
+<div class="fact"><label for="day" class="k">Per day, verified</label><span><input id="day" value="$40.00" style="width:110px"> <span class="k">soft: one turn of overshoot possible</span></span></div>
+<div class="fact"><label for="rep" class="k">Repair attempts</label><span><input id="rep" value="3" style="width:60px"> <span class="k">per work item, then a blocker</span></span></div>
+<div class="fact"><span class="k">Unknown cost</span><span>Codex tokens have no price. Bounded at 2M tokens per day and never shown as $0. Today: 310k.</span></div>
+</div>
+<div class="panel">
+<h2 class="h">Deployment targets and secrets</h2>
+<div class="fact" style="border-top:0"><span class="k">Alpha</span><span>Local container. Verify: identity from /version, behavioral AC-01 and AC-12.</span></div>
+<div class="fact"><span class="k">Staging</span><span>Tailscale host meetproxy-stg. Secret reference: keychain item meetproxy-stg-ssh.</span></div>
+<div class="fact"><span class="k">Production</span><span>AWS, profile meetproxy-prod, 3 hosts. Secret reference: environment variable name AWS_PROFILE on the engine host.</span></div>
+<div class="fact"><span class="k">Delivery repo</span><span>meet-proxy-delivery, private. Secret reference: keychain item ghcr-delivery-token.</span></div>
+<div class="k" style="margin-top:8px">References only. Values are injected per role by capability and redacted in every record.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
