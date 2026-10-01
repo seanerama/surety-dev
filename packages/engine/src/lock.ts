@@ -90,7 +90,9 @@ function lockedRefusal(incarnation: string | null, why: string): Refusal {
 
 // Take the lock or throw engine_locked. Writes nothing but the guard file and
 // the lock record, and nothing at all when the lock is held by a live owner.
-export function acquireLock(home: string): LockRecord {
+// `beforeTake` runs inside the critical section once the lock is judged free
+// and before the record is written; if it throws, the lock is left as found.
+export function acquireLock(home: string, beforeTake: () => void = () => {}): LockRecord {
   const paths = homePaths(home);
   const bootId = readBootId();
   const ownStart = processStartTime(process.pid);
@@ -110,6 +112,7 @@ export function acquireLock(home: string): LockRecord {
         const owner = judgeOwner(existing, bootId);
         if (owner.live) throw lockedRefusal(owner.incarnation, owner.why);
       }
+      beforeTake();
       const record: LockRecord = {
         incarnation_id: newId('inc_'),
         pid: process.pid,

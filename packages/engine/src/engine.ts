@@ -6,8 +6,6 @@
 // starts restricted; a failure in store, recovery or integrity leaves it
 // restricted with the failure readable and the scheduler not started.
 
-import { randomBytes } from 'node:crypto';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 
 import { createApiServer } from './api/server.js';
@@ -16,9 +14,10 @@ import { type LockRecord, acquireLock } from './lock.js';
 import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
 import { Refusal } from './refusal.js';
 import { StoreClient } from './store/client.js';
+import { createToken, readToken } from './token.js';
 import { type BarrierSpec, configureMain } from './testing/seam.js';
 
-export const EXIT = { usage: 2, locked: 3, config: 4, failed: 1 } as const;
+export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, failed: 1 } as const;
 
 export type Step = 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'full' | 'scheduler';
 
@@ -53,21 +52,6 @@ function exitRefused(status: number, refusal: Refusal): never {
   process.exit(status);
 }
 
-// api.token: created at first start with mode 0600, never rotated by a restart.
-function ensureToken(file: string): string {
-  try {
-    writeFileSync(file, `${randomBytes(32).toString('hex')}\n`, { flag: 'wx', mode: 0o600 });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-  }
-  if ((statSync(file).mode & 0o077) !== 0) {
-    throw new Refusal(500, 'token_invalid', 'api.token is readable by group or others.', 'Restrict api.token to mode 0600 and start again.');
-  }
-  const token = readFileSync(file, 'utf8').trimEnd();
-  if (token.length < 32) throw new Refusal(500, 'token_invalid', 'api.token holds fewer than 32 characters.', 'Remove api.token so the engine creates a new one.');
-  return token;
-}
-
 export async function serve(opts: ServeOptions): Promise<void> {
   const paths = homePaths(opts.home);
 
@@ -79,20 +63,35 @@ export async function serve(opts: ServeOptions): Promise<void> {
     throw err;
   }
 
-  // 1. lock
-  let lock: LockRecord;
+  // An existing api.token is judged before the lock, reading only (SEAM.md
+  // §1, §6): a start refused for it writes nothing and takes no lock.
+  let token: string | null;
   try {
-    lock = acquireLock(opts.home);
+    token = readToken(paths.token);
   } catch (err) {
-    if (err instanceof Refusal) exitRefused(EXIT.locked, err);
+    if (err instanceof Refusal) exitRefused(EXIT.token, err);
     throw err;
   }
+
+  // 1. lock. A first start creates api.token once the lock is judged free and
+  // before the lock record names it, so a refusal there leaves the lock as
+  // found. The listener, which needs the token, starts after.
+  let lock: LockRecord;
+  try {
+    lock = acquireLock(opts.home, () => {
+      token ??= createToken(paths.token);
+    });
+  } catch (err) {
+    if (err instanceof Refusal) exitRefused(err.code === 'token_file_refused' ? EXIT.token : EXIT.locked, err);
+    throw err;
+  }
+  if (token === null) throw new Error('api.token was neither found nor created');
 
   const seam = configureMain(opts.harness, opts.barriers);
   const state: EngineState = {
     config,
     lock,
-    token: ensureToken(paths.token),
+    token,
     mode: 'restricted',
     step: 'lock',
     completed: ['lock'],
