@@ -522,6 +522,11 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 9. **`100 Continue` ordering** is pinned only for the Host check, as D1 §11.1 lists it. Whether a missing token is refused before `100 Continue` stays unpinned.
 10. **A request with no Host header** currently gets a bare 400 from the HTTP library rather than the engine's refusal body. The status is right; the body shape is deferred to slice 6.
 
+**From the second review, of the fix pass:**
+
+11. **A start that fails before listening always says why.** Any failure before the listener starts, including an environmental one (an unwritable engine home, a path of the wrong kind, a filesystem without hard links), writes the same one-line refusal as the other startup refusals and exits with a defined status. It never ends in an uncaught error and a stack trace. Not yet pinned by a test; the next Verifier pass adds one.
+12. **Two defects carried to the next Verifier pass rather than holding the slice-1 merge:** a named pipe placed at `api.token` hangs startup instead of being refused; and a request with an `Expect` value other than `100-continue` is answered by the HTTP library before the Host check and without an audit record. Neither lets a request take effect without the Host and token checks.
+
 **Consequences elsewhere.** `packages/engine/test/acceptance/harness/SEAM.md` and `COVERAGE.md` carry the test-side detail. No change to D1.
 
 ---
