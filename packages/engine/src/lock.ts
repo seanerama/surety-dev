@@ -9,14 +9,14 @@
 // kernel releases if this process dies, so simultaneous starts produce exactly
 // one owner whether or not a stale lock exists.
 
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 
 import Database from 'better-sqlite3';
 
 import { nowIso } from './clock.js';
 import { newId } from './ids.js';
 import { homePaths } from './paths.js';
-import { Refusal } from './refusal.js';
+import { Refusal, homeUnusable } from './refusal.js';
 
 export interface LockRecord {
   incarnation_id: string;
@@ -98,9 +98,19 @@ export function acquireLock(home: string, beforeTake: () => void = () => {}): Lo
   const ownStart = processStartTime(process.pid);
   if (ownStart === null) throw new Error('cannot read this process start time from /proc');
 
-  const guard = new Database(paths.lockGuard, { timeout: GUARD_WAIT_MS });
+  let guard: Database.Database;
   try {
-    guard.exec('BEGIN EXCLUSIVE');
+    guard = new Database(paths.lockGuard, { timeout: GUARD_WAIT_MS });
+  } catch (err) {
+    throw homeUnusable('engine.lock.guard', (err as Error).message);
+  }
+  try {
+    try {
+      guard.exec('BEGIN EXCLUSIVE');
+    } catch (err) {
+      if ((err as { code?: string }).code === 'SQLITE_BUSY') throw lockedRefusal(null, 'another start is judging the lock and did not finish in time');
+      throw homeUnusable('engine.lock.guard', (err as Error).message);
+    }
     try {
       let existing: string | null = null;
       try {
@@ -129,5 +139,17 @@ export function acquireLock(home: string, beforeTake: () => void = () => {}): Lo
     }
   } finally {
     guard.close();
+  }
+}
+
+// Remove engine.lock if it still names this incarnation. Used only by a start
+// that took the lock and then could not begin listening.
+export function releaseLock(home: string, record: LockRecord): void {
+  const paths = homePaths(home);
+  try {
+    const current = JSON.parse(readFileSync(paths.lock, 'utf8')) as Partial<LockRecord>;
+    if (current.incarnation_id === record.incarnation_id) unlinkSync(paths.lock);
+  } catch {
+    // Nothing to give back; the next start judges what is there.
   }
 }

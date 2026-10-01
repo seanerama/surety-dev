@@ -60,4 +60,18 @@ try {
   usage('SURETY_HOME does not exist');
 }
 
-await serve({ home, migrationsDir });
+try {
+  await serve({ home, migrationsDir });
+} catch (err) {
+  // serve() handles every failure from the listener on; anything that reaches
+  // here stopped the start before it, and is reported as the one refusal line.
+  process.stderr.write(
+    `${JSON.stringify({
+      code: 'home_unusable',
+      reason: `The engine could not start: ${(err as Error)?.message ?? String(err)}.`,
+      what_to_do: 'Check that the engine home is a writable directory and start again.',
+      subject: { path: '.' },
+    })}\n`,
+  );
+  process.exit(6);
+}

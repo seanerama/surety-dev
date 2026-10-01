@@ -10,13 +10,15 @@ import type { Server } from 'node:http';
 
 import { createApiServer } from './api/server.js';
 import { type EngineConfig, loadEngineConfig } from './config/engine-config.js';
-import { type LockRecord, acquireLock } from './lock.js';
+import { type LockRecord, acquireLock, releaseLock } from './lock.js';
 import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
-import { Refusal } from './refusal.js';
+import { relative } from 'node:path';
+
+import { Refusal, homeUnusable } from './refusal.js';
 import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 
-export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, failed: 1 } as const;
+export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
 export type Step = 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'full' | 'scheduler';
 
@@ -49,6 +51,20 @@ function exitRefused(status: number, refusal: Refusal): never {
   process.exit(status);
 }
 
+// What stopped a start before the listener: a refusal the engine decided, or
+// an environmental failure, which is reported against the path it concerns
+// (SEAM.md §1 "A start that fails before listening"). Never an uncaught error.
+function startFailure(home: string, err: unknown): { status: number; refusal: Refusal } {
+  if (err instanceof Refusal) {
+    const status =
+      err.code === 'token_file_refused' ? EXIT.token : err.code === 'engine_locked' ? EXIT.locked : err.code === 'home_unusable' ? EXIT.notStarted : EXIT.notStarted;
+    return { status, refusal: err };
+  }
+  const e = err as NodeJS.ErrnoException;
+  const at = typeof e?.path === 'string' ? relative(home, e.path) || '.' : '.';
+  return { status: EXIT.notStarted, refusal: homeUnusable(at.startsWith('..') ? '.' : at, e?.message ?? String(err)) };
+}
+
 export async function serve(opts: ServeOptions): Promise<void> {
   const paths = homePaths(opts.home);
 
@@ -79,10 +95,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
       token ??= createToken(paths.token);
     });
   } catch (err) {
-    if (err instanceof Refusal) exitRefused(err.code === 'token_file_refused' ? EXIT.token : EXIT.locked, err);
-    throw err;
+    const { status, refusal } = startFailure(opts.home, err);
+    exitRefused(status, refusal);
   }
-  if (token === null) throw new Error('api.token was neither found nor created');
+  if (token === null) exitRefused(EXIT.notStarted, homeUnusable('api.token', 'the token was neither found nor created'));
 
   const state: EngineState = {
     config,
@@ -113,8 +129,11 @@ export async function serve(opts: ServeOptions): Promise<void> {
       server!.listen(config.values.api_port, '127.0.0.1', () => resolve());
     });
   } catch (err) {
+    // This start never became an owner that others could reach: give the
+    // lock back so the next start does not have to judge it stale.
+    releaseLock(opts.home, lock);
     exitRefused(
-      EXIT.failed,
+      EXIT.notStarted,
       new Refusal(500, 'listen_failed', `The API could not listen on 127.0.0.1:${config.values.api_port}: ${(err as Error).message}`, 'Free the port or configure api_port.', {
         port: config.values.api_port,
       }),

@@ -152,7 +152,11 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  async function handle(req: IncomingMessage, res: ServerResponse, expectsContinue: boolean): Promise<void> {
+  // expect: 'none' (no expectation), 'continue' (exactly `100-continue`), or
+  // 'refuse' (any other expectation, which the engine answers itself after
+  // the Host and token checks, SEAM.md §6).
+  async function handle(req: IncomingMessage, res: ServerResponse, expect: 'none' | 'continue' | 'refuse'): Promise<void> {
+    const expectsContinue = expect === 'continue';
     const requestId = newId('req_');
     const method = req.method ?? 'GET';
     const send = (reply: Reply) => {
@@ -198,6 +202,14 @@ export function createApiServer(state: EngineState): http.Server {
     } catch (err) {
       return refuseAudited(err);
     }
+    if (expect === 'refuse') {
+      const value = String(req.headers.expect ?? '');
+      return refuseAudited(
+        new Refusal(417, 'expect_refused', `The expectation "${value}" is not one this engine meets.`, 'Send the request without an Expect header, or with Expect: 100-continue.', {
+          expect: value,
+        }),
+      );
+    }
 
     const segments = target.path.split('/').slice(1);
     const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
@@ -239,8 +251,12 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  const serve = (expectsContinue: boolean) => (req: IncomingMessage, res: ServerResponse) => {
-    handle(req, res, expectsContinue).catch((err) => {
+  const serve = (mode: 'none' | 'continue' | 'expect') => (req: IncomingMessage, res: ServerResponse) => {
+    // Node routes an Expect header that merely contains `100-continue` here
+    // too; only the exact expectation earns a `100 Continue`.
+    const expect =
+      mode === 'none' ? 'none' : mode === 'continue' && String(req.headers.expect ?? '').trim().toLowerCase() === '100-continue' ? 'continue' : 'refuse';
+    handle(req, res, expect).catch((err) => {
       try {
         const refusal = err instanceof Refusal ? err : storeError(err);
         if (!res.headersSent) {
@@ -252,10 +268,11 @@ export function createApiServer(state: EngineState): http.Server {
       }
     });
   };
-  const server = http.createServer(serve(false));
-  // Without this listener Node answers `Expect: 100-continue` itself, before
-  // the Host check has run.
-  server.on('checkContinue', serve(true));
+  const server = http.createServer(serve('none'));
+  // Without these listeners Node answers an `Expect` header itself (`100
+  // Continue`, or 417 for anything else), before the Host check has run.
+  server.on('checkContinue', serve('continue'));
+  server.on('checkExpectation', serve('expect'));
   server.on('clientError', (_err, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     else socket.destroy();
