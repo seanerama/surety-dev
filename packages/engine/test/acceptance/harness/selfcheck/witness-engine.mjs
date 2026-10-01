@@ -258,6 +258,7 @@ function members(domain) {
   return pids;
 }
 
+const firstInstruction = new Map();
 function observe(domain) {
   if (!qualified()) return 'terminated';
   let instruction = 'auto';
@@ -265,6 +266,11 @@ function observe(domain) {
   if (existsSync(boundaryFile)) {
     const b = JSON.parse(readFileSync(boundaryFile, 'utf8'));
     instruction = b.domains?.[domain] ?? b.default ?? 'auto';
+  }
+  if (mutant('boundary_read_once')) {
+    // The defect: the instruction is cached at the first observation.
+    if (!firstInstruction.has(domain)) firstInstruction.set(domain, instruction);
+    instruction = firstInstruction.get(domain);
   }
   if (instruction !== 'auto') return instruction;
   return members(domain).length > 0 ? 'running' : 'terminated';
@@ -840,6 +846,13 @@ async function reobserveQuarantined() {
 // ---- recovery at startup (D1 §16.1; SEAM.md §16) -----------------------------------------------------
 
 async function recover() {
+  if (mutant('restart_forgets_quarantine')) {
+    // The defect: a restart takes a quarantined domain to be empty.
+    for (const r of all('SELECT * FROM "runs" WHERE "quarantined" = 1')) {
+      for (const d of all(`SELECT * FROM "execution_domains" WHERE "run" = ? AND "status" = 'quarantined'`, r.id)) markTerminated(d);
+      await finishRun(r.id, { spawned: null }, false);
+    }
+  }
   await reobserveQuarantined();
   for (const r of all(`SELECT * FROM "runs" WHERE "state" <> 'ended' AND "quarantined" = 0 ORDER BY "seq"`)) {
     if (mutant('signal_recorded_pid')) for (const d of all('SELECT * FROM "execution_domains" WHERE "run" = ?', r.id)) signal(d.id, 'SIGKILL');
@@ -857,6 +870,12 @@ async function tick() {
   const started = Date.now();
   try {
     await reobserveQuarantined();
+    if (mutant('cleanup_repeats')) {
+      // The defect: every tick finalizes ended runs again.
+      for (const receipt of all(`SELECT i.* FROM "invocation_receipts" i JOIN "runs" r ON r."id" = i."run" WHERE r."state" = 'ended' AND r."outcome" = 'stopped'`)) {
+        appendStatus(receipt.project, receipt.id, 'ended');
+      }
+    }
     checkDeadlines();
     const projects = all('SELECT * FROM "projects" ORDER BY "id"');
     const suppressed = new Set();
