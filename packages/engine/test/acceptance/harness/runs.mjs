@@ -35,8 +35,8 @@ export async function scriptedEngine(t, { config = {}, barriers = [], until = 'f
     scripted.killStrays();
     removeDir(root);
   });
-  fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs } = {}) => {
-    const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b])];
+  fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [] } = {}) => {
+    const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b]), ...more];
     const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs });
     fx.engines.push(engine);
     fx.engine = engine;
@@ -88,6 +88,14 @@ export async function installPlan(engine, project, stages) {
   return res.body;
 }
 
+// One new eligible work item of any dispatched kind. A stage_build item is
+// the work of a stage, so it comes from a one-stage plan.
+export async function addWorkOfKind(engine, project, kind) {
+  if (kind !== 'stage_build') return addWork(engine, project, kind);
+  const plan = await installPlan(engine, project, [{ number: 1, goal: 'a stage to build' }]);
+  return plan.stages[0].work_item;
+}
+
 // Ask the engine's work-item transition function for one edge (SEAM.md §15).
 export const forceTransition = (engine, workItem, to) => engine.post(`/v1/harness/work/${workItem}/transition`, { to });
 
@@ -117,6 +125,33 @@ export async function tick(engine, projects, { rounds = 2, timeoutMs } = {}) {
   }
 }
 
+// Exactly one tick: request it and wait for its engine.tick event. Only for
+// use when no tick is under way and none is pending. Returns that event's seq.
+export async function tickOnce(engine, project, { timeoutMs } = {}) {
+  const before = lastTickSeq(engine.home);
+  await requestTick(engine, project);
+  return waitFor(
+    () => {
+      const seq = lastTickSeq(engine.home);
+      return seq > before ? seq : undefined;
+    },
+    { timeoutMs, what: 'the requested tick to finish (an engine.tick event)' },
+  );
+}
+
+// Tick until `done()` returns something, waiting after each tick for the runs
+// it started to end. For work whose scripts all finish by themselves.
+export async function tickUntil(engine, projects, done, { max = 12, what = 'the expected state' } = {}) {
+  for (let i = 0; i <= max; i++) {
+    const value = await done();
+    if (value !== undefined && value !== false && value !== null) return value;
+    if (i === max) break;
+    await tick(engine, projects);
+    await waitForIdle(engine.home, projects);
+  }
+  throw new Error(`${what} was not reached after ${max} ticks`);
+}
+
 // ---- commands ------------------------------------------------------------------
 
 // Stop and Abandon: the first request raises the confirmation decision, the
@@ -135,6 +170,9 @@ export async function confirmCommand(engine, path) {
 export const stopRun = (engine, project, run) => confirmCommand(engine, `/v1/projects/${project}/runs/${run}/stop`);
 export const abandonRun = (engine, project, run) => confirmCommand(engine, `/v1/projects/${project}/runs/${run}/abandon`);
 
+export const pauseProject = async (engine, project) => expectStatus(await engine.post(`/v1/projects/${project}/pause`, {}), 200, 'pause');
+export const resumeProject = async (engine, project) => expectStatus(await engine.post(`/v1/projects/${project}/resume`, {}), 200, 'resume project');
+
 export const resumeWork = async (engine, project, workItem) =>
   expectStatus(await engine.post(`/v1/projects/${project}/work/${workItem}/resume`, {}), 200, `resume ${workItem}`);
 
@@ -151,6 +189,20 @@ export async function answerDecision(engine, project, decision, option) {
 }
 
 export const advanceClock = async (engine, seconds) => expectStatus(await engine.post('/v1/harness/clock/advance', { seconds }), 200, 'clock advance');
+
+// Move the clock forward by `seconds` in steps shorter than the lease TTL the
+// test configured, leaving real time between steps for the roles' heartbeats
+// to renew their leases. So nothing expires merely because the clock moved,
+// and what the test observes is the deadline it is about.
+export async function advanceClockInSteps(engine, seconds, { stepSeconds, pauseMs = 1200 } = {}) {
+  let left = seconds;
+  while (left > 0) {
+    const stepNow = Math.min(left, stepSeconds);
+    await advanceClock(engine, stepNow);
+    left -= stepNow;
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
+  }
+}
 
 export async function allocate(engine, run) {
   const res = expectStatus(await engine.post('/v1/harness/allocate', { run }), 200, `allocate for ${run}`);
@@ -175,6 +227,10 @@ export const decisionsAbout = (home, subjectId, kind) =>
   withStore(home, (db) =>
     db.prepare('SELECT * FROM "decisions" WHERE "subject_id" = ? AND "kind" = ? ORDER BY "id"').all(subjectId, kind),
   );
+
+// Every lease that names a run, oldest first.
+export const leasesOf = (home, runId) =>
+  withStore(home, (db) => db.prepare('SELECT * FROM "leases" WHERE "resource_id" = ? ORDER BY "id"').all(runId));
 
 export const countOf = (home, table, where = '1 = 1', ...params) =>
   withStore(home, (db) => db.prepare(`SELECT COUNT(*) AS n FROM "${table}" WHERE ${where}`).get(...params).n);
@@ -204,6 +260,15 @@ export function waitForRunState(home, runId, state, { timeoutMs } = {}) {
     },
     { timeoutMs, what: `run ${runId} to be ${wanted.join(' or ')}` },
   );
+}
+
+// No run of these projects is still under way (a quarantined run counts as settled).
+export function waitForIdle(home, projects, { timeoutMs } = {}) {
+  const ids = [projects].flat();
+  return waitFor(() => ids.every((p) => runsOfProject(home, p).every((r) => r.state === 'ended' || r.quarantined === 1)), {
+    timeoutMs,
+    what: `every run of ${ids.join(', ')} to end`,
+  });
 }
 
 export const waitForQuarantine = (home, runId, opts = {}) =>
