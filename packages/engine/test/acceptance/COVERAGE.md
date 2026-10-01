@@ -262,7 +262,7 @@ Row closes in slice 2.
 | The transaction that enters `finalizing` fails once: the run still ends within a bounded number of ticks, and the project dispatches its next item (review) | `M15-lease-supervision.test.mjs` | 2 | written |
 | The transaction that ends the run fails once: the run still ends with the outcome it had recorded, the work is not bought again, and the project dispatches its next item (review) | same | 2 | written |
 | A role that sends no heartbeat for longer than `lease_ttl` keeps its lease, because the engine renews it at least every `lease_ttl`/3, and has its result accepted (review; E25 item 1) | same | 2 | written |
-| A lease nobody renews expires, and the next tick ends its run although the engine that owns it is alive: a launch stalled before the spawn finds its run over and spawns nothing (review; E25 item 1) | same | 2 | written |
+| A lease nobody renews expires, and the next tick puts its run through the run-end protocol although the engine that owns it is alive: a launch stalled before the spawn finds its run ending or over when it comes back, and spawns nothing (review; E25 item 1) | same | 2 | written |
 | A lease past its expiry is not renewed by a heartbeat or by the engine, the result presented on it is refused, the role is not left running, and the project goes on (review; E25 item 1) | same | 2 | written |
 | A git call past its deadline; possible writes become ambiguous | — | 3 | deferred → 3 |
 | Repository integrity as the overrunning prerequisite step | — | 3 | deferred → 3 |

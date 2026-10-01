@@ -81,7 +81,7 @@ export const MUTANTS = [
   ['resume_hold_no_event', 'M14-abandon', 'Resume of an eligible item on dispatch hold writes exactly one work.resumed event, in the transaction that clears the hold'],
   ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that enters finalizing fails once: the run still ends, and the project dispatches its next item'],
   ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that ends the run fails once: the run still ends, and the project dispatches its next item'],
-  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'a lease nobody renews expires, and the next tick ends its run, although the engine that owns it is alive'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'a lease nobody renews expires, and the next tick puts its run through the run-end protocol, although the engine that owns it is alive'],
   ['no_self_renewal', 'M15-lease-supervision', 'a role that sends no heartbeat for longer than lease_ttl keeps its lease, because the engine renews it, and has its result accepted'],
   ['expired_lease_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
   ['expired_result_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],

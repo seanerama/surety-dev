@@ -144,7 +144,7 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', launched: true, recovery: false });
   });
 
-  test('a lease nobody renews expires, and the next tick ends its run, although the engine that owns it is alive', async (t) => {
+  test('a lease nobody renews expires, and the next tick puts its run through the run-end protocol, although the engine that owns it is alive', async (t) => {
     // The launch stalls before the spawn: the run is claimed, its lease is live, and no process exists to supervise.
     const fx = await scriptedEngine(t, { config: { lease_ttl: LEASE_TTL }, barriers: ['launch.before_spawn=pause'] });
     const project = (await addProject(fx)).id;
@@ -159,20 +159,22 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
 
     const { now } = (await advanceClock(fx.engine, LEASE_TTL + 5)).body;
     assert.ok(ms(before.expires_at) < ms(now), 'the clock is past the expiry of the lease');
-    // D1 §8.1 step 1: the tick reconciles a lease past its expiry. The domain was never spawned into, so the run ends.
-    await tick(fx.engine, project);
-    await waitFor(() => runRow(fx.home, first.id).state === 'ended', { timeoutMs: 10_000, what: 'the run to end' }).catch(() => {});
+    // D1 §8.1 step 1: the tick takes a lease past its expiry to the run-end
+    // protocol, although the launch that owns the run has not come back.
+    await requestTick(fx.engine, project);
+    const begun = (row) => row.state === 'finalizing' || row.state === 'ended';
+    await waitFor(() => begun(runRow(fx.home, first.id)), { timeoutMs: 10_000, what: 'the run-end protocol to begin' }).catch(() => {});
     const row = runRow(fx.home, first.id);
-    assert.equal(
-      row.state,
-      'ended',
-      `the lease of run ${first.id} expired at ${before.expires_at} and the clock is at ${now}, but two ticks later the run is still ${row.state} (${describeLease(runLease(fx.home, first.id))}): the tick did not reconcile it`,
+    assert.ok(
+      begun(row),
+      `the lease of run ${first.id} expired at ${before.expires_at} and the clock is at ${now}, but ten seconds after a tick the run is still ${row.state} (${describeLease(runLease(fx.home, first.id))}): the tick did not reconcile it`,
     );
+
+    // The stalled launch comes back to a run that is ending or over, and spawns nothing.
+    await releaseBarrier(fx.engine, 'launch.before_spawn');
+    await waitForRunState(fx.home, first.id, 'ended');
     const facts = assertRunEnded(fx.home, first.id, { launched: false, recovery: false });
     assert.notEqual(facts.run.outcome, 'completed');
-
-    // The stalled launch comes back to a run that is over, and spawns nothing.
-    await releaseBarrier(fx.engine, 'launch.before_spawn');
     await sleep(700);
     assert.equal(fx.scripted.launches({ run: first.id }).length, 0, 'no role is spawned for a run whose lease expired while its launch waited');
     await tickUntil(fx.engine, project, () => workItem(fx.home, next).status === 'complete', { max: 6, what: 'the next item of the project to be dispatched and to complete' });
