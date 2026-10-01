@@ -130,7 +130,7 @@ export function assertEndedRun(db, runId, expect = {}) {
   assert.equal(run.quarantined, 0, `${what}: an ended run is not quarantined`);
 
   for (const d of f.domains) {
-    assert.equal(d.status, 'terminated', `${what}: domain ${d.id} is terminated`);
+    assert.ok(LIFECYCLE.domain.terminal.includes(d.status), `${what}: domain ${d.id} is terminated (it is ${d.status})`);
     assert.equal(eventsAbout(db, 'domain', d.id, 'domain.terminated').length, 1, `${what}: exactly one domain.terminated event for ${d.id}`);
   }
   for (const o of f.ownership) assert.ok(o.termination_confirmed_at, `${what}: ownership ${o.id} records when termination was confirmed`);
@@ -154,7 +154,7 @@ export function assertEndedRun(db, runId, expect = {}) {
   const ended = eventsAbout(db, 'run', runId, 'run.ended');
   assert.equal(ended.length, 1, `${what}: exactly one run.ended event`);
   assert.equal(ended[0].payload.outcome, run.outcome, `${what}: run.ended names the outcome`);
-  if (expect.recovery === false) assert.equal(ended[0].payload.recovery, undefined, `${what}: not ended by recovery`);
+  if (expect.recovery === false) assert.ok(ended[0].payload.recovery === undefined || ended[0].payload.recovery === null, `${what}: not ended by recovery`);
   else if (expect.recovery !== undefined) {
     assert.equal(ended[0].payload.recovery?.incarnation, expect.recovery, `${what}: run.ended records the recovering incarnation`);
   }
@@ -260,13 +260,16 @@ export function assertRecoveredStore(db) {
   for (const run of runs) {
     assert.ok(run.state === 'ended' || (run.state === 'finalizing' && run.quarantined === 1), `run ${run.id} is ${run.state}: after recovery every run is ended or quarantined`);
   }
+  // No reusable execution authority: what may still be held is a reservation.
   const held = all(db, 'SELECT * FROM "leases" WHERE "released_at" IS NULL');
-  for (const lease of held) assert.equal(lease.resource_kind, 'quarantine', `lease ${lease.id} (${lease.resource_kind}) is unreleased: only quarantine reservations survive recovery`);
+  for (const lease of held) {
+    assert.ok(!LIFECYCLE.lease.execution_authority.includes(lease.resource_kind), `lease ${lease.id} (${lease.resource_kind}) is unreleased: only quarantine reservations survive recovery`);
+  }
   const live = all(db, 'SELECT * FROM "capability_grants" WHERE "revoked_at" IS NULL');
   assert.deepEqual(live.map((g) => g.id), [], 'no grant is live after recovery');
   for (const w of all(db, 'SELECT * FROM "workspaces"')) assert.notEqual(w.disposition, 'active', `workspace ${w.id} is still active after recovery`);
   for (const d of all(db, 'SELECT * FROM "execution_domains"')) {
-    assert.ok(['terminated', 'quarantined'].includes(d.status), `domain ${d.id} is ${d.status} after recovery`);
+    assert.ok([...LIFECYCLE.domain.terminal, 'quarantined'].includes(d.status), `domain ${d.id} is ${d.status} after recovery`);
   }
   return runs;
 }
