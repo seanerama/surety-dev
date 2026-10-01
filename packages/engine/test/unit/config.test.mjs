@@ -43,6 +43,9 @@ test('decision targets merge over the defaults and refuse the untargeted kinds',
   assert.equal(c.values.decision_targets.go_live, 600);
   assert.equal(c.values.decision_targets.blocker, 14400);
   assert.equal(c.sources.decision_targets, 'file');
+  const empty = validateEngineConfig({ decision_targets: {} });
+  assert.equal(empty.sources.decision_targets, 'default', 'a map that overrides nothing is the default');
+  assert.equal(empty.values.decision_targets.blocker, 14400);
   refusedWith(() => validateEngineConfig({ decision_targets: null }), 'invalid_value', 'decision_targets');
   refusedWith(() => validateEngineConfig({ decision_targets: { abandon_confirm: 600 } }), 'invalid_value', 'decision_targets.abandon_confirm');
 });

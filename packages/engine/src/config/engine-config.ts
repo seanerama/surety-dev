@@ -53,8 +53,10 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
   const sources = {} as Record<EngineKey, ConfigSource>;
   for (const key of ENGINE_KEYS) {
     const given = Object.hasOwn(raw, key);
-    sources[key] = given ? 'file' : 'default';
     const value = raw[key];
+    // A decision-target map that overrides nothing is the default (SEAM.md §2).
+    const overrides = key !== 'decision_targets' || !isPlainObject(value) || Object.keys(value).length > 0;
+    sources[key] = given && overrides ? 'file' : 'default';
     if (key === 'api_authority') {
       const port = values.api_port as number;
       const allowed = [`127.0.0.1:${port}`, `localhost:${port}`];
