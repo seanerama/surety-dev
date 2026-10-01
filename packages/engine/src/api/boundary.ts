@@ -11,21 +11,30 @@ export interface Target {
   query: string;
 }
 
-const hostRefused = (what: string) =>
-  new Refusal(400, 'host_refused', `${what} does not name this engine's API authority.`, 'Address the engine by its configured authority.', {});
+const hostRefused = (reason: string) =>
+  new Refusal(400, 'host_refused', reason, 'Address the engine by its configured authority, in exactly one Host header.', {});
+const notSelf = (what: string) => hostRefused(`${what} does not name this engine's API authority.`);
 
 // The Host header, and the authority of an absolute-form target, must equal
-// the configured authority exactly. Returns the request path and query.
+// the configured authority exactly. Returns the request path and query. The
+// check reads every Host line the client sent: the parser keeps only the
+// first, and a request with more than one is malformed (RFC 9112 §3.2).
 export function checkTarget(req: IncomingMessage, authority: string): Target {
-  if (req.headers.host !== authority) throw hostRefused('The Host header');
+  const hosts: string[] = [];
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (req.rawHeaders[i]!.toLowerCase() === 'host') hosts.push(req.rawHeaders[i + 1]!);
+  }
+  if (hosts.length === 0) throw hostRefused('The request has no Host header.');
+  if (hosts.length > 1) throw hostRefused('The request has more than one Host header, so its authority is ambiguous.');
+  if (hosts[0] !== authority) throw notSelf('The Host header');
   const raw = req.url ?? '';
   let rest: string;
   if (raw.startsWith('/')) {
     rest = raw;
   } else {
     const m = /^http:\/\/([^/?#]*)(.*)$/i.exec(raw);
-    if (!m) throw hostRefused('The request target');
-    if (m[1] !== authority) throw hostRefused('The request target');
+    if (!m) throw notSelf('The request target');
+    if (m[1] !== authority) throw notSelf('The request target');
     rest = m[2]!.startsWith('/') ? m[2]! : `/${m[2]!}`;
   }
   const q = rest.indexOf('?');

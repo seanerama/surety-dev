@@ -22,7 +22,11 @@ interface Request {
   method: string;
   path: string;
   req: IncomingMessage;
+  res: ServerResponse;
   actor: Actor;
+  // The client sent `Expect: 100-continue` and has not yet been told to send
+  // its body.
+  awaitingContinue: boolean;
 }
 
 // A matched route. Reads and harness routes are not audited. A refusal route
@@ -72,7 +76,16 @@ export function createApiServer(state: EngineState): http.Server {
   const bodyCap = state.config.values.body_cap;
   const bodyDeadlineMs = state.config.values.request_body_deadline * 1000;
 
-  const body = async (r: Request): Promise<unknown> => readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+  // Reading a body is what earns a `100 Continue`: only a request that has
+  // passed the Host and token checks and reached a command that reads its
+  // body is told to send it (D1 §11.1, SEAM.md §6).
+  const body = async (r: Request): Promise<unknown> => {
+    if (r.awaitingContinue) {
+      r.awaitingContinue = false;
+      r.res.writeContinue();
+    }
+    return readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+  };
   const store = () => {
     if (!state.store) throw storeError(new Error('the store is not open'));
     return state.store;
@@ -162,7 +175,7 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handle(req: IncomingMessage, res: ServerResponse, expectsContinue: boolean): Promise<void> {
     const requestId = newId('req_');
     const method = req.method ?? 'GET';
     const send = (reply: Reply) => {
@@ -220,7 +233,7 @@ export function createApiServer(state: EngineState): http.Server {
       return;
     }
     if (!route) return refuseAudited(notFound(target.path));
-    const r: Request = { method, path: target.path, req, actor };
+    const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
 
     switch (route.kind) {
       case 'refuse':
@@ -248,8 +261,8 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  const server = http.createServer((req, res) => {
-    handle(req, res).catch((err) => {
+  const serve = (expectsContinue: boolean) => (req: IncomingMessage, res: ServerResponse) => {
+    handle(req, res, expectsContinue).catch((err) => {
       try {
         const refusal = err instanceof Refusal ? err : storeError(err);
         if (!res.headersSent) {
@@ -260,7 +273,11 @@ export function createApiServer(state: EngineState): http.Server {
         res.destroy();
       }
     });
-  });
+  };
+  const server = http.createServer(serve(false));
+  // Without this listener Node answers `Expect: 100-continue` itself, before
+  // the Host check has run.
+  server.on('checkContinue', serve(true));
   server.on('clientError', (_err, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     else socket.destroy();
