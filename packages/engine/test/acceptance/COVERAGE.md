@@ -4,7 +4,9 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not started` (row not yet split).
 
-Last updated: slice 2, 2026-10-01. Slice 2 wrote rows M09 to M18 as far as slice 2 can pass them, the cases of M02, M05, M06, M07 and M08 that slice 1 deferred to it, and the cases the slice-1 reviews carried over (E23 items 8, 11 and 12), marked "(carried)" below. A file is listed under one slice only, so every slice-2 case of a slice-1 row is in a new file. The paragraph that follows is the slice-1 Verifier's.
+Last updated: slice 2, 2026-10-01, after the slice-2 review. A Reviewer probed the slice-2 engine and confirmed defects that the slice-2 tests did not catch; the owner decided the questions it raised (E25). The defects and the decisions that needed a test became eleven cases, marked "(review)" below: five in a new file for row M15, two in M16, one in M14, and three in two files for rows M23 and M31, which slice 3 introduces and whose cases slice 2's engine already reaches. What that review found and no test pins yet is under "Obligations recorded after the slice-2 review". `harness/SEAM.md` §22 lists what changed in the contract. The paragraph that follows is the slice-2 Verifier's.
+
+Slice 2, 2026-10-01. Slice 2 wrote rows M09 to M18 as far as slice 2 can pass them, the cases of M02, M05, M06, M07 and M08 that slice 1 deferred to it, and the cases the slice-1 reviews carried over (E23 items 8, 11 and 12), marked "(carried)" below. A file is listed under one slice only, so every slice-2 case of a slice-1 row is in a new file. The paragraph that follows is the slice-1 Verifier's.
 
 Slice 1, 2026-10-01, after the slice-1 review. The review's four contract defects became five cases, marked "(review)" below: two in row M69 for the Host check, one in M69 and one in M06 for the token file, one in M07. The owner's decisions on the review's other findings (E23) added the seam-confinement cases of row M74 and the obligations listed under "Obligations recorded after the slice-1 review".
 
@@ -245,6 +247,7 @@ Row closes in slice 2.
 | Abandon from `executing`, for each dispatched kind: termination confirmed, workspace discarded, work back at its prior status under a dispatch hold, no repurchase until Resume (6 cases) | `M14-abandon.test.mjs` | 2 | written |
 | Abandon from `claimed`, for each dispatched kind (6 cases) | same | 2 | written |
 | While the boundary reports the domain running nothing is discarded, and no new trigger generation is dispatched onto the project; when termination is observed the abandon completes and the new generation runs | same | 2 | written |
+| Resume of an eligible item on dispatch hold writes exactly one `work.resumed` event, in the transaction that clears the hold: with the event's write failing, the hold stays (review) | same | 2 | written |
 | Abandon from `integrating`, `integrated`, `verifying`; with a journal operation in flight | — | 3 | deferred → 3 |
 | Abandon from `awaiting_decision` while a run still owns the work | — | 5 | deferred → 5 |
 
@@ -256,6 +259,11 @@ Row closes in slice 2.
 | A deadline is not observed termination: with the boundary reporting the domain running, the run is quarantined | same | 2 | written |
 | A prerequisite step that overruns its budget suppresses that project for the tick, late completion included | same | 2 | written |
 | A tick that has used up its budget dispatches nothing more | same | 2 | written |
+| The transaction that enters `finalizing` fails once: the run still ends within a bounded number of ticks, and the project dispatches its next item (review) | `M15-lease-supervision.test.mjs` | 2 | written |
+| The transaction that ends the run fails once: the run still ends with the outcome it had recorded, the work is not bought again, and the project dispatches its next item (review) | same | 2 | written |
+| A role that sends no heartbeat for longer than `lease_ttl` keeps its lease, because the engine renews it at least every `lease_ttl`/3, and has its result accepted (review; E25 item 1) | same | 2 | written |
+| A lease nobody renews expires, and the next tick ends its run although the engine that owns it is alive: a launch stalled before the spawn finds its run over and spawns nothing (review; E25 item 1) | same | 2 | written |
+| A lease past its expiry is not renewed by a heartbeat or by the engine, the result presented on it is refused, the role is not left running, and the project goes on (review; E25 item 1) | same | 2 | written |
 | A git call past its deadline; possible writes become ambiguous | — | 3 | deferred → 3 |
 | Repository integrity as the overrunning prerequisite step | — | 3 | deferred → 3 |
 
@@ -267,6 +275,8 @@ Row closes in slice 2.
 | The boundary cannot read membership; survives a restart | same | 2 | written |
 | Cancellation fails after Stop; survives a restart; an acknowledgement establishes nothing | same | 2 | written |
 | No discard while quarantined | `M14-abandon.test.mjs` (the quarantine case) | 2 | written |
+| A role that completes and exits, leaving a real descendant that holds its stdout open: the run-end protocol begins at the exit, the descendant is terminated as a member of the domain, the run ends `completed` (review) | `M16-quarantine.test.mjs` | 2 | written |
+| With the boundary reporting `unknown`, a stopped run is quarantined at that report, not after `terminate_grace` and `kill_grace` (review) | same | 2 | written |
 | No snapshot while quarantined | — | 3 | deferred → 3: snapshots are slice 3 (row M21 pins "no live snapshot") |
 
 ### M17. Observed quarantine clearance
@@ -293,6 +303,42 @@ Row closes in slice 2.
 | A boundary whose emptiness is unknown after the restart leaves the run quarantined until termination is observed | same | 2 | written |
 | After a normal result: the snapshot and its receipts are recovered | — | 3 | deferred → 3: slice 2 asserts the workspace retained with the role's files |
 
+## Rows of slice 3 with a case moved forward to slice 2
+
+The slice-2 review found two defects in the one git effect slice 2 makes, the run workspace. Their rows are introduced in slice 3; the cases are written now and their files are listed under slice 2, because the slice-2 engine already makes the call they pin. Slice 3's Verifier splits the rest of each row.
+
+### M23. Two repositories and hostile ambient overrides (engine git runs no repository code, moved forward)
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| A `post-checkout` hook (and a `reference-transaction` hook) in the repository's hooks directory is not run when the engine creates a workspace (review; E25 item 3) | `M23-engine-git-runs-no-repository-code.test.mjs` | 2 | written |
+| The same hooks in a directory the repository's configuration names as `core.hooksPath` are not run either (review; E25 item 3) | same | 2 | written |
+| The same rule for commits, ref updates, snapshots and every other engine git call; the other repository-configured programs (filter drivers, `core.fsmonitor`, external diff and merge drivers, `core.sshCommand`, credential helpers, signing programs) | — | 3 | deferred → 3: slice 3 builds those calls. E25 item 3 requires the test to be extended there |
+| Two repositories with identifiable content; hostile `GIT_*`, `GH_*` and editor variables; a wrong ambient working directory | — | 3 | deferred → 3 (the row as the Plan states it; not yet split into cases) |
+
+### M31. Worktree-add probe (the engine home behind a symbolic link, moved forward)
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| With `$SURETY_HOME` a symbolic link, a dispatch launches, its `worktree_add` operation is recorded `succeeded`, the role runs in the workspace, and no worktree is registered in the repository that no `workspaces` row names, also after a second dispatch (review) | `M31-worktree-add-symlinked-home.test.mjs` | 2 | written |
+| The five probe outcomes at recovery: no artifacts, complete valid worktree, partial directory or metadata, foreign or conflicting occupancy, unreadable metadata | — | 3 | deferred → 3 (not yet split into cases) |
+
+## Obligations recorded after the slice-2 review
+
+What the slice-2 review found, or the owner decided (E25), that no test pins yet. Each is work for the Verifier of the slice named.
+
+| Slice | Row (suggested home) | Obligation | Why it is recorded |
+|---|---|---|---|
+| 3 | M32, M33 (journal matrix, M29–M33) | After a `worktree_remove` settles `ambiguous` and the engine crashes before the run finishes, recovery must complete and the engine must reach full mode. In the slice-2 engine a second removal intent for the same run collides on the operation's idempotency key, so recovery fails on every restart. | Confirmed by the Reviewer. The journal's probe and retry rules are slice 3's (build spec §6 correction 14); a slice-2 test would pin a retry rule before its row is written. |
+| 3 | M31, M33 | An engine killed during `git worktree add` leaves the git child running. Recovery can then probe `absent` while the child is still writing, and the worktree appears afterwards as one no row names. Recovery must account for a git child that outlived its engine before it trusts a probe. | Same review. Needs a barrier inside a git call, which slice 3's harness adds. |
+| 3 | M23 | Extend `M23-engine-git-runs-no-repository-code.test.mjs` to commits, ref updates and snapshots, and decide with the owner how far "other repository-configured execution" reaches: filter drivers (`filter.*.clean`, `smudge`, `process`) run on checkout and on `git add`, so they are reachable from slice 3's snapshot; disabling them also disables Git LFS in a governed repository. | E25 item 3 states the rule generally and pins it now for the worktree calls only. |
+| 5 | M47, M48 | What a Stop or Abandon confirmation binds: the run's identity, whether it can still be stopped, and the workspace's fate, not the difference between `claimed` and `executing` (E25 item 4). Until then the slice-2 behaviour stands: a confirmation raised while the run was `claimed` may be refused as stale once it is `executing`. | The owner settled the rule and put the test in slice 5, with the decision manifests. |
+| 5 | M09 (`check_correction`), M35–M37 | `check_correction` is in the transition table and the slice-2 engine will dispatch one and complete it with no proposal captured. Only a fixture can create one today (`harness/SEAM.md` §12 says the slice-2 tests never dispatch it). The first slice-5 case for this kind must show that a `check_correction` run completes only through proposal capture. | A kind that completes without doing what it exists for must not be read as built. |
+| 4, 6 | M63 (output limits), M71 (load) | The engine buffers a role's output without a cap. The scripted boundary scans every process on each observation, at least once a second while a run is ending, which costs time under load. | Reviewer's findings; E25 carries them to the records slice and the load row. |
+| 5 (or the row that owns it) | M47, with M16 | A quarantined run answers Stop with `illegal_transition`. D1 A.7 has a public code `quarantined`, which no test uses yet. Decide which code a Stop or Abandon of a quarantined run answers with, and pin it where the Stop manifest is written. | The slice-2 tests pin `illegal_transition` only for a run that has ended. |
+| report | — | E25 item 2: M1 roles run without control-plane isolation. A scripted role runs as the engine's user, under the engine home, and can read the token file. Nothing in M1 is evidence for D1 §17 item 12. The M1 acceptance report must say so. | An accepted limit must not be read as a passed requirement. |
+| D2 (no M1 test) | — | The scripted `auto` boundary does not count a process whose `/proc/<pid>/environ` it cannot read, so it can report `terminated` while a marked process that made itself unreadable is alive. The Reviewer asked whether to pin `unknown` for that. The case was written and tried, and then withdrawn. It reproduces: a role that leaves a copy of `sleep` which may be executed and not read (the kernel marks such a process not dumpable) exits, and the slice-2 engine ends the run `completed` while that process lives. It is not pinned for four reasons. (1) "Unreadable means `unknown`" cannot be the rule: every exiting process and every zombie is unreadable for a moment (measured on this host: more than 750 failed reads while some 650 short-lived children came and went), the role itself at each run end, and two lasting processes of the same user are unreadable all the time (`systemd --user`, `(sd-pam)`). The first form of the rule made the stand-in engine quarantine at random in three files that had passed. (2) A rule that works has to tell a hiding process from a dying one by whether `/proc/<pid>/stat` still shows an address space, and has to bound membership by the recorded process group; it then still misses a descendant that leaves the group, and a domain whose ownership row was never completed. (3) The premise cannot be made as root, where every environment is readable, and the runner does not allow a skip. (4) `auto` is the Verifier's stand-in for the execution boundary. It qualifies no containment (Plan §2), and M1 claims no isolation of a role from the engine (E25 item 2). `harness/SEAM.md` §14 now says what `auto` does and states the limit. | A limit of a stand-in, recorded so it is not mistaken for containment, and so the next Verifier does not rediscover the trap. Membership that cannot be escaped is D2's to qualify (build spec §6 correction 1). |
+
 ## Obligations recorded after the slice-1 review
 
 The owner's decisions on the slice-1 review (E23). Each is work for the Verifier of the slice named; none is written yet.
@@ -311,9 +357,12 @@ The owner's decisions on the slice-1 review (E23). Each is work for the Verifier
 | Row | Introduced in slice | Known straddles (build spec §9 and slice-1 deferrals) |
 |---|---|---|
 | M01 | 7 | — |
-| M19–M23 | 3 | — |
+| M19–M22 | 3 | — |
+| M23 | 3 | The engine-git hook cases are written in slice 2 (above); the rest → 3 |
 | M24 | 3 | "Block affected gates" → 5 |
-| M25–M34 | 3 | — |
+| M25–M30 | 3 | — |
+| M31 | 3 | The symlinked-home case is written in slice 2 (above); the five probe outcomes → 3 |
+| M32–M34 | 3 | — |
 | M35–M58 | 5 | — |
 | M59, M60 | 4 | — |
 | M61 | 4 | Faults in gate and decision transactions → 5 |
@@ -328,7 +377,7 @@ The owner's decisions on the slice-1 review (E23). Each is work for the Verifier
 
 Deferred cases that later slices must pick up, by slice:
 
-- **Slice 3:** M04 (journal state projection); M07 (a valid project policy change; the effective-policy obligation); M06 (startup `integrity` doing real work); M09 (the integrating part of `stage_build`, `fix`, `replan`, `assessment`); M11 (no-progress over a snapshot tree; a repair that completes work which integrates); M12 (the chaining boundary); M13 and M14 (Stop and Abandon from `integrating`, `integrated`, `verifying`; a journal operation in flight); M15 (a git call past its deadline, ambiguous writes, integrity as the prerequisite step); M18 (recovery of the snapshot after a normal result).
-- **Slice 4:** M02 (record identities); M04 (chunk receipts); M12 (the over-budget project); the fsync open item.
-- **Slice 5:** M08 (gate kinds, reserved decision kinds); M09 (a dispatched `check_correction`; an engine-raised `awaiting_decision` answered through the queue); M11 (findings in the progress key; a typed conflict); M13 and M14 (Stop and Abandon from `awaiting_decision` while a run owns the work); the decision manifests of `blocker`, `stop_confirm` and `abandon_confirm` (rows M45, M47, M48).
-- **Slice 6:** M69 (the rest of the boundary matrix, with the two cases the second slice-1 review found); M74 (fixture semantics and the invocation boundary).
+- **Slice 3:** M04 (journal state projection); M07 (a valid project policy change; the effective-policy obligation); M06 (startup `integrity` doing real work); M09 (the integrating part of `stage_build`, `fix`, `replan`, `assessment`); M11 (no-progress over a snapshot tree; a repair that completes work which integrates); M12 (the chaining boundary); M13 and M14 (Stop and Abandon from `integrating`, `integrated`, `verifying`; a journal operation in flight); M15 (a git call past its deadline, ambiguous writes, integrity as the prerequisite step); M18 (recovery of the snapshot after a normal result); M23 (engine git runs no repository code, for commits, ref updates and snapshots) and M31 (the five probe outcomes); the two recovery obligations of the slice-2 review (an ambiguous worktree removal followed by a crash; a git child that outlives its engine).
+- **Slice 4:** M02 (record identities); M04 (chunk receipts); M12 (the over-budget project); the fsync open item; a cap on buffered role output (slice-2 review).
+- **Slice 5:** M08 (gate kinds, reserved decision kinds); M09 (a dispatched `check_correction`; an engine-raised `awaiting_decision` answered through the queue); M11 (findings in the progress key; a typed conflict); M13 and M14 (Stop and Abandon from `awaiting_decision` while a run owns the work); the decision manifests of `blocker`, `stop_confirm` and `abandon_confirm` (rows M45, M47, M48), with what a Stop or Abandon confirmation binds (E25 item 4) and the code a quarantined run answers Stop with; a `check_correction` run that cannot complete without a captured proposal.
+- **Slice 6:** M69 (the rest of the boundary matrix, with the two cases the second slice-1 review found); M74 (fixture semantics and the invocation boundary); M71 (the cost of the boundary's process scan under load).
