@@ -413,3 +413,18 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 | 11 / O8 | Product shape | E14 |
 | Appendix A | Human decision inventory | E9 |
 | Appendix B | Decision trail | E15 |
+
+## E17. Stack and reuse (decided: O9, O10)
+
+**Decision (O9, stack).** Node with TypeScript for the engine package, compiled with `tsc` only, no bundler. Two-package monorepo per O8: `engine` (public API, CLI bin, publishable alone) and `ui` (hand-written HTML and JS, zero build step, imports only the engine's published API schema). Runtime store is SQLite. Every dependency pinned; the engine's runtime dependencies are the SQLite driver and nothing else. Variant allowed: JSDoc-typed JavaScript checked by the TypeScript compiler, if a build step proves unwanted.
+
+**Decision (O10, reuse).** Clean-room engine core (entities, store, API, scheduler, gate function, git). Verity's backend drivers and a small set of pure-function modules (approval consequence, diff classification, usage normalization, promotion allowlist) are ported behind the new adapter contract with their tests, then requalified against real binaries. The two permission vocabularies Verity never reconciled are unified in the port. Verity's assessments, ADRs, canaries, and benchmark fixtures are preserved as a regression corpus.
+
+**Proposed text, Section 11, new rows:**
+
+> | **O9** | Implementation stack | Node + TypeScript engine (tsc only), zero-build UI, SQLite runtime store, pinned dependencies, SQLite driver as the only runtime dependency. | 10 |
+> | **O10** | Reuse of Verity | Clean-room core; backend drivers and pure-function modules ported and requalified; Verity records kept as regression corpus. | 10 |
+
+**Mockup accepted.** The eight-screen MVP UI mockup (mockup/) was accepted the same day; UI refinement deferred until the narrow loop runs.
+
+---
