@@ -4,7 +4,7 @@
 // the scripts that program follows, the boundary's instructions, and the log
 // the program writes of every launch.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -143,15 +143,27 @@ export class Scripted {
     return processIsLive(launch.pid, launch.start_time);
   }
 
-  // Kill every scripted child that is still alive. Tests call this when they
-  // finish, so no role outlives its test.
+  // Kill every scripted child of this directory that is still alive: the ones
+  // in the launch log, and any that was started so recently that it has not
+  // logged yet, found by its command line. Tests call this when they finish,
+  // so no role outlives its test. (A child also exits by itself once this
+  // directory is removed.)
   killStrays() {
-    const killed = [];
-    for (const launch of this.launches()) {
-      if (!this.isLive(launch)) continue;
+    const pids = new Set(this.launches().filter((launch) => this.isLive(launch)).map((launch) => launch.pid));
+    const program = join(this.dir, 'child.mjs');
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue;
       try {
-        process.kill(launch.pid, 'SIGKILL');
-        killed.push(launch.pid);
+        if (readFileSync(`/proc/${name}/cmdline`, 'utf8').split('\0').includes(program)) pids.add(Number(name));
+      } catch {
+        // gone, or not ours to read
+      }
+    }
+    const killed = [];
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 'SIGKILL');
+        killed.push(pid);
       } catch {
         // already gone
       }

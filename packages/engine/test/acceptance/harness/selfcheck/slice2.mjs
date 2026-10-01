@@ -486,6 +486,24 @@ export async function slice2Checks(check, work) {
     assert.deepEqual(await run.exited, { code: 0, signal: null });
   });
 
+  await check('scripted child: no role outlives its test: strays are found before they have logged, and a child exits when its directory is removed', async () => {
+    const { scripted, ws } = scriptedDir('strays');
+    // Started, and still waiting for its request: nothing in the launch log yet.
+    const silent = spawn(process.execPath, [join(scripted.dir, 'child.mjs')], { cwd: ws, detached: true, env: { PATH: process.env.PATH }, stdio: ['pipe', 'ignore', 'ignore'] });
+    const gone = new Promise((resolve) => silent.once('exit', (code, signal) => resolve({ code, signal })));
+    await waitFor(() => existsSync(`/proc/${silent.pid}/cmdline`) && readFileSync(`/proc/${silent.pid}/cmdline`, 'utf8').includes('child.mjs'), { what: 'the child to start' });
+    assert.deepEqual(scripted.launches(), [], 'it has not logged a launch');
+    assert.deepEqual(scripted.killStrays(), [silent.pid], 'it is found by its command line');
+    assert.deepEqual(await gone, { code: null, signal: 'SIGKILL' });
+
+    const orphan = launch(scripted, ws);
+    const entry = await scripted.waitForHolding({ work_item: 'wi_X' }, 'unscripted');
+    const { rmSync } = await import('node:fs');
+    rmSync(scripted.dir, { recursive: true, force: true });
+    assert.deepEqual(await orphan.exited, { code: 0, signal: null }, 'a held child exits once its scripted directory is gone');
+    assert.equal(processIsLive(entry.pid, entry.start_time), false);
+  });
+
   await check('scripted helper: boundary instructions are merged, validated and written whole; liveness needs the same start time', async () => {
     const { scripted } = scriptedDir('boundary');
     const file = join(scripted.dir, 'boundary.json');

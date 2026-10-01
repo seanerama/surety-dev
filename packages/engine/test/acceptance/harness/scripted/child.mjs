@@ -61,6 +61,12 @@ function log(event, fields = {}) {
   }
 }
 
+// A role outlives its engine, but not its test: when the scripted directory
+// is removed, which a test does when it finishes, the program exits.
+setInterval(() => {
+  if (!existsSync(join(dir, 'child.mjs'))) process.exit(0);
+}, 1000).unref();
+
 // The engine may be dead (a crash test kills it); a role that outlives its
 // engine keeps running, so a broken pipe is not an error here.
 process.stdout.on('error', () => {});
