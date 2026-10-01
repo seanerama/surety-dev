@@ -61,7 +61,7 @@ button{font:inherit;cursor:pointer}
 <div class="k">Alpha gate, c-0421, a71c9d4, pv-19 proposed</div>
 <div class="disp ser" style="font-size:44px">Not satisfied</div>
 </div>
-<p style="margin:0;font-size:16px;line-height:1.45;max-width:66ch">Computed by the engine 38 s ago from recorded inputs only. Four things stand between this candidate and Alpha: AC-14 fails, AC-09 is stale, UI-03 did not run, and finding F-212 has no disposition. The Reviewer's candidate-level sign-off is also outstanding.</p>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:66ch">Computed by the engine 38 s ago from recorded inputs only. Five things stand between this candidate and Alpha authorization: AC-14 fails, AC-09 is stale, UI-03 did not run, finding F-212 has no disposition, and the Reviewer's candidate-level sign-off is outstanding.</p>
 <a href="Attention.dc.html" class="btn">2 of these wait on you</a>
 </section>
 <div style="padding:20px 36px;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;min-height:0;overflow:hidden">
@@ -112,13 +112,13 @@ button{font:inherit;cursor:pointer}
 <h2 class="h">Protected path since you last reviewed it</h2>
 <div class="k" style="margin-top:2px">pv-17 was the last version a human reviewed, at the v1.4.0 go-live.</div>
 <div class="chk" style="grid-template-columns:60px minmax(0,1fr);margin-top:8px"><span class="num">pv-18</span><span><strong>Tightening.</strong> Added AC-16, streaming export emits a header row on an empty set. Approved by the Reviewer against spec requirement R-22, 2 d ago.</span></div>
-<div class="chk" style="grid-template-columns:60px minmax(0,1fr)"><span class="num">pv-19</span><span><strong class="ser">Loosening, proposed.</strong> AC-14 timeout 2 s to 5 s. Classified loosening by the engine; <a href="Attention.dc.html">waiting on you</a>.</span></div>
+<div class="chk" style="grid-template-columns:60px minmax(0,1fr)"><span class="num">pv-19</span><span><strong class="ser">Loosening, proposed.</strong> AC-14 timeout 2 s to 5 s. Classified loosening by the engine; <a href="Attention.dc.html">waiting on you</a>. If approved, the protected commit creates successor candidate c-0422; c-0421 keeps its identity and evidence.</span></div>
 <div class="k" style="margin-top:8px">The Builder cannot edit any of this. Objections arrive as proposals from the Verifier in a fresh session.</div>
 </div>
 <div class="panel">
 <h2 class="h">What satisfies this gate</h2>
 <ol style="margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.55">
-<li>AC-14 passes, or pv-19 is approved and AC-14 re-runs and passes.</li>
+<li>AC-14 passes, or pv-19 is approved, applied as a protected commit, and the successor candidate c-0422 is evaluated with AC-14 at 5 s.</li>
 <li>AC-09 runs against a71c9d4 at pv-18.</li>
 <li>UI-03 runs. The browser runner is unavailable on this host; Settings can point it at the Tailscale runner.</li>
 <li>F-212 receives a disposition. Fix keeps it open until verified.</li>

@@ -19,3 +19,4 @@ Design decisions: grey-green ledger ground; Barlow Condensed for the single loud
 
 Status: accepted for MVP by Sean on 2026-09-30. UI refinement deferred until after the narrow loop runs. Fixture corrections applied 2026-09-30 per Astra D1 review N03: NOW priority on Main (relationship-crm Running, verity-console Refused), Build NOW band says Waiting on you with the run panel titled Running, Gate shows pv-18 as effective with pv-19 proposed.
 Working product name: Surety (collision-checked 2026-09-30; npm availability not yet checked).
+Second fixture pass 2026-09-30 per Astra draft-2 review N03: Gate names five blockers and shows the successor candidate c-0422 after a protected correction; Main labels no-dispatch rows "No dispatch", never "measured zero".

@@ -443,3 +443,17 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 > | **O11** | Repository | `sdlc-x` becomes the Surety development repository, history preserved; docs move under `docs/` when implementation is authorized. | 10, 19 |
 
 ---
+
+## E19. Authority over inherited-finding exclusions (decided by Sean, 2026-09-30)
+
+**Gap.** D1 inherits unresolved findings across successor candidates (E11 lineage succession). Someone must be able to record that a finding no longer applies to a candidate, and that record must not become a severity-lowering or check-waiver path (Astra draft-2 review, Q4).
+
+**Decision.** An applicability assessment is proposed by the Verifier in a fresh session, assessed for technical applicability by an independent Reviewer run, and takes effect only when approved. If excluding the finding would remove a finding that blocks any gate kind for that candidate, the human owner must authorize the approval. The engine records and applies the decision; an agent-authored assessment alone never excludes a finding.
+
+**Proposed text, Section 6.2 addition:**
+
+> **Applicability across candidates.** An unresolved finding applies to every successor candidate on its lineage chain until an applicability assessment excludes it. The Verifier proposes the assessment; an independent Reviewer assesses it; a finding that would otherwise block any gate for the candidate may be excluded only with the human owner's authorization. Exclusion never changes a severity and never waives a required check.
+
+**Consequences elsewhere.** Appendix A (E9) gains "Authorize an applicability assessment that removes a blocking inherited finding" (not floor). D1 §3.4 and §9.3(5) implement it.
+
+---

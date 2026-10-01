@@ -1,55 +1,56 @@
-# D1 Cross-Review Dispositions (Draft 1 → Draft 2)
+# D1 Cross-Review Dispositions
 
-**Review:** `sdlc-review-D1-Astra.md` (2026-09-30). Verdict: reject, 16 blocking, 5 non-blocking.
-**Dispositions by:** Claude, applied in D1 draft 2; product decisions by Sean recorded where marked.
-**Legend:** Accepted = applied as proposed. Accepted, variant = applied with a stated difference. Scoped = the requirement is stated in D1 and the mechanism is assigned to D2 or D3.
+**Draft 1 review:** `sdlc-review-D1-Astra.md` (reject; 16 blocking, 5 non-blocking). Applied in draft 2.
+**Draft 2 review:** `sdlc-review-D1-draft2-Astra.md` (reject; 5 closed, 11 still open, 1 new blocker B17). Applied in draft 3.
+**Dispositions by:** Claude. Product decisions by Sean recorded where marked.
+**Legend:** Closed = Astra marked it closed in her draft-2 review. Applied = the draft-3 change that answers her still-open finding, with the section that implements it.
 
-## Blocking objections
+## Draft-2 findings → draft 3
 
-| # | Disposition | Applied in draft 2 | Notes |
-|---|---|---|---|
-| B01 Gate scope | Accepted | §2.4, §3.4 AcceptanceScope, §9.1–9.3, A.4, D1-09 | Empty required set never satisfies; effective protected version; result selection by full binding; deadline precedes exit status; T3 inherits T2 sign-off. Materialization of source plus protected assets assigned to D3. |
-| B02 Findings | Accepted | §3.4 Finding, §9.3(5), §9.4, D1-24 | Scopes project, lineage, candidate; inheritance across candidates; fix unsatisfied until verified; defer authority and re-evaluation per gate; Alpha exception evidence; severity transitions enforce F §6.3. |
-| B03 Deployment | Accepted | §3.5 DeploymentVerification, §9.6, GateKind split, D1-25 | `*_authorize` and `*_complete` per environment; verification bound to one Operation, target set, artifact, mapping, config identity, protected version. |
-| B04 Protected proposals | Accepted | §3.3 ProtectedProposal, §4.1 `proposal_captured`, §5.2, §7.3, §7.9, D1-21, D1-22 | Snapshot after quiescence; proposal is a terminal state with no commit; `applyProtectedProposal` is the only writer; policy-root loophole closed. |
-| B05 Git integrity | Accepted | §3.5 GitJournal and RefRegistry, §7.2, §7.5, §7.6, §7.10, D1-11, D1-19 | Registry of engine-owned refs; CAS integration; journal reconciliation before integrity; developer branches excluded. |
-| B06 Durability | Accepted | §6.1 FULL, §6.5 closure, §14.1, D1-23 | Power-loss test separate from kill test. |
-| B07 Retry identity | Accepted | §2.5, §3.5 Operation and OperationAttempt, §4.4, §10.4, D1-14 | Logical operation plus attempts; notifications as journaled outbox intents. |
-| B08 Leases and Stop | Accepted | §1.2 claim narrowed, §3.2 ProcessOwnership, §4.5, §8.3, §16.1, D1-08 | Exact generation equality; confirmed termination or quarantine; second-worker correctness explicitly not claimed. |
-| B09 Event loop | Accepted, variant | §1.4, §6.1, §8.1 safety prerequisites, §8.5, §11.3, D1-20, §20 Q1 | Store worker is the default placement; the D1-20 latency test is the requirement. Draft 2 asks whether a main-thread placement that passes D1-20 may stay. |
-| B10 Triggers and work state | Accepted | §3.2 trigger identity, §4.2, §8.2, A.5, D1-05, D1-31 | Unique trigger constraint; stopped state held until explicit resume; integrated versus complete; preflight refusal path; progress key and no-progress limit; typed conflict routing. |
-| B11 Accounting | Accepted | §3.6 InvocationReceipt and UsageObservation, §13, D1-26 | Nullable unknowns; boundary disclosure per adapter; corrections append-only. |
-| B12 Decisions | Accepted | §3.4 Decision identity, §9.7 effect plans, §10.1–10.5, §11.4, D1-15, D1-27 | Identity tuple unique across open and consumed; dry-run previews; fresh-read comparison; intents in transaction, effects after; inventory completed. |
-| B13 Observation | Accepted | §3.5 ObservationJob, §8.1 step 5, §11.3 served_at vs observed_at, §12.3, D1-28 | Freshness bound; Unknown on expiry; reads never refresh timestamps. |
-| B14 Browser boundary | Accepted; isolation scoped to D2 | §7.1 option terminators, §11.1, §17 items 1–5, 12–14, D1-29 | Control-plane isolation requirement stated in §17(12); D2 qualifies the mechanism; autonomy above supervised refused without it. |
-| B15 Sessions and resume | Accepted | §3.2 Run state and session_state, §4.1, §15.2, §15.3, D1-30 | Exact provider session id; resume is a new Run. |
-| B16 M1 labeling | Accepted | §19.3 | M1 is the preliminary loop; skeleton closes at M3; M1 entity list completed. |
-
-## Non-blocking suggestions
-
-| # | Disposition | Applied in draft 2 |
+| # | Draft-2 status | Draft-3 disposition and location |
 |---|---|---|
-| N01 D1-02 strength | Accepted | §18 D1-02 rewritten per the proposed scenario |
-| N02 Schema consistency | Accepted | Appendix A with a parsing consistency test; missing prefixes, event types, error codes added; workspace exception to the engine-home rule stated in §1.6; lineage succession in §3.3 |
-| N03 UI contract and mockup fixtures | Accepted | §11.2 joint behavioral suite; §11.3 added routes; §12.3 local panel rule; three mockup fixture corrections applied in `mockup/` (Main NOW for relationship-crm and verity-console, Build NOW band, Gate pv-18 labels) |
-| N04 Port provenance | Accepted | §13.2, §19.2 |
-| N05 Retention and chunk redaction | Accepted | §14.2, §14.3, §5.5 resolver wording |
+| B01 Gate scope | Still open | Applied. Evidence reuse only justifies a specific result and never replaces a check (§9.1); delivery derived from integrated stages at the pinned revision, never phase start (§9.1, Q3); selection order is none→missing, non-matching→stale, then latest matching by `execution_seq` (§9.2); scope carries `source_revision` and `runner_classes` (A.3). D1-09 extended. |
+| B02 Findings | Still open | Applied. Evaluation covers `open` and `dispositioned` (§9.3(5)); applicability follows `started_from_candidate` ancestry, not lineage equality (§3.3, §9.3); `applicability_assessments` entity with Verifier/Reviewer/human authority (§3.4, E19, Q4); `reevaluations` keyed by evaluation id (§3.4, §9.3); invalidated resolution reopens (§9.5, A.5). D1-24 extended. |
+| B03 Deployment | Still open | Applied. `deployment_authorizations` entity; `evaluateGate` takes `operation` for completion kinds; verification bound to attempt and `deployment_generation` (§3.4, §9.1, §9.6); Beta publication predicate restored (`PUBLICATION_NOT_SUCCEEDED`, §9.6); approvals bind the governed subject and sign-offs bind `acceptance_content_hash`, so one go-live approval serves authorize and complete (§3.4, §9.3(6)–(7), A.8). D1-25 extended. |
+| B04 Proposals | Still open | Applied. Snapshot admitted only with zero live processes in the domain and the workspace lease (§7.3, Q2); live checkpoints refused in v1; protected changes classified by the governed set including policy fields (§5.2, §7.3 step 2); human policy edits become proposals (§7.9, §11.4); proposal capture is an intermediate state with the commit path unreachable (§4.1, §7.3). D1-21, D1-35. |
+| B05 Git integrity | Still open | Applied. `managed_checkouts` with tracked-tree baseline; integrity reads tracked content; active workspaces excluded; typed `IntegritySubject` with per-subject dispositions (§7.2, §7.6); immutable `git_journal_events` plus `git_journal_state` projection; probes and domain finalizers per `JournalKind`; confirmed is not finalized (§3.5, §7.10). D1-18, D1-19, D1-36. |
+| B06 Durability | Closed | Chunk receipts now a declared table (`stream_chunk_receipts`, A.3). |
+| B07 Retry identity | Closed | Attempt-to-operation status derivation stated in A.5. |
+| B08 Process ownership | Still open | Applied. `execution_domains` allocated before launch with an environment marker and process group; enumeration by marker, never parent pid (§2.7); ownership written with pid null before spawn (§3.2, §15.1); parent exit never establishes termination (§4.5 step 2); preflight refusal goes through `endRun` (§4.1); `cleanup_authority` distinct from role authority (§3.2, §8.3); quarantine reservation is a distinct lease kind; recovery enumerates `allocated` domains (§16.1). D1-08 extended. |
+| B09 Event loop | Closed with variant | D1-20 workload expanded per N03 (§6.1, §18). |
+| B10 Work state | Still open | Applied. A.5 is the single transition table and §4 references it; operation-backed kinds complete only on `succeeded`; conformance only on `alpha_complete`; `held` status for Stop; `dispatch_hold` on Abandon; `repair_attempts` increments atomically; progress-key fields defined; `FindingCategory` for typed conflicts (§4.3, A.2, A.5). D1-31, D1-37. |
+| B11 Accounting | Still open | Applied. Invocation id allocated before dispatch and shared (§2.6); immutable receipt plus `invocation_status_observations` (§3.6); `UNIQUE(invocation) WHERE corrects IS NULL` and `(invocation, correction_seq)` (§6.2); sessions finalize per turn with no session row (§13.1). D1-26 extended. |
+| B12 Decisions | Still open | Applied. Per-kind `dependency_manifest` (A.8); `preview_hash` over identity, option set, plan hashes, schema version, manifest values including deadlines (§3.4, §9.7); fresh-read recomputation with current time (§10.5); `effect_intents` with preconditions revalidated immediately before execution and target-side CAS (§3.4, §10.5). D1-04, D1-15, D1-27 extended. |
+| B13 Observation | Closed | `observation_history` now a declared table. |
+| B14 Boundary | Still open | Applied. `GET /v1/token/bootstrap` is read-only with positive same-origin evidence and no token (§11.1, §17.2); body caps distinguish declared length from counted bytes (§11.1); isolation required for every run at every autonomy setting, `isolation_unqualified` (§15.1, §17.12); Referer parsed as origin, link resolution, regular-file checks, audit before effect (§11.1). D1-29 extended. |
+| B15 Sessions | Still open | Applied. `allocated` state; first turn creates the provider session and captures its id; per-turn invocation and domain; save returns to `open_idle` and never takes the termination path; `current_base` tracked separately from `base_revision` (§3.2, §4.2, §7.4, §15.2). D1-30 extended. |
+| B16 M1 labeling | Closed | Isolation prerequisite for any real backend added to §19.3. |
+| B17 Appendix | New blocker | Applied. Appendix A rewritten first with every entity, field, nested key, enumeration, transition, event, reason, error, decision kind, and configuration key; body written against it; every enum value and event named by its owning transition in the body; `scripts/d1-consistency.mjs` checks both directions and its clean run is recorded below. Specific items: journal split into immutable events plus mutable state; ledger uniqueness partial; `EventType` alias; `→capability_grants`; `released_at IS NULL`; decision unique on `kind`; success outcome `completed`; `proposal_captured` intermediate; quarantine stays finalizing; A.5 single table; `assessment` kind; attempt-to-operation mapping; scope `source_revision` and `runner_classes`; approval subject binding; verification attempt and generation; `managed_checkouts`, `observation_history`, `stream_chunk_receipts`, `invocation_status_observations`; `FindingCategory`; `applicability_assessments`; A.9 configuration; incarnation written to the lock file before the store; `pending_bootstrap`; `RecordKind` variants; `InvocationStatus`; `Role`; `ActorKind`. `oob_dev_repo_change` removed; `withdrawn` removed; `superseded`, `sending`, `stale` given derivations. D1-38. |
+| N01 | Closed | D1-02 states counts before and asserts after. |
+| N02 | Elevated to B17 | See B17. |
+| N03 | Partly closed | Import-boundary enforcement in the joint suite (§11.2); D1-20 workload expanded; Gate fixture now shows five blockers and the successor candidate c-0422 after a protected correction; Main fixture labels no dispatch as "No dispatch", never "measured zero". |
+| N04 | Closed | Regression-corpus provenance sentence added (§19.2). |
+| N05 | Substantially closed | Chunk and reference schema declared; retention covers pending intents (§14.3). |
 
-## Open questions from draft 1 (§20)
+## Draft-2 open questions
 
 | Q | Decided by | Decision |
 |---|---|---|
-| 1 Store scope | Claude, per Astra | One store per engine home; export closure in §6.5 |
-| 2 Nomination tags | **Sean** | Keep, as immutable registered refs audited by integrity |
-| 3 Adoption baseline | **Sean** | Exact current commit, unpushed included; later unrecorded changes are out-of-band |
-| 4 Concurrency | **Sean** | One active run per project through M3 |
-| 5 Consequences | Claude, per Astra | Effect plans from owning transitions in dry-run; adapters describe only |
-| 6 Sessions | Claude, per Astra | Feasible on both backends (`codex exec resume <id>`, `claude --resume <id>` observed); unqualified until D2; no silent fallback |
-| 7 Event retention | Claude, per Astra | Append-only; paginated replay; size telemetry |
-| 8 Repository | **Sean** | This directory becomes Surety's development repository (O11) |
+| Q1 Store worker placement | Claude, per Astra | Worker is the default; a main-thread placement is eligible only under the expanded D1-20 workload and its declared limits (§6.1) |
+| Q2 Session snapshot quiescence | Claude, per Astra | Live checkpoints refused in v1; snapshots only at confirmed termination or `open_idle`, which owns no process (§7.3) |
+| Q3 Delivered requirements | Claude, per Astra | Delivered iff every implementing stage is integrated at or before the candidate's revision; partial shown separately; release obligations in scope regardless (§9.1) |
+| Q4 Finding-exclusion authority | **Sean** (E19) | Verifier proposes; independent Reviewer assesses; human authorizes any exclusion that removes a finding blocking any gate (§3.4, §9.3) |
 
-## Verification notes carried into D2 and D3
+## Draft-1 findings (for the record)
 
-- O10 port paths all exist at the resolved `verity/bin/lib/...` locations. `trust.classify` and `substrate-local.localPrDiff` perform git and GitHub acquisition and are not pure; extract rules only. Claude `normalizeUsage` folds cache reads into input; Codex `normalizeUsage` emits zeros for missing usage; neither is ported verbatim (§13.2).
-- Codex 0.154.0 exposes `codex exec resume [SESSION_ID]`; Claude 2.1.286 (installed; 2.1.281 not retained) advertises `--resume`, `--session-id`, `--input-format stream-json`. Both are mechanisms, not qualifications. D2 must qualify the resume subcommand's containment and configuration separately from initial exec, and must handle provider session files under E16c.
-- The 21 console security invariants are mapped in Astra's §8.4; items 2–8, 10, 11, 13–18, 20, 21 produced the §11.1 and §17 additions. Item 20's persistent operator token is a deliberate change under O8 and depends on D2 isolation.
+All sixteen blocking objections and five suggestions from the draft-1 review were accepted and applied in draft 2; the draft-2 review's section 2 records which were closed there and which remained open. The eight draft-1 open questions were resolved as recorded in draft 2 §20 and E18.
+
+## Consistency checker
+
+`node scripts/d1-consistency.mjs sdlc-design-D1-engine-core.md` on the committed draft 3:
+
+```
+D1 consistency: 0 finding(s)
+
+Run on 2026-09-30 against the draft-3 text at the commit that adds this file. Rules checked: R1 body identifiers declared; R2 declarations owned; R3 A.5 states in their enumerations; R4 A.8 and DecisionKind agree; R5 foreign keys name declared tables. The check is lexical; semantic agreement between body and appendix is what the cross-review is for.
+```
