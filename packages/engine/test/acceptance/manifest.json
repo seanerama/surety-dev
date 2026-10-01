@@ -1,6 +1,16 @@
 {
   "slices": {
-    "1": [],
+    "1": [
+      "M02-receipt-store-constraints.test.mjs",
+      "M03-turn-receipt-constraints.test.mjs",
+      "M04-append-only-history.test.mjs",
+      "M04-atomic-transition.test.mjs",
+      "M05-migrations.test.mjs",
+      "M06-engine-lock.test.mjs",
+      "M07-closed-configuration.test.mjs",
+      "M08-api-capability-refusals.test.mjs",
+      "M69-boundary-core.test.mjs"
+    ],
     "2": [],
     "3": [],
     "4": [],
