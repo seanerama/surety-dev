@@ -5,8 +5,8 @@
 // scripted role's own log.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, realpathSync, statSync, symlinkSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { freePort, installProject, makeTempDir, removeDir, sha256Hex, startEngine, waitFor, writeEngineConfig } from './engine.mjs';
 import { assertRefused } from './fixtures.mjs';
@@ -22,10 +22,15 @@ export const SLICE2_CONFIG = Object.freeze({ tick_interval: 600, terminate_grace
 // A home, a scripted directory and (unless start is false) a running engine
 // in harness mode with the scripted backend. `fx.start(opts)` starts another
 // engine on the same home: after a kill, without --harness, or with barriers.
-export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true } = {}) {
+// With `homeSymlink`, $SURETY_HOME is a symbolic link to the directory that
+// holds the engine's files; `fx.home` is the link, as the engine is given it.
+export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false } = {}) {
   const root = makeTempDir('s2');
   const home = join(root, 'home');
-  mkdirSync(home);
+  if (homeSymlink) {
+    mkdirSync(join(root, 'home-real'));
+    symlinkSync(join(root, 'home-real'), home);
+  } else mkdirSync(home);
   const scripted = new Scripted(join(root, 'scripted'));
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, ...SLICE2_CONFIG, ...config });
@@ -302,6 +307,53 @@ const worktreePaths = (repo) =>
     .map((line) => line.slice('worktree '.length));
 
 const isDirectory = (path) => existsSync(path) && statSync(path).isDirectory();
+
+// A path with its symbolic links resolved, which is how git prints a
+// worktree. The part of it that no longer exists (a discarded workspace) is
+// kept as given.
+export function resolvedPath(path) {
+  let head = path;
+  const tail = [];
+  while (!existsSync(head) && dirname(head) !== head) {
+    tail.unshift(basename(head));
+    head = dirname(head);
+  }
+  return join(realpathSync(head), ...tail);
+}
+
+// The worktrees registered in a project's repository, other than its main
+// work tree, that no `workspaces` row of the project names. Paths are
+// compared with their symbolic links resolved.
+export function unownedWorktrees(home, project) {
+  const repo = repoOf(home, project);
+  const owned = new Set(
+    withStore(home, (db) => db.prepare('SELECT "path" FROM "workspaces" WHERE "project" = ?').all(project)).map((w) => resolvedPath(w.path)),
+  );
+  return worktreePaths(repo)
+    .map(resolvedPath)
+    .filter((path) => path !== resolvedPath(repo) && !owned.has(path));
+}
+
+// The git_worktree operations journaled for a run under one journal kind
+// (`worktree_add` or `worktree_remove`), oldest first, each with its status
+// and the kinds of its journal events in order.
+export function worktreeOperations(home, runId, journalKind) {
+  return withStore(home, (db) =>
+    db
+      .prepare(
+        `SELECT o."id", o."status" FROM "operations" o
+         WHERE o."kind" = 'git_worktree' AND EXISTS (
+           SELECT 1 FROM "git_journal_events" e
+           WHERE e."operation" = o."id" AND e."journal_kind" = ? AND json_extract(e."payload", '$.run') = ?)
+         ORDER BY o."seq"`,
+      )
+      .all(journalKind, runId)
+      .map((op) => ({
+        ...op,
+        events: db.prepare('SELECT "event_kind" FROM "git_journal_events" WHERE "operation" = ? ORDER BY "seq"').all(op.id).map((e) => e.event_kind),
+      })),
+  );
+}
 
 // The run has ended as SEAM.md §16 says, and its workspace is where its
 // disposition says: still there when retained, gone and unregistered when

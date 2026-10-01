@@ -25,6 +25,9 @@ export const step = {
   hold: (name = 'gate', opts = {}) => ({ hold: name, ...opts }),
   result: (value = VALID_RESULT) => ({ result: value }),
   exit: (code) => ({ exit: code }),
+  // One more process that carries the role's domain marker and outlives the
+  // role. By default it keeps the role's stdout open and ends on SIGTERM.
+  descendant: (opts = {}) => ({ descendant: opts }),
 };
 
 // Whole scripts for the common cases.
@@ -116,6 +119,31 @@ export class Scripted {
     return this.log().filter((e) => e.pid === pid && (event === undefined || e.event === event));
   }
 
+  // The descendants the roles started (scripted/child.mjs), each as
+  // {pid, start_time, pgrp, parent, domain, invocation, holds_stdout, on_term,
+  // ready}: `pid` and `start_time` are the descendant's own, so isLive()
+  // takes an entry as it takes a launch; `parent` is the role's pid.
+  descendants(filter = {}) {
+    return this.log()
+      .filter((e) => e.event === 'descendant')
+      .map((e) => ({
+        pid: e.descendant_pid,
+        start_time: e.descendant_start_time,
+        pgrp: e.descendant_pgrp,
+        parent: e.pid,
+        domain: e.domain,
+        invocation: e.invocation,
+        holds_stdout: e.holds_stdout,
+        on_term: e.on_term,
+        ready: e.ready,
+      }))
+      .filter((d) => Object.entries(filter).every(([k, v]) => d[k] === v));
+  }
+
+  async waitForDescendant(filter = {}, { timeoutMs } = {}) {
+    return waitFor(() => this.descendants(filter)[0], { timeoutMs, what: `a descendant matching ${JSON.stringify(filter)}` });
+  }
+
   async waitForLaunch(filter = {}, { count = 1, timeoutMs } = {}) {
     return waitFor(
       () => {
@@ -144,12 +172,14 @@ export class Scripted {
   }
 
   // Kill every scripted child of this directory that is still alive: the ones
-  // in the launch log, and any that was started so recently that it has not
-  // logged yet, found by its command line. Tests call this when they finish,
-  // so no role outlives its test. (A child also exits by itself once this
-  // directory is removed.)
+  // in the launch log, the descendants they logged, and any that was started
+  // so recently that it has not logged yet, found by its command line. Tests
+  // call this when they finish, so no role or descendant outlives its test.
+  // (A child, role or descendant, also exits by itself once this directory
+  // is removed.)
   killStrays() {
-    const pids = new Set(this.launches().filter((launch) => this.isLive(launch)).map((launch) => launch.pid));
+    const logged = [...this.launches(), ...this.descendants()];
+    const pids = new Set(logged.filter((entry) => this.isLive(entry)).map((entry) => entry.pid));
     const program = join(this.dir, 'child.mjs');
     for (const name of readdirSync('/proc')) {
       if (!/^\d+$/.test(name)) continue;
