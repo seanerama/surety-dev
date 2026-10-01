@@ -16,7 +16,7 @@
 
 import { readFileSync } from 'node:fs';
 
-const path = process.argv[2] ?? 'sdlc-design-D1-engine-core.md';
+const path = process.argv[2] ?? 'docs/design/sdlc-design-D1-engine-core.md';
 const text = readFileSync(path, 'utf8');
 const idx = text.indexOf('\n## Appendix A.');
 if (idx < 0) { console.error('Appendix A not found'); process.exit(2); }
