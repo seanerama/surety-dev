@@ -457,3 +457,17 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 **Consequences elsewhere.** Appendix A (E9) gains "Authorize an applicability assessment that removes a blocking inherited finding" (not floor). D1 §3.4 and §9.3(5) implement it.
 
 ---
+
+## E20. Design-review method and stopping rule (decided by Sean, 2026-10-01: O12)
+
+**Gap.** D1 went through three cross-review rounds (16 blockers; 12 open; 12 open). Round-three findings were correct and were implementation-level contract defects found by execution (a SQL null-uniqueness hole, a git working-tree side effect, a browser header interaction). Prose iteration had no stopping point, which is the failure the foundations attribute to Verity's testing (Section 1) and which P7 forbids for testing.
+
+**Decision (O12).** Detailed design is reviewed in two layers. **Architecture** (ownership boundaries, mechanisms, invariants, decisions) is settled in prose and cross-reviewed. **Contract precision** (constraints, transition edges, recovery outcomes, manifests) is settled in executable form: the Verifier writes acceptance tests first, the Builder implements against real SQLite and real git, and the schema and transition tables in the repository are the contract from which any appendix is generated. A design document is done when no open item is architecture-level and every contract-level item is a Verifier-owned test. New findings are classified the same way.
+
+**D1 decision recorded with it.** v1 rule: the integration branch is engine-owned and must not be checked out in any worktree the engine does not own; the engine refuses integration otherwise. A checkout-updating protocol is deferred.
+
+**Proposed text, Section 10, opening paragraph addition:**
+
+> Detailed design settles architecture in cross-reviewed prose and contract precision in Verifier-owned acceptance tests written before implementation. A design document is complete when no open item is architecture-level and every contract-level item is a test.
+
+---
