@@ -501,3 +501,27 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 **Consequences elsewhere.** `docs/spec/M1-build-spec.md` section 9 lists the M69 cases under slice 1. No change to D1.
 
 ---
+
+## E23. Slice-1 review decisions (provisional, 2026-10-01)
+
+**Status: provisional.** On 2026-10-01 Sean told the driver session to "drive this as far as you can" and to merge on his behalf, without answering the questions the slice-1 review had raised. The driver applied its own recommendation on each as a default so the build could continue. Every item below is reversible: Sean confirms or overturns it when he returns, and an overturned item becomes a changed test.
+
+**From the Reviewer's six design questions:**
+
+1. **Startup steps that are not built yet.** `recovery` and `integrity` may be reported as completed in slice 1, because a normal engine has no project until slice 3. Slices 2 and 3 must show each step doing real work, with a restart test that has state to recover and a violation to find. Recorded in `COVERAGE.md`.
+2. **Audit in restricted mode.** No refusal issued while the engine is in restricted mode needs an audit event. The store may not be open, and nothing can take effect in that mode.
+3. **Effective policy.** A project's effective policy is the policy revision the engine has recorded. With none recorded it is the schema defaults, reported with no revision. A policy file committed in the repository but never recorded by the engine is not effective. Slice 3 pins what project setup does with a pre-existing file.
+4. **Test-mode code is confined to one folder.** Everything that exists only for the test harness lives under `packages/engine/src/testing/`. Production source may import the seam module and call its functions, and the command-line entry point parses the harness flags. Nothing else asks whether harness mode is on. A source-inspection test enforces it.
+5. **The migration runner is a named exception** to the rule that only transition functions write to the store. It is the only one. A fixture installer in the testing folder therefore writes through a transition function.
+6. **Refusing a filesystem that does not honour sync** (D1 §6.1) is deferred to slice 4, to be decided with the power-loss test. Until then it is an open item, not a met requirement.
+
+**From the Verifier's follow-up questions:**
+
+7. **A refused start leaves the lock exactly as it found it.** A start refused for its configuration or its token file takes no lock and writes nothing under the engine home.
+8. **A malformed token file is refused, not replaced.** A token file that is empty or too short gets the same refusal as one with unsafe permissions. The engine never rotates the operator's token on its own. Creating the token must be atomic so an interrupted first start cannot leave a malformed file. Not yet pinned by a test; the next Verifier pass adds one.
+9. **`100 Continue` ordering** is pinned only for the Host check, as D1 §11.1 lists it. Whether a missing token is refused before `100 Continue` stays unpinned.
+10. **A request with no Host header** currently gets a bare 400 from the HTTP library rather than the engine's refusal body. The status is right; the body shape is deferred to slice 6.
+
+**Consequences elsewhere.** `packages/engine/test/acceptance/harness/SEAM.md` and `COVERAGE.md` carry the test-side detail. No change to D1.
+
+---

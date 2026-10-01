@@ -8,7 +8,13 @@
 //   1. every store case in ../store-cases.mjs passes against witness-schema.sql;
 //   2. every store case FAILS against a mutant of that schema that lacks the
 //      constraint the case pins (so a case cannot pass vacuously);
-//   3. id, process-identity, refusal-parsing and HTTP helpers behave as SEAM.md says.
+//   3. id, process-identity, refusal-parsing and HTTP helpers behave as SEAM.md says,
+//      including the raw-socket client against a byte-level server (repeated
+//      header lines, interim responses, a body held back until `100 Continue`).
+//   4. the source inspection behind row M74 (../source-lint.mjs) reads comments,
+//      strings, templates and regular expressions correctly, passes a witness
+//      source set that follows SEAM.md §7 "Confinement", fails each mutant of it
+//      on the rule the mutant breaks, and has the limit SEAM.md states.
 //
 // It is not an acceptance test and is not run by scripts/run-tests.mjs.
 // Usage: node packages/engine/test/acceptance/harness/selfcheck/run.mjs
@@ -17,6 +23,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +34,7 @@ import {
   freePort,
   httpRequest,
   isRefusalBody,
+  parseRawResponse,
   parseRefusal,
   rawRequest,
   snapshotDir,
@@ -36,6 +44,7 @@ import {
 } from '../engine.mjs';
 import { hasIdForm, isoNow, newId, ulid } from '../ids.mjs';
 import { procStartTime } from '../proc.mjs';
+import { inspectSources, tokenize } from '../source-lint.mjs';
 import * as cases from '../store-cases.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -243,6 +252,132 @@ await check('engine helpers: http and raw requests send exactly what the test sa
   }
 });
 
+// A byte-level server, so the checks below control and see exactly what
+// crosses the socket. `react(conn, socket)` runs on every data event; `conn`
+// holds everything received so far and whatever `react` notes on it.
+async function withRawServer(react, fn) {
+  const port = await freePort();
+  const conns = [];
+  const server = net.createServer((socket) => {
+    const conn = { received: '' };
+    conns.push(conn);
+    socket.on('error', () => {});
+    socket.on('data', (c) => {
+      conn.received += c.toString('utf8');
+      react(conn, socket);
+    });
+  });
+  await new Promise((r) => server.listen(port, '127.0.0.1', r));
+  try {
+    return await fn(port, conns);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+const OK = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{"ok":true}';
+const REFUSED = 'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{"code":"nope"}';
+const CONTINUE = 'HTTP/1.1 100 Continue\r\n\r\n';
+const EXPECT_HEAD = 'POST /v1/x HTTP/1.1\r\nHost: a\r\nContent-Length: 2\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n';
+
+await check('raw request: a repeated header line reaches the server byte for byte', async () => {
+  const text = 'GET /v1/x HTTP/1.1\r\nHost: a.example:1\r\nHost: b.example\r\nConnection: close\r\n\r\n';
+  await withRawServer(
+    (conn, socket) => {
+      if (conn.received.endsWith('\r\n\r\n')) socket.end(OK);
+    },
+    async (port, conns) => {
+      const res = await rawRequest({ port, text });
+      assert.equal(conns.length, 1);
+      assert.equal(conns[0].received, text, 'nothing added, dropped or reordered');
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { ok: true });
+      assert.deepEqual(res.interim, []);
+    },
+  );
+});
+
+await check('raw request: an interim 100 is reported, and the body is sent only after it', async () => {
+  await withRawServer(
+    (conn, socket) => {
+      if (conn.atHead === undefined && conn.received.endsWith('\r\n\r\n')) {
+        conn.atHead = conn.received;
+        // Leave time for a client that does not wait to show itself.
+        setTimeout(() => {
+          conn.beforeContinue = conn.received;
+          socket.write(CONTINUE);
+        }, 150);
+      } else if (conn.received.endsWith('\r\n\r\n{}')) socket.end(OK);
+    },
+    async (port, conns) => {
+      const res = await rawRequest({ port, text: EXPECT_HEAD, continueWith: '{}' });
+      assert.equal(conns[0].atHead, EXPECT_HEAD);
+      assert.equal(conns[0].beforeContinue, EXPECT_HEAD, 'no body byte was sent before the 100 arrived');
+      assert.equal(conns[0].received, `${EXPECT_HEAD}{}`);
+      assert.deepEqual(res.interim, [100]);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { ok: true });
+    },
+  );
+});
+
+await check('raw request: a final response with no 100 before it leaves the body unsent', async () => {
+  await withRawServer(
+    (conn, socket) => {
+      if (conn.received.endsWith('\r\n\r\n')) socket.end(REFUSED);
+    },
+    async (port, conns) => {
+      const res = await rawRequest({ port, text: EXPECT_HEAD, continueWith: '{}' });
+      assert.deepEqual(res.interim, []);
+      assert.equal(res.status, 400);
+      assert.equal(res.body.code, 'nope');
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(conns[0].received, EXPECT_HEAD, 'the body was never sent');
+    },
+  );
+});
+
+await check('raw request: a 100 sent ahead of a refusal is seen, in one segment or two', async () => {
+  for (const split of [false, true]) {
+    await withRawServer(
+      (conn, socket) => {
+        if (!conn.received.endsWith('\r\n\r\n')) return;
+        if (!split) return void socket.end(CONTINUE + REFUSED);
+        socket.write(CONTINUE);
+        setTimeout(() => socket.end(REFUSED), 100);
+      },
+      async (port, conns) => {
+        const res = await rawRequest({ port, text: EXPECT_HEAD });
+        assert.deepEqual(res.interim, [100], `split=${split}`);
+        assert.equal(res.status, 400);
+        assert.equal(res.body.code, 'nope');
+        assert.equal(conns[0].received, EXPECT_HEAD, 'no continuation was asked for, so none was sent');
+      },
+    );
+  }
+});
+
+await check('raw responses: interim heads are separated from the final response', () => {
+  const two = parseRawResponse(`HTTP/1.1 102 Processing\r\nX-A: 1\r\n\r\n${CONTINUE}${OK}`);
+  assert.deepEqual(two.interim, [102, 100]);
+  assert.equal(two.status, 200);
+  assert.equal(two.headers['x-a'], undefined, 'an interim header is not attributed to the final response');
+  assert.equal(two.headers['content-length'], '11');
+  assert.deepEqual(parseRawResponse(OK).interim, []);
+  assert.throws(() => parseRawResponse(CONTINUE), /no complete final HTTP response head.*after interim 100/);
+  assert.throws(() => parseRawResponse(''), /no complete final HTTP response head/);
+});
+
+await check('raw request: a server that answers nothing is a timeout that says what arrived', async () => {
+  await withRawServer(
+    (conn, socket) => {
+      if (conn.received.endsWith('\r\n\r\n')) socket.write(CONTINUE);
+    },
+    async (port) => {
+      await assert.rejects(rawRequest({ port, text: EXPECT_HEAD, timeoutMs: 300 }), /timed out after 300 ms; received so far: "HTTP\/1\.1 100 Continue/);
+    },
+  );
+});
+
 await check('engine helpers: start, wait for full mode, refuse and stop a stand-in process', async () => {
   const cli = join(here, 'fake-engine.mjs');
   const home = mkdtempSync(join(work, 'home-'));
@@ -265,6 +400,159 @@ await check('engine helpers: start, wait for full mode, refuse and stop a stand-
   writeEngineConfig(home, { api_port: port });
   const killed = await startEngine({ home, port, cli });
   assert.deepEqual(await killed.kill(), { code: null, signal: 'SIGKILL' });
+});
+
+// ---- 4. source inspection (row M74) ---------------------------------------------
+
+const lex = (src) => tokenize(src).map((t) => `${t.kind}:${t.text}`);
+
+await check('source lint: comments vanish; strings, templates and regular expressions do not hide or invent code', () => {
+  assert.deepEqual(lex("a // harness 'x\n/* harness\n ` */ b"), ['word:a', 'word:b']);
+  assert.deepEqual(lex("f('http://x') // c"), ['word:f', 'punct:(', 'string:http://x', 'punct:)']);
+  assert.deepEqual(lex('const m = /^http:\\/\\/([^/?#]*)(.*)$/i.exec(raw);').slice(3, 6), ['regex:^http:\\/\\/([^/?#]*)(.*)$', 'punct:.', 'word:exec']);
+  assert.deepEqual(lex('x = a / b / c'), ['word:x', 'punct:=', 'word:a', 'punct:/', 'word:b', 'punct:/', 'word:c']);
+  assert.deepEqual(lex('i++ / 2\nharness'), ['word:i', 'punct:+', 'punct:+', 'punct:/', 'number:2', 'word:harness'], 'a division is not an unterminated regular expression');
+  assert.deepEqual(lex('return /a\\/[/]b/.test(s)'), ['word:return', 'regex:a\\/[/]b', 'punct:.', 'word:test', 'punct:(', 'word:s', 'punct:)']);
+  assert.deepEqual(lex('`a${f(`b${c}d`, { x: 1 })}e` + z'), [
+    'template:a', 'word:f', 'punct:(', 'template:b', 'word:c', 'template:d', 'punct:,', 'punct:{', 'word:x', 'punct::', 'number:1', 'punct:}', 'punct:)', 'template:e', 'punct:+', 'word:z',
+  ]);
+  assert.deepEqual(lex("a?.b ? 0.5 : arr[0].x; f(...r)"), [
+    'word:a', 'punct:?.', 'word:b', 'punct:?', 'number:0.5', 'punct::', 'word:arr', 'punct:[', 'number:0', 'punct:]', 'punct:.', 'word:x', 'punct:;', 'word:f', 'punct:(', 'punct:...', 'word:r', 'punct:)',
+  ]);
+  const lines = tokenize('a\n/* x\n y */ b\n`t\n${c}\nu` d');
+  assert.deepEqual(lines.map((t) => [t.text, t.line]), [['a', 1], ['b', 3], ['t\n', 4], ['c', 5], ['\nu', 5], ['d', 6]]);
+  assert.throws(() => tokenize("x = 'abc\ny", 'f.ts'), /f\.ts:1: unterminated string/);
+  assert.throws(() => tokenize('x = `abc', 'f.ts'), /f\.ts:1: unterminated template/);
+});
+
+// A source set shaped the way SEAM.md §7 "Confinement" asks: harness behaviour
+// under testing/, production files importing only the seam module and only
+// calling it, the flags parsed in cli.ts.
+const CONFINED = {
+  'cli.ts': [
+    "import { serve } from './engine.js';",
+    "import { type SeamFlags, configureSeam, parseBarrierFlag } from './testing/seam.js';",
+    '// Harness flags are accepted only together with --harness.',
+    'let harness = false;',
+    'const harnessOnly: string[] = [];',
+    'for (const flag of process.argv.slice(3)) {',
+    "  if (flag === '--harness') harness = true;",
+    "  else if (flag === '--harness-migrations' || flag === '--harness-barrier') harnessOnly.push(flag);",
+    '}',
+    'if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);',
+    'const flags: SeamFlags = { on: harness };',
+    'await serve({ home, seam: configureSeam(flags, harnessOnly.map((v, i) => parseBarrierFlag(v, i))) });',
+  ],
+  'index.ts': ["export const ENGINE_VERSION = '0.0.0';"],
+  'api/server.ts': [
+    "import { seamInfo, seamRoute } from '../testing/seam.js';",
+    'export async function handle(r) {',
+    '  const reply = await seamRoute(r.method, r.segments, r);',
+    '  if (reply) return reply;',
+    "  return { status: 200, body: { mode: 'full', ...seamInfo() } };",
+    '}',
+  ],
+  'store/migrate.ts': [
+    "import * as seam from '../testing/seam.js';",
+    "export function migrate(db) { seam.barrier('migration.before_commit'); db.exec('COMMIT'); }",
+  ],
+  'store/client.ts': [
+    "import { Worker } from 'node:worker_threads';",
+    "import { barrierReached, type SeamInit } from '../testing/seam.js';",
+    "export const start = () => new Worker(new URL('./worker.js', import.meta.url));",
+    'export function onMessage(msg: { barrier: string }, init: SeamInit) {',
+    '  barrierReached(msg.barrier, msg.state);',
+    '  return { barrierReached: 1, init, note: msg.barrierReached };',
+    '}',
+  ],
+  'store/transitions/project.ts': [
+    '// The harness fixture installer (in testing/) calls this with its label.',
+    'export function registerProject(tx, fields, label: Record<string, unknown>) {',
+    "  tx.emit('project.created', { project: fields.id }, { ...label, name: fields.name });",
+    '}',
+  ],
+  'testing/seam.ts': [
+    "import { installFixture } from './fixtures.js';",
+    "export const isHarness = () => on; // anything goes in here: '/v1/harness', test_fixture",
+  ],
+  'testing/fixtures.ts': ["export const installFixture = (tx) => registerProject(tx, {}, { test_fixture: true });"],
+};
+const sourceSet = (edit = {}) =>
+  Object.entries({ ...CONFINED, ...edit }).map(([file, lines]) => ({ file, text: lines.join('\n') }));
+// The witness with one file's lines replaced or appended to.
+const withLines = (file, extra, { replace = false } = {}) => sourceSet({ [file]: replace ? extra : [...CONFINED[file], ...extra] });
+const found = (list) => list.map((v) => `${v.file}:${v.line}`);
+
+await check('source lint: the witness source set passes all three rules', () => {
+  assert.deepEqual(inspectSources(sourceSet()), { door: [], callOnly: [], names: [] });
+});
+
+const DOOR_MUTANTS = [
+  ['a second module of the seam folder', 'api/server.ts', ["import { installFixture } from '../testing/fixtures.js';"], 'api/server.ts:7', /other than the seam module/],
+  ['a dynamic import of the seam module', 'api/server.ts', ["const m = await import('../testing/seam.js');"], 'api/server.ts:7', /dynamically/],
+  ['a re-export of the seam module', 'index.ts', ["export * from './testing/seam.js';"], 'index.ts:2', /re-exports/],
+  ['a named re-export of the seam module', 'index.ts', ["export { seamRoute } from './testing/seam.js';"], 'index.ts:2', /re-exports/],
+  ['a worker file in the seam folder', 'store/client.ts', ["new Worker(new URL('../testing/worker.js', import.meta.url));"], 'store/client.ts:8', /names a path inside/],
+  ['a path built from a root', 'store/client.ts', ["load(join(root, 'dist/testing/fixtures.js'));"], 'store/client.ts:8', /names a path inside/],
+  ['a require of the seam module', 'store/client.ts', ["const s = require('../testing/seam.js');"], 'store/client.ts:8', /dynamically/],
+  ['a template path', 'store/client.ts', ['load(`${root}/testing/fixtures.js`);'], 'store/client.ts:8', /names a path inside/],
+];
+for (const [name, file, extra, at, what] of DOOR_MUTANTS) {
+  await check(`source lint mutant fails rule 1: ${name}`, () => {
+    const r = inspectSources(withLines(file, extra));
+    assert.deepEqual(found(r.door), [at]);
+    assert.match(r.door[0].what, what);
+  });
+}
+await check('source lint: rule 1 leaves other paths and the bare word alone', () => {
+  const r = inspectSources(
+    withLines('store/client.ts', ["import x from '../testingx/seam.js';", "import y from './testing-notes/a.js';", "const mode = 'testing';", "import z from '../../elsewhere/testing/a.js';"]),
+  );
+  assert.deepEqual(r.door, []);
+});
+
+const CALL_MUTANTS = [
+  ['a seam constant compared', 'api/server.ts', ["import { SEGMENT } from '../testing/seam.js';", 'if (s[1] === SEGMENT) extra();'], ['api/server.ts:8']],
+  ['a seam class tested with instanceof', 'api/server.ts', ["import { InjectedFault } from '../testing/seam.js';", 'const x = err instanceof InjectedFault ? a : b;'], ['api/server.ts:8']],
+  ['a seam function passed as a value', 'api/server.ts', ['const all = list.map(seamInfo);'], ['api/server.ts:7']],
+  ['a seam export in a shorthand property', 'api/server.ts', ['const o = { a: 1, seamInfo };'], ['api/server.ts:7']],
+  ['a property read off the namespace', 'store/migrate.ts', ['const on = seam.on;', 'const again = seam;'], ['store/migrate.ts:3', 'store/migrate.ts:4']],
+  ['a renamed import read as a value', 'api/server.ts', ["import { mode as m } from '../testing/seam.js';", 'if (cond ? m : 0) extra();'], ['api/server.ts:8']],
+];
+for (const [name, file, extra, at] of CALL_MUTANTS) {
+  await check(`source lint mutant fails rule 2: ${name}`, () => {
+    const r = inspectSources(withLines(file, extra));
+    assert.deepEqual(found(r.callOnly), at);
+    assert.deepEqual(r.door, []);
+  });
+}
+
+const NAME_MUTANTS = [
+  ['a harness route matched in the server, mode query renamed', 'api/server.ts', ["import { seamOn } from '../testing/seam.js';", "if (s[1] === 'harness' && seamOn()) serve();"], ['api/server.ts:8'], /string 'harness'/],
+  ['the engine-info field written in the server', 'api/server.ts', ['const info = { harness: seamInfo() };'], ['api/server.ts:7'], /identifier harness/],
+  ['a mode query imported under its own name', 'api/server.ts', ["import { isHarness } from '../testing/seam.js';", 'isHarness();'], ['api/server.ts:7', 'api/server.ts:8'], /identifier isHarness/],
+  ['a harness store operation in the worker', 'store/migrate.ts', ["const OPS = { 'harness.command': run };"], ['store/migrate.ts:3'], /string 'harness\.command'/],
+  ['a route in a template', 'api/server.ts', ['const p = `/v1/harness/${name}`;'], ['api/server.ts:7'], /template `\/v1\/harness\/`/],
+  ['a route in a regular expression', 'api/server.ts', ['const re = /^\\/v1\\/HARNESS\\//;'], ['api/server.ts:7'], /regular expression/],
+  ['the fixture label written by a transition', 'store/transitions/project.ts', ["const payload = { test_fixture: true };"], ['store/transitions/project.ts:5'], /fixture label/],
+  ['the fixture label as a string key', 'store/transitions/project.ts', ["payload['test_fixture'] = true;"], ['store/transitions/project.ts:5'], /fixture label/],
+  ['a route named in the CLI entry point', 'cli.ts', ["const base = '/v1/harness';"], ['cli.ts:13'], /string '\/v1\/harness'/],
+  ['the bare word in a CLI string', 'cli.ts', ["log('harness mode');"], ['cli.ts:13'], /string 'harness mode'/],
+  ['the fixture label in the CLI entry point', 'cli.ts', ['const test_fixture = 1;'], ['cli.ts:13'], /fixture label/],
+];
+for (const [name, file, extra, at, what] of NAME_MUTANTS) {
+  await check(`source lint mutant fails rule 3: ${name}`, () => {
+    const r = inspectSources(withLines(file, extra));
+    assert.deepEqual(found(r.names), at);
+    assert.match(r.names[0].what, what);
+  });
+}
+
+await check('source lint limit: a mode query under another name that is only called is not detected', () => {
+  // SEAM.md §7 says so: the inspection cannot tell a hook from a question
+  // about the mode. Pinned here so the limit is not forgotten.
+  const r = inspectSources(withLines('api/server.ts', ["import { seamOn } from '../testing/seam.js';", 'if (seamOn()) extra();']));
+  assert.deepEqual(r, { door: [], callOnly: [], names: [] });
 });
 
 // ---- report --------------------------------------------------------------------
