@@ -1,0 +1,37 @@
+{
+  "$comment": "Verifier's expected work-item transition table. Derived from D1 A.5 (WorkItem) with build spec §6 correction 11 (Review B10): common transitions are templates limited to the statuses a kind can reach and to their named cause; returning from awaiting_decision restores the stored continuation only; Stop and Abandon exist from every status that owns a run, integrated and awaiting_decision included. Tests generate their cases from this file through ../harness/transitions.mjs and never read the engine's own table (build spec §4, Plan §2).",
+  "statuses": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete", "awaiting_decision", "held", "parked", "cancelled"],
+  "terminal": ["complete", "cancelled"],
+  "kinds": {
+    "stage_build": { "m1": true, "role": "builder", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete"] },
+    "fix": { "m1": true, "role": "builder", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete"] },
+    "verification": { "m1": true, "role": "verifier", "path": ["eligible", "claimed", "executing", "complete"] },
+    "review": { "m1": true, "role": "reviewer", "path": ["eligible", "claimed", "executing", "complete"] },
+    "check_correction": { "m1": true, "role": "verifier", "path": ["eligible", "claimed", "executing", "complete"] },
+    "replan": { "m1": true, "role": "architect", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
+    "assessment": { "m1": true, "role": null, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
+    "phase_verification": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
+    "adoption_baseline": { "m1": false, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
+    "conformance": { "m1": false, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete"] },
+    "spec_change": { "m1": false, "path": ["eligible", "awaiting_decision", "complete"] },
+    "triage_accept": { "m1": false, "path": ["eligible", "awaiting_decision", "complete"] },
+    "export": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
+    "publish": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
+    "deploy": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
+    "rollback": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] }
+  },
+  "templates": {
+    "$comment": "A template gives a kind the edge from → to for each `from` status the kind can reach: a status on its path, or one a template leads to from such a status. `stop` and `abandon` apply only to kinds whose path has `claimed`, the kinds a run can own. `to` is fixed except for `continue`. A.5 lists the first eight templates' edges; correction 11 adds `integrated` and `awaiting_decision` to stop and abandon.",
+    "return": { "cause": "a run that failed or was refused, re-dispatched later", "from": ["claimed", "executing", "integrating", "verifying"], "to": "eligible" },
+    "park": { "cause": "a limit was reached", "from": ["claimed", "executing", "integrating", "verifying"], "to": "parked" },
+    "block": { "cause": "a decision is needed before the work can go on; the status left is stored as the continuation", "from": ["executing", "integrating", "verifying"], "to": "awaiting_decision" },
+    "continue": { "cause": "the decision was answered", "from": ["awaiting_decision"], "to": "the stored continuation, and no other of executing, integrating, verifying" },
+    "stop": { "cause": "Stop", "only_kinds_with": "claimed", "from": ["claimed", "executing", "integrating", "integrated", "verifying", "awaiting_decision"], "to": "held" },
+    "abandon": { "cause": "Abandon: the recorded prior status, with dispatch_hold", "only_kinds_with": "claimed", "from": ["claimed", "executing", "integrating", "integrated", "verifying", "awaiting_decision"], "to": "eligible" },
+    "resume": { "cause": "explicit Resume", "from": ["held"], "to": "eligible" },
+    "unpark": { "cause": "the blocker was answered", "from": ["parked"], "to": "eligible" },
+    "cancel": { "cause": "Cancel", "from": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "awaiting_decision", "held", "parked"], "to": "cancelled" }
+  },
+  "run_owning": ["claimed", "executing", "integrating", "integrated", "verifying", "awaiting_decision"],
+  "continuations": ["executing", "integrating", "verifying"]
+}

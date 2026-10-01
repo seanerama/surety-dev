@@ -16,6 +16,8 @@
 //      source set that follows SEAM.md §7 "Confinement", fails each mutant of it
 //      on the rule the mutant breaks, and has the limit SEAM.md states.
 //
+//   5-8. the slice-2 helpers: see slice2.mjs.
+//
 // It is not an acceptance test and is not run by scripts/run-tests.mjs.
 // Usage: node packages/engine/test/acceptance/harness/selfcheck/run.mjs
 
@@ -46,6 +48,7 @@ import { hasIdForm, isoNow, newId, ulid } from '../ids.mjs';
 import { procStartTime } from '../proc.mjs';
 import { inspectSources, tokenize } from '../source-lint.mjs';
 import * as cases from '../store-cases.mjs';
+import { slice2Checks } from './slice2.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WITNESS = readFileSync(join(here, 'witness-schema.sql'), 'utf8');
@@ -554,6 +557,10 @@ await check('source lint limit: a mode query under another name that is only cal
   const r = inspectSources(withLines('api/server.ts', ["import { seamOn } from '../testing/seam.js';", 'if (seamOn()) extra();']));
   assert.deepEqual(r, { door: [], callOnly: [], names: [] });
 });
+
+// ---- 5 to 8. slice 2 -------------------------------------------------------------
+
+await slice2Checks(check, work);
 
 // ---- report --------------------------------------------------------------------
 
