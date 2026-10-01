@@ -8,6 +8,6 @@ This directory belongs to the Verifier. The Builder may read it and may not chan
 - `contract/` holds the Verifier's expected transition tables. Cases are generated from these, never from the engine's own tables.
 - `harness/` holds the test side of the seam and `SEAM.md`, which states exactly what the engine must provide (build spec §8).
 
-No tests exist yet. Slice 1 starts by writing them.
+Slice 1's tests exist; later slices add theirs. `harness/selfcheck/run.mjs` checks the harness helpers that carry logic (it is not an acceptance test and the runner does not run it).
 
 Run with `node scripts/run-tests.mjs acceptance --slice N` for slices 1 to N, or without `--slice` for the full suite. The runner builds first and runs one file at a time. It fails on a failing, skipped or todo test, a file with no passing test, a file not named for a known row, a file not listed in the manifest, a listed file that is missing, and, on a full run, any row without a file.
