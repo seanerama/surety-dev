@@ -2,12 +2,14 @@
 // exclusive engine per home. A second start is refused with engine_locked and
 // changes nothing; simultaneous starts produce one owner; a restart tells a
 // stale owner from a live or reused process identity and runs recovery before
-// it lifts to full mode and starts the scheduler.
+// it lifts to full mode and starts the scheduler. A start that is refused for
+// what it can read beforehand (here its token file, SEAM.md §1 status 5) never
+// becomes an owner: it leaves the lock as it found it.
 
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -190,5 +192,41 @@ describe('M06 one engine incarnation per home', () => {
     assert.equal(readLock(home).pid, engine.pid);
     assert.equal(readLock(home).host_boot_id, bootId());
     assert.ok(isAlive(other.pid) && other.signalCode === null, 'the unrelated process is not signalled');
+  });
+
+  // A start refused before it runs is not an incarnation. It must not take the
+  // lock over from a dead owner, leave a lock naming itself, or open the store;
+  // and once the cause is removed the next start goes ahead.
+  test('a start refused for its token file takes no lock and does not block the next start', async (t) => {
+    const { home, engine: first, restart } = await engineFixture(t);
+    const firstInc = (await first.engineInfo()).incarnation;
+    const token = first.token();
+    await first.kill();
+    const lockText = readFileSync(lockPath(home), 'utf8');
+    assert.equal(JSON.parse(lockText).incarnation_id, firstInc, 'a killed owner leaves its lock behind');
+
+    chmodSync(first.tokenPath(), 0o644);
+    const refused = await startRefused({ home });
+    assert.equal(existsSync(lockPath(home)), true, 'the refused start did not remove the lock it found');
+    assert.equal(readFileSync(lockPath(home), 'utf8'), lockText, 'the refused start left the lock exactly as it found it');
+    assert.equal(refused.code, EXIT.token, `exit status (signal: ${refused.signal}; stderr: ${refused.stderr})`);
+    assert.equal(refused.refusal?.code, 'token_file_refused', refused.stderr);
+    assert.deepEqual(
+      incarnations(home).map((r) => r.id),
+      [firstInc],
+      'the refused start recorded no incarnation',
+    );
+
+    chmodSync(first.tokenPath(), 0o600);
+    const next = await restart();
+    const info = await waitForFullStartup(next);
+    assert.notEqual(info.incarnation, firstInc);
+    assert.equal(readLock(home).incarnation_id, info.incarnation);
+    assert.equal(readLock(home).pid, next.pid);
+    assert.deepEqual(
+      incarnations(home).map((r) => r.id),
+      [firstInc, info.incarnation],
+    );
+    assert.equal(next.token(), token, 'the token is the one the home had before the refused start');
   });
 });

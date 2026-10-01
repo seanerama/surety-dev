@@ -16,7 +16,7 @@ export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..
 export const CLI = join(REPO_ROOT, 'packages', 'engine', 'dist', 'cli.js');
 export const ENGINE_MIGRATIONS = join(REPO_ROOT, 'packages', 'engine', 'migrations');
 
-export const EXIT = { usage: 2, locked: 3, config: 4 };
+export const EXIT = { usage: 2, locked: 3, config: 4, token: 5 };
 
 const DEFAULT_WAIT_MS = 30_000;
 
@@ -101,19 +101,35 @@ export function httpRequest({ port, method = 'GET', path, headers = {}, body, ti
   });
 }
 
-// A request written byte for byte on a raw socket, for request targets that
-// http.request cannot produce (absolute-form). Returns status, headers, body.
-export function rawRequest({ port, text, timeoutMs = 15_000 }) {
+// A request written byte for byte on a raw socket, for what http.request
+// cannot produce: an absolute-form target, a repeated header line, a request
+// head sent without its body. `text` is written as given and nothing is added.
+// If `continueWith` is given it is written once, and only after the server
+// has sent a complete `100 Continue`, which is what a client that sent
+// `Expect: 100-continue` does. Resolves when the server closes the connection
+// with the final response {status, headers, text, body} and `interim`, the
+// status codes of every 1xx response that came before it, in order.
+export function rawRequest({ port, text, continueWith, timeoutMs = 15_000 }) {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host: '127.0.0.1', port });
     const chunks = [];
-    socket.setTimeout(timeoutMs, () => socket.destroy(new Error('raw request timed out')));
+    const received = () => Buffer.concat(chunks).toString('utf8');
+    let continued = continueWith === undefined;
+    socket.setTimeout(timeoutMs, () =>
+      socket.destroy(new Error(`raw request timed out after ${timeoutMs} ms; received so far: ${JSON.stringify(received().slice(0, 400))}`)),
+    );
     socket.on('connect', () => socket.write(text));
-    socket.on('data', (c) => chunks.push(c));
+    socket.on('data', (c) => {
+      chunks.push(c);
+      if (!continued && /^HTTP\/1\.[01] 100[^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n/.test(received())) {
+        continued = true;
+        socket.write(continueWith);
+      }
+    });
     socket.on('error', reject);
     socket.on('close', () => {
       try {
-        resolve(parseRawResponse(Buffer.concat(chunks).toString('utf8')));
+        resolve(parseRawResponse(received()));
       } catch (err) {
         reject(err);
       }
@@ -121,26 +137,43 @@ export function rawRequest({ port, text, timeoutMs = 15_000 }) {
   });
 }
 
+// Everything a server wrote on one connection for one request: zero or more
+// interim (1xx) responses, which have a head and no body, then the final one.
 export function parseRawResponse(raw) {
-  const split = raw.indexOf('\r\n\r\n');
-  if (split < 0) throw new Error(`no complete HTTP response head in ${JSON.stringify(raw.slice(0, 200))}`);
-  const [statusLine, ...headerLines] = raw.slice(0, split).split('\r\n');
-  const match = /^HTTP\/1\.[01] (\d{3})/.exec(statusLine);
-  if (!match) throw new Error(`bad status line ${JSON.stringify(statusLine)}`);
-  const headers = {};
-  for (const line of headerLines) {
-    const at = line.indexOf(':');
-    headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+  const interim = [];
+  let rest = raw;
+  for (;;) {
+    const split = rest.indexOf('\r\n\r\n');
+    if (split < 0) {
+      throw new Error(
+        `no complete final HTTP response head in ${JSON.stringify(rest.slice(0, 200))}` +
+          (interim.length > 0 ? ` after interim ${interim.join(', ')}` : ''),
+      );
+    }
+    const [statusLine, ...headerLines] = rest.slice(0, split).split('\r\n');
+    const match = /^HTTP\/1\.[01] (\d{3})/.exec(statusLine);
+    if (!match) throw new Error(`bad status line ${JSON.stringify(statusLine)}`);
+    const status = Number(match[1]);
+    rest = rest.slice(split + 4);
+    if (status >= 100 && status <= 199) {
+      interim.push(status);
+      continue;
+    }
+    const headers = {};
+    for (const line of headerLines) {
+      const at = line.indexOf(':');
+      headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+    }
+    let bodyText = rest;
+    if (/chunked/i.test(headers['transfer-encoding'] ?? '')) bodyText = dechunk(bodyText);
+    let body;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      body = undefined;
+    }
+    return { status, headers, text: bodyText, body, interim };
   }
-  let bodyText = raw.slice(split + 4);
-  if (/chunked/i.test(headers['transfer-encoding'] ?? '')) bodyText = dechunk(bodyText);
-  let body;
-  try {
-    body = JSON.parse(bodyText);
-  } catch {
-    body = undefined;
-  }
-  return { status: Number(match[1]), headers, text: bodyText, body };
 }
 
 function dechunk(text) {

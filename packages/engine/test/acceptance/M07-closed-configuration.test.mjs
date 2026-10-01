@@ -141,6 +141,18 @@ describe('M07 engine configuration', () => {
     await assertConfigRefused(t, { decision_targets: [] }, { field: 'decision_targets' });
   });
 
+  // SEAM.md §2: the source is "file" only if at least one override was given.
+  // An empty map is valid, overrides nothing and so reports the defaults.
+  test('an empty decision-target map is valid and is reported as the default', async (t) => {
+    const { engine } = await engineFixture(t, { config: { decision_targets: {} } });
+    const { config } = await engine.engineInfo();
+    const defaults = Object.fromEntries(Object.entries(CONTRACT.decision_target_defaults).filter(([kind]) => !kind.startsWith('$')));
+    for (const [kind, seconds] of Object.entries(defaults)) {
+      assert.equal(config.decision_targets.value[kind], seconds, `decision target ${kind} keeps its default`);
+    }
+    assert.equal(config.decision_targets.source, 'default', 'a map with no override is not a configured value');
+  });
+
   test('engine-wide run concurrency is bounded', async (t) => {
     await assertEachRefused(t, 'max_concurrent_runs', [0, 9, -1, 2.5]);
   });
