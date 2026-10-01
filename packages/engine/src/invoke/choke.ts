@@ -178,15 +178,16 @@ export class Launcher {
       this.never(handle, 'failed', 'infra_error');
       return;
     }
+    child.on('error', (err) => log('role process', err));
     handle.child = child;
     handle.pid = child.pid;
-    handle.startTime = processStartTime(child.pid) ?? '0';
+    // Read before the event loop can reap the child, so it is there to read;
+    // if it cannot be read it is recorded as unknown, and the process is then
+    // reached only by its marker, never by a pid whose identity is unproven.
+    handle.startTime = processStartTime(child.pid);
 
     const lines: string[] = [];
-    let drained: () => void = () => {};
-    const outputDone = new Promise<void>((resolve) => {
-      drained = resolve;
-    });
+    let closed = false;
     const reader = createInterface({ input: child.stdout! });
     let wake: (() => void) | null = null;
     reader.on('line', (line) => {
@@ -194,7 +195,7 @@ export class Launcher {
       wake?.();
     });
     reader.on('close', () => {
-      drained();
+      closed = true;
       wake?.();
     });
     const exited = new Promise<void>((resolve) => {
@@ -232,10 +233,6 @@ export class Launcher {
     }
 
     // The role's callbacks, one at a time, in the order sent.
-    let closed = false;
-    void outputDone.then(() => {
-      closed = true;
-    });
     for (;;) {
       const line = lines.shift();
       if (line !== undefined) {

@@ -395,7 +395,7 @@ export function leaseActive(tx: Tx, args: { run: string; generation: number }): 
 
 // ---- launch and callbacks ---------------------------------------------------------
 
-function completeOwnership(tx: Tx, run: RunRow, args: { domain: string; invocation: string; pid: number; pgid: number; startTime: string }): void {
+function completeOwnership(tx: Tx, run: RunRow, args: { domain: string; invocation: string; pid: number; pgid: number; startTime: string | null }): void {
   tx.db
     .prepare('UPDATE "process_ownership" SET "pid" = ?, "pgid" = ?, "pid_start_time" = ? WHERE "domain" = ? AND "pid" IS NULL')
     .run(args.pid, args.pgid, args.startTime, args.domain);
@@ -406,7 +406,7 @@ function completeOwnership(tx: Tx, run: RunRow, args: { domain: string; invocati
 // After the spawn (D1 §15.1): ownership completed, `launched`, the domain
 // launched; and, unless the run was stopped meanwhile, the run and its work
 // item executing.
-export function recordLaunch(tx: Tx, args: { run: string; invocation: string; domain: string; pid: number; pgid: number; startTime: string }): void {
+export function recordLaunch(tx: Tx, args: { run: string; invocation: string; domain: string; pid: number; pgid: number; startTime: string | null }): void {
   const run = mustRun(tx, args.run);
   completeOwnership(tx, run, args);
   const lease = runLease(tx, run.id);

@@ -150,18 +150,18 @@ function publicCode(reason: string | null, text: string | null): string | null {
   }
 }
 
-// GET /v1/projects/:p/runs/:r.
-export function runRepresentation(tx: Tx, args: { project: string; run: string }) {
-  const run = tx.db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
+// GET /v1/projects/:p/runs/:r. A read: it writes nothing.
+export function runRepresentation(db: Tx['db'], args: { project: string; run: string }) {
+  const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
-  const domains = tx.db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
-  const receipts = (tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string }[]).map((r) => ({
+  const domains = db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
+  const receipts = (db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string }[]).map((r) => ({
     id: r.id,
-    statuses: (tx.db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(r.id) as { status: string }[]).map(
+    statuses: (db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(r.id) as { status: string }[]).map(
       (o) => o.status,
     ),
   }));
-  const workspace = tx.db.prepare('SELECT "id", "path", "disposition" FROM "workspaces" WHERE "run" = ?').get(args.run) ?? null;
+  const workspace = db.prepare('SELECT "id", "path", "disposition" FROM "workspaces" WHERE "run" = ?').get(args.run) ?? null;
   return {
     run: {
       id: run.id,

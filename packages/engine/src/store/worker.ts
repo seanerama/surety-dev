@@ -79,7 +79,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
 
 const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
-  'run.representation': (d, a: { project: string; run: string }) => transact(d, ENGINE_ACTOR, (tx) => runRepresentation(tx, a)),
+  'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
   'scheduler.candidates': (d, a: { maxConcurrentRuns: number }) => dispatchCandidates(d, a),
   'scheduler.projects': (d) => projectIds(d),
   'runs.quarantined': (d) => quarantinedRuns(d),
