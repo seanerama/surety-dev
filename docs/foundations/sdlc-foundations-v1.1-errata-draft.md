@@ -485,3 +485,19 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 **Consequences elsewhere.** The resolution note §4 and the acceptance plan's "Owner: Astra, acting as Verifier" line are read with this entry. Neither file is edited.
 
 ---
+
+## E22. Slice-1 seam decisions (decided by Sean, 2026-10-01)
+
+**Gap.** Writing the slice-1 acceptance tests, the Verifier had to fix five points the sources left open and flagged them as touching design. They are recorded in `packages/engine/test/acceptance/harness/SEAM.md`; Sean accepted all five.
+
+**Decisions.**
+
+1. **Engine settings live in a file.** Engine-scope configuration is read once, at startup, from `$SURETY_HOME/config.json`, before the lock is taken. The API port must be known before the store opens (D1 §1.4), so it cannot live only in the store. Changing an engine setting means restarting the engine. D1's `config` table (A.3) holds no engine-scope setting; project settings stay in each project's policy file. Runtime-changeable engine settings would be a new decision with its own test.
+2. **The health route requires the token.** D1 §11.1 and §17(2) are confirmed as written: `GET /v1/token/bootstrap` is the only route answered without a token. The `surety` command reads the token file. A tokenless liveness route for an outside monitor would be a new decision with its own test.
+3. **Boundary tests start in slice 1.** The Host, token and audit cases of acceptance row M69 are listed under slice 1, where that behavior is first built. The rest of the row stays in slice 6.
+4. **Pause and resume are built in slice 1.** They are the smallest real command with which to test that a failed write leaves nothing half-done (row M04).
+5. **Tables that later slices use are created in slice 1,** because rows M03 and M04 write to them. When a later slice changes one of them, that slice's Verifier updates the shared seed helper in the same branch.
+
+**Consequences elsewhere.** `docs/spec/M1-build-spec.md` section 9 lists the M69 cases under slice 1. No change to D1.
+
+---

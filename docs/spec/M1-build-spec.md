@@ -24,7 +24,7 @@ All paths are from the repository root. The short names are used throughout this
 | Short name | Document | What it is |
 |---|---|---|
 | **F** | `docs/foundations/sdlc-framework-foundations-v1.0.md` | The agreed principles, roles, state model and testing rules. |
-| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E21 that amend F. The merged v1.1 text has not been produced; read F with E. |
+| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E22 that amend F. The merged v1.1 text has not been produced; read F with E. |
 | **RN** | `docs/design/sdlc-design-D1-resolution-note.md` | Seven design corrections to D1 (R1 to R7) and the rule that ended prose review. |
 | **Plan** | `docs/acceptance/sdlc-M1-acceptance-plan-Astra.md` | The M1 acceptance matrix: 74 rows, each a scenario with a required observable result. Written by Astra, the second architect. |
 | **D1** | `docs/design/sdlc-design-D1-engine-core.md` | The engine architecture, draft 3: entities, store, git, scheduler, gate function, decisions, API, recovery. |
@@ -122,6 +122,7 @@ These are decided (E17, E18, D1 §6.1). Changing one is a decision for Sean.
 - **Schema growth:** each slice adds the tables its rows touch. Until M1 is accepted no store exists outside a test, so a migration file may be rewritten. From acceptance on, an applied migration is immutable.
 - **Git:** every command is spawned with an argument array, a constructed environment, explicit `--git-dir` and `--work-tree`, bounded output and a deadline. Never a shell string.
 - **Engine home:** all runtime state lives under `$SURETY_HOME`. None of it is ever written into a tracked tree.
+- **Engine settings:** read once at startup from `$SURETY_HOME/config.json`; changing one means a restart (E22).
 - **API:** HTTP/1.1 on `127.0.0.1`, default port 7227, server-sent events for streams.
 
 ## 6. Design in force: D1 with its corrections
@@ -242,7 +243,7 @@ The API and the decision queue grow with every slice. Each slice adds the routes
 
 | Slice | Capability delivered | Rows introduced | D1 sections |
 |---|---|---|---|
-| **1. Store and startup** | Migrations with history; the transition framework; identity and sequence numbers; the tables rows M03 and M04 name, with their constraints and append-only triggers; engine lock and incarnation; startup sequence and restricted mode; closed configuration; health and engine routes with the Host check, token and audit event; refusal of excluded capabilities at the API; a fixture-installed project. | M03–M07; the store cases of M02; the API cases of M08 | §§1, 2, 6; A.1–A.3, A.9 |
+| **1. Store and startup** | Migrations with history; the transition framework; identity and sequence numbers; the tables rows M03 and M04 name, with their constraints and append-only triggers; engine lock and incarnation; startup sequence and restricted mode; closed configuration; health and engine routes with the Host check, token and audit event; refusal of excluded capabilities at the API; a fixture-installed project. | M03–M07; the store cases of M02; the API cases of M08; the Host, token and audit cases of M69 (E22) | §§1, 2, 6; A.1–A.3, A.9 |
 | **2. Work, runs and interruption** | Work items and their transition table; triggers; the tick; leases and fencing; receipts, status and usage observations, and the original ledger row, because the run-end protocol writes them; domains and process ownership; the invocation choke point with the scripted adapter and boundary; the run-end protocol; Stop, Abandon, Resume; deadlines; quarantine and its clearance; run recovery. Workspaces are created through the journal's ordinary path. A minimal `blocker`, `stop_confirm` and `abandon_confirm`. | M09–M18; the rest of M02; the scheduler cases of M08 | §§3.2, 4, 8, 13.1, 15, 16 |
 | **3. Git and the journal** | Execution context and ref registry; project bootstrap through the API; snapshot admission and validation; commits; checkpoints; integration by compare-and-swap; repository integrity; nomination; plan and stage finalizers; the full probe and recovery matrix for all four journal kinds; operation attempt semantics. | M19–M34 | §§3.1, 3.3, 3.5, 7 |
 | **4. Ledger, records and backup** | Ledger corrections and normalization; budgets and fail-closed reads; the durable record path, chunk receipts, redaction and rescan; retention; backup and restore; power-loss durability. | M59–M67 | §§6.5, 6.6, 13, 14 |
@@ -289,7 +290,7 @@ None of these blocks slice 1.
 | Power-loss harness for row M67 | It must distinguish synced from unsynced state on real SQLite and real git. That may need a privileged device or filesystem setup on this WSL2 host, which is Sean's call. Without it M67 stays unpassed and M1 is not accepted. | Slice 4 |
 | Browser driver for row M68 | A pinned development dependency, and two browser families whose versions are recorded. | Slice 6 |
 | Numeric load limits for row M71 | The Plan requires them stated in the fixture. Qualifying a small store proves nothing about a larger one. | Slice 6 |
-| Foundations v1.1 text | E1 to E21 are not yet merged into one document. | Whenever convenient |
+| Foundations v1.1 text | E1 to E22 are not yet merged into one document. | Whenever convenient |
 | Package name | "surety" has not been checked on npm. Both packages are private until it is. | Before any publication |
 | `.surety/project.json` for this repository | Not created. The engine's own bootstrap or adoption transition is its only writer (E2), and Surety adopts itself only after M3. | After M3 |
 

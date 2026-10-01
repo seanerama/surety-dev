@@ -88,11 +88,14 @@ if (files.length === 0) fail(`${suite}: no test files found`);
 const build = spawnSync('npm', ['run', 'build', '--silent'], { cwd: root, stdio: 'inherit' });
 if (build.status !== 0) fail('build failed; nothing was tested.');
 
-const counts = { failed: 0, skipped: 0, todo: 0 };
+const counts = { failed: 0, failedGroups: 0, skipped: 0, todo: 0 };
 const passedIn = new Map(files.map((f) => [join(root, f), 0]));
 const stream = run({ files: [...passedIn.keys()], concurrency: false, timeout: TEST_TIMEOUT_MS });
 stream.on('test:fail', (t) => {
+  // A describe() group that contains a failure is reported as failed too; count it apart
+  // so the total names tests, while a group that fails on its own (a hook) still fails the run.
   if (t.todo !== undefined) counts.todo++;
+  else if (t.details?.type === 'suite') counts.failedGroups++;
   else counts.failed++;
 });
 stream.on('test:pass', (t) => {
@@ -107,7 +110,9 @@ const report = stream.compose(spec);
 report.pipe(process.stdout);
 await new Promise((resolve) => report.on('end', resolve));
 
-if (counts.failed > 0) fail(`${suite}: ${counts.failed} failed.`);
+if (counts.failed > 0 || counts.failedGroups > 0) {
+  fail(`${suite}: ${counts.failed} test(s) failed or were cancelled, in ${counts.failedGroups} failing group(s).`);
+}
 if (suite === 'acceptance') {
   if (counts.skipped > 0 || counts.todo > 0) {
     fail(`acceptance: skipped=${counts.skipped} todo=${counts.todo}. A skip is not a pass.`);
