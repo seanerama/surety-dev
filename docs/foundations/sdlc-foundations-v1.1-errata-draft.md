@@ -552,3 +552,18 @@ Also accepted without a decision being needed: answering a blocker is tested in 
 **Consequences elsewhere.** The build spec's layout now shows the scripted adapter under `src/testing/`, as E23 item 4 requires. No change to D1.
 
 ---
+
+## E25. Slice-2 review decisions (provisional, 2026-10-01)
+
+**Status: provisional**, on the same footing as E23 and E24. The slice-2 review confirmed three serious defects by running the engine; they go back to the Verifier and Builder before slice 2 merges. It also raised the questions below. The driver applied the Reviewer's recommendation on each. Sean confirms or overturns them.
+
+1. **The engine renews a run's lease itself** at least every third of the lease lifetime while it supervises that run's live process, as D1 §8.3 already says. Only a lease nobody is supervising expires, and the tick's first step then reconciles it through the run-end protocol. A role that never sends a heartbeat does not lose its result for that reason.
+2. **M1 roles run without control-plane isolation.** A scripted role runs as the same user as the engine, in a directory under the engine home, and can read the token file. This is known and accepted for M1, where the only role is a test script. Nothing in M1 is evidence for the isolation requirement (D1 §17 item 12); D2 owns it, and no real backend runs before D2 qualifies it.
+3. **Engine git never runs code from the repository.** Every git call the engine makes disables hooks and other repository-configured execution. A role can otherwise plant a hook that runs later inside the engine's own process tree, outside any execution domain. Pinned by a test now for the worktree calls and again in slice 3 for the rest.
+4. **What a Stop or Abandon confirmation binds** is settled in slice 5: the run's identity, whether it can still be stopped, and the workspace's fate. A run moving from claimed to executing should not by itself make the confirmation stale. Until then the stricter behavior stands; it fails safe.
+
+**Carried to later slices, recorded in `COVERAGE.md`:** a second worktree-removal intent for one run after an ambiguous result (slice 3, journal matrix); the cost of scanning every process on each observation (slice 6, load); unbounded role output (slices 4 and 6).
+
+**Consequences elsewhere.** No change to D1.
+
+---
