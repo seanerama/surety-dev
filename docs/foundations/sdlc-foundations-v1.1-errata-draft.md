@@ -530,3 +530,25 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 **Consequences elsewhere.** `packages/engine/test/acceptance/harness/SEAM.md` and `COVERAGE.md` carry the test-side detail. No change to D1.
 
 ---
+
+## E24. Slice-2 seam decisions (provisional, 2026-10-01)
+
+**Status: provisional**, on the same footing as E23. The slice-2 Verifier fixed these points in `harness/SEAM.md` and its tests and flagged them for the owner. The driver accepted the Verifier's recommendation on each. Sean confirms or overturns them.
+
+1. **A chain of roles.** A run is chained when it is dispatched for work that a previous run's outcome created. Work created by a fixture or a person, a repair re-dispatch, and a Resume are not chained. Without this reading the default `max_chained_roles = 1` would stop every second run. Tested from slice 3.
+2. **Work whose run timed out is parked** with a blocker naming the deadline. It is neither held nor repaired automatically.
+3. **Work whose run was recovered after a crash is held** and needs an explicit Resume. This follows E7's Section 3.9.4 (a crash ends in the same state as Stop). Consequence worth knowing: after an engine crash, nothing restarts on its own.
+4. **Repair count.** An item that always fails is launched once plus `repair_attempts_max` times, so a limit of zero means no repair.
+5. **An `assessment` run is performed by the Architect role.** Not yet tested; to be settled before slice 3.
+6. **A new trigger generation creates new work and does not lift the dispatch hold** on the abandoned item it replaces.
+7. **Exit status 6** for a start that fails before listening, with code `home_unusable` or `listen_failed`. A directory where `store.db` should be is not an exit: the engine stays up in restricted mode and reports the failed step, as D1 §1.4 says.
+8. **A well-formed token** is at least 32 visible ASCII characters. Anything else, including an interior space or tab, is refused. The interior-whitespace case is not yet tested.
+9. **An unknown `Expect` value** is refused with 417 and code `expect_refused`, after the Host and token checks, and is audited.
+10. **Stop and Abandon are two requests.** The first returns the decision and its preview hash; the second, carrying the hash, performs it.
+11. **The Verifier's stand-in engine stays in the test tree** through the slice-2 build. It shows the tests can be passed and that each catches a defect. It is not the engine and not a design; the Builder must not copy it in place of building to D1.
+
+Also accepted without a decision being needed: answering a blocker is tested in slice 2 only on an item parked at its repair limit; leaving `awaiting_decision` through the queue is tested in slice 5.
+
+**Consequences elsewhere.** The build spec's layout now shows the scripted adapter under `src/testing/`, as E23 item 4 requires. No change to D1.
+
+---
