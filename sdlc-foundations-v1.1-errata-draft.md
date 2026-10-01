@@ -428,3 +428,18 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 **Mockup accepted.** The eight-screen MVP UI mockup (mockup/) was accepted the same day; UI refinement deferred until the narrow loop runs.
 
 ---
+
+## E18. Repository and D1 cross-review decisions (decided: O11 plus three D1 decisions)
+
+**Decision (O11, repository).** This directory (`sdlc-x`) becomes the Surety development repository with its git history preserved. Documents move under `docs/` with recorded renames when implementation is authorized. No separate design repository.
+
+**D1 decisions reserved to Sean, recorded 2026-09-30 after Astra's cross-review of draft 1:**
+- Nomination tags are kept, as immutable engine-owned refs registered and audited by the integrity check (D1 §7.2, §7.7).
+- Adoption records the exact current commit of the selected integration branch as the baseline, unpushed commits included; later unrecorded changes are out-of-band (D1 §3.1, E6).
+- One active run per project through M3; bounded parallelism across projects (D1 §7.5, §8.1).
+
+**Proposed text, Section 11, new row:**
+
+> | **O11** | Repository | `sdlc-x` becomes the Surety development repository, history preserved; docs move under `docs/` when implementation is authorized. | 10, 19 |
+
+---

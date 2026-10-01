@@ -56,13 +56,13 @@ button{font:inherit;cursor:pointer}
 <div class="stamp" style="padding:12px 12px 0;border-top:1px solid #C9D1C4;margin-top:8px">Engine running locally<br>Last tick 14 s ago<br>Lease held by r-1193</div>
 </nav>
 <main style="display:flex;flex-direction:column;min-width:0">
-<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#E3EAF2;border-bottom:1px solid #C9D1C4">
+<section aria-label="Now" style="display:grid;grid-template-columns:260px minmax(0,1fr) auto;gap:32px;align-items:center;padding:22px 36px;background:#EBE6F8;border-bottom:1px solid #C9D1C4">
 <div>
 <div class="k">Now</div>
-<div class="disp" style="font-size:44px;color:#2F5FA8">Running</div>
+<div class="disp you" style="font-size:44px">Waiting on you</div>
 </div>
-<p style="margin:0;font-size:16px;line-height:1.45;max-width:62ch">Builder is on stage 6, "Export service and CSV endpoint", in run r-1193. Last activity 8 seconds ago. When the Builder returns its result, the engine validates the diff, commits, nominates a candidate, and runs the Alpha gate.</p>
-<a href="Attention.dc.html" class="btn2">3 decisions wait on you</a>
+<p style="margin:0;font-size:16px;line-height:1.45;max-width:62ch">Three decisions are queued, the oldest past target. Meanwhile the Builder is on stage 6, "Export service and CSV endpoint", in run r-1193, last active 8 seconds ago. When it returns, the engine validates the snapshot, commits, nominates a candidate, and evaluates the Alpha gate.</p>
+<a href="Attention.dc.html" class="btn">Open the 3 decisions</a>
 </section>
 <div style="padding:22px 36px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;min-height:0;overflow:hidden">
 <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
@@ -79,7 +79,7 @@ button{font:inherit;cursor:pointer}
 </div>
 <div class="panel">
 <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px">
-<h2 class="h">Run r-1193: Builder, stage 6</h2>
+<h2 class="h"><span class="dot" style="background:#2F5FA8"></span>Running: r-1193, Builder, stage 6</h2>
 <div style="display:flex;gap:8px">
 <button class="btn2">Pause dispatch</button>
 <button class="btn2">Stop run</button>

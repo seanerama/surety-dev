@@ -17,5 +17,5 @@ Eight desktop screens, 1440x900, one invented project (meet-proxy, T2) in the Se
 
 Design decisions: grey-green ledger ground; Barlow Condensed for the single loud element (the NOW state word); Atkinson Hyperlegible elsewhere; violet reserved for "waiting on you" so status colors stay the engine's; Unknown drawn as a hatch, never blank; every fact tagged observed / claimed / configured with its age.
 
-Status: accepted for MVP by Sean on 2026-09-30. UI refinement deferred until after the narrow loop runs.
+Status: accepted for MVP by Sean on 2026-09-30. UI refinement deferred until after the narrow loop runs. Fixture corrections applied 2026-09-30 per Astra D1 review N03: NOW priority on Main (relationship-crm Running, verity-console Refused), Build NOW band says Waiting on you with the run panel titled Running, Gate shows pv-18 as effective with pv-19 proposed.
 Working product name: Surety (collision-checked 2026-09-30; npm availability not yet checked).

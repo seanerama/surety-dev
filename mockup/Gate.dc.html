@@ -72,9 +72,9 @@ button{font:inherit;cursor:pointer}
 <div style="display:flex;justify-content:space-between;align-items:baseline"><strong>Required checks at a71c9d4</strong><span class="k num">17 required: 14 passed, 1 failed, 1 stale, 1 skipped, 0 missing</span></div>
 <div class="k" style="margin-top:2px">Judged by exit status of each check process, spawned by the engine. Only passed satisfies.</div>
 <div class="chk" style="margin-top:6px"><span class="num">AC-14</span><span>Export completes within 2 s on 10k rows</span><span class="ser" style="font-weight:700">Failed, exit 1</span><span class="k">direct runner, 1 m ago</span></div>
-<div class="chk"><span class="num">AC-09</span><span>Session cookie carries Secure and HttpOnly flags</span><span class="warn" style="font-weight:700">Stale</span><span class="k">passed at pv-18, re-run due</span></div>
+<div class="chk"><span class="num">AC-09</span><span>Session cookie carries Secure and HttpOnly flags</span><span class="warn" style="font-weight:700">Stale</span><span class="k">passed at 5d0e77b, not yet run at a71c9d4</span></div>
 <div class="chk"><span class="num">UI-03</span><span>Checkout flow completes in a real browser</span><span class="warn" style="font-weight:700">Skipped</span><span class="k">runner reported not executed</span></div>
-<div class="chk"><span class="num">14 more</span><span>Including sensitivity-floor checks for authentication (AC-07 to AC-10)</span><span class="good" style="font-weight:700">Passed</span><span class="k">pv-19, 1 m ago</span></div>
+<div class="chk"><span class="num">14 more</span><span>Including sensitivity-floor checks for authentication (AC-07 to AC-10)</span><span class="good" style="font-weight:700">Passed</span><span class="k">pv-18, a71c9d4, 1 m ago</span></div>
 </div>
 </div>
 <div class="in">
@@ -119,7 +119,7 @@ button{font:inherit;cursor:pointer}
 <h2 class="h">What satisfies this gate</h2>
 <ol style="margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.55">
 <li>AC-14 passes, or pv-19 is approved and AC-14 re-runs and passes.</li>
-<li>AC-09 re-runs at the current protected version.</li>
+<li>AC-09 runs against a71c9d4 at pv-18.</li>
 <li>UI-03 runs. The browser runner is unavailable on this host; Settings can point it at the Tailscale runner.</li>
 <li>F-212 receives a disposition. Fix keeps it open until verified.</li>
 <li>The Reviewer records a sign-off for a71c9d4.</li>
