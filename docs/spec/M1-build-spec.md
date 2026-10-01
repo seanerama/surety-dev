@@ -82,7 +82,7 @@ The foundations' first principle is that the Builder cannot determine acceptance
 
 Each role's list is complete. A change to any path not on a role's list is a boundary violation, and `scripts/check-role-boundary.mjs` enforces exactly these lists. A session that needs an owner-only file changed (a new dependency, a compiler option, a row added to the Plan) asks Sean.
 
-Astra wrote the Plan and does not take part in the build (E21). The Plan remains the inventory of what must be tested. Sean may ask her for a cross-review at any time.
+Astra wrote the Plan and does not take part in the build (E21). The Plan remains the inventory of what must be tested. Her budget is limited, so Sean asks her for a cross-review at milestones only; slice reviews are done by a Claude Reviewer session.
 
 **One slice, start to finish:**
 

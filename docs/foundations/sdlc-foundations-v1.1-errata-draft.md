@@ -478,9 +478,9 @@ Every amendment that adds, removes, or re-routes a human decision updates this t
 
 **Decision (O13).** In Sean's words: "Astra will not be building this project. Claude will." Claude performs the M1 build.
 
-**How it is applied.** The Verifier role passes to Claude along with the Builder role. The independence rule (Section 5.1) is kept by separation, not by using a different model, as Section 5.5 already allows: the Verifier, the Builder and the Reviewer are separate sessions that never share context; each writes only its own paths; a script checks those paths before every merge; and the acceptance suite's exit status is the judgment. Astra's acceptance plan remains the inventory of what must be tested, and the rule that tests are written before implementation is unchanged. Sean may still ask Astra for a cross-review at any point. `docs/spec/M1-build-spec.md` section 4 carries the working procedure.
+**How it is applied.** The Verifier role passes to Claude along with the Builder role. The independence rule (Section 5.1) is kept by separation, not by using a different model, as Section 5.5 already allows: the Verifier, the Builder and the Reviewer are separate sessions that never share context; each writes only its own paths; a script checks those paths before every merge; and the acceptance suite's exit status is the judgment. Astra's acceptance plan remains the inventory of what must be tested, and the rule that tests are written before implementation is unchanged. Astra's cross-reviews are reserved for milestones because her budget is limited. `docs/spec/M1-build-spec.md` section 4 carries the working procedure.
 
-**Open to correction.** If the decision was meant to keep Astra as author of the executable tests and change only who implements, the Verifier row in the build specification's role table changes back to Astra and nothing else does.
+**Confirmed by Sean, 2026-10-01.** "Claude writes the test and Astra reviews (sometimes). We have a budget constraint with Astra so it will be used at milestones only." The reading above stands. Astra's cross-reviews are reserved for milestones, not for individual slices.
 
 **Consequences elsewhere.** The resolution note §4 and the acceptance plan's "Owner: Astra, acting as Verifier" line are read with this entry. Neither file is edited.
 
