@@ -16,8 +16,14 @@
 //      source set that follows SEAM.md §7 "Confinement", fails each mutant of it
 //      on the rule the mutant breaks, and has the limit SEAM.md states.
 //
+//   5-8. the slice-2 helpers: see slice2.mjs.
+//   9. the slice-2 acceptance files themselves, run against a witness engine:
+//      every test passes, and each defect switched on in the witness makes
+//      the test meant to catch it fail. See witness.mjs. This part takes a
+//      few minutes; --fast leaves it out.
+//
 // It is not an acceptance test and is not run by scripts/run-tests.mjs.
-// Usage: node packages/engine/test/acceptance/harness/selfcheck/run.mjs
+// Usage: node packages/engine/test/acceptance/harness/selfcheck/run.mjs [--fast]
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -46,6 +52,8 @@ import { hasIdForm, isoNow, newId, ulid } from '../ids.mjs';
 import { procStartTime } from '../proc.mjs';
 import { inspectSources, tokenize } from '../source-lint.mjs';
 import * as cases from '../store-cases.mjs';
+import { slice2Checks } from './slice2.mjs';
+import { witnessChecks } from './witness.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WITNESS = readFileSync(join(here, 'witness-schema.sql'), 'utf8');
@@ -555,6 +563,15 @@ await check('source lint limit: a mode query under another name that is only cal
   assert.deepEqual(r, { door: [], callOnly: [], names: [] });
 });
 
+// ---- 5 to 8. slice 2 -------------------------------------------------------------
+
+await slice2Checks(check, work);
+
+// ---- 9. the slice-2 tests against the witness engine -------------------------------
+
+const fast = process.argv.includes('--fast');
+if (!fast) await witnessChecks(check, work);
+
 // ---- report --------------------------------------------------------------------
 
 rmSync(work, { recursive: true, force: true });
@@ -566,5 +583,5 @@ for (const [ok, name, err] of results) {
     console.log(`FAIL ${name}\n     ${String(err?.stack ?? err).split('\n').slice(0, 4).join('\n     ')}`);
   }
 }
-console.log(`\nselfcheck: ${results.length - failed} passed, ${failed} failed`);
+console.log(`\nselfcheck: ${results.length - failed} passed, ${failed} failed${fast ? ' (--fast: the witness-engine part was left out)' : ''}`);
 process.exit(failed === 0 ? 0 : 1);

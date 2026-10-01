@@ -1,0 +1,73 @@
+{
+  "$comment": "Verifier's expected run, execution-domain and lease tables, and what each run outcome leaves behind. Derived from D1 A.5 (Run, Domain), §§4.1, 4.5, 8.3, 16 and E7, with build spec §6 corrections 1, 2, 12 and 13 (Review B08, B17). Tests compare the engine against this file and never read the engine's own tables.",
+  "run": {
+    "states": ["created", "claimed", "executing", "validating", "proposal_captured", "finalizing", "ended"],
+    "edges": [
+      ["created", "claimed"],
+      ["claimed", "executing"],
+      ["claimed", "finalizing"],
+      ["executing", "validating"],
+      ["executing", "finalizing"],
+      ["validating", "finalizing"],
+      ["validating", "proposal_captured"],
+      ["proposal_captured", "finalizing"],
+      ["finalizing", "ended"],
+      ["finalizing", "finalizing"],
+      ["created", "finalizing"]
+    ],
+    "$edges_comment": "The last edge is correction 12: recovery, Stop or Abandon can end a run that is still `created`.",
+    "event_state": {
+      "run.created": "created",
+      "run.claimed": "claimed",
+      "run.started": "executing",
+      "run.validating": "validating",
+      "run.proposal_captured": "proposal_captured",
+      "run.finalizing": "finalizing",
+      "run.ended": "ended"
+    },
+    "outcomes": {
+      "completed": { "reason_class": ["none"], "workspace": "retained" },
+      "failed": { "reason_class": ["diff_violation", "ref_violation", "invalid_result", "infra_error", "integration_conflict"], "workspace": "retained" },
+      "refused": { "reason_class": ["preflight_refused"], "workspace": null },
+      "timed_out": { "reason_class": ["deadline"], "workspace": "retained" },
+      "stopped": { "reason_class": ["human_stop", "budget"], "workspace": "retained" },
+      "abandoned": { "reason_class": ["human_abandon"], "workspace": "discarded" },
+      "recovered": { "reason_class": ["recovered"], "workspace": "retained" }
+    },
+    "$outcomes_comment": "D1 §4.1 and §4.5 step 6. `workspace` is the disposition once the run has ended; null means not pinned."
+  },
+  "domain": {
+    "states": ["allocated", "launched", "terminated", "quarantined"],
+    "edges": [
+      ["allocated", "launched"],
+      ["launched", "terminated"],
+      ["allocated", "terminated"],
+      ["launched", "quarantined"],
+      ["allocated", "quarantined"],
+      ["quarantined", "terminated"]
+    ],
+    "$edges_comment": "The last edge is correction 13: a quarantine ends on observed termination, and on nothing else (correction 2).",
+    "terminal": ["terminated"]
+  },
+  "lease": {
+    "kinds": ["run", "integration", "workspace", "quarantine"],
+    "execution_authority": ["run", "integration", "workspace"],
+    "$comment": "D1 §8.3 and §4.5. A lease is `active` (released_at null, closing 0), `closing` (released_at null, closing 1: role effects and late callbacks are refused, cleanup is allowed), or `released` (released_at set). A `quarantine` lease is a reservation, never execution authority; it is released only when termination has been observed.",
+    "edges": [
+      ["active", "closing"],
+      ["closing", "released"],
+      ["closing", "quarantine_reservation"],
+      ["quarantine_reservation", "released"]
+    ]
+  },
+  "work_after_run": {
+    "$comment": "What a run's outcome does to its work item in slice 2 (SEAM.md §16). `complete` holds for kinds whose path does not integrate; the integrating kinds are pinned in slice 3.",
+    "completed": "complete",
+    "stopped": "held",
+    "recovered": "held",
+    "abandoned": "eligible",
+    "timed_out": "parked",
+    "failed": "eligible, or parked at repair_attempts_max",
+    "refused": "eligible, or parked at preflight_refusals_max"
+  }
+}

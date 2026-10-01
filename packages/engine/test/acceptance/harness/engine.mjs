@@ -13,7 +13,21 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
-export const CLI = join(REPO_ROOT, 'packages', 'engine', 'dist', 'cli.js');
+
+// The harness self-check can point the tests at its witness engine
+// (selfcheck/witness-engine.mjs) to show that they are satisfiable and that
+// they catch defects. Such a run is never an acceptance run: with the variable
+// set, every test file gains one test that fails, so no runner can report a
+// pass that the real engine did not earn.
+const WITNESS = process.env.SURETY_WITNESS_ENGINE;
+export const WITNESS_MARKER = 'NOT AN ACCEPTANCE RUN: the harness is driving the self-check witness engine';
+if (WITNESS) {
+  const { test } = await import('node:test');
+  test(WITNESS_MARKER, () => {
+    throw new Error('SURETY_WITNESS_ENGINE is set. Unset it to test the engine.');
+  });
+}
+export const CLI = WITNESS ?? join(REPO_ROOT, 'packages', 'engine', 'dist', 'cli.js');
 export const ENGINE_MIGRATIONS = join(REPO_ROOT, 'packages', 'engine', 'migrations');
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5 };
