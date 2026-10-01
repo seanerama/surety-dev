@@ -75,6 +75,19 @@ export const MUTANTS = [
   ['recovery_not_recorded', 'M18-crash-boundaries', 'killed at launch.before_ownership'],
   ['recovery_overwrites_outcome', 'M18-crash-boundaries', 'killed at run_end.before_ended'],
   ['signal_recorded_pid', 'M18-crash-boundaries', 'a recorded pid that now belongs to an unrelated process is not signalled'],
+  // The cases written after the slice-2 review (SEAM.md §22).
+  ['waits_for_stdout_eof', 'M16-quarantine', 'a role that completes and exits, leaving a descendant with its output open, ends completed once the descendant is terminated'],
+  ['unknown_waits_for_grace', 'M16-quarantine', 'with the boundary reporting unknown, a stopped run is quarantined at once, not after the grace periods'],
+  ['resume_hold_no_event', 'M14-abandon', 'Resume of an eligible item on dispatch hold writes exactly one work.resumed event, in the transaction that clears the hold'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that enters finalizing fails once: the run still ends, and the project dispatches its next item'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that ends the run fails once: the run still ends, and the project dispatches its next item'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'a lease nobody renews expires, and the next tick ends its run, although the engine that owns it is alive'],
+  ['no_self_renewal', 'M15-lease-supervision', 'a role that sends no heartbeat for longer than lease_ttl keeps its lease, because the engine renews it, and has its result accepted'],
+  ['expired_lease_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
+  ['expired_result_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
+  ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in the repository's hooks directory is not run when the engine creates a workspace"],
+  ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in a directory the repository's configuration names as core.hooksPath is not run when the engine creates a workspace"],
+  ['worktree_probe_literal_path', 'M31-worktree-add-symlinked-home', 'with the engine home behind a symbolic link, a dispatch launches, its worktree_add is recorded as succeeded, and no worktree is left without a workspaces row'],
 ];
 
 // The harness starts the engine with a constructed environment, so a defect
