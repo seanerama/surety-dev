@@ -10,7 +10,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { seamDescribe, seamRoute } from '../testing/seam.js';
+import { seamBackends, seamDescribe, seamRoute } from '../testing/seam.js';
 import { checkTarget, checkToken, readJsonBody } from './boundary.js';
 
 interface Reply {
@@ -59,6 +59,25 @@ const decodeSegment = (segment: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const isObject = (b: unknown): b is Record<string, unknown> => typeof b === 'object' && b !== null && !Array.isArray(b);
+
+// A body that is absent or an object of only these fields.
+const onlyFields = (b: unknown, fields: string[]): Record<string, unknown> => {
+  if (b === undefined) return {};
+  if (!isObject(b)) throw new Refusal(400, 'invalid_value', 'The request body must be a JSON object.', 'Send a JSON object.', { field: null });
+  for (const key of Object.keys(b)) {
+    if (!fields.includes(key)) throw new Refusal(400, 'unknown_field', `"${key}" is not a field of this command.`, `Send only ${fields.join(', ') || 'an empty object'}.`, { field: key });
+  }
+  return b;
+};
+
+const optionalString = (b: Record<string, unknown>, field: string): string | undefined => {
+  const v = b[field];
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string') throw new Refusal(400, 'invalid_value', `"${field}" must be a string.`, `Send "${field}" as a string.`, { field });
+  return v;
 };
 
 const noFields = (b: unknown) => {
@@ -112,6 +131,54 @@ export function createApiServer(state: EngineState): http.Server {
           return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
         }
         if (post) return { kind: 'command', name: 'project.policy_submit', args: (b) => ({ project, body: b }) };
+      }
+      if (rest.length === 1 && rest[0] === 'tick' && post) {
+        return {
+          kind: 'command',
+          name: 'project.tick',
+          args: (b) => {
+            noFields(b);
+            return { project };
+          },
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'runs' && (rest[2] === 'stop' || rest[2] === 'abandon') && post) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return {
+          kind: 'command',
+          name: rest[2] === 'stop' ? 'run.stop' : 'run.abandon',
+          args: (b) => ({ project, run, preview_hash: optionalString(onlyFields(b, ['preview_hash']), 'preview_hash') }),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'runs' && get) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'run.representation', args: { project, run } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'work' && rest[2] === 'resume' && post) {
+        const workItem = decodeSegment(rest[1]!);
+        if (workItem === null) return null;
+        return {
+          kind: 'command',
+          name: 'work.resume',
+          args: (b) => {
+            noFields(b);
+            return { project, work_item: workItem };
+          },
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'decisions' && rest[2] === 'answer' && post) {
+        const decision = decodeSegment(rest[1]!);
+        if (decision === null) return null;
+        return {
+          kind: 'command',
+          name: 'decision.answer',
+          args: (b) => {
+            const body = onlyFields(b, ['option', 'preview_hash', 'note']);
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note };
+          },
+        };
       }
       if (rest.length === 1 && (rest[0] === 'pause' || rest[0] === 'resume') && post) {
         return {
@@ -236,7 +303,9 @@ export function createApiServer(state: EngineState): http.Server {
           return refuseAudited(err);
         }
         try {
-          send(await store().call<Reply>('mutate', { name: route.name, args, actor, method, path: target.path }));
+          const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
+          send({ status: result.status, body: result.body });
+          if (result.effects && result.effects.length > 0) state.runtime?.afterCommit(result.effects);
         } catch (err) {
           refuse(err);
         }
@@ -285,8 +354,9 @@ function engineInfo(state: EngineState) {
     version: ENGINE_VERSION,
     incarnation: state.lock.incarnation_id,
     mode: state.mode,
-    // No backend is qualified in M1; the scripted adapter arrives in slice 2.
-    backends: [],
+    // The backends a dispatch may use: in M1 only the scripted backend, and
+    // only where the test seam provides it.
+    backends: seamBackends().map((b) => b.id),
     config: inspectEngineConfig(state.config),
     startup: { step: state.step, completed: [...state.completed], failed: state.failed },
   });

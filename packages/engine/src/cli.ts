@@ -29,18 +29,21 @@ if (command !== 'serve') {
 // migrations directory reaches the engine as an ordinary parameter.
 let harness = false;
 let migrationsDir: string | null = null;
+let scriptedDir: string | null = null;
 const barrierValues: string[] = [];
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
     harness = true;
-  } else if (flag === '--harness-migrations' || flag === '--harness-barrier') {
+  } else if (flag === '--harness-migrations' || flag === '--harness-barrier' || flag === '--harness-scripted') {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
     harnessOnly.push(flag);
     if (flag === '--harness-migrations') {
       migrationsDir = isAbsolute(value) ? value : resolve(value);
+    } else if (flag === '--harness-scripted') {
+      scriptedDir = isAbsolute(value) ? value : resolve(value);
     } else {
       barrierValues.push(value);
     }
@@ -49,7 +52,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
-const harnessProblem = configureHarness(harness, barrierValues);
+const harnessProblem = configureHarness(harness, barrierValues, scriptedDir);
 if (harnessProblem !== null) usage(harnessProblem);
 
 const home = process.env.SURETY_HOME;
