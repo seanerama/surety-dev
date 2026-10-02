@@ -1,5 +1,5 @@
 {
-  "$comment": "The git journal as the slice-3 tests of the first Verifier session use it: the four journal kinds with the operation kind each belongs to, the five boundaries at which a barrier can stop the engine, and the events of an operation that ran its ordinary course. Derived from D1 §§2.5, 3.5, 6.3, 7.3, 7.5, 7.10 and Plan §2 ('deterministic barriers at intent commit, effect application, receipt commit, probe confirmation and finalizer commit'). The journal's full transition table, with build spec §6 corrections 14 and 16 (the exits from `ambiguous`, the five probe outcomes, the attempt statuses), is added here by the second slice-3 session, which generates rows M29 to M34 from it; nothing in this file is to be renamed for that.",
+  "$comment": "The git journal. The first slice-3 Verifier session wrote the four journal kinds with the operation kind each belongs to, the five boundaries at which a barrier can stop the engine, and the events of an operation that ran its ordinary course (D1 §§2.5, 3.5, 6.3, 7.3, 7.5, 7.10; Plan §2: 'deterministic barriers at intent commit, effect application, receipt commit, probe confirmation and finalizer commit'). The second session added, without renaming anything: the journal's transition table with build spec §6 correction 14 (`transitions`), the one barrier recovery adds (`recovery_boundaries`), what is durable at each boundary (`durable`), the five probe outcomes with what each must lead to for each kind (`probe`), the attempt table and the derivation of an operation's status with correction 16 (`attempts`), and the receipts each finalizer writes (`finalizers`). Sources for the additions: D1 §§2.5, 3.5, 4.4, 4.5 step 4, 7.7 to 7.10, 16, A.3, A.5; Review B05 and B17 (the replacement text behind corrections 14 and 16); Plan rows M26 to M34. Where those leave a choice open it is listed in SEAM.md §50. Tests generate rows M29 to M34 from this file through ../harness/journal.mjs and ../harness/probes.mjs; they never ask the engine what a probe outcome leads to.",
   "kinds": {
     "ref_update": { "operation_kind": "git_ref_update", "effect": "git update-ref <ref> <new_oid> <old_oid>, a compare-and-swap", "payload": ["repo", "ref", "old_oid", "new_oid"] },
     "commit_tree": { "operation_kind": "git_commit", "effect": "git commit-tree with the frozen parent and tree, and the publication of the commit under a keep ref", "payload": ["repo", "tree", "old_oid", "new_oid"] },
@@ -15,5 +15,188 @@
   },
   "barrier_name": "journal.<kind>.<boundary>",
   "ordinary_events": ["intended", "applied", "confirmed", "finalized"],
-  "ordinary_status": "succeeded"
+  "ordinary_status": "succeeded",
+
+  "durable": {
+    "$comment": "What a store reopened after a kill at each boundary shows of the operation, and what real git shows of its effect. `events` is the journal's events in order. `exact` false: the engine may commit this boundary's fact together with the next one's (SEAM.md §33: 'where the engine commits two of these facts together, the two barriers fire one after the other with the same store'), so the events begin with these and may go on, legally. That freedom exists for `confirmed` and `finalized` only: `applied` is recorded before the probe is made, and the probe is a git call, across which no transaction is held (D1 §6.1), so a journal that is `applied` and not yet `confirmed` is always a durable state. `effect` is what a test-side look at git finds: `absent` (nothing of the effect is there) or `applied` (all of it is). `finalized` is whether `finalized_at` is set and the finalizer's receipts exist.",
+    "intent_committed": { "events": ["intended"], "exact": true, "effect": "absent", "finalized": false },
+    "effect_applied": { "events": ["intended"], "exact": true, "effect": "applied", "finalized": false },
+    "receipt_committed": { "events": ["intended", "applied"], "exact": true, "effect": "applied", "finalized": false },
+    "probe_confirmed": { "events": ["intended", "applied", "confirmed"], "exact": false, "effect": "applied" },
+    "finalizer_committed": { "events": ["intended", "applied", "confirmed", "finalized"], "exact": true, "effect": "applied", "finalized": true }
+  },
+
+  "recovery_boundaries": {
+    "$comment": "One boundary beyond the Plan's five, reached only when the engine reconciles an operation it did not see through (at startup recovery, or at a tick for an operation left ambiguous). Row M34 names 'the interval before an allowed retry' as a case, and an interval can only be observed where the engine can be made to wait. Same barrier naming: journal.<kind>.reconciled.",
+    "reconciled": "The transaction that records what the probe found has committed: the latest attempt is `reconciled_succeeded`, `reconciled_absent` or `reconciled_partial`, or it is `ambiguous` and the operation is blocked. Nothing that follows from it has been done: no new attempt has been issued, no missing receipt appended, no finalizer run."
+  },
+
+  "states": ["intended", "applied", "confirmed", "failed", "ambiguous", "finalized"],
+  "terminal": ["finalized", "failed"],
+  "transitions": {
+    "$comment": "The journal's legal transitions: D1 A.5 (Journal) with build spec §6 correction 14 (Review B05, B17). D1 gives `ambiguous` no exit and has no path for an effect whose applied receipt was lost; the two edges out of `ambiguous` are the correction. `intended → applied` also carries the reconstructed receipt: recovery found the effect applied, or reconciled it absent and its one retry applied it. There is no edge from a state to itself: an operation that stays blocked gets no further journal event. The state is the kind of the operation's last journal event; the `git_journal_state` projection holds it (D1 §3.5).",
+    "edges": [
+      { "from": "intended", "to": "applied", "by": "the effect was applied and its receipt recorded, in the ordinary course or by recovery (a receipt reconstructed from observation; a retry after reconciled absence)" },
+      { "from": "intended", "to": "failed", "by": "the effect was refused or failed before anything was applied, and is not retried in this operation" },
+      { "from": "intended", "to": "ambiguous", "by": "a command that could have written was killed at its deadline, or the probe found the effect conflicting, unknown or unexplainedly partial" },
+      { "from": "applied", "to": "confirmed", "by": "the probe matched" },
+      { "from": "applied", "to": "ambiguous", "by": "the probe no longer finds what the receipt recorded" },
+      { "from": "confirmed", "to": "finalized", "by": "the finalizer ran" },
+      { "from": "ambiguous", "to": "applied", "by": "correction 14: the probe found the effect applied, or reconciled it absent or boundedly partial and the retry applied it", "correction": 14 },
+      { "from": "ambiguous", "to": "failed", "by": "correction 14: reconciled absent, and the operation is not to be attempted again", "correction": 14 }
+    ]
+  },
+
+  "recovery": {
+    "$comment": "Correction 14: recovery visits every operation that is not `finalized`, confirmed ones included. D1 §7.10 as drafted skipped `confirmed` entries; D1-18 and D1-19 require the opposite. Recovery runs at startup, before full mode, and at every tick before integrity and dispatch (D1 §§7.10, 8.1 step 2, 16.1).",
+    "visits": {
+      "intended": "probe",
+      "applied": "probe",
+      "ambiguous": "probe",
+      "confirmed": "finalizer only: the effect is never attempted again",
+      "failed": "nothing: a failed operation is never retried by recovery (correction 16: failed is not proven absent)",
+      "finalized": "nothing: a finalizer that has run is not run again, and returns the same receipts"
+    }
+  },
+
+  "probe": {
+    "$comment": "Correction 14 (Review B05): each journal kind has a probe that classifies the effect as absent, applied, partial, conflicting or unknown, whether or not a receipt survived. `dispositions` says what each of five ways on must leave; `kinds.<kind>.<outcome>` says how a test constructs the outcome with real git (`fixture`), what the probe must see in it (`means`), and which way on it must lead to (`leads_to`). Unknown and conflicting block for every kind. A retry needs positively reconciled absence (`retry`) or an explicitly bounded remaining effect (`complete`); an operation whose purpose is over is not retried at all (`withdraw`); a single-ref compare-and-swap has no partial state, so a partial result claimed for one blocks (Plan M29). The outcome the probe found is recorded on the attempt it reconciles: the last entry of `operation_attempts.reconciliation_reads` has `result` equal to the outcome's name.",
+    "outcomes": ["absent", "applied", "partial", "conflicting", "unknown"],
+    "durable_states": {
+      "$comment": "The states a probe is made from (Plan M29: 'Include durable states intended, applied and ambiguous'). How a test reaches each is the harness's (../harness/probes.mjs): a kill at a barrier for `intended` and `applied`; for `ambiguous`, a restart during which the probe can only find `unknown`.",
+      "states": ["intended", "applied", "ambiguous"]
+    },
+    "dispositions": {
+      "finalize": {
+        "what": "The effect is there. The missing receipt is appended (the journal reaches `applied` if it was not there), the probe confirms, the finalizer runs. The effect is not attempted again: no new attempt.",
+        "journal": "finalized",
+        "operation": "succeeded",
+        "finalized": true,
+        "new_attempts": 0,
+        "reconciled_attempt": ["reconciled_succeeded", "succeeded"],
+        "blocker": false
+      },
+      "retry": {
+        "what": "The effect is positively absent. The attempt is reconciled absent; one retry follows as a new attempt of the same operation; then the ordinary course.",
+        "journal": "finalized",
+        "operation": "succeeded",
+        "finalized": true,
+        "new_attempts": 1,
+        "reconciled_attempt": ["reconciled_absent"],
+        "blocker": false
+      },
+      "complete": {
+        "what": "Part of the effect is there, and what remains is bounded and declared. The attempt is reconciled partial; a new attempt of the same operation completes the remainder, touching only what the operation owns; then the ordinary course.",
+        "journal": "finalized",
+        "operation": "succeeded",
+        "finalized": true,
+        "new_attempts": 1,
+        "reconciled_attempt": ["reconciled_partial"],
+        "blocker": false
+      },
+      "withdraw": {
+        "what": "The effect is not there, or only owned residue of it is, and the operation is no longer wanted: what it was for is over. The attempt is reconciled (absent, or partial once its residue is removed, touching only what the operation owns); nothing is retried; the journal and the operation are `failed`, and no finalizer runs.",
+        "journal": "failed",
+        "operation": "failed",
+        "finalized": false,
+        "new_attempts": 0,
+        "reconciled_attempt": ["reconciled_absent", "reconciled_partial"],
+        "blocker": false
+      },
+      "block": {
+        "what": "Nothing is retried, completed or finalized, and nothing the probe found is changed. The journal is `ambiguous`, the attempt `ambiguous`, the operation `ambiguous`; one open `blocker` decision names the operation (`subject_type` `operation`). The operation is probed again at every tick; when the probe then finds another outcome, that outcome's way on is taken and the blocker is closed.",
+        "journal": "ambiguous",
+        "operation": "ambiguous",
+        "finalized": false,
+        "new_attempts": 0,
+        "reconciled_attempt": ["ambiguous"],
+        "blocker": true
+      }
+    },
+    "kinds": {
+      "ref_update": {
+        "absent": { "means": "the ref is at the intent's old commit (or, for a ref the intent creates, does not exist)", "fixture": "the ref put at old_oid", "leads_to": "retry" },
+        "applied": { "means": "the ref is at the intent's new commit", "fixture": "the ref put at new_oid", "leads_to": "finalize" },
+        "partial": { "means": "nothing git can hold: a single-ref compare-and-swap has no partially written state. A partial result can only be claimed", "fixture": "the probe is made to report partial (--harness-probe), with no remaining effect declared", "leads_to": "block" },
+        "conflicting": { "means": "the ref is at a commit that is neither the old nor the new one, or is gone when the intent expected it", "fixture": "the ref put at a third commit", "leads_to": "block" },
+        "unknown": { "means": "the ref cannot be read", "fixture": "the repository made unreadable", "leads_to": "block" }
+      },
+      "commit_tree": {
+        "absent": { "means": "the commit object does not exist and no keep ref of the operation does", "fixture": "the commit's object file and its keep ref removed", "leads_to": "retry" },
+        "applied": { "means": "the commit object exists and the operation's keep ref points at it", "fixture": "as the effect left it", "leads_to": "finalize" },
+        "partial": { "means": "the commit object exists and its keep ref does not: the publication is the remaining effect", "fixture": "the keep ref removed, the object left", "leads_to": "complete" },
+        "conflicting": { "means": "the operation's keep ref exists and points at another commit", "fixture": "the keep ref put at another commit", "leads_to": "block" },
+        "unknown": { "means": "the object store cannot be read", "fixture": "the object store made unreadable", "leads_to": "block" }
+      },
+      "worktree_add": {
+        "$comment": "A workspace is added for one run, and a probe of its operation is only ever made when that run is over: recovery ends every run it finds (SEAM.md §16), and a run whose `worktree add` was killed at its deadline is ended then (SEAM.md §45). So nothing is added again: a complete worktree is adopted, once, as the ended run's retained workspace (Plan M31), and absence and owned residue are reconciled and the operation withdrawn.",
+        "absent": { "means": "nothing is at the owned path and the repository has no worktree metadata for it", "fixture": "no artifacts", "leads_to": "withdraw" },
+        "applied": { "means": "a complete worktree of the repository is at the owned path, detached at the intent's base", "fixture": "git worktree add --detach, complete", "leads_to": "finalize" },
+        "partial": { "means": "residue that is verifiably the operation's own: the repository's metadata for the owned path without its directory, or the directory with its link to that metadata and no complete checkout", "fixture": "the worktree's directory removed, its metadata left", "leads_to": "withdraw" },
+        "conflicting": { "means": "something that is not the operation's is at the owned path: a file, a link, a directory with no link to the repository's metadata for it, another repository's worktree", "fixture": "a directory with unrelated content at the owned path", "leads_to": "block" },
+        "unknown": { "means": "the repository's worktree metadata cannot be read", "fixture": "the worktree metadata made unreadable", "leads_to": "block" }
+      },
+      "worktree_remove": {
+        "absent": { "means": "the owned worktree is still there, directory and metadata", "fixture": "the worktree present", "leads_to": "retry" },
+        "applied": { "means": "nothing is at the owned path and the repository has no worktree metadata for it", "fixture": "git worktree remove, complete", "leads_to": "finalize" },
+        "partial": { "means": "owned residue remains: the metadata without the directory, or the directory, still linked to that metadata, without the metadata", "fixture": "the worktree's directory removed, its metadata left", "leads_to": "complete" },
+        "conflicting": { "means": "the owned worktree is gone and something that is not the operation's is at its path", "fixture": "the worktree removed and a directory with unrelated content put at its path", "leads_to": "block" },
+        "unknown": { "means": "the repository's worktree metadata cannot be read", "fixture": "the worktree metadata made unreadable", "leads_to": "block" }
+      }
+    }
+  },
+
+  "attempts": {
+    "$comment": "Operation attempts: D1 §2.5, §4.4, A.5 (Attempt) with build spec §6 correction 16 (Review B17). D1 has no rule that admits the first attempt, gives `reconciled_absent` with a retry permitted no operation status, and cannot reconcile a recorded `failed` attempt. In force: every attempt state derives an operation status; the first attempt is admitted once; a failed attempt is never treated as proven absence.",
+    "statuses": ["started", "succeeded", "failed", "ambiguous", "reconciled_succeeded", "reconciled_absent", "reconciled_partial"],
+    "edges": [
+      ["started", "succeeded"],
+      ["started", "failed"],
+      ["started", "ambiguous"],
+      ["ambiguous", "reconciled_succeeded"],
+      ["ambiguous", "reconciled_absent"],
+      ["ambiguous", "reconciled_partial"],
+      ["failed", "reconciled_succeeded"],
+      ["failed", "reconciled_absent"],
+      ["failed", "reconciled_partial"]
+    ],
+    "$edges_comment": "The last three are correction 16: a recorded failure can be reconciled by a probe. Nothing in slice 3 requires an engine to do so; they are in the table so that one which does is not refused.",
+    "admission": {
+      "first": "Attempt 1 is admitted once: `(operation, attempt_number)` is unique in the store (D1 §6.2), and numbers count from 1 without a gap.",
+      "next": "Attempt n+1 is admitted only when attempt n is `reconciled_absent`, or `reconciled_partial` with a declared `remaining_scope` on the operation. Never after `failed`, `ambiguous`, `started` or a success.",
+      "after": ["reconciled_absent", "reconciled_partial"]
+    },
+    "succeeds_at": "An attempt becomes `succeeded` when the probe confirms its effect (the journal's `confirmed`), not when the command returns.",
+    "derivation": {
+      "$comment": "The operation's status, from its latest attempt, its journal state and whether a linked successor is recorded. The rules are tried in order; the first whose `when` holds gives the status. Total: every combination an operation can be in has a status. `latest` is the status of the attempt with the highest number, null if there is none; `journal` is the journal state; `successor` is whether another operation names this one in `linked_prior`.",
+      "rules": [
+        { "when": { "successor": true, "latest_not": ["succeeded", "reconciled_succeeded"] }, "status": "superseded", "source": "D1 §4.4: superseded only when a linked successor is recorded" },
+        { "when": { "latest": ["succeeded", "reconciled_succeeded"] }, "status": "succeeded", "source": "A.5" },
+        { "when": { "latest": [null], "journal": ["confirmed", "finalized"] }, "status": "succeeded", "source": "an effect that recovery found applied before any attempt had been recorded: the engine died between the intent and the first attempt, and the effect was there all the same" },
+        { "when": { "journal": ["failed"] }, "status": "failed", "source": "A.5: failed, or reconciled absent with no further attempt permitted" },
+        { "when": { "latest": [null], "journal": ["ambiguous"] }, "status": "ambiguous", "source": "an operation blocked before any attempt was issued" },
+        { "when": { "latest": [null] }, "status": "intended", "source": "A.5: no attempt" },
+        { "when": { "latest": ["started"] }, "status": "in_progress", "source": "A.5" },
+        { "when": { "latest": ["failed"] }, "status": "failed", "source": "A.5" },
+        { "when": { "latest": ["ambiguous"] }, "status": "ambiguous", "source": "A.5" },
+        { "when": { "latest": ["reconciled_partial"] }, "status": "partial", "source": "A.5" },
+        { "when": { "latest": ["reconciled_absent"] }, "status": "intended", "source": "correction 16: the interval before an allowed retry. The effect is positively absent and nothing is in flight, as before the first attempt" }
+      ]
+    },
+    "never_completes_work": ["failed", "partial", "ambiguous", "superseded", "intended", "in_progress"],
+    "successor": "A new operation recorded to do what an earlier operation, which did not succeed, was recorded to do (the integration of the same work item into the same ref) names the earlier one in `linked_prior`; the earlier one's status is then `superseded`. A retry after reconciliation is never a new operation: it is a new attempt of the same one, with the same id and idempotency key."
+  },
+
+  "finalizers": {
+    "$comment": "The domain receipts each finalizer writes (D1 §7.10: 'registry expectation, work item integrated, stage status, candidate and lineage rows, ..., plan registration, project registered'), in the transaction that appends `finalized` and sets `finalized_at`. Inputs are frozen before the effect; repeating a finalizer, after ordinary execution or after any number of recoveries, returns the same receipts: the same rows with the same ids and content, none added (correction 14; Review B05). `../harness/journal.mjs` (`receiptSnapshot`) reads them.",
+    "worktree_add": ["the run's `workspaces` row (`path`, `base_revision`), named by `runs.workspace`", "its `managed_checkouts` row (`run_workspace`, `owner_run`)"],
+    "worktree_remove": ["the workspace's `disposition` `discarded` and `disposed_at`", "its managed checkout no longer listed"],
+    "commit_tree": ["the `revisions` row of the commit (`sha`, `parent_sha`, `kind`, `created_by_run`, `lineage`)", "the registered keep ref that makes the commit reachable"],
+    "ref_update": {
+      "every": ["the registry's expected commit for the ref"],
+      "integration": ["the work item `integrated`, once (`work.integrated`)", "for a stage's work: the stage `integrated` with `integrated_revision`", "for a commit that holds a phase plan: the `phase_plans` row, its `stages` rows and one `stage_build` work item per stage", "for the Architect's kinds: the work item `complete`"],
+      "nomination": ["the `candidates` row", "the registered, immutable nomination ref", "the candidate's lineage closed and its successor opened", "the candidate's `verification` work item", "the Builder's integrated work on that lineage `verifying`"],
+      "bootstrap": ["the project `registered`"]
+    }
+  }
 }

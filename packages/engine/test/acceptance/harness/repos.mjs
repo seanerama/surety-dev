@@ -7,7 +7,7 @@
 // environment and with nothing a fixture repository configures switched on.
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { sha256Hex } from './engine.mjs';
@@ -399,6 +399,13 @@ export function makeUnreadable(repo) {
 // waiting at the pipe is given the configuration through it and goes on;
 // one that was killed meanwhile is simply gone. No test-side git may touch
 // the repository while it is held.
+//
+// Git reads its configuration more than once in one command. So the file is
+// put back under its name, by a rename, before the waiting call is given
+// anything: a call that comes back for its second read then opens the file.
+// (Written through the pipe first, and the name replaced afterwards, a call
+// could come back while the pipe was still under the name, and wait at it
+// for ever: the self-check hung there.)
 export function holdGit(repo) {
   const config = join(repo, '.git', 'config');
   const saved = readFileSync(config);
@@ -408,15 +415,214 @@ export function holdGit(repo) {
   return () => {
     if (!held) return;
     held = false;
+    let pipe = null;
     try {
       // Opening for writing without blocking succeeds only if a reader waits.
-      const fd = openSync(config, constants.O_WRONLY | constants.O_NONBLOCK);
-      writeSync(fd, saved);
-      closeSync(fd);
+      pipe = openSync(config, constants.O_WRONLY | constants.O_NONBLOCK);
     } catch {
       // nobody is waiting at the pipe
     }
-    rmSync(config, { force: true });
-    writeFileSync(config, saved);
+    const restored = `${config}.restored`;
+    writeFileSync(restored, saved);
+    renameSync(restored, config);
+    if (pipe === null) return;
+    try {
+      writeSync(pipe, saved);
+    } catch {
+      // the reader went away meanwhile
+    }
+    closeSync(pipe);
   };
+}
+
+// ---- git states built by hand, for the probe and crash rows (SEAM.md §45) ----------
+// A probe is tested from states the engine did not get to by itself: an
+// effect that was applied behind a journal that never recorded it, half of
+// one, something foreign in its place, a repository that cannot be read. The
+// helpers below build those states with real git and real files. Each is run
+// against real git in the harness self-check.
+
+// Does the object exist in the repository's object store?
+export const objectExists = (repo, oid) => {
+  try {
+    gitQuiet(repo, ['cat-file', '-e', oid]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Every commit object in the repository's object store, reachable from a ref
+// or not, whose message contains `text`. A commit the engine made for a run
+// is found by its `Surety-Run` trailer, whether or not anything points at it.
+export function commitsNaming(repo, text) {
+  const found = [];
+  for (const line of gitQuiet(repo, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname) %(objecttype)']).split('\n')) {
+    const [oid, type] = line.split(' ');
+    if (type === 'commit' && messageOf(repo, oid).includes(text)) found.push(oid);
+  }
+  return found;
+}
+
+// Remove one object from the object store, so that it no longer exists. Only
+// a loose object, which is what a commit just made is, can be removed so.
+export function deleteLooseObject(repo, oid) {
+  const file = join(repo, '.git', 'objects', oid.slice(0, 2), oid.slice(2));
+  if (!existsSync(file)) throw new Error(`${oid} is not a loose object of ${repo}`);
+  rmSync(file, { force: true });
+  if (objectExists(repo, oid)) throw new Error(`${oid} still exists in ${repo} after its file was removed`);
+}
+
+// Make one part of a repository unreadable: 'objects' (the object store) or
+// 'worktrees' (the metadata of its linked worktrees). The part must exist.
+// As root a mode keeps nobody out, so there the whole repository is made
+// unreadable instead (makeUnreadable). Returns the function that restores
+// access, which is safe to call twice.
+export function makePartUnreadable(repo, part) {
+  if (!['objects', 'worktrees'].includes(part)) throw new Error(`unknown part ${part}`);
+  const dir = join(repo, '.git', part);
+  if (!existsSync(dir)) throw new Error(`${dir} does not exist: nothing to make unreadable`);
+  if (process.getuid() === 0) return makeUnreadable(repo);
+  const mode = statSync(dir).mode & 0o7777;
+  chmodSync(dir, 0o000);
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    chmodSync(dir, mode);
+  };
+}
+
+// The worktrees the repository lists: [{path, head, branch, prunable}],
+// branch null if detached, the repository's own work tree included.
+export function worktreeList(repo) {
+  const out = [];
+  let current = null;
+  for (const line of gitQuiet(repo, ['worktree', 'list', '--porcelain']).split('\n')) {
+    if (line.startsWith('worktree ')) {
+      current = { path: line.slice('worktree '.length), head: null, branch: null, prunable: false };
+      out.push(current);
+    } else if (current && line.startsWith('HEAD ')) current.head = line.slice('HEAD '.length);
+    else if (current && line.startsWith('branch ')) current.branch = line.slice('branch '.length);
+    else if (current && line.startsWith('prunable')) current.prunable = true;
+  }
+  return out;
+}
+
+const resolvedParent = (path) => {
+  let head = path;
+  const tail = [];
+  while (!existsSync(head) && dirname(head) !== head) {
+    tail.unshift(head.slice(dirname(head).length + 1));
+    head = dirname(head);
+  }
+  return join(realpathSync(head), ...tail);
+};
+
+// The repository's own metadata directory for a worktree at `path` (the entry
+// under .git/worktrees whose `gitdir` file names `<path>/.git`), or null.
+export function worktreeMetadata(repo, path) {
+  const dir = join(repo, '.git', 'worktrees');
+  if (!existsSync(dir)) return null;
+  for (const name of readdirSync(dir)) {
+    const file = join(dir, name, 'gitdir');
+    if (!existsSync(file)) continue;
+    if (resolvedParent(dirname(readFileSync(file, 'utf8').trim())) === resolvedParent(path)) return join(dir, name);
+  }
+  return null;
+}
+
+// What is at a workspace path and in the repository for it, as a test sees
+// it with its own eyes:
+//   'absent'    nothing at the path, no metadata for it;
+//   'complete'  a worktree the repository lists, not prunable, its directory
+//               there with its .git link, detached at `base` (if given) with
+//               every tracked file checked out and unmodified;
+//   'metadata_only'  the repository's metadata for the path, and no directory;
+//   'directory_only' a directory that still has its .git link, and no metadata;
+//   'incomplete'     a worktree the repository lists whose checkout is not whole;
+//   'foreign'   something at the path that is no worktree of the repository:
+//               a file, a link, a directory with no .git link into it.
+export function workspaceState(repo, path, base) {
+  const metadata = worktreeMetadata(repo, path);
+  let st = null;
+  try {
+    st = lstatSync(path);
+  } catch {
+    // nothing there
+  }
+  if (st === null) return metadata ? 'metadata_only' : 'absent';
+  if (st.isSymbolicLink() || !st.isDirectory()) return 'foreign';
+  const dotGit = join(path, '.git');
+  let link = null;
+  if (existsSync(dotGit) && lstatSync(dotGit).isFile()) {
+    const text = readFileSync(dotGit, 'utf8').trim();
+    if (text.startsWith('gitdir: ')) link = text.slice('gitdir: '.length);
+  }
+  const into = link !== null && resolvedParent(dirname(link)) === resolvedParent(join(repo, '.git', 'worktrees'));
+  if (!into) return 'foreign';
+  if (metadata === null) return 'directory_only';
+  const listed = worktreeList(repo).find((w) => resolvedParent(w.path) === resolvedParent(path));
+  if (!listed || listed.prunable) return 'incomplete';
+  try {
+    if (base !== undefined && gitQuiet(path, ['rev-parse', 'HEAD']) !== base) return 'incomplete';
+    if (gitQuiet(path, ['rev-parse', '--abbrev-ref', 'HEAD']) !== 'HEAD') return 'incomplete';
+    // Tracked files that are missing or modified mean the checkout was not finished (untracked files are a role's, and fine).
+    if (gitQuiet(path, ['status', '--porcelain', '--untracked-files=no']) !== '' && base !== undefined) return 'incomplete';
+  } catch {
+    return 'incomplete';
+  }
+  return 'complete';
+}
+
+// A complete worktree at `path`, detached at `base`, made the way the engine's
+// effect makes one.
+export function addWorktreeByHand(repo, path, base) {
+  gitQuiet(repo, ['worktree', 'add', '-q', '--detach', path, base]);
+}
+
+// The worktree at `path` removed completely: directory and metadata.
+export function removeWorktreeByHand(repo, path) {
+  if (worktreeMetadata(repo, path) !== null && existsSync(path)) gitQuiet(repo, ['worktree', 'remove', '--force', path]);
+  rmSync(path, { recursive: true, force: true });
+  gitQuiet(repo, ['worktree', 'prune']);
+}
+
+// Only the worktree's directory removed: the repository's metadata for it stays.
+export function removeWorktreeDirectory(repo, path) {
+  if (worktreeMetadata(repo, path) === null) throw new Error(`${repo} has no worktree metadata for ${path}`);
+  rmSync(path, { recursive: true, force: true });
+}
+
+// Only the repository's metadata for the worktree removed: its directory, with
+// its .git link, stays.
+export function removeWorktreeMetadata(repo, path) {
+  const metadata = worktreeMetadata(repo, path);
+  if (metadata === null) throw new Error(`${repo} has no worktree metadata for ${path}`);
+  rmSync(metadata, { recursive: true, force: true });
+}
+
+// A directory with unrelated content at `path`: something that is nobody's
+// worktree. Returns {file, content} for the "it was left alone" assertion.
+export function foreignDirectory(path) {
+  mkdirSync(path, { recursive: true });
+  const file = join(path, 'unrelated.txt');
+  const content = `not the engine's: ${path}\n`;
+  writeFileSync(file, content);
+  return { file, content };
+}
+
+// The git processes that name `text` on their command line: [{pid, argv}].
+export function gitProcessesNaming(text) {
+  const found = [];
+  for (const name of readdirSync('/proc')) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const argv = readFileSync(`/proc/${name}/cmdline`, 'utf8').split('\0').filter((arg) => arg !== '');
+      if (/(^|\/)git$/.test(argv[0] ?? '') && argv.some((arg) => arg.includes(text))) found.push({ pid: Number(name), argv });
+    } catch {
+      // gone, or not ours to read
+    }
+  }
+  return found;
 }

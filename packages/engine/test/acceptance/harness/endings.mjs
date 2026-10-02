@@ -14,6 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { armFault, releaseBarrier, waitFor } from './engine.mjs';
 import { CONTRACT, assertRefused } from './fixtures.mjs';
 import { git } from './git.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, roleThatHolds, runToHold } from './gitruns.mjs';
 import { hasIdForm } from './ids.mjs';
 import { runPath, workPath } from './invariants.mjs';
 import {
@@ -34,10 +35,15 @@ import {
 } from './runs.mjs';
 import { BOUNDARY, script, step } from './scripted.mjs';
 import { withStore } from './store.mjs';
+import { armBarrier, journalBarrier } from './journal.mjs';
+import { changedPaths, refOid } from './repos.mjs';
 
 export const RUN_END_FAULTS = JSON.parse(readFileSync(new URL('../contract/run-end-faults.json', import.meta.url), 'utf8'));
 export const ENDINGS = RUN_END_FAULTS.endings;
-export const STAGES = ['before_end', 'quarantined'];
+export const STAGES = ['before_end', 'quarantined', 'committed'];
+
+// The endings that pass through a commit or an integration (slice 3, second session; SEAM.md §48).
+export const throughIntegration = (spec) => spec.through === 'integration';
 
 // One cell of the matrix per ending and fault, in the table's order.
 export function matrixCells(table = RUN_END_FAULTS) {
@@ -165,6 +171,55 @@ export function factsOf(fx, project) {
   return withStore(fx.home, (db) => projectFacts(db, project, disk));
 }
 
+// What the repository and the journal hold once an ending that passes
+// through a commit or an integration is over, again with no id, no commit id
+// and no timestamp in it: how many commits the integration branch gained and
+// which paths they changed; whether every registered ref is where the
+// registry expects it; the revisions recorded, by kind and by the run that
+// made them; every operation's journal events and attempt statuses.
+// `project` is {id, repo: {path, ref}, base}.
+export function gitFacts(fx, project) {
+  const repo = project.repo.path;
+  const tip = refOid(repo, project.repo.ref);
+  return withStore(fx.home, (db) => {
+    const runs = db.prepare('SELECT "id" FROM "runs" WHERE "project" = ? ORDER BY "seq"').all(project.id).map((r) => r.id);
+    return {
+      commits: Number(git(repo, ['rev-list', '--count', `${project.base}..${tip}`])),
+      changed: tip === project.base ? {} : changedPaths(repo, project.base, tip),
+      registry: db
+        .prepare('SELECT "ref", "kind", "expected_oid", "immutable" FROM "ref_registry" WHERE "project" = ? ORDER BY "id"')
+        .all(project.id)
+        .map((row) => `${row.kind} ${row.immutable ? 'immutable' : 'mutable'} ${refOid(repo, row.ref) === row.expected_oid ? 'as expected' : 'not where expected'}`),
+      revisions: db
+        .prepare('SELECT "kind", "created_by_run" FROM "revisions" WHERE "project" = ? ORDER BY "id"')
+        .all(project.id)
+        .map((row) => `${row.kind} by run ${runs.indexOf(row.created_by_run)}`),
+      operations: db
+        .prepare('SELECT "id", "status", "linked_prior" FROM "operations" WHERE "project" = ? ORDER BY "seq", "id"')
+        .all(project.id)
+        .map((op) => ({
+          journal: db.prepare('SELECT "journal_kind", "event_kind" FROM "git_journal_events" WHERE "operation" = ? ORDER BY "seq"').all(op.id).map((e) => `${e.journal_kind} ${e.event_kind}`),
+          projection: db.prepare('SELECT "state", "last_event_seq" FROM "git_journal_state" WHERE "operation" = ?').all(op.id).map((row) => `${row.state} ${row.last_event_seq}`),
+          attempts: db.prepare('SELECT "status" FROM "operation_attempts" WHERE "operation" = ? ORDER BY "attempt_number"').all(op.id).map((a) => a.status),
+          status: op.status,
+          successor_of_another: op.linked_prior !== null,
+        })),
+      out_of_band: db.prepare('SELECT COUNT(*) AS n FROM "out_of_band_changes" WHERE "project" = ?').get(project.id).n,
+    };
+  });
+}
+
+// What the contract table says an ending through integration leaves of the
+// run's journaled operations and of the integration branch.
+export function assertIntegrationExpectations(facts, spec, what) {
+  const { expect } = spec;
+  assert.deepEqual(facts.runs[0].operations.map((op) => [op.journal_kind, op.status]), expect.operations, `${what}: the run's journaled operations and their statuses`);
+  assert.equal(facts.git.commits, expect.commits, `${what}: the commits the integration branch gained`);
+  assert.ok(facts.git.registry.every((row) => row.endsWith(' as expected')), `${what}: every registered ref is where the registry expects it (${facts.git.registry.join('; ')})`);
+  assert.equal(facts.git.out_of_band, 0, `${what}: nothing was observed out of band`);
+  for (const op of facts.git.operations) assert.equal(op.projection.length, 1, `${what}: each operation has one state projection`);
+}
+
 // What the contract table says the ending leaves, whatever was armed. `facts`
 // is projectFacts once the project has gone on; the ending's own run is the
 // first run of the first work item.
@@ -274,6 +329,30 @@ async function claimedRun(t) {
   return { fx, project, item, nextKind: 'review', run: first.id, ttl: TTL };
 }
 
+// A Builder's `fix` item on a repository of its own, whose role has made a
+// permitted edit and waits at a hold. `primary` is what the developer's own
+// work tree has checked out; with `checkpoint` the result asks for one.
+async function heldBuilder(t, { primary = 'detached', checkpoint = false } = {}) {
+  const fx = await scriptedEngine(t, { config: { lease_ttl: TTL } });
+  const git = await addGitProject(fx, { primary });
+  const item = await addItem(fx, git.id, 'fix');
+  fx.scripted.script(item, [roleThatHolds([permittedEdit(), step.usage({ input_tokens: 7 })], [], checkpoint ? { checkpoint: true } : {}), roleThat([step.write('src/second.js', 'export const second = 2;\n')])]);
+  fx.scripted.defaultScript(script.complete());
+  const { run } = await runToHold(fx, git.id, item);
+  return { fx, project: git.id, item, nextKind: 'review', run: run.id, ttl: TTL, git };
+}
+
+// The same, with its role released and its integration waiting at the
+// barrier after the ref update's intent: the work is `integrating`.
+async function integratingRun(t) {
+  const ctx = await heldBuilder(t);
+  ctx.barrier = journalBarrier('ref_update', 'intent_committed');
+  await armBarrier(ctx.fx.engine, ctx.barrier, 'pause');
+  ctx.fx.scripted.release(ctx.item);
+  await ctx.fx.engine.waitUntil(`barrier:${ctx.barrier}`, { timeoutMs: 60_000 });
+  return ctx;
+}
+
 // Each driver brings one run to the point where its end begins, calls
 // `arm(stage, ctx)` at the stages the contract table names, causes the end,
 // and returns. It does not wait for the end: runEnding does.
@@ -364,6 +443,50 @@ const DRIVERS = {
     await tick(fx.engine, ctx.project);
     return ctx;
   },
+
+  // ---- the endings through integration (slice 3, second session) ----
+
+  async integrates(t, arm) {
+    const ctx = await heldBuilder(t);
+    // Stop once between the commit and the integration, so that a fault can be armed on the integration's own transactions.
+    const committed = journalBarrier('commit_tree', 'finalizer_committed');
+    await armBarrier(ctx.fx.engine, committed, 'pause');
+    await arm('before_end', ctx);
+    ctx.fx.scripted.release(ctx.item);
+    await ctx.fx.engine.waitUntil(`barrier:${committed}`, { timeoutMs: 60_000 });
+    await arm('committed', ctx);
+    await releaseBarrier(ctx.fx.engine, committed);
+    return ctx;
+  },
+
+  async integration_conflict(t, arm) {
+    // The developer's own work tree has the integration branch checked out: the integration is refused.
+    const ctx = await heldBuilder(t, { primary: 'integration' });
+    await arm('before_end', ctx);
+    ctx.fx.scripted.release(ctx.item);
+    return ctx;
+  },
+
+  async stop_integrating(t, arm) {
+    const ctx = await integratingRun(t);
+    await confirmWithFault(ctx, 'stop', arm);
+    await releaseBarrier(ctx.fx.engine, ctx.barrier);
+    return ctx;
+  },
+
+  async abandon_integrating(t, arm) {
+    const ctx = await integratingRun(t);
+    await confirmWithFault(ctx, 'abandon', arm);
+    await releaseBarrier(ctx.fx.engine, ctx.barrier);
+    return ctx;
+  },
+
+  async checkpoint(t, arm) {
+    const ctx = await heldBuilder(t, { checkpoint: true });
+    await arm('before_end', ctx);
+    ctx.fx.scripted.release(ctx.item);
+    return ctx;
+  },
 };
 
 // Wait for the run to get somewhere, as the contract table's `retry` says:
@@ -426,7 +549,9 @@ export async function runEnding(t, name, { fault = null } = {}) {
   for (const [stage, seq] of Object.entries(armedAt)) {
     written[stage] = withStore(fx.home, (db) => db.prepare('SELECT DISTINCT "type" FROM "events" WHERE "seq" > ?').all(seq).map((e) => e.type));
   }
-  return { facts: factsOf(fx, project), written, ctx };
+  const facts = factsOf(fx, project);
+  if (throughIntegration(spec)) facts.git = gitFacts(fx, ctx.git);
+  return { facts, written, ctx };
 }
 
 // The unfaulted ending, run once per ending and test file: the reference
@@ -443,6 +568,7 @@ export function reference(name) {
         try {
           const { facts, written } = await runEnding(scope, name);
           assertEndingExpectations(facts, ENDINGS[name], `${name}, no fault`);
+          if (throughIntegration(ENDINGS[name])) assertIntegrationExpectations(facts, ENDINGS[name], `${name}, no fault`);
           return { facts, written };
         } finally {
           for (const fn of cleanup.reverse()) await fn();
@@ -472,5 +598,6 @@ export async function assertCell(t, cell) {
   const what = `${spec.title}; ${cell.fault.what} fails once`;
   const { facts } = await runEnding(t, cell.ending, { fault: cell.fault });
   assertEndingExpectations(facts, spec, what);
+  if (throughIntegration(spec)) assertIntegrationExpectations(facts, spec, what);
   assert.deepEqual(facts, ref.facts, `${what}: the final durable facts differ from those of the same ending with no fault`);
 }

@@ -7,10 +7,11 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import { installProject, waitFor } from './engine.mjs';
-import { createProject } from './journal.mjs';
+import { armBarrier, createProject, journalBarrier } from './journal.mjs';
 import { makeProjectRepo, refOid } from './repos.mjs';
-import { addWork, addWorkOfKind, getRow, runsOf, tick, waitForRun, workItem } from './runs.mjs';
+import { addWork, addWorkOfKind, getRow, runsOf, scriptedEngine, tick, waitForRun, workItem } from './runs.mjs';
 import { VALID_RESULT, script, step } from './scripted.mjs';
+import { withStore } from './store.mjs';
 
 // A project on a repository of its own. `primary` is what the developer's
 // work tree has checked out ('detached', the supported topology, by
@@ -69,3 +70,54 @@ export const PERMITTED_EDIT = Object.freeze({ path: 'src/app.js', content: 'expo
 export const permittedEdit = () => step.write(PERMITTED_EDIT.path, PERMITTED_EDIT.content);
 
 export { script, step, workItem };
+
+// ---- slice 3, second session: plans, stages, nomination (SEAM.md §§40 to 42) --------
+
+// A phase plan as an Architect commits it: .surety/phases/phase-<n>.json,
+// {"phase": n, "stages": [{"number", "goal"}]}.
+export const planPath = (phase) => `.surety/phases/phase-${phase}.json`;
+export const planText = (phase, stages) => `${JSON.stringify({ phase, stages }, null, 2)}\n`;
+export const writePlan = (phase, stages) => step.write(planPath(phase), planText(phase, stages));
+
+// A project of the given tier with a fixture plan of `stages` stages
+// (default one). Returns {project, plan, items}: `items[n]` is the
+// stage_build work item of stage n+1.
+export async function addStagedProject(fx, { tier = 'T2', stages = 1 } = {}) {
+  const project = await addGitProject(fx, { tier });
+  const res = await fx.engine.post('/v1/harness/fixtures/plan', { project: project.id, stages: Array.from({ length: stages }, (unused, i) => ({ number: i + 1, goal: `stage ${i + 1} of the fixture plan` })) });
+  assert.equal(res.status, 201, `plan fixture (body: ${res.text})`);
+  return { project, plan: res.body, items: res.body.stages.map((stage) => stage.work_item) };
+}
+
+// The candidates of a project once it has at least `count` of them. A tick is
+// asked for first: a nomination that is due is made by then.
+export async function waitForCandidates(fx, project, count = 1) {
+  await tick(fx.engine, project);
+  return waitFor(
+    () => {
+      const found = withStoreCandidates(fx.home, project);
+      return found.length >= count ? found : undefined;
+    },
+    { timeoutMs: 15_000, what: `${count} candidate(s) of ${project}` },
+  );
+}
+const withStoreCandidates = (home, project) => withStore(home, (db) => db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(project));
+
+// A Builder's `fix` run held at one boundary of its integration's journal
+// (SEAM.md §§33, 47): the role has sent its result and exited, the run's
+// snapshot is committed, and the integration's ref update waits at the
+// barrier. `boundary` is one of the contract's five. Returns {fx, project,
+// item, run, barrier, launch}.
+export async function pausedIntegration(t, boundary, { config = {} } = {}) {
+  const fx = await scriptedEngine(t, { config });
+  const project = await addGitProject(fx);
+  const item = await addItem(fx, project.id, 'fix');
+  fx.scripted.script(item, [roleThatHolds([permittedEdit(), step.usage({ input_tokens: 11 })]), roleThat([step.write('src/second.js', 'export const second = 2;\n')])]);
+  fx.scripted.defaultScript(script.complete());
+  const { run, launch } = await runToHold(fx, project.id, item);
+  const barrier = journalBarrier('ref_update', boundary);
+  await armBarrier(fx.engine, barrier, 'pause');
+  fx.scripted.release(item);
+  await fx.engine.waitUntil(`barrier:${barrier}`);
+  return { fx, project, item, run, barrier, launch };
+}
