@@ -215,6 +215,25 @@ export async function replayInPages(engine, { since = 0, limit, maxPages = 100_0
   }
 }
 
+// The same reading, keeping what was read: every message of every page from
+// the cursor until a page comes back empty, in the order received, each with
+// its `data` parsed as JSON in `json` (null where the data was too long to
+// keep, undefined where it is not JSON). For a log small enough to hold: the
+// journey's (row M01).
+export async function replayMessages(engine, { since = 0, limit = 500, maxPages = 1000 } = {}) {
+  const messages = [];
+  let cursor = since;
+  for (let pages = 0; pages < maxPages; pages++) {
+    const page = await streamOf(engine, eventsPath({ since: cursor, limit }));
+    if (page.status !== 200) throw new Error(`replay page since=${cursor} → ${page.status} ${JSON.stringify(page.refusal)}`);
+    await page.waitEnd({ what: `the replay page after ${cursor} to end (a request with a limit never waits for new events)` });
+    if (page.ids.length === 0) return messages;
+    for (const message of page.messages) messages.push({ ...message, json: message.data === null ? null : safeJson(message.data) });
+    cursor = page.lastId;
+  }
+  throw new Error(`the replay did not end after ${maxPages} pages`);
+}
+
 // The state of the engine's end of a client's connection, as /proc/net/tcp
 // shows it: 'established', 'closing' (the engine has closed its end; any
 // state but established), or 'gone' (it reset the connection, or the

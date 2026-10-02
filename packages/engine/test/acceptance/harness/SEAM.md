@@ -1855,22 +1855,40 @@ The cases are few by decision (E31), and several pin a name this file fixed rath
 
 ---
 
-# Slice 7: the journey
+# The journey: slice 5, and slice 7 for the same journey read through the API
 
-## 86. The journey adds nothing
+## 86. The journey: a slice-5 target, read again through the API in slice 7
 
-Section 86 was written with the slice-7 acceptance test (2026-10-02): row M01, `M01-kernel-journey.test.mjs`. It fixes no name and asks for no route, fixture, barrier, table or column that sections 1 to 85 do not already give. The procedure is E31's: one file, the fewest cases, no stand-in engine, no self-check. The file was checked for syntax and every name it imports was resolved against the module that exports it. It was not run: it needs slice 5.
+Section 86 was written with the journey's acceptance test (2026-10-02), row M01, and rewritten in place when the journey became a target of the slice-5 build (the Verifier pass after slice 6 was verified; the owner's response to the milestone review, which found that components had been proved before the complete workflow). It fixes no name and asks for no route, fixture, barrier, table or column that the other sections do not already give. The procedure is E31's: the fewest cases, no stand-in engine, no self-check.
+
+**Two files, one journey.** `journey.mjs` makes the journey; both files call it once, in a `before` hook, and each of their cases reads one clause of the row's required result from it.
+
+| File | Listed under | What it reads the journey from | Needs |
+|---|---|---|---|
+| `M01-kernel-journey.test.mjs` (seven cases) | slice 5, first in its list | the store, the repository, the scripted roles' launches, the run read (section 17) and the answers of the gate and authorization commands (sections 70, 75) | slices 1 to 5 |
+| `M01-journey-through-the-api.test.mjs` (two cases) | slice 7 | the event stream in replay pages (section 92), the project read and the decisions read (section 91), the candidate read (section 95) | slice 6 as well |
+
+The first file is the central target of the slice-5 build: it is the one place where what slices 1 to 5 build is made to work together, from a project's creation to an issued Alpha authorization, and it needs nothing of slice 6. The second adds no behaviour. It is the same journey observed where a person would observe it, and it exists because the row's last clause, "API and event history agree with durable rows", could only be read from the store before slice 6 pinned the public reads. (The runner also refuses `--slice 7` when slice 7 lists nothing.)
 
 **What the journey uses,** in its order: `POST /v1/projects` (section 27); the plan fixture with a requirement, and the checks fixture (section 67); a scripted Builder's run, its commit and its integration (sections 28, 30); the T2 nomination and the verification work it registers (section 42); the chain boundary's `continue` (section 40); the review the engine queues once the check's execution is observed, let through the chain boundary like the verification, and the scripted Reviewer's sign-off (sections 40, 68, 70; changed with E36 item 3: the journey made this work with the trigger fixture before); the check-result and environment fixtures (section 67); the two gate routes and the authorization route (sections 70, 75); `GET /v1/projects/:p/runs/:r` (section 17).
+
+**How a decision is found at a chain boundary.** In the slice-5 file, in the store (`openDecision` in `decisions.mjs`, which also checks the preview against the contract). In the slice-7 file, in `GET /v1/projects/:p/decisions`: the journey ticks until that read lists an open `blocker` about the waiting work, and answers it with the `id` and the `preview_hash` the read showed. So the slice-7 journey is one a person could make with the API alone.
 
 **Two combinations no earlier test makes.** Each follows from the sections named; none is a new rule.
 
 - The plan, checks, check-result and environment fixtures are applied to a project created through `POST /v1/projects`, where the slice-5 tests use the project fixture. Such a project has its lineage and its first protected version (sections 42, 66).
 - The checks fixture is called before the project has a candidate. It declares checks of the effective protected version, whatever candidates exist (section 67).
 
-A third, a sign-off recorded before the check's execution, went with E36 item 3: the engine queues the review only once the check has passed, so in the journey the execution now comes first. The first stage-gate evaluation of the journey, made with the candidate verified and no execution on record, therefore lacks the check and the sign-off both (`CHECK_NOT_PASSED`, `SIGNOFF_MISSING`). Engine-made review work, which the paragraph below still names as something the seam does not reach, is in the seam since that decision (section 70).
+A third, a sign-off recorded before the check's execution, went with E36 item 3: the engine queues the review only once the check has passed, so in the journey the execution now comes first. The first stage-gate evaluation of the journey, made with the candidate verified and no execution on record, therefore lacks the check and the sign-off both (`CHECK_NOT_PASSED`, `SIGNOFF_MISSING`).
 
-**What the row names and the seam does not reach** is in `../COVERAGE.md`, under row M01: the event history read over HTTP, a candidate read, and engine-made review work.
+**What the slice-7 file reads, and how far that goes beyond the rows that own the routes.** Each route is pinned by its own row (M70, M72, M74). The journey's two cases compare what the routes show of one whole journey with the durable rows, and in doing so read four things those rows' own cases do not; each follows from the section named:
+
+- every stored event up to the read is one message of the replay, in `seq` order, and its `data` holds the stored `seq`, `type` and `at` and the stored `subject` and `payload` as objects (section 92 says the data is the event; row M72 compares `seq`, `type` and the subject's project);
+- a project whose work is all complete, with no run under way and no open decision, is `idle`, and its `spend_today.invocations` is the number of original ledger rows of the day, three here (section 91; the journey is not started within two minutes of midnight UTC);
+- while work waits at a chain boundary, the decisions read lists exactly the one open `blocker` about it, and at the journey's end it lists nothing (section 91);
+- a candidate's `gates` entry for a kind is the latest stored evaluation of that kind, with the stored `outcome` and `stale` (section 95), and `protected_version.effective` is the project's effective version, here the one the candidate was nominated under.
+
+**What stands behind the two files.** Both were run once against the slice-4 engine with `node --test`: both load, and both fail in their `before` hook at the plan fixture, which that engine has without requirements (`unknown_field`), as they must. `replayMessages` (`sse.mjs`) and the event comparison of the first slice-7 case were exercised outside any test, against a scratch server that served a real slice-4 store's events in section 92's wire form in pages shorter than asked for: 33 events, each compared field by field. Nothing else of the slice-7 file can be run before slices 5 and 6 are built. A defect in either file will show then and goes through the objection procedure.
 
 ---
 

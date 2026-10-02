@@ -95,6 +95,7 @@
       "M23-partial-clone-no-remote.test.mjs"
     ],
     "5": [
+      "M01-kernel-journey.test.mjs",
       "M35-separate-governed-policy-file.test.mjs",
       "M36-capture-protected-only-proposal.test.mjs",
       "M37-apply-approved-protected-proposal.test.mjs",
@@ -134,7 +135,7 @@
       "M74-invocation-boundary.test.mjs"
     ],
     "7": [
-      "M01-kernel-journey.test.mjs"
+      "M01-journey-through-the-api.test.mjs"
     ]
   }
 }
