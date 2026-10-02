@@ -92,14 +92,18 @@ function decodedView(buf: Buffer): View | null {
   const boundary = new Uint8Array(buf.length + 1);
   boundary[buf.length] = 1;
   if (!buf.includes(BACKSLASH)) return null;
-  const bytes: number[] = [];
-  const from: number[] = [];
-  const to: number[] = [];
+  // A decoded byte never comes from fewer than one source byte, so the view
+  // is no longer than `buf`.
+  const bytes = Buffer.allocUnsafe(buf.length);
+  const from = new Int32Array(buf.length);
+  const to = new Int32Array(buf.length);
+  let n = 0;
   const emit = (decoded: Buffer | number[], start: number, end: number) => {
     for (const b of decoded) {
-      bytes.push(b);
-      from.push(start);
-      to.push(end);
+      bytes[n] = b;
+      from[n] = start;
+      to[n] = end;
+      n++;
     }
   };
   let i = 0;
@@ -135,7 +139,7 @@ function decodedView(buf: Buffer): View | null {
     emit([b], i, i + 1);
     i += 1;
   }
-  return { bytes: Buffer.from(bytes), from: Int32Array.from(from), to: Int32Array.from(to), boundary };
+  return { bytes: bytes.subarray(0, n), from, to, boundary };
 }
 
 interface Span {
