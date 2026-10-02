@@ -539,7 +539,7 @@ export function recordDisposition(
 // The engine creates the fix work a "fix" disposition plans (E43; E38 item
 // 6): one `fix` item on the finding's project, naming the finding, in the
 // transaction that records the disposition, whoever's authority recorded it.
-// The trigger identity ("disposition", <finding>, n) is the durable fact: the
+// The trigger identity ("finding", <finding>, n) is the durable fact: the
 // store's uniqueness on it and the disposition's own transaction make it
 // exactly once, across a restart as before. A finding that already has open
 // fix work gets no second item; one whose fix completed and that was reopened
@@ -554,12 +554,12 @@ function registerFixWork(tx: Tx, f: FindingRow, by: string): void {
     .get(f.project, f.id);
   if (open) return;
   const { n } = tx.db
-    .prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) + 1 AS n FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'disposition' AND "trigger_id" = ?`)
+    .prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) + 1 AS n FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'finding' AND "trigger_id" = ?`)
     .get(f.project, f.id) as { n: number };
   const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(by) as { chain: number } | undefined;
   observeTrigger(
     tx,
-    { project: f.project, kind: 'fix', trigger_source: 'disposition', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id }, chain: Math.max(run?.chain ?? 1, 1) },
+    { project: f.project, kind: 'fix', trigger_source: 'finding', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id }, chain: Math.max(run?.chain ?? 1, 1) },
     { finding: f.id },
   );
 }

@@ -271,9 +271,14 @@ export function intendIntegration(
   const item = getWorkItem(tx, run.work_item)!;
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
-  const subject = JSON.parse(item.subject) as { stage?: string };
+  const subject = JSON.parse(item.subject) as { stage?: string; finding?: string };
+  // At T2 and T3 the integration of a stage is a cadence point, and so is the
+  // integration of a fix that names a finding: nothing else would nominate
+  // the fixed code, whose candidate resolves the finding (E43; SEAM.md §42).
+  const namesFinding =
+    item.kind === 'fix' && typeof subject.finding === 'string' && tx.db.prepare('SELECT 1 FROM "findings" WHERE "id" = ? AND "project" = ?').get(subject.finding, run.project) !== undefined;
   let nominate: RefInputs['nominate'] = null;
-  if (item.kind === 'stage_build' && (p.tier === 'T2' || p.tier === 'T3')) nominate = { by: 'engine_cadence' };
+  if ((item.kind === 'stage_build' || namesFinding) && (p.tier === 'T2' || p.tier === 'T3')) nominate = { by: 'engine_cadence' };
   else if (p.tier === 'T1' && result?.nominate === true && (item.kind === 'stage_build' || item.kind === 'fix')) nominate = { by: 'builder_request' };
   const inputs: RefInputs & { fence: boolean; work_kind: string } = {
     purpose: 'integration',
