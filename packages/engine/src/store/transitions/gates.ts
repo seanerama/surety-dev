@@ -505,10 +505,22 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, scope: scopeId, stale: false } };
 }
 
-// A satisfied stage gate completes its stage's work, held by the candidate
-// (SEAM.md §70).
-function completeStageWork(tx: Tx, candidate: CandidateRow, stage: string, evaluation: string): void {
+// The work a candidate holds by ancestry (E43): what it holds itself and what
+// every candidate before it on its lineage chain holds. After a fix, the
+// stage's work its first candidate held is held by the fix's candidate too.
+function heldByAncestry(db: Db, candidate: CandidateRow): string[] {
   const held = JSON.parse(candidate.held_work) as string[];
+  for (const id of predecessors(db, candidate)) {
+    const prior = getCandidate(db, id);
+    if (prior) held.push(...(JSON.parse(prior.held_work) as string[]));
+  }
+  return [...new Set(held)];
+}
+
+// A satisfied stage gate completes its stage's work, held by the candidate
+// by ancestry (SEAM.md §70; E43).
+function completeStageWork(tx: Tx, candidate: CandidateRow, stage: string, evaluation: string): void {
+  const held = heldByAncestry(tx.db, candidate);
   const row = tx.db.prepare('SELECT "work_item" FROM "stages" WHERE "id" = ?').get(stage) as { work_item: string | null } | undefined;
   if (!row?.work_item || !held.includes(row.work_item)) return;
   const item = getWorkItem(tx, row.work_item);
@@ -623,15 +635,15 @@ export function proposeAuthorization(tx: Tx, args: { project: string; candidate:
 
 // The stage gates the engine evaluates at a tick (SEAM.md §70): of every
 // candidate whose verification work is complete, each stage whose work the
-// candidate holds and is still verifying, when it has no evaluation yet or
-// its latest is stale.
+// candidate holds by ancestry (E43) and is still verifying, when it has no
+// evaluation yet or its latest is stale.
 export function dueStageGates(db: Db, args: { project: string }): { candidate: string; stage: string }[] {
   const out: { candidate: string; stage: string }[] = [];
   const candidates = db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(args.project) as CandidateRow[];
   for (const c of candidates) {
     const v = verificationOf(db, c.id);
     if (!v || v.status !== 'complete') continue;
-    for (const w of JSON.parse(c.held_work) as string[]) {
+    for (const w of heldByAncestry(db, c)) {
       const item = db.prepare('SELECT "kind", "status", "subject" FROM "work_items" WHERE "id" = ?').get(w) as { kind: string; status: string; subject: string } | undefined;
       if (!item || item.kind !== 'stage_build' || item.status !== 'verifying') continue;
       const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
