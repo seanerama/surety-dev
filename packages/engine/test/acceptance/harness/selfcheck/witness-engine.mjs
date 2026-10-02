@@ -5,8 +5,8 @@
 // It exists for the reason witness-schema.sql does. The slice-2 acceptance
 // tests were written before the engine they test, so running them could not
 // show they are right. This single-file stand-in does what SEAM.md §§12–18
-// ask (with the amendments of §22, made after the slice-2 review), as plainly
-// as it can, so that the self-check can show two things:
+// ask (with the amendments of §§22 and 23, made after the two slice-2
+// reviews), as plainly as it can, so that the self-check can show two things:
 //   - the tests are satisfiable: every one of them passes against something;
 //   - the tests bite: with one defect switched on (WITNESS_MUTANT), the test
 //     meant to catch that defect fails.
@@ -411,10 +411,12 @@ function gitDir(project) {
   return one('SELECT * FROM "projects" WHERE "id" = ?', project);
 }
 // Engine git runs no code from the repository (SEAM.md §16 "Engine git"):
-// hooks are switched off on every call, whatever the repository configures.
-const NO_REPOSITORY_CODE = ['-c', 'core.hooksPath=/dev/null'];
+// hooks and the file-system monitor program are switched off on every call,
+// whatever the repository configures.
+const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
+const NO_FSMONITOR = ['-c', 'core.fsmonitor=false'];
 const git = (repo, args) =>
-  execFileSync('git', [...(mutant('hooks_run') ? [] : NO_REPOSITORY_CODE), '--git-dir', join(repo, '.git'), ...args], {
+  execFileSync('git', [...(mutant('hooks_run') ? [] : NO_HOOKS), ...(mutant('fsmonitor_runs') ? [] : NO_FSMONITOR), '--git-dir', join(repo, '.git'), ...args], {
     env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -547,12 +549,17 @@ const activeLease = (runId) => one(`SELECT * FROM "leases" WHERE "resource_id" =
 const expired = (lease) => !mutant('expired_lease_accepted') && Date.parse(lease.expires_at) <= now();
 const renew = (lease) => exec('UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "id" = ?', iso(), iso(now() + cfg.lease_ttl * 1000), lease.id);
 
-// E25 item 1: the engine renews the lease of every run whose live process it
-// supervises, at least every third of the lease's lifetime.
+// E25 item 1, E27 item 2: the engine renews the lease of every run it is
+// preparing (claimed, not yet spawned) and of every run whose live process it
+// supervises, at least every third of the lease's lifetime. E27 item 5: once
+// it has decided to end a run, it renews nothing for it.
 function renewSupervised() {
   if (mutant('no_self_renewal')) return;
   for (const [id, known] of live) {
-    if (!known.child || known.child.exitCode !== null || known.child.signalCode !== null) continue;
+    if (known.ending) continue;
+    const supervising = known.child && known.child.exitCode === null && known.child.signalCode === null;
+    const preparing = !known.child && known.spawned === false && !mutant('no_renewal_while_preparing');
+    if (!supervising && !preparing) continue;
     const lease = activeLease(id);
     if (!lease || expired(lease)) continue;
     if (now() - Date.parse(lease.renewed_at) >= (cfg.lease_ttl * 1000) / 3) renew(lease);
@@ -614,8 +621,9 @@ async function launch(id, { receipt, domain, workspace, role }) {
       return;
     }
     if (message.type === 'heartbeat') {
+      // E27 item 5: once the end of the run is decided, nothing renews its lease.
       const lease = activeLease(id);
-      if (lease && !expired(lease)) renew(lease);
+      if (lease && !expired(lease) && (!known.ending || mutant('heartbeat_renews_after_end_decided'))) renew(lease);
     } else if (message.type === 'usage') {
       insert('usage_observations', {
         id: newId('uo_'),
@@ -648,15 +656,41 @@ async function launch(id, { receipt, domain, workspace, role }) {
   });
   // The run-end protocol begins when the role exits. What the role wrote
   // before it went is read first; the end of the stream is not waited for,
-  // because a descendant that inherited it can hold it open for ever.
+  // because a descendant that inherited it can hold it open for ever. Nor is
+  // the end of the stream the exit: a role may close its stdout and go on.
   const closed = new Promise((resolve) => child.stdout.once('close', resolve));
-  child.on('exit', async () => {
-    await (mutant('waits_for_stdout_eof') ? closed : Promise.race([closed, sleep(150)]));
+  const roleEnded = () =>
     chain.then(() => {
       if (getRun(id).outcome !== null) return; // already ending for another reason
-      endRun(id, ...outcomeOf(known));
+      endRun(id, ...earned(id, known));
     });
+  if (mutant('stdout_eof_is_exit')) closed.then(roleEnded); // the defect: the end of the output is taken for the end of the role
+  child.on('exit', async () => {
+    await (mutant('waits_for_stdout_eof') ? closed : Promise.race([closed, sleep(150)]));
+    // E27 item 1: what is left without a line ending when the engine stops
+    // reading is a line like any other.
+    if (buffer !== '' && !mutant('unterminated_line_dropped')) {
+      const last = buffer;
+      buffer = '';
+      chain = chain.then(() => onLine(last));
+    }
+    roleEnded();
   });
+}
+
+// The unreleased run lease of the run is past its expiry.
+const leaseExpired = (runId) => {
+  const lease = one(`SELECT * FROM "leases" WHERE "resource_id" = ? AND "resource_kind" = 'run' AND "released_at" IS NULL`, runId);
+  return Boolean(lease) && Date.parse(lease.expires_at) <= now();
+};
+
+// The end of a run whose role has exited, or whose lease is being reconciled,
+// when nothing else has decided it. E27 item 3: if the lease expired before
+// the role earned anything, the run is treated as recovered, not as failed.
+function earned(id, known) {
+  const [outcome, reason] = outcomeOf(known);
+  if (reason === 'infra_error' && leaseExpired(id) && !mutant('lease_expiry_fails_run')) return ['recovered', 'recovered'];
+  return [outcome, reason];
 }
 
 // What a role that has exited earned (SEAM.md §13); a role that has not
@@ -676,6 +710,9 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
   const known = live.get(id) ?? { spawned: null, child: null, result: undefined, ending: null };
   live.set(id, known);
   if (known.ending) return known.ending;
+  // The end the engine decided, kept so that a reconciliation after a failed
+  // attempt ends the run with the same outcome.
+  known.intended ??= [outcome, reason];
   known.ending = (async () => {
     const r = getRun(id);
     if (r.state === 'ended') return;
@@ -702,6 +739,8 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
 
 // D1 §8.1 step 1: a run lease past its expiry is reconciled through the
 // run-end protocol, whether or not this engine is still alive and supervising.
+// An outcome recorded, or decided by this engine before the expiry, stands;
+// otherwise the run is treated as recovered (E27 item 3).
 async function reconcileExpiredLeases() {
   if (mutant('expired_lease_not_reconciled')) return;
   for (const lease of all(`SELECT * FROM "leases" WHERE "resource_kind" = 'run' AND "released_at" IS NULL`)) {
@@ -714,7 +753,11 @@ async function reconcileExpiredLeases() {
       known.ending = null;
       known.failed = false;
     }
-    await endRun(r.id, ...(r.outcome !== null ? [r.outcome, r.reason_class] : outcomeOf(known)));
+    let end = r.outcome !== null ? [r.outcome, r.reason_class] : (known?.intended ?? earned(r.id, known));
+    // The defect: every run whose lease expired is treated as recovered, whatever had been decided for it.
+    if (mutant('expiry_forgets_decided_end') && r.outcome === null) end = ['recovered', 'recovered'];
+    if (known) known.intended = null;
+    await endRun(r.id, ...end);
   }
 }
 
@@ -755,8 +798,15 @@ async function establishTermination(id, known, recovery) {
         done = true;
         break;
       }
-      // An unknown report is acted on when it is made (SEAM.md §14).
-      if (report === 'unknown' && !mutant('unknown_waits_for_grace')) break;
+      // An unknown report is acted on when it is made (SEAM.md §14). It ends
+      // the wait for a report, not the signalling: what was found is still
+      // killed once terminate_grace has passed (D1 §4.5 step 2).
+      if (report === 'unknown' && !mutant('unknown_waits_for_grace')) {
+        if (!killed && !mutant('unknown_stops_signalling')) {
+          setTimeout(() => signal(d.id, 'SIGKILL'), Math.max(0, cfg.terminate_grace * 1000 - (Date.now() - started)));
+        }
+        break;
+      }
       const waited = Date.now() - started;
       if (waited > (cfg.terminate_grace + cfg.kill_grace) * 1000) break;
       if (!killed && waited > cfg.terminate_grace * 1000) {
