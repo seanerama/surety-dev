@@ -1,0 +1,17 @@
+{
+  "$comment": "The kinds of filesystem an engine home may not be on (E36 item 7, which settles E32 item 2; D1 §6.1). A kind is named as /proc/self/mountinfo names the filesystem type of a mount; a type with a subtype (`fuse.sshfs`) is of the kind before the dot. `refused` lists the names the tests pin, each with the class that makes it unsafe; the engine may refuse more names of the same three classes. Any other kind starts normally, `accepted` and a name nobody has heard of included: the engine cannot check that storage honours a sync, and does not pretend to. Tests read expectations from this file, never from the engine.",
+  "refused": [
+    { "name": "tmpfs", "class": "memory" },
+    { "name": "ramfs", "class": "memory" },
+    { "name": "nfs", "class": "network" },
+    { "name": "nfs4", "class": "network" },
+    { "name": "cifs", "class": "network" },
+    { "name": "smb3", "class": "network" },
+    { "name": "fuse", "class": "user_space" },
+    { "name": "fuse.sshfs", "class": "user_space" },
+    { "name": "fuseblk", "class": "user_space" },
+    { "name": "9p", "class": "user_space", "note": "what a Windows drive is when seen from inside WSL (/mnt/c)" }
+  ],
+  "accepted": ["ext4", "xfs", "btrfs", "a-kind-nobody-has-heard-of"],
+  "refusal": { "exit_status": 6, "code": "unsafe_filesystem" }
+}
