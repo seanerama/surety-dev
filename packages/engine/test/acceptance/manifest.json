@@ -36,7 +36,12 @@
       "M23-engine-git-runs-no-repository-code.test.mjs",
       "M31-worktree-add-symlinked-home.test.mjs"
     ],
-    "3": [],
+    "3": [
+      "M15-run-end-fault-matrix.test.mjs",
+      "M15-decided-outcome-stands.test.mjs",
+      "M16-role-output-long-line.test.mjs",
+      "M69-token-interior-whitespace.test.mjs"
+    ],
     "4": [],
     "5": [],
     "6": [],

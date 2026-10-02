@@ -39,6 +39,12 @@ const ENGINE_MIGRATIONS = join(here, '..', '..', '..', '..', 'migrations');
 
 const MUTANT = process.env.WITNESS_MUTANT ?? '';
 const mutant = (name) => MUTANT === name;
+// Three defects written for the slice-2 cases are defects of an engine whose
+// only way to end a run after a failed attempt is the expiry of its lease:
+// with them, the engine does not retry a failed end itself either.
+const NO_RETRY = ['expired_lease_not_reconciled', 'heartbeat_renews_after_end_decided', 'expiry_forgets_decided_end'].includes(MUTANT);
+// The same defect in an engine that does retry: `heartbeat_renews_while_retrying`.
+const heartbeatRenewsAfterDecided = () => mutant('heartbeat_renews_after_end_decided') || mutant('heartbeat_renews_while_retrying');
 
 // ---- command line and configuration ---------------------------------------------
 
@@ -103,7 +109,8 @@ const bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
 
 // ---- a start that cannot begin (SEAM.md §1, §6) -----------------------------------------
 
-const TOKEN_FORM = /^[\x21-\x7e]{32,}$/;
+// The defect `token_space_accepted`: a space or a tab inside the token is let through.
+const TOKEN_FORM = process.env.WITNESS_MUTANT === 'token_space_accepted' ? /^[\x21-\x7e][\x20-\x7e\t]{30,}[\x21-\x7e]$/ : /^[\x21-\x7e]{32,}$/;
 function readToken() {
   let st;
   try {
@@ -422,7 +429,16 @@ const git = (repo, args) =>
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
 
-function journal(project, runId, kind, eventKinds, status = 'succeeded') {
+// The journal of one worktree effect of a run, in two steps that can each be
+// repeated (E28 item 1). The intent is recorded once per run and kind: a
+// repeated intent finds the operation it recorded before. The settle writes
+// the journal's remaining events and the operation's status once.
+const journalKey = (kind, runId) => createHash('sha256').update(`${kind}:${runId}`).digest('hex');
+function journalIntend(project, runId, kind) {
+  const key = journalKey(kind, runId);
+  const existing = one('SELECT * FROM "operations" WHERE "idempotency_key" = ?', key);
+  // The defect `remove_settle_not_repeatable`: a repeated intent records the operation again.
+  if (existing && !(mutant('remove_settle_not_repeatable') && kind === 'worktree_remove')) return existing.id;
   const op = newId('op_');
   insert('operations', {
     id: op,
@@ -432,15 +448,25 @@ function journal(project, runId, kind, eventKinds, status = 'succeeded') {
     kind: 'git_worktree',
     target: '{}',
     subject: '{}',
-    idempotency_key: createHash('sha256').update(`${kind}:${runId}`).digest('hex'),
+    idempotency_key: key,
     semantic_generation: 1,
-    status,
+    status: 'intended',
     deadline_at: iso(now() + 60_000),
-    finalized_at: iso(),
   });
-  eventKinds.forEach((eventKind, i) =>
-    insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: i + 1, journal_kind: kind, event_kind: eventKind, payload: JSON.stringify({ repo: 'dev', run: runId }) }),
-  );
+  emit('operation.intended', { operation: op, project, run: runId });
+  insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: 1, journal_kind: kind, event_kind: 'intended', payload: JSON.stringify({ repo: 'dev', run: runId }) });
+  emit('git.journal_intended', { operation: op, project, run: runId });
+  return op;
+}
+function journalSettle(project, runId, kind, op, eventKinds = ['applied', 'confirmed', 'finalized'], status = 'succeeded') {
+  if (one('SELECT "status" FROM "operations" WHERE "id" = ?', op).status !== 'intended') return;
+  eventKinds.forEach((eventKind, i) => {
+    insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: i + 2, journal_kind: kind, event_kind: eventKind, payload: JSON.stringify({ repo: 'dev', run: runId }) });
+    if (eventKind !== 'failed') emit(`git.journal_${eventKind}`, { operation: op, project, run: runId });
+  });
+  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, iso(), op);
+  emit(`operation.${status}`, { operation: op, project, run: runId });
+  emit('operation.finalized', { operation: op, project, run: runId });
 }
 
 function selectWork(project) {
@@ -519,6 +545,12 @@ async function dispatch(item) {
   await barrier('dispatch.domain_allocated');
   await barrier('dispatch.receipt_committed');
 
+  // D1 §15.1: an unqualified backend is refused before anything is prepared or spawned.
+  if (!qualified()) {
+    live.get(id).spawned = false;
+    return void endRun(id, 'refused', 'preflight_refused');
+  }
+
   const workspace = join(home, 'workspaces', id);
   mkdirSync(join(home, 'workspaces'), { recursive: true });
   git(project.dev_repo_path, ['worktree', 'add', '--detach', workspace, base]);
@@ -527,17 +559,17 @@ async function dispatch(item) {
     // prints with symbolic links resolved, and takes a miss for "not added".
     const listed = git(project.dev_repo_path, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${workspace}`);
     if (!listed) {
-      tx(() => journal(item.project, id, 'worktree_add', ['intended', 'failed'], 'failed'));
+      tx(() => journalSettle(item.project, id, 'worktree_add', journalIntend(item.project, id, 'worktree_add'), ['failed'], 'failed'));
       live.get(id).spawned = false;
       return void endRun(id, 'failed', 'infra_error');
     }
   }
   tx(() => {
-    journal(item.project, id, 'worktree_add', ['intended', 'applied', 'confirmed', 'finalized']);
+    journalSettle(item.project, id, 'worktree_add', journalIntend(item.project, id, 'worktree_add'));
     const ws = newId('ws_');
     insert('workspaces', { id: ws, created_at: iso(), project: item.project, run: id, path: workspace, base_revision: base, current_base: base, disposition: 'active' });
     exec('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?', ws, id);
-    insert('invocation_status_observations', { id: newId('iso_'), created_at: iso(), project: item.project, invocation: receipt, seq: 1, status: 'dispatch_started', at: iso() });
+    appendStatus(item.project, receipt, 'dispatch_started');
   });
   // The spawn is not waited for by the tick.
   launch(id, { receipt, domain, workspace, role }).catch((err) => process.stderr.write(`launch ${id}: ${err.stack}\n`));
@@ -556,7 +588,7 @@ const renew = (lease) => exec('UPDATE "leases" SET "renewed_at" = ?, "expires_at
 function renewSupervised() {
   if (mutant('no_self_renewal')) return;
   for (const [id, known] of live) {
-    if (known.ending) continue;
+    if (known.intended) continue;
     const supervising = known.child && known.child.exitCode === null && known.child.signalCode === null;
     const preparing = !known.child && known.spawned === false && !mutant('no_renewal_while_preparing');
     if (!supervising && !preparing) continue;
@@ -565,7 +597,7 @@ function renewSupervised() {
     if (now() - Date.parse(lease.renewed_at) >= (cfg.lease_ttl * 1000) / 3) renew(lease);
   }
 }
-const appendStatus = (project, receipt, status) =>
+function appendStatus(project, receipt, status) {
   insert('invocation_status_observations', {
     id: newId('iso_'),
     created_at: iso(),
@@ -575,14 +607,14 @@ const appendStatus = (project, receipt, status) =>
     status,
     at: iso(),
   });
+  emit('invocation.status', { invocation: receipt, project, run: one('SELECT "run" FROM "invocation_receipts" WHERE "id" = ?', receipt).run }, { status });
+}
 
 async function launch(id, { receipt, domain, workspace, role }) {
   const known = live.get(id);
   await barrier('launch.before_spawn');
   const r = getRun(id);
   if ((r.state !== 'claimed' || closing(id)) && !mutant('spawn_after_stop')) return; // stopped or abandoned while it waited
-  if (!qualified()) return void endRun(id, 'refused', 'preflight_refused');
-
   const child = spawn(process.execPath, [join(opt.scripted, 'child.mjs')], {
     cwd: workspace,
     detached: true,
@@ -623,7 +655,7 @@ async function launch(id, { receipt, domain, workspace, role }) {
     if (message.type === 'heartbeat') {
       // E27 item 5: once the end of the run is decided, nothing renews its lease.
       const lease = activeLease(id);
-      if (lease && !expired(lease) && (!known.ending || mutant('heartbeat_renews_after_end_decided'))) renew(lease);
+      if (lease && !expired(lease) && (!known.intended || heartbeatRenewsAfterDecided())) renew(lease);
     } else if (message.type === 'usage') {
       insert('usage_observations', {
         id: newId('uo_'),
@@ -639,8 +671,26 @@ async function launch(id, { receipt, domain, workspace, role }) {
       const lease = activeLease(id);
       const fenced = closing(id) || getRun(id).state !== 'executing' || !lease || (expired(lease) && !mutant('expired_result_accepted'));
       if (known.result !== undefined || (fenced && !mutant('late_success_completes'))) return;
-      known.result = message.result;
       if (validResult(message.result)) await barrier('run.result_received');
+      if (!fenced) {
+        // The result is recorded in a transaction of its own. A store failure
+        // there is retried, briefly: the result is the work the role was run for.
+        for (const wait of [0, 100, 300]) {
+          if (wait > 0) await sleep(wait);
+          if (known.intended || getRun(id).state !== 'executing') break;
+          try {
+            tx(() => {
+              exec(`UPDATE "runs" SET "state" = 'validating' WHERE "id" = ?`, id);
+              emit('run.validating', runSubject(r));
+            });
+            break;
+          } catch (err) {
+            process.stderr.write(`result ${id}: ${err.message}\n`);
+          }
+        }
+        if (getRun(id).state !== 'validating') return; // never recorded: the run ends by what was recorded
+      }
+      known.result = message.result;
       if (fenced && mutant('late_success_completes')) {
         // The defect: a success that arrives after the lease closed still completes the work.
         const item = one('SELECT * FROM "work_items" WHERE "id" = ?', r.work_item);
@@ -648,11 +698,29 @@ async function launch(id, { receipt, domain, workspace, role }) {
       }
     }
   };
+  // The text of the line being read is kept in pieces and joined once, when
+  // its line ending arrives: the time is linear in the line's length.
+  let pieces = [];
+  let lastDataAt = 0;
+  child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
-    buffer += chunk;
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) chain = chain.then(() => onLine(line));
+    lastDataAt = Date.now();
+    if (mutant('quadratic_reader')) {
+      // The defect: every chunk is put after all that was read of the line so far, and the whole is searched again.
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) chain = chain.then(() => onLine(line));
+      return;
+    }
+    let start = 0;
+    for (let end = chunk.indexOf('\n'); end >= 0; end = chunk.indexOf('\n', start)) {
+      const line = pieces.join('') + chunk.slice(start, end);
+      pieces = [];
+      start = end + 1;
+      chain = chain.then(() => onLine(line));
+    }
+    if (start < chunk.length) pieces.push(chunk.slice(start));
   });
   // The run-end protocol begins when the role exits. What the role wrote
   // before it went is read first; the end of the stream is not waited for,
@@ -666,14 +734,21 @@ async function launch(id, { receipt, domain, workspace, role }) {
     });
   if (mutant('stdout_eof_is_exit')) closed.then(roleEnded); // the defect: the end of the output is taken for the end of the role
   child.on('exit', async () => {
-    await (mutant('waits_for_stdout_eof') ? closed : Promise.race([closed, sleep(150)]));
+    known.exitedAt = now();
+    // What is already in the pipe is still read: until the pipe closes, or
+    // nothing has arrived for 150 ms, and never for longer than two seconds.
+    const exitedAt = Date.now();
+    const quiet = async () => {
+      while (Date.now() - exitedAt < 2000 && Date.now() - Math.max(exitedAt, lastDataAt) < 150) await sleep(25);
+    };
+    await (mutant('waits_for_stdout_eof') ? closed : Promise.race([closed, quiet()]));
     // E27 item 1: what is left without a line ending when the engine stops
     // reading is a line like any other.
-    if (buffer !== '' && !mutant('unterminated_line_dropped')) {
-      const last = buffer;
-      buffer = '';
-      chain = chain.then(() => onLine(last));
-    }
+    const rest = buffer + pieces.join('');
+    buffer = '';
+    pieces = [];
+    child.stdout.removeAllListeners('data');
+    if (rest !== '' && !mutant('unterminated_line_dropped')) chain = chain.then(() => onLine(rest));
     roleEnded();
   });
 }
@@ -690,6 +765,10 @@ const leaseExpired = (runId) => {
 function earned(id, known) {
   const [outcome, reason] = outcomeOf(known);
   if (reason === 'infra_error' && leaseExpired(id) && !mutant('lease_expiry_fails_run')) return ['recovered', 'recovered'];
+  // The defect `expiry_beats_clean_exit`: a lease found expired when the engine
+  // comes to act on a clean exit makes the run recovered, although the result
+  // was accepted and the role had exited before the expiry.
+  if (mutant('expiry_beats_clean_exit') && leaseExpired(id)) return ['recovered', 'recovered'];
   return [outcome, reason];
 }
 
@@ -710,15 +789,17 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
   const known = live.get(id) ?? { spawned: null, child: null, result: undefined, ending: null };
   live.set(id, known);
   if (known.ending) return known.ending;
-  // The end the engine decided, kept so that a reconciliation after a failed
-  // attempt ends the run with the same outcome.
+  // The end the engine decided, kept so that every later attempt, its own
+  // retry or a reconciliation, ends the run with the same outcome.
   known.intended ??= [outcome, reason];
+  known.recovery = known.recovery || recovery;
+  const [decided, why] = known.intended;
   known.ending = (async () => {
     const r = getRun(id);
     if (r.state === 'ended') return;
     tx(() => {
       if (r.outcome === null || (recovery && mutant('recovery_overwrites_outcome'))) {
-        exec('UPDATE "runs" SET "outcome" = ?, "reason_class" = ? WHERE "id" = ?', outcome, reason, id);
+        exec('UPDATE "runs" SET "outcome" = ?, "reason_class" = ? WHERE "id" = ?', decided, why, id);
       }
       if (r.state !== 'finalizing') {
         exec(`UPDATE "runs" SET "state" = 'finalizing' WHERE "id" = ?`, id);
@@ -727,14 +808,37 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
       exec(`UPDATE "leases" SET "closing" = 1 WHERE "resource_id" = ? AND "released_at" IS NULL`, id);
     });
     if (getRun(id).outcome === 'abandoned' && mutant('discard_before_termination')) discardWorkspace(getRun(id));
-    const terminated = await establishTermination(id, known, recovery);
+    const terminated = await establishTermination(id, known, known.recovery);
     if (!terminated) return void quarantine(id);
-    await finishRun(id, known, recovery);
-  })().catch((err) => {
-    known.failed = true; // nothing retries here; the tick reconciles the lease once it has expired
-    process.stderr.write(`endRun ${id}: ${err.stack}\n`);
-  });
+    await finishRun(id, known, known.recovery);
+  })().then(
+    () => {
+      known.failed = false;
+      known.failures = 0;
+    },
+    (err) => {
+      // Every step above can be repeated (E28 item 1): the engine retries the
+      // end itself, half a second later and then at doubling intervals, and at
+      // every tick. The expiry of the lease, which nothing renews any more, is
+      // the backstop.
+      process.stderr.write(`endRun ${id}: ${err.stack}\n`);
+      known.failed = true;
+      known.ending = null;
+      known.failures = (known.failures ?? 0) + 1;
+      // The defect `refusal_fault_fails_run`: a refusal whose record failed is turned into a failure of the run.
+      if (mutant('refusal_fault_fails_run') && known.intended?.[0] === 'refused') known.intended = ['failed', 'infra_error'];
+      if (!NO_RETRY) setTimeout(() => retryEnd(id), Math.min(500 * 2 ** (known.failures - 1), 10_000)).unref();
+    },
+  );
   return known.ending;
+}
+
+function retryEnd(id) {
+  const known = live.get(id);
+  if (!known?.failed || known.ending || !known.intended) return;
+  const r = getRun(id);
+  if (!r || r.state === 'ended' || r.quarantined) return;
+  endRun(id, ...known.intended);
 }
 
 // D1 §8.1 step 1: a run lease past its expiry is reconciled through the
@@ -870,6 +974,11 @@ function discardWorkspace(r) {
   const ws = one('SELECT * FROM "workspaces" WHERE "run" = ?', r.id);
   if (!ws || ws.disposition === 'discarded') return;
   const project = gitDir(r.project);
+  let op;
+  tx(() => {
+    op = journalIntend(r.project, r.id, 'worktree_remove');
+  });
+  // Removing what is already gone is no failure: the effect can be repeated.
   try {
     git(project.dev_repo_path, ['worktree', 'remove', '--force', ws.path]);
   } catch {
@@ -877,7 +986,7 @@ function discardWorkspace(r) {
     git(project.dev_repo_path, ['worktree', 'prune']);
   }
   tx(() => {
-    journal(r.project, r.id, 'worktree_remove', ['intended', 'applied', 'confirmed', 'finalized']);
+    journalSettle(r.project, r.id, 'worktree_remove', op);
     exec(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ?`, iso(), ws.id);
   });
 }
@@ -886,16 +995,44 @@ async function finishRun(id, known, recovery) {
   await barrier('run_end.before_ended');
   const r = getRun(id);
   if (r.outcome === 'abandoned') discardWorkspace(r);
+  known.finishes = (known.finishes ?? 0) + 1;
+  // What this incarnation knows of the spawn is kept for as long as it lives,
+  // so a repeated attempt records what the first would have. The defect
+  // `retry_forgets_never_launched`: a repeated attempt no longer knows.
+  const spawned = mutant('retry_forgets_never_launched') && known.finishes > 1 ? null : known.spawned;
+  const terminalOf = (receipt) => {
+    const statuses = all('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ?', receipt.id).map((s) => s.status);
+    if (statuses.some((s) => ['ended', 'unknown', 'refused'].includes(s))) return null;
+    const started = statuses.includes('dispatch_started');
+    const launchedForSure = statuses.includes('launched') || spawned === true || known.memberSeen === true;
+    // Never launched: this incarnation dispatched it and did not spawn, or
+    // the dispatch had not started. Otherwise, launched, or not known.
+    const neverLaunched = !launchedForSure && (!started || spawned === false);
+    return { neverLaunched, status: neverLaunched ? 'refused' : launchedForSure ? 'ended' : 'unknown' };
+  };
+  if (mutant('status_outside_tx')) {
+    // The defect: the terminal observation is written on its own, before the
+    // transaction that charges and ends the run, so a failure of that
+    // transaction leaves the observation behind and a repeated attempt skips
+    // the receipt it finds already observed.
+    for (const receipt of all('SELECT * FROM "invocation_receipts" WHERE "run" = ?', id)) {
+      const terminal = terminalOf(receipt);
+      if (terminal) {
+        try {
+          appendStatus(r.project, receipt.id, terminal.status);
+        } catch {
+          // the fault was on this event; the next attempt writes it
+        }
+        known.observedAlone = true;
+      }
+    }
+  }
   tx(() => {
     for (const receipt of all('SELECT * FROM "invocation_receipts" WHERE "run" = ?', id)) {
-      const statuses = all('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ?', receipt.id).map((s) => s.status);
-      if (statuses.some((s) => ['ended', 'unknown', 'refused'].includes(s))) continue;
-      const started = statuses.includes('dispatch_started');
-      const launchedForSure = statuses.includes('launched') || known.spawned === true || known.memberSeen === true;
-      // Never launched: this incarnation dispatched it and did not spawn, or
-      // the dispatch had not started. Otherwise, launched, or not known.
-      const neverLaunched = !launchedForSure && (!started || known.spawned === false);
-      appendStatus(r.project, receipt.id, neverLaunched ? 'refused' : launchedForSure ? 'ended' : 'unknown');
+      const terminal = terminalOf(receipt);
+      if (terminal === null && !(known.observedAlone && known.finishes === 1)) continue;
+      const neverLaunched = terminal ? terminal.neverLaunched : !all('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ?', receipt.id).some((s) => ['ended', 'unknown'].includes(s.status));
+      if (terminal) appendStatus(r.project, receipt.id, terminal.status);
       if ((neverLaunched && !mutant('never_launched_charged')) || mutant('no_ledger_row')) continue;
       insert('ledger_rows', {
         id: newId('led_'),
@@ -913,13 +1050,15 @@ async function finishRun(id, known, recovery) {
         cost_status: 'unknown',
         day_utc: iso().slice(0, 10),
       });
-      emit('ledger.row', { run: id, project: r.project });
+      emit('ledger.row', { run: id, project: r.project, invocation: receipt.id });
     }
     exec(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`, id);
     if (!mutant('grant_not_revoked')) exec('UPDATE "capability_grants" SET "revoked_at" = ? WHERE "run" = ? AND "revoked_at" IS NULL', iso(), id);
     if (mutant('clearance_revives_grant') && r.quarantined) exec('UPDATE "capability_grants" SET "revoked_at" = NULL WHERE "run" = ?', id);
     if (!mutant('lease_not_released')) exec('UPDATE "leases" SET "released_at" = ? WHERE "resource_id" = ? AND "released_at" IS NULL', iso(), id);
     exec(`UPDATE "decisions" SET "status" = 'invalidated', "invalidated_reason" = 'termination observed' WHERE "kind" = 'blocker' AND "subject_id" = ? AND "status" = 'open'`, id);
+    // A confirmation that was never consumed asks about a run that is over.
+    exec(`UPDATE "decisions" SET "status" = 'invalidated', "invalidated_reason" = 'the run has ended' WHERE "kind" IN ('stop_confirm', 'abandon_confirm') AND "subject_id" = ? AND "status" = 'open'`, id);
     exec(`UPDATE "runs" SET "state" = 'ended', "finished_at" = ?, "quarantined" = 0 WHERE "id" = ?`, iso(), id);
     emit('run.ended', runSubject(r), { outcome: r.outcome, ...(recovery && !mutant('recovery_not_recorded') ? { recovery: { incarnation } } : {}) });
     settleWork(r);
@@ -1003,6 +1142,7 @@ async function tick() {
   try {
     await reobserveQuarantined();
     await reconcileExpiredLeases();
+    if (!NO_RETRY) for (const id of [...live.keys()]) retryEnd(id);
     if (mutant('cleanup_repeats')) {
       // The defect: every tick finalizes ended runs again.
       for (const receipt of all(`SELECT i.* FROM "invocation_receipts" i JOIN "runs" r ON r."id" = i."run" WHERE r."state" = 'ended' AND r."outcome" = 'stopped'`)) {
@@ -1042,7 +1182,9 @@ async function tick() {
 }
 
 function checkDeadlines() {
-  for (const r of all(`SELECT * FROM "runs" WHERE "state" IN ('claimed', 'executing') AND "outcome" IS NULL`)) {
+  for (const r of all(`SELECT * FROM "runs" WHERE "state" IN ('claimed', 'executing', 'validating') AND "outcome" IS NULL`)) {
+    // A run whose end is already decided is left to the retry of that end.
+    if (live.get(r.id)?.intended) continue;
     if (Date.parse(r.deadline_at) < now()) endRun(r.id, 'timed_out', 'deadline');
   }
 }
@@ -1058,18 +1200,34 @@ function confirmCommand(project, runId, kind, outcome, reason, body) {
   let decision = decisionFor(kind, runId);
   if (body.preview_hash === undefined && !mutant('stop_without_confirm')) {
     if (!decision) {
-      raiseDecision(project, kind, 'run', runId, ['confirm'], `Confirm ${kind} of run ${runId}.`);
+      tx(() => raiseDecision(project, kind, 'run', runId, ['confirm'], `Confirm ${kind} of run ${runId}.`));
       decision = decisionFor(kind, runId);
     }
     throw refusal(409, 'confirm_required', 'This needs a confirmation.', { decision: decision.id, preview_hash: decision.preview_hash });
   }
-  if (!mutant('stop_without_confirm')) {
-    if (!decision || decision.preview_hash !== body.preview_hash) throw refusal(409, 'decision_stale', 'The preview hash is not the open decision\'s.');
-    exec(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ? WHERE "id" = ?`, iso(), decision.id);
+  // A run whose end the engine has already decided, for a deadline or because
+  // its role exited, is not stopped any more: the outcome decided stands
+  // (SEAM.md §24). An expired lease that no tick has acted on has decided
+  // nothing, and the command is recorded as given (E28 item 2).
+  const known = live.get(runId);
+  if (known?.intended && !mutant('stop_replaces_decided_end')) throw refusal(409, 'illegal_transition', `the engine is already ending this run (${known.intended[0]})`, { run: runId });
+  tx(() => {
+    if (!mutant('stop_without_confirm')) {
+      if (!decision || decision.preview_hash !== body.preview_hash) throw refusal(409, 'decision_stale', 'The preview hash is not the open decision\'s.');
+      exec(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ?, "answer" = ? WHERE "id" = ?`, iso(), JSON.stringify({ option: 'confirm' }), decision.id);
+      emit('decision.answered', { decision: decision.id, project });
+      emit('decision.consumed', { decision: decision.id, project });
+    }
+    // The lease is closing before the request is answered.
+    exec(`UPDATE "leases" SET "closing" = 1 WHERE "resource_id" = ? AND "released_at" IS NULL`, runId);
+  });
+  if (known) {
+    known.intended = null;
+    known.ending = null;
   }
-  // The lease is closing before the request is answered.
-  exec(`UPDATE "leases" SET "closing" = 1 WHERE "resource_id" = ? AND "released_at" IS NULL`, runId);
-  endRun(runId, outcome, reason);
+  // The defect `expiry_beats_stop`: a command confirmed on an expired lease is recorded as a recovery.
+  if (mutant('expiry_beats_stop') && leaseExpired(runId)) endRun(runId, 'recovered', 'recovered');
+  else endRun(runId, outcome, reason);
   return { status: 200, body: { run: { id: runId } } };
 }
 

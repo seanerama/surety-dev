@@ -1,0 +1,170 @@
+{
+  "$comment": "The run-end fault matrix (E28 item 1). Rule: every step of ending a run is repeatable; a step repeated after a partial failure writes the same facts it would have written the first time. For each way a run can end in slice 2 (`endings`) and each store transaction on that ending's path (`faults`), a one-shot fault is armed on the transaction and the run must reach, without a restart, the same final durable facts as the same ending with no fault. A transaction is named by an event it writes (SEAM.md §7, the `before_event` fault): D1 §12.1 has every change write its event in the same transaction, so every transaction on these paths writes an event that D1 A.6 names. The event types are the ones D1 §§3.5, 3.6, 4.1, 4.3, 4.5 and 10 give the facts each ending writes (SEAM.md §§15, 16, 24); they are not read from the engine. Where an engine commits two of them in one transaction, two cells arm the same transaction; where it splits them, each cell arms its own. `stage` says when the fault is armed: `before_end` (default) is the last moment before the test causes the end; `quarantined` is after the run has been quarantined and before termination is observed. `expect` is what the ending leaves whatever the fault: the run's outcome and reason class, whether its invocation is recorded as launched, its workspace's disposition, and the work item once the project has gone on (`work`). `next` is what the project's next item reaches afterwards. Tests generate one separately reported case per fault through ../harness/endings.mjs.",
+  "retry": {
+    "$comment": "How long a faulted ending is given (SEAM.md §16, 'The run lease', the safety net; §24). The engine retries a failed step itself. The test waits `wait_ms`; if the run has not ended it then gives the engine, up to `rounds` times, a clock step of two thirds of lease_ttl (shorter than lease_ttl, so nothing expires merely because the clock moved, and together longer than lease_ttl, so the lease that nothing renews any more expires), a tick, and `wait_ms` again.",
+    "wait_ms": 5000,
+    "rounds": 4
+  },
+  "endings": {
+    "role_completes": {
+      "title": "a role completes",
+      "kind": "verification",
+      "expect": { "outcome": "completed", "reason_class": "none", "launched": true, "workspace": "retained", "work": { "status": "complete", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "run.validating", "what": "the transaction that records the role's result" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.complete", "what": "the transaction that completes the work item" }
+      ]
+    },
+    "invalid_result": {
+      "title": "a role fails with a result that is not valid",
+      "kind": "verification",
+      "expect": { "outcome": "failed", "reason_class": "invalid_result", "launched": true, "workspace": "retained", "work": { "status": "complete", "repair_attempts": 1, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 2 } },
+      "$expect_comment": "The work returns to eligible, is dispatched again as a repair (its second launch completes), and ends complete with one repair attempt.",
+      "next": "complete",
+      "faults": [
+        { "event_type": "run.validating", "what": "the transaction that records the role's result" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.advanced", "what": "the transaction that returns the work item to eligible" }
+      ]
+    },
+    "preflight_refused": {
+      "title": "a preflight refusal after a lease was issued",
+      "kind": "verification",
+      "expect": { "outcome": "refused", "reason_class": "preflight_refused", "launched": false, "workspace": null, "work": { "status": "parked", "repair_attempts": 0, "preflight_refusals": 3, "dispatch_hold": 0, "blocker": "preflight_refusals_max", "runs": 3 } },
+      "$expect_comment": "No backend is qualified, so every dispatch of the project is refused: the work is refused preflight_refusals_max times (the default, 3) and parks; the next item does the same.",
+      "next": "parked",
+      "faults": [
+        { "event_type": "invocation.status", "what": "the transaction that records the refusal" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.advanced", "what": "the transaction that returns the work item to eligible" }
+      ]
+    },
+    "deadline": {
+      "title": "a run passes its deadline",
+      "kind": "review",
+      "expect": { "outcome": "timed_out", "reason_class": "deadline", "launched": true, "workspace": "retained", "work": { "status": "parked", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": "deadline", "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "decision.raised", "what": "the transaction that raises the deadline blocker" },
+        { "event_type": "work.parked", "what": "the transaction that parks the work item" }
+      ]
+    },
+    "stop_claimed": {
+      "title": "Stop from claimed, at the barrier before the spawn",
+      "kind": "verification",
+      "expect": { "outcome": "stopped", "reason_class": "human_stop", "launched": false, "workspace": "retained", "work": { "status": "held", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "decision.consumed", "what": "the transaction that consumes the Stop confirmation" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that records that nothing was launched" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.held", "what": "the transaction that holds the work item" }
+      ]
+    },
+    "stop_executing": {
+      "title": "Stop from executing",
+      "kind": "verification",
+      "expect": { "outcome": "stopped", "reason_class": "human_stop", "launched": true, "workspace": "retained", "work": { "status": "held", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "decision.consumed", "what": "the transaction that consumes the Stop confirmation" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.held", "what": "the transaction that holds the work item" }
+      ]
+    },
+    "abandon_claimed": {
+      "title": "Abandon from claimed, at the barrier before the spawn",
+      "kind": "verification",
+      "expect": { "outcome": "abandoned", "reason_class": "human_abandon", "launched": false, "workspace": "discarded", "work": { "status": "eligible", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 1, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "decision.consumed", "what": "the transaction that consumes the Abandon confirmation" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "git.journal_intended", "what": "the transaction that records the intent to remove the worktree" },
+        { "event_type": "git.journal_applied", "what": "the transaction that records the worktree removal, after the removal succeeded on disk" },
+        { "event_type": "git.journal_confirmed", "what": "the transaction that confirms the worktree removal" },
+        { "event_type": "git.journal_finalized", "what": "the transaction that finalizes the worktree removal" },
+        { "event_type": "invocation.status", "what": "the transaction that records that nothing was launched" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.advanced", "what": "the transaction that returns the work item to its prior status" }
+      ]
+    },
+    "abandon_executing": {
+      "title": "Abandon from executing",
+      "kind": "verification",
+      "expect": { "outcome": "abandoned", "reason_class": "human_abandon", "launched": true, "workspace": "discarded", "work": { "status": "eligible", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 1, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "decision.consumed", "what": "the transaction that consumes the Abandon confirmation" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "git.journal_intended", "what": "the transaction that records the intent to remove the worktree" },
+        { "event_type": "git.journal_applied", "what": "the transaction that records the worktree removal, after the removal succeeded on disk" },
+        { "event_type": "git.journal_confirmed", "what": "the transaction that confirms the worktree removal" },
+        { "event_type": "git.journal_finalized", "what": "the transaction that finalizes the worktree removal" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.advanced", "what": "the transaction that returns the work item to its prior status" }
+      ]
+    },
+    "lease_expiry": {
+      "title": "a lease expiry reconciled by the tick",
+      "kind": "verification",
+      "expect": { "outcome": "recovered", "reason_class": "recovered", "launched": true, "workspace": "retained", "work": { "status": "held", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 1 } },
+      "next": "complete",
+      "faults": [
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.terminated", "what": "the transaction that records the domain's termination" },
+        { "event_type": "invocation.status", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "what": "the transaction that ends the run" },
+        { "event_type": "work.held", "what": "the transaction that holds the work item" }
+      ]
+    },
+    "quarantine_cleared": {
+      "title": "a quarantine followed by its clearance",
+      "kind": "verification",
+      "expect": { "outcome": "stopped", "reason_class": "human_stop", "launched": true, "workspace": "retained", "work": { "status": "held", "repair_attempts": 0, "preflight_refusals": 0, "dispatch_hold": 0, "blocker": null, "runs": 1 } },
+      "$expect_comment": "A Stop whose domain the boundary cannot read: the run is quarantined; when the boundary reports the domain terminated the run ends with the outcome it had.",
+      "next": "complete",
+      "faults": [
+        { "event_type": "decision.consumed", "what": "the transaction that consumes the Stop confirmation" },
+        { "event_type": "run.finalizing", "what": "the transaction that enters finalizing" },
+        { "event_type": "domain.quarantined", "what": "the transaction that quarantines the domain" },
+        { "event_type": "run.quarantined", "what": "the transaction that quarantines the run" },
+        { "event_type": "engine.quarantine", "what": "the transaction that records the quarantine" },
+        { "event_type": "decision.raised", "what": "the transaction that raises the quarantine blocker" },
+        { "event_type": "domain.terminated", "stage": "quarantined", "what": "the transaction that records the observed termination" },
+        { "event_type": "invocation.status", "stage": "quarantined", "what": "the transaction that appends the terminal status observation" },
+        { "event_type": "ledger.row", "stage": "quarantined", "what": "the transaction that writes the ledger row" },
+        { "event_type": "run.ended", "stage": "quarantined", "what": "the transaction that ends the run" },
+        { "event_type": "work.held", "stage": "quarantined", "what": "the transaction that holds the work item" }
+      ]
+    }
+  }
+}

@@ -24,8 +24,14 @@ const ACCEPTANCE = join(here, '..', '..');
 const WITNESS = join(here, 'witness-engine.mjs');
 const REPORTER = join(here, 'json-reporter.mjs');
 
-// Every file the manifest lists for slice 2.
-export const SLICE2_FILES = JSON.parse(readFileSync(join(ACCEPTANCE, 'manifest.json'), 'utf8')).slices['2'];
+// Every file the manifest lists for slice 2, and every file it lists for
+// slice 3 that the witness engine can pass (those written with slice 3's
+// first Verifier session; the name is kept from when slice 2 was the last).
+const MANIFEST = JSON.parse(readFileSync(join(ACCEPTANCE, 'manifest.json'), 'utf8')).slices;
+export const SLICE2_FILES = [...MANIFEST['2'], ...MANIFEST['3']];
+
+// The cells of the run-end fault matrix are named by the contract table.
+const cell = (title, what, event) => `${title}; ${what} (${event}) fails once: the same facts as with no fault, without a restart`;
 
 // [defect switched on in the witness, file, the test that must fail]
 export const MUTANTS = [
@@ -102,6 +108,22 @@ export const MUTANTS = [
   ['stdout_eof_is_exit', 'M16-quarantine', 'a role that sends a valid result, closes its stdout and exits 0 later is not signalled before it exits, and ends completed'],
   ['unterminated_line_dropped', 'M16-quarantine', 'a valid result with no line ending, from a role that exits 0 and leaves a descendant holding its stdout, ends completed'],
   ['unterminated_line_dropped', 'M16-quarantine', 'a valid result with no line ending, from a role that exits 0, ends completed'],
+  // Slice 3, part 1: what the final slice-2 review carried forward (SEAM.md §24).
+  ['remove_settle_not_repeatable', 'M15-run-end-fault-matrix', cell('Abandon from executing', 'the transaction that records the worktree removal, after the removal succeeded on disk', 'git.journal_applied')],
+  ['remove_settle_not_repeatable', 'M15-run-end-fault-matrix', cell('Abandon from claimed, at the barrier before the spawn', 'the transaction that finalizes the worktree removal', 'git.journal_finalized')],
+  ['retry_forgets_never_launched', 'M15-run-end-fault-matrix', cell('Stop from claimed, at the barrier before the spawn', 'the transaction that ends the run', 'run.ended')],
+  ['retry_forgets_never_launched', 'M15-run-end-fault-matrix', cell('Abandon from claimed, at the barrier before the spawn', 'the transaction that returns the work item to its prior status', 'work.advanced')],
+  ['refusal_fault_fails_run', 'M15-run-end-fault-matrix', cell('a preflight refusal after a lease was issued', 'the transaction that enters finalizing', 'run.finalizing')],
+  ['status_outside_tx', 'M15-run-end-fault-matrix', cell('a role completes', 'the transaction that ends the run', 'run.ended')],
+  ['status_outside_tx', 'M15-run-end-fault-matrix', cell('a run passes its deadline', 'the transaction that parks the work item', 'work.parked')],
+  ['stop_replaces_decided_end', 'M15-decided-outcome-stands', 'the Stop is refused with illegal_transition, the run ends timed_out and the work is parked behind the deadline blocker'],
+  ['heartbeat_renews_while_retrying', 'M15-decided-outcome-stands', 'the Stop is refused with illegal_transition, the run ends timed_out and the work is parked behind the deadline blocker'],
+  ['expiry_beats_stop', 'M15-decided-outcome-stands', 'Stop: the run ends stopped, not recovered, and its work is held'],
+  ['expiry_beats_stop', 'M15-decided-outcome-stands', 'Abandon: the run ends abandoned, not recovered, its workspace is discarded and its work waits under a dispatch hold'],
+  ['expiry_beats_clean_exit', 'M15-decided-outcome-stands', 'a clock jump past lease_ttl that lands after the role has exited, and before the engine has acted on the exit, does not make the run recovered'],
+  ['quadratic_reader', 'M16-role-output-long-line', 'a role that writes one line of 64 MiB and then its usage and a valid result ends completed within eight seconds, and nothing after the line is lost'],
+  ['token_space_accepted', 'M69-token-interior-whitespace', 'a token file with a space inside the token refuses the start and is never replaced'],
+  ['token_space_accepted', 'M69-token-interior-whitespace', 'a token file with a tab inside the token refuses the start and is never replaced'],
 ];
 
 // The harness starts the engine with a constructed environment, so a defect
