@@ -1,5 +1,5 @@
-// The attention queue's slice-2 kinds (D1 §3.4, §10; A.8): `blocker`,
-// `stop_confirm` and `abandon_confirm`. Only transition functions raise
+// The attention queue's kinds through slice 3 (D1 §3.4, §10; A.8): `blocker`,
+// `stop_confirm`, `abandon_confirm` and `out_of_band_change`. Only transition functions raise
 // decisions. Identity is (project, kind, subject_type, subject_id,
 // semantic_generation, scope), unique across all statuses; a raise with an
 // open decision of the same identity and preview returns it. The preview
@@ -14,7 +14,7 @@ import type { Tx } from './tx.js';
 
 export const TRANSITION_SCHEMA_VERSION = 1;
 
-export type DecisionKind = 'blocker' | 'stop_confirm' | 'abandon_confirm';
+export type DecisionKind = 'blocker' | 'stop_confirm' | 'abandon_confirm' | 'out_of_band_change';
 
 export interface OptionSpec {
   key: string;
@@ -43,12 +43,13 @@ export interface DecisionRow {
 export interface DecisionSpec {
   project: string;
   kind: DecisionKind;
-  subjectType: 'work_item' | 'run';
+  subjectType: 'work_item' | 'run' | 'operation' | 'out_of_band_change';
   subjectId: string;
   question: string;
   options: OptionSpec[];
   manifest: Record<string, unknown>;
   blockedWorkItems?: string[];
+  blockedOperation?: string;
 }
 
 const SCOPE = 'subject';
@@ -133,7 +134,7 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
   const options = optionsJson(spec.options);
   const preview = previewHash(identity, options, spec.manifest);
   const target = engineSettings().decision_targets[spec.kind] ?? null;
-  const blocked = { work_items: spec.blockedWorkItems ?? [], gate: null, operation: null };
+  const blocked = { work_items: spec.blockedWorkItems ?? [], gate: null, operation: spec.blockedOperation ?? null };
   tx.db
     .prepare(
       `INSERT INTO "decisions" ("id", "created_at", "project", "seq", "kind", "subject_type", "subject_id", "semantic_generation", "scope",

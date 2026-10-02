@@ -15,7 +15,34 @@ import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from '
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
 import { liftToFull, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
-import { setPaused, submitPolicy } from './transitions/project.js';
+import { bootstrapProject, policyFacts, setPaused, submitPolicy } from './transitions/project.js';
+import {
+  acceptFacts,
+  beginIntegration,
+  checkpointContinue,
+  intendCommit,
+  intendIntegration,
+  intendNomination,
+  nominationDue,
+  recordSnapshot,
+  recordWorkspaceMetadata,
+} from './transitions/accept.js';
+import { integrityFacts, recordIntegrity } from './transitions/integrity.js';
+import {
+  blockOperation,
+  finalizeOperation,
+  intendOperation,
+  opDetail,
+  reconcileOperation,
+  recordAmbiguous,
+  recordApplied,
+  recordConfirmed,
+  recordFailed,
+  refuseOperation,
+  startAttempt,
+  unfinishedOperations,
+  withdrawOperation,
+} from './transitions/journal.js';
 import {
   allocateReceipt,
   beginEnd,
@@ -27,21 +54,18 @@ import {
   expiredRunLeases,
   finishRun,
   heartbeat,
-  intendWorktree,
   leaseActive,
-  pendingWorktreeOperations,
   quarantineRun,
   recordFoundProcess,
   recordLaunch,
   recordResult,
   recordUsage,
   renewLease,
-  settleWorktree,
   unendedRuns,
 } from './transitions/runs.js';
 import { type EngineSettings, setEngineSettings } from './transitions/settings.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
-import { resumeWork } from './transitions/work.js';
+import { chainBoundary, resumeWork } from './transitions/work.js';
 
 export interface WorkerData {
   file: string;
@@ -70,7 +94,8 @@ const ok = (body: unknown): CommandResult => ({ status: 200, body });
 const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.pause': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: true })),
   'project.resume': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: false })),
-  'project.policy_submit': (tx, a: { project: string; body: unknown }) => ok(submitPolicy(tx, a)),
+  'project.policy_submit': (tx, a) => ({ status: 200, body: submitPolicy(tx, a), effects: [{ kind: 'journal', project: a.project }] }),
+  'project.create': (tx, a) => ({ status: 201, body: bootstrapProject(tx, a), effects: [{ kind: 'journal', project: a.id }] }),
   'project.tick': (tx, a: { project: string }) => requestTick(tx, a),
   'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
     controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash, decided: a.decided }),
@@ -87,6 +112,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'scheduler.projects': (d) => projectIds(d),
   'runs.quarantined': (d) => quarantinedRuns(d),
   'runs.expired_leases': (d) => expiredRunLeases(d, nowIso()),
+  'run.state': (d, a: { run: string }) => (d.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(a.run) as { state: string } | undefined)?.state ?? null,
+  'journal.unfinished': (d, a: { project: string | null }) => unfinishedOperations(d, a.project ?? undefined),
+  'nomination.due': (d) => nominationDue(d),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -99,9 +127,30 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),
   'invoke.launched': (tx, a) => recordLaunch(tx, a),
   'invoke.found_process': (tx, a) => recordFoundProcess(tx, a),
-  'worktree.intend': (tx, a) => intendWorktree(tx, a),
-  'worktree.settle': (tx, a) => settleWorktree(tx, a),
-  'worktree.pending': (tx) => pendingWorktreeOperations(tx),
+  'journal.detail': (tx, a: { operation: string }) => opDetail(tx, a.operation),
+  'journal.intend': (tx, a) => intendOperation(tx, a),
+  'journal.refuse': (tx, a) => refuseOperation(tx, a),
+  'journal.start_attempt': (tx, a) => startAttempt(tx, a),
+  'journal.applied': (tx, a) => recordApplied(tx, a),
+  'journal.confirmed': (tx, a) => recordConfirmed(tx, a),
+  'journal.failed': (tx, a) => recordFailed(tx, a),
+  'journal.ambiguous': (tx, a) => recordAmbiguous(tx, a),
+  'journal.finalize': (tx, a) => finalizeOperation(tx, a),
+  'journal.reconcile': (tx, a) => reconcileOperation(tx, a),
+  'journal.block': (tx, a) => blockOperation(tx, a),
+  'journal.withdraw': (tx, a) => withdrawOperation(tx, a),
+  'accept.facts': (tx, a) => acceptFacts(tx, a),
+  'accept.intend_commit': (tx, a) => intendCommit(tx, a),
+  'accept.checkpoint': (tx, a) => checkpointContinue(tx, a),
+  'accept.integrating': (tx, a) => beginIntegration(tx, a),
+  'accept.intend_integration': (tx, a) => intendIntegration(tx, a),
+  'nomination.intend': (tx, a) => intendNomination(tx, a),
+  'workspace.snapshot': (tx, a) => recordSnapshot(tx, a),
+  'workspace.metadata': (tx, a) => recordWorkspaceMetadata(tx, a),
+  'integrity.facts': (tx, a) => integrityFacts(tx, a),
+  'integrity.record': (tx, a) => recordIntegrity(tx, a),
+  'project.policy_facts': (tx, a) => policyFacts(tx, a),
+  'scheduler.chain_boundary': (tx, a) => chainBoundary(tx, a),
   'run.lease_active': (tx, a) => leaseActive(tx, a),
   'run.renew': (tx, a) => renewLease(tx, a),
   'run.expire': (tx, a) => expireRun(tx, a),

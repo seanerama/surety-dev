@@ -24,8 +24,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Database } from 'better-sqlite3';
 
-import { branchHead } from '../git/worktree.js';
 import { repoContext } from '../git/exec.js';
+import { integrationCheckouts } from '../git/integrity.js';
+import { branchHead } from '../git/worktree.js';
+import type { Baseline } from '../store/transitions/repo.js';
 import type { BackendSpec, DomainObservation } from '../invoke/backend.js';
 import { markedProcesses } from '../invoke/processes.js';
 import { Refusal } from '../refusal.js';
@@ -37,13 +39,17 @@ import {
   installFixturePlan,
   installFixtureProject,
   installFixtureTrigger,
+  type ProjectBody,
   parsePlanBody,
+  parseProjectBody,
   projectRepo,
 } from './fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
 const WORKER_BARRIERS = ['migration.before_commit'] as const;
-const MAIN_BARRIERS = [
+const JOURNAL_KINDS = ['ref_update', 'commit_tree', 'worktree_add', 'worktree_remove'] as const;
+const JOURNAL_BOUNDARIES = ['intent_committed', 'effect_applied', 'receipt_committed', 'probe_confirmed', 'finalizer_committed', 'reconciled'] as const;
+const MAIN_BARRIERS: readonly string[] = [
   'dispatch.run_created',
   'dispatch.domain_allocated',
   'dispatch.receipt_committed',
@@ -51,8 +57,11 @@ const MAIN_BARRIERS = [
   'launch.before_ownership',
   'run.result_received',
   'run_end.before_ended',
-] as const;
+  // SEAM.md §§33, 45: one per journal kind and boundary.
+  ...JOURNAL_KINDS.flatMap((kind) => JOURNAL_BOUNDARIES.map((boundary) => `journal.${kind}.${boundary}`)),
+];
 const BARRIER_NAMES: readonly string[] = [...WORKER_BARRIERS, ...MAIN_BARRIERS];
+const PROBE_OUTCOMES = ['absent', 'applied', 'partial', 'conflicting', 'unknown'];
 type BarrierAction = 'pause' | 'kill';
 type BarrierState = 'armed' | 'waiting' | 'released' | 'fired';
 
@@ -71,10 +80,12 @@ export interface SeamInit {
   clock: SharedArrayBuffer | null;
   // --harness-scripted: the scripted backend's directory (SEAM.md §13).
   scripted: string | null;
+  // --harness-probe: the outcome every probe of a journal kind reports.
+  probes: Record<string, string>;
 }
 
 type Fault = { point: 'before_event'; event_type: string } | { point: 'audit_write' };
-type TickFault = { point: 'tick_step'; step: 'recover' | 'journal'; project: string; delay_ms: number };
+type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
 // interrupts rolls back and is reported like any other store failure.
@@ -84,7 +95,7 @@ class InjectedFault extends Error {
   }
 }
 
-let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null };
+let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null, probes: {} };
 let clockCell: BigInt64Array | null = null;
 let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
@@ -118,7 +129,7 @@ const registry = new Map<string, { spec: BarrierSpec; state: BarrierState; resum
 // The command line's --harness flag, --harness-barrier values and
 // --harness-scripted directory. Returns a usage problem to report, or null.
 // Called once, before the engine starts.
-export function configureHarness(harness: boolean, barrierValues: string[], scripted: string | null = null): string | null {
+export function configureHarness(harness: boolean, barrierValues: string[], scripted: string | null = null, probeValues: string[] = []): string | null {
   const barriers: BarrierSpec[] = [];
   for (const value of barrierValues) {
     const spec = parseBarrier(value, barriers.length);
@@ -126,9 +137,17 @@ export function configureHarness(harness: boolean, barrierValues: string[], scri
     if (barriers.some((b) => b.name === spec.name)) return `barrier ${spec.name} is armed twice`;
     barriers.push(spec);
   }
-  if (!harness && (barriers.length > 0 || scripted !== null)) return 'harness flags are accepted only with --harness';
+  const probes: Record<string, string> = {};
+  for (const value of probeValues) {
+    const at = value.indexOf('=');
+    const kind = value.slice(0, at);
+    const outcome = value.slice(at + 1);
+    if (at <= 0 || !(JOURNAL_KINDS as readonly string[]).includes(kind) || !PROBE_OUTCOMES.includes(outcome)) return `unknown journal kind or outcome in --harness-probe ${value}`;
+    probes[kind] = outcome;
+  }
+  if (!harness && (barriers.length > 0 || scripted !== null || probeValues.length > 0)) return 'harness flags are accepted only with --harness';
   const shared = harness && barriers.length > 0 ? new SharedArrayBuffer(4 * barriers.length) : null;
-  adopt({ harness, barriers: harness ? barriers : [], shared, clock: harness ? new SharedArrayBuffer(8) : null, scripted: harness ? scripted : null });
+  adopt({ harness, barriers: harness ? barriers : [], shared, clock: harness ? new SharedArrayBuffer(8) : null, scripted: harness ? scripted : null, probes: harness ? probes : {} });
   registry.clear();
   for (const spec of init.barriers) registry.set(spec.name, { spec, state: 'armed' });
   return null;
@@ -151,6 +170,23 @@ export function seamMessage(message: unknown): void {
 
 function listBarriers(): { name: string; action: BarrierAction; state: BarrierState }[] {
   return [...registry.values()].map(({ spec, state }) => ({ name: spec.name, action: spec.action, state }));
+}
+
+// POST /v1/harness/barriers (SEAM.md §33): arm a main-thread barrier while
+// the engine runs, or arm it again after it fired or was released.
+function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> } {
+  const b = isObject(body) ? body : {};
+  const name = b.name;
+  const action = b.action;
+  if (typeof name !== 'string' || !MAIN_BARRIERS.includes(name) || (action !== 'pause' && action !== 'kill')) {
+    throw new Refusal(400, 'invalid_value', 'Unknown barrier or action.', 'Send {"name": <a barrier the engine reaches on its main thread>, "action": "pause"|"kill"}.', { field: 'name' });
+  }
+  const existing = registry.get(name);
+  if (existing && existing.state === 'waiting') {
+    throw new Refusal(409, 'illegal_transition', `Barrier "${name}" is waiting.`, 'Release it first.', { barrier: name });
+  }
+  registry.set(name, { spec: { name, action, slot: -1 }, state: 'armed' });
+  return { barriers: listBarriers() };
 }
 
 function releaseBarrier(name: string): void {
@@ -228,6 +264,16 @@ export function seamObserveDomain(domain: string): DomainObservation {
   return live.length > 0 ? 'running' : 'terminated';
 }
 
+// ---- the journal's probes (main thread) ----------------------------------------
+
+// --harness-probe (SEAM.md §45): the outcome every probe of the journal kind
+// reports while this engine runs, whatever git holds; null outside harness
+// mode and for a kind not named.
+export function seamProbeOutcome(kind: string): string | null {
+  if (!init.harness) return null;
+  return init.probes[kind] ?? null;
+}
+
 // ---- the scheduler's prerequisite steps (main thread) -----------------------
 
 // A tick_step fault (SEAM.md §18): the next time the step runs for that
@@ -248,6 +294,8 @@ export interface SeamRequestHooks {
   body: () => Promise<unknown>;
   store: () => StoreClient;
   actor: Actor;
+  // The engine home and its scratch directory.
+  scratch: () => { home: string; scratch: string };
 }
 
 export interface SeamRoute {
@@ -289,13 +337,13 @@ function advanceClock(body: unknown): { now: string } {
 function armTickFault(body: Record<string, unknown>): TickFault {
   const ok =
     Object.keys(body).every((k) => ['point', 'step', 'project', 'delay_ms'].includes(k)) &&
-    (body.step === 'recover' || body.step === 'journal') &&
+    (body.step === 'recover' || body.step === 'journal' || body.step === 'integrity') &&
     typeof body.project === 'string' &&
     typeof body.delay_ms === 'number' &&
     Number.isInteger(body.delay_ms) &&
     body.delay_ms >= 0;
-  if (!ok) throw new Refusal(400, 'invalid_value', 'Unknown tick_step fault.', 'Send {"point":"tick_step","step":"recover"|"journal","project":...,"delay_ms":<n>}.', { field: 'point' });
-  const fault: TickFault = { point: 'tick_step', step: body.step as 'recover' | 'journal', project: body.project as string, delay_ms: body.delay_ms as number };
+  if (!ok) throw new Refusal(400, 'invalid_value', 'Unknown tick_step fault.', 'Send {"point":"tick_step","step":"recover"|"journal"|"integrity","project":...,"delay_ms":<n>}.', { field: 'point' });
+  const fault: TickFault = { point: 'tick_step', step: body.step as TickFault['step'], project: body.project as string, delay_ms: body.delay_ms as number };
   tickFaults.push(fault);
   return fault;
 }
@@ -317,6 +365,9 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'barriers' && get) {
     return { restricted: true, handler: async () => ({ status: 200, body: { barriers: listBarriers() } }) };
   }
+  if (s.length === 1 && s[0] === 'barriers' && post) {
+    return { restricted: true, handler: async () => ({ status: 200, body: armBarrier(await hooks.body()) }) };
+  }
   if (s.length === 3 && s[0] === 'barriers' && s[2] === 'release' && post) {
     return {
       restricted: true,
@@ -328,7 +379,20 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     };
   }
   if (!post) return null;
-  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'project') return route(201, (body) => storeOp(OP.fixtureProject, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'project') {
+    return route(201, async (body) => {
+      const b = parseProjectBody(body);
+      // What the project is installed on: the branch's commit, which the
+      // registry will expect, and the developer's checkouts of the branch,
+      // which become managed checkouts (SEAM.md §25).
+      const ctx = repoContext(b.dev_repo_path);
+      const head = await branchHead(ctx, b.integration_branch);
+      if (head === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository or its integration branch could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
+      const checkouts = await integrationCheckouts(hooks.scratch(), b.dev_repo_path, b.integration_branch);
+      if (checkouts === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
+      return storeOp(OP.fixtureProject, { body: b, head, checkouts, actor: hooks.actor });
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'trigger') {
     return {
       restricted: false,
@@ -380,7 +444,7 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
   const a = args as { body: unknown; actor: Actor } & Record<string, unknown>;
   switch (op) {
     case OP.fixtureProject:
-      return installFixtureProject(store(), a.actor, a.body);
+      return installFixtureProject(store(), a.actor, a as unknown as { body: ProjectBody; head: string; checkouts: { path: string; baseline: Baseline }[] });
     case OP.fixtureTrigger:
       return installFixtureTrigger(store(), a.actor, a.body);
     case OP.fixturePlan:

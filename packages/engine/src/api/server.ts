@@ -7,6 +7,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { inspectEngineConfig } from '../config/engine-config.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
+import { prepareBootstrap, preparePolicy } from '../projects/commands.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
@@ -33,10 +34,15 @@ interface Request {
 // answered by its handler and not audited. A refusal route is audited here. A
 // command is prepared here (body read and checked; a failure is audited here)
 // and then runs in the store, which commits its audit record with it.
+//
+// A prepared command first does, on the main thread and with no transaction
+// open, the reads and git work its transaction needs (projects/commands.ts);
+// a refusal there is audited like any other.
 type Route =
   | { kind: 'direct'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
   | { kind: 'refuse'; refusal: Refusal }
-  | { kind: 'command'; name: string; args: (body: unknown) => unknown };
+  | { kind: 'command'; name: string; args: (body: unknown) => unknown }
+  | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown> };
 
 const MUTATING = (method: string) => method !== 'GET' && method !== 'HEAD';
 
@@ -109,6 +115,10 @@ export function createApiServer(state: EngineState): http.Server {
     if (!state.store) throw storeError(new Error('the store is not open'));
     return state.store;
   };
+  const runtime = () => {
+    if (!state.runtime) throw storeError(new Error('the engine is not running'));
+    return state.runtime;
+  };
 
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';
@@ -122,6 +132,10 @@ export function createApiServer(state: EngineState): http.Server {
       return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: engineInfo(state) }) };
     }
 
+    if (s.length === 2 && s[1] === 'projects' && post) {
+      return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
+    }
+
     if (s[1] === 'projects' && s.length >= 4) {
       const project = decodeSegment(s[2]!);
       if (project === null) return null;
@@ -130,7 +144,7 @@ export function createApiServer(state: EngineState): http.Server {
         if (get) {
           return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
         }
-        if (post) return { kind: 'command', name: 'project.policy_submit', args: (b) => ({ project, body: b }) };
+        if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b) };
       }
       if (rest.length === 1 && rest[0] === 'tick' && post) {
         return {
@@ -213,7 +227,7 @@ export function createApiServer(state: EngineState): http.Server {
   // A request no production route matched is offered to the seam, which
   // answers only in harness mode (SEAM.md §7).
   function offerToSeam(r: Request, segments: string[]): Route | null {
-    const offered = seamRoute(r.method, segments, { body: () => body(r), store, actor: r.actor });
+    const offered = seamRoute(r.method, segments, { body: () => body(r), store, actor: r.actor, scratch: () => runtime() });
     return offered === null ? null : { kind: 'direct', restricted: offered.restricted, handler: offered.handler };
   }
 
@@ -288,7 +302,7 @@ export function createApiServer(state: EngineState): http.Server {
     const segments = target.path.split('/').slice(1);
     const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
     const route = match(method, segments) ?? offerToSeam(r, segments);
-    const restricted = route !== null && route.kind !== 'refuse' && route.kind !== 'command' && route.restricted === true;
+    const restricted = route !== null && route.kind === 'direct' && route.restricted === true;
     if (state.mode !== 'full' && !restricted) {
       refuse(
         new Refusal(503, 'engine_starting', `The engine is in restricted mode at startup step "${state.step}".`, 'Wait for startup to finish, or read GET /v1/engine for a startup failure.', {
@@ -302,10 +316,11 @@ export function createApiServer(state: EngineState): http.Server {
     switch (route.kind) {
       case 'refuse':
         return refuseAudited(route.refusal);
-      case 'command': {
+      case 'command':
+      case 'prepared': {
         let args: unknown;
         try {
-          args = route.args(await body(r));
+          args = route.kind === 'command' ? route.args(await body(r)) : await route.prepare(await body(r));
         } catch (err) {
           return refuseAudited(err);
         }

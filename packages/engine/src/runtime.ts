@@ -5,10 +5,13 @@
 // client every transition goes through.
 
 import type { ChildProcess } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { isoAt, nowMs } from './clock.js';
 import type { EngineConfig } from './config/engine-config.js';
 import { processState } from './invoke/processes.js';
+import type { Journal } from './journal/driver.js';
 import type { Claim, Outcome, ReasonClass } from './store/transitions/runs.js';
 import type { StoreClient } from './store/client.js';
 
@@ -19,8 +22,9 @@ export interface RunEnd {
   // that records it compares it with the lease: an end decided after the
   // lease had expired was not decided before the expiry (E27 item 3).
   decidedAt?: string;
-  // Recorded with the outcome (runs.reason_text).
+  // Recorded with the outcome (runs.reason_text, runs.reason_detail).
   reasonText?: string;
+  detail?: Record<string, unknown>;
 }
 
 export interface RunHandle {
@@ -61,6 +65,13 @@ export interface RunHandle {
   // earned by its exit was decided then, however long the engine goes on
   // reading what the role wrote before it exited (SEAM.md §24).
   exitAt: string | null;
+  // The role exited 0 after a valid result, and the engine is accepting
+  // what it left (runs/accept.ts). Nothing renews the lease meanwhile; a
+  // Stop or an Abandon is still admitted, and waits for `pipeline`.
+  accepting: boolean;
+  pipeline: Promise<void> | null;
+  // The baseline a fresh checkout of the run's base has.
+  baseline: { head: string; index_hash: string; tracked_tree_hash: string } | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -87,6 +98,9 @@ export function newHandle(claim: Claim): RunHandle {
     result: null,
     exit: null,
     exitAt: null,
+    accepting: false,
+    pipeline: null,
+    baseline: null,
   };
 }
 
@@ -120,7 +134,7 @@ export function expiryEnd(handle: RunHandle | undefined): RunEnd {
 // is not supervised, even if its exit was never delivered; one whose /proc
 // entry is unreadable is not taken for gone.
 function holding(handle: RunHandle): boolean {
-  if (handle.ending || handle.leaseLost || handle.abort) return false;
+  if (handle.ending || handle.leaseLost || handle.abort || handle.accepting) return false;
   if (handle.phase === 'preparing') return true;
   if (handle.phase !== 'spawned' || handle.exit !== null || handle.pid === null) return false;
   return handle.startTime === null || processState(handle.pid, handle.startTime) !== 'gone';
@@ -132,19 +146,33 @@ export interface Services {
   // Retry every run-end protocol that failed part way and is due again.
   retryEnds(): void;
   requestTick(): void;
+  // Accept what a role that exited 0 after a valid result left.
+  accept(handle: RunHandle): void;
+  // Make the nomination due in a project, if any.
+  nominate(project: string): Promise<void>;
+  // Drive the unfinished journal operations of a project.
+  journal(project: string): Promise<void>;
 }
 
 export class Runtime {
   readonly handles = new Map<string, RunHandle>();
   services: Services | null = null;
+  // The journal's main-thread driver (journal/driver.ts), set once at startup.
+  journal!: Journal;
   private watcher: NodeJS.Timeout | null = null;
+  // Scratch files of the engine's own (scratch indexes), under its home and
+  // never in a repository.
+  readonly scratch: string;
 
   constructor(
     readonly store: StoreClient,
     readonly config: EngineConfig,
     readonly incarnation: string,
     readonly home: string,
-  ) {}
+  ) {
+    this.scratch = join(home, 'tmp');
+    mkdirSync(this.scratch, { recursive: true, mode: 0o700 });
+  }
 
   setting(key: 'tick_interval' | 'tick_budget' | 'tick_step_budget' | 'terminate_grace' | 'kill_grace' | 'max_concurrent_runs' | 'git_deadline' | 'lease_ttl'): number {
     return this.config.values[key];
@@ -183,10 +211,17 @@ export class Runtime {
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
-  afterCommit(effects: { kind: string; run?: string }[]): void {
+  afterCommit(effects: { kind: string; run?: string; project?: string }[]): void {
     for (const effect of effects) {
       if (effect.kind === 'tick') this.services?.requestTick();
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
+      if (effect.kind === 'journal' && effect.project) {
+        const project = effect.project;
+        void this.services
+          ?.journal(project)
+          .catch((err) => log('journal', err, { project }))
+          .finally(() => this.services?.requestTick());
+      }
     }
   }
 

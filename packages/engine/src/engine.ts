@@ -12,14 +12,18 @@ import { relative } from 'node:path';
 import { createApiServer } from './api/server.js';
 import { type EngineConfig, loadEngineConfig } from './config/engine-config.js';
 import { configureGit } from './git/exec.js';
+import { observeIntegrity } from './git/integrity.js';
 import { Launcher } from './invoke/choke.js';
+import { Journal } from './journal/driver.js';
+import { nominate } from './journal/nominate.js';
 import { type LockRecord, acquireLock, releaseLock } from './lock.js';
 import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
 import { recoverAtStartup } from './recovery/startup.js';
 import { Refusal, homeUnusable } from './refusal.js';
+import { Acceptor } from './runs/accept.js';
 import { RunEnder } from './runs/end.js';
 import { Runtime, log } from './runtime.js';
-import { Scheduler } from './scheduler/tick.js';
+import { Scheduler, reconcileProject } from './scheduler/tick.js';
 import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 
@@ -175,40 +179,52 @@ export async function serve(opts: ServeOptions): Promise<void> {
   try {
     await store.call('open', {
       lock,
-      settings: { lease_ttl: config.values.lease_ttl, decision_targets: config.values.decision_targets },
+      settings: { lease_ttl: config.values.lease_ttl, git_deadline: config.values.git_deadline, decision_targets: config.values.decision_targets },
     });
   } catch (err) {
     return fail('store', err);
   }
   state.completed.push('store');
 
-  configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home });
+  configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home, incarnation: lock.incarnation_id });
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
+  const journal = new Journal(runtime);
+  runtime.journal = journal;
   const ender = new RunEnder(runtime);
+  const acceptor = new Acceptor(runtime, ender, journal);
   const launcher = new Launcher(runtime);
-  scheduler = new Scheduler(runtime, launcher, ender);
+  scheduler = new Scheduler(runtime, launcher, ender, journal);
   const tick = scheduler;
   runtime.services = {
     endRun: (run, end) => ender.endRun(run, end),
     completeEnd: (run) => ender.complete(run),
     retryEnds: () => ender.retryDue(),
     requestTick: () => tick.request(),
+    accept: (handle) => acceptor.start(handle),
+    nominate: (project) => nominate(runtime, journal, project),
+    journal: (project) => reconcileProject(runtime, journal, project),
   };
 
-  // 4. recovery (D1 §16): every run the previous incarnation left is ended
-  // or quarantined, and every journal operation settled, before full mode.
+  // 4. recovery (D1 §16): every journal operation the previous incarnation
+  // left is taken on its way, and every run it left is ended or quarantined,
+  // before full mode.
   state.step = 'recovery';
   try {
-    await recoverAtStartup(runtime, ender);
+    await recoverAtStartup(runtime, ender, journal);
   } catch (err) {
     return fail('recovery', err);
   }
   state.completed.push('recovery');
 
-  // 5. repository integrity (D1 §7.6). Not built yet: the ref registry and
-  // integrity observations arrive with the git slice. This step establishes
-  // nothing about any repository.
+  // 5. repository integrity (D1 §7.6), for every registered project. What it
+  // observes is recorded and blocks that project; it does not keep the
+  // engine restricted.
   state.step = 'integrity';
+  try {
+    for (const project of await runtime.read<string[]>('scheduler.projects')) await observeIntegrity(runtime, project);
+  } catch (err) {
+    return fail('integrity', err);
+  }
   state.completed.push('integrity');
 
   // 6. lift to full

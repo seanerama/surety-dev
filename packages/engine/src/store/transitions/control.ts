@@ -6,13 +6,16 @@
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound } from './common.js';
 import { type DecisionRow, checkAnswer, consumeDecision, currentPreview, openDecision, raiseDecision, stale } from './decisions.js';
+import { intendOperation } from './journal.js';
+import { type OobRow, type RegistryRow, nextCounter, projectRepoRow, recordRevision, registerRef } from './repo.js';
 import { beginEnd, getRun, runBlockerManifest, workBlockerManifest } from './runs.js';
+import { engineSettings } from './settings.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, transitionWork } from './work.js';
 
 // What a command hands back to the main thread besides its reply: work that
 // must start once the transaction has committed.
-export type Effect = { kind: 'tick' } | { kind: 'end_run'; run: string };
+export type Effect = { kind: 'tick' } | { kind: 'end_run'; run: string } | { kind: 'journal'; project: string };
 
 export interface CommandResult {
   status: number;
@@ -41,6 +44,14 @@ function controlManifest(tx: Tx, runId: string): Record<string, unknown> {
 
 function manifestOf(tx: Tx, d: DecisionRow): Record<string, unknown> {
   if (d.kind === 'stop_confirm' || d.kind === 'abandon_confirm') return controlManifest(tx, d.subject_id);
+  if (d.kind === 'out_of_band_change') {
+    const row = tx.db.prepare('SELECT * FROM "out_of_band_changes" WHERE "id" = ?').get(d.subject_id) as OobRow;
+    return { subject_kind: row.subject_kind, expected: row.expected, found: row.found };
+  }
+  if (d.subject_type === 'operation') {
+    const kind = (tx.db.prepare('SELECT "journal_kind" FROM "git_journal_state" WHERE "operation" = ?').get(d.subject_id) as { journal_kind: string } | undefined)?.journal_kind;
+    return { operation: d.subject_id, journal_kind: kind ?? null };
+  }
   if (d.subject_type === 'run') return runBlockerManifest(tx, d.subject_id);
   return workBlockerManifest(tx, d);
 }
@@ -127,8 +138,22 @@ export function answerDecision(tx: Tx, args: { project: string; decision: string
     const result = applyControl(tx, d.kind === 'stop_confirm' ? 'stop' : 'abandon', run.id);
     return { ...result, body: { decision: { id: d.id, status: 'consumed' }, ...(result.body as object) } };
   }
+  if (d.kind === 'out_of_band_change') return answerOutOfBand(tx, d, option, note);
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
+    const reason = item?.blocker ? (JSON.parse(item.blocker) as { reason: string }).reason : null;
+    if (item && item.status === 'eligible' && reason === 'max_chained_roles') {
+      // The human step at the chaining boundary (D1-34; SEAM.md §40): the
+      // work starts a new chain, and the scheduler dispatches it once; or it
+      // is cancelled without a launch. The answer launches nothing itself.
+      consumeDecision(tx, d, option, note);
+      if (option === 'continue') {
+        tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL, "chain" = 0 WHERE "id" = ?').run(item.id);
+        return { status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects: [{ kind: 'tick' }] };
+      }
+      transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
+      return { status: 200, body: { decision: { id: d.id, status: 'consumed' } } };
+    }
     if (!item || item.status !== 'parked') throw stale(d);
     consumeDecision(tx, d, option, note);
     if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
@@ -191,4 +216,52 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       workspace,
     },
   };
+}
+
+// The answers to an observation of a moved or deleted ref (D1 §7.6; SEAM.md
+// §§32, 42). `discard` journals, in this transaction, the ref that keeps the
+// commit found (if any) and the compare-and-swap that puts the ref back on
+// its expected commit; the reset's finalizer records the disposition. `adopt`
+// makes the commit found the expected one, recorded as an out-of-band
+// revision. The answers to a checkout observation are row M46's (slice 5).
+function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | null): CommandResult {
+  const row = tx.db.prepare('SELECT * FROM "out_of_band_changes" WHERE "id" = ?').get(d.subject_id) as OobRow;
+  if (row.subject_kind !== 'ref') {
+    throw new Refusal(501, 'unsupported', 'The answers to a checkout observation are not available in this engine revision.', 'Nothing was changed.', { decision: d.id });
+  }
+  if (row.disposition !== null || row.closed_at !== null) throw stale(d);
+  const reg = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(row.ref) as RegistryRow;
+  const repo = projectRepoRow(tx, row.project).dev_repo_path;
+  consumeDecision(tx, d, option, note);
+  if (option === 'adopt') {
+    if (row.found === null || reg.immutable === 1) throw stale(d);
+    registerRef(tx, { project: row.project, ref: reg.ref, kind: reg.kind, expected: row.found });
+    recordRevision(tx, { project: row.project, sha: row.found, parent: null, kind: 'out_of_band', run: null });
+    tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'adopt' WHERE "id" = ?`).run(row.id);
+    tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'adopt', ref: reg.ref, adopted: row.found });
+    return { status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects: [{ kind: 'tick' }] };
+  }
+  const deadline = engineSettings().git_deadline;
+  if (row.found !== null) {
+    const keep = `refs/surety/oob/${nextCounter(tx, row.project, 'oob')}`;
+    intendOperation(tx, {
+      project: row.project,
+      kind: 'ref_update',
+      payload: { repo, ref: keep, old_oid: null, new_oid: row.found },
+      target: { repo, ref: keep },
+      subject: { out_of_band_change: row.id, keep: row.found },
+      finalizer: { purpose: 'oob_keep', ref: keep, ref_kind: 'oob', new_oid: row.found },
+      deadlineSeconds: deadline,
+    });
+  }
+  intendOperation(tx, {
+    project: row.project,
+    kind: 'ref_update',
+    payload: { repo, ref: reg.ref, old_oid: row.found, new_oid: reg.expected_oid },
+    target: { repo, ref: reg.ref },
+    subject: { out_of_band_change: row.id, reset: reg.expected_oid },
+    finalizer: { purpose: 'oob_discard', ref: reg.ref, ref_kind: reg.kind, immutable: reg.immutable === 1, new_oid: reg.expected_oid, oob: row.id },
+    deadlineSeconds: deadline,
+  });
+  return { status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects: [{ kind: 'journal', project: row.project }] };
 }

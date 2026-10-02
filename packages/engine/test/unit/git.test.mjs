@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const { configureGit, repoContext } = await import(join(dist, 'git', 'exec.js'));
-const { addWorktree, branchHead, probeWorktree, removeWorktree } = await import(join(dist, 'git', 'worktree.js'));
+
+const { addWorktree, branchHead, probeAdd, probeRemove, removeWorktree } = await import(join(dist, 'git', 'worktree.js'));
 
 function scratchRepo(t) {
   const dir = mkdtempSync(join(tmpdir(), 'surety-git-'));
@@ -26,7 +27,7 @@ function scratchRepo(t) {
   writeFileSync(join(repo, 'a.txt'), 'a\n');
   execFileSync('git', ['-C', repo, 'add', 'a.txt'], { env });
   execFileSync('git', ['-C', repo, 'commit', '-q', '-m', 'one'], { env });
-  configureGit({ deadlineSeconds: 30, outputCap: 1 << 20, home: dir });
+  configureGit({ deadlineSeconds: 30, outputCap: 1 << 20, home: dir, incarnation: 'inc_unit' });
   return { dir, repo, head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim() };
 }
 
@@ -40,20 +41,30 @@ test('a branch head is read; a missing or option-shaped branch is unknown', asyn
 
 test('a worktree is added detached at the base, probed, and removed with its files', async (t) => {
   const { dir, repo, head } = scratchRepo(t);
-  const ctx = repoContext(repo);
   const ws = join(dir, 'ws-1');
-  assert.equal(await probeWorktree(ctx, ws), 'absent');
-  assert.equal(await addWorktree(ctx, ws, head), 'present');
-  assert.equal(await probeWorktree(ctx, ws, head), 'present');
+  assert.equal(await probeAdd(repo, ws, head), 'absent');
+  assert.equal(await addWorktree(repo, ws, head, 'op_unit'), 'ok');
+  assert.equal(await probeAdd(repo, ws, head), 'applied');
+  assert.equal(await probeRemove(repo, ws), 'absent');
   writeFileSync(join(ws, 'untracked.txt'), 'x');
-  assert.equal(await removeWorktree(ctx, ws), 'absent');
+  assert.equal(await removeWorktree(repo, ws, 'op_unit'), 'ok');
+  assert.equal(await probeRemove(repo, ws), 'applied');
   assert.equal(existsSync(ws), false);
 });
 
 test('a base that is not a full commit id is refused without running git', async (t) => {
   const { dir, repo } = scratchRepo(t);
-  assert.equal(await addWorktree(repoContext(repo), join(dir, 'ws-2'), 'main'), 'absent');
+  assert.equal(await addWorktree(repo, join(dir, 'ws-2'), 'main', 'op_unit'), 'failed');
   assert.equal(existsSync(join(dir, 'ws-2')), false);
+});
+
+test('something that is not the operation\'s at the owned path is conflicting, not absent', async (t) => {
+  const { dir, repo, head } = scratchRepo(t);
+  const ws = join(dir, 'ws-foreign');
+  mkdirSync(ws);
+  writeFileSync(join(ws, 'unrelated.txt'), 'not the engine\'s\n');
+  assert.equal(await probeAdd(repo, ws, head), 'conflicting');
+  assert.equal(await probeRemove(repo, ws), 'conflicting');
 });
 
 // A hook that records that it ran, in the repository's hooks directory and in
@@ -74,11 +85,10 @@ test('engine git runs no hook, in the hooks directory or in one core.hooksPath n
   const { dir, repo, head } = scratchRepo(t);
   const evidence = join(dir, 'evidence.txt');
   const named = plantHooks(dir, repo, evidence);
-  const ctx = repoContext(repo);
-  assert.equal(await addWorktree(ctx, join(dir, 'ws-hooks-1'), head), 'present');
+  assert.equal(await addWorktree(repo, join(dir, 'ws-hooks-1'), head, 'op_unit'), 'ok');
   execFileSync('git', ['-C', repo, 'config', 'core.hooksPath', named]);
-  assert.equal(await addWorktree(ctx, join(dir, 'ws-hooks-2'), head), 'present');
-  assert.equal(await removeWorktree(ctx, join(dir, 'ws-hooks-2')), 'absent');
+  assert.equal(await addWorktree(repo, join(dir, 'ws-hooks-2'), head, 'op_unit'), 'ok');
+  assert.equal(await removeWorktree(repo, join(dir, 'ws-hooks-2'), 'op_unit'), 'ok');
   assert.equal(existsSync(evidence), false, 'no hook ran');
   // The hooks are live: git run the ordinary way executes them.
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', join(dir, 'ws-hooks-3'), head], { env: { PATH: process.env.PATH, HOME: dir } });
@@ -92,24 +102,23 @@ test('engine git does not run the program the repository names as core.fsmonitor
   writeFileSync(program, `#!/bin/sh\necho ran >> '${evidence}'\nprintf 'token\\0/\\0'\n`);
   chmodSync(program, 0o755);
   execFileSync('git', ['-C', repo, 'config', 'core.fsmonitor', program]);
-  const ctx = repoContext(repo);
-  assert.equal(await addWorktree(ctx, join(dir, 'ws-fsm-1'), head), 'present');
-  assert.equal(await removeWorktree(ctx, join(dir, 'ws-fsm-1')), 'absent');
+  assert.equal(await addWorktree(repo, join(dir, 'ws-fsm-1'), head, 'op_unit'), 'ok');
+  assert.equal(await removeWorktree(repo, join(dir, 'ws-fsm-1'), 'op_unit'), 'ok');
   assert.equal(existsSync(evidence), false, 'the fsmonitor program did not run');
   // The program is live: git run the ordinary way executes it.
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', join(dir, 'ws-fsm-2'), head], { env: { PATH: process.env.PATH, HOME: dir } });
   assert.equal(existsSync(evidence), true);
 });
 
-test('a worktree under a symbolic link is probed present when added and absent when removed', async (t) => {
+test('a worktree under a symbolic link is probed applied when added and gone when removed', async (t) => {
   const { dir, repo, head } = scratchRepo(t);
   mkdirSync(join(dir, 'real'));
   symlinkSync(join(dir, 'real'), join(dir, 'link'));
-  const ctx = repoContext(repo);
   const ws = join(dir, 'link', 'ws');
-  assert.equal(await addWorktree(ctx, ws, head), 'present');
-  assert.equal(await probeWorktree(ctx, ws, head), 'present');
-  assert.equal(await probeWorktree(ctx, join(dir, 'real', 'ws'), head), 'present');
-  assert.equal(await removeWorktree(ctx, ws), 'absent');
+  assert.equal(await addWorktree(repo, ws, head, 'op_unit'), 'ok');
+  assert.equal(await probeAdd(repo, ws, head), 'applied');
+  assert.equal(await probeAdd(repo, join(dir, 'real', 'ws'), head), 'applied');
+  assert.equal(await removeWorktree(repo, ws, 'op_unit'), 'ok');
+  assert.equal(await probeRemove(repo, ws), 'applied');
   assert.equal(existsSync(join(dir, 'real', 'ws')), false);
 });

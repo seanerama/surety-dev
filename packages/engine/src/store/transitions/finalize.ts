@@ -1,0 +1,254 @@
+// The domain finalizers of the four journal kinds (D1 §7.10; build spec §6
+// correction 14; ../contract/journal.json `finalizers`). A finalizer writes
+// the receipts its operation exists for, in the transaction that appends the
+// journal's `finalized`, from the inputs fixed with the intent
+// (`operations.finalizer_inputs`): never from a newer plan in the store, a
+// stage with the same number elsewhere, or a file in a role's workspace. It
+// runs once: a finalized operation is never finalized again, so the receipts
+// keep the identities they were written with.
+
+import { illegal } from './common.js';
+import type { IntentSpec, OpDetail } from './journal.js';
+import { intendOperation } from './journal.js';
+import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
+import type { Tx } from './tx.js';
+import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
+
+export interface WorkspaceInputs {
+  purpose: 'workspace';
+  run: string;
+  path: string;
+  base: string;
+  baseline: Baseline;
+}
+
+export interface DiscardInputs {
+  purpose: 'discard';
+  run: string;
+  workspace: string;
+}
+
+export interface CommitInputs {
+  purpose: 'run' | 'bootstrap' | 'policy';
+  run?: string;
+  sha: string;
+  parent: string;
+  tree: string;
+  keep_ref: string;
+  revision_kind: string;
+  checkpoint?: boolean;
+  workspace?: string;
+  // An operation to intend once this commit is finalized (the ref update of
+  // a bootstrap or a policy change), so that the chain survives a crash.
+  follow?: IntentSpec;
+}
+
+export interface PlanInput {
+  phase: number;
+  path: string;
+  stages: { number: number; goal: string }[];
+}
+
+export interface RefInputs {
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard';
+  ref: string;
+  ref_kind: RefKind;
+  immutable?: boolean;
+  new_oid: string;
+  // integration
+  run?: string;
+  work_item?: string;
+  stage?: string | null;
+  plans?: PlanInput[];
+  architect?: boolean;
+  nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
+  chain?: number;
+  // nomination
+  seq?: number;
+  by?: 'engine_cadence' | 'builder_request';
+  // policy
+  revision?: number;
+  blob?: string;
+  effective?: Record<string, number>;
+  change?: Record<string, number>;
+  // out-of-band
+  oob?: string;
+}
+
+export function runFinalizer(tx: Tx, op: OpDetail): Record<string, unknown> {
+  switch (op.kind) {
+    case 'worktree_add':
+      return finalizeWorkspace(tx, op, op.inputs as unknown as WorkspaceInputs);
+    case 'worktree_remove':
+      return finalizeDiscard(tx, op.inputs as unknown as DiscardInputs);
+    case 'commit_tree':
+      return finalizeCommit(tx, op, op.inputs as unknown as CommitInputs);
+    case 'ref_update':
+      return finalizeRef(tx, op, op.inputs as unknown as RefInputs);
+    default:
+      throw illegal(`a finalizer for ${String(op.kind)}`, { operation: op.id });
+  }
+}
+
+// worktree_add: the run's workspaces row and its managed checkout. A
+// worktree adopted after its run is over (SEAM.md §45) is retained at once.
+function finalizeWorkspace(tx: Tx, op: OpDetail, inputs: WorkspaceInputs): Record<string, unknown> {
+  const run = tx.db.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(inputs.run) as { state: string };
+  const disposition = run.state === 'finalizing' || run.state === 'ended' ? 'retained' : 'active';
+  const id = tx.newId('ws_');
+  tx.db
+    .prepare(
+      `INSERT INTO "workspaces" ("id", "created_at", "project", "run", "path", "base_revision", "current_base", "disposition")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, tx.at, op.project, inputs.run, inputs.path, inputs.base, inputs.base, disposition);
+  tx.db.prepare('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?').run(id, inputs.run);
+  addCheckout(tx, { project: op.project, kind: 'run_workspace', path: inputs.path, baseline: inputs.baseline, run: inputs.run });
+  return { workspace: id };
+}
+
+// worktree_remove: the workspace discarded; it is no longer a managed checkout.
+function finalizeDiscard(tx: Tx, inputs: DiscardInputs): Record<string, unknown> {
+  tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ?`).run(tx.at, inputs.workspace);
+  releaseCheckouts(tx, { run: inputs.run });
+  return { workspace: inputs.workspace };
+}
+
+// commit_tree: the revision of the commit and the registered keep ref that
+// makes it reachable; for a checkpoint, the workspace's current base.
+function finalizeCommit(tx: Tx, op: OpDetail, inputs: CommitInputs): Record<string, unknown> {
+  const revision = recordRevision(tx, { project: op.project, sha: inputs.sha, parent: inputs.parent, kind: inputs.revision_kind, run: inputs.run ?? null });
+  registerRef(tx, { project: op.project, ref: inputs.keep_ref, kind: 'keep', expected: inputs.sha });
+  if (inputs.checkpoint && inputs.workspace) {
+    const ws = tx.db.prepare('SELECT "checkpoints" FROM "workspaces" WHERE "id" = ?').get(inputs.workspace) as { checkpoints: string };
+    const list = JSON.parse(ws.checkpoints) as string[];
+    list.push(revision);
+    tx.db.prepare('UPDATE "workspaces" SET "current_base" = ?, "checkpoints" = ? WHERE "id" = ?').run(inputs.sha, JSON.stringify(list), inputs.workspace);
+  }
+  let follow: string | null = null;
+  if (inputs.follow) {
+    const made = intendOperation(tx, inputs.follow);
+    if ('operation' in made) follow = made.operation;
+  }
+  return { revision, follow };
+}
+
+function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, unknown> {
+  registerRef(tx, { project: op.project, ref: inputs.ref, kind: inputs.ref_kind, expected: inputs.new_oid, immutable: inputs.immutable === true });
+  switch (inputs.purpose) {
+    case 'integration':
+      return finalizeIntegration(tx, op, inputs);
+    case 'nomination':
+      return finalizeNomination(tx, op, inputs);
+    case 'bootstrap': {
+      const row = tx.db.prepare('SELECT "registration_state" FROM "projects" WHERE "id" = ?').get(op.project) as { registration_state: string };
+      if (row.registration_state !== 'registered') {
+        tx.db.prepare(`UPDATE "projects" SET "registration_state" = 'registered' WHERE "id" = ?`).run(op.project);
+        tx.emit('project.registered', { project: op.project }, { revision: inputs.new_oid });
+      }
+      return {};
+    }
+    case 'policy': {
+      const id = tx.newId('pol_');
+      tx.db
+        .prepare(
+          `INSERT INTO "policy_revisions" ("id", "created_at", "project", "revision", "git_path", "git_blob", "changed_by", "changed_at", "diff_summary",
+             "widens_authority", "committed", "effective")
+           VALUES (?, ?, ?, ?, '.surety/policy.json', ?, 'human', ?, ?, 0, 1, ?)`,
+        )
+        .run(id, tx.at, op.project, inputs.revision, inputs.blob, tx.at, JSON.stringify(inputs.change ?? {}), JSON.stringify(inputs.effective ?? {}));
+      tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(id, op.project);
+      tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid });
+      return { policy_revision: id };
+    }
+    case 'oob_keep':
+      return {};
+    case 'oob_discard': {
+      tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'discard' WHERE "id" = ? AND "disposition" IS NULL`).run(inputs.oob);
+      tx.emit('repo.reconciled', { project: op.project, out_of_band_change: inputs.oob }, { disposition: 'discard', ref: inputs.ref, restored: inputs.new_oid });
+      return {};
+    }
+    default:
+      return {};
+  }
+}
+
+// The integration of a run's commit (D1 §§7.5, 7.7, 7.8): the work item
+// integrated; the stage it built integrated at the commit; every phase plan
+// the commit adds registered, with its stages and their work; the
+// Architect's work complete; and, where the tier's cadence or the Builder's
+// request says so, a nomination due.
+function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, unknown> {
+  const item = inputs.work_item ? getWorkItem(tx, inputs.work_item) : undefined;
+  let status = item?.status;
+  if (item && item.status === 'integrating') {
+    transitionWork(tx, item, 'integrated', {}, { run: inputs.run, operation: op.id, revision: inputs.new_oid });
+    status = 'integrated';
+  }
+  if (inputs.stage) {
+    tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
+  }
+  const plans: string[] = [];
+  for (const plan of inputs.plans ?? []) {
+    const made = registerPlan(
+      tx,
+      { project: op.project, baseRevision: inputs.new_oid, approvedBy: null, stages: plan.stages, phase: plan.phase, gitPath: plan.path, chain: inputs.chain ?? 1 },
+      {},
+    );
+    plans.push(made.plan.id);
+  }
+  if (inputs.architect && item && status === 'integrated') {
+    const now = getWorkItem(tx, item.id)!;
+    transitionWork(tx, now, 'complete', {}, { run: inputs.run, operation: op.id });
+  }
+  if (inputs.nominate) {
+    tx.db
+      .prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?')
+      .run(JSON.stringify({ revision: inputs.new_oid, by: inputs.nominate.by, chain: inputs.chain ?? 1 }), op.project);
+  }
+  return { plans };
+}
+
+// A nomination (D1 §§3.3, 7.7; E11; E18): the candidate, its immutable ref,
+// its lineage closed and the successor opened, its verification work, and the
+// Builder's integrated work on the closed lineage now being verified.
+function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, unknown> {
+  const lineage = openLineage(tx, op.project);
+  const candidate = tx.newId('cand_');
+  const held = (
+    tx.db
+      .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" IN ('stage_build', 'fix') AND "status" = 'integrated' ORDER BY "seq"`)
+      .all(op.project) as { id: string }[]
+  ).map((r) => r.id);
+  tx.db
+    .prepare(
+      `INSERT INTO "candidates" ("id", "created_at", "project", "seq", "revision", "lineage", "nominated_at", "nominated_by", "progress", "held_work")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
+    )
+    .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, JSON.stringify(held));
+  tx.db.prepare('UPDATE "lineages" SET "open" = 0 WHERE "id" = ?').run(lineage);
+  const branch = (tx.db.prepare('SELECT "branch" FROM "lineages" WHERE "id" = ?').get(lineage) as { branch: string }).branch;
+  tx.db
+    .prepare('INSERT INTO "lineages" ("id", "created_at", "project", "branch", "started_from_candidate", "open") VALUES (?, ?, ?, ?, ?, 1)')
+    .run(tx.newId('lin_'), tx.at, op.project, branch, candidate);
+  tx.emit('candidate.nominated', { project: op.project, candidate }, { seq: inputs.seq, revision: inputs.new_oid, nominated_by: inputs.by });
+  const verification = observeTrigger(
+    tx,
+    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
+    {},
+  );
+  for (const id of held) {
+    const item = getWorkItem(tx, id)!;
+    transitionWork(tx, item, 'verifying', {}, { candidate });
+  }
+  const due = tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(op.project) as { nomination_due: string | null };
+  if (due.nomination_due !== null && (JSON.parse(due.nomination_due) as { revision: string }).revision === inputs.new_oid) {
+    tx.db.prepare('UPDATE "projects" SET "nomination_due" = NULL WHERE "id" = ?').run(op.project);
+  }
+  return { candidate, verification: verification.work_item.id };
+}
+
+// The next candidate number and its ref (D1 §7.2: refs/surety/cand/<seq>).
+export function nextCandidateSeq(tx: Tx, project: string): number {
+  return nextCounter(tx, project, 'candidates');
+}

@@ -5,6 +5,7 @@
 
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
+import { raiseDecision } from './decisions.js';
 import type { EventType, Tx } from './tx.js';
 import {
   DISPATCHABLE,
@@ -33,6 +34,10 @@ export interface WorkRow {
   dispatch_hold: number;
   continuation: WorkStatus | null;
   repair_due: number;
+  no_progress_count: number;
+  progress_key: string | null;
+  chain: number;
+  continue_from: string | null;
 }
 
 export function getWorkItem(tx: Tx, id: string): WorkRow | undefined {
@@ -69,6 +74,9 @@ export interface WorkChanges {
   repair_attempts?: number;
   preflight_refusals?: number;
   repair_due?: 0 | 1;
+  no_progress_count?: number;
+  progress_key?: string | null;
+  continue_from?: string | null;
 }
 
 // The work-item transition function. Refuses with illegal_transition, and
@@ -87,9 +95,22 @@ export function transitionWork(tx: Tx, item: WorkRow, to: WorkStatus, changes: W
   tx.db
     .prepare(
       `UPDATE "work_items" SET "status" = ?, "continuation" = ?, "blocker" = ?, "dispatch_hold" = ?, "prior_status" = ?,
-         "repair_attempts" = ?, "preflight_refusals" = ?, "repair_due" = ? WHERE "id" = ?`,
+         "repair_attempts" = ?, "preflight_refusals" = ?, "repair_due" = ?, "no_progress_count" = ?, "progress_key" = ?, "continue_from" = ? WHERE "id" = ?`,
     )
-    .run(next.status, next.continuation, next.blocker, next.dispatch_hold, next.prior_status, next.repair_attempts, next.preflight_refusals, next.repair_due, item.id);
+    .run(
+      next.status,
+      next.continuation,
+      next.blocker,
+      next.dispatch_hold,
+      next.prior_status,
+      next.repair_attempts,
+      next.preflight_refusals,
+      next.repair_due,
+      next.no_progress_count,
+      next.progress_key,
+      next.continue_from,
+      item.id,
+    );
   tx.emit(eventFor(from, to), { project: item.project, work_item: item.id }, { ...payload, from, to });
   return next;
 }
@@ -114,6 +135,9 @@ export interface TriggerInput {
   trigger_generation: number;
   subject?: Record<string, unknown>;
   depends_on?: string[];
+  // The number of roles of the chain whose outcome created the work (D1-34;
+  // E24 item 1): 0 for work a person or a fixture created.
+  chain?: number;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation'];
@@ -155,10 +179,10 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   tx.db
     .prepare(
       `INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "depends_on",
-         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold")
-       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0)`,
+         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain")
+       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
     )
-    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation);
+    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation, input.chain ?? 0);
   tx.emit('work.created', { project: input.project, work_item: id }, { ...label, to: 'eligible', kind: input.kind, seq });
   return { work_item: { id }, created: true };
 }
@@ -173,7 +197,7 @@ export interface PlanStageInput {
 // from the trigger ("plan", <stage id>, 1).
 export function registerPlan(
   tx: Tx,
-  args: { project: string; baseRevision: string; approvedBy: string; stages: PlanStageInput[] },
+  args: { project: string; baseRevision: string; approvedBy: string | null; stages: PlanStageInput[]; phase?: number; gitPath?: string; chain?: number },
   label: Record<string, unknown>,
 ): { plan: { id: string }; stages: { id: string; number: number; work_item: string }[] } {
   if (!tx.db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
@@ -181,9 +205,9 @@ export function registerPlan(
   tx.db
     .prepare(
       `INSERT INTO "phase_plans" ("id", "created_at", "project", "phase_number", "prepared_against_revision", "git_path", "approved_by", "approved_at")
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(plan, tx.at, args.project, args.baseRevision, '.surety/phases/phase-1.md', args.approvedBy, tx.at);
+    .run(plan, tx.at, args.project, args.phase ?? 1, args.baseRevision, args.gitPath ?? '.surety/phases/phase-1.md', args.approvedBy, args.approvedBy === null ? null : tx.at);
   const out = [];
   for (const stage of args.stages) {
     const id = tx.newId('stage_');
@@ -195,7 +219,7 @@ export function registerPlan(
       .run(id, tx.at, args.project, plan, stage.number, stage.goal);
     const made = observeTrigger(
       tx,
-      { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id } },
+      { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0 },
       label,
     );
     tx.db.prepare('UPDATE "stages" SET "work_item" = ? WHERE "id" = ?').run(made.work_item.id, id);
@@ -223,4 +247,28 @@ export function resumeWork(tx: Tx, args: { project: string; workItem: string }) 
     throw illegal(`Resume of a ${item.status} item`, { work_item: item.id, status: item.status, dispatch_hold: item.dispatch_hold });
   }
   return { work_item: { id: next.id, status: next.status, dispatch_hold: next.dispatch_hold } };
+}
+
+// Work at its chaining boundary (D1 §8.1 step 8; D1-34; SEAM.md §40): it
+// stays eligible, and the next step is a decision on it, raised once.
+export function chainBoundary(tx: Tx, args: { workItem: string }): void {
+  const item = getWorkItem(tx, args.workItem);
+  if (!item || item.status !== 'eligible') return;
+  if (item.blocker !== null) return;
+  const decision = raiseDecision(tx, {
+    project: item.project,
+    kind: 'blocker',
+    subjectType: 'work_item',
+    subjectId: item.id,
+    question:
+      `Work item ${item.id} (${item.kind}) was created by the outcome of a run, and the project's max_chained_roles does not let it run ` +
+      'without a person. Continue to let the scheduler dispatch it, or cancel it.',
+    options: [
+      { key: 'continue', label: 'Continue', consequence: 'The work starts a new chain and the scheduler dispatches it.', effect: { work_item: item.id, chain: 0 } },
+      { key: 'cancel', label: 'Cancel', consequence: 'The work is cancelled without a launch.', effect: { work_item: item.id, to: 'cancelled' } },
+    ],
+    manifest: { work_item: item.id, status: 'eligible', reason: 'max_chained_roles' },
+    blockedWorkItems: [item.id],
+  });
+  tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'max_chained_roles', raised_at: tx.at, decision: decision.id }), item.id);
 }

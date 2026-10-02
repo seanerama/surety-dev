@@ -8,27 +8,34 @@
 //      domain the boundary now reports terminated is cleared and its run
 //      ended. Every run lease past its expiry is reconciled through the
 //      run-end protocol.
-//   2. Journal and effects: no git operation outlives the call that made it
-//      in this revision, so there is nothing to probe between ticks yet; the
-//      journal's recovery runs at startup.
-//   (3. integrity and 4. budgets arrive with the slices that build them.)
+//   2. Journal: every operation of the project that is not finalized and
+//      not failed, and that nothing in this engine is driving, is probed and
+//      taken on its way (correction 14); a nomination that is due is made.
+//   3. Repository integrity (D1 §7.6).
+//   (4. budgets arrive with the slice that builds them.)
 //   8. Select, and 9. dispatch: at most one run per project and
-//      max_concurrent_runs engine-wide; the tick waits for what a dispatch
-//      writes before its spawn, never for the spawn or the run.
+//      max_concurrent_runs engine-wide; work at its chaining boundary is not
+//      dispatched and gets one decision instead (D1-34); the tick waits for
+//      what a dispatch writes before its spawn, never for the spawn or the run.
 //  10. engine.tick, after everything else the tick wrote.
 //
-// Steps 1 and 2 are safety prerequisites: one that overruns tick_step_budget
-// for a project makes that project's dispatch ineligible for this tick, also
-// if it completes later; a tick that has used up tick_budget dispatches
-// nothing further.
+// Steps 1 to 3 are safety prerequisites: one that overruns tick_step_budget
+// or fails for a project makes that project's dispatch ineligible for this
+// tick, also if it completes later; a tick that has used up tick_budget
+// dispatches nothing further. Budgets are measured on the monotonic clock: a
+// wall clock that steps back cannot stretch them (E30).
 
+import { performance } from 'node:perf_hooks';
+
+import { observeIntegrity } from '../git/integrity.js';
 import { Launcher } from '../invoke/choke.js';
+import type { Journal } from '../journal/driver.js';
 import type { ProjectCandidates } from '../store/reads.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { seamStepDelay } from '../testing/seam.js';
 
-const PREREQUISITES = ['recover', 'journal'] as const;
+const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
 // Whether `work` settled successfully within `ms`.
 async function withinBudget(work: Promise<void>, ms: number): Promise<boolean> {
@@ -60,6 +67,7 @@ export class Scheduler {
     private readonly rt: Runtime,
     private readonly launcher: Launcher,
     private readonly ender: RunEnder,
+    private readonly journal: Journal,
   ) {}
 
   start(): void {
@@ -95,14 +103,21 @@ export class Scheduler {
       this.ender.retryDue(project);
       await this.ender.observeQuarantines(project);
       await this.ender.reconcileExpired(project);
+    } else if (name === 'journal') {
+      await reconcileProject(this.rt, this.journal, project);
+      await this.rt.services?.nominate(project);
+      // A run whose end waited for one of these operations goes on now.
+      this.ender.retryDue(project);
+    } else {
+      await observeIntegrity(this.rt, project);
     }
   }
 
   private async tick(): Promise<void> {
-    const started = Date.now();
+    const started = performance.now();
     const tickBudget = this.rt.setting('tick_budget') * 1000;
     const stepBudget = this.rt.setting('tick_step_budget') * 1000;
-    const remaining = () => tickBudget - (Date.now() - started);
+    const remaining = () => tickBudget - (performance.now() - started);
     const projects = await this.rt.read<string[]>('scheduler.projects');
     const ineligible = new Set<string>();
     for (const name of PREREQUISITES) {
@@ -118,13 +133,40 @@ export class Scheduler {
       for (const c of candidates) {
         if (ineligible.has(c.project) || c.items.length === 0) continue;
         if (remaining() <= 0) break;
-        try {
-          if (await this.launcher.dispatch(c, c.items[0]!)) dispatched++;
-        } catch (err) {
-          log('dispatch', err);
+        for (const item of c.items) {
+          try {
+            if (item.boundary) {
+              // D1-34: the next step is a decision, asked once.
+              await this.rt.engine('scheduler.chain_boundary', { workItem: item.id });
+              continue;
+            }
+            if (await this.launcher.dispatch(c, item)) dispatched++;
+          } catch (err) {
+            log('dispatch', err);
+          }
+          break;
         }
       }
     }
     await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched });
+  }
+}
+
+// Every unfinished operation of a project (or of every project), oldest
+// first, taken on its way. One that this engine is driving is waited for;
+// one this engine has just intended and not yet begun is its caller's.
+//
+// A finalizer may intend the next operation of a chain (a bootstrap's or a
+// policy change's ref update after its commit): the list is read again until
+// it holds nothing this pass has not taken on.
+export async function reconcileProject(rt: Runtime, journal: Journal, project?: string): Promise<void> {
+  const seen = new Set<string>();
+  for (let pass = 0; pass < 8; pass++) {
+    const ops = (await rt.read<{ id: string; project: string }[]>('journal.unfinished', { project: project ?? null })).filter((op) => !seen.has(op.id) && !journal.isFresh(op.id));
+    if (ops.length === 0) return;
+    for (const op of ops) {
+      seen.add(op.id);
+      await journal.withProject(op.project, () => journal.drive(op.id)).catch((err) => log('journal', err, { operation: op.id }));
+    }
   }
 }

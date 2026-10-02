@@ -1,45 +1,28 @@
-// Run workspaces as detached worktrees (D1 §7.3) and the probe of the
-// worktree list that the journal uses to confirm an effect (D1 §7.10).
+// Run workspaces as detached worktrees (D1 §7.3), and the probes the
+// journal uses for the two worktree journal kinds (D1 §7.10; correction 14;
+// SEAM.md §45). A probe reads the repository's worktree metadata and the
+// owned path directly, because `git worktree list` leaves out, without an
+// error, a worktree whose metadata it cannot read; and it makes one git call
+// first, so that a repository that does not answer is `unknown`, never
+// "nothing there".
 
-import { realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
-import { type GitContext, git } from './exec.js';
+import { type GitContext, SHA, git, gitOk, repoContext, worktreeContext } from './exec.js';
+import { listWorktrees, readHeadFile } from './repo.js';
 
-const SHA = /^[0-9a-f]{40}$/;
-const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+export type ProbeOutcome = 'absent' | 'applied' | 'partial' | 'conflicting' | 'unknown';
+
+const SAFE_BRANCH = /^[^\0\n]+$/;
 
 // The commit a branch points at, or null if it cannot be read.
 export async function branchHead(ctx: GitContext, branch: string): Promise<string | null> {
-  if (!SAFE_BRANCH.test(branch) || branch.includes('..')) return null;
+  if (!SAFE_BRANCH.test(branch)) return null;
   const r = await git(ctx, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}^{commit}`]);
   const sha = r.stdout.trim();
   return r.code === 0 && SHA.test(sha) ? sha : null;
 }
-
-export interface WorktreeEntry {
-  path: string;
-  head: string | null;
-  detached: boolean;
-}
-
-// Every registered worktree, or null if the list cannot be read.
-export async function listWorktrees(ctx: GitContext): Promise<WorktreeEntry[] | null> {
-  const r = await git(ctx, ['worktree', 'list', '--porcelain']);
-  if (r.code !== 0) return null;
-  const out: WorktreeEntry[] = [];
-  let current: WorktreeEntry | null = null;
-  for (const line of r.stdout.split('\n')) {
-    if (line.startsWith('worktree ')) {
-      current = { path: line.slice('worktree '.length), head: null, detached: false };
-      out.push(current);
-    } else if (current && line.startsWith('HEAD ')) current.head = line.slice(5);
-    else if (current && line === 'detached') current.detached = true;
-  }
-  return out;
-}
-
-export type EffectProbe = 'present' | 'absent' | 'ambiguous';
 
 // A path with its symbolic links resolved, as git prints a worktree. The part
 // that does not exist (a removed worktree) is kept as given, under its
@@ -59,35 +42,152 @@ export function canonicalPath(path: string): string | null {
   }
 }
 
-// Is a worktree registered at this path (at this base, when given)? Paths are
-// compared with their symbolic links resolved on both sides: the engine home,
-// and so a workspace path, may be reached through a link (SEAM.md §16).
-export async function probeWorktree(ctx: GitContext, path: string, base?: string): Promise<EffectProbe> {
-  const list = await listWorktrees(ctx);
-  if (list === null) return 'ambiguous';
-  const wanted = canonicalPath(path);
-  if (wanted === null) return 'ambiguous';
-  const entry = list.find((w) => w.path === path || canonicalPath(w.path) === wanted);
-  if (!entry) return 'absent';
-  if (base !== undefined && (entry.head !== base || !entry.detached)) return 'ambiguous';
-  return 'present';
+const samePath = (a: string, b: string): boolean => a === b || (canonicalPath(a) ?? a) === (canonicalPath(b) ?? b);
+
+// The repository's metadata directory for a worktree at `path`: the entry
+// under .git/worktrees whose `gitdir` file names `<path>/.git`. null if there
+// is none; 'unknown' if the metadata cannot be read.
+export function worktreeMetadata(repo: string, path: string): string | null | 'unknown' {
+  const dir = join(repo, '.git', 'worktrees');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unknown';
+  }
+  for (const name of names) {
+    const file = join(dir, name, 'gitdir');
+    let text: string;
+    try {
+      const st = lstatSync(file);
+      if (!st.isFile()) continue;
+      text = readFileSync(file, 'utf8').trim();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      return 'unknown';
+    }
+    if (samePath(dirname(text), path)) return join(dir, name);
+  }
+  return null;
 }
 
-// `git worktree add --detach <path> <base>`; then the probe decides.
-export async function addWorktree(ctx: GitContext, path: string, base: string): Promise<EffectProbe> {
-  if (!SHA.test(base) || !path.startsWith('/')) return 'absent';
-  const r = await git(ctx, ['worktree', 'add', '--detach', path, base]);
-  if (r.timedOut) return 'ambiguous';
-  return probeWorktree(ctx, path, base);
+// What is at the owned path: nothing; a directory whose .git file links it to
+// `metadata` (or into the repository's worktrees directory, when `metadata`
+// is null); something else; or unreadable.
+type Occupant = 'none' | 'linked' | 'foreign' | 'unknown';
+
+function occupant(repo: string, path: string, metadata: string | null): Occupant {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'unknown';
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) return 'foreign';
+  const dotGit = join(path, '.git');
+  let text: string;
+  try {
+    const g = lstatSync(dotGit);
+    if (!g.isFile()) return 'foreign';
+    text = readFileSync(dotGit, 'utf8').trim();
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'foreign' : 'unknown';
+  }
+  if (!text.startsWith('gitdir: ')) return 'foreign';
+  const link = text.slice('gitdir: '.length).trim();
+  if (metadata !== null) return samePath(link, metadata) ? 'linked' : 'foreign';
+  return samePath(dirname(link), join(repo, '.git', 'worktrees')) ? 'linked' : 'foreign';
 }
 
-// `git worktree remove --force <path>`; then the probe decides. The run's
-// files go with it: this is the discard of an abandoned run (D1 §4.5 step 6).
-export async function removeWorktree(ctx: GitContext, path: string): Promise<EffectProbe> {
-  if (!path.startsWith('/')) return 'ambiguous';
-  const r = await git(ctx, ['worktree', 'remove', '--force', '--force', path]);
-  if (r.timedOut) return 'ambiguous';
-  const probe = await probeWorktree(ctx, path);
-  // For a removal, `absent` is the effect having happened.
-  return probe;
+// Is the worktree's checkout whole: HEAD detached at `base`, every tracked
+// file there and unmodified? null if that cannot be read.
+async function checkoutComplete(repo: string, metadata: string, path: string, base: string): Promise<boolean | null> {
+  const head = readHeadFile(metadata);
+  if (head === null) return null;
+  if (!('detached' in head) || head.detached !== base) return false;
+  const status = await git(worktreeContext(repo, metadata, path), ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=all']);
+  if (status.code !== 0) return status.timedOut ? null : false;
+  return status.stdout === '';
 }
+
+// The repository answers: one git call that reads its configuration.
+async function answers(repo: string): Promise<boolean> {
+  return (await listWorktrees(repoContext(repo))) !== null;
+}
+
+// The probe of a `worktree_add` (contract `probe.kinds.worktree_add`).
+export async function probeAdd(repo: string, path: string, base: string): Promise<ProbeOutcome> {
+  if (!(await answers(repo))) return 'unknown';
+  const metadata = worktreeMetadata(repo, path);
+  if (metadata === 'unknown') return 'unknown';
+  const here = occupant(repo, path, metadata);
+  if (here === 'unknown') return 'unknown';
+  if (here === 'foreign') return 'conflicting';
+  if (here === 'none') return metadata === null ? 'absent' : 'partial';
+  if (metadata === null) return 'partial';
+  const whole = await checkoutComplete(repo, metadata, path, base);
+  if (whole === null) return 'unknown';
+  return whole ? 'applied' : 'partial';
+}
+
+// The probe of a `worktree_remove` (contract `probe.kinds.worktree_remove`).
+export async function probeRemove(repo: string, path: string): Promise<ProbeOutcome> {
+  if (!(await answers(repo))) return 'unknown';
+  const metadata = worktreeMetadata(repo, path);
+  if (metadata === 'unknown') return 'unknown';
+  const here = occupant(repo, path, metadata);
+  if (here === 'unknown') return 'unknown';
+  if (here === 'foreign') return 'conflicting';
+  if (here === 'none') return metadata === null ? 'applied' : 'partial';
+  return metadata === null ? 'partial' : 'absent';
+}
+
+// `git worktree add --detach <path> <base>`. Returns whether the command
+// reported success, or 'timeout' when it was killed at its deadline.
+export async function addWorktree(repo: string, path: string, base: string, operation: string): Promise<'ok' | 'failed' | 'timeout'> {
+  if (!SHA.test(base) || !path.startsWith('/')) return 'failed';
+  const r = await git(repoContext(repo), ['worktree', 'add', '--detach', '--', path, base], { operation });
+  if (r.timedOut) return 'timeout';
+  return r.code === 0 ? 'ok' : 'failed';
+}
+
+// `git worktree remove --force --force <path>`: the run's files go with it
+// (D1 §4.5 step 6).
+export async function removeWorktree(repo: string, path: string, operation: string): Promise<'ok' | 'failed' | 'timeout'> {
+  if (!path.startsWith('/')) return 'failed';
+  const r = await git(repoContext(repo), ['worktree', 'remove', '--force', '--force', '--', path], { operation });
+  if (r.timedOut) return 'timeout';
+  return r.code === 0 ? 'ok' : 'failed';
+}
+
+// Remove what is verifiably the operation's own residue at `path`: the
+// repository's metadata for that path, and a directory there whose .git file
+// links it into the repository's worktrees. Nothing else is touched.
+export function removeResidue(repo: string, path: string): 'ok' | 'unknown' | 'foreign' {
+  const metadata = worktreeMetadata(repo, path);
+  if (metadata === 'unknown') return 'unknown';
+  const here = occupant(repo, path, metadata);
+  if (here === 'unknown') return 'unknown';
+  if (here === 'foreign') return 'foreign';
+  try {
+    if (here === 'linked') rmSync(path, { recursive: true, force: true });
+    if (metadata !== null) rmSync(metadata, { recursive: true, force: true });
+  } catch {
+    return 'unknown';
+  }
+  return 'ok';
+}
+
+// The worktree's own metadata directory and .git link, as the engine finds
+// them right after it has added the worktree.
+export function workspaceLink(repo: string, path: string): { adminDir: string; gitlink: string } | null {
+  const metadata = worktreeMetadata(repo, path);
+  if (metadata === null || metadata === 'unknown') return null;
+  try {
+    return { adminDir: metadata, gitlink: readFileSync(join(path, '.git'), 'utf8') };
+  } catch {
+    return null;
+  }
+}
+
+export { gitOk };
