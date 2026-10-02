@@ -924,10 +924,14 @@ The one review of slice 6 found three serious defects and reproduced each by run
 
 ## E43. The engine creates fix work; the journey covers the fix loop (decided by Sean, 2026-10-02)
 
-**Decision.** When a finding's disposition "fix" is recorded (proposed by a role, approved by the human, E34 item 6), the engine registers the fix work itself, naming the finding (E38 item 6). This closes the gap E38 recorded, the second of the two workflow gaps Astra's review named (E40). Built before M1 is accepted.
+**Decision.** When a finding's disposition "fix" is recorded, the engine registers the fix work itself, naming the finding (E38 item 6). **Driver's reading, provisional (2026-10-02, after the Builder found the two sources disagree):** a Reviewer's "fix" is recorded at once with the Reviewer's authority, as the slice-5 seam (section 74) and row M42 already pin, because asking to fix a finding relaxes nothing; the human's step is the chain boundary, where the engine-made fix work waits for "continue" at the default chain limit (E30 item 1), like the engine-made review (E36 item 3). E34 item 6's rule that the human approves a disposition stands for `accept`, `defer` and exclusions. A fix disposition the human approves from a proposal creates the work in the same way. The stage's work completes when the stage gate is satisfied on the candidate that holds it by ancestry, which after a fix is the fix's own candidate. This closes the gap E38 recorded, the second of the two workflow gaps Astra's review named (E40). Built before M1 is accepted.
 
-**The journey gains a second path.** A Reviewer raises a finding against the candidate; the owner approves "fix"; the engine creates the fix work; a Builder run fixes it; the finding is resolved by the gate evaluation in which its check passes (E34 item 7, E36 item 4); the fix completes; the stage gate and the Alpha authorization are satisfied. The end-to-end test (row M01) covers this path as well as the path where nothing goes wrong.
+**The journey gains a second path.** A Reviewer raises a finding against the candidate with disposition "fix"; the engine creates the fix work and the owner lets it through at the chain boundary; a Builder run fixes it; the finding is resolved by the gate evaluation in which its check passes (E34 item 7, E36 item 4); the fix completes; the stage gate and the Alpha authorization are satisfied. The end-to-end test (row M01) covers this path as well as the path where nothing goes wrong.
 
 **Consequences elsewhere.** `docs/acceptance/reports/M1-not-claimed.md` and the M1 report are updated when the path passes. No change to D1.
 
 ---
+
+## E44. Sean's decisions at the end of the M1 build (decided by Sean, 2026-10-02)
+
+1. **The bootstrap-token exposure is accepted for M1 and becomes a requirement of the isolation design.** The browser bootstrap route (D1 section 11.1, resolution note R6) trusts request headers that a browser cannot forge and any other local program can, so any process that reaches the loopback port can obtain the operator token (E42). Nothing changes in M1. D2 must ensure that an isolated role cannot reach that route, and settles the question of other users of the same machine. The M1 report states the exposure.
