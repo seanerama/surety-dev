@@ -632,3 +632,14 @@ Slice 2 was merged after three reviews and two fix rounds, the limit the driver 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E29. Slice-3 starting decisions (provisional, 2026-10-02)
+
+**Status: provisional**, on the same footing as E23 to E28. Given to the slice-3 Verifier so its tests have something to pin.
+
+1. **Engine git runs no filter driver from the repository's own configuration.** This closes the question E26 item 4 left open. A clean, smudge or process filter named in a repository's configuration is not run when the engine creates a workspace, takes a snapshot or commits. **Consequence:** a repository that depends on such a filter, which includes any repository using Git LFS, is not supported in M1. Supporting it is a later decision that belongs with the isolation design, where a role can no longer write the repository's configuration.
+2. **One intermittent test failure is unresolved.** After the slice-2 merge the suite failed once on `main`, 190 of 191, then passed six times in a row. The failing run's output had not been kept. The runner now keeps every run's full report, and the slice-3 Verifier audits the tests for timing sensitivity on this machine, whose clock steps backwards. Until the failure is identified it is an open item, not a resolved one.
+
+**Consequences elsewhere.** No change to D1.
+
+---
