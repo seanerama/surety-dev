@@ -6,6 +6,7 @@ import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 import { EXIT, serve } from './engine.js';
+import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
 import { configureHarness } from './testing/seam.js';
@@ -23,6 +24,9 @@ if (command === '--version' || command === '-v') {
 }
 if (command === 'store') {
   await storeCommand(args);
+}
+if (command === 'contract') {
+  await contractCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -151,4 +155,21 @@ async function storeCommand(argv: string[]): Promise<never> {
     );
     process.exit(STORE_EXIT.refused);
   }
+}
+
+// `surety contract export`, `surety contract check [--file <path>]` and
+// `surety contract appendix [--file <path>]` (SEAM.md §94). They need no
+// engine home and no running engine.
+async function contractCommand(argv: string[]): Promise<never> {
+  const [sub, ...rest] = argv;
+  let file: string | null = null;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--file' && rest[i + 1] !== undefined && sub !== 'export') file = rest[++i]!;
+    else usage(`unknown argument ${rest[i]} for contract ${sub ?? ''}`);
+  }
+  if (sub !== 'export' && sub !== 'check' && sub !== 'appendix') usage(sub === undefined ? 'contract needs a command: export, check or appendix' : `"contract ${sub}" is not a contract command`);
+  const done = runContractCommand(sub, file);
+  process.stdout.write(done.stdout);
+  if (done.stderr !== '') process.stderr.write(done.stderr);
+  process.exit(done.status === 'refused' ? CONTRACT_EXIT.refused : done.status === 'failed' ? CONTRACT_EXIT.failed : CONTRACT_EXIT.ok);
 }
