@@ -383,12 +383,16 @@ export async function backupWhileRunning(home: string, deadlineMs: number): Prom
 // The engine's backup job (D1 §6.5): a backup of the running engine's home,
 // and when it has ended, `engine.backup` naming it with its label, which is
 // `complete` only for a backup that could be restored. A backup that could
-// not be made at all is logged and leaves nothing behind.
+// not be made at all is logged, leaves nothing behind, and is announced with
+// `backup` null.
 export async function backupJob(rt: { home: string; config: { values: { git_deadline_long: number } }; engine: (name: string, args: unknown) => Promise<unknown> }): Promise<void> {
   try {
     const done = await backupWhileRunning(rt.home, rt.config.values.git_deadline_long * 1000);
     await rt.engine('engine.backup', done);
   } catch (err) {
+    // One event for each backup started, when it has ended (SEAM.md §93):
+    // this one left nothing behind.
     log('backup', err);
+    await rt.engine('engine.backup', { backup: null, label: 'incomplete_for_recovery' }).catch((e: unknown) => log('backup event', e));
   }
 }
