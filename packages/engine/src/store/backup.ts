@@ -29,6 +29,7 @@ import { newId } from '../ids.js';
 import { acquireLock, releaseLock } from '../lock.js';
 import { homePaths } from '../paths.js';
 import { Refusal } from '../refusal.js';
+import { log } from '../runtime.js';
 import { rebindProject } from './transitions/project.js';
 import { ENGINE_ACTOR, transact } from './transitions/tx.js';
 
@@ -48,7 +49,7 @@ const refused = (code: string, reason: string, whatToDo: string, subject: unknow
 const incomplete = (reason: string, subject: unknown = {}) =>
   refused('backup_incomplete', `The backup cannot be restored: ${reason}.`, 'Restore from a complete backup whose members are all present and unaltered, with every project bound to its repository. Nothing was written.', subject);
 
-interface Manifest {
+export interface Manifest {
   label: 'complete' | 'incomplete_for_recovery';
   store: { file: string; sha256: string; bytes: number };
   records: { id: string; file: string; sha256: string; bytes: number }[];
@@ -87,7 +88,7 @@ async function withLock<T>(home: string, work: () => Promise<T>): Promise<T> {
 
 // The published, unexpired records a store refers to, and per project the
 // commits it refers to.
-function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
+export function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
   const records = db
     .prepare('SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at", "id"')
     .all() as { id: string; path: string; sha256: string; bytes: number }[];
@@ -276,4 +277,122 @@ export async function restoreStore(home: string, opts: { from: string; bind: Map
     }
     return { restored: dir, projects: closure.projects };
   });
+}
+
+// ---- a backup while the engine runs (D1 §6.5; SEAM.md §93; E42) ----------------------
+
+// The first listed commit engine git does not confirm as a commit of its
+// project's repository, with why, or null when it confirms every one. Engine
+// git runs off the event loop and within the git deadline, so a repository
+// whose files are a pipe, a device or a link, or whose git is held up, ends
+// the check within that deadline: a commit not confirmed in time is not
+// confirmed (E42 items 2 and 3; unknown is a value). The check stops at the
+// first commit it cannot confirm.
+export async function unconfirmedCommit(closure: { git: Manifest['git']; repos: Map<string, string> }): Promise<{ project: string; object: string; reason: string } | null> {
+  for (const entry of closure.git) {
+    const repo = closure.repos.get(entry.project);
+    for (const oid of entry.objects) {
+      if (repo === undefined) return { project: entry.project, object: oid, reason: 'the project is bound to no repository' };
+      let found;
+      try {
+        found = await git(repoContext(repo), ['cat-file', '-e', `${oid}^{commit}`]);
+      } catch (err) {
+        return { project: entry.project, object: oid, reason: `git could not be run: ${(err as Error).message}` };
+      }
+      if (found.timedOut) return { project: entry.project, object: oid, reason: 'git did not answer within its deadline' };
+      if (found.code !== 0) return { project: entry.project, object: oid, reason: `git does not confirm it as a commit of ${repo}` };
+    }
+  }
+  return null;
+}
+
+// A backup of a running engine's home, made without holding up the engine:
+// the store is copied by SQLite's online backup in a worker thread of its
+// own, with its own connection, from one read snapshot (the engine's writes
+// go on meanwhile, into the log); the records the snapshot refers to are
+// copied and hashed there too. Then engine git confirms every listed commit.
+// The backup is labelled `complete` only if it confirms all of them (E37 item
+// 4); otherwise it is kept, labelled `incomplete_for_recovery`, with the
+// commit that was not confirmed and why. The manifest is written last: a
+// backup without one is not a backup. The whole backup ends within
+// `deadlineMs`: a worker that has not answered by then is abandoned and the
+// backup removed (E42 item 3).
+export async function backupWhileRunning(home: string, deadlineMs: number): Promise<{ backup: string; label: Manifest['label'] }> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = join(home, 'backups', `${stamp}-${newId('bak_')}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const started = performance.now();
+  try {
+    const { Worker } = await import('node:worker_threads');
+    const draft = await new Promise<{ manifest: Manifest; repos: [string, string][] }>((resolvePromise, reject) => {
+      const worker = new Worker(new URL('./backup-worker.js', import.meta.url), { workerData: { home, store: homePaths(home).store, dir } });
+      const timer = setTimeout(() => {
+        reject(new Error(`the backup did not finish copying within ${Math.round(deadlineMs / 1000)} s`));
+        void worker.terminate();
+      }, deadlineMs);
+      worker.once('message', (msg: { ok: true; manifest: Manifest; repos: [string, string][] } | { ok: false; error: string }) => {
+        clearTimeout(timer);
+        if (msg.ok) resolvePromise({ manifest: msg.manifest, repos: msg.repos });
+        else reject(new Error(msg.error));
+      });
+      worker.once('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      worker.once('exit', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) reject(new Error(`the backup worker exited with code ${code}`));
+      });
+    });
+    const manifest: Manifest & { unconfirmed?: { project: string; object: string; reason: string } } = draft.manifest;
+    const left = deadlineMs - (performance.now() - started);
+    const unconfirmed =
+      left <= 0
+        ? { project: '', object: '', reason: 'the deadline of the backup passed before its commits could be confirmed' }
+        : await Promise.race([
+            unconfirmedCommit({ git: manifest.git, repos: new Map(draft.repos) }),
+            new Promise<{ project: string; object: string; reason: string }>((resolveTimeout) =>
+              setTimeout(() => resolveTimeout({ project: '', object: '', reason: 'the deadline of the backup passed before its commits were confirmed' }), left).unref(),
+            ),
+          ]);
+    if (unconfirmed !== null) {
+      manifest.label = 'incomplete_for_recovery';
+      manifest.unconfirmed = unconfirmed;
+    }
+    const { open: openFile } = await import('node:fs/promises');
+    const handle = await openFile(join(dir, 'manifest.json'), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(manifest, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const dirHandle = await openFile(dir, constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+    return { backup: dir, label: manifest.label };
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+// The engine's backup job (D1 §6.5): a backup of the running engine's home,
+// and when it has ended, `engine.backup` naming it with its label, which is
+// `complete` only for a backup that could be restored. A backup that could
+// not be made at all is logged, leaves nothing behind, and is announced with
+// `backup` null.
+export async function backupJob(rt: { home: string; config: { values: { git_deadline_long: number } }; engine: (name: string, args: unknown) => Promise<unknown> }): Promise<void> {
+  try {
+    const done = await backupWhileRunning(rt.home, rt.config.values.git_deadline_long * 1000);
+    await rt.engine('engine.backup', done);
+  } catch (err) {
+    // One event for each backup started, when it has ended (SEAM.md §93):
+    // this one left nothing behind.
+    log('backup', err);
+    await rt.engine('engine.backup', { backup: null, label: 'incomplete_for_recovery' }).catch((e: unknown) => log('backup event', e));
+  }
 }

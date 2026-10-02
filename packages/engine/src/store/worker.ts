@@ -11,10 +11,11 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
+import { listProjects, openDecisions, readCandidate, readProject, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
-import { liftToFull, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
+import { liftToFull, recordBackup, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
 import { bootstrapProject, policyFacts, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
   acceptFacts,
@@ -95,7 +96,7 @@ export interface WorkerData {
 }
 
 export type Request = { id: number; op: string; args: unknown };
-export type Reply = { id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> };
+export type Reply = ({ id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> }) & { seq?: number | null };
 
 const data = workerData as WorkerData;
 const port = parentPort!;
@@ -131,8 +132,13 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
 };
 
 const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
+  'projects.list': (d, a) => listProjects(d, a),
+  'project.read': (d, a) => readProject(d, a),
+  'decisions.open': (d, a) => openDecisions(d, a),
+  'candidate.read': (d, a) => readCandidate(d, a),
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
+  'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
   'scheduler.candidates': (d, a: { maxConcurrentRuns: number }) => dispatchCandidates(d, a),
   'scheduler.projects': (d) => projectIds(d),
   'runs.quarantined': (d) => quarantinedRuns(d),
@@ -167,6 +173,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
 // as actor.
 const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
+  'engine.backup': (tx, a) => recordBackup(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
   'receipt.allocate': (tx, a: { run: string }) => allocateReceipt(tx, a.run),
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),
@@ -307,6 +314,18 @@ const OPS: Record<string, (args: any) => unknown> = {
   },
 };
 
+// The highest committed event sequence, sent with every reply so that the
+// main thread learns of new events as they commit (the event stream follows
+// it). null while the store is not open or has no event log yet.
+function lastSeq(): number | null {
+  if (!db) return null;
+  try {
+    return (db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get() as { n: number }).n;
+  } catch {
+    return null;
+  }
+}
+
 port.on('message', (msg: Request) => {
   let reply: Reply;
   try {
@@ -317,5 +336,6 @@ port.on('message', (msg: Request) => {
   } catch (err) {
     reply = { id: msg.id, ok: false, refusal: asRefusal(err).toWire() };
   }
+  reply.seq = lastSeq();
   port.postMessage(reply);
 });

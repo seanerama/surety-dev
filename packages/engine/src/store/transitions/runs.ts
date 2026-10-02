@@ -6,6 +6,7 @@
 
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
+import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
@@ -109,6 +110,7 @@ function liveLease(tx: Tx, run: string, generation: number): LeaseRow | null {
 const runSubject = (run: RunRow) => ({ project: run.project, run: run.id, work_item: run.work_item });
 
 function setRunState(tx: Tx, run: RunRow, to: RunState, extra: Record<string, unknown> = {}): void {
+  assertEdge('RunState', run.state, to, { run: run.id });
   const sets = Object.keys(extra).map((k) => `"${k}" = ?`);
   tx.db.prepare(`UPDATE "runs" SET ${['"state" = ?', ...sets].join(', ')} WHERE "id" = ?`).run(to, ...Object.values(extra), run.id);
 }
@@ -166,7 +168,9 @@ export interface Claim {
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number): string | null {
+// `check`: false for a projection, which reads the budget without being a
+// budget check (D1 §6.6 governs the check, not the read).
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean } = {}): string | null {
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
   if (project.paused === 1) return 'project paused';
@@ -184,7 +188,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
-  if (exhaustedLimits(db, item.project, { check: true }).length > 0) return 'budget exhausted';
+  if (exhaustedLimits(db, item.project, { check: opts.check ?? true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -512,6 +516,7 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
     | undefined;
   if (!d) throw notFound('domain', args.domain);
   if (d.status === 'terminated') return;
+  assertEdge('DomainStatus', d.status, 'terminated', { domain: d.id });
   tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated' WHERE "id" = ?`).run(d.id);
   tx.db.prepare('UPDATE "process_ownership" SET "termination_confirmed_at" = ? WHERE "domain" = ?').run(tx.at, d.id);
   tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, { from: d.status, observed: args.observed });
@@ -531,6 +536,7 @@ export function quarantineRun(tx: Tx, args: { run: string; domains: string[]; pr
   for (const id of args.domains) {
     const d = tx.db.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(id) as { status: DomainStatus } | undefined;
     if (!d || (d.status !== 'allocated' && d.status !== 'launched')) continue;
+    assertEdge('DomainStatus', d.status, 'quarantined', { domain: id });
     tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'quarantined' WHERE "id" = ?`).run(id);
     tx.emit('domain.quarantined', { project: run.project, domain: id, run: run.id }, { from: d.status });
   }

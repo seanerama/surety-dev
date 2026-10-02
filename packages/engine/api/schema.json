@@ -1,0 +1,3980 @@
+{
+  "contract_version": 1,
+  "enums": {
+    "GateKind": [
+      "stage",
+      "phase",
+      "alpha_authorize",
+      "alpha_complete",
+      "beta_authorize",
+      "beta_complete",
+      "live_authorize",
+      "live_complete"
+    ],
+    "AssessmentStatus": [
+      "proposed",
+      "assessed",
+      "approved",
+      "rejected"
+    ],
+    "NominatedBy": [
+      "engine_cadence",
+      "builder_request"
+    ],
+    "CandidateProgress": [
+      "developing",
+      "alpha_deployed",
+      "beta_deployed",
+      "live"
+    ],
+    "RunnerClass": [
+      "direct",
+      "container",
+      "remote"
+    ],
+    "CheckKind": [
+      "acceptance",
+      "smoke",
+      "integration",
+      "security_lint",
+      "property",
+      "failure_recovery",
+      "sensitivity_floor",
+      "post_deploy_identity",
+      "post_deploy_behavior"
+    ],
+    "Tier": [
+      "T1",
+      "T2",
+      "T3"
+    ],
+    "DecisionKind": [
+      "idea_accept",
+      "spec_approval",
+      "spec_change",
+      "architecture_approval",
+      "plan_approval",
+      "check_correction_loosening",
+      "check_correction_unclassifiable",
+      "check_correction_tightening",
+      "finding_disposition",
+      "finding_applicability_exclusion",
+      "severity_lower",
+      "blocker",
+      "out_of_band_change",
+      "rollout_partial",
+      "publication_first_visibility",
+      "publication_subsequent",
+      "allowlist_widening",
+      "go_live",
+      "management_opt_in",
+      "triage",
+      "adoption_mode",
+      "requirement_confirm",
+      "stop_confirm",
+      "abandon_confirm",
+      "retire",
+      "reactivate",
+      "policy_widening"
+    ],
+    "DecisionStatus": [
+      "open",
+      "answered",
+      "consumed",
+      "invalidated"
+    ],
+    "AuthorizationStatus": [
+      "proposed",
+      "issued",
+      "consumed",
+      "superseded"
+    ],
+    "IntentStatus": [
+      "pending",
+      "executing",
+      "done",
+      "invalidated"
+    ],
+    "ActorKind": [
+      "engine",
+      "human",
+      "run"
+    ],
+    "DomainStatus": [
+      "allocated",
+      "launched",
+      "terminated",
+      "quarantined"
+    ],
+    "FindingScope": [
+      "project",
+      "lineage",
+      "candidate"
+    ],
+    "FindingCategory": [
+      "defect",
+      "requirement_conflict",
+      "contract_conflict",
+      "security",
+      "hygiene"
+    ],
+    "Severity": [
+      "critical",
+      "high",
+      "medium",
+      "low"
+    ],
+    "FindingStatus": [
+      "open",
+      "dispositioned",
+      "resolved"
+    ],
+    "Disposition": [
+      "fix",
+      "defer",
+      "accept"
+    ],
+    "Authority": [
+      "role",
+      "reviewer",
+      "human"
+    ],
+    "GateOutcome": [
+      "satisfied",
+      "not_satisfied"
+    ],
+    "JournalKind": [
+      "ref_update",
+      "commit_tree",
+      "worktree_add",
+      "worktree_remove"
+    ],
+    "JournalEventKind": [
+      "intended",
+      "applied",
+      "confirmed",
+      "failed",
+      "ambiguous",
+      "finalized"
+    ],
+    "JournalState": [
+      "intended",
+      "applied",
+      "confirmed",
+      "failed",
+      "ambiguous",
+      "finalized"
+    ],
+    "InvocationStatus": [
+      "dispatch_started",
+      "refused",
+      "launched",
+      "ended",
+      "unknown"
+    ],
+    "LeaseKind": [
+      "run",
+      "integration",
+      "workspace",
+      "quarantine"
+    ],
+    "Role": [
+      "vision",
+      "spec_writer",
+      "architect",
+      "builder",
+      "verifier",
+      "reviewer",
+      "release_operator",
+      "mechanic"
+    ],
+    "CostStatus": [
+      "reported",
+      "estimated",
+      "unknown",
+      "measured_zero"
+    ],
+    "CheckoutKind": [
+      "integration_worktree",
+      "run_workspace"
+    ],
+    "NotificationStatus": [
+      "queued",
+      "sending",
+      "delivered",
+      "failed",
+      "unknown"
+    ],
+    "AttemptStatus": [
+      "started",
+      "succeeded",
+      "failed",
+      "ambiguous",
+      "reconciled_succeeded",
+      "reconciled_absent",
+      "reconciled_partial"
+    ],
+    "OperationKind": [
+      "git_ref_update",
+      "git_commit",
+      "git_worktree",
+      "publish",
+      "deploy",
+      "rollback",
+      "teardown",
+      "issue_file",
+      "issue_update",
+      "notify"
+    ],
+    "OperationStatus": [
+      "intended",
+      "in_progress",
+      "succeeded",
+      "failed",
+      "partial",
+      "ambiguous",
+      "superseded"
+    ],
+    "IntegritySubject": [
+      "ref",
+      "checkout",
+      "repository"
+    ],
+    "OobDisposition": [
+      "discard",
+      "adopt",
+      "stash"
+    ],
+    "BaselineState": [
+      "idea",
+      "spec_ready",
+      "retired"
+    ],
+    "RegistrationState": [
+      "pending_bootstrap",
+      "registered"
+    ],
+    "ProposedBy": [
+      "verifier_run",
+      "human"
+    ],
+    "ProtectedChangeKind": [
+      "initial",
+      "tightening",
+      "loosening",
+      "unclassifiable"
+    ],
+    "ProposalStatus": [
+      "captured",
+      "classified",
+      "awaiting_human",
+      "approved",
+      "applied",
+      "rejected"
+    ],
+    "RecordKind": [
+      "transcript",
+      "tool_output",
+      "check_output",
+      "result",
+      "raw_user_report",
+      "parked_result",
+      "proposal_rationale",
+      "assessment_evidence",
+      "containment_evidence",
+      "recovery_plan"
+    ],
+    "PostScan": [
+      "pending",
+      "clean",
+      "hit"
+    ],
+    "RefKind": [
+      "integration",
+      "lineage",
+      "nomination",
+      "recovery",
+      "oob",
+      "keep"
+    ],
+    "RevisionKind": [
+      "working",
+      "checkpoint",
+      "engine_commit",
+      "nominated",
+      "out_of_band",
+      "protected",
+      "intent"
+    ],
+    "RunKind": [
+      "one_shot",
+      "session"
+    ],
+    "RunState": [
+      "created",
+      "claimed",
+      "executing",
+      "validating",
+      "proposal_captured",
+      "finalizing",
+      "ended"
+    ],
+    "SessionState": [
+      "allocated",
+      "open_idle",
+      "turn_running",
+      "saving",
+      "closing"
+    ],
+    "RunOutcome": [
+      "completed",
+      "failed",
+      "refused",
+      "timed_out",
+      "stopped",
+      "abandoned",
+      "recovered"
+    ],
+    "RunReasonClass": [
+      "diff_violation",
+      "ref_violation",
+      "invalid_result",
+      "infra_error",
+      "preflight_refused",
+      "deadline",
+      "integration_conflict",
+      "budget",
+      "human_stop",
+      "human_abandon",
+      "recovered",
+      "none"
+    ],
+    "ScopeApprovalKind": [
+      "validation_scope"
+    ],
+    "SignOffScope": [
+      "candidate",
+      "module",
+      "security"
+    ],
+    "StageStatus": [
+      "planned",
+      "building",
+      "integrated",
+      "verified"
+    ],
+    "UsageSemantics": [
+      "cumulative",
+      "delta"
+    ],
+    "WorkItemKind": [
+      "stage_build",
+      "fix",
+      "verification",
+      "review",
+      "phase_verification",
+      "replan",
+      "assessment",
+      "spec_change",
+      "check_correction",
+      "triage_accept",
+      "export",
+      "publish",
+      "deploy",
+      "rollback",
+      "adoption_baseline",
+      "conformance"
+    ],
+    "WorkItemStatus": [
+      "eligible",
+      "claimed",
+      "executing",
+      "integrating",
+      "integrated",
+      "verifying",
+      "complete",
+      "awaiting_decision",
+      "held",
+      "parked",
+      "cancelled"
+    ],
+    "WorkContinuation": [
+      "executing",
+      "integrating",
+      "verifying"
+    ],
+    "WorkspaceDisposition": [
+      "active",
+      "retained",
+      "quarantined",
+      "discarded"
+    ],
+    "EventType": [
+      "engine.started",
+      "engine.mode_changed",
+      "engine.tick",
+      "engine.quarantine",
+      "api.act",
+      "project.created",
+      "project.registered",
+      "project.paused",
+      "project.resumed",
+      "project.rebound",
+      "work.created",
+      "work.claimed",
+      "work.advanced",
+      "work.integrated",
+      "work.complete",
+      "work.held",
+      "work.resumed",
+      "work.parked",
+      "work.cancelled",
+      "run.created",
+      "run.claimed",
+      "run.started",
+      "run.heartbeat",
+      "run.validating",
+      "run.finalizing",
+      "run.ended",
+      "run.quarantined",
+      "domain.terminated",
+      "domain.quarantined",
+      "decision.raised",
+      "decision.answered",
+      "decision.consumed",
+      "decision.invalidated",
+      "operation.intended",
+      "operation.attempt_started",
+      "operation.succeeded",
+      "operation.failed",
+      "operation.partial",
+      "operation.ambiguous",
+      "operation.finalized",
+      "revision.recorded",
+      "candidate.nominated",
+      "repo.out_of_band",
+      "repo.reconciled",
+      "policy.changed",
+      "git.journal_intended",
+      "git.journal_applied",
+      "git.journal_confirmed",
+      "git.journal_ambiguous",
+      "git.journal_finalized",
+      "invocation.receipt",
+      "invocation.status",
+      "invocation.usage",
+      "ledger.row",
+      "ledger.correction",
+      "record.written",
+      "record.expired",
+      "record.secret_found",
+      "record.missing",
+      "run.proposal_captured",
+      "decision.escalated",
+      "protected.proposed",
+      "protected.classified",
+      "protected.approved",
+      "protected.rejected",
+      "protected.applied",
+      "protected.unauthorized_detected",
+      "check.result",
+      "gate.scope_built",
+      "gate.evaluated",
+      "authorization.issued",
+      "authorization.superseded",
+      "finding.raised",
+      "finding.severity_changed",
+      "finding.dispositioned",
+      "finding.resolved",
+      "finding.reopened",
+      "assessment.proposed",
+      "assessment.assessed",
+      "assessment.approved",
+      "assessment.rejected",
+      "signoff.recorded",
+      "intent.recorded",
+      "intent.executing",
+      "intent.done",
+      "intent.invalidated",
+      "notification.queued",
+      "notification.sending",
+      "notification.delivered",
+      "notification.failed",
+      "notification.unknown",
+      "environment.observed",
+      "engine.backup"
+    ],
+    "EngineMode": [
+      "restricted",
+      "full"
+    ],
+    "NowState": [
+      "refused",
+      "waiting_on_you",
+      "running",
+      "ready",
+      "idle"
+    ],
+    "ObservedCondition": [
+      "healthy",
+      "degraded",
+      "down",
+      "unknown"
+    ],
+    "Freshness": [
+      "fresh",
+      "stale",
+      "expired"
+    ],
+    "Provenance": [
+      "observed",
+      "claimed",
+      "configured"
+    ]
+  },
+  "tables": {
+    "acceptance_scopes": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "gate_kind": {
+          "required": true,
+          "enum": "GateKind"
+        },
+        "operation": {
+          "required": false,
+          "references": "operations"
+        },
+        "attempt": {
+          "required": false,
+          "references": "operation_attempts"
+        },
+        "phase": {
+          "required": false
+        },
+        "stage": {
+          "required": false,
+          "references": "stages"
+        },
+        "spec_revision": {
+          "required": false
+        },
+        "architecture_revision": {
+          "required": false
+        },
+        "policy_revision": {
+          "required": false,
+          "references": "policy_revisions"
+        },
+        "effective_protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "source_revision": {
+          "required": true
+        },
+        "delivered_requirement_ids": {
+          "required": true
+        },
+        "partial_requirement_ids": {
+          "required": true
+        },
+        "sensitivity_categories": {
+          "required": true
+        },
+        "required_check_ids": {
+          "required": true
+        },
+        "runner_classes": {
+          "required": true
+        },
+        "required_signoffs": {
+          "required": true
+        },
+        "environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "artifact_digest": {
+          "required": false
+        },
+        "evidence_reuse": {
+          "required": true
+        },
+        "validated": {
+          "required": true
+        },
+        "scope_hash": {
+          "required": true
+        },
+        "acceptance_content_hash": {
+          "required": true
+        }
+      }
+    },
+    "applicability_assessments": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "finding": {
+          "required": true,
+          "references": "findings"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "proposed_by_run": {
+          "required": true,
+          "references": "runs"
+        },
+        "assessed_by_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "authorized_by": {
+          "required": false
+        },
+        "evidence": {
+          "required": true,
+          "references": "records"
+        },
+        "reason": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "AssessmentStatus"
+        }
+      }
+    },
+    "approvals": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "decision": {
+          "required": true,
+          "references": "decisions"
+        },
+        "actor": {
+          "required": true
+        },
+        "consequence": {
+          "required": true
+        },
+        "subject_type": {
+          "required": true
+        },
+        "subject_id": {
+          "required": true
+        },
+        "acceptance_content_hash": {
+          "required": false
+        },
+        "result_hash": {
+          "required": false
+        },
+        "policy_revision": {
+          "required": false,
+          "references": "policy_revisions"
+        },
+        "protected_delta_shown": {
+          "required": false
+        },
+        "consumed_at": {
+          "required": true
+        }
+      }
+    },
+    "candidates": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "revision": {
+          "required": true
+        },
+        "lineage": {
+          "required": true,
+          "references": "lineages"
+        },
+        "nominated_at": {
+          "required": true
+        },
+        "nominated_by": {
+          "required": true,
+          "enum": "NominatedBy"
+        },
+        "spec_revision": {
+          "required": false
+        },
+        "architecture_revision": {
+          "required": false
+        },
+        "nominated_protected_version": {
+          "required": false
+        },
+        "progress": {
+          "required": true,
+          "enum": "CandidateProgress"
+        },
+        "superseded_by": {
+          "required": false,
+          "references": "candidates"
+        },
+        "held_work": {
+          "required": true
+        }
+      }
+    },
+    "capability_grants": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "capabilities": {
+          "required": true
+        },
+        "env_allowlist": {
+          "required": true
+        },
+        "secret_refs": {
+          "required": false
+        },
+        "issued_at": {
+          "required": true
+        },
+        "expires_at": {
+          "required": true
+        },
+        "revoked_at": {
+          "required": false
+        }
+      }
+    },
+    "check_results": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "check": {
+          "required": true,
+          "references": "checks"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "source_revision": {
+          "required": true
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "runner_class": {
+          "required": true,
+          "enum": "RunnerClass"
+        },
+        "runner_id": {
+          "required": true
+        },
+        "environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "artifact_digest": {
+          "required": false
+        },
+        "execution_seq": {
+          "required": true
+        },
+        "execution_established": {
+          "required": true
+        },
+        "signaled": {
+          "required": true
+        },
+        "deadline_hit": {
+          "required": true
+        },
+        "exit_status": {
+          "required": false
+        },
+        "output": {
+          "required": false,
+          "references": "records"
+        },
+        "started_at": {
+          "required": false
+        },
+        "finished_at": {
+          "required": false
+        },
+        "invalidated_at": {
+          "required": false
+        }
+      }
+    },
+    "checks": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "key": {
+          "required": true
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "kind": {
+          "required": true,
+          "enum": "CheckKind"
+        },
+        "required": {
+          "required": true
+        },
+        "gate_kinds": {
+          "required": true
+        },
+        "tier_floor": {
+          "required": false,
+          "enum": "Tier"
+        },
+        "definition_path": {
+          "required": true
+        },
+        "definition_hash": {
+          "required": true
+        },
+        "requirement_ids": {
+          "required": true
+        },
+        "sensitive_areas": {
+          "required": true
+        },
+        "phase": {
+          "required": false
+        },
+        "runner_class": {
+          "required": true,
+          "enum": "RunnerClass"
+        },
+        "requires": {
+          "required": true
+        }
+      }
+    },
+    "decisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "kind": {
+          "required": true,
+          "enum": "DecisionKind"
+        },
+        "subject_type": {
+          "required": true
+        },
+        "subject_id": {
+          "required": true
+        },
+        "semantic_generation": {
+          "required": true
+        },
+        "scope": {
+          "required": true
+        },
+        "question": {
+          "required": true
+        },
+        "options": {
+          "required": true
+        },
+        "dependency_manifest": {
+          "required": true
+        },
+        "transition_schema_version": {
+          "required": true
+        },
+        "preview_hash": {
+          "required": true
+        },
+        "evidence": {
+          "required": true
+        },
+        "blocked_while_open": {
+          "required": true
+        },
+        "raised_at": {
+          "required": true
+        },
+        "target_seconds": {
+          "required": false
+        },
+        "escalated_at": {
+          "required": false
+        },
+        "batch_key": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "DecisionStatus"
+        },
+        "answer": {
+          "required": false
+        },
+        "consumed_at": {
+          "required": false
+        },
+        "invalidated_reason": {
+          "required": false
+        }
+      }
+    },
+    "deployment_authorizations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "artifact_digest": {
+          "required": true
+        },
+        "source_delivery_mapping": {
+          "required": true
+        },
+        "config_identity": {
+          "required": true
+        },
+        "target_set": {
+          "required": true
+        },
+        "policy_revision": {
+          "required": false,
+          "references": "policy_revisions"
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "evaluation": {
+          "required": false,
+          "references": "gate_evaluations"
+        },
+        "status": {
+          "required": true,
+          "enum": "AuthorizationStatus"
+        },
+        "generation": {
+          "required": true
+        },
+        "binding_hash": {
+          "required": true
+        }
+      }
+    },
+    "effect_intents": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "decision": {
+          "required": true,
+          "references": "decisions"
+        },
+        "approval": {
+          "required": false,
+          "references": "approvals"
+        },
+        "operation": {
+          "required": false,
+          "references": "operations"
+        },
+        "preconditions": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "IntentStatus"
+        },
+        "invalidated_reason": {
+          "required": false
+        },
+        "kind": {
+          "required": true
+        },
+        "plan": {
+          "required": true
+        }
+      }
+    },
+    "engine_incarnations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "pid": {
+          "required": true
+        },
+        "started_at": {
+          "required": true
+        },
+        "host_boot_id": {
+          "required": true
+        },
+        "ended_at": {
+          "required": false
+        }
+      }
+    },
+    "environment_records": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "last_verified": {
+          "required": false
+        },
+        "attempted": {
+          "required": false
+        },
+        "observed": {
+          "required": true
+        },
+        "frozen_at": {
+          "required": false
+        }
+      }
+    },
+    "environments": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "name": {
+          "required": true
+        },
+        "adapter": {
+          "required": true
+        },
+        "adapter_config_ref": {
+          "required": true
+        },
+        "verify_spec": {
+          "required": true
+        }
+      }
+    },
+    "events": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "seq": {
+          "required": true
+        },
+        "at": {
+          "required": true
+        },
+        "type": {
+          "required": true
+        },
+        "subject": {
+          "required": true
+        },
+        "actor_kind": {
+          "required": true,
+          "enum": "ActorKind"
+        },
+        "actor_id": {
+          "required": false
+        },
+        "request_id": {
+          "required": false
+        },
+        "operation": {
+          "required": false,
+          "references": "operations"
+        },
+        "payload": {
+          "required": true
+        },
+        "tx": {
+          "required": true
+        }
+      }
+    },
+    "evidence_reuse": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "check": {
+          "required": true,
+          "references": "checks"
+        },
+        "check_result": {
+          "required": false,
+          "references": "check_results"
+        },
+        "record": {
+          "required": false,
+          "references": "records"
+        },
+        "assessed": {
+          "required": true
+        }
+      }
+    },
+    "execution_domains": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "status": {
+          "required": true,
+          "enum": "DomainStatus"
+        }
+      }
+    },
+    "findings": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "scope": {
+          "required": true,
+          "enum": "FindingScope"
+        },
+        "subject_id": {
+          "required": true
+        },
+        "candidate": {
+          "required": false,
+          "references": "candidates"
+        },
+        "source_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "source_role": {
+          "required": false
+        },
+        "category": {
+          "required": true,
+          "enum": "FindingCategory"
+        },
+        "message": {
+          "required": true
+        },
+        "check": {
+          "required": false
+        },
+        "proposed_severity": {
+          "required": true,
+          "enum": "Severity"
+        },
+        "effective_severity": {
+          "required": true,
+          "enum": "Severity"
+        },
+        "severity_history": {
+          "required": true
+        },
+        "sensitive_area": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "FindingStatus"
+        },
+        "disposition": {
+          "required": false,
+          "enum": "Disposition"
+        },
+        "disposition_authority": {
+          "required": false,
+          "enum": "Authority"
+        },
+        "disposition_by": {
+          "required": false
+        },
+        "disposition_at": {
+          "required": false
+        },
+        "disposition_seq": {
+          "required": false
+        },
+        "linked_issue": {
+          "required": false
+        },
+        "defer_target": {
+          "required": false
+        },
+        "reevaluations": {
+          "required": true
+        },
+        "alpha_exception": {
+          "required": false
+        },
+        "resolution_verification": {
+          "required": false
+        },
+        "proposed_disposition": {
+          "required": false
+        },
+        "proposed_severity_change": {
+          "required": false
+        }
+      }
+    },
+    "gate_evaluations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "scope": {
+          "required": true,
+          "references": "acceptance_scopes"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "gate_kind": {
+          "required": true,
+          "enum": "GateKind"
+        },
+        "computed_at": {
+          "required": true
+        },
+        "inputs_hash": {
+          "required": true
+        },
+        "inputs_snapshot": {
+          "required": true
+        },
+        "check_states": {
+          "required": true
+        },
+        "outcome": {
+          "required": true,
+          "enum": "GateOutcome"
+        },
+        "reasons": {
+          "required": true
+        },
+        "satisfiers": {
+          "required": true
+        },
+        "stale": {
+          "required": true
+        },
+        "stage": {
+          "required": false,
+          "references": "stages"
+        },
+        "authorization": {
+          "required": false
+        }
+      }
+    },
+    "git_journal_events": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "seq": {
+          "required": true
+        },
+        "journal_kind": {
+          "required": true,
+          "enum": "JournalKind"
+        },
+        "event_kind": {
+          "required": true,
+          "enum": "JournalEventKind"
+        },
+        "payload": {
+          "required": true
+        }
+      }
+    },
+    "git_journal_state": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "journal_kind": {
+          "required": true,
+          "enum": "JournalKind"
+        },
+        "state": {
+          "required": true,
+          "enum": "JournalState"
+        },
+        "last_event_seq": {
+          "required": true
+        }
+      }
+    },
+    "invocation_receipts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "turn": {
+          "required": false,
+          "references": "turns"
+        },
+        "provider": {
+          "required": true
+        },
+        "model_requested": {
+          "required": true
+        },
+        "grant": {
+          "required": true,
+          "references": "capability_grants"
+        },
+        "budget_snapshot": {
+          "required": true
+        }
+      }
+    },
+    "invocation_status_observations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "seq": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "InvocationStatus"
+        },
+        "at": {
+          "required": true
+        }
+      }
+    },
+    "leases": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "resource_kind": {
+          "required": true,
+          "enum": "LeaseKind"
+        },
+        "resource_id": {
+          "required": true
+        },
+        "owner_incarnation": {
+          "required": true,
+          "references": "engine_incarnations"
+        },
+        "generation": {
+          "required": true
+        },
+        "acquired_at": {
+          "required": true
+        },
+        "renewed_at": {
+          "required": true
+        },
+        "expires_at": {
+          "required": true
+        },
+        "released_at": {
+          "required": false
+        },
+        "closing": {
+          "required": true
+        },
+        "cleanup_authority": {
+          "required": true
+        }
+      }
+    },
+    "ledger_rows": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "turn": {
+          "required": false,
+          "references": "turns"
+        },
+        "role": {
+          "required": true,
+          "enum": "Role"
+        },
+        "provider": {
+          "required": true
+        },
+        "model_requested": {
+          "required": true
+        },
+        "model_observed": {
+          "required": false
+        },
+        "raw_usage": {
+          "required": true
+        },
+        "normalization_version": {
+          "required": true
+        },
+        "billable_in": {
+          "required": false
+        },
+        "cached_in": {
+          "required": false
+        },
+        "out": {
+          "required": false
+        },
+        "usage_complete": {
+          "required": true
+        },
+        "cost_status": {
+          "required": true,
+          "enum": "CostStatus"
+        },
+        "cost_usd": {
+          "required": false
+        },
+        "day_utc": {
+          "required": true
+        },
+        "corrects": {
+          "required": false,
+          "references": "ledger_rows"
+        },
+        "correction_seq": {
+          "required": false
+        }
+      }
+    },
+    "lineages": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "branch": {
+          "required": true
+        },
+        "started_from_candidate": {
+          "required": false,
+          "references": "candidates"
+        },
+        "open": {
+          "required": true
+        }
+      }
+    },
+    "managed_checkouts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "kind": {
+          "required": true,
+          "enum": "CheckoutKind"
+        },
+        "path": {
+          "required": true
+        },
+        "baseline": {
+          "required": true
+        },
+        "owner_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "released_at": {
+          "required": false
+        }
+      }
+    },
+    "modules": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "name": {
+          "required": true
+        },
+        "paths": {
+          "required": true
+        },
+        "sensitive_areas": {
+          "required": true
+        },
+        "tier_override": {
+          "required": false,
+          "enum": "Tier"
+        }
+      }
+    },
+    "notification_intents": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "source": {
+          "required": true
+        },
+        "channel": {
+          "required": true
+        },
+        "key": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "NotificationStatus"
+        },
+        "attempts": {
+          "required": true
+        }
+      }
+    },
+    "operation_attempts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "attempt_number": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "AttemptStatus"
+        },
+        "started_at": {
+          "required": true
+        },
+        "finished_at": {
+          "required": false
+        },
+        "timeline": {
+          "required": true
+        },
+        "reconciliation_reads": {
+          "required": true
+        },
+        "incarnation": {
+          "required": false
+        }
+      }
+    },
+    "operations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "kind": {
+          "required": true,
+          "enum": "OperationKind"
+        },
+        "target": {
+          "required": true
+        },
+        "subject": {
+          "required": true
+        },
+        "idempotency_key": {
+          "required": true
+        },
+        "semantic_generation": {
+          "required": true
+        },
+        "deployment_generation": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "OperationStatus"
+        },
+        "remaining_scope": {
+          "required": false
+        },
+        "linked_prior": {
+          "required": false,
+          "references": "operations"
+        },
+        "deadline_at": {
+          "required": true
+        },
+        "finalized_at": {
+          "required": false
+        },
+        "finalizer_inputs": {
+          "required": true
+        },
+        "outcome_detail": {
+          "required": false
+        }
+      }
+    },
+    "out_of_band_changes": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "subject_kind": {
+          "required": true,
+          "enum": "IntegritySubject"
+        },
+        "ref": {
+          "required": false,
+          "references": "ref_registry"
+        },
+        "checkout": {
+          "required": false,
+          "references": "managed_checkouts"
+        },
+        "expected": {
+          "required": true
+        },
+        "found": {
+          "required": false
+        },
+        "detected_at": {
+          "required": true
+        },
+        "disposition": {
+          "required": false,
+          "enum": "OobDisposition"
+        },
+        "decision": {
+          "required": true,
+          "references": "decisions"
+        },
+        "closed_at": {
+          "required": false
+        }
+      }
+    },
+    "phase_plans": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "phase_number": {
+          "required": true
+        },
+        "prepared_against_revision": {
+          "required": true
+        },
+        "git_path": {
+          "required": true
+        },
+        "approved_by": {
+          "required": false
+        },
+        "approved_at": {
+          "required": false
+        }
+      }
+    },
+    "policy_revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "revision": {
+          "required": true
+        },
+        "git_path": {
+          "required": true
+        },
+        "git_blob": {
+          "required": true
+        },
+        "changed_by": {
+          "required": true
+        },
+        "changed_at": {
+          "required": true
+        },
+        "diff_summary": {
+          "required": true
+        },
+        "widens_authority": {
+          "required": true
+        },
+        "committed": {
+          "required": true
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "effective": {
+          "required": true
+        }
+      }
+    },
+    "process_ownership": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "domain": {
+          "required": true,
+          "references": "execution_domains"
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "incarnation": {
+          "required": true,
+          "references": "engine_incarnations"
+        },
+        "pgid": {
+          "required": false
+        },
+        "pid": {
+          "required": false
+        },
+        "pid_start_time": {
+          "required": false
+        },
+        "containment_id": {
+          "required": false
+        },
+        "descendants": {
+          "required": true
+        },
+        "termination_confirmed_at": {
+          "required": false
+        }
+      }
+    },
+    "projects": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "name": {
+          "required": true
+        },
+        "tier": {
+          "required": true,
+          "enum": "Tier"
+        },
+        "dev_repo_path": {
+          "required": true
+        },
+        "integration_branch": {
+          "required": true
+        },
+        "delivery_repo": {
+          "required": false
+        },
+        "baseline_state": {
+          "required": true,
+          "enum": "BaselineState"
+        },
+        "prior_baseline_state": {
+          "required": false,
+          "enum": "BaselineState"
+        },
+        "registration_state": {
+          "required": true,
+          "enum": "RegistrationState"
+        },
+        "adoption": {
+          "required": false
+        },
+        "management": {
+          "required": true
+        },
+        "paused": {
+          "required": true
+        },
+        "seq_counters": {
+          "required": true
+        },
+        "policy_revision": {
+          "required": false,
+          "references": "policy_revisions"
+        },
+        "nomination_due": {
+          "required": false
+        }
+      }
+    },
+    "protected_proposals": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "proposed_by": {
+          "required": true,
+          "enum": "ProposedBy"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "base_revision": {
+          "required": true
+        },
+        "tree_id": {
+          "required": true
+        },
+        "diff_hash": {
+          "required": true
+        },
+        "affected_checks": {
+          "required": true
+        },
+        "rationale": {
+          "required": false,
+          "references": "records"
+        },
+        "requested_change_kind": {
+          "required": true,
+          "enum": "ProtectedChangeKind"
+        },
+        "classified_change_kind": {
+          "required": false,
+          "enum": "ProtectedChangeKind"
+        },
+        "status": {
+          "required": true,
+          "enum": "ProposalStatus"
+        },
+        "approver": {
+          "required": false
+        },
+        "approver_authority": {
+          "required": false,
+          "enum": "Authority"
+        },
+        "approved_at": {
+          "required": false
+        },
+        "resulting_version": {
+          "required": false,
+          "references": "protected_versions"
+        },
+        "changes_required_set": {
+          "required": true
+        }
+      }
+    },
+    "protected_versions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "fingerprint": {
+          "required": true
+        },
+        "check_ids": {
+          "required": true
+        },
+        "change_kind": {
+          "required": true,
+          "enum": "ProtectedChangeKind"
+        },
+        "proposal": {
+          "required": false,
+          "references": "protected_proposals"
+        },
+        "approved_by": {
+          "required": true
+        },
+        "approver_authority": {
+          "required": true,
+          "enum": "Authority"
+        },
+        "approved_at": {
+          "required": true
+        },
+        "applied_by_operation": {
+          "required": false,
+          "references": "operations"
+        },
+        "authorized": {
+          "required": true
+        },
+        "effective_from": {
+          "required": false
+        },
+        "superseded_by": {
+          "required": false,
+          "references": "protected_versions"
+        },
+        "roots": {
+          "required": true
+        }
+      }
+    },
+    "records": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "kind": {
+          "required": true,
+          "enum": "RecordKind"
+        },
+        "path": {
+          "required": false
+        },
+        "sha256": {
+          "required": false
+        },
+        "bytes": {
+          "required": false
+        },
+        "redaction_version": {
+          "required": true
+        },
+        "published": {
+          "required": true
+        },
+        "post_scan": {
+          "required": true,
+          "enum": "PostScan"
+        },
+        "post_scan_finding": {
+          "required": false
+        },
+        "retain_until": {
+          "required": false
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "published_at": {
+          "required": false
+        },
+        "missing_at": {
+          "required": false
+        }
+      }
+    },
+    "ref_registry": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "ref": {
+          "required": true
+        },
+        "kind": {
+          "required": true,
+          "enum": "RefKind"
+        },
+        "expected_oid": {
+          "required": true
+        },
+        "immutable": {
+          "required": true
+        }
+      }
+    },
+    "requirements": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "key": {
+          "required": true
+        },
+        "text_ref": {
+          "required": true
+        },
+        "assigned_phase": {
+          "required": false
+        },
+        "status": {
+          "required": true
+        },
+        "verified_by": {
+          "required": false
+        },
+        "confirmed_by": {
+          "required": false
+        }
+      }
+    },
+    "revision_ancestry": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "ancestor": {
+          "required": true
+        },
+        "descendant": {
+          "required": true
+        },
+        "is_ancestor": {
+          "required": true
+        }
+      }
+    },
+    "revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "sha": {
+          "required": true
+        },
+        "lineage": {
+          "required": true,
+          "references": "lineages"
+        },
+        "parent_sha": {
+          "required": false
+        },
+        "kind": {
+          "required": true,
+          "enum": "RevisionKind"
+        },
+        "created_by_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "recorded_at": {
+          "required": true
+        }
+      }
+    },
+    "runs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "work_item": {
+          "required": true,
+          "references": "work_items"
+        },
+        "role": {
+          "required": true,
+          "enum": "Role"
+        },
+        "kind": {
+          "required": true,
+          "enum": "RunKind"
+        },
+        "state": {
+          "required": true,
+          "enum": "RunState"
+        },
+        "session_state": {
+          "required": false,
+          "enum": "SessionState"
+        },
+        "outcome": {
+          "required": false,
+          "enum": "RunOutcome"
+        },
+        "reason_class": {
+          "required": false,
+          "enum": "RunReasonClass"
+        },
+        "reason_text": {
+          "required": false
+        },
+        "backend": {
+          "required": true
+        },
+        "backend_version": {
+          "required": true
+        },
+        "model_requested": {
+          "required": true
+        },
+        "model_observed": {
+          "required": false
+        },
+        "grant": {
+          "required": false,
+          "references": "capability_grants"
+        },
+        "base_revision": {
+          "required": true
+        },
+        "deadline_at": {
+          "required": true
+        },
+        "started_at": {
+          "required": false
+        },
+        "finished_at": {
+          "required": false
+        },
+        "parent_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "provider_session_id": {
+          "required": false
+        },
+        "quarantined": {
+          "required": true
+        },
+        "workspace": {
+          "required": false,
+          "references": "workspaces"
+        },
+        "result_value": {
+          "required": false
+        },
+        "reason_detail": {
+          "required": false
+        },
+        "chain": {
+          "required": true
+        },
+        "transcript": {
+          "required": false,
+          "references": "records"
+        },
+        "result": {
+          "required": false,
+          "references": "records"
+        },
+        "report_recorded": {
+          "required": true
+        },
+        "content_hash": {
+          "required": false
+        }
+      }
+    },
+    "schema_migrations": {
+      "fields": {
+        "seq": {
+          "required": true
+        },
+        "name": {
+          "required": true
+        },
+        "checksum": {
+          "required": true
+        },
+        "applied_at": {
+          "required": true
+        }
+      }
+    },
+    "scope_approvals": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "kind": {
+          "required": true,
+          "enum": "ScopeApprovalKind"
+        },
+        "proposal": {
+          "required": true,
+          "references": "protected_proposals"
+        }
+      }
+    },
+    "signoffs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "revision": {
+          "required": true
+        },
+        "role": {
+          "required": true
+        },
+        "scope": {
+          "required": true,
+          "enum": "SignOffScope"
+        },
+        "module": {
+          "required": false
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "acceptance_content_hash": {
+          "required": true
+        },
+        "recorded_at": {
+          "required": true
+        }
+      }
+    },
+    "stages": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "phase_plan": {
+          "required": true,
+          "references": "phase_plans"
+        },
+        "number": {
+          "required": true
+        },
+        "goal": {
+          "required": true
+        },
+        "modules": {
+          "required": true
+        },
+        "requirement_ids": {
+          "required": true
+        },
+        "implements": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "StageStatus"
+        },
+        "integrated_revision": {
+          "required": false
+        },
+        "work_item": {
+          "required": false,
+          "references": "work_items"
+        }
+      }
+    },
+    "stream_chunk_receipts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "record": {
+          "required": true,
+          "references": "records"
+        },
+        "offset": {
+          "required": true
+        },
+        "length": {
+          "required": true
+        },
+        "sha256": {
+          "required": true
+        }
+      }
+    },
+    "turns": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "number": {
+          "required": true
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "domain": {
+          "required": true,
+          "references": "execution_domains"
+        },
+        "started_at": {
+          "required": true
+        },
+        "finished_at": {
+          "required": false
+        }
+      }
+    },
+    "usage_observations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "seq": {
+          "required": true
+        },
+        "semantics": {
+          "required": true,
+          "enum": "UsageSemantics"
+        },
+        "raw": {
+          "required": true
+        },
+        "at": {
+          "required": true
+        }
+      }
+    },
+    "work_items": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "kind": {
+          "required": true,
+          "enum": "WorkItemKind"
+        },
+        "subject": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "WorkItemStatus"
+        },
+        "blocker": {
+          "required": false
+        },
+        "depends_on": {
+          "required": false
+        },
+        "trigger_source": {
+          "required": true
+        },
+        "trigger_id": {
+          "required": true
+        },
+        "trigger_generation": {
+          "required": true
+        },
+        "trigger_consumed_at": {
+          "required": false
+        },
+        "repair_attempts": {
+          "required": true
+        },
+        "no_progress_count": {
+          "required": true
+        },
+        "progress_key": {
+          "required": false
+        },
+        "preflight_refusals": {
+          "required": true
+        },
+        "prior_status": {
+          "required": false,
+          "enum": "WorkItemStatus"
+        },
+        "dispatch_hold": {
+          "required": true
+        },
+        "continuation": {
+          "required": false,
+          "enum": "WorkContinuation"
+        },
+        "repair_due": {
+          "required": true
+        },
+        "chain": {
+          "required": true
+        },
+        "continue_from": {
+          "required": false
+        }
+      }
+    },
+    "workspaces": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "path": {
+          "required": true
+        },
+        "base_revision": {
+          "required": true
+        },
+        "current_base": {
+          "required": true
+        },
+        "disposition": {
+          "required": true,
+          "enum": "WorkspaceDisposition"
+        },
+        "checkpoints": {
+          "required": true
+        },
+        "snapshot_tree": {
+          "required": false
+        },
+        "disposed_at": {
+          "required": false
+        },
+        "metadata_baseline": {
+          "required": false
+        }
+      }
+    }
+  },
+  "work_items": {
+    "statuses": [
+      "eligible",
+      "claimed",
+      "executing",
+      "integrating",
+      "integrated",
+      "verifying",
+      "complete",
+      "awaiting_decision",
+      "held",
+      "parked",
+      "cancelled"
+    ],
+    "terminal": [
+      "complete",
+      "cancelled"
+    ],
+    "kinds": {
+      "stage_build": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "complete"
+        ],
+        "role": "builder"
+      },
+      "fix": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "complete"
+        ],
+        "role": "builder"
+      },
+      "verification": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ],
+        "role": "verifier"
+      },
+      "review": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ],
+        "role": "reviewer"
+      },
+      "phase_verification": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ]
+      },
+      "replan": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "complete"
+        ],
+        "role": "architect"
+      },
+      "assessment": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "complete"
+        ],
+        "role": "architect"
+      },
+      "spec_change": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "awaiting_decision",
+          "complete"
+        ]
+      },
+      "check_correction": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ],
+        "role": "verifier"
+      },
+      "triage_accept": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "awaiting_decision",
+          "complete"
+        ]
+      },
+      "export": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ]
+      },
+      "publish": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ]
+      },
+      "deploy": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ]
+      },
+      "rollback": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ]
+      },
+      "adoption_baseline": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "complete"
+        ]
+      },
+      "conformance": {
+        "m1": false,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "complete"
+        ]
+      }
+    },
+    "templates": {
+      "return": {
+        "from": [
+          "claimed",
+          "executing",
+          "integrating",
+          "verifying"
+        ],
+        "to": "eligible"
+      },
+      "park": {
+        "from": [
+          "claimed",
+          "executing",
+          "integrating",
+          "verifying"
+        ],
+        "to": "parked"
+      },
+      "block": {
+        "from": [
+          "executing",
+          "integrating",
+          "verifying"
+        ],
+        "to": "awaiting_decision"
+      },
+      "continue": {
+        "from": [
+          "awaiting_decision"
+        ],
+        "to": null
+      },
+      "stop": {
+        "from": [
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "awaiting_decision"
+        ],
+        "to": "held",
+        "only_kinds_with": "claimed"
+      },
+      "abandon": {
+        "from": [
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "awaiting_decision"
+        ],
+        "to": "eligible",
+        "only_kinds_with": "claimed"
+      },
+      "resume": {
+        "from": [
+          "held"
+        ],
+        "to": "eligible"
+      },
+      "unpark": {
+        "from": [
+          "parked"
+        ],
+        "to": "eligible"
+      },
+      "cancel": {
+        "from": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "verifying",
+          "awaiting_decision",
+          "held",
+          "parked"
+        ],
+        "to": "cancelled"
+      }
+    },
+    "run_owning": [
+      "claimed",
+      "executing",
+      "integrating",
+      "integrated",
+      "verifying",
+      "awaiting_decision"
+    ],
+    "continuations": [
+      "executing",
+      "integrating",
+      "verifying"
+    ]
+  },
+  "transitions": {
+    "RunState": [
+      [
+        "created",
+        "claimed"
+      ],
+      [
+        "claimed",
+        "executing"
+      ],
+      [
+        "claimed",
+        "finalizing"
+      ],
+      [
+        "executing",
+        "validating"
+      ],
+      [
+        "executing",
+        "finalizing"
+      ],
+      [
+        "validating",
+        "finalizing"
+      ],
+      [
+        "validating",
+        "proposal_captured"
+      ],
+      [
+        "proposal_captured",
+        "finalizing"
+      ],
+      [
+        "finalizing",
+        "finalizing"
+      ],
+      [
+        "finalizing",
+        "ended"
+      ],
+      [
+        "created",
+        "finalizing"
+      ]
+    ],
+    "DomainStatus": [
+      [
+        "allocated",
+        "launched"
+      ],
+      [
+        "allocated",
+        "terminated"
+      ],
+      [
+        "allocated",
+        "quarantined"
+      ],
+      [
+        "launched",
+        "terminated"
+      ],
+      [
+        "launched",
+        "quarantined"
+      ],
+      [
+        "quarantined",
+        "terminated"
+      ]
+    ],
+    "AuthorizationStatus": [
+      [
+        "proposed",
+        "issued"
+      ],
+      [
+        "proposed",
+        "superseded"
+      ],
+      [
+        "issued",
+        "consumed"
+      ],
+      [
+        "issued",
+        "superseded"
+      ],
+      [
+        "consumed",
+        "superseded"
+      ]
+    ]
+  },
+  "decisions": {
+    "idea_accept": {
+      "enabled": false
+    },
+    "spec_approval": {
+      "enabled": false
+    },
+    "spec_change": {
+      "enabled": false
+    },
+    "architecture_approval": {
+      "enabled": false
+    },
+    "plan_approval": {
+      "enabled": false
+    },
+    "check_correction_loosening": {
+      "enabled": true,
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    },
+    "check_correction_unclassifiable": {
+      "enabled": true,
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    },
+    "finding_disposition": {
+      "enabled": true,
+      "manifest": [
+        "finding_status",
+        "disposition",
+        "proposed_disposition",
+        "effective_severity",
+        "sensitive_area",
+        "evidence",
+        "defer_target",
+        "linked_issue",
+        "applicable",
+        "candidate_revision",
+        "acceptance_content_hash",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    },
+    "severity_lower": {
+      "enabled": true,
+      "manifest": [
+        "finding_status",
+        "effective_severity",
+        "to",
+        "sensitive_area",
+        "applicable",
+        "candidate_revision",
+        "acceptance_content_hash",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    },
+    "blocker": {
+      "enabled": true,
+      "manifest": [
+        "subject_status",
+        "quarantined",
+        "cause",
+        "evidence",
+        "continuation"
+      ],
+      "target_seconds": 14400
+    },
+    "out_of_band_change": {
+      "enabled": true,
+      "manifest": [
+        "subject_kind",
+        "expected",
+        "found"
+      ],
+      "target_seconds": 14400
+    },
+    "rollout_partial": {
+      "enabled": false
+    },
+    "publication_first_visibility": {
+      "enabled": false
+    },
+    "publication_subsequent": {
+      "enabled": false
+    },
+    "allowlist_widening": {
+      "enabled": false
+    },
+    "go_live": {
+      "enabled": false
+    },
+    "management_opt_in": {
+      "enabled": false
+    },
+    "triage": {
+      "enabled": false
+    },
+    "adoption_mode": {
+      "enabled": false
+    },
+    "requirement_confirm": {
+      "enabled": false
+    },
+    "stop_confirm": {
+      "enabled": true,
+      "manifest": [
+        "run",
+        "stoppable",
+        "domains",
+        "lease_generation",
+        "workspace",
+        "workspace_snapshot",
+        "workspace_fate",
+        "work_fate"
+      ],
+      "target_seconds": null
+    },
+    "abandon_confirm": {
+      "enabled": true,
+      "manifest": [
+        "run",
+        "stoppable",
+        "domains",
+        "lease_generation",
+        "workspace",
+        "workspace_snapshot",
+        "workspace_fate",
+        "work_fate"
+      ],
+      "target_seconds": null
+    },
+    "retire": {
+      "enabled": false
+    },
+    "reactivate": {
+      "enabled": false
+    },
+    "policy_widening": {
+      "enabled": true,
+      "manifest": [
+        "base_revision",
+        "base_blob",
+        "proposed_policy",
+        "widens"
+      ],
+      "target_seconds": 172800
+    },
+    "finding_applicability_exclusion": {
+      "enabled": true,
+      "manifest": [
+        "assessment_status",
+        "evidence",
+        "reason",
+        "proposed_by_run",
+        "assessed_by_run",
+        "finding",
+        "candidate",
+        "ancestry",
+        "acceptance_content_hash",
+        "effective_severity",
+        "disposition",
+        "sensitive_area",
+        "blocks_gate",
+        "protected_version",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    },
+    "check_correction_tightening": {
+      "enabled": true,
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision"
+      ],
+      "target_seconds": 86400
+    }
+  },
+  "events": {
+    "engine.started": {
+      "owner": "store/transitions/engine.ts"
+    },
+    "engine.mode_changed": {
+      "owner": "store/transitions/engine.ts"
+    },
+    "engine.tick": {
+      "owner": "store/transitions/engine.ts"
+    },
+    "engine.quarantine": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "api.act": {
+      "owner": "store/transitions/audit.ts"
+    },
+    "project.created": {
+      "owner": "store/transitions/project.ts"
+    },
+    "project.registered": {
+      "owner": "store/transitions/finalize.ts"
+    },
+    "project.paused": {
+      "owner": "store/transitions/project.ts"
+    },
+    "project.resumed": {
+      "owner": "store/transitions/project.ts"
+    },
+    "project.rebound": {
+      "owner": "store/transitions/project.ts"
+    },
+    "work.created": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.claimed": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.advanced": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.integrated": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.complete": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.held": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.resumed": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.parked": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.cancelled": {
+      "owner": "store/transitions/work.ts"
+    },
+    "run.created": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.claimed": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.started": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.heartbeat": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.validating": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.finalizing": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.ended": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "run.quarantined": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "domain.terminated": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "domain.quarantined": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "decision.raised": {
+      "owner": "store/transitions/decisions.ts"
+    },
+    "decision.answered": {
+      "owner": "store/transitions/decisions.ts"
+    },
+    "decision.consumed": {
+      "owner": "store/transitions/decisions.ts"
+    },
+    "decision.invalidated": {
+      "owner": "store/transitions/decisions.ts"
+    },
+    "operation.intended": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.attempt_started": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.succeeded": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.failed": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.partial": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.ambiguous": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "operation.finalized": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "revision.recorded": {
+      "owner": "store/transitions/repo.ts"
+    },
+    "candidate.nominated": {
+      "owner": "store/transitions/finalize.ts"
+    },
+    "repo.out_of_band": {
+      "owner": "store/transitions/repo.ts"
+    },
+    "repo.reconciled": {
+      "owner": "store/transitions/finalize.ts, store/transitions/intents.ts, store/transitions/queue.ts, store/transitions/repo.ts"
+    },
+    "policy.changed": {
+      "owner": "store/transitions/finalize.ts"
+    },
+    "git.journal_intended": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "git.journal_applied": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "git.journal_confirmed": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "git.journal_ambiguous": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "git.journal_finalized": {
+      "owner": "store/transitions/journal.ts"
+    },
+    "invocation.receipt": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "invocation.status": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "invocation.usage": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "ledger.row": {
+      "owner": "store/transitions/ledger.ts"
+    },
+    "ledger.correction": {
+      "owner": "store/transitions/ledger.ts"
+    },
+    "record.written": {
+      "owner": "store/transitions/records.ts"
+    },
+    "record.expired": {
+      "owner": "store/transitions/records.ts"
+    },
+    "record.secret_found": {
+      "owner": "store/transitions/records.ts"
+    },
+    "record.missing": {
+      "owner": "store/transitions/records.ts"
+    },
+    "run.proposal_captured": {
+      "owner": "store/transitions/accept.ts"
+    },
+    "decision.escalated": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "protected.proposed": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "protected.classified": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "protected.approved": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "protected.rejected": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "protected.applied": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "protected.unauthorized_detected": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "check.result": {
+      "owner": "store/transitions/baseline.ts"
+    },
+    "gate.scope_built": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "gate.evaluated": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "authorization.issued": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "authorization.superseded": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "finding.raised": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "finding.severity_changed": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "finding.dispositioned": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "finding.resolved": {
+      "owner": "store/transitions/gates.ts"
+    },
+    "finding.reopened": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "assessment.proposed": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "assessment.assessed": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "assessment.approved": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "assessment.rejected": {
+      "owner": "store/transitions/findings.ts, store/transitions/queue.ts"
+    },
+    "signoff.recorded": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "intent.recorded": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "intent.executing": {
+      "owner": "store/transitions/intents.ts, store/transitions/protected.ts"
+    },
+    "intent.done": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "intent.invalidated": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "notification.queued": {
+      "owner": "store/transitions/queue.ts"
+    },
+    "notification.sending": {
+      "owner": "store/transitions/notify.ts"
+    },
+    "notification.delivered": {
+      "owner": "store/transitions/notify.ts"
+    },
+    "notification.failed": {
+      "owner": "store/transitions/notify.ts"
+    },
+    "notification.unknown": {
+      "owner": "store/transitions/notify.ts"
+    },
+    "environment.observed": {
+      "owner": "store/transitions/environments.ts"
+    },
+    "engine.backup": {
+      "owner": "store/transitions/engine.ts"
+    }
+  },
+  "config": {
+    "engine": {
+      "tick_interval": {
+        "default": 30,
+        "min": 5,
+        "max": 600,
+        "integer": true
+      },
+      "tick_budget": {
+        "default": 20,
+        "min": 5,
+        "max": 300,
+        "integer": true
+      },
+      "tick_step_budget": {
+        "default": 5,
+        "min": 1,
+        "max": 60,
+        "integer": true
+      },
+      "lease_ttl": {
+        "default": 90,
+        "min": 30,
+        "max": 600,
+        "integer": true
+      },
+      "terminate_grace": {
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "integer": true
+      },
+      "kill_grace": {
+        "default": 5,
+        "min": 1,
+        "max": 30,
+        "integer": true
+      },
+      "api_latency_bound": {
+        "default": 250,
+        "min": 50,
+        "max": 2000,
+        "integer": true
+      },
+      "request_body_deadline": {
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "integer": true
+      },
+      "body_cap": {
+        "default": 1048576,
+        "fixed": true
+      },
+      "upload_cap": {
+        "default": 8388608,
+        "fixed": true
+      },
+      "backup_keep": {
+        "default": 14,
+        "min": 1,
+        "max": 365,
+        "integer": true
+      },
+      "max_concurrent_runs": {
+        "default": 2,
+        "min": 1,
+        "max": 8,
+        "integer": true
+      },
+      "api_port": {
+        "default": 7227,
+        "min": 1024,
+        "max": 65535,
+        "integer": true
+      },
+      "api_authority": {
+        "default": "127.0.0.1:<api_port>",
+        "allowed": [
+          "127.0.0.1:<api_port>",
+          "localhost:<api_port>"
+        ]
+      },
+      "git_deadline": {
+        "default": 60,
+        "min": 1,
+        "max": 600,
+        "integer": true
+      },
+      "git_deadline_long": {
+        "default": 600,
+        "min": 60,
+        "max": 3600,
+        "integer": true
+      },
+      "git_output_cap": {
+        "default": 8388608,
+        "min": 65536,
+        "max": 268435456,
+        "integer": true
+      },
+      "decision_targets": {
+        "default": {},
+        "value_min": 300,
+        "value_max": 2592000,
+        "not_overridable": [
+          "abandon_confirm",
+          "stop_confirm"
+        ],
+        "effective_defaults": {
+          "blocker": 14400,
+          "out_of_band_change": 14400,
+          "stop_confirm": null,
+          "abandon_confirm": null,
+          "policy_widening": 172800,
+          "finding_disposition": 86400,
+          "severity_lower": 86400,
+          "finding_applicability_exclusion": 86400,
+          "check_correction_tightening": 86400,
+          "check_correction_loosening": 86400,
+          "check_correction_unclassifiable": 86400
+        }
+      }
+    },
+    "project": {
+      "max_concurrent_runs": {
+        "default": 1,
+        "min": 1,
+        "max": 1,
+        "integer": true
+      },
+      "max_chained_roles": {
+        "default": 1,
+        "min": 1,
+        "max": 6,
+        "integer": true
+      },
+      "preflight_refusals_max": {
+        "default": 3,
+        "min": 1,
+        "max": 10,
+        "integer": true
+      },
+      "repair_attempts_max": {
+        "default": 3,
+        "min": 0,
+        "max": 10,
+        "integer": true
+      },
+      "no_progress_max": {
+        "default": 2,
+        "min": 1,
+        "max": 5,
+        "integer": true
+      },
+      "deadline_builder": {
+        "default": 2700,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deadline_verifier": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deadline_reviewer": {
+        "default": 1200,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deadline_architect": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "session_idle_timeout": {
+        "default": 1200,
+        "min": 60,
+        "max": 7200,
+        "integer": true
+      },
+      "record_retention_days": {
+        "default": 90,
+        "min": 7,
+        "max": 3650,
+        "integer": true
+      },
+      "observation_cadence": {
+        "default": 30,
+        "min": 10,
+        "max": 3600,
+        "integer": true
+      },
+      "observation_freshness_bound": {
+        "default": 90,
+        "min": 30,
+        "max": 86400,
+        "integer": true
+      },
+      "budget_run_billable_tokens": {
+        "default": 1500000,
+        "min": 10000,
+        "max": 50000000,
+        "integer": true
+      },
+      "budget_day_verified_usd": {
+        "default": 40,
+        "min": 0,
+        "max": 10000,
+        "integer": false
+      },
+      "budget_day_unknown_tokens": {
+        "default": 2000000,
+        "min": 0,
+        "max": 100000000,
+        "integer": true
+      },
+      "snapshot_max_files": {
+        "default": 5000,
+        "min": 1,
+        "max": 100000,
+        "integer": true
+      },
+      "snapshot_max_bytes": {
+        "default": 104857600,
+        "min": 1048576,
+        "max": 1073741824,
+        "integer": true
+      },
+      "snapshot_max_file_bytes": {
+        "default": 10485760,
+        "min": 1024,
+        "max": 1073741824,
+        "integer": true
+      }
+    }
+  }
+}

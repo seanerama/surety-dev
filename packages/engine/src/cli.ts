@@ -6,6 +6,7 @@ import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 import { EXIT, serve } from './engine.js';
+import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
 import { configureHarness } from './testing/seam.js';
@@ -24,6 +25,9 @@ if (command === '--version' || command === '-v') {
 if (command === 'store') {
   await storeCommand(args);
 }
+if (command === 'contract') {
+  await contractCommand(args);
+}
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
 }
@@ -34,6 +38,8 @@ if (command !== 'serve') {
 let harness = false;
 let migrationsDir: string | null = null;
 let scriptedDir: string | null = null;
+let shellDir: string | null = null;
+let homeFsType: string | null = null;
 const barrierValues: string[] = [];
 const probeValues: string[] = [];
 const harnessOnly: string[] = [];
@@ -41,7 +47,14 @@ for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
     harness = true;
-  } else if (flag === '--harness-migrations' || flag === '--harness-barrier' || flag === '--harness-scripted' || flag === '--harness-probe') {
+  } else if (
+    flag === '--harness-migrations' ||
+    flag === '--harness-barrier' ||
+    flag === '--harness-scripted' ||
+    flag === '--harness-probe' ||
+    flag === '--harness-shell' ||
+    flag === '--harness-home-fstype'
+  ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
     harnessOnly.push(flag);
@@ -51,6 +64,14 @@ for (let i = 0; i < args.length; i++) {
       scriptedDir = isAbsolute(value) ? value : resolve(value);
     } else if (flag === '--harness-probe') {
       probeValues.push(value);
+    } else if (flag === '--harness-shell') {
+      // The shell reaches the engine as an ordinary parameter: a directory of
+      // static files to serve (SEAM.md §90).
+      shellDir = isAbsolute(value) ? value : resolve(value);
+    } else if (flag === '--harness-home-fstype') {
+      // Replaces the detection of the home's filesystem, not the judgement
+      // (SEAM.md §88).
+      homeFsType = value;
     } else {
       barrierValues.push(value);
     }
@@ -71,7 +92,7 @@ try {
 }
 
 try {
-  await serve({ home, migrationsDir });
+  await serve({ home, migrationsDir, shellDir, homeFsType });
 } catch (err) {
   // serve() handles every failure from the listener on; anything that reaches
   // here stopped the start before it, and is reported as the one refusal line.
@@ -134,4 +155,24 @@ async function storeCommand(argv: string[]): Promise<never> {
     );
     process.exit(STORE_EXIT.refused);
   }
+}
+
+// `surety contract export`, `surety contract check [--file <path>]` and
+// `surety contract appendix [--file <path>]` (SEAM.md §94). They need no
+// engine home and no running engine.
+async function contractCommand(argv: string[]): Promise<never> {
+  const [sub, ...rest] = argv;
+  let file: string | null = null;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--file' && rest[i + 1] !== undefined && sub !== 'export') file = rest[++i]!;
+    else usage(`unknown argument ${rest[i]} for contract ${sub ?? ''}`);
+  }
+  if (sub !== 'export' && sub !== 'check' && sub !== 'appendix') usage(sub === undefined ? 'contract needs a command: export, check or appendix' : `"contract ${sub}" is not a contract command`);
+  const done = runContractCommand(sub, file);
+  const status = done.status === 'refused' ? CONTRACT_EXIT.refused : done.status === 'failed' ? CONTRACT_EXIT.failed : CONTRACT_EXIT.ok;
+  if (done.stderr !== '') process.stderr.write(done.stderr);
+  // Exit once stdout has taken everything: a pipe is written asynchronously,
+  // and an exit before that would cut the document short.
+  await new Promise<void>((resolve) => process.stdout.write(done.stdout, () => resolve()));
+  process.exit(status);
 }

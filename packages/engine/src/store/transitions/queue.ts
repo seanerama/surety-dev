@@ -748,6 +748,55 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   check_correction_unclassifiable: correctionSpec('unclassifiable'),
 };
 
+// What each enabled kind's dependency manifest binds, at least (D1 A.8;
+// build spec §6 correction 22): every preview's manifest holds these keys,
+// which raising a question checks, and the executable contract (contract/)
+// states this table.
+const CORRECTION_KEYS = ['proposal_status', 'tree', 'diff_hash', 'base_revision', 'integration_revision', 'classification', 'evidence', 'effective_protected_version', 'spec_revision', 'scope_approval', 'policy_revision'];
+const CONTROL_KEYS = ['run', 'stoppable', 'domains', 'lease_generation', 'workspace', 'workspace_snapshot', 'workspace_fate', 'work_fate'];
+export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = {
+  blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
+  stop_confirm: CONTROL_KEYS,
+  abandon_confirm: CONTROL_KEYS,
+  out_of_band_change: ['subject_kind', 'expected', 'found'],
+  policy_widening: ['base_revision', 'base_blob', 'proposed_policy', 'widens'],
+  finding_disposition: [
+    'finding_status',
+    'disposition',
+    'proposed_disposition',
+    'effective_severity',
+    'sensitive_area',
+    'evidence',
+    'defer_target',
+    'linked_issue',
+    'applicable',
+    'candidate_revision',
+    'acceptance_content_hash',
+    'policy_revision',
+  ],
+  severity_lower: ['finding_status', 'effective_severity', 'to', 'sensitive_area', 'applicable', 'candidate_revision', 'acceptance_content_hash', 'policy_revision'],
+  finding_applicability_exclusion: [
+    'assessment_status',
+    'evidence',
+    'reason',
+    'proposed_by_run',
+    'assessed_by_run',
+    'finding',
+    'candidate',
+    'ancestry',
+    'acceptance_content_hash',
+    'effective_severity',
+    'disposition',
+    'sensitive_area',
+    'blocks_gate',
+    'protected_version',
+    'policy_revision',
+  ],
+  check_correction_tightening: CORRECTION_KEYS,
+  check_correction_loosening: CORRECTION_KEYS,
+  check_correction_unclassifiable: CORRECTION_KEYS,
+};
+
 // ---- raising, answering, revalidating ---------------------------------------------------
 
 // Raise the question of `kind` about a subject as it stands now, or return
@@ -756,6 +805,8 @@ export function raiseQuestion(tx: Tx, args: { project: string; kind: DecisionKin
   const seed: Subject = { project: args.project, kind: args.kind, subject_type: args.subjectType, subject_id: args.subjectId, scope: args.scope ?? 'subject', options: args.options ?? '[]' };
   const p = KINDS[args.kind].preview(tx, seed);
   if (p === null) return null;
+  const missing = MANIFEST_KEYS[args.kind].filter((key) => !(key in p.manifest));
+  if (missing.length > 0) throw new Error(`the ${args.kind} manifest lacks ${missing.join(', ')}`);
   const row = raiseDecision(tx, {
     project: args.project,
     kind: args.kind,

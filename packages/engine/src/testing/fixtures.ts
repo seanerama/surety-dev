@@ -11,6 +11,7 @@ import { Refusal } from '../refusal.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
+import { OBSERVED_CONDITIONS, type ObservedCondition, recordObservation } from '../store/transitions/environments.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
 import { applyWorkTransition, observeTrigger, registerPlan } from '../store/transitions/work.js';
 import {
@@ -296,4 +297,17 @@ export function projectRepo(db: Database, project: string): { repo: string; bran
     | { dev_repo_path: string; integration_branch: string }
     | undefined;
   return row ? { repo: row.dev_repo_path, branch: row.integration_branch } : null;
+}
+
+// POST /v1/harness/fixtures/observation (SEAM.md §91): an environment's
+// current observation, entered as test setup. M1 has no observation job.
+export function installObservation(db: Database, actor: Actor, body: unknown) {
+  const b = objectBody(body, ['project', 'environment', 'condition', 'observed_at', 'source']);
+  const condition = str(b, 'condition');
+  if (!(OBSERVED_CONDITIONS as readonly string[]).includes(condition)) throw invalid('condition', `must be one of ${OBSERVED_CONDITIONS.join(', ')}`);
+  const observedAt = str(b, 'observed_at');
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(observedAt) || Number.isNaN(Date.parse(observedAt))) throw invalid('observed_at', 'must be a timestamp, YYYY-MM-DDTHH:MM:SS.sssZ');
+  return transact(db, actor, (tx) =>
+    recordObservation(tx, { project: str(b, 'project'), environment: str(b, 'environment'), condition: condition as ObservedCondition, observed_at: observedAt, source: str(b, 'source') }, FIXTURE_LABEL),
+  );
 }

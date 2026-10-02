@@ -50,6 +50,7 @@ import {
   installCheckResult,
   installClassification,
   installEnvironment,
+  installObservation,
   installFixtureChecks,
   installFixturePlan,
   installFixtureProject,
@@ -399,6 +400,7 @@ const OP = {
   fixtureChecks: 'harness.fixture_checks',
   fixtureResult: 'harness.fixture_result',
   fixtureEnvironment: 'harness.fixture_environment',
+  fixtureObservation: 'harness.fixture_observation',
   fixtureClassification: 'harness.fixture_classification',
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
@@ -496,6 +498,23 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       },
     };
   }
+  if (s.length === 1 && s[0] === 'backup') {
+    // SEAM.md §93: the engine's own backup job, started now rather than at
+    // its daily time; answered at once while the backup runs.
+    return {
+      restricted: false,
+      handler: async () => {
+        const body = await hooks.body();
+        if (body !== undefined && (!isObject(body) || Object.keys(body).length > 0)) {
+          throw new Refusal(400, 'invalid_value', 'The backup route takes an empty body.', 'Send {}.', { field: null });
+        }
+        const rt = hooks.runtime();
+        const { backupJob } = await import('../store/backup.js');
+        void backupJob(rt);
+        return { status: 202, body: { backup: 'started' } };
+      },
+    };
+  }
   if (s.length === 1 && s[0] === 'secrets') {
     return route(200, async (body) => {
       const b = isObject(body) ? body : {};
@@ -577,6 +596,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     });
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'environment') return route(201, (body) => storeOp(OP.fixtureEnvironment, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'observation') return route(201, (body) => storeOp(OP.fixtureObservation, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') return route(200, (body) => storeOp(OP.fixtureClassification, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'approval') return route(201, (body) => storeOp(OP.fixtureApproval, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'evidence-reuse') return route(201, (body) => storeOp(OP.fixtureReuse, { body, actor: hooks.actor }));
@@ -634,6 +654,8 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installCheckResult(store(), a.actor, a.args as unknown as ResultInput);
     case OP.fixtureEnvironment:
       return installEnvironment(store(), a.actor, a.body);
+    case OP.fixtureObservation:
+      return installObservation(store(), a.actor, a.body);
     case OP.fixtureClassification:
       return installClassification(store(), a.actor, a.body);
     case OP.fixtureApproval:

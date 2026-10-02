@@ -4,6 +4,7 @@
 // from durable facts, so a step repeated after a failure writes what it
 // would have written the first time (E28 item 1).
 
+import { assertEdge } from './lifecycle.js';
 import { type Report, recordReport } from './findings.js';
 import { type ChangeKind, captureProposal, effectiveVersion } from './protected.js';
 import { projectPolicy } from './settings.js';
@@ -149,6 +150,7 @@ export function captureRunProposal(
 ): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
+  assertEdge('RunState', run.state, 'proposal_captured', { run: run.id });
   tx.db.prepare(`UPDATE "runs" SET "state" = 'proposal_captured' WHERE "id" = ?`).run(run.id);
   tx.emit('run.proposal_captured', { project: run.project, run: run.id, work_item: run.work_item }, {});
   captureProposal(tx, {
