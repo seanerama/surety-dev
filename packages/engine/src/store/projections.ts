@@ -30,7 +30,12 @@ const mustProject = (db: Db, project: string): void => {
 
 // ---- NOW (D1 §12.3) -----------------------------------------------------------------
 
-type NowState = 'refused' | 'waiting_on_you' | 'running' | 'ready' | 'idle';
+// What a projection can say (D1 A.2). M1 computes no `unknown` NOW: a store
+// snapshot that fails fails the read.
+export const NOW_STATES = ['refused', 'waiting_on_you', 'running', 'ready', 'idle'] as const;
+type NowState = (typeof NOW_STATES)[number];
+export const FRESHNESS = ['fresh', 'stale', 'expired'] as const;
+export const PROVENANCE = ['observed', 'claimed', 'configured'] as const;
 
 interface ExecutionRun {
   id: string;

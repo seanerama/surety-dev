@@ -11,6 +11,7 @@
 // recorded beforehand (evidence.ts), and the protected fingerprint of the
 // integration branch's head is handed in.
 
+import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, parseJson, sha256 } from './common.js';
@@ -540,9 +541,11 @@ function issueAuthorization(tx: Tx, auth: AuthorizationRow, evaluation: string):
     .prepare(`SELECT "id" FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ? AND "status" = 'issued' AND "id" <> ?`)
     .all(auth.candidate, auth.environment, auth.id) as { id: string }[];
   for (const e of earlier) {
+    assertEdge('AuthorizationStatus', 'issued', 'superseded', { authorization: e.id });
     tx.db.prepare(`UPDATE "deployment_authorizations" SET "status" = 'superseded' WHERE "id" = ?`).run(e.id);
     tx.emit('authorization.superseded', { project: auth.project, candidate: auth.candidate, authorization: e.id }, { by: auth.id });
   }
+  assertEdge('AuthorizationStatus', auth.status, 'issued', { authorization: auth.id });
   tx.db.prepare(`UPDATE "deployment_authorizations" SET "status" = 'issued', "evaluation" = ? WHERE "id" = ?`).run(evaluation, auth.id);
   tx.emit('authorization.issued', { project: auth.project, candidate: auth.candidate, authorization: auth.id }, { evaluation, environment: auth.environment });
 }
