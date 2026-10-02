@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './gitruns.mjs';
 import { hasIdForm } from './ids.mjs';
-import { openDecision } from './decisions.mjs';
+import { consume, openDecision } from './decisions.mjs';
 import { candidatesOf, changePolicy } from './journal.mjs';
 import { listTree, parentsOf, refOid } from './repos.mjs';
 import { addWork, runsOf, scriptedEngine, tickUntil } from './runs.mjs';
@@ -214,12 +214,16 @@ export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages
 }
 
 // A later candidate of a T1 project: a fix is integrated on top and the
-// Builder asks for its nomination. With `finding`, the fix's work item names
-// the finding it fixes (`subject.finding`). Returns the new candidate.
-export async function successor(fx, ctx, { finding } = {}) {
+// Builder asks for its nomination. By default the fix's work is a fixture's
+// (naming no finding). With `work`, it is that existing item: the fix the
+// engine registered for a finding dispositioned `fix` (SEAM.md §74; E43),
+// which is chained and waits at the chain boundary, so a person lets it
+// through first. Returns the new candidate.
+export async function successor(fx, ctx, { work } = {}) {
   const count = candidatesOf(fx.home, ctx.project.id).length;
-  const fix = finding === undefined ? await addItem(fx, ctx.project.id, 'fix') : await addWork(fx.engine, ctx.project.id, 'fix', { subject: { finding } });
+  const fix = work ?? (await addItem(fx, ctx.project.id, 'fix'));
   fx.scripted.script(fix, [roleThat([step.write(`src/fix-${count}.js`, `export const fix = ${count};\n`)], { nominate: true })]);
+  if (work !== undefined) await consume(fx, ctx.project.id, await openDecision(fx, ctx.project.id, 'blocker', work), 'continue');
   await tickUntil(fx.engine, ctx.project.id, () => runsOf(fx.home, fix)[0]?.state === 'ended', { what: 'the fix to be built' });
   return (await waitForCandidates(fx, ctx.project.id, count + 1)).at(-1);
 }

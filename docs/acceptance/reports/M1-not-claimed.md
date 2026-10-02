@@ -2,6 +2,8 @@
 
 **Written by:** the Verifier, 2026-10-02, on branch `verify/journey-first`. **Status:** a list for the owner; it decides nothing.
 
+**Updated, 2026-10-02, on branch `verify/fix-loop` (E43).** The fix loop is no longer outside M1's claim. Until E43 nothing in the engine created the work to fix a finding; the tests made it with a fixture, and the M1 report's walkthrough says it "raises no finding and runs no fix". That gap was never one of the 33 cases below, because it was an open question for the owner (errata E38, E40) rather than a case left unwritten. The owner has decided: the engine creates the fix work itself when a Reviewer's "fix" disposition is recorded, and the journey of row M01 now has a second path that goes through the whole loop, from the finding to the Alpha authorization issued for the fixed candidate (`COVERAGE.md`, row M01 and "With E43: the fix loop"). Those tests fail against the engine as it stands and pass once E43 is built; the counts and classes below are unchanged by this. One question raised by that path goes to the owner through the Verifier's report: what nominates the fixed code as a candidate at tier T2, which the tests fix as the fix's own integration (`packages/engine/test/acceptance/harness/SEAM.md` §42).
+
 Milestone M1 of Surety is accepted when every row of the acceptance plan has tests and all of them pass. A passing suite supports one claim: the engine behaves as the tests require. It supports no claim about behaviour that no test exercises. This document lists that behaviour, case by case, so that a passing M1 is not read as covering it.
 
 ## Where the list comes from
