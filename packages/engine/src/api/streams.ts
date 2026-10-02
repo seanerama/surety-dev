@@ -142,13 +142,10 @@ export async function serveTail(res: ServerResponse, ctx: { run: string; offset:
           continue;
         }
         if (live.over) {
-          // Everything it accepted has been delivered.
-          if (offset >= live.length) {
-            await deliver(res, endMessage(offset));
-            res.end();
-            return;
-          }
-          continue;
+          // Everything it accepted that can still be read has been delivered.
+          await deliver(res, endMessage(offset));
+          res.end();
+          return;
         }
         await waitFor(res, (wake) => live.listen(wake), 1000);
         continue;

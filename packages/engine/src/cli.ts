@@ -169,7 +169,10 @@ async function contractCommand(argv: string[]): Promise<never> {
   }
   if (sub !== 'export' && sub !== 'check' && sub !== 'appendix') usage(sub === undefined ? 'contract needs a command: export, check or appendix' : `"contract ${sub}" is not a contract command`);
   const done = runContractCommand(sub, file);
-  process.stdout.write(done.stdout);
+  const status = done.status === 'refused' ? CONTRACT_EXIT.refused : done.status === 'failed' ? CONTRACT_EXIT.failed : CONTRACT_EXIT.ok;
   if (done.stderr !== '') process.stderr.write(done.stderr);
-  process.exit(done.status === 'refused' ? CONTRACT_EXIT.refused : done.status === 'failed' ? CONTRACT_EXIT.failed : CONTRACT_EXIT.ok);
+  // Exit once stdout has taken everything: a pipe is written asynchronously,
+  // and an exit before that would cut the document short.
+  await new Promise<void>((resolve) => process.stdout.write(done.stdout, () => resolve()));
+  process.exit(status);
 }

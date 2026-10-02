@@ -176,7 +176,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (s.length === 2 && s[1] === 'projects' && get) {
       return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: { maxConcurrentRuns } }) }) };
     }
-    if (s.length === 2 && s[1] === 'events' && get) {
+    if (s.length === 2 && s[1] === 'events' && method === 'GET') {
       return {
         kind: 'stream',
         open: async (r) => {
@@ -210,7 +210,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (candidate === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.read', args: { project, candidate } }) }) };
       }
-      if (rest.length === 3 && rest[0] === 'runs' && rest[2] === 'tail' && get) {
+      if (rest.length === 3 && rest[0] === 'runs' && rest[2] === 'tail' && method === 'GET') {
         const run = decodeSegment(rest[1]!);
         if (run === null) return null;
         return { kind: 'stream', open: (r) => openTail(project, run, r.query) };
