@@ -25,7 +25,9 @@ export const SLICE2_CONFIG = Object.freeze({ tick_interval: 600, terminate_grace
 // With `homeSymlink`, $SURETY_HOME is a symbolic link to the directory that
 // holds the engine's files; `fx.home` is the link, as the engine is given it.
 // `env` and `cwd` give every engine of the fixture further environment
-// variables and another working directory (row M23 only; SEAM.md §31).
+// variables and another working directory (row M23 only; SEAM.md §31);
+// `fx.start({env})` adds variables for that one start, which is how row M67
+// starts an engine under the power-loss shim (SEAM.md §60).
 export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false, env, cwd } = {}) {
   const root = makeTempDir('s2');
   const home = join(root, 'home');
@@ -46,9 +48,9 @@ export async function scriptedEngine(t, { config = {}, barriers = [], until = 'f
     scripted.killStrays();
     removeDir(root);
   });
-  fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [] } = {}) => {
+  fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [], env: extra = {} } = {}) => {
     const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b]), ...more];
-    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs, env, cwd });
+    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs, env: { ...env, ...extra }, cwd });
     fx.engines.push(engine);
     fx.engine = engine;
     return engine;

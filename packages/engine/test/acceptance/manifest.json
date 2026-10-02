@@ -77,7 +77,9 @@
       "M15-run-end-fault-matrix-integration.test.mjs",
       "M24-nomination-ref-moved-or-deleted.test.mjs"
     ],
-    "4": [],
+    "4": [
+      "M67-power-loss-shim-is-faithful.test.mjs"
+    ],
     "5": [],
     "6": [],
     "7": []
