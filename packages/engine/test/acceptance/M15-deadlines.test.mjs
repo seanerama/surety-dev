@@ -175,9 +175,13 @@ describe('M15 deadlines', () => {
     await tick(fx.engine, a);
     const item = await addWork(fx.engine, a, 'verification');
 
-    // Two prerequisite steps, each within its step budget, together over the tick budget.
-    await armFault(fx.engine, { point: 'tick_step', step: 'recover', project: a, delay_ms: 3000 });
-    await armFault(fx.engine, { point: 'tick_step', step: 'journal', project: a, delay_ms: 3000 });
+    // Two prerequisite steps, each within its step budget, together over the tick budget
+    // by three seconds: more than the host's wall clock steps back at a time
+    // (measured at 1.7 to 1.8 s on 2026-10-02; SEAM.md §39). With one second to
+    // spare, an engine that times its tick by the wall clock saw the tick as
+    // within budget whenever a step back fell inside it.
+    await armFault(fx.engine, { point: 'tick_step', step: 'recover', project: a, delay_ms: 4000 });
+    await armFault(fx.engine, { point: 'tick_step', step: 'journal', project: a, delay_ms: 4000 });
     const tickSeq = await oneTick(fx, a);
     assert.equal(runsOf(fx.home, item).length, 0, 'the over-budget tick dispatched nothing');
     assert.equal(workItem(fx.home, item).status, 'eligible');
