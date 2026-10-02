@@ -15,7 +15,7 @@ import { listProjects, openDecisions, readCandidate, readProject, runTail } from
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
-import { liftToFull, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
+import { liftToFull, recordBackup, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
 import { bootstrapProject, policyFacts, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
   acceptFacts,
@@ -172,6 +172,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
 // as actor.
 const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
+  'engine.backup': (tx, a) => recordBackup(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
   'receipt.allocate': (tx, a: { run: string }) => allocateReceipt(tx, a.run),
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),

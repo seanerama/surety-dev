@@ -23,3 +23,8 @@ export function recordTick(tx: Tx, args: { incarnation: string; dispatched: numb
   const ref = tx.emit('engine.tick', { incarnation: args.incarnation }, { dispatched: args.dispatched });
   return { seq: ref.seq };
 }
+
+// A backup of the running engine's home is complete (D1 §6.5; SEAM.md §93).
+export function recordBackup(tx: Tx, args: { backup: string; label: 'complete' | 'incomplete_for_recovery' }): void {
+  tx.emit('engine.backup', {}, { backup: args.backup, label: args.label });
+}

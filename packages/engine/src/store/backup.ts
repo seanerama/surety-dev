@@ -29,6 +29,7 @@ import { newId } from '../ids.js';
 import { acquireLock, releaseLock } from '../lock.js';
 import { homePaths } from '../paths.js';
 import { Refusal } from '../refusal.js';
+import { log } from '../runtime.js';
 import { rebindProject } from './transitions/project.js';
 import { ENGINE_ACTOR, transact } from './transitions/tx.js';
 
@@ -48,7 +49,7 @@ const refused = (code: string, reason: string, whatToDo: string, subject: unknow
 const incomplete = (reason: string, subject: unknown = {}) =>
   refused('backup_incomplete', `The backup cannot be restored: ${reason}.`, 'Restore from a complete backup whose members are all present and unaltered, with every project bound to its repository. Nothing was written.', subject);
 
-interface Manifest {
+export interface Manifest {
   label: 'complete' | 'incomplete_for_recovery';
   store: { file: string; sha256: string; bytes: number };
   records: { id: string; file: string; sha256: string; bytes: number }[];
@@ -87,7 +88,7 @@ async function withLock<T>(home: string, work: () => Promise<T>): Promise<T> {
 
 // The published, unexpired records a store refers to, and per project the
 // commits it refers to.
-function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
+export function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
   const records = db
     .prepare('SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at", "id"')
     .all() as { id: string; path: string; sha256: string; bytes: number }[];
@@ -276,4 +277,65 @@ export async function restoreStore(home: string, opts: { from: string; bind: Map
     }
     return { restored: dir, projects: closure.projects };
   });
+}
+
+// ---- a backup while the engine runs (D1 §6.5; SEAM.md §93) ----------------------------
+
+// A complete backup of a running engine's home, made without holding up the
+// engine: the store is copied by SQLite's online backup in a worker thread of
+// its own, with its own connection, from one read snapshot (the engine's
+// writes go on meanwhile, into the log); the records the snapshot refers to
+// are copied and hashed there too, and every listed commit is looked for in
+// its repository's object store without running git (store/objects.ts), so
+// a repository whose git is held up does not hold the backup up. The
+// manifest is written last: a backup without one is not a backup. Resolves with the
+// backup's directory, or rejects, having removed what it wrote.
+export async function backupWhileRunning(home: string): Promise<{ backup: string; label: Manifest['label'] }> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = join(home, 'backups', `${stamp}-${newId('bak_')}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    const { Worker } = await import('node:worker_threads');
+    const draft = await new Promise<{ manifest: Manifest }>((resolvePromise, reject) => {
+      const worker = new Worker(new URL('./backup-worker.js', import.meta.url), { workerData: { home, store: homePaths(home).store, dir } });
+      worker.once('message', (msg: { ok: true; manifest: Manifest; repos: [string, string][] } | { ok: false; error: string }) => {
+        if (msg.ok) resolvePromise({ manifest: msg.manifest });
+        else reject(new Error(msg.error));
+      });
+      worker.once('error', reject);
+      worker.once('exit', (code) => {
+        if (code !== 0) reject(new Error(`the backup worker exited with code ${code}`));
+      });
+    });
+    const { open: openFile } = await import('node:fs/promises');
+    const handle = await openFile(join(dir, 'manifest.json'), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(draft.manifest, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const dirHandle = await openFile(dir, constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+    return { backup: dir, label: draft.manifest.label };
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+// The engine's backup job (D1 §6.5): a complete backup of the running
+// engine's home, and when it is complete, `engine.backup` naming it. A
+// backup that cannot be complete is logged and leaves nothing behind.
+export async function backupJob(rt: { home: string; engine: (name: string, args: unknown) => Promise<unknown> }): Promise<void> {
+  try {
+    const done = await backupWhileRunning(rt.home);
+    await rt.engine('engine.backup', done);
+  } catch (err) {
+    log('backup', err);
+  }
 }
