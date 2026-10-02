@@ -31,12 +31,13 @@ let harness = false;
 let migrationsDir: string | null = null;
 let scriptedDir: string | null = null;
 const barrierValues: string[] = [];
+const probeValues: string[] = [];
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
     harness = true;
-  } else if (flag === '--harness-migrations' || flag === '--harness-barrier' || flag === '--harness-scripted') {
+  } else if (flag === '--harness-migrations' || flag === '--harness-barrier' || flag === '--harness-scripted' || flag === '--harness-probe') {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
     harnessOnly.push(flag);
@@ -44,6 +45,8 @@ for (let i = 0; i < args.length; i++) {
       migrationsDir = isAbsolute(value) ? value : resolve(value);
     } else if (flag === '--harness-scripted') {
       scriptedDir = isAbsolute(value) ? value : resolve(value);
+    } else if (flag === '--harness-probe') {
+      probeValues.push(value);
     } else {
       barrierValues.push(value);
     }
@@ -52,7 +55,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
-const harnessProblem = configureHarness(harness, barrierValues, scriptedDir);
+const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, probeValues);
 if (harnessProblem !== null) usage(harnessProblem);
 
 const home = process.env.SURETY_HOME;

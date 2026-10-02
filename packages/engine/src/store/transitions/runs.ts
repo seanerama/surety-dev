@@ -8,12 +8,25 @@ import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
-import { KIND_PATHS, RUN_OWNING, type WorkStatus } from './work-table.js';
+import { journalBlocks } from './journal.js';
+import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
+import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
-export type ReasonClass = 'none' | 'invalid_result' | 'infra_error' | 'preflight_refused' | 'deadline' | 'human_stop' | 'human_abandon' | 'recovered';
+export type ReasonClass =
+  | 'none'
+  | 'invalid_result'
+  | 'infra_error'
+  | 'preflight_refused'
+  | 'deadline'
+  | 'human_stop'
+  | 'human_abandon'
+  | 'recovered'
+  | 'diff_violation'
+  | 'ref_violation'
+  | 'integration_conflict';
 export type DomainStatus = 'allocated' | 'launched' | 'terminated' | 'quarantined';
 export type InvocationStatus = 'dispatch_started' | 'refused' | 'launched' | 'ended' | 'unknown';
 
@@ -36,6 +49,9 @@ export interface RunRow {
   deadline_at: string;
   parent_run: string | null;
   quarantined: number;
+  reason_text: string | null;
+  reason_detail: string | null;
+  chain: number;
 }
 
 export interface LeaseRow {
@@ -124,7 +140,6 @@ export interface ClaimArgs {
   workItem: string;
   incarnation: string;
   backend: { id: string; version: string };
-  baseRevision: string;
   maxConcurrentRuns: number;
 }
 
@@ -145,9 +160,15 @@ export interface Claim {
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number): string | null {
-  const project = db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number } | undefined;
+  const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
   if (project.paused === 1) return 'project paused';
+  if (project.registration_state !== 'registered') return 'project not registered';
+  // Nothing of a project is dispatched while its integration branch or its
+  // repository has an unreconciled observation (SEAM.md §32), or its journal
+  // holds an ambiguous operation (SEAM.md §45).
+  if (blockingObservation(db, item.project)) return 'out-of-band change';
+  if (journalBlocks(db, item.project)) return 'journal blocked';
   if (item.status !== 'eligible') return `status ${item.status}`;
   if (item.dispatch_hold === 1) return 'dispatch hold';
   if (!ROLE_OF[item.kind]) return `kind ${item.kind} is not dispatched`;
@@ -165,8 +186,13 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
     )
     .get(item.project, item.id);
   if (holding) return 'held by an open decision';
+  // D1 §8.1 step 8, D1-34: work a run's outcome created runs only as far as
+  // max_chained_roles allows without a human step.
+  if (item.chain + 1 > projectPolicy(db, item.project).max_chained_roles!) return CHAIN_BOUNDARY;
   return null;
 }
+
+export const CHAIN_BOUNDARY = 'chaining boundary';
 
 // D1 §8.1 step 9, one transaction: the run (claimed), its work item claimed,
 // the run lease, the grant, the invocation receipt, the execution domain
@@ -176,8 +202,14 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.project !== args.project) return null;
   if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns) !== null) return null;
+  // The run's base: the checkpoint the work continues from (D1 §7.4), or the
+  // commit the registry expects the integration branch at.
+  const p = projectRepoRow(tx, item.project);
+  const registered = registryRow(tx, item.project, integrationRef(p.integration_branch));
+  const baseRevision = item.continue_from ?? registered?.expected_oid ?? null;
+  if (baseRevision === null) return null;
   const role = ROLE_OF[item.kind]!;
-  const policy = projectPolicy(item.project);
+  const policy = projectPolicy(tx.db, item.project);
   const deadlineSeconds = policy[`deadline_${role}`]!;
   const leaseTtl = engineSettings().lease_ttl;
 
@@ -186,7 +218,11 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const previous = tx.db
     .prepare('SELECT "id", "outcome" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1')
     .get(item.id) as { id: string; outcome: Outcome | null } | undefined;
-  const parent = previous && ['stopped', 'timed_out', 'recovered'].includes(previous.outcome ?? '') ? previous.id : null;
+  // A continuation from a checkpoint is linked to the run that made it (D1 §7.4).
+  const continues = previous?.outcome === 'completed' && item.continue_from !== null;
+  const parent = previous && (['stopped', 'timed_out', 'recovered'].includes(previous.outcome ?? '') || continues) ? previous.id : null;
+  // The roles of the chain this run belongs to (D1-34; E24 item 1).
+  const chain = item.chain + 1;
 
   const run = tx.newId('run_');
   const seq = nextSeq(tx, item.project, 'runs');
@@ -194,12 +230,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db
     .prepare(
       `INSERT INTO "runs" ("id", "created_at", "project", "seq", "work_item", "role", "kind", "state", "backend", "backend_version",
-         "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined")
-       VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0)`,
+         "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined", "chain")
+       VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
-    .run(run, tx.at, item.project, seq, item.id, role, args.backend.id, args.backend.version, args.backend.id, args.baseRevision, deadlineAt, parent);
+    .run(run, tx.at, item.project, seq, item.id, role, args.backend.id, args.backend.version, args.backend.id, baseRevision, deadlineAt, parent, chain);
   const subject = { project: item.project, run, work_item: item.id };
-  tx.emit('run.created', subject, { seq, role, backend: args.backend.id, base_revision: args.baseRevision, parent_run: parent });
+  tx.emit('run.created', subject, { seq, role, backend: args.backend.id, base_revision: baseRevision, parent_run: parent });
   tx.emit('run.claimed', subject, {});
 
   // An automatic re-dispatch after a failed run counts one repair (D1 §4.3).
@@ -243,7 +279,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     domain,
     generation: 1,
     deadline_at: deadlineAt,
-    base_revision: args.baseRevision,
+    base_revision: baseRevision,
     lease_renewed_at: tx.at,
   };
 }
@@ -257,7 +293,7 @@ export function allocateReceipt(tx: Tx, runId: string): string {
   if (run.state === 'ended' || run.state === 'finalizing') throw illegal(`Allocating a receipt for a ${run.state} run`, { run: runId, state: run.state });
   if (!run.grant) throw illegal('Allocating a receipt for a run without a grant', { run: runId });
   const id = tx.newId('inv_');
-  const policy = projectPolicy(run.project);
+  const policy = projectPolicy(tx.db, run.project);
   const budget = {
     budget_run_billable_tokens: policy.budget_run_billable_tokens,
     budget_day_verified_usd: policy.budget_day_verified_usd,
@@ -271,129 +307,6 @@ export function allocateReceipt(tx: Tx, runId: string): string {
     .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget));
   tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend });
   return id;
-}
-
-// The choke point refused the backend (D1 §15.1): the invocation is recorded
-// refused, never launched, and the run enters finalizing with outcome refused.
-export function refuseInvocation(tx: Tx, args: { run: string; invocation: string; code: string }): void {
-  const run = mustRun(tx, args.run);
-  if (!statuses(tx, args.invocation).includes('refused')) observe(tx, run, args.invocation, 'refused');
-  beginEnd(tx, { run: args.run, outcome: 'refused', reason: 'preflight_refused', reasonText: args.code });
-}
-
-// ---- workspace through the journal ----------------------------------------------
-
-interface JournalPayload {
-  repo: string;
-  run: string;
-  path: string;
-  base?: string;
-  workspace?: string;
-  lease_generation?: number;
-}
-
-function journal(tx: Tx, project: string, operation: string, kind: 'worktree_add' | 'worktree_remove', event: 'intended' | 'applied' | 'confirmed' | 'failed' | 'ambiguous' | 'finalized', payload: JournalPayload): void {
-  const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "git_journal_events" WHERE "operation" = ?').get(operation) as { n: number };
-  tx.db
-    .prepare('INSERT INTO "git_journal_events" ("id", "created_at", "project", "operation", "seq", "journal_kind", "event_kind", "payload") VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(tx.newId('gje_'), tx.at, project, operation, n, kind, event, JSON.stringify(payload));
-  const type = event === 'failed' ? null : (`git.journal_${event}` as const);
-  if (type) tx.emit(type, { project, operation, run: payload.run }, { journal_kind: kind, seq: n });
-}
-
-// D1 §2.5, §6.3, §7.3: the git_worktree operation and its journal intent are
-// committed before the worktree is touched.
-export function intendWorktree(
-  tx: Tx,
-  args: { run: string; kind: 'worktree_add' | 'worktree_remove'; repo: string; path: string; base?: string; workspace?: string; deadlineSeconds: number },
-): { operation: string } {
-  const run = mustRun(tx, args.run);
-  const operation = tx.newId('op_');
-  const target = { repo: args.repo, path: args.path };
-  const subject = { run: args.run, action: args.kind };
-  const key = createKey('git_worktree', target, subject, 1);
-  tx.db
-    .prepare(
-      `INSERT INTO "operations" ("id", "created_at", "project", "seq", "kind", "target", "subject", "idempotency_key", "semantic_generation", "status", "deadline_at")
-       VALUES (?, ?, ?, ?, 'git_worktree', ?, ?, ?, 1, 'intended', ?)`,
-    )
-    .run(operation, tx.at, run.project, nextSeq(tx, run.project, 'operations'), JSON.stringify(target), JSON.stringify(subject), key, addSeconds(tx.at, args.deadlineSeconds));
-  tx.emit('operation.intended', { project: run.project, operation, run: run.id }, { kind: 'git_worktree', journal_kind: args.kind });
-  const payload: JournalPayload = { repo: args.repo, run: args.run, path: args.path };
-  if (args.base !== undefined) payload.base = args.base;
-  if (args.workspace !== undefined) payload.workspace = args.workspace;
-  journal(tx, run.project, operation, args.kind, 'intended', payload);
-  return { operation };
-}
-
-// D1 §2.5: sha256(kind, target, subject, semantic_generation).
-const createKey = (kind: string, target: unknown, subject: unknown, generation: number): string => sha256(canonical({ kind, target, subject, generation }));
-
-function operationPayload(tx: Tx, operation: string): { project: string; kind: 'worktree_add' | 'worktree_remove'; payload: JournalPayload; last: string } {
-  const rows = tx.db.prepare('SELECT * FROM "git_journal_events" WHERE "operation" = ? ORDER BY "seq"').all(operation) as {
-    project: string;
-    journal_kind: 'worktree_add' | 'worktree_remove';
-    event_kind: string;
-    payload: string;
-  }[];
-  if (rows.length === 0) throw notFound('operation', operation);
-  return { project: rows[0]!.project, kind: rows[0]!.journal_kind, payload: JSON.parse(rows[0]!.payload) as JournalPayload, last: rows.at(-1)!.event_kind };
-}
-
-// The outcome of a worktree effect, as the main thread observed it: the
-// command's result and a probe of the worktree list (D1 §7.10). `present`
-// confirms the effect; the finalizer writes the domain rows it exists for.
-export function settleWorktree(tx: Tx, args: { operation: string; result: 'present' | 'absent' | 'ambiguous' }): { workspace: string | null } {
-  const { project, kind, payload, last } = operationPayload(tx, args.operation);
-  if (last === 'finalized' || last === 'failed') {
-    const ws = tx.db.prepare('SELECT "id" FROM "workspaces" WHERE "path" = ?').get(payload.path) as { id: string } | undefined;
-    return { workspace: ws?.id ?? null };
-  }
-  const done = (status: 'succeeded' | 'failed' | 'ambiguous') => {
-    tx.db.prepare('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?').run(status, status === 'ambiguous' ? null : tx.at, args.operation);
-    tx.emit(`operation.${status}` as const, { project, operation: args.operation, run: payload.run }, {});
-  };
-  const effectHappened = kind === 'worktree_add' ? args.result === 'present' : args.result === 'absent';
-  if (args.result === 'ambiguous') {
-    journal(tx, project, args.operation, kind, 'ambiguous', payload);
-    done('ambiguous');
-    return { workspace: null };
-  }
-  if (!effectHappened) {
-    journal(tx, project, args.operation, kind, 'failed', payload);
-    done('failed');
-    return { workspace: null };
-  }
-  if (last === 'intended') journal(tx, project, args.operation, kind, 'applied', payload);
-  journal(tx, project, args.operation, kind, 'confirmed', payload);
-  let workspace: string | null = null;
-  const run = mustRun(tx, payload.run);
-  if (kind === 'worktree_add') {
-    workspace = tx.newId('ws_');
-    tx.db
-      .prepare(
-        `INSERT INTO "workspaces" ("id", "created_at", "project", "run", "path", "base_revision", "current_base", "disposition")
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-      )
-      .run(workspace, tx.at, project, run.id, payload.path, payload.base!, payload.base!);
-    tx.db.prepare('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?').run(workspace, run.id);
-  } else {
-    workspace = payload.workspace ?? null;
-    tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ?`).run(tx.at, workspace);
-  }
-  journal(tx, project, args.operation, kind, 'finalized', payload);
-  done('succeeded');
-  tx.emit('operation.finalized', { project, operation: args.operation, run: run.id }, {});
-  return { workspace };
-}
-
-// Journal operations not yet finalized or failed, for recovery (D1 §7.10).
-export function pendingWorktreeOperations(tx: Tx): { operation: string; kind: string; payload: JournalPayload; last: string }[] {
-  const ops = tx.db.prepare(`SELECT "id" FROM "operations" WHERE "kind" = 'git_worktree' AND "finalized_at" IS NULL AND "status" IN ('intended', 'in_progress')`).all() as { id: string }[];
-  return ops.map((o) => {
-    const p = operationPayload(tx, o.id);
-    return { operation: o.id, kind: p.kind, payload: p.payload, last: p.last };
-  });
 }
 
 // The choke point appends dispatch_started immediately before it spawns
@@ -487,11 +400,11 @@ export function recordUsage(tx: Tx, args: { run: string; generation: number; inv
 // result is a role effect: refused once the lease is closing or has expired
 // (D1 §8.3), so a success that arrives after Stop, a deadline or the expiry
 // of the lease has no effect.
-export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean }): boolean {
+export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean; result?: Record<string, unknown> | null }): boolean {
   if (!liveLease(tx, args.run, args.generation)) return false;
   const run = mustRun(tx, args.run);
   if (run.state !== 'executing') return false;
-  setRunState(tx, run, 'validating');
+  setRunState(tx, run, 'validating', args.valid && args.result ? { result: JSON.stringify(args.result) } : {});
   tx.emit('run.validating', runSubject(run), { valid: args.valid });
   return true;
 }
@@ -511,7 +424,7 @@ export function recordResult(tx: Tx, args: { run: string; generation: number; va
 // outcome is recorded as it is.
 export function beginEnd(
   tx: Tx,
-  args: { run: string; outcome: Outcome; reason: ReasonClass; reasonText?: string; decidedAt?: string },
+  args: { run: string; outcome: Outcome; reason: ReasonClass; reasonText?: string; decidedAt?: string; detail?: Record<string, unknown> },
 ): { run: string; state: RunState; outcome: Outcome } {
   const run = mustRun(tx, args.run);
   if (run.state === 'finalizing' || run.state === 'ended') return { run: run.id, state: run.state, outcome: run.outcome! };
@@ -523,7 +436,12 @@ export function beginEnd(
     reasonText = 'lease_expired';
   }
   if (lease) tx.db.prepare('UPDATE "leases" SET "closing" = 1, "cleanup_authority" = 1 WHERE "id" = ?').run(lease.id);
-  setRunState(tx, run, 'finalizing', { outcome, reason_class: reason, reason_text: reasonText ?? null });
+  setRunState(tx, run, 'finalizing', {
+    outcome,
+    reason_class: reason,
+    reason_text: reasonText ?? null,
+    reason_detail: args.detail !== undefined && outcome === args.outcome ? JSON.stringify(args.detail) : null,
+  });
   const payload: Record<string, unknown> = { outcome, reason_class: reason, from: run.state };
   if (reasonText !== undefined) payload.reason_text = reasonText;
   tx.emit('run.finalizing', runSubject(run), payload);
@@ -558,13 +476,26 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
 
 // Step 2's result for one domain: termination established, by the boundary's
 // observation, or because the running engine knows it never spawned into it.
+//
+// When termination rests on the engine's knowledge that it never spawned into
+// the domain (`observed` false), that knowledge is made durable here, in the
+// same transaction: the domain's invocation is recorded `refused`, never
+// launched. A later step of the run-end protocol, repeated after a failure,
+// then reads it from the store and cannot charge an invocation that never ran
+// (SEAM.md §24).
 export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean }): void {
-  const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as { id: string; run: string; project: string; status: DomainStatus } | undefined;
+  const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
+    | { id: string; run: string; project: string; status: DomainStatus; invocation: string }
+    | undefined;
   if (!d) throw notFound('domain', args.domain);
   if (d.status === 'terminated') return;
   tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated' WHERE "id" = ?`).run(d.id);
   tx.db.prepare('UPDATE "process_ownership" SET "termination_confirmed_at" = ? WHERE "domain" = ?').run(tx.at, d.id);
   tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, { from: d.status, observed: args.observed });
+  if (!args.observed) {
+    const seen = statuses(tx, d.invocation);
+    if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
+  }
 }
 
 // Step 3: termination could not be established. The run stays finalizing and
@@ -635,7 +566,7 @@ export function runBlockerManifest(tx: Tx, runId: string): Record<string, unknow
 // Idempotent: a run already ended is left as it is.
 export function finishRun(
   tx: Tx,
-  args: { run: string; invocations: Record<string, 'ended' | 'unknown' | 'refused'>; recovery: string | null },
+  args: { run: string; invocations: Record<string, 'ended' | 'unknown' | 'refused'>; recovery: string | null; baseline?: Baseline | null },
 ): { ended: boolean } {
   const run = mustRun(tx, args.run);
   if (run.state === 'ended') return { ended: false };
@@ -657,6 +588,8 @@ export function finishRun(
   tx.db
     .prepare(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`)
     .run(run.id);
+  // What the role left is the retained workspace's baseline from now on.
+  if (args.baseline) rebaselineRunCheckout(tx, run.id, args.baseline);
   tx.db.prepare('UPDATE "capability_grants" SET "revoked_at" = ? WHERE "run" = ? AND "revoked_at" IS NULL').run(tx.at, run.id);
   tx.db.prepare('UPDATE "leases" SET "released_at" = ? WHERE "resource_id" = ? AND "released_at" IS NULL').run(tx.at, run.id);
   setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0 });
@@ -695,28 +628,59 @@ function charge(tx: Tx, run: RunRow, receipt: { id: string; turn: string | null 
 }
 
 // What a run's outcome does to its work item (D1 §4.3, §8.4; SEAM.md §§15,
-// 16). Only an item the run still owns is moved.
+// 16, 28–30, 40, 47). Only an item the run still owns is moved, and only by
+// its latest run. What the journal still has in hand is the journal's: work
+// whose integration is journaled and not yet settled is left integrating, and
+// integrated work stays integrated after a recovery (SEAM.md §45).
 function workAfterRun(tx: Tx, run: RunRow): void {
   const item = getWorkItem(tx, run.work_item);
   if (!item || !RUN_OWNING.includes(item.status)) return;
   const latest = tx.db.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item.id) as { id: string };
   if (latest.id !== run.id) return;
-  const policy = projectPolicy(run.project);
+  const policy = projectPolicy(tx.db, run.project);
   const cause = { run: run.id, outcome: run.outcome };
+  const integration = tx.db
+    .prepare(
+      `SELECT s."state" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id"
+       WHERE json_extract(o."finalizer_inputs", '$.run') = ? AND json_extract(o."finalizer_inputs", '$.purpose') = 'integration' ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(run.id) as { state: string } | undefined;
+  const integrationPending = integration !== undefined && integration.state !== 'failed';
   switch (run.outcome) {
     case 'completed':
-      if (KIND_PATHS[item.kind].includes('integrating')) {
-        // Integration is not built in this revision: the work stops here,
-        // visibly, rather than being reported as integrated or complete.
-        parkWork(tx, item, 'integration_unavailable', cause);
-      } else {
+      if (item.status === 'executing' && !KIND_INTEGRATES.includes(item.kind)) {
         transitionWork(tx, item, 'complete', {}, cause);
+        completeCandidateWork(tx, item);
       }
       return;
-    case 'failed':
-      if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause);
-      else transitionWork(tx, item, 'eligible', { repair_due: 1 }, cause);
+    case 'failed': {
+      if ((item.status === 'integrating' && integrationPending) || item.status === 'integrated' || item.status === 'verifying') return;
+      if (run.reason_class === 'integration_conflict') {
+        const detail = run.reason_detail ? (JSON.parse(run.reason_detail) as { park?: string; worktree?: string }) : {};
+        parkWork(tx, item, detail.park ?? 'integration_conflict', cause, {}, detail.worktree);
+        return;
+      }
+      // The progress key over the snapshot tree of an attempt that failed
+      // validation (D1 §4.3; SEAM.md §28). Findings join it in slice 5.
+      let progress: { no_progress_count?: number; progress_key?: string | null } = {};
+      if (run.reason_class === 'diff_violation' || run.reason_class === 'ref_violation') {
+        const ws = tx.db.prepare('SELECT "snapshot_tree" FROM "workspaces" WHERE "run" = ?').get(run.id) as { snapshot_tree: string | null } | undefined;
+        if (ws?.snapshot_tree) {
+          const key = sha256(canonical({ tree: ws.snapshot_tree, findings: [] }));
+          if (key === item.progress_key) {
+            const count = item.no_progress_count + 1;
+            if (count >= policy.no_progress_max!) {
+              parkWork(tx, item, 'no_progress_max', cause, { no_progress_count: count });
+              return;
+            }
+            progress = { no_progress_count: count };
+          } else progress = { progress_key: key };
+        }
+      }
+      if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause, progress);
+      else transitionWork(tx, item, 'eligible', { repair_due: 1, ...progress }, cause);
       return;
+    }
     case 'refused': {
       const refusals = item.preflight_refusals + 1;
       if (refusals >= policy.preflight_refusals_max!) parkWork(tx, item, 'preflight_refusals_max', cause, { preflight_refusals: refusals });
@@ -724,13 +688,20 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       return;
     }
     case 'timed_out':
+      if ((item.status === 'integrating' && integrationPending) || item.status === 'integrated' || item.status === 'verifying') return;
       parkWork(tx, item, 'deadline', cause);
       return;
-    case 'stopped':
     case 'recovered':
+      if (integrationPending && (item.status === 'integrating' || item.status === 'integrated')) return;
+      if (item.status === 'verifying') return;
+      transitionWork(tx, item, 'held', {}, cause);
+      return;
+    case 'stopped':
+      if (item.status === 'verifying') return;
       transitionWork(tx, item, 'held', {}, cause);
       return;
     case 'abandoned':
+      if (item.status === 'verifying') return;
       transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon' });
       return;
     default:
@@ -738,15 +709,43 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   }
 }
 
-// A limit was reached: the item parks with a visible blocker and an open
-// `blocker` decision that holds it (D1 §4.3, §10.6; SEAM.md §15).
-function parkWork(tx: Tx, item: WorkRow, reason: string, cause: Record<string, unknown>, extra: { preflight_refusals?: number } = {}): void {
+const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];
+
+// A candidate's verification is complete: the work the candidate holds is
+// complete with it (SEAM.md §40). Slice 5 puts the stage gate between them.
+function completeCandidateWork(tx: Tx, item: WorkRow): void {
+  if (item.kind !== 'verification') return;
+  const subject = JSON.parse(item.subject) as { candidate?: string };
+  if (!subject.candidate) return;
+  const candidate = tx.db.prepare('SELECT "held_work" FROM "candidates" WHERE "id" = ?').get(subject.candidate) as { held_work: string } | undefined;
+  if (!candidate) return;
+  for (const id of JSON.parse(candidate.held_work) as string[]) {
+    const held = getWorkItem(tx, id);
+    if (held && held.status === 'verifying') transitionWork(tx, held, 'complete', {}, { candidate: subject.candidate, verification: item.id });
+  }
+}
+
+// A limit was reached, or a person must act: the item parks with a visible
+// blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;
+// SEAM.md §§15, 30).
+function parkWork(
+  tx: Tx,
+  item: WorkRow,
+  reason: string,
+  cause: Record<string, unknown>,
+  extra: { preflight_refusals?: number; no_progress_count?: number; progress_key?: string | null } = {},
+  worktree?: string,
+): void {
+  const what =
+    reason === 'integration_branch_checked_out'
+      ? `its integration was refused: the integration branch is checked out in the worktree ${worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
+      : (PARK_REASONS[reason] ?? reason);
   const decision = raiseDecision(tx, {
     project: item.project,
     kind: 'blocker',
     subjectType: 'work_item',
     subjectId: item.id,
-    question: `Work item ${item.id} (${item.kind}) is parked: ${PARK_REASONS[reason] ?? reason}. Retry it, or cancel it.`,
+    question: `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
     options: [
       { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
       { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
@@ -762,7 +761,8 @@ const PARK_REASONS: Record<string, string> = {
   repair_attempts_max: 'every permitted repair attempt failed',
   preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
   deadline: 'its run passed its deadline',
-  integration_unavailable: 'its run finished, and integration is not available in this engine revision',
+  no_progress_max: 'its repairs left the same rejected result as often as policy allows',
+  integration_conflict: 'its result could not be integrated: the integration branch moved, and the change does not apply to it, or the compare-and-swap failed. No role resolves it',
 };
 
 // A.8 blocker manifest for a work item.
@@ -780,7 +780,7 @@ export interface EndFacts {
   lease: LeaseRow | null;
   domains: { id: string; status: DomainStatus; invocation: string; pid: number | null; pgid: number | null; pid_start_time: string | null }[];
   receipts: { id: string; statuses: InvocationStatus[] }[];
-  workspace: { id: string; path: string; disposition: string } | null;
+  workspace: { id: string; path: string; disposition: string; base_revision: string; current_base: string; snapshot_tree: string | null; metadata_baseline: string | null } | null;
 }
 
 export function endFacts(tx: Tx, runId: string): EndFacts {
@@ -796,9 +796,10 @@ export function endFacts(tx: Tx, runId: string): EndFacts {
     id: r.id,
     statuses: statuses(tx, r.id),
   }));
+  const columns = '"id", "path", "disposition", "base_revision", "current_base", "snapshot_tree", "metadata_baseline"';
   const workspace = (run.workspace
-    ? tx.db.prepare('SELECT "id", "path", "disposition" FROM "workspaces" WHERE "id" = ?').get(run.workspace)
-    : tx.db.prepare('SELECT "id", "path", "disposition" FROM "workspaces" WHERE "run" = ?').get(runId)) as EndFacts['workspace'] | undefined;
+    ? tx.db.prepare(`SELECT ${columns} FROM "workspaces" WHERE "id" = ?`).get(run.workspace)
+    : tx.db.prepare(`SELECT ${columns} FROM "workspaces" WHERE "run" = ?`).get(runId)) as EndFacts['workspace'] | undefined;
   return { run, repo, lease: runLease(tx, runId) ?? null, domains, receipts, workspace: workspace ?? null };
 }
 

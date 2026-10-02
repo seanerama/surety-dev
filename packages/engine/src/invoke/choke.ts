@@ -18,7 +18,11 @@ import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
 import { repoContext } from '../git/exec.js';
-import { addWorktree, branchHead } from '../git/worktree.js';
+import { treeOf } from '../git/repo.js';
+import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
+import { INTEGRATING_KINDS } from '../runs/accept.js';
+import type { RunResult } from '../store/transitions/accept.js';
+import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
 import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
@@ -34,10 +38,16 @@ export interface DispatchTarget {
 
 // The slice-2 structured result (SEAM.md §13): an object whose `status` is
 // "completed" and whose `summary` is a string.
-function isValidResult(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+//
+// From slice 3 a result may carry `checkpoint` and `nominate`, each a JSON
+// boolean (SEAM.md §26); anything else there makes the result invalid.
+function parseResult(value: unknown): RunResult | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
-  return r.status === 'completed' && typeof r.summary === 'string';
+  if (r.status !== 'completed' || typeof r.summary !== 'string') return null;
+  if (r.checkpoint !== undefined && typeof r.checkpoint !== 'boolean') return null;
+  if (r.nominate !== undefined && typeof r.nominate !== 'boolean') return null;
+  return { summary: r.summary, checkpoint: r.checkpoint === true, nominate: r.nominate === true };
 }
 
 // The role's environment is constructed, never inherited (D1 §17(4)): no
@@ -58,23 +68,26 @@ export class Launcher {
   // before its spawn is durable when this returns true. The launch goes on
   // asynchronously (D1 §8.1 step 9).
   async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
-    const base = await branchHead(repoContext(target.repo), target.branch);
-    if (base === null) {
-      log('dispatch', new Error(`the integration branch of project ${target.project} could not be read`));
-      return false;
-    }
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
+    // The run's base is the commit the registry expects the integration
+    // branch at, or the checkpoint the work continues from (D1 §7.4); the
+    // claim reads it in its own transaction.
     const claim = await this.rt.engine<Claim | null>('dispatch.claim', {
       project: target.project,
       workItem: item.id,
       incarnation: this.rt.incarnation,
       backend: { id: M1_BACKEND, version: backend?.version ?? 'unqualified' },
-      baseRevision: base,
       maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
     });
     if (!claim) return false;
     const handle = newHandle(claim);
     this.rt.handles.set(claim.run, handle);
+    // The baseline of a fresh checkout of the base, read now: it is fixed
+    // with the workspace's intent.
+    const ctx = repoContext(target.repo);
+    const tree = await treeOf(ctx, claim.base_revision).catch(() => null);
+    const index = tree === null ? null : await indexHashOfTree(ctx, tree).catch(() => null);
+    handle.baseline = tree === null || index === null ? null : { head: claim.base_revision, index_hash: index, tracked_tree_hash: tree };
     // The claim committed the run, its domain and its receipt together.
     await pausePoint('dispatch.run_created');
     await pausePoint('dispatch.domain_allocated');
@@ -93,10 +106,10 @@ export class Launcher {
   }
 
   // The run will never be spawned into by this incarnation.
-  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never'): void {
+  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string): void {
     handle.phase = phase;
     handle.settle();
-    this.rt.requestEnd(handle, { outcome, reason });
+    this.rt.requestEnd(handle, reasonText === undefined ? { outcome, reason } : { outcome, reason, reasonText });
   }
 
   // Backend check, workspace, dispatch_started. Returns false if the run is
@@ -104,12 +117,11 @@ export class Launcher {
   private async prepare(handle: RunHandle, backend: BackendSpec | null, repo: string): Promise<boolean> {
     const { claim } = handle;
     if (!backend) {
-      // D1 §15.1: an unqualified backend is refused before launch.
-      await this.rt.engine('invoke.refuse', { run: claim.run, invocation: claim.invocation, code: 'backend_refused' });
-      handle.phase = 'never';
-      handle.settle();
-      handle.ending = true;
-      void this.rt.services?.completeEnd(claim.run).catch((err) => log('run end', err, { run: claim.run }));
+      // D1 §15.1: an unqualified backend is refused before launch. The
+      // refusal is the end the engine decided, and it is kept with the
+      // handle: if recording it fails, the engine's retry records the same
+      // refusal, never a failure (SEAM.md §24).
+      this.never(handle, 'refused', 'preflight_refused', 'never', 'backend_refused');
       return false;
     }
     if (handle.abort) {
@@ -118,24 +130,48 @@ export class Launcher {
       return false;
     }
 
-    // D1 §7.3: `git worktree add --detach <ws> <base>`, journaled.
+    // D1 §7.3: `git worktree add --detach <ws> <base>`, journaled. The
+    // workspace's baseline is that of a fresh checkout of the base, fixed
+    // with the intent.
     const path = join(this.rt.home, 'workspaces', claim.run);
     mkdirSync(join(this.rt.home, 'workspaces'), { recursive: true, mode: 0o700 });
-    const { operation } = await this.rt.engine<{ operation: string }>('worktree.intend', {
-      run: claim.run,
-      kind: 'worktree_add',
-      repo,
-      path,
-      base: claim.base_revision,
-      deadlineSeconds: this.rt.setting('git_deadline'),
-    });
-    const probe = await addWorktree(repoContext(repo), path, claim.base_revision);
-    const { workspace } = await this.rt.engine<{ workspace: string | null }>('worktree.settle', { operation, result: probe });
-    if (workspace === null) {
+    const baseline = handle.baseline;
+    if (baseline === null) {
+      this.never(handle, 'failed', 'infra_error');
+      return false;
+    }
+    const intent = await this.rt.journal.intend(
+      'journal.intend',
+      {
+        project: claim.project,
+        kind: 'worktree_add',
+        payload: { repo, run: claim.run, path, base: claim.base_revision },
+        target: { repo, path },
+        subject: { run: claim.run, action: 'worktree_add' },
+        finalizer: { purpose: 'workspace', run: claim.run, path, base: claim.base_revision, baseline },
+        deadlineSeconds: this.rt.setting('git_deadline'),
+      },
+      'worktree_add',
+    );
+    if (!('operation' in intent)) {
+      this.never(handle, 'failed', 'infra_error');
+      return false;
+    }
+    const settled = await this.rt.journal.drive(intent.operation);
+    const workspace = settled.receipts.workspace as string | undefined;
+    if (settled.end !== 'finalized' || workspace === undefined) {
       this.never(handle, 'failed', 'infra_error');
       return false;
     }
     handle.workspacePath = path;
+    // What lies outside the workspace's diff, as the engine leaves it before
+    // the role is launched (correction 15).
+    const metadata = await captureMetadata(repo, path);
+    if (metadata === null) {
+      this.never(handle, 'failed', 'infra_error');
+      return false;
+    }
+    await this.rt.engine('workspace.metadata', { workspace, metadata });
 
     const started = await this.rt.engine<boolean>('invoke.dispatch_started', { run: claim.run, invocation: claim.invocation });
     if (!started || handle.abort) {
@@ -211,6 +247,7 @@ export class Launcher {
     const exited = new Promise<void>((resolve) => {
       child.once('exit', (code, signal) => {
         handle.exit = { code, signal };
+        handle.exitAt = isoAt(nowMs());
         output.exited();
         resolve();
       });
@@ -289,9 +326,10 @@ export class Launcher {
       // closing lease takes none (D1 §8.3), also while the transaction that
       // would make the lease closing has not yet succeeded (E27 item 5).
       if (handle.ending) return;
-      const valid = isValidResult(m.result);
+      const result = parseResult(m.result);
+      const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
-      const accepted = await this.recordResult(handle, valid);
+      const accepted = await this.recordResult(handle, valid, result);
       if (accepted && handle.result === null) handle.result = { valid };
     }
   }
@@ -303,12 +341,12 @@ export class Launcher {
   // back; every attempt is fenced again in the store (D1 §8.3), and none is
   // made once the engine has decided to end the run. If every attempt fails
   // the result is lost, as before, and the run ends by what was recorded.
-  private async recordResult(handle: RunHandle, valid: boolean): Promise<boolean> {
+  private async recordResult(handle: RunHandle, valid: boolean, result: RunResult | null): Promise<boolean> {
     const { run, generation } = handle.claim;
     for (let attempt = 0; ; attempt++) {
       if (handle.ending) return false;
       try {
-        return await this.rt.role<boolean>('run.result', run, { run, generation, valid });
+        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result });
       } catch (err) {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) throw err;
@@ -322,8 +360,16 @@ export class Launcher {
   // already ending, its outcome follows from what it sent (SEAM.md §13); the
   // run-end protocol then establishes termination, which the exit itself
   // never does.
+  //
+  // A run of the Builder's or the Architect's kinds that earned `completed`
+  // is not ended yet: what its role left is accepted first (runs/accept.ts).
   private childDone(handle: RunHandle): void {
-    this.rt.requestEnd(handle, earnedEnd(handle));
+    const end = earnedEnd(handle);
+    if (!handle.ending && end.outcome === 'completed' && INTEGRATING_KINDS.includes(handle.claim.work_kind) && this.rt.services) {
+      this.rt.services.accept(handle);
+      return;
+    }
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
   }
 }
 
@@ -346,7 +392,10 @@ const RESULT_RETRY_MS = [100, 300];
 class RoleOutput {
   private readonly lines: string[] = [];
   private readonly decoder = new StringDecoder('utf8');
-  private partial = '';
+  // The text read after the last line ending, as the pieces it arrived in:
+  // joined once, when its line ends, so reading a line is linear in its
+  // length (SEAM.md §24).
+  private partial: string[] = [];
   private closed = false;
   private exitAt: number | null = null;
   private lastDataAt = 0;
@@ -368,8 +417,16 @@ class RoleOutput {
   }
 
   private take(text: string): void {
-    const parts = (this.partial + text).split('\n');
-    this.partial = parts.pop()!;
+    if (text === '') return;
+    const parts = text.split('\n');
+    if (parts.length === 1) {
+      this.partial.push(text);
+      return;
+    }
+    const last = parts.pop()!;
+    this.partial.push(parts[0]!);
+    parts[0] = this.partial.join('');
+    this.partial = last === '' ? [] : [last];
     for (const part of parts) this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
   }
 
@@ -379,8 +436,9 @@ class RoleOutput {
     if (this.closed) return;
     this.closed = true;
     this.take(this.decoder.end());
-    const last = this.partial.endsWith('\r') ? this.partial.slice(0, -1) : this.partial;
-    this.partial = '';
+    const rest = this.partial.join('');
+    const last = rest.endsWith('\r') ? rest.slice(0, -1) : rest;
+    this.partial = [];
     if (last !== '') this.lines.push(last);
     this.wake?.();
   }

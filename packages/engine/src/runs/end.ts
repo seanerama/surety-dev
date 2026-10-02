@@ -33,8 +33,10 @@
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { repoContext } from '../git/exec.js';
-import { removeWorktree } from '../git/worktree.js';
+import { worktreeContext } from '../git/exec.js';
+import { checkoutBaseline } from '../git/repo.js';
+import { type MetadataBaseline, snapshotTree } from '../git/snapshot.js';
+import type { Baseline } from '../store/transitions/repo.js';
 import { markedProcesses, signalFound, signalRecordedGroup } from '../invoke/processes.js';
 import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../runtime.js';
 import type { EndFacts } from '../store/transitions/runs.js';
@@ -70,7 +72,7 @@ export class RunEnder {
 
   async endRun(run: string, end: RunEnd, opts: EndOptions = {}): Promise<void> {
     try {
-      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, decidedAt: end.decidedAt });
+      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, reasonText: end.reasonText, decidedAt: end.decidedAt, detail: end.detail });
     } catch (err) {
       this.failed(run, end, opts);
       throw err;
@@ -133,6 +135,9 @@ export class RunEnder {
       handle.ending = true;
       handle.abort = true;
       await handle.settled;
+      // An operation the run issued is reconciled before the run ends (D1
+      // §4.5 step 4): the acceptance pipeline settles what it has in flight.
+      if (handle.pipeline) await handle.pipeline;
     }
     const facts = await this.rt.engine<EndFacts>('run.end_facts', { run });
     if (facts.run.state === 'ended') {
@@ -175,24 +180,68 @@ export class RunEnder {
     if (facts.run.outcome === 'abandoned' && facts.workspace && facts.workspace.disposition !== 'discarded') {
       await this.discard(facts);
     }
+    const ws = facts.workspace;
+    let baseline: Baseline | null = null;
+    if (ws && ws.disposition !== 'discarded' && ws.metadata_baseline) {
+      const metadata = JSON.parse(ws.metadata_baseline) as MetadataBaseline;
+      const ctx = worktreeContext(facts.repo, metadata.adminDir, ws.path);
+      // D1-32: a recovery captures what the role left, once termination is
+      // established. It validates, commits and integrates nothing.
+      if (opts.recovery && ws.snapshot_tree === null) {
+        const tree = await snapshotTree(ctx, ws.current_base, this.rt.scratch).catch(() => null);
+        if (tree !== null) await this.rt.engine('workspace.snapshot', { workspace: ws.id, tree });
+      }
+      // What the role left is the retained workspace's baseline from now on.
+      baseline = await checkoutBaseline(ctx, this.rt.scratch).catch(() => null);
+    }
     await pausePoint('run_end.before_ended');
-    await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null });
+    await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null, baseline });
     this.rt.handles.delete(run);
   }
 
+  // The removal of an abandoned run's workspace, through the journal: one
+  // operation per workspace. A repeated discard finds the operation it
+  // recorded and drives it on from what the journal holds; the run is not
+  // ended until the removal is finalized (SEAM.md §§24, 45).
   private async discard(facts: EndFacts): Promise<void> {
     const ws = facts.workspace!;
-    const { operation } = await this.rt.engine<{ operation: string }>('worktree.intend', {
-      run: facts.run.id,
-      kind: 'worktree_remove',
-      repo: facts.repo,
-      path: ws.path,
-      workspace: ws.id,
-      deadlineSeconds: this.rt.setting('git_deadline'),
-    });
-    const probe = await removeWorktree(repoContext(facts.repo), ws.path);
-    await this.rt.engine('worktree.settle', { operation, result: probe });
-    if (probe !== 'absent') log('discard', new Error(`workspace ${ws.path} could not be removed (${probe}); it is retained`), { run: facts.run.id });
+    const intent = await this.rt.journal.intend(
+      'journal.intend',
+      {
+        project: facts.run.project,
+        kind: 'worktree_remove',
+        payload: { repo: facts.repo, run: facts.run.id, path: ws.path, workspace: ws.id },
+        target: { repo: facts.repo, path: ws.path },
+        subject: { run: facts.run.id, action: 'worktree_remove' },
+        finalizer: { purpose: 'discard', run: facts.run.id, workspace: ws.id },
+        deadlineSeconds: this.rt.setting('git_deadline'),
+      },
+      'worktree_remove',
+    );
+    if (!('operation' in intent)) throw new Error(`the removal of workspace ${ws.path} could not be journaled`);
+    const settled = await this.rt.journal.drive(intent.operation);
+    if (settled.end !== 'finalized') {
+      throw new Error(`workspace ${ws.path} is not discarded yet: its removal is ${settled.end}; the run ends once it is`);
+    }
+  }
+
+  // Termination of every domain of a run that is not terminated yet, before a
+  // snapshot (correction 1). Returns whether it was established for all. The
+  // run is not quarantined here: the run-end protocol does that.
+  async terminateDomains(run: string): Promise<boolean> {
+    const facts = await this.rt.engine<EndFacts>('run.end_facts', { run });
+    const handle = this.rt.handles.get(run);
+    let all = true;
+    for (const d of facts.domains) {
+      if (d.status === 'terminated') continue;
+      if (d.status === 'quarantined') {
+        all = false;
+        continue;
+      }
+      const r = await this.terminate(facts, d, handle);
+      if (!r.terminated) all = false;
+    }
+    return all;
   }
 
   // Step 2 for one domain. Returns whether termination was established.
@@ -300,6 +349,10 @@ export class RunEnder {
     for (const e of expired) {
       if (e.project !== project) continue;
       const handle = this.rt.handles.get(e.run);
+      // A run whose role exited 0 after a valid result is held by the
+      // acceptance pipeline, which ends it with the outcome its steps decide
+      // (runs/accept.ts); it does not wait for a renewal it would never get.
+      if (handle?.accepting && !handle.ending) continue;
       const end = expiryEnd(handle);
       if (handle) {
         handle.leaseLost = true;

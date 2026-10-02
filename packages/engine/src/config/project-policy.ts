@@ -43,3 +43,33 @@ export function validatePolicySubmission(body: unknown): Record<string, number> 
   }
   return Object.fromEntries(entries) as Record<string, number>;
 }
+
+// Keys whose larger value widens what the engine may do unasked: limits,
+// deadlines, budgets and caps. Raising one takes the policy_widening route
+// (row M49, slice 5), which this engine revision does not have.
+const WIDENING_KEYS = new Set([
+  'max_concurrent_runs',
+  'max_chained_roles',
+  'preflight_refusals_max',
+  'repair_attempts_max',
+  'no_progress_max',
+  'deadline_builder',
+  'deadline_verifier',
+  'deadline_reviewer',
+  'deadline_architect',
+  'session_idle_timeout',
+  'observation_freshness_bound',
+  'budget_run_billable_tokens',
+  'budget_day_verified_usd',
+  'budget_day_unknown_tokens',
+  'snapshot_max_files',
+  'snapshot_max_bytes',
+  'snapshot_max_file_bytes',
+]);
+
+// The keys of a change that widen authority against the effective policy.
+export function wideningKeys(effective: Record<string, number>, change: Record<string, number>): string[] {
+  return Object.entries(change)
+    .filter(([key, value]) => WIDENING_KEYS.has(key) && value > (effective[key] ?? Number.NEGATIVE_INFINITY))
+    .map(([key]) => key);
+}

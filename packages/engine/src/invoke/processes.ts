@@ -105,3 +105,52 @@ export function signalFound(p: ProcessIdentity, signal: NodeJS.Signals): boolean
     return false;
   }
 }
+
+// The environment of a process, or null if it cannot be read.
+export function environOf(pid: number): Map<string, string> | null {
+  let environ: string;
+  try {
+    environ = readFileSync(`/proc/${pid}/environ`, 'latin1');
+  } catch {
+    return null;
+  }
+  const out = new Map<string, string>();
+  for (const entry of environ.split('\0')) {
+    const at = entry.indexOf('=');
+    if (at > 0) out.set(entry.slice(0, at), entry.slice(at + 1));
+  }
+  return out;
+}
+
+// Every live process whose environment carries the variable `name`, with any
+// value. null when /proc itself cannot be listed.
+export function processesWithMarker(name: string): ProcessIdentity[] | null {
+  let names: string[];
+  try {
+    names = readdirSync('/proc');
+  } catch {
+    return null;
+  }
+  const found: ProcessIdentity[] = [];
+  const prefix = `${name}=`;
+  for (const entry of names) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
+    if (pid === process.pid) continue;
+    let environ: string;
+    try {
+      environ = readFileSync(`/proc/${entry}/environ`, 'latin1');
+    } catch {
+      continue;
+    }
+    if (!environ.split('\0').some((e) => e.startsWith(prefix))) continue;
+    let startTime: string | null;
+    try {
+      startTime = processStartTime(pid);
+    } catch {
+      continue;
+    }
+    if (startTime !== null && processState(pid, startTime) === 'same') found.push({ pid, startTime });
+  }
+  return found;
+}

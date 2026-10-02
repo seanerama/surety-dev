@@ -9,6 +9,7 @@ import type { Database } from 'better-sqlite3';
 
 import { Refusal } from '../refusal.js';
 import { createProject } from '../store/transitions/project.js';
+import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
 import { applyWorkTransition, observeTrigger, registerPlan } from '../store/transitions/work.js';
@@ -41,9 +42,14 @@ const positiveInt = (b: Record<string, unknown>, field: string) => {
   return v;
 };
 
-// POST /v1/harness/fixtures/project: a registered project on an existing
-// repository.
-export function installFixtureProject(db: Database, actor: Actor, body: unknown): { project: { id: string } } {
+export interface ProjectBody {
+  name: string;
+  tier: string;
+  dev_repo_path: string;
+  integration_branch: string;
+}
+
+export function parseProjectBody(body: unknown): ProjectBody {
   const b = objectBody(body, FIXTURE_FIELDS);
   const name = str(b, 'name');
   const tier = str(b, 'tier');
@@ -51,8 +57,18 @@ export function installFixtureProject(db: Database, actor: Actor, body: unknown)
   const repo = str(b, 'dev_repo_path');
   if (!isAbsolute(repo)) throw invalid('dev_repo_path', 'must be an absolute path');
   const branch = str(b, 'integration_branch');
+  return { name, tier, dev_repo_path: repo, integration_branch: branch };
+}
 
-  const id = transact(db, actor, (tx) => createProject(tx, { name, tier, dev_repo_path: repo, integration_branch: branch }, FIXTURE_LABEL));
+// POST /v1/harness/fixtures/project: a registered project on an existing
+// repository, its integration branch registered at the commit it is at, and
+// the developer's checkouts of that branch managed (SEAM.md §25).
+export function installFixtureProject(
+  db: Database,
+  actor: Actor,
+  args: { body: ProjectBody; head: string; checkouts: { path: string; baseline: Baseline }[] },
+): { project: { id: string } } {
+  const id = transact(db, actor, (tx) => createProject(tx, { ...args.body, head: args.head, checkouts: args.checkouts }, FIXTURE_LABEL));
   return { project: { id } };
 }
 

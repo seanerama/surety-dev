@@ -2,18 +2,17 @@
 
 import type { Database } from 'better-sqlite3';
 
-import { projectPolicyDefaults } from '../config/project-policy.js';
+import { policyRevision, projectPolicy as effectivePolicy } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
-import { ROLE_OF, dispatchBlocker } from './transitions/runs.js';
+import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
 import type { WorkRow } from './transitions/work.js';
 
-// The project's effective ungoverned policy. No policy revision can exist yet
-// (valid changes need the journaled git path), so the effective values are
-// the schema defaults and the revision is null.
+// The project's effective ungoverned policy: the revision the engine
+// recorded over the schema defaults, or the defaults with revision null.
 export function projectPolicy(db: Database, project: string) {
   const row = db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(project);
   if (!row) throw projectNotFound(project);
-  return { effective: projectPolicyDefaults(), revision: null };
+  return { effective: effectivePolicy(db, project), revision: policyRevision(db, project) };
 }
 
 // D1 §8.1 step 8 order: verification due, then builds, then replans, then
@@ -24,7 +23,7 @@ export interface ProjectCandidates {
   project: string;
   repo: string;
   branch: string;
-  items: { id: string; kind: string; role: string }[];
+  items: { id: string; kind: string; role: string; boundary: boolean }[];
 }
 
 // Every project with work that could be dispatched now, as far as the store
@@ -39,9 +38,10 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
   const out: ProjectCandidates[] = [];
   for (const p of projects) {
     const items = (db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[])
-      .filter((item) => dispatchBlocker(db, item, args.maxConcurrentRuns) === null)
-      .sort((a, b) => (PRIORITY[a.kind] ?? 3) - (PRIORITY[b.kind] ?? 3) || a.seq - b.seq)
-      .map((item) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]! }));
+      .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
+      .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
+      .sort((a, b) => (PRIORITY[a.item.kind] ?? 3) - (PRIORITY[b.item.kind] ?? 3) || a.item.seq - b.item.seq)
+      .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));
     out.push({ project: p.id, repo: p.dev_repo_path, branch: p.integration_branch, items });
   }
   return out;
