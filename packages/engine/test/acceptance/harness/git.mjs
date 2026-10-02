@@ -2,7 +2,7 @@
 // with a constructed environment so the developer's configuration never leaks in.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function gitEnv(home) {
@@ -40,4 +40,21 @@ export function repoState(dir) {
     status: git(dir, ['status', '--porcelain', '--untracked-files=all']),
     worktrees: git(dir, ['worktree', 'list', '--porcelain']),
   };
+}
+
+// Plant a hook in a repository, as a role that runs as the engine's user
+// could (E25 item 3). Each time git runs it, the hook appends one line to
+// `evidence`, a file outside the repository. `where` is 'hooks' (the
+// repository's own hooks directory) or 'hooksPath' (a directory `dir`
+// outside the repository, which the repository's configuration names as
+// core.hooksPath).
+export function plantHook(repo, name, evidence, { where = 'hooks', dir } = {}) {
+  if (!['hooks', 'hooksPath'].includes(where)) throw new Error(`unknown hook place ${where}`);
+  const hooks = where === 'hooks' ? join(repo, '.git', 'hooks') : dir;
+  mkdirSync(hooks, { recursive: true });
+  const file = join(hooks, name);
+  writeFileSync(file, `#!/bin/sh\necho "${name} ran: pid $$ in $(pwd) with HOME=$HOME" >> '${evidence}'\n`);
+  chmodSync(file, 0o755);
+  if (where === 'hooksPath') git(repo, ['config', 'core.hooksPath', hooks]);
+  return file;
 }

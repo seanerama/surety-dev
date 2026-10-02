@@ -12,7 +12,8 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 import { freePort, startEngine, waitFor, writeEngineConfig } from '../engine.mjs';
+import { git, gitEnv, makeRepo, plantHook } from '../git.mjs';
 import { isoNow, newId } from '../ids.mjs';
 import {
   assertDispatched,
@@ -33,7 +35,21 @@ import {
   runPath,
   workPath,
 } from '../invariants.mjs';
-import { addWork, advanceClock, allocate, answerDecision, driveTo, forceTransition, observeTrigger, stopRun, tick } from '../runs.mjs';
+import {
+  addWork,
+  advanceClock,
+  allocate,
+  answerDecision,
+  driveTo,
+  forceTransition,
+  observeTrigger,
+  resolvedPath,
+  scriptedEngine,
+  stopRun,
+  tick,
+  unownedWorktrees,
+  worktreeOperations,
+} from '../runs.mjs';
 import { BOUNDARY, Scripted, VALID_RESULT, lateSuccess, processIsLive, script, step } from '../scripted.mjs';
 import {
   WORK,
@@ -320,6 +336,24 @@ export async function slice2Checks(check, work) {
     }),
   );
 
+  await check('work history: a work.resumed that keeps the status is not a step; any other event that keeps it is one, and an illegal one', () =>
+    withStore((db, project) => {
+      const path = ['eligible', 'claimed', 'executing', 'eligible'];
+      const lifted = witnessWork(db, project, { kind: 'review', path });
+      emit(db, 'work.resumed', { work_item: lifted.id, project }, { from: 'eligible', to: 'eligible' });
+      assert.deepEqual(workPath(db, lifted.id), path, 'lifting a dispatch hold adds no step');
+      assert.deepEqual(assertWorkHistory(db, lifted.id), path);
+      emit(db, 'work.claimed', { work_item: lifted.id, project }, { from: 'eligible', to: 'claimed' });
+      assert.deepEqual(workPath(db, lifted.id), [...path, 'claimed'], 'and the path goes on from the status the item kept');
+      const odd = witnessWork(db, project, { kind: 'review', path });
+      emit(db, 'work.advanced', { work_item: odd.id, project }, { from: 'eligible', to: 'eligible' });
+      assert.throws(() => assertWorkHistory(db, odd.id), /eligible → eligible is not a legal review transition/);
+      const torn = witnessWork(db, project, { kind: 'review', path });
+      emit(db, 'work.resumed', { work_item: torn.id, project }, { from: 'held', to: 'held' });
+      assert.throws(() => workPath(db, torn.id), /starts where the previous event ended/, 'a resumed event must still name the status the item is in');
+    }),
+  );
+
   await check('run intervals: concurrency is read from run.created and run.ended in log order', () =>
     withStore((db, project) => {
       const other = newId('proj_');
@@ -504,6 +538,44 @@ export async function slice2Checks(check, work) {
     assert.equal(processIsLive(entry.pid, entry.start_time), false);
   });
 
+  await check('scripted child: a descendant outlives the role, carries its marker, and keeps its stdout from ending until it is signalled', async () => {
+    const { scripted, ws } = scriptedDir('descendant');
+    scripted.script('wi_X', [script.complete([step.descendant()])]);
+    const run = launch(scripted, ws);
+    let ended = false;
+    run.child.stdout.on('close', () => (ended = true));
+    assert.deepEqual(await run.exited, { code: 0, signal: null }, run.out.stderr);
+    const d = await scripted.waitForDescendant({ parent: run.child.pid });
+    assert.deepEqual([d.domain, d.invocation, d.pgrp, d.ready, d.holds_stdout, d.on_term], ['dom_X', 'inv_X', run.child.pid, true, true, 'exit']);
+    assert.equal(scripted.isLive(d), true, 'the descendant outlives the role');
+    assert.ok(readFileSync(`/proc/${d.pid}/environ`, 'utf8').split('\0').includes('SURETY_DOMAIN=dom_X'), 'it carries the domain marker');
+    await sleep(400);
+    assert.equal(ended, false, 'the reader of the role\'s stdout sees no end of file while the descendant lives');
+    assert.deepEqual(run.out.lines, [{ type: 'result', result: VALID_RESULT }], 'what the role wrote before it exited can be read all the same');
+    process.kill(d.pid, 'SIGTERM');
+    await waitFor(() => !scripted.isLive(d), { what: 'the descendant to end on SIGTERM' });
+    await waitFor(() => ended, { what: 'the stream to end once nothing holds it' });
+    assert.equal(scripted.eventsOf(d.pid, 'signal').length, 1, 'the descendant logged its signal');
+    assert.deepEqual(scripted.descendants({ parent: 1 }), [], 'descendants are filtered like launches');
+  });
+
+  await check('scripted child: a descendant that does not hold stdout, ignores SIGTERM, and is killed with the strays', async () => {
+    const { scripted, ws } = scriptedDir('descendant-quiet');
+    scripted.script('wi_X', [script.complete([step.descendant({ holds_stdout: false, on_term: 'ignore' })])]);
+    const run = launch(scripted, ws);
+    const closed = new Promise((resolve) => run.child.stdout.on('close', resolve));
+    assert.deepEqual(await run.exited, { code: 0, signal: null }, run.out.stderr);
+    await closed;
+    const [d] = scripted.descendants();
+    assert.deepEqual([d.holds_stdout, d.on_term, scripted.isLive(d)], [false, 'ignore', true], 'the stream ended although the descendant lives');
+    process.kill(d.pid, 'SIGTERM');
+    await waitFor(() => scripted.eventsOf(d.pid, 'signal').length === 1, { what: 'the signal to be logged' });
+    await sleep(200);
+    assert.equal(scripted.isLive(d), true, 'an ignored SIGTERM leaves it running');
+    assert.deepEqual(scripted.killStrays(), [d.pid]);
+    await waitFor(() => !scripted.isLive(d), { what: 'the descendant to be gone' });
+  });
+
   await check('scripted helper: boundary instructions are merged, validated and written whole; liveness needs the same start time', async () => {
     const { scripted } = scriptedDir('boundary');
     const file = join(scripted.dir, 'boundary.json');
@@ -519,6 +591,79 @@ export async function slice2Checks(check, work) {
     assert.equal(processIsLive(process.pid, procStartTime(process.pid)), true);
     assert.equal(processIsLive(process.pid, '1'), false, 'a reused pid is not the same process');
     assert.equal(processIsLive(2 ** 22 + 12345, '1'), false);
+  });
+
+  // ---- 7b. worktree, hook and engine-home helpers ---------------------------------------
+
+  await check('worktree helpers: paths are compared resolved; an unowned worktree is one no workspaces row names; operations are read with their journal', async () => {
+    const root = mkdtempSync(join(work, 'worktrees-'));
+    const repo = makeRepo(join(root, 'repo'));
+    mkdirSync(join(root, 'real-home', 'workspaces'), { recursive: true });
+    const home = join(root, 'home');
+    symlinkSync(join(root, 'real-home'), home);
+    const owned = join(home, 'workspaces', 'run_A');
+    const stray = join(home, 'workspaces', 'run_B');
+    for (const path of [owned, stray]) git(repo.path, ['worktree', 'add', '--quiet', '--detach', path, 'HEAD']);
+    assert.equal(resolvedPath(owned), join(realpathSync(root), 'real-home', 'workspaces', 'run_A'));
+    assert.equal(resolvedPath(join(home, 'workspaces', 'gone', 'deeper')), join(realpathSync(root), 'real-home', 'workspaces', 'gone', 'deeper'), 'the part that does not exist is kept as given');
+
+    const db = new Database(join(home, 'store.db'));
+    db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, dev_repo_path TEXT);
+             CREATE TABLE workspaces (id TEXT PRIMARY KEY, project TEXT, path TEXT);
+             CREATE TABLE operations (id TEXT PRIMARY KEY, seq INTEGER, kind TEXT, status TEXT);
+             CREATE TABLE git_journal_events (operation TEXT, seq INTEGER, journal_kind TEXT, event_kind TEXT, payload TEXT);`);
+    db.prepare('INSERT INTO projects VALUES (?, ?)').run('proj_A', repo.path);
+    // The store names the workspace through the link, as the engine was given its home.
+    db.prepare('INSERT INTO workspaces VALUES (?, ?, ?)').run('ws_A', 'proj_A', owned);
+    const journal = (op, seq, status, kind, run, events) => {
+      db.prepare('INSERT INTO operations VALUES (?, ?, ?, ?)').run(op, seq, 'git_worktree', status);
+      events.forEach((e, i) => db.prepare('INSERT INTO git_journal_events VALUES (?, ?, ?, ?, ?)').run(op, i + 1, kind, e, JSON.stringify({ run })));
+    };
+    journal('op_2', 2, 'failed', 'worktree_add', 'run_B', ['intended', 'failed']);
+    journal('op_1', 1, 'succeeded', 'worktree_add', 'run_A', ['intended', 'applied', 'confirmed', 'finalized']);
+    journal('op_3', 3, 'succeeded', 'worktree_remove', 'run_A', ['intended', 'applied']);
+    db.close();
+
+    assert.deepEqual(unownedWorktrees(home, 'proj_A'), [resolvedPath(stray)], 'the main work tree and the owned workspace are not reported; the stray one is');
+    assert.deepEqual(worktreeOperations(home, 'run_A', 'worktree_add'), [{ id: 'op_1', status: 'succeeded', events: ['intended', 'applied', 'confirmed', 'finalized'] }]);
+    assert.deepEqual(worktreeOperations(home, 'run_B', 'worktree_add'), [{ id: 'op_2', status: 'failed', events: ['intended', 'failed'] }]);
+    assert.deepEqual(worktreeOperations(home, 'run_A', 'worktree_remove').map((o) => o.id), ['op_3']);
+    assert.deepEqual(worktreeOperations(home, 'run_C', 'worktree_add'), []);
+    // A discarded workspace: its row stays, its directory and registration go.
+    git(repo.path, ['worktree', 'remove', '--force', owned]);
+    assert.deepEqual(unownedWorktrees(home, 'proj_A'), [resolvedPath(stray)]);
+  });
+
+  await check('hook fixture: a planted hook runs when git checks out the ordinary way, from the hooks directory and through core.hooksPath, and can be switched off per call', async () => {
+    for (const where of ['hooks', 'hooksPath']) {
+      const root = mkdtempSync(join(work, `hook-${where}-`));
+      const repo = makeRepo(join(root, 'repo'));
+      const evidence = join(root, 'evidence.txt');
+      const file = plantHook(repo.path, 'post-checkout', evidence, { where, dir: join(root, 'planted') });
+      assert.equal(file.startsWith(join(repo.path, '.git', 'hooks')), where === 'hooks');
+      git(repo.path, ['worktree', 'add', '--quiet', '--detach', join(root, 'wt-1'), 'HEAD']);
+      assert.match(readFileSync(evidence, 'utf8'), /^post-checkout ran: pid \d+ in .*wt-1 with HOME=/m, `${where}: the hook left its evidence`);
+      rmSync(evidence);
+      // What an engine can do about it: the same call with hooks switched off leaves no evidence.
+      execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-C', repo.path, 'worktree', 'add', '--quiet', '--detach', join(root, 'wt-2'), 'HEAD'], { env: gitEnv(repo.path) });
+      assert.equal(existsSync(evidence), false, `${where}: switched off on the command line, the hook does not run`);
+    }
+    assert.throws(() => plantHook('/nonexistent', 'post-checkout', '/nonexistent/e', { where: 'elsewhere' }), /unknown hook place/);
+  });
+
+  await check('run fixture: with homeSymlink the engine home is a symbolic link to the directory that holds its files', async () => {
+    const after = [];
+    const fx = await scriptedEngine({ after: (fn) => after.push(fn) }, { start: false, homeSymlink: true });
+    try {
+      assert.ok(lstatSync(fx.home).isSymbolicLink());
+      assert.equal(realpathSync(fx.home), join(realpathSync(fx.root), 'home-real'));
+      assert.ok(existsSync(join(fx.root, 'home-real', 'config.json')), 'the configuration written through the link is in the real directory');
+      const plain = await scriptedEngine({ after: (fn) => after.push(fn) }, { start: false });
+      assert.ok(lstatSync(plain.home).isDirectory());
+    } finally {
+      for (const fn of after) await fn();
+    }
+    assert.equal(existsSync(fx.root), false, 'the fixture cleans up after itself');
   });
 
   // ---- 8. HTTP helpers against a stand-in ------------------------------------------

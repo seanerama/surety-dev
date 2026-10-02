@@ -14,7 +14,8 @@
 //   scripts/default.json    one script, for a launch with no script of its own
 //   release/<key>.<name>    a file whose existence releases the hold <name>;
 //                           <key> is the invocation id, the work item id or "all"
-//   launches.jsonl          appended by this program: launch, holding, signal, exit
+//   launches.jsonl          appended by this program: launch, holding, signal, exit,
+//                           descendant
 //   boundary.json           read by the engine's scripted boundary, never by this program
 //
 // With no script at all the program holds until it is killed: nothing
@@ -29,8 +30,21 @@
 //           {"result": <any JSON value>}
 //           {"stdout": "<raw text written as is>"}
 //           {"exit": <code>}
+//           {"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore"}}
 // After the last step the program exits 0.
+//
+// A descendant is one more process the role starts and does not wait for:
+// this program again, as `child.mjs descendant <on_term>`. It stays in the
+// role's process group and inherits its environment, so it carries the
+// role's domain marker, and it outlives the role. It follows no script and
+// writes nothing to stdout, but unless holds_stdout is false it keeps the
+// role's stdout open, so whoever reads that pipe sees no end of file while
+// it lives. SIGTERM ends it, or is ignored, as on_term says. The role goes
+// on to its next step once the descendant has installed its signal handling,
+// and logs a `descendant` entry with the descendant's pid, start time and
+// process group.
 
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -40,10 +54,10 @@ import { fileURLToPath } from 'node:url';
 const dir = dirname(fileURLToPath(import.meta.url));
 const logFile = join(dir, 'launches.jsonl');
 
-// Field n of /proc/self/stat, counted as proc(5) does. The command name
+// Field n of /proc/<pid>/stat, counted as proc(5) does. The command name
 // (field 2) may contain spaces, so fields are counted from the last ')'.
-function statField(n) {
-  const stat = readFileSync('/proc/self/stat', 'utf8');
+function statField(n, pid = 'self') {
+  const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[n - 3];
 }
 
@@ -66,6 +80,21 @@ function log(event, fields = {}) {
 setInterval(() => {
   if (!existsSync(join(dir, 'child.mjs'))) process.exit(0);
 }, 1000).unref();
+
+// Descendant mode: `child.mjs descendant <on_term>`, started by a role's
+// {"descendant": ...} step. It reads no request, follows no script and never
+// writes to stdout; it only stays, holding whatever it inherited, until it
+// is signalled or its scripted directory is removed.
+if (process.argv[2] === 'descendant') {
+  const onTerm = process.argv[3] === 'ignore' ? 'ignore' : 'exit';
+  process.on('SIGTERM', () => {
+    log('signal', { signal: 'SIGTERM', descendant: true });
+    if (onTerm === 'exit') process.exit(143);
+  });
+  log('descendant_ready', { on_term: onTerm });
+  setInterval(() => {}, 1 << 30);
+  await new Promise(() => {});
+}
 
 // The engine may be dead (a crash test kills it); a role that outlives its
 // engine keeps running, so a broken pipe is not an error here.
@@ -142,6 +171,39 @@ function finish(code) {
 
 const released = (name, keys) => keys.some((key) => key && existsSync(join(dir, 'release', `${key}.${name}`)));
 
+// Has the descendant with this pid logged that it is ready?
+function loggedReady(pid) {
+  if (!existsSync(logFile)) return false;
+  for (const line of readFileSync(logFile, 'utf8').split('\n')) {
+    if (!line.includes('descendant_ready')) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.event === 'descendant_ready' && entry.pid === pid) return true;
+    } catch {
+      // a torn line is not an entry
+    }
+  }
+  return false;
+}
+
+// Start a descendant (see the head of this file) and wait until it is ready.
+async function startDescendant(spec) {
+  const stdout = spec.holds_stdout === false ? 'ignore' : 'inherit';
+  const descendant = spawn(process.execPath, [fileURLToPath(import.meta.url), 'descendant', spec.on_term ?? 'exit'], { stdio: ['ignore', stdout, 'ignore'] });
+  descendant.on('error', (err) => log('descendant_error', { message: err.message }));
+  descendant.unref();
+  if (descendant.pid === undefined) return void log('descendant_error', { message: 'the descendant could not be started' });
+  for (let waited = 0; waited < 5000 && !loggedReady(descendant.pid); waited += 25) await sleep(25);
+  log('descendant', {
+    descendant_pid: descendant.pid,
+    descendant_start_time: statField(22, descendant.pid),
+    descendant_pgrp: Number(statField(5, descendant.pid)),
+    holds_stdout: spec.holds_stdout !== false,
+    on_term: spec.on_term ?? 'exit',
+    ready: loggedReady(descendant.pid),
+  });
+}
+
 async function runSteps(steps, ctx) {
   for (const step of steps ?? []) {
     if (step.usage !== undefined) emit({ type: 'usage', semantics: step.usage.semantics ?? 'cumulative', raw: step.usage.raw ?? {} });
@@ -165,6 +227,7 @@ async function runSteps(steps, ctx) {
       log('released', { hold: step.hold });
     } else if (step.result !== undefined) emit({ type: 'result', result: step.result });
     else if (step.stdout !== undefined) process.stdout.write(step.stdout);
+    else if (step.descendant !== undefined) await startDescendant(step.descendant);
     else if (step.exit !== undefined) await finish(step.exit);
     else {
       log('bad_step', { step });
