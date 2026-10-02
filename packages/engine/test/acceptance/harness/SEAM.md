@@ -1,6 +1,6 @@
 # The test seam
 
-**Owner:** the Verifier (build spec §4). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). **Extended:** slice 4, 2026-10-02 (sections 52 to 64: rows M59 to M67 and the slice-4 cases of rows M02, M04, M12 and M61; one exit status added to section 1). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
+**Owner:** the Verifier (build spec §4). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). **Extended:** slice 4, 2026-10-02 (sections 52 to 64: rows M59 to M67 and the slice-4 cases of rows M02, M04, M12 and M61; one exit status added to section 1). **Extended:** slice 5, 2026-10-02 (sections 65 to 85: rows M35 to M58 and the slice-5 cases of rows M08, M09, M12, M24, M27, M61, M62, M64 and M65; section 65 lists what it changes in earlier sections; one sentence added to section 31 for the slice-3 review). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
 
 This file states exactly what the engine must provide for the acceptance tests to observe it (build spec §8). The tests are the contract; this file says in prose what they rely on. Where the sources (build spec §2) left a name, code, format or range open, the Verifier fixed it here; section 10 lists those choices. Everything else follows D1 Appendix A as corrected by build spec §6.
 
@@ -822,6 +822,7 @@ When the developer has switched or detached the worktree, the blocker's `retry` 
 - *hooks*: none of git's hooks runs, from the repository's hooks directory or from a directory its configuration names;
 - *the file-system monitor*: the program named as `core.fsmonitor` does not run, on a snapshot's `git add` as on a checkout;
 - *filter drivers*: a `filter.<name>.clean`, `.smudge` or `.process` program named in the repository's own configuration does not run, on workspace creation (where git would smudge), on a snapshot (where it would clean) or on a commit. **A repository that needs such a filter, any repository using Git LFS among them, is not supported in M1**: the engine checks out and snapshots its files unfiltered. Supporting it is a later decision that belongs with the isolation design (E29 item 1);
+- *filter drivers, however the configuration spells them* (the slice-3 review; `M23-filter-driver-however-spelled.test.mjs`, listed under slice 4). The rule is about what git honours, not about what the engine can parse. A driver is not run whatever form the repository's configuration gives it: an old-style dotted section whose name is not all lower case (`[filter.EVIL]`, which git reads as `filter.evil`, while a `-c filter.EVIL.clean=` override names another key); a second section header on the same line as another (`[core] [filter "evil"]`); an include written on one line (`[include] path = other.cfg`) with the driver defined only in the included file; an included file reached through a symbolic link. An engine that finds the filter names by reading the config file itself, and switches each off by name, runs every driver it did not find. How the engine makes git run none is its own choice; the four cases pin only that none runs and that the files are committed unfiltered;
 - *other configured programs*: an external diff program (`diff.external`), a diff driver's `command` and `textconv`, a signing program (`gpg.program`, with `commit.gpgsign` set), an editor and a pager do not run.
 
 Not reachable from any git call M1 makes, and so not pinned: `core.sshCommand`, credential helpers and `core.askPass` (M1 has no remote operation), merge drivers (no merge; a rebase is row M28's).
@@ -944,7 +945,7 @@ Sections 39 to 51 are the second of slice 3's two Verifier sessions: rows M26 to
 
 **The Builder's kinds** (`stage_build`, `fix`). The work stays `integrated` until a candidate that holds it is nominated: the nomination's finalizer moves every `stage_build` and `fix` item of the project that is `integrated` at that moment to `verifying` (section 42). It becomes `complete` when that candidate's `verification` work item becomes `complete`, in that item's completing transaction or with it. A verification run that fails completes nothing: the Builder's work is still `verifying` when the failed run has ended and its repair has begun, and is complete only when a verification run of that candidate completes. Work integrated after a nomination is not held by that candidate: it stays `integrated` when the candidate is verified, and waits for the next nomination. A `verification` item that is cancelled leaves the work it would have verified `verifying`.
 
-From slice 5 a stage's work is complete only when its `stage` gate is satisfied; these cases then change with the gate (`../COVERAGE.md`).
+From slice 5 a stage's work is complete only when its `stage` gate is satisfied; these cases then change with the gate (`../COVERAGE.md`). Section 70 now states that rule.
 
 **A chain of roles** (D1 §8.1 step 8; D1-34; E24 item 1). A run is chained when it is dispatched for work that a previous run's outcome created. In slice 3 two outcomes create work: a nomination that follows a Builder's run creates the candidate's `verification` item, and the integration of a committed plan creates its stages' `stage_build` items. Work created by a fixture or a person, the repair of a failed run and a Resume are not chained. `max_chained_roles` counts the roles of a chain, the first included; a run that is not chained starts a chain of one.
 
@@ -1443,3 +1444,360 @@ Each of these was open in the sources. The Builder may object. Those marked † 
 Less than before, by decision (E31). The shim is the one piece with logic of its own, and it is tested: the five cases of section 60 pass on the host these tests were written on (git 2.43, the pinned driver, ext4). It was also loaded once into the slice-2 engine on `main`, outside any test: the shim was in the engine, in each git the engine started and in the role; after a cut the store held the dispatch that had been committed; the workspace made since the session began was empty; and the engine refused to start again, because its `engine.lock` is written and renamed without a sync and was therefore empty. That last observation is the first thing row M67 will ask of the build.
 
 Every other file was checked for syntax, and its imports and names were resolved against the harness; none was run, since each fails at its first slice-4 step on an engine that has none. The shared helpers that changed (`fx.start({env})` in `runs.mjs`; new steps and helpers in `scripted.mjs` and `scripted/child.mjs`; `clearFaults` in `engine.mjs`; `seedStream` and `seedChunkReceipt` in `seed.mjs`) are additions, and `M02-dispatch-identity.test.mjs` was run on the slice-2 engine afterwards and passes. The frozen self-check was not run and is not known to pass or fail with them.
+
+---
+
+# Slice 5: the protected path, gates and decisions
+
+Sections 65 to 85 were written with the slice-5 acceptance tests (2026-10-02): rows M35 to M58, and the cases of rows M08, M09, M12, M24, M27, M61, M62, M64 and M65 that earlier slices left for this one. They follow D1 §§2.4, 3.3, 3.4, 5, 7.9, 9 and 10 with build spec §6 corrections 3, 4, 5, 8, 9, 17, 18 and 22, RN R1, R2, R4 and R7, Review B01, B03, B12, B18 and B19, and E13, E19, E25 item 4 and E30 items 1 and 16. Where those left something open, the choice is listed in section 84.
+
+**What slice 5 changes in earlier sections.** Section 6's table: 202 answers a governed policy submission (section 66), and 409 gains `decision_invalidated`, `batch_conflict` and `quarantined`. Section 17: a confirmation taken while a run was `claimed` is good when it is `executing`, and Stop or Abandon of a quarantined run is `quarantined` (section 80); an answer may also be refused `decision_invalidated` (section 76). Section 27: a widening is not answered 200 (section 78). Sections 25 and 28: a Verifier's and a Reviewer's runs are validated (section 68). Section 40: a stage's work completes with its `stage` gate, not with its candidate's verification (section 70). Sections 32, 57 and 58: what an observation, a detector hit and missing bytes do to gates (section 72). The tests of slices 1 to 4 were not changed; `../COVERAGE.md` lists the ones whose assertions these changes make wrong.
+
+The procedure is E31's, as in slice 4: the fewest cases that pin each row's required result, no stand-in engine, no self-check. None of these tests was run: every one fails at its first slice-5 step on an engine that has none. Two helpers with logic of their own were exercised directly (the protected fingerprint against a scratch repository, the notification sink program as a process); everything else was read, and its imports and names were resolved against the harness.
+
+The expected table is `../contract/decisions.json` (the eleven enabled decision kinds, what each one's preview must bind, and the answer codes). `gates.mjs` and `decisions.mjs` are the test side.
+
+## 65. What the slice-5 tests assume throughout
+
+- **Candidates are made by runs, as in slice 3.** A case that needs a candidate builds a stage and has it nominated (`nominated` in `gates.mjs`). Most cases use tier T1, where a nomination is the Builder's request and no sign-off is needed; a later candidate of a T1 project is a `fix` whose Builder asks for a nomination (`successor`).
+- **Observations are fixtures; reports are a role's.** Check executions, the classification of a protected diff, a validation-scope approval, a reuse entry, the evidence of an Alpha exception and a test target enter through harness routes and are labelled as test setup (section 67). M1 has no check runner and no classifier, and no test claims to qualify one (Plan §2). Findings, sign-offs, dispositions, severity changes, assessments and proposals are not fixtures: a scripted Verifier or Reviewer reports them in its result, as an agent would, and the engine records them (section 68).
+- **Work a fixture creates for a role is not chained.** A `review`, `verification` or `check_correction` item made with the trigger fixture is dispatched at the next tick. The `verification` item a nomination creates still waits at the chain boundary (section 40) and is let through only by the cases that are about it.
+- **Three rows read one history.** The cases of M38, M39 and M41 are separately reported readings of one fixture built in the suite's `before` hook: one candidate (or two), one check per case, one evaluation. If the fixture cannot be built, every case of the row fails.
+- **The clock.** M40 (retention), M42 and M50 (a deferral's target) and M58 (aging) move the controlled clock, each in one jump with no run under way. M58 is the first test that restarts an engine whose clock it moved; section 82 says what it relies on.
+- **The store is written directly in two rows,** M45 and M51, with the engine stopped (section 83), to change a dependency that no engine path changes while the question stands.
+- **A rejected run's repair.** Where a case rejects a Verifier's or a Reviewer's run and then needs the project again, it first lowers `repair_attempts_max` to 0, so that the rejected work is parked and nothing else is launched for it.
+
+## 66. The protected set, its fingerprint and its versions
+
+(RN R2; build spec §6 correction 3; D1 §§2.4, 5.2; Review B19; rows M35 to M37.)
+
+**The governed file.** The governed settings live in `.surety/checks/protected-policy.json`, a JSON object whose keys are `protected_paths`, `check_commands`, `check_discovery`, `runner_config`, `result_collection` and `required_checks`. A key that is absent has its default; the default of `protected_paths` is `[".surety/checks/"]`. The values of the other five are D3's; M1 stores them and gives them no meaning, except that a change of `required_checks` is a change of the required set (section 69). `.surety/policy.json` holds only the ungoverned keys of `../contract/config.json`.
+
+**The protected set** of a revision is every file under the protected roots. The roots are those the governed file of the effective protected version names; a root is a path prefix ending in `/`.
+
+**The fingerprint** of a revision is SHA-256, in lower-case hex, of the UTF-8 JSON text (no white space) of the array of `[path, blob id]` pairs of the protected set, sorted by path. Nothing of any file's content is projected into it. `protectedFingerprint` in `gates.mjs` computes it from `git ls-tree`; the tests compare `protected_versions.fingerprint` with that and never read the engine's computation. A repository with no file under its roots has the fingerprint of `[]`.
+
+**Versions.** `protected_versions` holds one row per version: `seq`, `fingerprint`, `change_kind`, `proposal`, `approver_authority`, `authorized` (0 or 1), `effective_from`, `superseded_by`, `check_ids`. Creating a project, through `POST /v1/projects` or the fixture installer, records its first version: `change_kind` `initial`, `authorized` 1, `effective_from` set, the fingerprint of the integration branch's commit under the roots its governed file names. The **effective version** of a project is the one row that is authorized, has `effective_from`, and has no `superseded_by`; the tests require exactly one at every moment (`effectiveVersion`). The only writer of a later authorized version is the application of an approved proposal (section 69).
+
+**An ordinary policy change** (section 27) commits `.surety/policy.json` and nothing else. It leaves the fingerprint, the effective version and the proposals as they were.
+
+**A governed change through the policy route** (D1 §11.4, §7.9; D1-35). `POST /v1/projects/:p/policy` with a body whose keys are governed keys is answered **202** `{"proposal": {"id": "prop_<ULID>"}}`. The engine has recorded a `protected_proposals` row: `proposed_by` `human`, `status` `captured`, `base_revision` the commit the integration branch is at, and `tree_id` a tree that differs from the base's in exactly `.surety/checks/protected-policy.json`, whose content there is the recorded governed fields with the submitted ones replaced. Nothing is applied: no commit, no policy revision, no new version, and no `policy_widening` decision. From there the proposal goes the way of any proposal (classification, approval, application: sections 67 and 69). A body that mixes governed keys with a widening is in section 78; one that mixes them with an ordinary change is not pinned.
+
+**Roots are judged by the authorized set.** A diff is partitioned by the roots of the effective version, not by roots it proposes: a change of `protected_paths` is a change to a protected file and takes the protected route, and while it is not applied every path the authorized roots protect stays protected (a Builder's edit under an authorized root other than `.surety/checks/` is still a `diff_violation`). What the protected set is once a version is authorized whose roots no longer hold the governed file is not pinned (section 84, the owner's question).
+
+**An unauthorized protected set.** When the protected set at the integration branch's commit has a fingerprint that is not the effective version's, which in M1 can only follow the adoption of an out-of-band commit, the engine emits `protected.unauthorized_detected` and every gate evaluation of the project carries the reason `PROTECTED_PATH_UNAUTHORIZED`. Adopting a commit authorizes nothing: the effective version stays the authorized one.
+
+## 67. Fixtures of slice 5
+
+Each route follows section 7's rules. Each installs through the engine's transition functions and labels what it creates: every event it causes has `payload.test_fixture = true`.
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /v1/harness/fixtures/plan` (extended) | adds `"requirements": [{"key"}]`, `"modules": [{"name", "paths", "sensitive_areas"?}]`, and per stage `"implements": [<requirement key>]` | **201**; the answer adds `"requirements": [{"id": "req_<ULID>", "key"}]` (always present, `[]` when none was sent). Requirements belong to the fixture's approved spec; a stage's `implements` (and `requirement_ids`) are the requirements of those keys. A stage that omits `implements` implements nothing. A second call adds a plan and its stages to the same project. |
+| `POST /v1/harness/fixtures/checks` | `{"project", "checks": [{"key", "kind", "gate_kinds", "requirements": [<key>], "required"?, "tier_floor"?, "sensitive_areas"?, "runner_class"?, "requires"?}]}` | **201** `{"protected_version": "pv_<ULID>", "checks": [{"id": "chk_<ULID>", "key"}]}`. Declares checks of the project's effective protected version, in addition to those it has: the stand-in for what D3 discovers in the protected set. `required` defaults to true, `runner_class` to `direct`, `requires` to `[]`; `requires` may name `environment` and `artifact_digest` (section 71). A version that has just become effective has no check until the fixture declares some. |
+| `POST /v1/harness/fixtures/check-result` | `{"project", "check", "candidate", "exit_status": <integer or null>, "source_revision"?, "protected_version"?, "runner_class"?, "runner_id"?, "environment"?, "artifact_digest"?, "execution_established"?, "signaled"?, "deadline_hit"?, "started_at"?, "finished_at"?, "output"?}` | **201** `{"check_result": {"id": "cr_<ULID>", "execution_seq": <n>}}`. Records one execution of a check as an observation. Defaults: the candidate's revision, the effective protected version, the check's runner class, `execution_established` true, `signaled` and `deadline_hit` false, no environment and no artifact. `execution_seq` is the engine's: it rises with every result recorded in the project, whatever timestamps the body gives. `output`, a string, is published through the record path as a `check_output` record, which `check_results.output` names. `check.result` is emitted. |
+| `POST /v1/harness/fixtures/environment` | `{"project", "name", "target_set": [<string>]}` | **201** `{"environment": {"id": "env_<ULID>"}}`. A configured test target. Nothing is ever deployed to it. |
+| `POST /v1/harness/fixtures/classification` | `{"proposal", "change_kind": "tightening" \| "loosening" \| "unclassifiable"}` | **200**. What D3's classifier would say of a captured proposal: the proposal becomes `classified` with that `classified_change_kind`, `protected.classified` is emitted, and the engine routes it (section 69). Sent again for a proposal that is not yet approved, it replaces the classification, and the routing follows. |
+| `POST /v1/harness/fixtures/approval` | `{"project", "kind": "validation_scope", "proposal"}` | **201** `{"approval": {"id"}}`. The validation-scope approval of a proposal that changes the required set: a baseline approval, which M1 takes as a fixture (build spec §3). |
+| `POST /v1/harness/fixtures/alpha-exception` | `{"finding", "containment_evidence": <string>, "testing_purpose": <string>}` | **201**. Records the two things F §6.1 asks for before a High finding may be nonblocking at Alpha, on `findings.alpha_exception`; the evidence is published as a `containment_evidence` record. |
+| `POST /v1/harness/fixtures/evidence-reuse` | `{"project", "candidate", "check", "check_result"?, "record"?, "assessed": <boolean>}` | **201** `{"reuse": {"id"}}`. A reuse entry offered for a candidate and a check (section 73). The fixture stores what it is given, complete or not. |
+
+## 68. The scripted role in slice 5: what it reports, what it may change, and proposal capture
+
+**The structured result.** Beside `status`, `summary`, `checkpoint` and `nominate` (sections 13 and 26) a valid result may carry the fields below. Each, if present, must have the form given; anything else there is `invalid_result`. A finding, sign-off or assessment is about the candidate the run's work item names in `subject.candidate`.
+
+| Field | From | Form | The engine |
+|---|---|---|---|
+| `findings` | Verifier, Reviewer | `[{"category": <FindingCategory>, "severity": <Severity>, "message": <string>, "scope"?: "candidate" \| "lineage" \| "project", "sensitive_area"?: <string>, "check"?: <check key>}]` | records one `findings` row each, in the order given: `status` `open`, `proposed_severity` and `effective_severity` the severity, `candidate` the subject candidate, `source_run`, `source_role`; `finding.raised`. |
+| `signoffs` | Reviewer | `[{"scope": "candidate" \| "module" \| "security", "module"?: <name>}]` | records one `signoffs` row each: `candidate`, `revision`, `role` `reviewer`, `scope`, `module`, `run`, and the `acceptance_content_hash` of what was reviewed; `signoff.recorded`. |
+| `dispositions` | Reviewer | `[{"finding", "disposition": "fix" \| "defer" \| "accept", "linked_issue"?, "defer_target"?: <timestamp>}]` | section 74. |
+| `severity_changes` | Verifier, Reviewer | `[{"finding", "to": <Severity>}]` | section 74. |
+| `applicability` | Verifier | `[{"finding", "candidate", "reason", "evidence": <string>}]` | records one `applicability_assessments` row each, `proposed`, with `proposed_by_run`; the evidence is published as an `assessment_evidence` record; `assessment.proposed`. |
+| `assessments` | Reviewer | `[{"assessment", "verdict": "not_applicable" \| "applicable"}]` | section 74. |
+| `proposal` | Verifier | `{"rationale": <string>, "requested_change_kind": "tightening" \| "loosening" \| "unclassifiable"}` | used when the run's diff is captured as a proposal (below); the rationale is published as a `proposal_rationale` record. |
+| `proposal_approval` | Reviewer | `{"proposal", "reason": <string>}` | section 69. |
+
+What the engine does with a field from a role that may not send it is pinned in one case only: a Verifier's `proposal_approval` approves nothing (row M53). What such a run ends as is not pinned.
+
+**What a Verifier and a Reviewer may change** (F §4.1; D1 §7.3 steps 1 and 2; sections 25 and 28 left this for slice 5). From slice 5 a run of the Verifier's kinds (`verification`, `check_correction`) and of the Reviewer's (`review`) is snapshotted and validated like a Builder's, once its role has sent a valid result and exited and its domain is reported terminated:
+
+- a run that changed nothing is as in slice 2: it completes;
+- a **Verifier** whose diff consists of protected changes and nothing else has it captured as a proposal;
+- a Verifier whose diff holds any other path, alone or beside protected ones, and a **Reviewer** whose diff holds any path at all, protected or not, is rejected whole as section 28 says: `failed` / `diff_violation`, `reason_text` naming the path, nothing accepted and no proposal. (That nothing its result reported is recorded either follows from "rejected whole"; no case pins it.)
+
+A Verifier's or Reviewer's run whose termination cannot be established is quarantined as section 16 says, with the outcome slice 2 gives it, and is not snapshotted; no test of this slice makes such a run write anything.
+
+**Proposal capture** (D1 §§4.1, 7.3; D1-21). The run goes `validating → proposal_captured → finalizing → ended` and ends `completed` / `none`, its workspace retained and its work item `complete`: a `check_correction` item completes this way. The engine records a `protected_proposals` row: `proposed_by` `verifier_run`, `run`, `base_revision` the run's base, `tree_id` the run's snapshot tree, `status` `captured`, `requested_change_kind` and `rationale` from the result's `proposal`; `protected.proposed` is emitted. Capture is not a commit: no `commit_tree` or `ref_update` operation, no `revisions` row, no ref created or moved, the registry and the effective version as they were.
+
+## 69. Classifying, approving and applying a proposal
+
+(D1 §7.9; E13; RN R2, R4; build spec §6 corrections 5, 14 and 17; rows M37, M53 to M55, M57.)
+
+**Routing by classification.** When the fixture classifies a proposal the engine raises one decision about it, `subject_type` `protected_proposal`, `subject_id` the proposal, of the kind its class names: `check_correction_tightening`, `check_correction_loosening` or `check_correction_unclassifiable`; each offers `approve` and `reject`. A proposal classified `loosening` or `unclassifiable` becomes `awaiting_human`; one classified `tightening` stays `classified`, because a Reviewer may approve it too. A classification that is replaced before approval closes the decision of the old class and raises the one of the new.
+
+**Who may approve** (E13). Tightening: the human, through `check_correction_tightening`, or a Reviewer's run whose result carries `proposal_approval` naming the proposal. Loosening and unclassifiable: the human only, through the decision of that kind; a Reviewer's `proposal_approval` for such a proposal approves nothing. A Verifier approves nothing. When a Reviewer's approval takes effect the open human decision about the proposal is closed as `invalidated`. A proposal whose tree changes the value of `required_checks` in the governed file also needs a validation-scope approval (the fixture of section 67): until one is recorded the decision's `approve` option lists the blocker `APPROVAL_MISSING` and an answer that picks it is refused (section 76).
+
+**Application** follows the approval: as the effect of a human's answer (section 76), or by the next ticks after a Reviewer's approval. The approval is recorded on the proposal (`approved`, `approver`, `approver_authority` `reviewer` or `human`; for a Reviewer, `approver` is its run), for a human's answer in the consuming transaction. The application then begins with one transaction that records the intended `protected_versions` row, with `authorized` 0 and `effective_from` null, together with the journal intent of the commit: the intended version precedes any git effect. The commit is made through the journal like any other (`commit_tree`, then `ref_update` of the integration branch): its parent is the commit the branch is at, its protected set is the proposal's (the fingerprint of the new commit equals the fingerprint of `tree_id`), and it is recorded as a `revisions` row of kind `protected` with no run. The integration's finalizer, in one transaction, sets the version `authorized` 1 with `effective_from`, sets `superseded_by` on the previous version, sets the proposal `applied` with `resulting_version`, invalidates the evidence that depended on the old version (section 72), and emits `protected.applied`. Exactly one version results from one proposal, whatever crashes on the way: killed at `journal.commit_tree.intent_committed`, the store shows the intended version unauthorized and git shows no effect, and recovery applies the proposal once; paused at `journal.ref_update.effect_applied`, the branch has moved and the old version is still the effective one, and killed there, recovery runs the finalizer and makes no second commit.
+
+**While an application is pending** every gate evaluation of the project carries `GIT_JOURNAL_PENDING` (section 72).
+
+**Candidates.** A candidate nominated before the change keeps its row, `nominated_protected_version` included. The next nomination is a new candidate whose `nominated_protected_version` is the new version.
+
+**Checks across versions.** A check is identified across protected versions by its `key`: the executions of a required check are those recorded for any check row with its key, for the candidate. So an execution recorded under the old version is `stale` for the same check under the new one (section 71), and is invalidated besides.
+
+## 70. Gates: the two routes, scope, delivery, and what a satisfied stage gate does
+
+(D1 §§9.1, 9.3; RN R1, R7; build spec §3 and §6 corrections 4, 8 and 9; rows M38, M44, and the gate half of M08.)
+
+**Evaluating.** `POST /v1/projects/:p/candidates/:c/gates/:kind` evaluates one gate of one candidate and records the evaluation. For `stage` the body is `{"stage": "stage_<ULID>"}`; for `alpha_authorize` it is `{"authorization": "dauth_<ULID>"}` (section 75). The answer is **200** whether or not the gate is satisfied, because an unsatisfied gate is an answer and not an error:
+
+```json
+{"evaluation": {"id": "gate_…", "gate_kind": "stage", "outcome": "not_satisfied",
+                "reasons": [{"code": "CHECK_NOT_PASSED", "subjects": ["chk_…"]}],
+                "check_states": {"chk_…": "missing"}, "scope": "scope_…", "stale": false}}
+```
+
+`outcome` is `satisfied` exactly when `reasons` is empty. `reasons[].code` is a D1 A.4 code; `subjects` are the ids the reason is about (a check, a finding, a requirement, a record). `check_states` has one entry per required check of the scope and no other. `scope` names the `acceptance_scopes` row. The evaluation and its scope are rows (`gate_evaluations`, `acceptance_scopes`) written in one transaction that emits `gate.scope_built` and `gate.evaluated`; if it fails the answer is **500** `store_error` and nothing is left, no issued authorization included (the `before_event` fault on `gate.evaluated`).
+
+**Every other gate kind** (`phase`, `alpha_complete`, `beta_authorize`, `beta_complete`, `live_authorize`, `live_complete`) is refused **501** `unsupported` on that route, whatever the body, with no row written but the audit event.
+
+**Delivery** (correction 8) is computed per candidate when a scope is built, from the stages whose `implements` list the requirement: no such stage, or none of them integrated at the candidate's revision or an ancestor of it, is not started; some is partial; all is delivered. The scope row holds `delivered_requirement_ids` and `partial_requirement_ids`; a requirement in neither is not started. A stage integrated at a revision that is not an ancestor of the candidate's counts for nothing.
+
+**The required set** of a scope (`required_check_ids`) is drawn from the checks of the effective protected version that are `required`, whose `gate_kinds` hold the gate kind, and whose `tier_floor`, if any, is not above the project's tier (T1 < T2 < T3). Of those:
+
+- a check with no requirement is a release obligation and is in scope whenever its gate kind and tier are;
+- at `alpha_authorize`, a check with requirements is in scope when at least one of them is delivered. Checks of requirements that are only partial or not started are not in the set, and those requirements are not listed as delivered;
+- at `stage`, the scope names its stage (`acceptance_scopes.stage`) and holds the checks of the delivered requirements that stage implements, and no check whose requirements all belong to other stages. Whether the check of a requirement the stage implements only in part is required at that stage is not pinned.
+
+**An incomplete scope.** A scope whose required set is empty, or in which a delivered requirement has no required check, is not validated (`validated` 0) and its evaluation carries `ACCEPTANCE_SCOPE_INCOMPLETE`; for an uncovered requirement the reason's `subjects` hold the requirement. Such a gate is never satisfied.
+
+**A satisfied `stage` gate completes its stage's work** (E30 item 16 ends here). A `stage_build` item that is `verifying` becomes `complete` in the transaction of a satisfied `stage` evaluation of a candidate that holds it, for its stage, and not before: the completion of the candidate's `verification` work no longer completes it. The engine evaluates that gate by itself when the candidate's `verification` item completes, and each tick recomputes an evaluation that is stale (D1 §8.1 step 7); a test may also ask for the evaluation with the route above. So with a failing or missing execution the work stays `verifying` however many ticks run, and it completes at the first tick after a passing execution is recorded. A `fix` item has no stage and therefore no stage gate: slice 5 does not change what completes it (section 40). A satisfied `stage` gate issues no authorization and advances no candidate.
+
+**Sign-offs** (D1 §9.3(6); F §5.7). T1 requires none. T2 requires the Reviewer's at candidate scope. T3 requires that, one at module scope for each module of the plan fixture, and one of scope `security` (the security review). A sign-off counts when its `acceptance_content_hash` is the scope's. While one is missing the evaluation carries `SIGNOFF_MISSING`.
+
+## 71. Check states
+
+(D1 §9.2; E8; row M39.) For each required check, in this order:
+
+1. the executions recorded for the check (by key, section 69) and the candidate, together with those a valid reuse entry adds (section 73) and without those that are invalidated (section 72): if there is none, and none was ever recorded, **missing**;
+2. of those, the ones whose bindings match the scope: `source_revision` the candidate's revision (a reused result excepted), `protected_version` the effective version, `runner_class` the check's, and, for a check whose `requires` names them, `environment` and `artifact_digest` those of the scope. A check that requires neither matches whatever environment its execution names. If none matches, **stale**. An invalidated execution counts here, not under 1: a check whose only executions are invalidated is `stale`;
+3. of the matching ones, the one with the highest `execution_seq` decides, whatever its timestamps: `execution_established` false is **skipped**, whatever exit status came with it; `signaled`, `deadline_hit`, a null `exit_status` or a nonzero one is **failed**; otherwise **passed**.
+
+Every required check that is not `passed` is a subject of `CHECK_NOT_PASSED`. Nothing a role's result says changes a state.
+
+## 72. What blocks a gate from outside its evidence, and evidence that cannot be used
+
+(D1 §§7.6, 9.3(3), 9.3(8), 9.5, 14.2, 14.3; build spec §6 correction 17; rows M37, M40, and the slice-5 halves of M24, M62, M64 and M65.)
+
+- **An out-of-band observation.** While a project has an unreconciled observation of its integration branch, every gate evaluation of the project carries `OUT_OF_BAND_CHANGE`. The ledger and the records are read as before. (Section 32 left this for slice 5. Observations of other subjects are not pinned.)
+- **A pending journal operation.** While a journaled operation of the project is not finalized (the tests: the application of a proposal, paused between its effect and its receipt), every gate evaluation of the project carries `GIT_JOURNAL_PENDING`.
+- **Invalidation is durable and is not staleness** (correction 17). `check_results.invalidated_at` is null until the result is invalidated and a timestamp afterwards; no other column of the row changes. An invalidated result is never selected again, after a restart as before it, although its bindings still match. `gate_evaluations.stale` is set on every evaluation that used the result. Two things invalidate: the finalizer of a protected application invalidates every result recorded under the superseded version; and `adopt` of an observation on the integration branch invalidates at least the results of the candidate the open lineage started from (which other candidates' results it invalidates is not pinned).
+- **Evidence a gate cannot use.** A result's `output` record that is missing or corrupt (section 58), or that a later detector matched (section 57), makes the evaluation carry `EVIDENCE_MISSING` with the record among its `subjects`. A later detector hit also raises one finding: `scope` `project`, `category` `security`, `effective_severity` `critical`, `source_run` null, `status` `open`; `records.post_scan_finding` names it; being Critical it is a subject of `FINDING_BLOCKING` at every gate of the project.
+- **Retention.** A record that a check result of a recorded evaluation names is retained however old it is (section 58 listed what refers to a record in slice 4). Retention held by a finding or an open decision is not pinned.
+
+## 73. Evidence reuse
+
+(Build spec §6 correction 18; D1 §9.1; F §3.8; Review B17; row M41.) A reuse entry (the fixture of section 67) says that an identified result of an earlier candidate may count for a later one. The gate considers an entry only if it is assessed, names a `check_result`, and that result is an execution of the same check (by key). The referenced result then joins the executions of the check for the later candidate with its candidate and `source_revision` excused, and with nothing else excused: its protected version, runner class, and environment and artifact where the check requires them must match the scope like any other's, or the check is `stale`. An entry that is not assessed, that names a record and no result, or that names nothing, adds nothing: the check is `missing` as if the entry were not there. Reuse never changes the required set. Nothing in M1 creates a reuse entry but the fixture.
+
+## 74. Findings: applicability, dispositions, severity, resolution, assessments
+
+(D1 §§3.4, 9.3(5), 9.4, 9.5; F §§6.1 to 6.3; E19; rows M42, M43, M50 to M52.)
+
+**Which findings a gate asks about.** Every finding whose `status` is `open` or `dispositioned` and that applies to the candidate: a `project` finding always; any other, on the candidate it was raised on and on every later candidate reached through `lineages.started_from_candidate`, unless an `approved` assessment excludes that candidate.
+
+**Blocking.** A Critical finding is a subject of `FINDING_BLOCKING`. At `alpha_authorize` a High finding is too, unless its Alpha exception is recorded (`findings.alpha_exception`) and it has no `sensitive_area`; a High finding in a sensitive area blocks with or without the exception. The exception changes no check state. What a High finding does at a `stage` gate is not pinned.
+
+**Nonblocking findings** (Medium, Low, and a High one under its exception) are subjects of `FINDING_UNSATISFIED` until one of these holds:
+
+- a deferral (`disposition` `defer`) with a linked issue and a target, whose `disposition_authority` covers the finding's current `effective_severity` (`reviewer` covers Low only; `human` covers Low and Medium) and whose `defer_target` has not passed. The evaluation that accepts it appends `{"evaluation": <its id>, "effective_severity", "at"}` to `findings.reevaluations`. A deferral whose target has passed makes the finding a subject of `FINDING_DEFER_EXPIRED`;
+- an accept (`disposition` `accept`) with `disposition_authority` `human`;
+- a resolution. A `fix` disposition is a plan and satisfies nothing.
+
+**Dispositions a Reviewer reports** (`dispositions` in its result). `fix` is recorded: `status` `dispositioned`, `disposition` `fix`. `defer` of a finding whose current severity is Low is recorded with `disposition_authority` `reviewer`, `linked_issue` and `defer_target`. `defer` of a Medium finding and `accept` of any finding are beyond a Reviewer: the finding is left as it was and the engine raises a `finding_disposition` decision about it (section 77). `finding.dispositioned` is emitted when a disposition is recorded.
+
+**Severity** (`severity_changes`). Any role may raise: `effective_severity` changes, `severity_history` gains `{"actor", "authority", "from", "to", "at"}`, and `finding.severity_changed` is emitted. A Reviewer may lower within the nonblocking range (Medium to Low), with `authority` `reviewer`. A lowering out of the blocking range (from Critical or High to Medium or Low) is not applied: the engine raises a `severity_lower` decision (section 77). No severity change alters a check state.
+
+**Resolution.** A finding reported with `check` (a check key), dispositioned `fix`, is resolved by an evaluation for a candidate it applies to in which that check is `passed` by an execution recorded after the disposition: the finding becomes `resolved`, `resolution_verification` is `{"evaluation": <the evaluation>, "check_result": <the execution>}`, and `finding.resolved` is emitted; that evaluation does not count the finding against the gate. When the verifying execution is invalidated the finding returns to `open` and `finding.reopened` is emitted.
+
+**Applicability assessments** (E19). A Verifier proposes (`applicability`, section 68). A Reviewer's `assessments` entry with `not_applicable` makes the assessment `assessed` with `assessed_by_run`; with `applicable`, `rejected`. An assessed exclusion of a finding that would block any gate kind for the candidate (Critical or High) excludes nothing: the engine raises a `finding_applicability_exclusion` decision (section 77), and only its approval makes the assessment `approved`, with `authorized_by`. Whether an assessed exclusion of a Medium or Low finding is approved without the human is not pinned.
+
+## 75. The Alpha authorization
+
+(RN R1; build spec §3 and §6 correction 4; D1 §9.6; row M44.)
+
+**Proposing.** `POST /v1/projects/:p/candidates/:c/authorizations` with `{"environment", "artifact_digest", "config_identity", "target_set"}` records a `deployment_authorizations` row with `status` `proposed` and answers **201** `{"authorization": {"id": "dauth_<ULID>", "status": "proposed", "generation": <n>}}`. The same binding sent again for the same candidate answers **200** with the row it already has. Another binding is another row.
+
+**Issuing.** An `alpha_authorize` evaluation is made for one proposed authorization and takes its environment and artifact from it. A satisfied evaluation, in its own transaction, moves that row to `issued`, sets its `evaluation`, and emits `authorization.issued`; an authorization of the same candidate and environment that was `issued` before becomes `superseded` (`authorization.superseded`). Evaluating again for an authorization already issued issues nothing more. An authorization that is not the candidate's is **404** `not_found`. A restart changes no authorization.
+
+The row's transitions are correction 4's: `proposed → issued`, `proposed → superseded`, `issued → consumed`, `issued → superseded`, `consumed → superseded`. M1 builds no consumer, so `consumed` is never reached.
+
+**Nothing is deployed.** No route deploys; no operation of kind `deploy`, `publish`, `rollback` or `teardown` is ever recorded; every candidate's `progress` stays `developing`; `candidate.advanced` is never emitted.
+
+## 76. Decisions in slice 5: previews, answers, generations and effects
+
+(D1 §§3.4, 4.6, 9.7, 10; build spec §6 correction 22; Review B12; rows M45 to M57.) Slice 2 built three kinds with no manifest (section 17). Slice 5 completes the eleven kinds of build spec §3; `../contract/decisions.json` lists them with what each binds, and section 77 says when each is raised and what its answers do.
+
+**What every decision row carries.** `kind`, `subject_type`, `subject_id`, `semantic_generation` (from 1), `status`, `preview_hash`, `options`, `dependency_manifest`, `blocked_while_open`, `target_seconds`, `escalated_at`, `answer`. `dependency_manifest` is a JSON object that holds at least the keys the contract lists for the kind; the tests name the values they pin and nothing fixes the form of the others. `options` is a JSON array; each option has `key`, `effect_plan` (an object: what choosing it will do), `plan_hash`, and `blockers` (an array of reason codes, empty when the option can be chosen). `preview_hash` covers the identity, the options with their plan hashes, and every manifest value; it does not cover the order in which a submission listed its content, a timestamp of presentation, or how often the question was asked. `answer`, once given, is `{"option", "note", "actor", "at"}`. Every `decision.*` event carries `subject.decision` and `subject.project`.
+
+**One identity** (D1 §10.2). Raising a question that is already open returns the open row: the same id, the same `preview_hash`, before and after a restart. A decision about one subject never stands for another subject.
+
+**Answering.** `POST /v1/projects/:p/decisions/:d/answer` with `{"option", "preview_hash", "note"?}`:
+
+| Answer | When |
+|---|---|
+| **200** | The decision is open, the option can be chosen, and what the engine computes now, from current rows and the current time, is what `preview_hash` covers. One transaction sets the decision `consumed` with its `answer`, records the approval (an `approvals` row: `decision`, `actor`, `subject_type`, `subject_id`, and `result_hash` or `acceptance_content_hash` as section 77 says) for the kinds that approve something, applies the answer's local transition, and for an effect-producing option records one `effect_intents` row (`decision`, `operation`, `preconditions`, `status` `pending`). `decision.answered`, `decision.consumed` and `intent.recorded` are emitted. No role is launched by it. |
+| **409** `decision_stale` | The decision is open and something it is bound to has changed since the preview: a manifest value, a plan, an expiry. Nothing is consumed, approved or intended. This holds also when the action is still eligible under the changed value. |
+| **409** `decision_consumed` | The decision is consumed. `subject.decision` names it, so a client that lost the first response learns that its answer took effect. |
+| **409** `decision_invalidated` | The decision is invalidated: its dependency changed, or its subject was settled by another path. |
+| **409** `illegal_transition` | The option lists a blocker. |
+| **500** `store_error` | The consuming transaction failed (the `before_event` fault on `decision.consumed`): the decision is still open, with no approval and no intent, and can be answered again. |
+
+A test that answers with a preview taken before a change accepts `decision_stale` or `decision_invalidated`: the engine may find the change when the answer arrives, or may have invalidated the decision already.
+
+**Invalidation and the next generation** (D1 §4.6). A decision whose dependency changed becomes `invalidated`, at the answer that found it or at the next tick's decision step. If the question still stands, the engine raises it again about the same subject with `semantic_generation` one higher, a manifest that shows the changed value, and another `preview_hash`; the new row has no approval. If the question no longer stands (a quarantine that cleared, a proposal a Reviewer approved, a deferral whose target passed) nothing is raised. A decision raised by a command (section 78, 80) gets its next generation when the command is sent again.
+
+**Effects** (D1 §10.5). The kinds marked `effect` in the contract are followed by a journaled operation. Between the consuming transaction and the effect the engine reads every precondition of the intent again, from the store and, where the effect is on a repository, from the repository itself. `effect_intents.preconditions` is a JSON object holding the manifest's keys with the values expected **after** the consumption's own local transition: approving a correction moves its proposal to `approved`, and the intent expects `approved`, so an effect is never invalidated by its own consumption. If a precondition differs, the intent becomes `invalidated` with `invalidated_reason` `EFFECT_PRECONDITION_CHANGED` (`intent.invalidated`), the effect is not made, the consumption's local transition is withdrawn (a proposal returns to `classified` or `awaiting_human`), and the next generation of the decision is raised with no approval: the approval stays with the consumed decision. Otherwise the intent goes `executing` and, when the operation is finalized, `done`. An intent found `pending` after a restart is revalidated and executed then, once. The operation an intent names is `succeeded` once the effect is made, and its journal intent names the planned tree or ref. Whether the engine runs an effect within the answering request or in the next tick's effects step is its own choice; the tests ask for ticks while they wait.
+
+**The barrier `intent.recorded`** (armed as section 33 says, `pause` or `kill`) fires after the consuming transaction and before the preconditions are read again. What the answer's HTTP response says when its effect is afterwards invalidated is not pinned.
+
+## 77. The eleven kinds: when each is raised and what its answers do
+
+The manifest keys of each kind are in `../contract/decisions.json`. `subject_type` is as there.
+
+| Kind | Raised | Options | A positive answer |
+|---|---|---|---|
+| `blocker` | As in sections 15, 16, 40, 45 and 55: work parked, a quarantined run, the chain boundary, a blocked operation. | `retry`, `cancel` (parked work); `continue`, `cancel` (the chain boundary); `acknowledge` (a quarantine) | As before. `retry` makes the work eligible and launches nothing; it completes nothing and attests nothing. |
+| `out_of_band_change` | Section 32. | `discard`, `adopt` (a ref); `stash`, `adopt` (a checkout) | Section 79. |
+| `stop_confirm`, `abandon_confirm` | By the Stop and Abandon routes (section 17). | not read by the tests | Section 80. |
+| `policy_widening` | By a policy submission that widens (section 78). `subject_type` `project`. | `approve`, `reject` | Section 78. |
+| `finding_disposition` | When a Reviewer reports a disposition beyond its authority: `defer` of a Medium finding, `accept` of any (section 74). | `approve`, `reject` | `approve` records the proposed disposition with `disposition_authority` `human`, and for a deferral its `linked_issue` and `defer_target`. The approval's `acceptance_content_hash` is that of the candidate's scope. |
+| `severity_lower` | When a Reviewer reports a lowering out of the blocking range. | `approve`, `reject` | `approve` sets `effective_severity` and records the change with `authority` `human`. |
+| `finding_applicability_exclusion` | When an assessment of a finding that blocks a gate kind becomes `assessed`. `subject_type` `applicability_assessment`. | `approve`, `reject` | `approve` makes the assessment `approved` with `authorized_by`; the approval's subject is the assessment. The finding no longer applies to that candidate, and applies to every other as before. |
+| `check_correction_tightening`, `check_correction_loosening`, `check_correction_unclassifiable` | When the fixture classifies a proposal (section 69). | `approve`, `reject` | `approve` approves the proposal with authority `human` and its application follows as the effect. The approval's subject is the proposal and its `result_hash` the proposal's `diff_hash`. The option's `effect_plan` holds at least `proposal`, `tree` (the proposal's `tree_id`) and `ref` (the integration branch's full name). |
+
+**Manifest values the tests pin.**
+
+- `blocker`: `subject_status` (`parked` for parked work), `cause` (the subject's recorded blocker reason: `work_items.blocker.reason`), `quarantined` (a boolean), `continuation` (`eligible` for parked work).
+- `finding_disposition`: `finding_status`, `disposition` (null while none is recorded), `proposed_disposition`, `effective_severity`, `defer_target`, `linked_issue`, `candidate_revision`, `acceptance_content_hash`. A deferral whose target has passed cannot be approved.
+- `severity_lower`: `effective_severity`, `to`, `sensitive_area` (null when the finding has none).
+- `finding_applicability_exclusion`: `assessment_status`, `finding`, `candidate`, `proposed_by_run`, `assessed_by_run`, `effective_severity`, `blocks_gate` (a boolean).
+- the three `check_correction_*` kinds: `proposal_status`, `tree`, `diff_hash`, `base_revision`, `integration_revision` (the commit the integration branch is at), `classification`, `effective_protected_version`, `scope_approval` (null, or the validation-scope approval). `evidence` covers the proposal's rationale record and its state, so that a rationale a later detector matched is a changed dependency.
+
+The answers `reject` of the approving kinds are not exercised.
+
+## 78. A widening policy change
+
+(D1 §§10.1, 11.4; Review B12, B19; rows M49, M56; section 27 pinned the ordinary change.) A submission to `POST /v1/projects/:p/policy` that raises `max_chained_roles` or one of the three budgets widens what the engine may do unasked. It is not committed. The answer is **409** `confirm_required` with `subject: {"decision", "preview_hash"}`: a `policy_widening` decision, `subject_type` `project`, whose manifest holds `base_revision` (the number of the policy revision in effect, null when there is none), `base_blob`, `proposed_policy` (the complete policy that would be in effect: every ungoverned key with its value) and `widens` (the keys that widen, sorted). Whether raising any other key widens is not pinned.
+
+- The same submission sent again, its keys in any order, before or after a restart, names the same decision with the same preview. Another submission against the same base is another decision.
+- `approve` commits `.surety/policy.json` through the journal as section 27 says, as the decision's effect; the `policy_revisions` row has `widens_authority` 1 and `decision` the decision.
+- When the base changes before the answer (another policy change was recorded), the decision is stale: nothing is widened and no update is lost. The same submission sent again raises the next generation, bound to the new base; approving it commits a policy that holds both changes.
+- When the base changes after the answer and before the effect, the intent is invalidated as section 76 says and the engine raises the next generation itself.
+- A submission that holds a widening and governed keys answers `confirm_required` with `subject.proposal` naming the proposal the governed part became (section 66). Approving the widening commits the ordinary policy only: no governed key is in `.surety/policy.json`, the governed file and the effective protected version are unchanged, and the proposal is still `captured`.
+
+**The chain limit above one** (row M12; section 40). With `max_chained_roles` at 2, work that a run's outcome created is dispatched with no decision while its run is the second role of its chain, and the work that run's outcome creates waits at the boundary as section 40 says.
+
+## 79. Reconciling an out-of-band observation: the fresh comparison, and a checkout's answers
+
+(D1 §7.6; Review B05, B12; row M46; section 32 pinned the observation and a ref's two answers.) The manifest holds `subject_kind`, `expected` and `found` as the observation's row has them (for a ref, `found` is the commit id). Rereading that row is not a fresh read. Before an answer is consumed, and again before its effect is made, the engine reads the actual ref, or the actual HEAD, index and tracked files of the checkout, and compares them with `found`. If they differ:
+
+- the answer is refused as stale, or the intent is invalidated, as section 76 says;
+- nothing is reset, stashed or adopted, and the newer commit or edit is exactly where the developer left it;
+- at the next tick the engine observes what is there now and raises a decision about that: the old decision is no longer open and exactly one other is.
+
+**`stash`** for a checkout: the engine commits the checkout's tracked content as reviewed to a new registered `refs/surety/oob/<n>` ref, restores the checkout to its baseline (its files, its index and its HEAD as the baseline says), records `disposition` `stash`, and emits `repo.reconciled`; its own restore is never observed in turn. `adopt` for a checkout is not exercised.
+
+## 80. What a Stop or Abandon confirmation binds
+
+(E25 item 4; Review B12; D1 §§8.4, 10.5; rows M47, M48; section 17 has the two requests.) The manifest of `stop_confirm` and `abandon_confirm` holds `run`, `stoppable`, `domains`, `lease_generation`, `workspace`, `workspace_snapshot` (the workspace's `snapshot_tree`, null until a snapshot is captured), `workspace_fate` (`retained` for a Stop, `discarded` for an Abandon) and `work_fate` (`{"status": "held"}` for a Stop; `{"status": <the prior status>, "dispatch_hold": true}` for an Abandon).
+
+- **Claimed or executing is not bound.** A preview taken while the run is `claimed`, at `launch.before_spawn`, confirms the run when it is `executing`: asking again returns the same decision and preview, and the confirmation is accepted. This replaces the stricter slice-2 behaviour section 17 allowed.
+- **What the workspace holds is bound.** When the role has finished and its snapshot is captured (its commit integrated, in the tests), a confirmation that carries the earlier preview is refused, although the run can still be stopped or abandoned; the command sent again with `{}` raises the next generation, whose `workspace_snapshot` is the snapshot's tree. A refused confirmation stops nothing.
+- **A quarantined run.** `POST …/stop` and `…/abandon` on a run that is quarantined is **409** `quarantined`, and raises no decision. (Section 17 said `illegal_transition` for a run "whose end the engine has already decided"; a quarantine has its own code, D1 §11.5.)
+- An Abandon confirmed while termination is not observed discards nothing until it is: the run is quarantined with outcome `abandoned`, its workspace is there and its work is not released; when termination is observed the workspace is discarded and the work is where `work_fate` said. Stop and Abandon record no effect intent: they act through the run-end protocol.
+
+## 81. A batch of answers
+
+(D1 §10.3; row M56.) `POST /v1/projects/:p/decisions/answer-batch` with `{"answers": [{"decision", "option", "preview_hash"}]}`. The answers are evaluated as one combined plan and consumed in one transaction: **200** when every answer would be accepted by itself and their plans are compatible, and then every decision is consumed; **409** `batch_conflict` when two plans conflict (the tests: two widenings of one key previewed against one base), and then none is consumed, approved or intended. What a batch with a stale member answers is not pinned.
+
+## 82. Aging, escalation and the scripted notification sink
+
+(D1 §§8.1 step 6, 10.4; build spec §8; row M58.)
+
+**Escalation.** A tick's decision step finds each open decision whose age on the engine's clock exceeds its `target_seconds` (the effective map of section 2; a kind with no target never ages) and, in one transaction, sets `escalated_at`, records one `notification_intents` row whose `source` is `{"decision": <id>}` and whose `key` is unique to that decision and generation, and emits `decision.escalated`. This happens once per decision generation, however many ticks and however much time follow. The decision stays open.
+
+**The sink.** In harness mode with `--harness-scripted <dir>`, the project's external channel is the program `<dir>/notify.mjs`, if that file exists; `../harness/scripted/notify.mjs` documents it. The engine runs it as one process per call, with an argument array, a deadline, and never a shell:
+
+| Call | Input | Exit status |
+|---|---|---|
+| `process.execPath <dir>/notify.mjs deliver` | one line on standard input: a JSON object with at least `key` and `decision` | 0: delivered and confirmed. 1: not delivered. Anything else, a signal or a timeout: the sink cannot say. |
+| `process.execPath <dir>/notify.mjs lookup <key>` | none | 0: a notification with that key was delivered. 1: positively absent. Anything else: the sink cannot say. |
+
+**Delivery is an attempt that is reconciled, never repeated blindly.** The intent is `queued`, then `sending` while an attempt is in flight, then `delivered`, `failed` or `unknown` (with `notification.delivered`, `notification.failed` or `notification.unknown`). An attempt whose outcome the engine does not hold (the engine died, or the sink could not say) is reconciled with `lookup` before anything else: found, the intent is `delivered` and nothing is sent again; positively absent, one new attempt is made; the sink cannot say, the intent is `unknown` and stays so, and nothing is sent again by later ticks or a restart.
+
+**Barriers** (`pause` and `kill`): `notify.before_delivery` fires when the intent and its attempt are durable (`sending`) and before the sink is called; `notify.delivered` fires after the sink has returned from a `deliver` call and before the store records its outcome.
+
+**The clock.** M58 moves the clock past the target, and in two cases the engine is then killed and restarted, which resets the clock (section 18). The cases rely on one thing: an escalation that was recorded is not undone, and its notification intent is reconciled, whatever the restarted engine's clock says about the decision's age.
+
+## 83. Store rows the slice-5 tests read and write
+
+Names are D1 A.3's (sections 8, 19, 35, 49 and 62 apply), each table with a `project` column. The tests read:
+
+- `protected_versions` (`seq`, `fingerprint`, `change_kind`, `proposal`, `approved_by`, `approver_authority`, `authorized`, `effective_from`, `superseded_by`); `protected_proposals` (`seq`, `proposed_by`, `run`, `base_revision`, `tree_id`, `diff_hash`, `rationale`, `requested_change_kind`, `status`, `approver`, `approver_authority`, `resulting_version`);
+- `check_results` (every A.3 column, and `invalidated_at`, which A.3 does not have); `acceptance_scopes` (`candidate`, `gate_kind`, `stage`, `delivered_requirement_ids`, `partial_requirement_ids`, `required_check_ids`, `validated`, `acceptance_content_hash`); `gate_evaluations` (`candidate`, `gate_kind`, `outcome`, `stale`);
+- `deployment_authorizations` (`candidate`, `environment`, `artifact_digest`, `config_identity`, `target_set`, `protected_version`, `evaluation`, `status`); `evaluation` is null until issuance, and `status` has the value `proposed` (correction 4);
+- `findings` (`seq`, `scope`, `candidate`, `source_run`, `category`, `effective_severity`, `severity_history`, `sensitive_area`, `status`, `disposition`, `disposition_authority`, `linked_issue`, `defer_target`, `reevaluations`, `resolution_verification`); `applicability_assessments` (`finding`, `candidate`, `proposed_by_run`, `assessed_by_run`, `authorized_by`, `status`); `signoffs` (`candidate`, `revision`, `role`, `scope`, `module`, `acceptance_content_hash`);
+- `decisions` (section 76); `approvals` (`decision`, `actor`, `subject_type`, `subject_id`, `acceptance_content_hash`, `result_hash`); `effect_intents` (`decision`, `operation`, `preconditions`, `status`, `invalidated_reason`); `notification_intents` (`source`, `status`);
+- `candidates.nominated_protected_version` and `candidates.progress`; `policy_revisions.widens_authority` and `.decision`; `stages.integrated_revision`; `records.post_scan_finding`.
+
+The other A.3 columns of these tables are whatever the engine's schema needs. A table the engine keeps for reuse entries, for validation-scope approvals or for a check's `requires` is its own; the tests do not read it.
+
+The tests write to the store directly in two cases, both with the engine stopped and started again afterwards: row M45 changes `work_items.blocker` (its `reason`), and row M51 sets `findings.sensitive_area`.
+
+## 84. Names the Verifier fixed in slice 5
+
+Each of these was open in the sources. The Builder may object. Those marked † carry a question for the owner in the Verifier's report.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The fingerprint's input † | The JSON text of the sorted array of `[path, blob id]` pairs. | Correction 3 gives the content and not the encoding. JSON has no separator a path can contain. |
+| Where the roots come from; the first version | The governed file of the effective version, default `[".surety/checks/"]`; an `initial` version recorded when the project is created or installed. | RN R2; D1 §2.4 ("project bootstrap"). |
+| A governed edit through the policy route | **202** with the proposal; a tree that differs in the governed file only. | D1 §11.4, §7.9: such an edit "becomes a proposal". |
+| What is not pinned about roots † | The protected set after an authorized roots change that leaves the governed file outside the roots. | The Plan asks only that the change cannot hide its delta or bypass the authorized set. |
+| The fixtures of section 67 | Eight harness routes. | Plan §§1, 2: check results, classifications and baseline approvals are fixtures. Check discovery, test targets, reuse entries and the Alpha exception's evidence have no M1 source either. |
+| A check's bindings | `requires` on the check names `environment` and `artifact_digest`; other checks match on revision, version and runner class. | D1 §9.2: "where the kind requires them", and no source says which kinds do. The fixture says it per check and decides nothing for D3. |
+| A check across versions | Identified by its key. | D1-09 expects `stale` for "old protected version", which needs one check on both sides of a version change. |
+| A role's result fields † | Section 68's table. | Section 13 left them for "later slices". |
+| What a Verifier and a Reviewer may change | A Verifier only the protected set; a Reviewer nothing. | F §4.1; the first slice-3 session's obligation. |
+| The gate routes † | `POST …/candidates/:c/gates/:kind`, 200 for either outcome; 501 for the six other kinds. | D1 §9.1 names the function and §11.3 only a read. |
+| An incomplete scope | An evaluation with `ACCEPTANCE_SCOPE_INCOMPLETE`, not an HTTP refusal. | One shape for every evaluation. A.7's `scope_incomplete` is left unused. |
+| The required set at each gate | Section 70. | D1 §9.1 and correction 8; "stage scope binds its stage obligations" (Plan M38). |
+| When the stage gate is evaluated, and what a satisfied one does † | By the engine when the candidate's verification completes and at ticks; it completes the stage's work. `fix` work is unchanged. | E30 item 16 left the completion rule to this slice. |
+| The security review | A sign-off of scope `security`, a value `SignOffScope` (A.2) does not have. † | F §5.7 requires a clear security review at T3; A gives it no representation. |
+| Durable invalidation | `check_results.invalidated_at`. | Correction 17; A.3 has the same column on `deployment_verifications`. |
+| The state of a check whose executions are all invalidated | `stale`. | The Plan: the gate "explains stale/invalidated evidence". |
+| What blocks gates | An unreconciled observation of the integration branch, and a journal operation not finalized, each for every gate of the project. | D1 §9.3(3) says "on the lineage"; D1-11 says "gates blocked". |
+| What `adopt` invalidates † | At least the results of the candidate the open lineage started from. | The Plan (M40) has an adoption invalidate a result that had passed a gate; D1 §7.6 says "on the lineage". |
+| Evidence that cannot be used | `EVIDENCE_MISSING` naming the record, for missing, corrupt and quarantined evidence alike. | D1 §9.3(8). |
+| A reuse entry | Assessed, naming a result of the same check; candidate and source revision excused and nothing else. | Correction 18. |
+| How dispositions, lowerings and exclusions reach the human † | A role proposes in its result; what is beyond its authority raises a decision with `approve` and `reject`. | F §§6.2, 6.3 and E19 give the authorities; the answer body has no room for a deferral's target (D1 §11.4), so the target must come with the question. |
+| How a fix is resolved † | By an evaluation in which the check the finding names passes, by an execution recorded after the disposition. | D1 A.3: a resolution is `{evaluation, check_result}`. No role's claim resolves a finding. |
+| The Alpha exception's evidence † | A fixture. | F §6.1 says what must be recorded and not who records it. |
+| Authorizations † | `POST …/candidates/:c/authorizations`; the gate is evaluated for one proposed row; 404 for another candidate's. | Correction 4: the row exists, proposed, before the evaluation. |
+| The preview's parts | `options[].blockers`; manifest keys per `../contract/decisions.json`. | Review B12's table, one key per dependency it names, as far as M1 has the dependency. |
+| `policy_widening`'s subject | The project. | A.8 says the policy revision, which a project with no recorded revision does not have. |
+| What widens | Raising `max_chained_roles` or a budget. | Plan M49: "a budget/autonomy widening". Nothing else is pinned. |
+| Answer codes | `decision_invalidated` and `batch_conflict` (409); `illegal_transition` for an option with a blocker. | A.7 has the first; nothing fits a conflicting batch. |
+| A stale decision's fate | `invalidated`; the next generation raised if the question stands. | D1 §4.6. |
+| An invalidated effect | The local transition is withdrawn; a proposal returns to `classified` or `awaiting_human`. † | D1 §10.5 invalidates the intent and raises the next generation; A.5 has no edge back from `approved`, and without one the proposal could never be approved again. |
+| `intent.recorded`; `effect_intents.preconditions` | Section 76. | The interval between consumption and effect cannot be reached otherwise. |
+| What Stop and Abandon bind † | Section 80. | E25 item 4, and Plan M48's "intervening git operation". |
+| Stop of a quarantined run | 409 `quarantined`. | D1 §11.5; the slice-2 review left the choice to this slice. |
+| The batch route's body and refusal | Section 81. | D1 §11.4 names the route. |
+| The notification sink † | A program in the scripted directory with `deliver` and `lookup`; two barriers. | Build spec §8: "a local sink that can succeed, fail or leave delivery unknown". A program the test owns counts deliveries independently of the engine. |
+
+## 85. What stands behind these tests before the engine exists
+
+As section 64 says of slice 4: the sources and a reading of the tests. None was run. Each file was checked for syntax, and every name it imports was resolved against the module that exports it. Two pieces with logic of their own were exercised directly, outside any test: `protectedFingerprint` against a scratch repository (the files under the roots, sorted; unchanged by a change outside the roots; changed by a change to the governed file; the fingerprint of `[]` for an empty set), and `scripted/notify.mjs` as a process (each of its three delivery behaviours and three lookup answers, and its log). No shared helper of slices 1 to 4 was changed: `gates.mjs`, `decisions.mjs`, `scripted/notify.mjs` and `../contract/decisions.json` are new files. The frozen self-check was neither extended nor run.
+
+The cases are few by decision (E31), and several pin a name this file fixed rather than one the sources give. A defect in a test, or a name the Builder finds unworkable, goes through the objection procedure.
