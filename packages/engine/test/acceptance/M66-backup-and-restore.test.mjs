@@ -8,19 +8,24 @@
 // also after the repository was garbage-collected, and the engine reaches
 // full mode on it. A backup with a member missing or altered is refused,
 // and a copy of the database alone is labeled as not enough to recover from.
+//
+// The last case is the slice-4 review's (E37 item 4): a backup is complete
+// only if every commit its manifest lists is in the repository when it is
+// taken. One taken after such a commit was pruned could not be restored, and
+// must not be labeled complete or exit 0.
 
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
-import { STORE_REFUSED, backup, restore } from './harness/backup.mjs';
+import { STORE_REFUSED, backup, restore, storeCommand } from './harness/backup.mjs';
 import { freePort, sha256Hex, startEngine, writeEngineConfig } from './harness/engine.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
 import { revisionsOf } from './harness/journal.mjs';
 import { getLedger } from './harness/ledger.mjs';
 import { readRecord, recordRow } from './harness/records.mjs';
-import { gitQuiet, objectExists } from './harness/repos.mjs';
+import { gitQuiet, objectExists, refsContaining } from './harness/repos.mjs';
 import { pauseProject, scriptedEngine, tickOnce, waitForRun } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
@@ -125,5 +130,42 @@ describe('M66 backup and restore', () => {
     assert.equal(databaseOnly.manifest.label, 'incomplete_for_recovery');
     const { home, copy } = await freshHome(t, databaseOnly);
     assertRefusedRestore(restore(home, copy, bindings()), home, 'incomplete_for_recovery');
+  });
+
+  test('a backup taken after a commit its manifest would list has left the repository is refused, and nothing it leaves is labeled complete', async (t) => {
+    // A home of its own: a Builder's run whose commit is a checkpoint, on no branch.
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()], { checkpoint: true })]);
+    await tickOnce(fx.engine, project.id);
+    const run = await waitForRun(fx.home, item, { state: 'ended' });
+    assert.equal(run.outcome, 'completed', 'the fixture run completed');
+    await pauseProject(fx.engine, project.id);
+    const [commit, ...others] = revisionsOf(fx.home, { run: run.id }).map((revision) => revision.sha);
+    assert.ok(commit !== undefined && others.length === 0, 'the fixture run recorded one commit');
+    await fx.engine.stop();
+
+    // Someone deletes the refs that keep the commit, and prunes.
+    const repo = project.repo.path;
+    const keeping = refsContaining(repo, commit);
+    assert.ok(keeping.length >= 1, 'the fixture: the engine kept the commit reachable from a ref');
+    for (const ref of keeping) gitQuiet(repo, ['update-ref', '-d', ref]);
+    gitQuiet(repo, ['reflog', 'expire', '--expire=now', '--all']);
+    gitQuiet(repo, ['prune', '--expire=now']);
+    assert.equal(objectExists(repo, commit), false, 'the fixture: the commit is gone from the repository');
+
+    const done = storeCommand(fx.home, ['backup']);
+    assert.notDeepEqual([done.status, done.last?.label], [0, 'complete'], `a backup that lists a commit the repository no longer has is not complete (stdout: ${done.stdout})`);
+    assert.equal(done.status, STORE_REFUSED, `surety store backup exits ${STORE_REFUSED} (stdout: ${done.stdout}; stderr: ${done.stderr})`);
+    assert.equal(done.refusal?.code, 'backup_incomplete');
+    // Whether it leaves a backup behind is not pinned. What it names on stdout
+    // or leaves under backups/ says that it is not enough to recover from.
+    if (done.last?.label !== undefined) assert.equal(done.last.label, 'incomplete_for_recovery', 'the label on stdout');
+    const backups = join(fx.home, 'backups');
+    for (const name of existsSync(backups) ? readdirSync(backups) : []) {
+      const manifest = join(backups, name, 'manifest.json');
+      if (existsSync(manifest)) assert.equal(JSON.parse(readFileSync(manifest, 'utf8')).label, 'incomplete_for_recovery', `the label in ${manifest}`);
+    }
   });
 });

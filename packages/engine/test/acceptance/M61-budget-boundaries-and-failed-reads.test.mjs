@@ -18,10 +18,17 @@
 // The last case is the obligation the second slice-2 review left (E27; E30
 // item 9): a role's result whose recording keeps failing must not be a
 // silently missing result.
+//
+// The third budget case is the slice-4 review's (E37 item 3): a usage
+// observation whose recording fails once must not be a silently missing
+// observation. The run that passes its limit on it is stopped as if nothing
+// had failed, and the ledger holds the usage.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { describe, test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, clearFaults, releaseBarrier } from './harness/engine.mjs';
 import { addGitProject, runToEnd } from './harness/gitruns.mjs';
@@ -117,6 +124,45 @@ describe('M61 budget boundaries', () => {
       'the unknown cost is counted by its tokens and shown as unknown',
     );
     assert.deepEqual(ledger.budget, { exhausted: ['budget_day_unknown_tokens'] });
+  });
+
+  test('a usage observation whose first write fails is not lost: the run that passes its token limit on it is stopped as with no failure, and the ledger holds the usage', async (t) => {
+    // The first case's over-limit run, with one store failure on the write of the observation that passes the limit.
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    await changePolicy(fx.engine, project.id, { budget_run_billable_tokens: 10_000 });
+    const item = await addWork(fx.engine, project.id, 'verification');
+    fx.scripted.script(item, [script.hold('gate', { before: [step.usage({ input_tokens: 9000, output_tokens: 6000 })] })]);
+    await armFault(fx.engine, { point: 'before_event', event_type: 'invocation.usage' });
+    await tick(fx.engine, project.id);
+    // The role has sent the observation and waits; it never ends by itself.
+    await fx.scripted.waitForHolding({ work_item: item });
+
+    // A write that failed once is retried well within the minute after which
+    // the engine gives up on one that keeps failing (SEAM.md §55). The wait
+    // is measured on the monotonic clock.
+    const deadline = performance.now() + 60_000;
+    let stopped = runsOf(fx.home, item)[0];
+    while (stopped.state !== 'ended' && performance.now() < deadline) {
+      await sleep(100);
+      stopped = runsOf(fx.home, item)[0];
+    }
+    const stored = countOf(fx.home, 'usage_observations', '"invocation" = ?', invocationOf(fx.home, stopped.id));
+    assert.equal(stopped.state, 'ended', `the run is stopped for its budget although the first write of the observation failed (60 s after the role sent it the run is ${stopped.state}, with ${stored} usage observation(s) stored)`);
+
+    // The durable facts are those of the first case's stopped run.
+    assertRunEnded(fx.home, stopped.id, { outcome: 'stopped', reason_class: 'budget', workspace: 'retained', launched: true });
+    assert.equal((await fx.engine.get(`/v1/projects/${project.id}/runs/${stopped.id}`)).body?.run?.code, 'budget_exhausted');
+    const [launch] = fx.scripted.launches({ run: stopped.id });
+    assert.equal(fx.scripted.isLive(launch), false, 'the role is gone');
+    assert.equal(stored, 1, 'the observation is stored once: not lost, and not twice');
+    const charged = originalRowOf(fx.home, stopped.id);
+    assert.deepEqual({ billable_in: charged.billable_in, out: charged.out, usage_complete: charged.usage_complete }, { billable_in: 9000, out: 6000, usage_complete: 0 }, 'the ledger holds the usage that was observed');
+    assert.equal(ledgerRows(fx.home, project.id).length, 1, 'one invocation, charged once');
+    assertParkedFor(fx.home, item, 'budget_run_billable_tokens');
+    const { totals, budget } = await getLedger(fx.engine, project.id);
+    assert.deepEqual({ invocations: totals.invocations, billable_in: totals.billable_in, out: totals.out, usage_incomplete: totals.usage_incomplete }, { invocations: 1, billable_in: 9000, out: 6000, usage_incomplete: 1 });
+    assert.deepEqual(budget, { exhausted: [] });
   });
 });
 

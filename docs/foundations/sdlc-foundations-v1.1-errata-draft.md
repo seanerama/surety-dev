@@ -781,3 +781,55 @@ Sean went through the items waiting for him one at a time. Each entry records hi
 **Consequences elsewhere.** Build spec section 11 marks the browser driver and the load limits as decided. No change to D1.
 
 ---
+
+## E37. Slice-4 review: what is fixed before the merge and what is carried (provisional, 2026-10-02)
+
+**Status: provisional.** The driver's defaults under Sean's delegation, like E23 to E30. Sean confirms or overturns them.
+
+The one review of slice 4 (E31) found five serious defects and reproduced each by running the engine. Four are fixed before slice 4 merges, each with one new test and one fix. The fifth is not fixed in M1; the reason is given so it is a choice.
+
+**Fixed before the merge:**
+
+1. **Engine git never contacts a remote and never runs a program a remote's configuration names.** In a partial clone, git fetched a missing object on demand and ran the program named as the remote's upload-pack, from workspace creation and from every object lookup. The rule that engine git runs no repository code covers this. **Consequence:** a partial clone is not supported in M1, like a repository using Git LFS (E29 item 1). An object that is not present is missing; the engine does not fetch it. The seam's statement that no git call M1 makes can reach a remote was false and is corrected.
+2. **Redaction covers a secret as the role's output encodes it.** A held secret containing a character that JSON escapes (a quote, a backslash) reached the transcript on disk and the API in its escaped form, because the transcript is redacted as raw bytes while roles write JSON lines. A transcript line that parses as JSON is redacted on its decoded values; any other line is redacted as bytes. Neither the raw nor an escaped form of a held secret may be on disk or served.
+3. **A usage observation the engine could not record is never lost silently.** One failed store write dropped the observation, the ledger then claimed complete usage, and the run's budget stop did not happen. The engine retries the write for the bounded time it uses for a result (E32 item 5). After one failed write the durable facts are those of the same run with no failure (the rule of E28 item 1). If the observation still cannot be recorded, the run is stopped as it is when the budget cannot be read, and its usage is marked incomplete.
+4. **A backup is labelled complete only if every commit its manifest lists is in the repository.** A backup taken after a listed commit had been pruned was labelled complete, exited 0, and could not be restored.
+
+**Not fixed in M1, for Sean to confirm:**
+
+5. **A filter driver can still run if the repository's configuration is rewritten while the engine is running git.** The slice-4 fix asks git which filter drivers it sees and switches those off, in two steps; a process that swaps the configuration between the steps gets its driver run. The review showed the window is wide. Closing it inside M1 means the engine no longer using any git command that applies filters, which is a rewrite of the git layer. The attacker here is a process running at the same time as the engine with write access to the repository's configuration. In M1 that is a role with no isolation (E25 item 2), which can already do anything the user can. E29 item 1 already ties filter support to the isolation design, where a role can no longer write the configuration. So M1's rule is: no filter driver runs from the configuration as it stands when the engine calls git. The race is carried to D2 as a named requirement. The M1 report states the limit.
+
+**Carried, not serious:**
+
+- An invocation with unknown cost and unknown token counts adds nothing to the unknown-token budget, so it is bounded only by time (E16b says tokens and time). Decided with E32 item 4, before M2.
+- A correction with a negative amount has no effect on totals. Whether a correction may lower a total is open; decided before M2.
+- A restore does not carry unpublished streams, so their chunk receipts point at bytes that are absent and nothing reports them missing.
+- New directories under the engine home are created without syncing the directory above them. The power-loss shim does not model names, so this is unconfirmed.
+- A result record is published even when the result is then refused because the lease is closing; and if writing the result record fails, the result is accepted with no record. Both go to the next Verifier pass.
+- A workspace half-made at a power cut is raised as a decision (already noted in E36 item 8).
+
+**Consequences elsewhere.** No change to D1.
+
+---
+
+## E38. Review queuing and fix completion: detail fixed by the Verifier (provisional, 2026-10-02)
+
+**Status: provisional.** The Verifier turned E36 items 3 and 4 into tests and raised the points below. The driver accepted its recommendation on each. Sean confirms or overturns them.
+
+1. **The review waits for the checks the stage scope requires,** where the stage scope and the Alpha scope differ. That is the gate the engine evaluates itself when verification completes.
+2. **A candidate with no declared check gets no review.** Nothing was verified, and its gate can never be satisfied.
+3. **The queued review is chained work.** At the default chain limit it waits for a "continue" like every other hand-off (E30 item 1).
+4. **A candidate whose check fails and later passes gets its review then.** The rule is about the state of the checks, not the first result.
+5. **One review item per candidate in M1,** at T3 as at T2. One per required sign-off is a later refinement.
+6. **A fix names its finding** and completes in the gate evaluation that resolves it. A fix that names no finding, or whose finding names no check, can never complete under E36 item 4. Accepted for M1; work the engine creates for a fix must name its finding.
+7. **A finding that is reopened after its fix completed needs a new fix item.** Complete is terminal.
+
+**Left open, none needed for M1:** what happens to a queued review whose check later fails or is invalidated; whether the engine sends a fix back to its Builder when the named check fails (decided with the real check runner, since nothing in M1 re-dispatches work on a check result).
+
+**A gap of the same kind as E35, for Sean:** nothing in the engine creates fix work when a finding is dispositioned "fix"; the tests create it with a fixture. Recommended: the engine registers it when the disposition is recorded. Not applied; to decide before M2.
+
+**The harness failure the slice-4 Builder saw is explained.** Harness waits were timed on the wall clock, and this machine's clock jumps forward by about 15 minutes when the virtual machine resumes after the host sleeps (three times in the last day). A wait then expires at once. Harness waits now use a monotonic clock, and a start that fails no longer leaves an engine running. This does not explain the earlier failure of E29 item 2: the clock did not jump in that window. That one stays open. A host sleep during a test run can still fail cases legitimately, because leases and stored timestamps are on the wall clock by decision.
+
+**Consequences elsewhere.** No change to D1.
+
+---
