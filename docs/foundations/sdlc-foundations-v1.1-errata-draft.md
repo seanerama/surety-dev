@@ -567,3 +567,17 @@ Also accepted without a decision being needed: answering a blocker is tested in 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E26. Lease expiry and related points (provisional, 2026-10-02)
+
+**Status: provisional**, on the same footing as E23 to E25. Raised by the Verifier while turning the slice-2 review into tests; the driver accepted its recommendations. Sean confirms or overturns them.
+
+1. **Lease expiry is final.** An expired lease is never revived, neither by a role's heartbeat nor by the engine's own renewal. The tick ends the run through the run-end protocol. **Consequence worth weighing:** if the engine stops running for longer than the lease lifetime (90 seconds by default) while the role keeps going, for example because the machine was suspended, every in-flight run is ended when the engine wakes and its work is retried. The alternative is to let the tick re-grant a lease whose process is still alive and supervised; D1 §8.1 can be read either way.
+2. **A run ended because its lease expired** has outcome `failed` with reason `infra_error`, unless a valid result was accepted while the lease was live.
+3. **The tick reconciles an expired lease even while the engine's own launch is stalled** before the spawn, as D1 §8.1 step 1 says ("even when the owning engine is alive").
+4. **Git filter drivers** (which Git LFS uses) are not yet covered by the rule that engine git runs no repository code. Only hooks are pinned. Disabling filters would break LFS checkouts in a governed repository, so the question is decided in slice 3.
+5. **The scripted boundary's automatic mode cannot see an unreadable process,** and no reliable same-user rule exists. This is recorded as a limit of the test stand-in, not fixed. Real containment is D2's.
+
+**Consequences elsewhere.** No change to D1.
+
+---
