@@ -1819,3 +1819,312 @@ Section 86 was written with the slice-7 acceptance test (2026-10-02): row M01, `
 - The Reviewer's sign-off is recorded before the check's execution is. It still counts: a sign-off is bound to the acceptance content hash, which holds the source revision, the protected fingerprint, the delivered requirements, the required checks and the sensitivity categories, and no check result (section 70; D1 §3.4).
 
 **What the row names and the seam does not reach** is in `../COVERAGE.md`, under row M01: the event history read over HTTP, a candidate read, and engine-made review work.
+
+---
+
+# Slice 6: the API, load and the contract
+
+Sections 87 to 97 were written with the slice-6 acceptance tests (2026-10-02): rows M68 to M74, the unsafe-filesystem case E36 item 7 added (attached to row M67), and the cases of rows M64, M69, M71 and M74 that earlier slices left for this one. They follow D1 §§6.1, 11, 12, 14.2, 15.4 and 17 with build spec §6 correction 7, RN R6 and §3, Review B14, B17, N02, N03, N06 and §8.3, and E36 items 1, 2 and 7. Where those left something open, the choice is listed in section 96. The procedure is E31's: the fewest cases that pin each row's required result, no stand-in engine, no self-check.
+
+The expected tables added are `../contract/load-limits.json` (the qualified load limits) and `../contract/filesystems.json` (the kinds of filesystem an engine home may not be on). The test side is in new modules only: `mono.mjs`, `boundary.mjs`, `browser.mjs` with `shell/`, `sse.mjs`, `stream-clients.mjs`, `load.mjs`, `reads.mjs`, `filesystem.mjs` and `launch-lint.mjs`. No module of slices 1 to 5 was changed.
+
+## 87. What the slice-6 tests assume throughout
+
+- **Time is monotonic.** The host these tests were written on steps its wall clock back by about 1.8 s every half minute (section 39). Every wait, deadline and duration of the slice-6 tests is taken from `performance.now()` (`mono.mjs`), never from `Date.now()`. Two timestamps of the engine's own clock are still subtracted from each other where a case is about the engine's clock (an observation ten seconds older than a read's `served_at`); no test compares an engine timestamp with the test's own clock.
+- **Where engine homes are.** Under the system temporary directory, as before. From this slice the engine refuses a home on a memory-backed filesystem (section 88), so on a host whose temporary directory is one, the tests must be run with `TMPDIR` set to a directory on a disk filesystem; `M67-unsafe-filesystem-refused.test.mjs` says so when it finds the temporary directory on a refused kind.
+- **Fixtures several cases read.** Rows M68, M70, M71 and M72 each build one engine that several cases read, the first time a case asks for it; a case that cannot have it fails with the reason. Row M71's store of one gibibyte is built once for its file (section 93).
+- **Ticks happen when asked,** as in section 12; no slice-6 case depends on a timer tick.
+
+**What slice 6 changes in earlier sections.** Section 1: two flags (`--harness-shell`, section 90; `--harness-home-fstype`, section 88), one more cause of exit status 6 (section 88), exit status 8 and the `surety contract` commands (section 94). Section 6: two more checks before a route is reached, and when `100 Continue` may be sent (section 89); 403 `origin_refused` and 413 `payload_too_large` join its status table; "every slice-1 route needs [the token]" now has two exceptions, the shell routes and the token bootstrap (section 90); a request with no `Host` header is answered by the engine (section 89). Section 17: the run read gains three fields (section 95). Section 56: what a record read refuses (section 91). The tests of slices 1 to 5 were not changed by this session.
+
+## 88. The engine home's filesystem
+
+(E36 item 7, which settles E32 item 2; D1 §6.1; `M67-unsafe-filesystem-refused.test.mjs`.) The engine cannot check that storage honours a sync. It refuses a home on a kind of filesystem known not to keep what is written to it or not to give sync guarantees: memory-backed, network and user-space filesystems.
+
+**The kind** of the home's filesystem is the filesystem type of the mount that holds the home, named as `/proc/self/mountinfo` names it (`ext4`, `tmpfs`, `nfs4`, `9p`, `fuse.sshfs`). A type with a subtype is of the kind before the dot. `../contract/filesystems.json` lists the names the tests pin as refused: `tmpfs`, `ramfs` (memory); `nfs`, `nfs4`, `cifs`, `smb3` (network); `fuse`, `fuse.<subtype>`, `fuseblk`, `9p` (user space; `9p` is what a Windows drive is when seen from inside WSL). The engine may refuse further names of those three classes. **Any other kind starts normally,** a name the engine has never heard of included.
+
+**The refusal** is a start that fails before listening (section 1): exit status **6**, one refusal line with `code: "unsafe_filesystem"` and `subject: {"path": ".", "filesystem": <the type as found>}`, a `reason` that names the kind and a `what_to_do`. It is decided before the lock is taken and before anything is written: the home holds exactly what it held, with no `engine.lock`, no `api.token` and no store.
+
+**How a test makes the engine see such a kind without privilege.** The memory-backed kind for real: a home under `/dev/shm`, a tmpfs any user can write to, started with no harness flag, so the engine's own detection is what is tested. (The case first checks that `/dev/shm` is a tmpfs, and fails if it is not: a missing lane is not a pass.) The other kinds cannot be mounted without privilege. For them harness mode has one flag:
+
+| Flag | Meaning |
+|---|---|
+| `--harness-home-fstype <name>` | The engine takes `<name>` as the type of the home's filesystem instead of detecting it. Accepted only with `--harness` (section 1). |
+
+The flag replaces the detection, not the judgement: which names are refused is the engine's own table, the one a start without the flag uses. It reaches production code as an ordinary parameter (section 7, "Confinement": like `--harness-migrations`).
+
+**What a pass shows:** that the engine refuses the kinds listed and starts on the others. It shows nothing about the storage of the host the tests ran on; the M1 report must say so (E36 item 7).
+
+## 89. The HTTP boundary completed
+
+(D1 §§11.1, 17(1), 17(2), 17(13), 17(14), D1-29; Review §8.3; E23 item 10; `M69-boundary-matrix.test.mjs`.) Section 6 has the Host check and the token. Every request now passes these checks, in this order, before routing, before any of its body is read and before any interim response:
+
+1. **Host** (section 6, item 1). New: a request with no `Host` header is answered by the engine, **400** `host_refused`, not by the HTTP library's bare 400.
+2. **Origin evidence.** The engine's own origin is `http://<api_authority>`: scheme, host and port. A present `Origin` or `Referer` header whose value, parsed as an origin, is not exactly that origin refuses the request: **403** `origin_refused`. That covers another host, another port, `https`, `localhost` where the authority is `127.0.0.1`, a host that only begins with the authority, `null`, and a value that cannot be parsed. A present `Sec-Fetch-Site` header other than `same-origin` refuses it the same way (`cross-site` and `same-site` are pinned; `none` is accepted on a shell route, section 90, and not pinned elsewhere). A request with none of the three headers is an origin-less client and goes on to the token check. A request of the engine's own origin, by either header or both, goes on too.
+3. **Token** (section 6, item 2), except on the routes of section 90.
+4. **Declared length.** A `Content-Length` greater than `body_cap` refuses the request, **413** `payload_too_large`, with none of the body read: the tests send the head only and the engine must answer it. A body of exactly `body_cap` bytes is read.
+
+**`100 Continue`** is sent only to a request that has passed all four. A request refused for its origin evidence or its declared length gets its refusal and no interim response. (Section 6 pinned this for Host.)
+
+**A streamed body** (chunked) is counted as it arrives. When the count crosses `body_cap` the engine stops reading and answers **413** `payload_too_large` without waiting for the end of the body: the tests send seventeen chunks of 64 KiB, never finish the body, and require the answer within ten seconds, with `request_body_deadline` set to sixty so that the answer cannot be the deadline's. A chunked body under the cap is accepted like any other.
+
+**No CORS.** No response carries an `Access-Control-…` header. `OPTIONS` is not special: a preflight from another origin is a request with a foreign `Origin` and is refused like one.
+
+**Audit and effect.** Each of these refusals comes before the route: the mutation it refused has no effect. On a mutating request in full mode it is audited like any refusal after the Host check (section 6): one `api.act` with `status` 403 or 413.
+
+**A request the HTTP parser rejects** (a request line that is not HTTP; a header section far over any limit) is answered by the engine: status **400** (431 is accepted for an oversized header section), a body in the refusal form of section 6, and the defensive headers. The `code` of these two is not pinned.
+
+**Defensive headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a `Cache-Control` that holds `no-store`, and `X-Frame-Options: DENY`: every status, the parser-level refusals and the head of an event stream included.
+
+**A failing client does not stop the engine.** A request whose body stops arriving and whose connection is then reset, and an event stream whose client resets the connection while events are being written to it, leave the engine the same process, answering, carrying out the next mutation and serving the next stream.
+
+## 90. The shell and the token bootstrap
+
+(RN R6; build spec §6 correction 7; D1 §§11.1, 17(2), D1-29; Review B14; E36 item 1; `M68-browser-bootstrap.test.mjs`.)
+
+**The shell is the harness's.** M1 has no UI (build spec §3; `packages/ui/README.md`). The page a browser loads in row M68 is `shell/index.html` with `shell/assets/shell.js`, the Verifier's files, which the test copies to a directory and hands to the engine:
+
+| Flag | Meaning |
+|---|---|
+| `--harness-shell <dir>` | The engine serves the files of `<dir>` as its static shell: `GET /` is `<dir>/index.html`, and `GET /assets/<name>` is `<dir>/assets/<name>` for each regular file that is there when the engine starts. Accepted only with `--harness`. |
+
+It reaches production code as an ordinary parameter, the directory of static files to serve. Without it the engine has no shell route: `GET /` is a path like any other that no route matches.
+
+**Shell routes** are the enumerated ones and no others. They are served after the Host check and the origin-evidence check of section 89 (with `Sec-Fetch-Site: none`, a first navigation, accepted) and **without a token**. The response is 200 with the file's bytes exactly as they are: nothing is put into them, no cookie is set, and no header holds the token or anything of a project. `index.html` is `text/html`; a `.js` file is `text/javascript` (or `application/javascript`). They carry the defensive headers of section 89, and the document also carries a `Content-Security-Policy` whose `default-src` is `'none'` or `'self'`, which has `frame-ancestors 'none'`, and which names no `'unsafe-inline'`, no `'unsafe-eval'` and no origin but `'self'`: the browser must refuse the shell's inline script and run its `/assets/shell.js`. The exact policy is the engine's. A path under `/assets/` that is not an enumerated file, and every API route, need the token as before.
+
+**`GET /v1/token/bootstrap`** needs no token and gives the token to a page of the engine's own origin and to nobody else. After the Host check it requires positive evidence: `Sec-Fetch-Site: same-origin`, and an `Origin` or a `Referer`, at least one, each one that is present being of the engine's own origin. Then: **200** `{"token": <the API token>}`, with `Cache-Control: no-store` and no `Access-Control-…` header. Everything else is **403** `origin_refused`, in the refusal form, with a `what_to_do` a person can act on and no token anywhere in the response: no evidence at all; fetch metadata with neither `Origin` nor `Referer`; either of those without fetch metadata; `same-site` or `cross-site`; a foreign, `null` or unparseable `Origin` or `Referer`; an `Origin` of the engine with a foreign `Referer`. That evidence authorizes the bootstrap and nothing else: an API read with it and no token is still 401. What the route answers in restricted mode, and to a request that also carries a token header, is not pinned.
+
+**What the browsers do** (the cases print it; both were observed while the tests were written, Chromium 145 and Firefox 146). A same-origin `fetch` of the bootstrap with `referrerPolicy: "same-origin"` carries `Sec-Fetch-Site: same-origin` and a `Referer` of the page, and no `Origin`. The same `fetch` without that option, from a page served with `Referrer-Policy: no-referrer`, carries `Sec-Fetch-Site: same-origin` and neither `Origin` nor `Referer`: Review B14's counterexample, which the engine must refuse. A page on another loopback port sends `Sec-Fetch-Site: same-site` and its own `Origin` or `Referer`. A same-origin `POST` by `fetch` carries the page's `Origin`.
+
+**The browser lane.** Playwright 1.58.2 (E36 item 1) with its Chromium and its Firefox, headless, a new browser context for each case. No header is added, no request is intercepted and no token is injected. A browser that cannot be launched fails its cases; none is skipped. Each case prints the browser's version.
+
+## 91. Reads: projects, NOW, facts beside it, an observation, and record reads that refuse
+
+(D1 §§11.3, 12.2 to 12.4, 13.1, 14, A.10, D1-28; Review N03; `M70-scoped-reads-and-now.test.mjs`; the spend keys also `M74-fixture-semantics.test.mjs`.)
+
+**Every read** of this section is a JSON object with `served_at` (a timestamp of the engine's clock) and `snapshot_seq` (the highest event `seq` of the store snapshot it was computed from). A read writes nothing: no row changes, no event is appended, no adapter is called (the tests count the launches of the scripted role, which is the adapter call a test can count from outside).
+
+**`GET /v1/projects`** → **200** `{"served_at", "snapshot_seq", "projects": [...]}`, every project once, each with at least `id`, `now` and `spend_today` as below. **`GET /v1/projects/:p`** → **200** `{"served_at", "snapshot_seq", "project": {...}}` with at least:
+
+| Key | Value |
+|---|---|
+| `id` | the project |
+| `now` | `{"state", "primary_action", "reason"}`: `state` a `NowState`; `reason` one sentence; `primary_action` a string or null |
+| `execution` | `{"runs": [{"id", "state", "quarantined"}]}`: the project's runs that have not ended, oldest first; `quarantined` a JSON boolean |
+| `open_decisions` | `{"count": <the number of open decisions of the project>}` |
+| `spend_today` | the totals of section 54 for the invocations of the engine clock's current UTC day (`invocations`, `billable_in`, `cached_in`, `out`, `usage_incomplete`, `reported_usd`, `estimated_usd`, `unknown_cost_invocations`, `unknown_cost_tokens`), and `no_dispatch` |
+| `environments` | `[{"id", "name", "observed": {...}}]`, see "An observation" |
+
+**NOW** (D1 §12.3) is exactly one state, by this priority. `refused`: the engine cannot act on the project; the tests pin a quarantined run. `waiting_on_you`: the project has an open decision. `running`: a run of it is under way. `ready`: it has eligible work that the next tick could dispatch. `idle`: otherwise. So a project with a quarantined run is `refused` although its blocker is open, and a project with a run executing and an open decision (a Stop asked for and not confirmed) is `waiting_on_you`. The other causes of `refused` D1 names (an unreadable repository, an integrity block, a store error) and `unknown` are not pinned.
+
+**The facts beside NOW stay what they are.** `execution.runs` lists a run as `executing` whatever NOW says, and a quarantined run as `{"state": "finalizing", "quarantined": true}`.
+
+**No dispatch is a fact of its own** (D1 §13.1). `spend_today.no_dispatch` is true when none of the day's invocations of the project was launched; the amounts are then null and `invocations` is 0. A project whose launched role reported nothing has `no_dispatch` false, `invocations` 1, `unknown_cost_invocations` 1 and `reported_usd` null. One whose role reported a cost of exactly zero has `reported_usd` 0, the number, and its ledger row is `measured_zero` (section 53). Null is never shown as zero and zero never as null. A dispatch whose launch is unknown, and a day with only a refused dispatch, are not pinned.
+
+**An observation** (D1 §3.5; D1-28). M1 builds no observation job and no observation history (section 8). What it has is the current observation on an environment's record, and that enters as a fixture:
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /v1/harness/fixtures/observation` | `{"project", "environment", "condition": <ObservedCondition>, "observed_at": <timestamp>, "source": <string>}` | **201**. Records that observation as the environment's current one, on its `environment_records` row (`environment`, and `observed`, JSON text holding at least `condition`, `observed_at` and `source` as given), through a transition that emits `environment.observed` with `payload.test_fixture = true`. It follows section 7's rules. |
+
+The project read shows it as `environments[].observed`: `{"condition", "observed_at", "source", "provenance", "freshness", "expires_at"}`. `observed_at` and `source` are the stored ones, always. `freshness` is computed at the read from the engine's clock and the project's `observation_freshness_bound` (default 90 s): `fresh`, `stale` past half the bound, `expired` past it (the tests pin `fresh` and `expired`). An expired observation is projected with `condition` `unknown`. `provenance` is a `Provenance` value. Reading rewrites nothing: the stored `observed` is byte for byte what the fixture recorded, before the bound and after it. What an environment that was never observed shows is not pinned.
+
+**Record reads that refuse** (D1 §11.1; section 56 has the route). The engine serves a record only from the regular file it wrote. If the path now holds anything else, the read is **409** `record_missing`, promptly, with nothing of what is there in the response: a symbolic link (one that leads to a copy of the same bytes included, and one that leads to `api.token`), a named pipe (the engine does not wait at it: the tests allow ten seconds, and require health to answer within two while the read is open), a link to a device (a real device node cannot be made without privilege), and a file whose size is not the recorded one (the tests put a sparse gibibyte there; the response is at most a refusal, never the content). Another project's record is **404** `not_found`, as section 56 says.
+
+## 92. The two streams
+
+(D1 §§11.3, 12.1, 14.2, 17(5), D1-33; Review B14; `M72-bounded-event-streams.test.mjs`, `M64-secrets-in-streams.test.mjs`.) Both are server-sent event streams: **200**, `Content-Type: text/event-stream`, the defensive headers, and a body of messages. A message is lines that end with one line feed, then an empty line; a line that begins with a colon is a comment and may appear anywhere between messages. The token is the `X-Surety-Token` header as on every route. **It is never taken from a URL:** a request with the token as a query parameter and no header is **401** `token_required`.
+
+**`GET /v1/events?since=<seq>`** is the event log (section 9) after a cursor. Each committed event with `seq` greater than `since` is one message, exactly once, in `seq` order:
+
+```
+id: <seq>
+event: <type>
+data: <one line of JSON: an object with at least "seq", "type", "at", "subject" and "payload", the last two as objects>
+```
+
+The stream first replays what is stored and then stays open and delivers each event as it commits. `id` is the cursor: a client that connects again with `since` set to the last `id` it has received loses nothing and sees nothing twice. An absent `since` is 0. D1's `project=` filter is not pinned.
+
+**Replay pages.** With `&limit=<n>` (a positive integer) the response is one page: at most `n` events after the cursor, and then it ends. A request with a limit never waits for an event that is not yet committed; a page past the end of the log is empty and ends at once. The engine may end a page before `n` events (its own page size is its choice): the client goes on from the last `id` until a page is empty. A page of a million events is not built in memory.
+
+**Bounded buffering, and a client that takes nothing.** The engine holds a bounded amount of undelivered stream data for a client, whatever the client asked for. A client that takes nothing for **five seconds** while the engine has data for it is let go of: the engine closes that client's connection. What the client was sent before is whole messages in order; a message cut off by the end of the connection is dropped by the client, so the last `id` it holds is a cursor. The tests pin this with a log of 256 MiB, a client that asks for all of it and reads nothing, and two measures: the engine's end of the connection is no longer established within forty seconds (`/proc/net/tcp`; `engineEndState` in `sse.mjs`), and the engine's peak resident memory (VmHWM) has risen by less than half of the log, 128 MiB. The same memory bound holds while the whole log is read in pages of a million. A client that reads its stream is never let go of. Whether the engine writes a last `slow_consumer` message (D1 A.7) before it closes is its choice: a client that is not reading could not be shown one, and the tests do not look for it.
+
+**The number of clients changes no adapter call:** with twenty clients connected, no role is launched and no invocation allocated that would not have been without them.
+
+**`GET /v1/projects/:p/runs/:r/tail?offset=<n>`** is a run's captured output from a byte offset (default 0), as it is captured, after redaction: the bytes its transcript holds or will hold (section 56). Messages:
+
+```
+id: <the offset after this chunk>
+event: output
+data: {"offset": <where this chunk begins>, "b64": "<the chunk's bytes, base64>"}
+```
+
+Chunks are contiguous from the offset asked for, and are delivered while the role runs, not when it ends. When the run's output has ended the engine sends `event: end` with `data: {"offset": <the total>}` and ends the response. What the tail delivered is byte for byte what the published transcript holds. A run that is not of project `:p` is **404** `not_found`. The rule for a client that takes nothing is the events stream's; a tail of output beyond the transcript cap is not pinned.
+
+**No known secret reaches either stream** (section 57): a secret the engine holds, printed by a role in two writes, is in no byte the tail delivers while the text before and after it is; reported by the role in a usage line, it is in no event a client receives.
+
+## 93. Load: the limits, the store at its size, and how a latency is judged
+
+(Plan M71; D1 §§6.1, 8.1, 8.5, D1-20; Review N03; E36 item 2; `M71-latency-under-declared-load.test.mjs`, `M71-role-output-memory.test.mjs`; `load.mjs`.)
+
+**The limits** are `../contract/load-limits.json`: 5 projects, 20 connected clients, a store of 1,073,741,824 bytes, and `api_latency_bound` at its default, 250 ms, which the cases read from `GET /v1/engine` (`config.api_latency_bound` is `{"value": 250, "source": "default"}`). Nothing larger is qualified by a pass. Each case first shows that its fixture is at the limits (the store's files are at least that large, the store holds five projects, twenty clients are connected) and prints the numbers with what it measured.
+
+**The store at its size.** `fillStore` grows a stopped engine's store by appending filler rows to `events` directly, as `seedEvent` does (section 9): `type` `engine.tick`, `actor_kind` `engine`, `subject` `{}`, a `payload` of 64 KiB of filler with `test_fixture: true`, `seq` counting on from the highest stored, one transaction. The engine must take such rows for what they are: events of its log. It numbers its next event after the highest stored `seq`, starts on that store, and replays the rows like any others. The store's journal mode is switched from WAL for the bulk write and back before the store is closed. On the host these tests were written on, building the gibibyte takes about two seconds.
+
+**Two cases, two shapes of load.**
+
+- *A startup migration over the full store.* The engine is started with `--harness-migrations` on a copy of its migrations plus one that makes eight full scans of the filler: the store's one connection is busy with one transaction for seconds. Until it has been applied the engine is restricted in step `store` (section 4). Throughout, `GET /v1/health` answers 200 with `mode` `restricted`, and a Stop is answered **503** `engine_starting`, each within the bound. (This case passes on the slice-3 engine, whose store is in a worker thread; an engine whose store call occupied the main thread would answer nothing for seconds.)
+- *Full mode, everything else together.* Twenty clients on the event stream: seventeen follow it, two read the whole log again and again in pages of a million, one asks for the whole log and reads nothing. During the window a backup of the store runs (below), a git child of the engine is held open on one project's repository (`holdGit`), a role writes six mebibytes that the engine hashes into chunks, and a tick recomputes a stage gate whose missing execution has just been recorded. `GET /v1/health` is sampled every hundred milliseconds or so for six and a half seconds, and three runs are stopped. Each Stop is the two requests of section 17, and each request is a sample.
+
+**The backup under way.** D1 §6.5's backup is the engine's own job (the scheduler's daily one); a test cannot wait for a day:
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /v1/harness/backup` | `{}` | **202** at once. The engine then writes a complete backup of its home as section 59 describes it, under `$SURETY_HOME/backups/`, while it goes on serving, and when the backup is complete emits `engine.backup` with `payload: {"backup": <the directory, absolute>, "label": "complete"}`. |
+
+**Admission and termination are two quantities** (Review N03). Admission is the answer to the request. When the confirming request of a Stop is answered, the run's lease is `closing` (section 17) and the run has not ended unless its role is gone. Termination is the time from that answer to the run's `ended`: it waits for the role's processes (section 14), is measured and printed by itself, and is not judged against the bound. A role that ignores SIGTERM is admitted within the bound and ends no sooner than `terminate_grace` later.
+
+**A prerequisite that timed out dispatches nothing, even late** (D1 §8.1; section 34 pinned it without load). The project whose repository's git is held has eligible work. The tick whose integrity step overran `tick_step_budget` on it dispatches none of it, and neither does that step's late completion when the hold is released; a later tick dispatches it and it completes.
+
+**How a latency is judged on a host that may be busy.** Every sample is paired with a control: at the same instant, from the same event loop, a request to a trivial server inside the test process. A sample whose control took more than 50 ms is void: the host or the test process was not responsive then, and the sample says nothing about the engine. Every valid sample must be within the bound, with whatever the control cost included in it; the bound is never widened and nothing is subtracted. A judgement needs a stated number of valid samples (thirty of health and four of the six Stop requests in full mode; five of health and two of Stop during the migration); with fewer the case fails as not judged, which is not a pass. The clients of the full-mode case run in a process of their own (`stream-clients.mjs`), so that their reading does not occupy the event loop that measures.
+
+**Memory a role's output costs** (carried from the slice-2 review and the slice-4 session). A role writes 512 MiB to its standard output in lines of one mebibyte, then its result. The run completes, and the engine's peak resident memory rises by less than half of what the role wrote. The bound comes from the claim, not from a measurement of an engine: an engine that keeps the output must hold it. (The slice-3 engine rises by about 86 MiB on this host and passes.)
+
+**The scripted boundary's process scan under load** (carried from the slice-2 review): the full-mode case samples health while two stopped runs are being terminated, which is when the boundary is observed every second. No separate case.
+
+## 94. The executable contract
+
+(Plan M73 and §5; RN §3; E20; D1 §11.2, D1-38; Review B10, B17, N02; build spec §2 item 6 and §5; `M73-executable-contract.test.mjs`.) The contract is what the engine executes. The engine states it as one JSON document and can check such a document and generate Appendix A from one.
+
+**Commands.** They need no engine home and no running engine.
+
+| Command | Result |
+|---|---|
+| `surety contract export` | Exit status 0; stdout is the contract document of this engine, computed from what it executes (its migrations, its enumerations, its transition tables). |
+| `surety contract check [--file <path>]` | Checks this engine's contract, or the document in `<path>`. The last line of stdout is a JSON object `{"valid", "findings", "checked", "not_checked"}`. Valid: exit status 0, `valid` true, `findings` `[]`. Not valid: exit status **8**, `valid` false, at least one finding. |
+| `surety contract appendix [--file <path>]` | Exit status 0; stdout is Appendix A generated from this engine's contract, or from the document in `<path>`. The same input gives the same text. |
+
+**The committed files.** `packages/engine/api/schema.json` is the contract document: it parses to exactly what `surety contract export` prints, so a change to the engine that changes its contract fails the test until the file is regenerated (D1 §11.2: the pin fails on drift). `packages/engine/api/appendix-a.md` is exactly what `surety contract appendix` prints. Both are the Builder's files. The file may hold more than the sections below (the routes, for one); the tests read these.
+
+**The document.** A JSON object with at least:
+
+| Section | Holds |
+|---|---|
+| `enums` | `{<Name>: [<value>, ...]}`: every closed enumeration, `EventType` and `DecisionKind` among them |
+| `tables` | `{<table>: {"fields": {<column>: {"required": <boolean>, "enum"?: <Name>, "references"?: <table>}}}}`: every table and column of the store the migrations create, no more and no fewer; `references` exactly where the schema has a foreign key |
+| `work_items` | the work-item table in the form of `../contract/work-items.json`: `statuses`, `terminal`, `kinds` (`{<kind>: {"m1", "path"}}`), `templates` (`{<name>: {"from", "to", "only_kinds_with"?}}`; the `to` of `continue` is null), `run_owning`, `continuations` |
+| `transitions` | `{<Name of the enumeration the states are of>: [<chain>, ...]}`; a chain is an array of two or more states, each consecutive pair an edge. The tests read `RunState`, `DomainStatus` and `AuthorizationStatus` |
+| `decisions` | `{<DecisionKind>: {"enabled": <boolean>, "manifest": [<key>, ...], ...}}`; an enabled kind has its manifest |
+| `events` | `{<EventType>: {"owner": <what emits it, a non-empty string>}}`, or `{"reserved": true}` for a type nothing in M1 emits |
+| `config` | `{"engine": {<key>: {"default", "min"?, "max"?, ...}}, "project": {...}}` |
+
+**What the engine's own contract must be.** Valid. Its `tables` are those of a store the engine created, compared with `PRAGMA table_info` and `PRAGMA foreign_key_list` on a real store. Every event type found in a real store's `events` is an `EventType` with an owner, not reserved. It agrees with the Verifier's tables, which hold the accepted corrections: every work kind has exactly the legal edges of `../contract/work-items.json` (correction 11); `RunState` and `DomainStatus` have the edges of `../contract/run-lifecycle.json` (corrections 12 and 13); `AuthorizationStatus` has `proposed` and the five edges of correction 4; the eleven kinds of `../contract/decisions.json` are enabled, each with at least the manifest keys listed there, and no other kind is (correction 5; build spec §3); the configuration keys, with their numeric defaults and ranges, are those of `../contract/config.json` (correction 20). D1's hand-written Appendix A is not an input to any of this.
+
+**The checker** makes two kinds of check, and each finding says which: `{"check": "lexical" | "structural", "path": [<key>, ...], "message": <string>}`. `path` leads to the offending element of the document. *Lexical*: every name used is declared (a state of a transition, a path or a template is a value of its enumeration; a field's `enum` is a declared enumeration; a `references` names a declared table). *Structural*: the declarations are true and complete (the `tables` section agrees with the schema the engine's migrations create in a real SQLite database; an enabled decision kind has a manifest; an event type is owned or reserved). A valid result lists what was checked, `"checked": ["lexical", "structural"]`, and what was not: `not_checked` holds at least `"lifecycle_traces"`. A clean check certifies no lifecycle path; the acceptance rows do that.
+
+The seven mutations of the Plan, each made on a copy of the engine's export and each refused with a finding at the path given:
+
+| Mutation | `path` begins | `check` |
+|---|---|---|
+| the common transition `resume` leads to a state that is no `WorkItemStatus` | `work_items`, `templates`, `resume` | lexical |
+| the path of `verification` ends in a state that is no `WorkItemStatus` | `work_items`, `kinds`, `verification` | lexical |
+| `runs.state` is of an enumeration that is not declared | `tables`, `runs`, `fields`, `state` | lexical |
+| `snapshot_tree` is declared on `runs` and no longer on `workspaces` | `tables`, `runs`, `fields`, `snapshot_tree` | structural |
+| `runs.work_item` references `stages` | `tables`, `runs`, `fields`, `work_item` | structural |
+| the enabled kind `blocker` has no manifest | `decisions`, `blocker` | structural |
+| an event type is declared with neither owner nor `reserved` | `events`, `<the type>` | structural |
+
+For the four structural ones the lexical check must find nothing: every name in those documents is declared, and they are wrong all the same.
+
+**The appendix** states each enumeration as one line in D1 A.2's form, `- **<Name>:** <values, separated by ", ">.`, with the values in the contract's order, and names every table. It is generated from the document it is given: the same contract with one enumeration reordered gives an appendix with that line changed. The rest of its layout is the engine's. Where D1's hand-written appendix was corrected the generated one differs from it (`AuthorizationStatus`, `DecisionKind`).
+
+## 95. Fixture semantics and the invocation boundary
+
+(Plan M74; RN §3 N06; D1 §§7.3, 7.4, 11.2, 11.3, 15.4; Review N03, N06 and §8.3; `M74-fixture-semantics.test.mjs`, `M74-invocation-boundary.test.mjs`.)
+
+**The run read** (section 17) gains three keys.
+
+| Key | Value |
+|---|---|
+| `checkpoint` | null while the run's role has asked for none. `{"status": "pending", "revision": null}` from the moment a result that asks for a checkpoint has arrived until its snapshot is committed. `{"status": "accepted", "revision": <the id of the `revisions` row of kind `checkpoint`>}` afterwards. What a request whose snapshot failed validation shows is not pinned. |
+| `parent_run` | the stored `runs.parent_run`, or null |
+| `successor_run` | the run whose `parent_run` is this run, or null while there is none |
+
+A request is not a checkpoint: while the role that asked is alive the engine has taken no snapshot (section 28), the workspace has no checkpoint and no `checkpoint` revision exists, and the read says `pending`. Whether such a run is still `executing` or already `validating` is the engine's choice; the slice-3 engine shows `validating`. An accepted checkpoint is shown on a run that has ended, and its successor only once that run exists.
+
+**`GET /v1/projects/:p/candidates/:c`** → **200** `{"served_at", "snapshot_seq", "candidate": {...}}` with at least:
+
+| Key | Value |
+|---|---|
+| `id`, `progress` | the stored ones; `progress` is `developing` for every candidate in M1 (section 75) |
+| `protected_version` | `{"nominated": <the candidate's `nominated_protected_version`>, "effective": <the project's effective protected version>}` |
+| `successor` | the candidate whose lineage started from this one (section 42), or null |
+| `gates` | `{<gate kind>: {"id", "outcome", "stale"}}`: for each gate kind that was evaluated for the candidate, its latest stored evaluation; a kind never evaluated is absent |
+
+After a protected correction is applied (section 69) a candidate nominated before it shows the old version as `nominated` and the new as `effective`, and its `gates.stage` is not a current satisfied one: it is the stored evaluation, stale or recomputed. The next candidate is its `successor`.
+
+**The spend keys** for "no dispatch" and a measured zero are section 91's.
+
+**The invocation boundary** (D1 §15.4). `launch-lint.mjs` reads the engine's source as text, with section 7's lexer. A file under `packages/engine/src/` may name a module that can start a process (`node:child_process` or `child_process`, `node:cluster` or `cluster`, and the internal bindings `spawn_sync` and `process_wrap`) only in three places: `invoke/`, the choke point; `git/exec.ts`, the one file that runs git; and `testing/`, the seam folder. So the scripted notification sink (section 82), which is harness-only, is run from the seam folder. Naming is any string or template literal that is such a name, in a static import, `import()`, `require()`, a re-export or `process.getBuiltinModule()`. A static import that binds types only is allowed anywhere. The mutation fixture inserts a launch path into the real source in seven forms, each of which the inspection must report; the same code under `invoke/` and a types-only import must not be reported. What it does not prove: anything about a name assembled at run time, that `git/exec.ts` runs only git, or that code under `invoke/` launches only through the choke function.
+
+**The package graph** (D1 §11.2). `packages/engine/package.json` exports exactly one entry point and one command, `surety`. The module that entry names exports no function and no class: a client that imports the engine package cannot start an engine, open its store or launch a backend with it. No file under `packages/ui/` names a process-starting module or a path into the engine's `src`, `dist` or `migrations`.
+
+## 96. Names the Verifier fixed in slice 6
+
+Each of these was open in the sources. The Builder may object. Those marked † carry a question for the owner in the Verifier's report.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The unsafe-filesystem refusal | Exit status 6, `unsafe_filesystem`, `subject: {"path": ".", "filesystem"}`, decided before anything is written | E36 item 7 asks for a clear message and names no code. Status 6 is section 1's status for a home that cannot be used; a code of its own says why. |
+| How a kind is named; the refused names † | The mount's type as `/proc/self/mountinfo` gives it; `../contract/filesystems.json` | The name a person sees in `findmnt` and `mount`. The decision gives three classes and one example; the ten names are the common ones of each class. |
+| Seeing a kind without privilege | A real home under `/dev/shm`; `--harness-home-fstype <name>` for the rest | The task asks that the test need no root. The flag replaces detection only. |
+| The row of that case | M67 | The row where durability is pinned, and where `COVERAGE.md` carried the open item since slice 1. |
+| The order of the boundary checks | Host, origin evidence, token, declared length; `100 Continue` after all four | D1 §11.1 lists them "before routing, body reads ... or `100 Continue`" without an order among them. |
+| `origin_refused` | 403 | D1 names the code; 403 is HTTP's status for it. |
+| `Sec-Fetch-Site` values | `same-origin` goes on; `cross-site` and `same-site` are refused; `none` only on a shell route | D1: "consistent with same-origin use". A first navigation is `none`. |
+| A request with no `Host` | 400 `host_refused`, by the engine | E23 item 10. |
+| Parser-level refusals | 400 (or 431), refusal form, defensive headers; code not pinned | D1 §17(13), (14). No A.7 code fits and no test needs one. |
+| Frame denial | `X-Frame-Options: DENY` | D1 says "frame denial" and names no header. |
+| The shell † | The harness's files, served from `--harness-shell <dir>`: `GET /`, `GET /assets/<name>` | `packages/ui/README.md`: the test shell "belongs to the acceptance harness". M1 has no UI to serve. |
+| The shell's content security policy | Properties, not a text: default `'none'` or `'self'`, no inline, no eval, no other origin, `frame-ancestors 'none'` | D1 §17(13): "the UI's CSP is restrictive". |
+| The bootstrap's answer | 200 `{"token"}`; 403 `origin_refused` otherwise | D1 §11.1 gives the predicate and not the body. |
+| The project list and projection † | Section 91: `now`, `execution.runs`, `open_decisions.count`, `spend_today`, `environments` | D1 §11.3 names what the routes return in words. Only what row M70 reads is fixed. |
+| `no_dispatch` | A boolean beside the ledger's totals | D1 §13.1: "no dispatch is a projection fact with no row". |
+| What `refused` is, as pinned | A quarantined run | D1 §12.3 lists four causes; the row needs one. |
+| The observation fixture † | `POST /v1/harness/fixtures/observation`; the current observation on `environment_records.observed` | The Plan seeds "historical observation fixtures"; M1 has no observation job and no history table. |
+| A substituted record file | 409 `record_missing` for a link, a pipe, a device and another size | D1 §11.1 says what is rejected and names no code; section 56 has this one for bytes that are not there. |
+| The event stream's wire form | Section 92: `id` the `seq`, `event` the type, `data` the event as one line of JSON | D1 §11.3: "SSE: replay from `seq` with a resumable cursor". |
+| Replay pages | `&limit=<n>`; a page ends; the engine may end it early | Plan M72: "request large replay pages". |
+| A client that takes nothing † | Let go of after five seconds with data waiting; whole messages before; no last message required | D1: "bounded queue; slow consumers disconnected with a cursor". Without a time, an engine that only waits is never wrong. |
+| The memory bounds | A rise of peak resident memory below half of the log (128 MiB of 256), below half of a role's output (256 MiB of 512) | Derived from the claim: an engine that buffers must hold what it buffers. No number measured on an engine. |
+| The tail's wire form | `offset`, base64 chunks, `id` the end offset, `event: end` | D1 §11.3: "captured output from an offset". Output need not be text. |
+| Adapter calls a test can count | Launches of the scripted role, and invocation receipts | The scripted boundary reads a file and `/proc`; a test cannot count that from outside. |
+| The load limits' numbers | `../contract/load-limits.json`; 1 GB as 2^30 bytes | E36 item 2. A gibibyte is not less than a gigabyte. |
+| The filler | `engine.tick` events of 64 KiB, labelled, written directly | The store must be large with what the engine really reads: replay and backup read events. |
+| The backup trigger | `POST /v1/harness/backup`, 202, `engine.backup` with `{backup, label}` | D1 §6.5's backup is the scheduler's daily job; section 59 has the manifest. |
+| What a valid latency sample is † | Paired with a control within 50 ms; every valid sample within the bound; a floor on valid samples | The task: reliable on a loaded machine without being loosened until it proves nothing. |
+| Stop admission | Each of a Stop's two requests | Section 17 made Stop two requests. |
+| The contract commands and exit status 8 † | `surety contract export`, `check [--file]`, `appendix [--file]` | RN §3: the appendix is generated from the contract. Something has to print the contract and check one. |
+| Where the contract and the appendix are kept † | `packages/engine/api/schema.json`, `packages/engine/api/appendix-a.md` | Build spec §5 names `api/schema.json` as the contract; the appendix beside it is in the Builder's paths. D1's own Appendix A is the owner's file. |
+| The contract document's sections | Section 94; the work-item table in the Verifier's own form | The mutations have to be made on a document of a known form. |
+| Lexical and structural | The two labels of a finding; `not_checked` holds `lifecycle_traces` | Review N02 and B17: the checker's output "MUST identify that it checks lexical declarations only". |
+| The appendix's form | D1 A.2's enumeration lines; every table named | Enough to show it follows its source. |
+| The run read's `checkpoint`, `successor_run` | Section 95 | Review N06: a request is shown pending, an accepted checkpoint with its successor run. |
+| The candidate read | Section 95: `protected_version`, `successor`, `gates` | D1 §11.3: "candidate, lineage ..., latest evaluation per gate kind". |
+| Where a process may be started | `invoke/`, `git/exec.ts`, `testing/` | D1 §15.4 names `engine/invoke/`. git is run by `git/exec.ts` today; harness-only programs belong to the seam folder (section 7). |
+| What the engine package exports | One entry with nothing callable | D1 §11.2: a client imports the engine's published API types. |
+
+## 97. What stands behind these tests before the engine exists
+
+More than for slices 4 and 5, because part of slice 6 can be run on the engine as it is. On the slice-3 engine of this working copy, each new file was run once with `node --test`: all eleven load, and every failure is an assertion or a missing feature (a route that does not exist, a flag or command the engine does not know), none a syntax error, a bad import or a helper that throws for its own reasons. What passes already:
+
+- `M71-latency-under-declared-load.test.mjs`, first case: the migration over the gibibyte keeps the slice-3 engine restricted for about seven seconds, during which 151 health samples (worst 3 ms) and 5 Stop samples were valid and within the bound. The fixture, the sampler and the control ran against a real engine.
+- `M71-role-output-memory.test.mjs`: 512 MiB written, a rise of 86 MiB.
+- `M74-invocation-boundary.test.mjs`, all three cases: the slice-3 source keeps to the rule, and each of the seven inserted launch paths is reported.
+- `M68-browser-bootstrap.test.mjs`, the two lane cases: Chromium 145.0.7632.6 and Firefox 146.0.1 launch, report their versions and reach the real engine (a navigation to `/v1/health` is refused 401).
+- `M69-boundary-matrix.test.mjs`, "a declared body over the cap ...": the slice-3 engine already refuses it unread. The streamed case got its 413 from the real engine too, and fails only on the defensive headers.
+- `M67-unsafe-filesystem-refused.test.mjs`: the real `/dev/shm` home is made and removed; the slice-3 engine starts on it, which is the failure.
+
+Helpers with logic of their own were exercised outside any test, against things that are not the engine and are not kept: the stream client (`sse.mjs`: parsing, a paused client, `engineEndState`, a cursor taken up again, replay pages) and the client process (`stream-clients.mjs`) against a scratch server that wrote messages and closed a stalled connection; the browser helpers against a scratch page server, where both browsers were seen to send what section 90 records; `fillStore`, the scans and a restart on the filled store against the slice-3 engine; the schema reading of row M73 against a real store. One finding of that work is in `sse.mjs`: a client that has stopped reading cannot see from its own socket that the engine closed the connection, so the test reads the state of the engine's end.
+
+Everything else was read, and its imports and names resolved. The cases are few by decision (E31); a defect in a test, or a name the Builder finds unworkable, goes through the objection procedure.
