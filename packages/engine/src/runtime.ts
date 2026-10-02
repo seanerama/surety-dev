@@ -162,6 +162,8 @@ export interface Services {
   nominate(project: string): Promise<void>;
   // Drive the unfinished journal operations of a project.
   journal(project: string): Promise<void>;
+  // Make the effect of a consumed decision (decisions/effects.ts).
+  effect(intent: string): Promise<void>;
 }
 
 export class Runtime {
@@ -221,10 +223,17 @@ export class Runtime {
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
-  afterCommit(effects: { kind: string; run?: string; project?: string }[]): void {
+  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string }[]): void {
     for (const effect of effects) {
       if (effect.kind === 'tick') this.services?.requestTick();
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
+      if (effect.kind === 'effect' && effect.intent) {
+        const intent = effect.intent;
+        void this.services
+          ?.effect(intent)
+          .catch((err) => log('effect', err, { intent }))
+          .finally(() => this.services?.requestTick());
+      }
       if (effect.kind === 'journal' && effect.project) {
         const project = effect.project;
         void this.services

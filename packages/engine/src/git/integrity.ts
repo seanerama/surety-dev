@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import type { Runtime } from '../runtime.js';
 import type { IntegrityFacts, IntegrityReport } from '../store/transitions/integrity.js';
-import { repoContext, worktreeContext } from './exec.js';
+import { type GitContext, repoContext, worktreeContext } from './exec.js';
 import { checkoutBaseline, listWorktrees, readAllRefs } from './repo.js';
 import { canonicalPath, worktreeMetadata } from './worktree.js';
 
@@ -97,4 +97,13 @@ export async function integrationCheckouts(rt: Runtime | { home: string; scratch
     out.push({ path: w.path, baseline });
   }
   return out;
+}
+
+// The git context of a developer's checkout of the integration branch, by
+// its path: the repository itself, or a linked worktree by its metadata.
+export async function checkoutContext(repo: string, path: string): Promise<GitContext | null> {
+  if (same(path, repo)) return repoContext(repo);
+  const admin = worktreeMetadata(repo, path);
+  if (admin === null || admin === 'unknown') return null;
+  return worktreeContext(repo, admin, path);
 }

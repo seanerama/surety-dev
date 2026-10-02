@@ -34,12 +34,20 @@ import type { Journal, Settled } from '../journal/driver.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { type RunEnd, type RunHandle, type Runtime, log } from '../runtime.js';
 import type { AcceptFacts } from '../store/transitions/accept.js';
+import { canonical } from '../store/transitions/common.js';
+import { governedText } from '../protected/set.js';
+import { diffHashOf } from '../projects/commands.js';
+import { writeWholeRecord } from '../records/files.js';
+import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
 
 export const INTEGRATING_KINDS = ['stage_build', 'fix', 'replan', 'assessment'];
+// A Verifier's and a Reviewer's kinds: validated, never committed (SEAM.md §68).
+export const REPORTING_KINDS = ['verification', 'review', 'check_correction'];
+export const ACCEPTED_KINDS = [...INTEGRATING_KINDS, ...REPORTING_KINDS];
 
 const failed = (reason: RunEnd['reason'], text: string, detail?: Record<string, unknown>): RunEnd => ({ outcome: 'failed', reason, reasonText: text, ...(detail ? { detail } : {}) });
 
@@ -67,7 +75,7 @@ export class Acceptor {
       } catch (err) {
         log('acceptance step', err, { run, failures: failures + 1 });
         const state = await this.rt.read<string | null>('run.state', { run }).catch(() => null);
-        if (state !== 'validating' && state !== null) {
+        if (state !== 'validating' && state !== 'proposal_captured' && state !== null) {
           // A Stop or an Abandon took the run while a step had failed: what
           // the run issued is settled before its end goes on (D1 §4.5 step 4).
           await this.settleIssued(run);
@@ -82,6 +90,8 @@ export class Acceptor {
   // is no longer the pipeline's to end (a Stop or an Abandon took it).
   private async step(run: string): Promise<RunEnd | null> {
     let facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
+    // A proposal already captured: the run's report is recorded with it.
+    if (facts.run.state === 'proposal_captured') return { outcome: 'completed', reason: 'none' };
     if (facts.run.state !== 'validating') return null;
     const repo = facts.project.repo;
     const ws = facts.workspace;
@@ -96,6 +106,15 @@ export class Acceptor {
     if (facts.domains.some((d) => d.status !== 'terminated')) {
       const terminated = await this.ender.terminateDomains(run);
       if (!terminated) {
+        // A Verifier's or a Reviewer's run whose termination cannot be
+        // established is quarantined with the outcome its role earned, and
+        // is not snapshotted (SEAM.md §68).
+        // Its report is recorded like any other, before the run can end and
+        // complete the work (E41 item 3).
+        if (REPORTING_KINDS.includes(facts.work.kind)) {
+          await this.recordReport(facts);
+          return { outcome: 'completed', reason: 'none' };
+        }
         return failed('infra_error', "the termination of the run's domain could not be established, so what the role left cannot be known; nothing of it was captured");
       }
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
@@ -111,9 +130,10 @@ export class Acceptor {
     }
 
     const role = facts.run.role;
+    if (REPORTING_KINDS.includes(facts.work.kind)) return this.report(facts, tree, base, metadata);
     // 3. Validation, unless the run's commit is already journaled.
     if (facts.commits.length === 0) {
-      const diff = await validateDiff(repo, base, tree, role, facts.caps);
+      const diff = await validateDiff(repo, base, tree, role, facts.caps, facts.roots);
       if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
       const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
       if (outside) return failed(outside.klass, outside.text);
@@ -165,7 +185,7 @@ export class Acceptor {
         if (rebased.conflict !== null) {
           return failed('integration_conflict', `the integration branch moved to ${head}, and the run's changes to ${rebased.conflict} do not apply to it`, { park: 'integration_conflict' });
         }
-        const check = await validateDiff(repo, head, rebased.tree, role, facts.caps);
+        const check = await validateDiff(repo, head, rebased.tree, role, facts.caps, facts.roots);
         if (check.violation) return failed(check.violation.klass, `the rebased result: ${check.violation.text}`);
         const again = facts.commits.find((c) => c.parent === head && c.tree === rebased.tree);
         if (again && again.state === 'finalized') target = again;
@@ -178,7 +198,7 @@ export class Acceptor {
       const headTree = await treeOf(ctx, head);
       const targetTree = await treeOf(ctx, target.sha);
       if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
-      const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER });
+      const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
       if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
       const intent = await this.journal.withProject(facts.project.id, () =>
         this.journal.intend('accept.intend_integration', { run, repo, head, commit: target.sha, plans: plans.plans, deadlineSeconds: this.rt.setting('git_deadline') }, 'ref_update'),
@@ -207,6 +227,70 @@ export class Acceptor {
     // 7. A nomination that is due.
     await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  // A Verifier's or a Reviewer's run (SEAM.md §68): validated like a
+  // Builder's and never committed. A run that changed nothing has its report
+  // recorded; a Verifier's protected-only diff is captured as a proposal;
+  // anything else is rejected whole.
+  private async report(facts: AcceptFacts, tree: string, base: string, metadata: MetadataBaseline): Promise<RunEnd | null> {
+    const repo = facts.project.repo;
+    const run = facts.run.id;
+    const diff = await validateDiff(repo, base, tree, facts.run.role, facts.caps, facts.roots);
+    if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
+    const ws = facts.workspace!;
+    const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
+    if (outside) return failed(outside.klass, outside.text);
+    if (diff.changes.length === 0) {
+      await this.recordReport(facts);
+      return { outcome: 'completed', reason: 'none' };
+    }
+    const report = facts.result?.report ?? {};
+    const evidence = await this.evidenceOf(facts);
+    // Only a Verifier reaches here with changes, and only protected ones.
+    const proposal = report.proposal;
+    const rationale = await writeWholeRecord(this.rt, {
+      project: facts.project.id,
+      run,
+      kind: 'proposal_rationale',
+      content: Buffer.from(proposal?.rationale ?? 'The Verifier gave no rationale.'),
+    });
+    const required = async (rev: string) => {
+      try {
+        const text = await governedText(repoContext(repo), rev);
+        return canonical(text === null ? null : ((JSON.parse(text) as { required_checks?: unknown }).required_checks ?? null));
+      } catch {
+        return 'unreadable';
+      }
+    };
+    await this.rt.engine('accept.capture_proposal', {
+      run,
+      base,
+      tree,
+      diffHash: diffHashOf(diff.changes),
+      rationale,
+      requested: proposal?.requested_change_kind ?? 'unclassifiable',
+      changesRequiredSet: (await required(base)) !== (await required(tree)),
+      evidence,
+    });
+    return { outcome: 'completed', reason: 'none' };
+  }
+
+  // The records an applicability proposal's evidence is published as.
+  private async evidenceOf(facts: AcceptFacts): Promise<(string | null)[]> {
+    // What the report's content hashes need, made durable first.
+    await ensureAncestry(this.rt, facts.project.id);
+    const evidence: (string | null)[] = [];
+    if (facts.run.role !== 'verifier') return evidence;
+    for (const a of facts.result?.report?.applicability ?? []) {
+      evidence.push(await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'assessment_evidence', content: Buffer.from(a.evidence) }).catch(() => null));
+    }
+    return evidence;
+  }
+
+  // What a Verifier's or a Reviewer's role reported, recorded with its run.
+  private async recordReport(facts: AcceptFacts): Promise<void> {
+    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts) });
   }
 
   // Drive every operation the run issued that has not settled, a few times

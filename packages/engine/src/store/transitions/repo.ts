@@ -5,6 +5,8 @@
 
 import { notFound } from './common.js';
 import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
+import { oobOptions } from './queue.js';
+import { markStale } from './evidence.js';
 import type { Tx } from './tx.js';
 
 export type RefKind = 'integration' | 'lineage' | 'nomination' | 'recovery' | 'oob' | 'keep';
@@ -150,25 +152,19 @@ export function openObservation(tx: Tx, project: string, o: Pick<Observation, 's
     .get(project, o.subject, o.ref ?? null, o.ref ?? null, o.checkout ?? null, o.checkout ?? null) as OobRow | undefined;
 }
 
-function optionsFor(tx: Tx, o: Observation): { key: string; label: string; consequence: string; effect: Record<string, unknown> }[] {
-  if (o.subject === 'repository') return [];
-  if (o.subject === 'checkout') {
-    return [
-      { key: 'stash', label: 'Stash', consequence: 'The engine commits the checkout as it is to an oob ref and restores its baseline.', effect: { disposition: 'stash' } },
-      { key: 'adopt', label: 'Adopt', consequence: 'What the checkout holds becomes its baseline.', effect: { disposition: 'adopt' } },
-    ];
-  }
-  const row = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(o.ref) as RegistryRow;
-  const discard = { key: 'discard', label: 'Discard', consequence: `The engine puts ${row.ref} back on ${row.expected_oid}${o.found ? ' and keeps the commit found under an oob ref' : ''}.`, effect: { disposition: 'discard' } };
-  if (o.found === null || row.immutable === 1) return [discard];
-  return [discard, { key: 'adopt', label: 'Adopt', consequence: `The commit found, ${o.found}, becomes the one the engine expects for ${row.ref}.`, effect: { disposition: 'adopt' } }];
-}
-
 // Record an observation, once: one that is already recorded and
 // unreconciled is not recorded again. Returns the row.
 export function recordObservation(tx: Tx, project: string, o: Observation): OobRow {
   const existing = openObservation(tx, project, o);
-  if (existing) return existing;
+  if (existing && existing.found === o.found) return existing;
+  if (existing) {
+    // What is there now is not what was observed: the old observation, and
+    // the question about it, are closed, and what is there now is observed
+    // and asked about (SEAM.md §79).
+    tx.db.prepare('UPDATE "out_of_band_changes" SET "closed_at" = ? WHERE "id" = ?').run(tx.at, existing.id);
+    const d = tx.db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(existing.decision) as DecisionRow;
+    invalidateDecision(tx, d, 'the subject changed again');
+  }
   const id = tx.newId('oob_');
   let what = 'The repository cannot be read: nothing about it can be established until it can.';
   if (o.subject === 'ref') {
@@ -184,7 +180,7 @@ export function recordObservation(tx: Tx, project: string, o: Observation): OobR
     subjectType: 'out_of_band_change',
     subjectId: id,
     question: what,
-    options: optionsFor(tx, o),
+    options: oobOptions(tx, { subject_kind: o.subject, ref: o.ref ?? null, found: o.found }),
     manifest: { subject_kind: o.subject, expected: o.expected, found: o.found },
   });
   tx.db
@@ -194,6 +190,8 @@ export function recordObservation(tx: Tx, project: string, o: Observation): OobR
     )
     .run(id, tx.at, project, o.subject, o.ref ?? null, o.checkout ?? null, o.expected, o.found, tx.at, decision.id);
   tx.emit('repo.out_of_band', { project, out_of_band_change: id }, { subject_kind: o.subject, expected: o.expected, found: o.found, decision: decision.id });
+  // An observation is an input of every evaluation of the project (D1 §9.5).
+  markStale(tx, { project });
   return tx.db.prepare('SELECT * FROM "out_of_band_changes" WHERE "id" = ?').get(id) as OobRow;
 }
 
@@ -206,6 +204,7 @@ export function closeRepositoryObservation(tx: Tx, project: string): boolean {
   const d = tx.db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(row.decision) as DecisionRow;
   invalidateDecision(tx, d, 'the repository can be read again');
   tx.emit('repo.reconciled', { project, out_of_band_change: row.id }, { subject_kind: 'repository', closed: 'readable' });
+  markStale(tx, { project });
   return true;
 }
 

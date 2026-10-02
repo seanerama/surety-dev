@@ -3,14 +3,18 @@
 // will freeze. No transaction is held across any of it; the command's own
 // transaction checks again what it depends on and records the intent.
 
+import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { nowIso } from '../clock.js';
 import { validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
+import { GOVERNED_FILE, GOVERNED_KEYS, governedText, protectedSetAt } from '../protected/set.js';
+import { writeWholeRecord } from '../records/files.js';
+import { canonical } from '../store/transitions/common.js';
 import { commitContent, messageText } from '../git/commit.js';
 import { SHA, gitOk, repoContext } from '../git/exec.js';
-import { readRef, treeOf, writeBlob } from '../git/repo.js';
+import { diffTrees, readRef, treeOf, writeBlob } from '../git/repo.js';
 import { newId } from '../ids.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { Refusal } from '../refusal.js';
@@ -23,7 +27,7 @@ const repoUnreadable = (path: string) =>
   new Refusal(409, 'repo_unreadable', `${path} is not a git repository the engine can read.`, 'Give the path of a readable git repository; nothing was created.', { path });
 
 // A tree: `base` with `files` added or replaced, built in a scratch index.
-async function treeWith(repo: string, base: string, files: Record<string, string>, scratch: string): Promise<string | null> {
+export async function treeWith(repo: string, base: string, files: Record<string, string>, scratch: string): Promise<string | null> {
   const ctx = repoContext(repo);
   const index = join(scratch, `prepare-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
@@ -41,7 +45,7 @@ async function treeWith(repo: string, base: string, files: Record<string, string
   }
 }
 
-async function prepareCommit(repo: string, base: string, files: Record<string, string>, message: string, scratch: string) {
+export async function prepareCommit(repo: string, base: string, files: Record<string, string>, message: string, scratch: string) {
   const tree = await treeWith(repo, base, files, scratch);
   if (tree === null) return null;
   const content = commitContent({ tree, parent: base, message, at: nowIso() });
@@ -86,20 +90,31 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
       { worktree: at, branch },
     );
   }
+  // The project's first protected version: the fingerprint of the branch's
+  // commit under the roots its governed file names (SEAM.md §66).
+  const protectedSet = await protectedSetAt(repo, head.oid);
+  if (protectedSet === null) throw repoUnreadable(repo);
   const id = newId('proj_');
   const identity = `${JSON.stringify({ id, name }, null, 2)}\n`;
   const message = messageText({ title: `surety: bootstrap project ${id}`, trailers: [['Surety-Project', id]] });
   const commit = await prepareCommit(repo, head.oid, { '.surety/project.json': identity }, message, rt.scratch);
   if (commit === null) throw repoUnreadable(repo);
-  return { id, name, tier, repo, branch, head: head.oid, commit, deadlineSeconds: rt.setting('git_deadline') };
+  return { id, name, tier, repo, branch, head: head.oid, commit, deadlineSeconds: rt.setting('git_deadline'), protectedSet };
 }
 
-// POST /v1/projects/:p/policy, a valid change (SEAM.md §27): validated whole
-// against the closed schema first; refused while the repository is held by
-// an observation; and a change that widens authority is not taken here.
+// POST /v1/projects/:p/policy (SEAM.md §§27, 66, 78): the submission is
+// split into its governed keys, which become a protected proposal, and its
+// ungoverned ones, validated whole against the closed schema. An ungoverned
+// change that widens authority is not prepared for a commit: it goes to the
+// queue. Otherwise the commit is prepared here, and refused while the
+// repository is held by an observation.
 export async function preparePolicy(rt: Runtime, project: string, body: unknown): Promise<Record<string, unknown>> {
   await rt.read('project.policy', { project });
-  const change = validatePolicySubmission(body);
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) validatePolicySubmission(body);
+  const all = body as Record<string, unknown>;
+  const governedKeys = Object.keys(all).filter((k) => (GOVERNED_KEYS as readonly string[]).includes(k));
+  const ordinaryBody = Object.fromEntries(Object.entries(all).filter(([k]) => !governedKeys.includes(k)));
+  const change = validatePolicySubmission(ordinaryBody);
   // What the project's journal has in hand (its bootstrap, an earlier policy
   // change) is settled first: the change is made on the branch they leave.
   await rt.services?.journal(project);
@@ -111,17 +126,57 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
     revision: number | null;
     blocking: string | null;
   }>('project.policy_facts', { project });
-  if (facts.blocking) throw policyRefusal(facts.blocking);
+  const ctx = repoContext(facts.repo);
   const widens = wideningKeys(facts.effective, change);
-  if (widens.length > 0) {
-    throw new Refusal(
-      501,
-      'unsupported',
-      `The change widens authority (${widens.join(', ')}): it needs a policy_widening decision, which this engine revision does not have.`,
-      'Nothing was changed. Lower limits only, or wait for the policy-widening route.',
-      { fields: widens },
-    );
+
+  let governed: Record<string, unknown> | null = null;
+  if (governedKeys.length > 0) {
+    if (facts.head === null) throw policyRefusal('repository');
+    let current: Record<string, unknown> = {};
+    try {
+      const text = await governedText(ctx, facts.head);
+      const parsed = text === null ? {} : (JSON.parse(text) as unknown);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) current = parsed as Record<string, unknown>;
+    } catch {
+      throw policyRefusal('repository');
+    }
+    const next = { ...current, ...Object.fromEntries(governedKeys.map((k) => [k, all[k]])) };
+    const content = `${JSON.stringify(next, null, 2)}\n`;
+    const tree = await treeWith(facts.repo, facts.head, { [GOVERNED_FILE]: content }, rt.scratch);
+    if (tree === null) throw policyRefusal('repository');
+    const changes = await diffTrees(ctx, facts.head, tree);
+    if (changes === null) throw policyRefusal('repository');
+    const rationale = await writeWholeRecord(rt, {
+      project,
+      run: null,
+      kind: 'proposal_rationale',
+      content: Buffer.from(`A human edited the governed field${governedKeys.length === 1 ? '' : 's'} ${governedKeys.join(', ')} through the policy route.\n`),
+    });
+    governed = {
+      head: facts.head,
+      tree,
+      diffHash: diffHashOf(changes),
+      changesRequiredSet: canonical(current.required_checks ?? null) !== canonical(next.required_checks ?? null),
+      rationale,
+    };
   }
+
+  let prepared: Record<string, unknown> | null = null;
+  if (widens.length === 0 && Object.keys(change).length > 0) {
+    if (facts.blocking) throw policyRefusal(facts.blocking);
+    prepared = await preparePolicyCommit(rt, project, facts, change);
+  }
+  return { project, body, ordinary: change, widens: widens.sort(), governed, prepared };
+}
+
+// The commit of `.surety/policy.json` holding the effective policy with
+// `change` applied, on the commit the integration branch is at.
+export async function preparePolicyCommit(
+  rt: Runtime,
+  project: string,
+  facts: { repo: string; branch: string; head: string | null; effective: Record<string, number>; revision: number | null },
+  change: Record<string, number>,
+): Promise<Record<string, unknown>> {
   const ctx = repoContext(facts.repo);
   const head = await readRef(ctx, `refs/heads/${facts.branch}`);
   if (head.state === 'unknown' || facts.head === null) throw policyRefusal('repository');
@@ -136,7 +191,14 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
   if (commit === null) throw policyRefusal('repository');
   const blob = await writeBlob(ctx, content);
   if (blob === null) throw policyRefusal('repository');
-  return { project, body, prepared: { head: facts.head, revision, commit, blob, effective: sorted, change, deadlineSeconds: rt.setting('git_deadline') } };
+  return { head: facts.head, revision, commit, blob, effective: sorted, change, deadlineSeconds: rt.setting('git_deadline') };
+}
+
+// The identity of a diff: its changes, path by path (SEAM.md §77).
+export function diffHashOf(changes: { status: string; path: string; newMode: string; newOid: string }[]): string {
+  return createHash('sha256')
+    .update(canonical(changes.map((c) => [c.status, c.path, c.newMode, c.newOid]).sort()))
+    .digest('hex');
 }
 
 // POST /v1/projects/:p/rebind: the new path must be a readable repository

@@ -14,13 +14,26 @@ import type { Tx } from './tx.js';
 
 export const TRANSITION_SCHEMA_VERSION = 1;
 
-export type DecisionKind = 'blocker' | 'stop_confirm' | 'abandon_confirm' | 'out_of_band_change';
+export type DecisionKind =
+  | 'blocker'
+  | 'stop_confirm'
+  | 'abandon_confirm'
+  | 'out_of_band_change'
+  | 'policy_widening'
+  | 'finding_disposition'
+  | 'severity_lower'
+  | 'finding_applicability_exclusion'
+  | 'check_correction_tightening'
+  | 'check_correction_loosening'
+  | 'check_correction_unclassifiable';
 
 export interface OptionSpec {
   key: string;
   label: string;
   consequence: string;
   effect: Record<string, unknown>;
+  // Reason codes that keep the option from being chosen now (SEAM.md §76).
+  blockers?: string[];
 }
 
 export interface DecisionRow {
@@ -43,36 +56,53 @@ export interface DecisionRow {
 export interface DecisionSpec {
   project: string;
   kind: DecisionKind;
-  subjectType: 'work_item' | 'run' | 'operation' | 'out_of_band_change';
+  subjectType: string;
   subjectId: string;
+  // The identity's scope: 'subject' unless a kind asks several questions
+  // about one subject (a policy widening: one per submitted change).
+  scope?: string | undefined;
   question: string;
   options: OptionSpec[];
   manifest: Record<string, unknown>;
-  blockedWorkItems?: string[];
-  blockedOperation?: string;
+  blockedWorkItems?: string[] | undefined;
+  blockedOperation?: string | undefined;
 }
 
 const SCOPE = 'subject';
 
-function optionsJson(options: OptionSpec[]) {
+export interface OptionJson {
+  key: string;
+  label: string;
+  effect_plan: Record<string, unknown>;
+  plan_hash: string;
+  consequence_text: string;
+  blockers: string[];
+}
+
+export function optionsJson(options: OptionSpec[]): OptionJson[] {
   return options.map((o) => ({
     key: o.key,
     label: o.label,
     effect_plan: o.effect,
     plan_hash: sha256(canonical({ key: o.key, effect_plan: o.effect })),
     consequence_text: o.consequence,
+    blockers: [...(o.blockers ?? [])].sort(),
   }));
 }
 
+// The preview hash (D1 §§9.7, 10.2): the identity, the options with their
+// plan hashes and blockers, the schema version and every manifest value.
+// Never the order of a submission, a presentation time or how often the
+// question was asked.
 export function previewHash(
   identity: { project: string; kind: string; subject_type: string; subject_id: string; semantic_generation: number; scope: string },
-  options: { key: string; plan_hash: string }[],
+  options: { key: string; plan_hash: string; blockers?: string[] }[],
   manifest: Record<string, unknown>,
 ): string {
   return sha256(
     canonical({
       identity,
-      options: options.map((o) => ({ key: o.key, plan_hash: o.plan_hash })),
+      options: options.map((o) => ({ key: o.key, plan_hash: o.plan_hash, blockers: o.blockers ?? [] })),
       transition_schema_version: TRANSITION_SCHEMA_VERSION,
       manifest,
     }),
@@ -88,22 +118,23 @@ const identityOf = (d: DecisionRow) => ({
   scope: d.scope,
 });
 
-// The preview hash of an existing decision against a manifest read now.
-export function currentPreview(d: DecisionRow, manifest: Record<string, unknown>): string {
-  return previewHash(identityOf(d), JSON.parse(d.options) as { key: string; plan_hash: string }[], manifest);
+// The preview hash of an existing decision against a manifest read now, and
+// the options as they are now (or as they were offered).
+export function currentPreview(d: DecisionRow, manifest: Record<string, unknown>, options?: OptionSpec[]): string {
+  return previewHash(identityOf(d), options ? optionsJson(options) : (JSON.parse(d.options) as OptionJson[]), manifest);
 }
 
 export function getDecision(tx: Tx, id: string): DecisionRow | undefined {
   return tx.db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(id) as DecisionRow | undefined;
 }
 
-export function openDecision(tx: Tx, project: string, kind: DecisionKind, subjectType: string, subjectId: string): DecisionRow | undefined {
+export function openDecision(tx: Tx, project: string, kind: DecisionKind, subjectType: string, subjectId: string, scope: string = SCOPE): DecisionRow | undefined {
   return tx.db
     .prepare(
-      `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = ? AND "subject_type" = ? AND "subject_id" = ? AND "status" = 'open'
+      `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = ? AND "subject_type" = ? AND "subject_id" = ? AND "scope" = ? AND "status" = 'open'
        ORDER BY "semantic_generation" DESC LIMIT 1`,
     )
-    .get(project, kind, subjectType, subjectId) as DecisionRow | undefined;
+    .get(project, kind, subjectType, subjectId, scope) as DecisionRow | undefined;
 }
 
 const decisionSubject = (d: { project: string; id: string; subject_type: string; subject_id: string; kind: string }) => ({
@@ -117,9 +148,10 @@ const decisionSubject = (d: { project: string; id: string; subject_type: string;
 // preview. An open one whose preview no longer matches its manifest is
 // invalidated and the next semantic generation is raised (D1 §4.6).
 export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
-  const open = openDecision(tx, spec.project, spec.kind, spec.subjectType, spec.subjectId);
+  const scope = spec.scope ?? SCOPE;
+  const open = openDecision(tx, spec.project, spec.kind, spec.subjectType, spec.subjectId, scope);
   if (open) {
-    if (currentPreview(open, spec.manifest) === open.preview_hash) return open;
+    if (currentPreview(open, spec.manifest, spec.options) === open.preview_hash) return open;
     invalidateDecision(tx, open, 'dependency manifest changed');
   }
   const { g } = tx.db
@@ -127,10 +159,10 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
       `SELECT COALESCE(MAX("semantic_generation"), 0) AS g FROM "decisions"
        WHERE "project" = ? AND "kind" = ? AND "subject_type" = ? AND "subject_id" = ? AND "scope" = ?`,
     )
-    .get(spec.project, spec.kind, spec.subjectType, spec.subjectId, SCOPE) as { g: number };
+    .get(spec.project, spec.kind, spec.subjectType, spec.subjectId, scope) as { g: number };
   const id = tx.newId('dec_');
   const seq = nextSeq(tx, spec.project, 'decisions');
-  const identity = { project: spec.project, kind: spec.kind, subject_type: spec.subjectType, subject_id: spec.subjectId, semantic_generation: g + 1, scope: SCOPE };
+  const identity = { project: spec.project, kind: spec.kind, subject_type: spec.subjectType, subject_id: spec.subjectId, semantic_generation: g + 1, scope };
   const options = optionsJson(spec.options);
   const preview = previewHash(identity, options, spec.manifest);
   const target = engineSettings().decision_targets[spec.kind] ?? null;
@@ -151,7 +183,7 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
       spec.subjectType,
       spec.subjectId,
       identity.semantic_generation,
-      SCOPE,
+      scope,
       spec.question,
       JSON.stringify(options),
       JSON.stringify(spec.manifest),
@@ -189,6 +221,12 @@ export function consumeDecision(tx: Tx, d: DecisionRow, option: string, note: st
 export function checkAnswer(tx: Tx, args: { project: string; decision: string; option: unknown; preview_hash: unknown }, manifest: (d: DecisionRow) => Record<string, unknown>): DecisionRow {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
+  if (d.status === 'invalidated') {
+    throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} was invalidated: what it was bound to changed, or its subject was settled another way.`, 'Read the current decision about its subject, if there is one.', {
+      decision: d.id,
+      status: d.status,
+    });
+  }
   if (d.status !== 'open') {
     throw new Refusal(409, 'decision_consumed', `Decision ${d.id} is ${d.status}, not open.`, 'Read the decision again; it cannot be answered twice.', { decision: d.id, status: d.status });
   }

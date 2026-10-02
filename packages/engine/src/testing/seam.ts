@@ -18,6 +18,7 @@
 // transaction until released, and another that holds the controlled clock's
 // offset, so both threads take the same time.
 
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -36,15 +37,29 @@ import type { Runtime } from '../runtime.js';
 import type { StoreClient } from '../store/client.js';
 import { appendCorrection } from '../store/transitions/ledger.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
+import type { ResultInput } from '../store/transitions/baseline.js';
+import type { ProtectedSet } from '../store/transitions/protected.js';
+import { protectedSetAt } from '../protected/set.js';
 import {
+  type PlanBody,
+  type ProjectBody,
   allocateFixtureReceipt,
   applyFixtureTransition,
+  findingProject,
+  installAlphaException,
+  installCheckResult,
+  installClassification,
+  installEnvironment,
+  installFixtureChecks,
   installFixturePlan,
   installFixtureProject,
   installFixtureTrigger,
-  type ProjectBody,
+  installReuse,
+  installScopeApproval,
+  parseAlphaException,
   parsePlanBody,
   parseProjectBody,
+  parseResultBody,
   projectRepo,
 } from './fixtures.js';
 
@@ -65,6 +80,11 @@ const MAIN_BARRIERS: readonly string[] = [
   'stream.chunk_durable',
   'stream.before_rename',
   'stream.published',
+  // SEAM.md §§76, 82: between a decision's consumption and its effect; a
+  // notification's delivery.
+  'intent.recorded',
+  'notify.before_delivery',
+  'notify.delivered',
   // SEAM.md §§33, 45: one per journal kind and boundary.
   ...JOURNAL_KINDS.flatMap((kind) => JOURNAL_BOUNDARIES.map((boundary) => `journal.${kind}.${boundary}`)),
 ];
@@ -279,6 +299,56 @@ export function seamObserveDomain(domain: string): DomainObservation {
   return live.length > 0 ? 'running' : 'terminated';
 }
 
+// ---- the scripted notification sink (main thread; SEAM.md §82) --------------------
+
+// The project's external notification channel: in harness mode, the program
+// notify.mjs in the scripted directory, if it is there. null: no channel.
+export function seamNotifyChannel(): string | null {
+  if (!init.harness || init.scripted === null) return null;
+  try {
+    readFileSync(join(init.scripted, 'notify.mjs'));
+    return 'scripted';
+  } catch {
+    return null;
+  }
+}
+
+const NOTIFY_DEADLINE_MS = 10_000;
+
+// One call of the sink, as one process with an argument array and a
+// deadline, never a shell: its exit status, or null for a signal, a
+// timeout or a program that could not be run (the sink cannot say).
+export function seamNotify(mode: 'deliver' | 'lookup', notification: { key: string; decision: string }): Promise<number | null> {
+  if (seamNotifyChannel() === null) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(process.execPath, [join(init.scripted!, 'notify.mjs'), mode, ...(mode === 'lookup' ? [notification.key] : [])], {
+        cwd: init.scripted!,
+        env: { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8' },
+        stdio: ['pipe', 'ignore', 'ignore'],
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolve(null);
+    }, NOTIFY_DEADLINE_MS);
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve(signal !== null ? null : code);
+    });
+    child.stdin!.on('error', () => {});
+    child.stdin!.end(mode === 'deliver' ? `${JSON.stringify(notification)}\n` : '');
+  });
+}
+
 // ---- the journal's probes (main thread) ----------------------------------------
 
 // --harness-probe (SEAM.md §45): the outcome every probe of the journal kind
@@ -326,6 +396,14 @@ const OP = {
   fixtureProject: 'harness.fixture_project',
   fixtureTrigger: 'harness.fixture_trigger',
   fixturePlan: 'harness.fixture_plan',
+  fixtureChecks: 'harness.fixture_checks',
+  fixtureResult: 'harness.fixture_result',
+  fixtureEnvironment: 'harness.fixture_environment',
+  fixtureClassification: 'harness.fixture_classification',
+  fixtureApproval: 'harness.fixture_approval',
+  fixtureAlphaException: 'harness.fixture_alpha_exception',
+  fixtureReuse: 'harness.fixture_reuse',
+  findingProject: 'harness.finding_project',
   projectRepo: 'harness.project_repo',
   workTransition: 'harness.work_transition',
   allocate: 'harness.allocate',
@@ -458,7 +536,9 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       if (head === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository or its integration branch could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
       const checkouts = await integrationCheckouts(hooks.scratch(), b.dev_repo_path, b.integration_branch);
       if (checkouts === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
-      return storeOp(OP.fixtureProject, { body: b, head, checkouts, actor: hooks.actor });
+      const protectedSet = await protectedSetAt(b.dev_repo_path, head);
+      if (protectedSet === null) throw new Refusal(409, 'repo_unreadable', 'The protected set of the fixture repository could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
+      return storeOp(OP.fixtureProject, { body: b, head, checkouts, protectedSet, actor: hooks.actor });
     });
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'trigger') {
@@ -478,6 +558,37 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       const base = await branchHead(repoContext(repo.repo), repo.branch);
       if (base === null) throw new Refusal(409, 'repo_unreadable', 'The project repository could not be read.', 'Check the fixture repository.', { project: plan.project });
       return storeOp(OP.fixturePlan, { ...plan, baseRevision: base, actor: hooks.actor });
+    });
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'checks') return route(201, (body) => storeOp(OP.fixtureChecks, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'check-result') {
+    return route(201, async (body) => {
+      const parsed = parseResultBody(body);
+      const { outputText, ...result } = parsed;
+      // The output is published through the record path before the result
+      // names it (SEAM.md §67).
+      let output: string | null = null;
+      if (outputText !== null) {
+        const rt = hooks.runtime();
+        const { writeWholeRecord } = await import('../records/files.js');
+        output = await writeWholeRecord(rt, { project: result.project, run: null, kind: 'check_output', content: Buffer.from(outputText) });
+      }
+      return storeOp(OP.fixtureResult, { args: { ...result, output }, actor: hooks.actor });
+    });
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'environment') return route(201, (body) => storeOp(OP.fixtureEnvironment, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') return route(200, (body) => storeOp(OP.fixtureClassification, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'approval') return route(201, (body) => storeOp(OP.fixtureApproval, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'evidence-reuse') return route(201, (body) => storeOp(OP.fixtureReuse, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'alpha-exception') {
+    return route(201, async (body) => {
+      const parsed = parseAlphaException(body);
+      const project = (await storeOp(OP.findingProject, { finding: parsed.finding })) as string | null;
+      if (project === null) throw new Refusal(404, 'not_found', `No finding "${parsed.finding}".`, 'Check the finding id.', { finding: parsed.finding });
+      const rt = hooks.runtime();
+      const { writeWholeRecord } = await import('../records/files.js');
+      const record = await writeWholeRecord(rt, { project, run: null, kind: 'containment_evidence', content: Buffer.from(parsed.containment) });
+      return storeOp(OP.fixtureAlphaException, { args: { finding: parsed.finding, record, purpose: parsed.purpose }, actor: hooks.actor });
     });
   }
   if (s.length === 3 && s[0] === 'work' && s[2] === 'transition') {
@@ -512,11 +623,27 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
   const a = args as { body: unknown; actor: Actor } & Record<string, unknown>;
   switch (op) {
     case OP.fixtureProject:
-      return installFixtureProject(store(), a.actor, a as unknown as { body: ProjectBody; head: string; checkouts: { path: string; baseline: Baseline }[] });
+      return installFixtureProject(store(), a.actor, a as unknown as { body: ProjectBody; head: string; checkouts: { path: string; baseline: Baseline }[]; protectedSet: ProtectedSet });
     case OP.fixtureTrigger:
       return installFixtureTrigger(store(), a.actor, a.body);
     case OP.fixturePlan:
-      return installFixturePlan(store(), a.actor, a as unknown as { project: string; baseRevision: string; stages: { number: number; goal: string }[] });
+      return installFixturePlan(store(), a.actor, a as unknown as PlanBody & { baseRevision: string });
+    case OP.fixtureChecks:
+      return installFixtureChecks(store(), a.actor, a.body);
+    case OP.fixtureResult:
+      return installCheckResult(store(), a.actor, a.args as unknown as ResultInput);
+    case OP.fixtureEnvironment:
+      return installEnvironment(store(), a.actor, a.body);
+    case OP.fixtureClassification:
+      return installClassification(store(), a.actor, a.body);
+    case OP.fixtureApproval:
+      return installScopeApproval(store(), a.actor, a.body);
+    case OP.fixtureAlphaException:
+      return installAlphaException(store(), a.actor, a.args as { finding: string; record: string; purpose: string });
+    case OP.fixtureReuse:
+      return installReuse(store(), a.actor, a.body);
+    case OP.findingProject:
+      return findingProject(store(), a.finding as string);
     case OP.projectRepo:
       return projectRepo(store(), a.project as string);
     case OP.workTransition:

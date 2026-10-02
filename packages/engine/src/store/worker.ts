@@ -80,6 +80,13 @@ import {
 import { type EngineSettings, setEngineSettings } from './transitions/settings.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
+import { captureRunProposal, recordRunReport } from './transitions/accept.js';
+import { ancestryPairs, recordAncestry } from './transitions/evidence.js';
+import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from './transitions/gates.js';
+import { beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
+import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
+import { applicationFacts, beginApplication } from './transitions/protected.js';
+import { answerBatch, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 
 export interface WorkerData {
   file: string;
@@ -108,7 +115,7 @@ const ok = (body: unknown): CommandResult => ({ status: 200, body });
 const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.pause': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: true })),
   'project.resume': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: false })),
-  'project.policy_submit': (tx, a) => ({ status: 200, body: submitPolicy(tx, a), effects: [{ kind: 'journal', project: a.project }] }),
+  'project.policy_submit': (tx, a) => submitPolicy(tx, a),
   'project.create': (tx, a) => ({ status: 201, body: bootstrapProject(tx, a), effects: [{ kind: 'journal', project: a.id }] }),
   'project.tick': (tx, a: { project: string }) => requestTick(tx, a),
   'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
@@ -117,6 +124,9 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
+  'decision.answer_batch': (tx, a) => answerBatch(tx, a),
+  'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
+  'authorization.propose': (tx, a) => proposeAuthorization(tx, a),
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
 };
 
@@ -137,6 +147,19 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.stored': (d) => storedRecords(d),
   'records.expirable': (d, a: { now: string }) => expirableRecords(d, a.now),
   'records.referenced': (d) => referencedRecords(d),
+  'ancestry.pairs': (d, a: { project: string }) => ancestryPairs(d, a),
+  'project.repo': (d, a: { project: string }) => {
+    const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
+    return row ? { repo: row.dev_repo_path } : null;
+  },
+  'gate.facts': (d, a: { project: string; candidate: string }) => gateFactsRead(d, a),
+  'gates.due': (d, a: { project: string }) => dueStageGates(d, a),
+  'candidate.revision': (d, a: { candidate: string }) => (d.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ?').get(a.candidate) as { revision: string } | undefined)?.revision ?? null,
+  'decision.subject': (d, a: { project: string; decision: string }) => decisionSubjectRead(d, a),
+  'intent.row': (d, a: { intent: string }) => intentRow(d, a),
+  'effects.due': (d, a: { project: string }) => effectsDue(d, a),
+  'oob.stash_kept': (d, a: { intent: string }) => stashKept(d, a),
+  'notify.due': (d, a: { project: string }) => notificationsDue(d, a),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -189,6 +212,20 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'record.scan': (tx, a) => recordScan(tx, a),
   'record.expire': (tx, a) => expireRecord(tx, a),
   'record.audited': (tx, a) => recordAudited(tx, a),
+  'ancestry.record': (tx, a) => recordAncestry(tx, a),
+  'gate.evaluate': (tx, a) => evaluateGate(tx, a),
+  'decisions.review': (tx, a) => reviewDecisions(tx, a),
+  'accept.record_report': (tx, a) => recordRunReport(tx, a),
+  'accept.capture_proposal': (tx, a) => captureRunProposal(tx, a),
+  'protected.application_facts': (tx, a) => applicationFacts(tx, a),
+  'protected.begin_application': (tx, a) => beginApplication(tx, a, a.intent ? (t: Tx) => revalidateIntent(t, a.intent, a.facts ?? {}) : null),
+  'intent.revalidate': (tx, a) => revalidate(tx, a),
+  'policy.begin_widening': (tx, a) => beginWidening(tx, a),
+  'oob.stash_facts': (tx, a) => stashFacts(tx, a),
+  'oob.begin_stash': (tx, a) => beginStash(tx, a),
+  'oob.stashed': (tx, a) => stashed(tx, a),
+  'notify.sending': (tx, a) => notificationSending(tx, a),
+  'notify.outcome': (tx, a) => notificationOutcome(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

@@ -5,7 +5,7 @@
 
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
-import { raiseDecision } from './decisions.js';
+import { raiseQuestion } from './queue.js';
 import type { EventType, Tx } from './tx.js';
 import {
   DISPATCHABLE,
@@ -190,6 +190,8 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
 export interface PlanStageInput {
   number: number;
   goal: string;
+  // The requirements the stage implements (ids), from an approved baseline.
+  implements?: string[];
 }
 
 // Register a phase plan's stages and the stage_build work of each (D1 §7.8:
@@ -214,9 +216,9 @@ export function registerPlan(
     tx.db
       .prepare(
         `INSERT INTO "stages" ("id", "created_at", "project", "phase_plan", "number", "goal", "modules", "requirement_ids", "implements", "status")
-         VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', 'planned')`,
+         VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, 'planned')`,
       )
-      .run(id, tx.at, args.project, plan, stage.number, stage.goal);
+      .run(id, tx.at, args.project, plan, stage.number, stage.goal, JSON.stringify(stage.implements ?? []), JSON.stringify(stage.implements ?? []));
     const made = observeTrigger(
       tx,
       { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0 },
@@ -255,20 +257,6 @@ export function chainBoundary(tx: Tx, args: { workItem: string }): void {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.status !== 'eligible') return;
   if (item.blocker !== null) return;
-  const decision = raiseDecision(tx, {
-    project: item.project,
-    kind: 'blocker',
-    subjectType: 'work_item',
-    subjectId: item.id,
-    question:
-      `Work item ${item.id} (${item.kind}) was created by the outcome of a run, and the project's max_chained_roles does not let it run ` +
-      'without a person. Continue to let the scheduler dispatch it, or cancel it.',
-    options: [
-      { key: 'continue', label: 'Continue', consequence: 'The work starts a new chain and the scheduler dispatches it.', effect: { work_item: item.id, chain: 0 } },
-      { key: 'cancel', label: 'Cancel', consequence: 'The work is cancelled without a launch.', effect: { work_item: item.id, to: 'cancelled' } },
-    ],
-    manifest: { work_item: item.id, status: 'eligible', reason: 'max_chained_roles' },
-    blockedWorkItems: [item.id],
-  });
-  tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'max_chained_roles', raised_at: tx.at, decision: decision.id }), item.id);
+  tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'max_chained_roles', raised_at: tx.at, decision: null }), item.id);
+  raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
 }

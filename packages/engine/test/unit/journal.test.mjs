@@ -99,10 +99,10 @@ test('a link that leads out of the workspace through another link is a diff viol
     return g('write-tree');
   };
   const caps = { files: 100, bytes: 1 << 20, fileBytes: 1 << 20 };
-  const inside = await validateDiff(repo, base, mk({ 'dir/inner': '../a.txt' }), 'builder', caps);
+  const inside = await validateDiff(repo, base, mk({ 'dir/inner': '../a.txt' }), 'builder', caps, ['.surety/checks/']);
   assert.equal(inside.violation, null);
-  const viaDot = await validateDiff(repo, base, mk({ x: 'y/..', y: '.' }), 'builder', caps);
+  const viaDot = await validateDiff(repo, base, mk({ x: 'y/..', y: '.' }), 'builder', caps, ['.surety/checks/']);
   assert.equal(viaDot.violation?.klass, 'diff_violation', 'x resolves through y to the parent of the workspace');
-  const absolute = await validateDiff(repo, base, mk({ leak: '/etc/hostname' }), 'builder', caps);
+  const absolute = await validateDiff(repo, base, mk({ leak: '/etc/hostname' }), 'builder', caps, ['.surety/checks/']);
   assert.equal(absolute.violation?.klass, 'diff_violation');
 });
