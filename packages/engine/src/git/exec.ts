@@ -234,9 +234,27 @@ function gitEnv(home: string, operation: string | undefined, extra: Record<strin
     GIT_ATTR_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0',
     GIT_OPTIONAL_LOCKS: '0',
+    // Engine git never contacts a remote and never runs a program a remote's
+    // configuration names (E37 item 1). An object that is not present is
+    // missing; in a partial clone git would otherwise fetch it on demand and
+    // run the remote's upload-pack, from any command that looks an object
+    // up. Both settings are read by git itself, inside every git process
+    // this call starts, so no configuration file and no rewrite of one can
+    // outrank them. GIT_NO_LAZY_FETCH stops the on-demand fetch from git
+    // 2.44 (and where a distribution backported it). GIT_ALLOW_PROTOCOL
+    // holds for every git version the engine
+    // supports: set, it is an allow list that overrides every
+    // `protocol.*.allow` setting, and empty it allows no transport at all,
+    // so the fetch git 2.43 still starts is refused before it connects or
+    // runs any transport program (upload-pack, ssh, a remote helper).
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_ALLOW_PROTOCOL: '',
     [GIT_INCARNATION_MARKER]: gitSettings().incarnation,
     ...extra,
   };
+  // Neither may be loosened by a caller's extra variables.
+  env.GIT_NO_LAZY_FETCH = '1';
+  env.GIT_ALLOW_PROTOCOL = '';
   if (operation !== undefined) env[GIT_OPERATION_MARKER] = operation;
   return env;
 }
