@@ -13,7 +13,9 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Interface, createInterface } from 'node:readline';
+import { performance } from 'node:perf_hooks';
+import type { Readable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 
 import { repoContext } from '../git/exec.js';
 import { addWorktree, branchHead } from '../git/worktree.js';
@@ -242,7 +244,8 @@ export class Launcher {
     }
 
     // The role's callbacks, one at a time, in the order sent, until the role
-    // has exited and what it wrote before its exit has been read (SEAM.md §13).
+    // has exited and what it wrote before its exit has been read, or its
+    // output has ended (SEAM.md §13).
     try {
       for (let line = await output.next(); line !== null; line = await output.next()) {
         await this.callback(handle, line).catch((err) => log('callback', err, { run: claim.run }));
@@ -253,8 +256,14 @@ export class Launcher {
       // terminated by the run-end protocol.
       output.close();
     }
-    // The output closed first: wait for the exit status, but not for ever.
-    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
+    // The end of the output is not the role's exit: a role may close its
+    // standard output and go on working, and nothing begins until it exits
+    // (SEAM.md §13). Meanwhile the engine holds the run as before: it renews
+    // the lease while the process lives, and a deadline, Stop or Abandon ends
+    // the run as for any role. Should the exit never be delivered, the
+    // process is no longer held once /proc shows it gone, its lease expires,
+    // and the tick reconciles the run.
+    await exited;
     this.childDone(handle);
   }
 
@@ -297,33 +306,58 @@ export class Launcher {
 // DRAIN_QUIET_MS, and never longer than DRAIN_CAP_MS. A role's last lines may
 // still be in the pipe when its exit is reported; a descendant that holds the
 // pipe open does not hold the run (SEAM.md §13, "When the role exits").
+// Measured on the monotonic clock, so a wall clock that steps back cannot
+// stretch or shorten the drain.
 const DRAIN_QUIET_MS = 250;
 const DRAIN_CAP_MS = 2000;
 
-// The role's standard output, as protocol lines.
+// The role's standard output, as protocol lines. When the engine stops
+// reading, at the end of the stream or after the role's exit, whatever it has
+// read after the last line ending is a line like any other (E27 item 1).
 class RoleOutput {
   private readonly lines: string[] = [];
+  private readonly decoder = new StringDecoder('utf8');
+  private partial = '';
   private closed = false;
   private exitAt: number | null = null;
-  private lastLineAt = 0;
+  private lastDataAt = 0;
   private wake: (() => void) | null = null;
-  private readonly reader: Interface;
+  private readonly stream: Readable;
 
-  constructor(private readonly child: ChildProcess) {
-    this.reader = createInterface({ input: child.stdout! });
-    this.reader.on('line', (line) => {
-      this.lines.push(line);
-      this.lastLineAt = Date.now();
+  constructor(child: ChildProcess) {
+    this.stream = child.stdout!;
+    this.stream.on('data', (chunk: Buffer) => {
+      if (this.closed) return;
+      this.take(this.decoder.write(chunk));
+      this.lastDataAt = performance.now();
       this.wake?.();
     });
-    this.reader.on('close', () => {
-      this.closed = true;
-      this.wake?.();
-    });
+    const ended = () => this.stop();
+    this.stream.once('end', ended);
+    this.stream.once('close', ended);
+    this.stream.on('error', ended);
+  }
+
+  private take(text: string): void {
+    const parts = (this.partial + text).split('\n');
+    this.partial = parts.pop()!;
+    for (const part of parts) this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
+  }
+
+  // No more is read. The text after the last line ending, if any, is the
+  // last line.
+  private stop(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.take(this.decoder.end());
+    const last = this.partial.endsWith('\r') ? this.partial.slice(0, -1) : this.partial;
+    this.partial = '';
+    if (last !== '') this.lines.push(last);
+    this.wake?.();
   }
 
   exited(): void {
-    this.exitAt = Date.now();
+    this.exitAt = performance.now();
     this.wake?.();
   }
 
@@ -335,9 +369,12 @@ class RoleOutput {
       if (this.closed) return null;
       let waitMs: number | null = null;
       if (this.exitAt !== null) {
-        const now = Date.now();
-        const quietFor = now - Math.max(this.exitAt, this.lastLineAt);
-        if (quietFor >= DRAIN_QUIET_MS || now - this.exitAt >= DRAIN_CAP_MS) return null;
+        const now = performance.now();
+        const quietFor = now - Math.max(this.exitAt, this.lastDataAt);
+        if (quietFor >= DRAIN_QUIET_MS || now - this.exitAt >= DRAIN_CAP_MS) {
+          this.stop();
+          continue;
+        }
         waitMs = Math.min(DRAIN_QUIET_MS - quietFor, DRAIN_CAP_MS - (now - this.exitAt));
       }
       await new Promise<void>((resolve) => {
@@ -352,8 +389,10 @@ class RoleOutput {
     }
   }
 
+  // Stop reading; a descendant may still hold the pipe open.
   close(): void {
-    this.reader.close();
-    if (!this.closed) this.child.stdout?.destroy();
+    this.stop();
+    this.stream.removeAllListeners('data');
+    this.stream.destroy();
   }
 }
