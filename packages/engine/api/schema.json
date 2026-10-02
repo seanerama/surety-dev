@@ -2521,6 +2521,9 @@
         },
         "report_recorded": {
           "required": true
+        },
+        "content_hash": {
+          "required": false
         }
       }
     },
