@@ -344,7 +344,7 @@ export class Launcher {
       await this.rt.heartbeat(handle);
     } else if (m.type === 'usage') {
       if ((m.semantics !== 'cumulative' && m.semantics !== 'delta') || typeof m.raw !== 'object' || m.raw === null || Array.isArray(m.raw)) return;
-      const recorded = await this.rt.role<boolean>('run.usage', run, { run, generation, invocation, semantics: m.semantics, raw: redactValue(m.raw) });
+      const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: m.semantics, raw: redactValue(m.raw) });
       if (recorded) await this.checkBudget(handle);
     } else if (m.type === 'result') {
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
@@ -388,6 +388,37 @@ export class Launcher {
       limit = 'budget_unreadable';
     }
     if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit });
+  }
+
+  // A usage observation is never lost silently (E37 item 3). A store failure
+  // while recording it is retried, at the waits used for a result
+  // (RESULT_RETRY_MS), so that after one failed write the durable facts are
+  // those of the same run with no failure: the observation in the ledger and
+  // the budget checked on it. Only a store failure is retried, which rolled
+  // its transaction back; none is made once the engine has decided to end the
+  // run, whose outcome then marks its usage incomplete. If the observation
+  // still cannot be recorded, the run is stopped as it is when the budget
+  // cannot be read: its budget can no longer be known, and the run does not
+  // go on without one (D1 §6.6). A run so stopped is engine-ended, so its
+  // ledger row is charged with usage incomplete. Returns whether the
+  // observation was recorded.
+  private async recordUsage(handle: RunHandle, args: { run: string; generation: number; invocation: string; semantics: 'cumulative' | 'delta'; raw: unknown }): Promise<boolean> {
+    const { run } = handle.claim;
+    for (let attempt = 0; ; attempt++) {
+      if (handle.ending) return false;
+      try {
+        return await this.rt.role<boolean>('run.usage', run, args);
+      } catch (err) {
+        const retryIn = RESULT_RETRY_MS[attempt];
+        if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) {
+          log('usage', err, { run, attempt: attempt + 1, lost: true });
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' });
+          return false;
+        }
+        log('usage', err, { run, attempt: attempt + 1, retry_in_ms: retryIn });
+        await new Promise((resolve) => setTimeout(resolve, retryIn));
+      }
+    }
   }
 
   // The result is the work the role was run for, so a store failure while
