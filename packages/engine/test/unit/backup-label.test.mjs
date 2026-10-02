@@ -1,11 +1,13 @@
 // Developer tests for E37 item 4: a backup is labeled complete only if every
-// commit its manifest lists is in its project's repository when it is taken.
+// commit its manifest lists is in its project's repository when it is taken;
+// otherwise it is refused (exit status 7, backup_incomplete) and nothing it
+// wrote is left behind.
 // The store is a scratch one, migrated, with one project whose registered
 // refs name the commits the backup lists.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -16,7 +18,7 @@ import Database from 'better-sqlite3';
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(pkg, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
-const { backupStore } = await import(join(dist, 'store', 'backup.js'));
+const { STORE_EXIT, backupStore } = await import(join(dist, 'store', 'backup.js'));
 
 const MISSING = '1234567890123456789012345678901234567890';
 
@@ -60,17 +62,28 @@ test('every listed commit present: complete', async (t) => {
   assert.equal(manifestOf(done).label, 'complete');
 });
 
-test('a listed commit gone from the repository: incomplete for recovery', async (t) => {
-  const home = fixture(t, { oids: ['HEAD', MISSING] });
-  const done = await backupStore(home, { databaseOnly: false });
-  assert.equal(done.label, 'incomplete_for_recovery');
-  const manifest = manifestOf(done);
-  assert.equal(manifest.label, 'incomplete_for_recovery');
-  assert.ok(manifest.git[0].objects.includes(MISSING), 'the manifest still lists what the store refers to');
+async function assertRefused(home, object) {
+  await assert.rejects(backupStore(home, { databaseOnly: false }), (err) => {
+    assert.equal(err.status, STORE_EXIT.refused);
+    assert.equal(err.refusal.code, 'backup_incomplete');
+    if (object) assert.equal(err.refusal.subject.object, object);
+    return true;
+  });
+  const backups = join(home, 'backups');
+  assert.deepEqual(existsSync(backups) ? readdirSync(backups) : [], [], 'nothing is left that could be taken for a backup');
+}
+
+test('a listed commit gone from the repository: refused, nothing left', async (t) => {
+  await assertRefused(fixture(t, { oids: ['HEAD', MISSING] }), MISSING);
 });
 
-test('a repository that cannot be read: incomplete for recovery', async (t) => {
-  const home = fixture(t, { repoPath: '/nonexistent/surety-unit-repo' });
-  const done = await backupStore(home, { databaseOnly: false });
+test('a repository that cannot be read: refused', async (t) => {
+  await assertRefused(fixture(t, { repoPath: '/nonexistent/surety-unit-repo' }));
+});
+
+test('a database-only copy does not look at the repository', async (t) => {
+  const home = fixture(t, { oids: [MISSING] });
+  const done = await backupStore(home, { databaseOnly: true });
   assert.equal(done.label, 'incomplete_for_recovery');
+  assert.equal(manifestOf(done).label, 'incomplete_for_recovery');
 });

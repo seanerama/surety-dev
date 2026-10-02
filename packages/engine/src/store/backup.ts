@@ -118,7 +118,7 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
         source.close();
       }
       syncFile(join(dir, 'store.db'));
-      let label: Manifest['label'] = opts.databaseOnly ? 'incomplete_for_recovery' : 'complete';
+      const label: Manifest['label'] = opts.databaseOnly ? 'incomplete_for_recovery' : 'complete';
       const manifest: Manifest = { label, store: { file: 'store.db', ...fileDigest(join(dir, 'store.db')) }, records: [], git: [] };
       if (!opts.databaseOnly) {
         const snapshot = new Database(join(dir, 'store.db'), { readonly: true, fileMustExist: true });
@@ -145,12 +145,20 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
         syncDirectory(join(dir, 'records'));
         manifest.git = closure.git;
         // The commits are not copied, so the backup is complete only if every
-        // commit it lists is in its project's repository now (E37 item 4). A
-        // commit that is gone, or a repository that cannot be read, makes it
-        // a backup that cannot be restored: labeled as one, as a copy of the
-        // database alone is (SEAM.md §59).
-        if (!(await commitsPresent(home, closure))) label = 'incomplete_for_recovery';
-        manifest.label = label;
+        // commit it lists is in its project's repository now (E37 item 4;
+        // E32 item 6). A commit that is gone, or a repository that cannot be
+        // read, makes it a backup that could not be restored: it is refused,
+        // and what was written is removed, so nothing says `complete`
+        // (SEAM.md §59, "A backup that cannot be complete").
+        const missing = await missingCommit(home, closure);
+        if (missing !== null) {
+          throw refused(
+            'backup_incomplete',
+            `Commit ${missing.object} of project ${missing.project} is listed by the store and is not in its repository (${missing.repo}), so a backup would not be complete.`,
+            'Restore the commit to the repository, or take a database-only copy, which is labeled incomplete for recovery. Nothing was kept.',
+            missing,
+          );
+        }
       }
       writeFileDurable(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
       syncDirectory(dirname(dir));
@@ -162,18 +170,19 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
   });
 }
 
-// Is every commit the closure lists in the repository its project is bound to?
-async function commitsPresent(home: string, closure: { git: Manifest['git']; repos: Map<string, string> }): Promise<boolean> {
+// The first commit the closure lists that is not in the repository its
+// project is bound to, or null if every one is there.
+async function missingCommit(home: string, closure: { git: Manifest['git']; repos: Map<string, string> }): Promise<{ project: string; repo: string; object: string } | null> {
   configureGit({ deadlineSeconds: 60, outputCap: 8 << 20, home, incarnation: 'backup' });
   for (const entry of closure.git) {
     const repo = closure.repos.get(entry.project);
-    if (repo === undefined) return false;
     for (const oid of entry.objects) {
+      if (repo === undefined) return { project: entry.project, repo: '(none)', object: oid };
       const found = await git(repoContext(repo), ['cat-file', '-e', `${oid}^{commit}`]);
-      if (found.code !== 0) return false;
+      if (found.code !== 0) return { project: entry.project, repo, object: oid };
     }
   }
-  return true;
+  return null;
 }
 
 function readManifest(dir: string): Manifest {
@@ -207,12 +216,7 @@ export async function restoreStore(home: string, opts: { from: string; bind: Map
     const dir = resolve(opts.from);
     const manifest = readManifest(dir);
     if (manifest.label === 'incomplete_for_recovery') {
-      throw refused(
-        'incomplete_for_recovery',
-        'The backup is labeled incomplete for recovery: it is a copy of the database alone, or a commit it lists was not in its repository when it was taken.',
-        'Restore from a complete backup.',
-        { label: manifest.label },
-      );
+      throw refused('incomplete_for_recovery', 'The backup is a copy of the database alone, labeled incomplete for recovery: it holds no records and lists no repository objects.', 'Restore from a complete backup.', { label: manifest.label });
     }
     if (manifest.label !== 'complete') throw incomplete(`its label is ${String(manifest.label)}`);
     const storeFile = verifyMember(dir, manifest.store);
