@@ -32,13 +32,15 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { ENDINGS, STAGES, assertCell, matrixCells, reference } from './harness/endings.mjs';
+import { ENDINGS, STAGES, assertCell, matrixCells, reference, throughIntegration } from './harness/endings.mjs';
 
 const cells = matrixCells();
 assert.ok(cells.length >= 60, 'the contract table carries the matrix');
 for (const cell of cells) assert.ok(STAGES.includes(cell.fault.stage) && typeof cell.fault.event_type === 'string', `a cell names its event and stage: ${JSON.stringify(cell)}`);
 
-for (const [name, spec] of Object.entries(ENDINGS)) {
+// The endings that pass through a commit or an integration are generated
+// into M15-run-end-fault-matrix-integration.test.mjs.
+for (const [name, spec] of Object.entries(ENDINGS).filter(([, ending]) => !throughIntegration(ending))) {
   describe(`M15 ending a run is repeatable: ${spec.title}`, () => {
     test(`${spec.title}, with no fault: the reference ends as the contract table says`, async () => {
       await reference(name);
