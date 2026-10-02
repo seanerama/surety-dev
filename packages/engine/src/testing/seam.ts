@@ -31,8 +31,11 @@ import type { Baseline } from '../store/transitions/repo.js';
 import type { BackendSpec, DomainObservation } from '../invoke/backend.js';
 import { markedProcesses } from '../invoke/processes.js';
 import { Refusal } from '../refusal.js';
+import { holdSecret, registerDetector } from '../records/redact.js';
+import type { Runtime } from '../runtime.js';
 import type { StoreClient } from '../store/client.js';
-import type { Actor } from '../store/transitions/tx.js';
+import { appendCorrection } from '../store/transitions/ledger.js';
+import { type Actor, transact } from '../store/transitions/tx.js';
 import {
   allocateFixtureReceipt,
   applyFixtureTransition,
@@ -57,6 +60,11 @@ const MAIN_BARRIERS: readonly string[] = [
   'launch.before_ownership',
   'run.result_received',
   'run_end.before_ended',
+  // SEAM.md §56: a streamed record's four crash points.
+  'stream.before_registration',
+  'stream.chunk_durable',
+  'stream.before_rename',
+  'stream.published',
   // SEAM.md §§33, 45: one per journal kind and boundary.
   ...JOURNAL_KINDS.flatMap((kind) => JOURNAL_BOUNDARIES.map((boundary) => `journal.${kind}.${boundary}`)),
 ];
@@ -84,7 +92,14 @@ export interface SeamInit {
   probes: Record<string, string>;
 }
 
-type Fault = { point: 'before_event'; event_type: string } | { point: 'audit_write' };
+// A fault fires for the next `times` matching transactions or reads (SEAM.md
+// §61), then is gone.
+type FaultSpec =
+  | { point: 'before_event'; event_type: string }
+  | { point: 'audit_write' }
+  | { point: 'budget_read'; project: string }
+  | { point: 'lease_read' };
+type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
@@ -296,6 +311,8 @@ export interface SeamRequestHooks {
   actor: Actor;
   // The engine home and its scratch directory.
   scratch: () => { home: string; scratch: string };
+  // The running engine's services, for the routes that act through them.
+  runtime: () => Runtime;
 }
 
 export interface SeamRoute {
@@ -313,6 +330,8 @@ const OP = {
   workTransition: 'harness.work_transition',
   allocate: 'harness.allocate',
   armFault: 'harness.arm_fault',
+  clearFaults: 'harness.clear_faults',
+  correction: 'harness.ledger_correction',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -336,7 +355,8 @@ function advanceClock(body: unknown): { now: string } {
 
 function armTickFault(body: Record<string, unknown>): TickFault {
   const ok =
-    Object.keys(body).every((k) => ['point', 'step', 'project', 'delay_ms'].includes(k)) &&
+    Object.keys(body).every((k) => ['point', 'step', 'project', 'delay_ms', 'times'].includes(k)) &&
+    (body.times === undefined || (typeof body.times === 'number' && Number.isInteger(body.times) && body.times >= 1)) &&
     (body.step === 'recover' || body.step === 'journal' || body.step === 'integrity') &&
     typeof body.project === 'string' &&
     typeof body.delay_ms === 'number' &&
@@ -344,7 +364,7 @@ function armTickFault(body: Record<string, unknown>): TickFault {
     body.delay_ms >= 0;
   if (!ok) throw new Refusal(400, 'invalid_value', 'Unknown tick_step fault.', 'Send {"point":"tick_step","step":"recover"|"journal"|"integrity","project":...,"delay_ms":<n>}.', { field: 'point' });
   const fault: TickFault = { point: 'tick_step', step: body.step as TickFault['step'], project: body.project as string, delay_ms: body.delay_ms as number };
-  tickFaults.push(fault);
+  for (let i = 0; i < ((body.times as number | undefined) ?? 1); i++) tickFaults.push(fault);
   return fault;
 }
 
@@ -378,7 +398,55 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       },
     };
   }
+  if (s.length === 1 && s[0] === 'faults' && method === 'DELETE') {
+    return {
+      restricted: false,
+      handler: async () => {
+        tickFaults.length = 0;
+        await storeOp(OP.clearFaults, {});
+        return { status: 200, body: { faults: [] } };
+      },
+    };
+  }
   if (!post) return null;
+  if (s.length === 2 && s[0] === 'ledger' && s[1] === 'corrections') {
+    return {
+      restricted: false,
+      handler: async () => {
+        const result = (await storeOp(OP.correction, { body: await hooks.body(), actor: hooks.actor })) as { id: string; created: boolean };
+        return { status: result.created ? 201 : 200, body: { ledger_row: { id: result.id }, created: result.created } };
+      },
+    };
+  }
+  if (s.length === 1 && s[0] === 'secrets') {
+    return route(200, async (body) => {
+      const b = isObject(body) ? body : {};
+      if (typeof b.ref !== 'string' || b.ref.length === 0 || typeof b.value !== 'string' || b.value.length === 0 || Object.keys(b).some((k) => k !== 'ref' && k !== 'value')) {
+        throw new Refusal(400, 'invalid_value', 'A secret needs a "ref" and a non-empty "value".', 'Send {"ref": <name>, "value": <the secret>}.', { field: 'value' });
+      }
+      holdSecret(b.ref, b.value);
+      // The value is held in memory only and never answered back.
+      return { held: b.ref };
+    });
+  }
+  if (s.length === 1 && s[0] === 'detectors') {
+    return route(200, async (body) => {
+      const b = isObject(body) ? body : {};
+      if (typeof b.name !== 'string' || b.name.length === 0 || typeof b.pattern !== 'string' || b.pattern.length === 0 || Object.keys(b).some((k) => k !== 'name' && k !== 'pattern')) {
+        throw new Refusal(400, 'invalid_value', 'A detector needs a "name" and a "pattern".', 'Send {"name": <name>, "pattern": <a regular expression>}.', { field: 'pattern' });
+      }
+      try {
+        registerDetector(b.name, b.pattern);
+      } catch (err) {
+        throw new Refusal(400, 'invalid_value', `The pattern is not a regular expression: ${(err as Error).message}`, 'Send a valid ECMAScript regular expression source.', { field: 'pattern' });
+      }
+      const rt = hooks.runtime();
+      // Registration starts a rescan of the stored records (SEAM.md §57).
+      const { rescanRecords } = await import('../records/files.js');
+      void rescanRecords(rt).catch(() => {});
+      return { detector: b.name, rescan: 'started' };
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'project') {
     return route(201, async (body) => {
       const b = parseProjectBody(body);
@@ -457,6 +525,11 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return allocateFixtureReceipt(store(), a.actor, a.body);
     case OP.armFault:
       return armFault(args);
+    case OP.clearFaults:
+      faults.length = 0;
+      return { cleared: true };
+    case OP.correction:
+      return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:
       throw new Error(`unknown store op ${op}`);
   }
@@ -478,36 +551,61 @@ export function barrier(name: string): void {
   while (Atomics.load(cells, spec.slot) === 0) Atomics.wait(cells, spec.slot, 0);
 }
 
-function armFault(fault: unknown): Fault {
+function armFault(fault: unknown): FaultSpec & { times: number } {
   if (!init.harness) throw notFound('Fault injection');
-  const f = fault as Partial<Record<string, unknown>> | null;
-  let parsed: Fault | null = null;
-  if (f && f.point === 'before_event' && typeof f.event_type === 'string' && f.event_type.length > 0 && Object.keys(f).length === 2) {
+  const f = isObject(fault) ? fault : {};
+  const times = f.times === undefined ? 1 : f.times;
+  const keys = Object.keys(f).filter((k) => k !== 'times');
+  const only = (...allowed: string[]) => keys.every((k) => allowed.includes(k));
+  let parsed: FaultSpec | null = null;
+  if (f.point === 'before_event' && typeof f.event_type === 'string' && f.event_type.length > 0 && only('point', 'event_type')) {
     parsed = { point: 'before_event', event_type: f.event_type };
-  } else if (f && f.point === 'audit_write' && Object.keys(f).length === 1) {
+  } else if (f.point === 'audit_write' && only('point')) {
     parsed = { point: 'audit_write' };
+  } else if (f.point === 'budget_read' && typeof f.project === 'string' && only('point', 'project')) {
+    parsed = { point: 'budget_read', project: f.project };
+  } else if (f.point === 'lease_read' && only('point')) {
+    parsed = { point: 'lease_read' };
   }
-  if (!parsed) {
+  if (!parsed || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
     throw new Refusal(
       400,
       'invalid_value',
       'Unknown fault.',
-      'Send {"point":"before_event","event_type":...}, {"point":"audit_write"} or {"point":"tick_step",...}.',
+      'Send {"point":"before_event","event_type":...}, {"point":"audit_write"}, {"point":"budget_read","project":...}, {"point":"lease_read"} or {"point":"tick_step",...}, each with an optional "times".',
       { field: 'point' },
     );
   }
-  faults.push(parsed);
-  return parsed;
+  faults.push({ ...parsed, times, remaining: times });
+  return { ...parsed, times };
+}
+
+// Fail the enclosing transaction or read if an armed fault matches.
+function fire(matches: (f: Fault) => boolean, what: string): void {
+  if (!init.harness || faults.length === 0) return;
+  const i = faults.findIndex(matches);
+  if (i < 0) return;
+  const fault = faults[i]!;
+  fault.remaining -= 1;
+  if (fault.remaining <= 0) faults.splice(i, 1);
+  throw new InjectedFault(what);
+}
+
+// A budget check reads a project's spend (SEAM.md §61).
+export function seamBudgetRead(project: string): void {
+  fire((f) => f.point === 'budget_read' && f.project === project, `budget read of ${project}`);
+}
+
+// A launch reads the run's lease before its spawn (SEAM.md §61).
+export function seamLeaseRead(): void {
+  fire((f) => f.point === 'lease_read', 'lease read');
 }
 
 // Called by the event writer just before it appends an event: fails the
 // enclosing transaction once if a matching fault is armed.
 export function beforeEventWrite(eventType: string): void {
-  if (!init.harness || faults.length === 0) return;
-  const i = faults.findIndex(
+  fire(
     (f) => (f.point === 'before_event' && f.event_type === eventType) || (f.point === 'audit_write' && eventType === 'api.act'),
+    eventType === 'api.act' ? 'audit write' : `before event ${eventType}`,
   );
-  if (i < 0) return;
-  const [fault] = faults.splice(i, 1);
-  throw new InjectedFault(fault!.point === 'audit_write' ? 'audit write' : `before event ${eventType}`);
 }

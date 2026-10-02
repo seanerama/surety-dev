@@ -37,11 +37,19 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
   }[];
   const out: ProjectCandidates[] = [];
   for (const p of projects) {
-    const items = (db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[])
-      .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
-      .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
-      .sort((a, b) => (PRIORITY[a.item.kind] ?? 3) - (PRIORITY[b.item.kind] ?? 3) || a.item.seq - b.item.seq)
-      .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));
+    let items: ProjectCandidates['items'];
+    try {
+      items = (db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[])
+        .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
+        .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
+        .sort((a, b) => (PRIORITY[a.item.kind] ?? 3) - (PRIORITY[b.item.kind] ?? 3) || a.item.seq - b.item.seq)
+        .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));
+    } catch {
+      // A check that could not read what it needs (a budget, D1 §6.6) has
+      // failed: nothing of this project is dispatched on it, and the other
+      // projects go on.
+      items = [];
+    }
     out.push({ project: p.id, repo: p.dev_repo_path, branch: p.integration_branch, items });
   }
   return out;

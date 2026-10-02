@@ -168,6 +168,47 @@ function filterDrivers(ctx: GitContext, env: NodeJS.ProcessEnv, deadlineMs: numb
   });
 }
 
+// Can this command run a filter driver? Filters run where content passes
+// between a work tree and the object store: adding, hashing a path,
+// checking out, comparing a work tree with its index, and writing an index,
+// which may re-read a racily clean entry's file. A command that only reads
+// objects, refs and indexes, or writes objects and refs, never runs one, and
+// needs no query. Anything not known to be such a command is asked about.
+export function mayRunFilter(args: readonly string[]): boolean {
+  const [command, ...rest] = args;
+  const has = (...flags: string[]) => flags.some((f) => rest.includes(f));
+  switch (command) {
+    case 'rev-parse':
+    case 'for-each-ref':
+    case 'update-ref':
+    case 'ls-tree':
+    case 'diff-tree':
+    case 'merge-base':
+    case 'show-ref':
+    case 'symbolic-ref':
+    case 'commit-tree':
+    case 'mktree':
+    case 'config':
+      return false;
+    case 'ls-files':
+      return !rest.every((a) => a === '--stage' || a === '-s' || a === '-z');
+    case 'cat-file':
+      return has('--filters', '--textconv') || rest.some((a) => a.startsWith('--filters') || a.startsWith('--textconv'));
+    case 'hash-object':
+      return !(has('--no-filters') || (has('--stdin') && !has('--path', '--stdin-paths') && !rest.some((a) => a.startsWith('--path='))));
+    case 'worktree': {
+      const [sub] = rest;
+      if (sub === 'list' || sub === 'prune') return false;
+      // Forced, a removal does not look at the worktree's content.
+      if (sub === 'remove') return !has('--force');
+      if (sub === 'add') return !has('--no-checkout');
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
 // The environment pairs that switch off each of `drivers`.
 function filterOverrides(drivers: string[]): Record<string, string> {
   const pairs: [string, string][] = [];
@@ -206,6 +247,7 @@ export async function git(ctx: GitContext, args: string[], opts: GitOptions = {}
   const env = gitEnv(home, opts.operation, opts.env);
   // Measured on the monotonic clock: the query and the command share the
   // deadline.
+  if (!mayRunFilter(args)) return run(ctx, args, env, opts.input, deadlineMs);
   const started = performance.now();
   const drivers = await filterDrivers(ctx, env, deadlineMs);
   if (drivers === null) {

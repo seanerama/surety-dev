@@ -26,6 +26,8 @@ import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
 import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
+import { RecordStream, writeWholeRecord } from '../records/files.js';
+import { redactValue } from '../records/redact.js';
 import { pausePoint, seamBackends } from '../testing/seam.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
@@ -211,6 +213,23 @@ export class Launcher {
       return;
     }
 
+    // The transcript's stream has its identity before the role writes
+    // anything (correction 21; SEAM.md §56).
+    let transcript: RecordStream;
+    try {
+      transcript = await RecordStream.open(this.rt, { project: claim.project, run: claim.run, kind: 'transcript' });
+    } catch (err) {
+      log('transcript', err, { run: claim.run });
+      this.never(handle, 'failed', 'infra_error');
+      return;
+    }
+    if (handle.abort) {
+      await transcript.abandon();
+      handle.phase = 'aborted';
+      handle.settle();
+      return;
+    }
+
     handle.phase = 'spawned';
     let child;
     try {
@@ -222,11 +241,13 @@ export class Launcher {
       });
     } catch (err) {
       log('spawn', err, { run: claim.run });
+      await transcript.abandon();
       this.never(handle, 'failed', 'infra_error');
       return;
     }
     if (child.pid === undefined) {
       child.once('error', (err) => log('spawn', err, { run: claim.run }));
+      await transcript.abandon();
       this.never(handle, 'failed', 'infra_error');
       return;
     }
@@ -243,7 +264,9 @@ export class Launcher {
       handle.startTime = null;
     }
 
-    const output = new RoleOutput(child);
+    const output = new RoleOutput(child, (bytes) => transcript.write(bytes));
+    let outputDone: () => void = () => {};
+    handle.output = { done: new Promise<void>((resolve) => (outputDone = resolve)), stop: () => output.close() };
     const exited = new Promise<void>((resolve) => {
       child.once('exit', (code, signal) => {
         handle.exit = { code, signal };
@@ -292,6 +315,9 @@ export class Launcher {
       // reading it. The descendant is a member of the domain and is
       // terminated by the run-end protocol.
       output.close();
+      // The transcript ends where the engine stopped reading (SEAM.md §56).
+      await transcript.end().catch((err) => log('transcript', err, { run: claim.run }));
+      outputDone();
     }
     // The end of the output is not the role's exit: a role may close its
     // standard output and go on working, and nothing begins until it exits
@@ -317,8 +343,9 @@ export class Launcher {
     if (m.type === 'heartbeat') {
       await this.rt.heartbeat(handle);
     } else if (m.type === 'usage') {
-      if ((m.semantics !== 'cumulative' && m.semantics !== 'delta') || typeof m.raw !== 'object' || m.raw === null) return;
-      await this.rt.role('run.usage', run, { run, generation, invocation, semantics: m.semantics, raw: m.raw });
+      if ((m.semantics !== 'cumulative' && m.semantics !== 'delta') || typeof m.raw !== 'object' || m.raw === null || Array.isArray(m.raw)) return;
+      const recorded = await this.rt.role<boolean>('run.usage', run, { run, generation, invocation, semantics: m.semantics, raw: redactValue(m.raw) });
+      if (recorded) await this.checkBudget(handle);
     } else if (m.type === 'result') {
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
       if (handle.result !== null) return;
@@ -326,12 +353,41 @@ export class Launcher {
       // closing lease takes none (D1 §8.3), also while the transaction that
       // would make the lease closing has not yet succeeded (E27 item 5).
       if (handle.ending) return;
-      const result = parseResult(m.result);
+      // Nothing the role sent is kept with a secret in it (SEAM.md §57).
+      const sent = redactValue(m.result);
+      const result = parseResult(sent);
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
-      const accepted = await this.recordResult(handle, valid, result);
+      // A valid result is kept as a record, published before anything
+      // refers to it (SEAM.md §56).
+      let record: string | null = null;
+      if (valid) {
+        try {
+          record = await writeWholeRecord(this.rt, { project: handle.claim.project, run, kind: 'result', content: Buffer.from(JSON.stringify(sent)) });
+        } catch (err) {
+          log('result record', err, { run });
+        }
+      }
+      const accepted = await this.recordResult(handle, valid, result, record);
       if (accepted && handle.result === null) handle.result = { valid };
     }
+  }
+
+  // The budget check on a usage observation (D1 §13.3; SEAM.md §55): a run
+  // that has passed a limit with what it has observed is stopped at this
+  // boundary, through the run-end protocol. A check that cannot read the
+  // ledger has failed, and the run does not go on without one (D1 §6.6).
+  private async checkBudget(handle: RunHandle): Promise<void> {
+    if (handle.ending) return;
+    const { run, invocation } = handle.claim;
+    let limit: string | null;
+    try {
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation });
+    } catch (err) {
+      log('budget check', err, { run });
+      limit = 'budget_unreadable';
+    }
+    if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit });
   }
 
   // The result is the work the role was run for, so a store failure while
@@ -341,15 +397,22 @@ export class Launcher {
   // back; every attempt is fenced again in the store (D1 §8.3), and none is
   // made once the engine has decided to end the run. If every attempt fails
   // the result is lost, as before, and the run ends by what was recorded.
-  private async recordResult(handle: RunHandle, valid: boolean, result: RunResult | null): Promise<boolean> {
+  private async recordResult(handle: RunHandle, valid: boolean, result: RunResult | null, record: string | null): Promise<boolean> {
     const { run, generation } = handle.claim;
     for (let attempt = 0; ; attempt++) {
       if (handle.ending) return false;
       try {
-        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result });
+        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result, record });
       } catch (err) {
         const retryIn = RESULT_RETRY_MS[attempt];
-        if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) throw err;
+        if ((err as { code?: unknown }).code !== 'store_error') throw err;
+        if (retryIn === undefined) {
+          // The result is not lost silently (E27; SEAM.md §61): the run ends
+          // failed with the cause stated, and the role's transcript holds the
+          // line it sent.
+          if (valid) handle.resultLost = `the result the role sent could not be recorded: ${attempt + 1} attempts failed (${(err as Error).message})`;
+          throw err;
+        }
         log('result', err, { run, attempt: attempt + 1, retry_in_ms: retryIn });
         await new Promise((resolve) => setTimeout(resolve, retryIn));
       }
@@ -383,8 +446,9 @@ export class Launcher {
 const DRAIN_QUIET_MS = 250;
 const DRAIN_CAP_MS = 2000;
 
-// The waits before the second and third attempt to record a role's result.
-const RESULT_RETRY_MS = [100, 300];
+// The waits between attempts to record a role's result: a few seconds in
+// all, well within a minute (SEAM.md §61).
+const RESULT_RETRY_MS = [100, 300, 1000, 2000, 4000];
 
 // The role's standard output, as protocol lines. When the engine stops
 // reading, at the end of the stream or after the role's exit, whatever it has
@@ -402,10 +466,14 @@ class RoleOutput {
   private wake: (() => void) | null = null;
   private readonly stream: Readable;
 
-  constructor(child: ChildProcess) {
+  constructor(
+    child: ChildProcess,
+    private readonly onBytes: (bytes: Buffer) => void,
+  ) {
     this.stream = child.stdout!;
     this.stream.on('data', (chunk: Buffer) => {
       if (this.closed) return;
+      this.onBytes(chunk);
       this.take(this.decoder.write(chunk));
       this.lastDataAt = performance.now();
       this.wake?.();

@@ -7,7 +7,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { inspectEngineConfig } from '../config/engine-config.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
-import { prepareBootstrap, preparePolicy } from '../projects/commands.js';
+import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
+import { readRecordBytes } from '../records/files.js';
+import type { RecordRow } from '../store/transitions/records.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
@@ -17,11 +19,14 @@ import { checkTarget, checkToken, readJsonBody } from './boundary.js';
 interface Reply {
   status: number;
   body: unknown;
+  // A record's bytes, answered as they are (SEAM.md §56).
+  raw?: Buffer;
 }
 
 interface Request {
   method: string;
   path: string;
+  query: string;
   req: IncomingMessage;
   res: ServerResponse;
   actor: Actor;
@@ -146,6 +151,17 @@ export function createApiServer(state: EngineState): http.Server {
         }
         if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b) };
       }
+      if (rest.length === 1 && rest[0] === 'ledger' && get) {
+        return { kind: 'direct', handler: async (r) => ({ status: 200, body: await store().call('read', { name: 'ledger.view', args: { project, day: ledgerDay(r.query) } }) }) };
+      }
+      if (rest.length === 2 && rest[0] === 'records' && get) {
+        const record = decodeSegment(rest[1]!);
+        if (record === null) return null;
+        return { kind: 'direct', handler: async () => readRecord(project, record) };
+      }
+      if (rest.length === 1 && rest[0] === 'rebind' && post) {
+        return { kind: 'prepared', name: 'project.rebind', prepare: (b) => prepareRebind(runtime(), project, b) };
+      }
       if (rest.length === 1 && rest[0] === 'tick' && post) {
         return {
           kind: 'command',
@@ -224,10 +240,25 @@ export function createApiServer(state: EngineState): http.Server {
     return null;
   }
 
+  // GET /v1/projects/:p/records/:id (D1 §11.3; SEAM.md §§56-58). Unknown is
+  // never answered as empty: a record that is not whole is refused.
+  async function readRecord(project: string, id: string): Promise<Reply> {
+    const row = await store().call<RecordRow>('read', { name: 'record.get', args: { project, record: id } });
+    const refuse = (status: number, code: string, reason: string, whatToDo: string) => {
+      throw new Refusal(status, code, reason, whatToDo, { record: id });
+    };
+    if (row.published !== 1) refuse(409, 'record_unpublished', `Record ${id} is a stream that was never published, so it is not known to be whole.`, 'Nothing depends on it; read a published record.');
+    if (row.path === null) refuse(410, 'record_expired', `Record ${id} has expired: its retention passed and its content was removed.`, 'Its row says what it was; its bytes are gone.');
+    if (row.post_scan === 'hit') refuse(409, 'record_quarantined', `Record ${id} matched a secret detector and is no longer served.`, 'Inspect the record through the engine home; resolve the finding.');
+    const bytes = await readRecordBytes(runtime().home, { path: row.path!, sha256: row.sha256, bytes: row.bytes });
+    if (bytes === null) refuse(409, 'record_missing', `The bytes of record ${id} are missing or do not have the recorded hash.`, 'Restore the record from a backup; it is not served as anything else.');
+    return { status: 200, body: null, raw: bytes! };
+  }
+
   // A request no production route matched is offered to the seam, which
   // answers only in harness mode (SEAM.md §7).
   function offerToSeam(r: Request, segments: string[]): Route | null {
-    const offered = seamRoute(r.method, segments, { body: () => body(r), store, actor: r.actor, scratch: () => runtime() });
+    const offered = seamRoute(r.method, segments, { body: () => body(r), store, actor: r.actor, scratch: () => runtime(), runtime });
     return offered === null ? null : { kind: 'direct', restricted: offered.restricted, handler: offered.handler };
   }
 
@@ -249,9 +280,9 @@ export function createApiServer(state: EngineState): http.Server {
     const method = req.method ?? 'GET';
     const send = (reply: Reply) => {
       if (res.headersSent) return;
-      const text = method === 'HEAD' ? '' : JSON.stringify(reply.body);
+      const text = method === 'HEAD' ? '' : reply.raw ?? JSON.stringify(reply.body);
       res.writeHead(reply.status, {
-        'content-type': 'application/json; charset=utf-8',
+        'content-type': reply.raw ? 'application/octet-stream' : 'application/json; charset=utf-8',
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
         'x-surety-request-id': requestId,
@@ -300,7 +331,7 @@ export function createApiServer(state: EngineState): http.Server {
     }
 
     const segments = target.path.split('/').slice(1);
-    const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
+    const r: Request = { method, path: target.path, query: target.query, req, res, actor, awaitingContinue: expectsContinue };
     const route = match(method, segments) ?? offerToSeam(r, segments);
     const restricted = route !== null && route.kind === 'direct' && route.restricted === true;
     if (state.mode !== 'full' && !restricted) {
@@ -369,6 +400,16 @@ export function createApiServer(state: EngineState): http.Server {
     else socket.destroy();
   });
   return server;
+}
+
+// `?day=YYYY-MM-DD`, or every day.
+function ledgerDay(query: string): string | null {
+  const day = new URLSearchParams(query).get('day');
+  if (day === null) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`))) {
+    throw new Refusal(400, 'invalid_value', '"day" must be a date, YYYY-MM-DD.', 'Send ?day=YYYY-MM-DD, or no day for every day.', { field: 'day' });
+  }
+  return day;
 }
 
 function engineInfo(state: EngineState) {

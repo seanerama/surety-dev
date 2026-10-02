@@ -143,13 +143,22 @@ export async function probeRemove(repo: string, path: string): Promise<ProbeOutc
   return metadata === null ? 'partial' : 'absent';
 }
 
-// `git worktree add --detach <path> <base>`. Returns whether the command
-// reported success, or 'timeout' when it was killed at its deadline.
+// `git worktree add --detach <path> <base>`, in the two steps git itself
+// takes: the worktree is registered with no checkout, which runs nothing a
+// repository could name, and then checked out by `reset --hard` in it, as
+// `worktree add` does in its own child, with every filter driver git reports
+// for that worktree switched off (exec.ts). Returns whether both reported
+// success, or 'timeout' when one was killed at its deadline.
 export async function addWorktree(repo: string, path: string, base: string, operation: string): Promise<'ok' | 'failed' | 'timeout'> {
   if (!SHA.test(base) || !path.startsWith('/')) return 'failed';
-  const r = await git(repoContext(repo), ['worktree', 'add', '--detach', '--', path, base], { operation });
+  const r = await git(repoContext(repo), ['worktree', 'add', '--no-checkout', '--detach', '--', path, base], { operation });
   if (r.timedOut) return 'timeout';
   if (r.code !== 0) return 'failed';
+  const metadata = worktreeMetadata(repo, path);
+  if (typeof metadata !== 'string') return 'failed';
+  const checkout = await git(worktreeContext(repo, metadata, path), ['reset', '--hard', '--quiet', '--no-recurse-submodules'], { operation });
+  if (checkout.timedOut) return 'timeout';
+  if (checkout.code !== 0) return 'failed';
   // git syncs none of what `worktree add` writes: the checked-out files, the
   // workspace's .git file, the worktree's metadata (SEAM.md §60). The engine
   // syncs them before the journal records the effect, so that a workspace
@@ -157,11 +166,8 @@ export async function addWorktree(repo: string, path: string, base: string, oper
   // fails throws: whether the effect is durable is then unknown, and the
   // journal treats the attempt as ambiguous.
   syncTree(path);
-  const metadata = worktreeMetadata(repo, path);
-  if (typeof metadata === 'string') {
-    syncTree(metadata);
-    syncDirectory(dirname(metadata));
-  }
+  syncTree(metadata);
+  syncDirectory(dirname(metadata));
   syncDirectory(dirname(path));
   return 'ok';
 }

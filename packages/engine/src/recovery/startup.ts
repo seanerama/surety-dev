@@ -16,8 +16,13 @@
 //      blocked) stays finalizing and is retried by the engine.
 //   3. Every quarantined run is observed again, and cleared if the boundary
 //      now reports its domains terminated.
+//   4. Records are audited (D1 §16.1 step 5): a published record that
+//      something refers to and whose bytes are missing or not of its hash is
+//      reported (`record.missing`) before full mode. It does not keep the
+//      engine restricted.
 
 import type { Journal } from '../journal/driver.js';
+import { auditRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { reconcileProject } from '../scheduler/tick.js';
@@ -39,5 +44,6 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
       }
     }),
   );
+  await auditRecords(rt);
   return { runs: runs.length };
 }

@@ -72,6 +72,13 @@ export interface RunHandle {
   pipeline: Promise<void> | null;
   // The baseline a fresh checkout of the run's base has.
   baseline: { head: string; index_hash: string; tracked_tree_hash: string } | null;
+  // The role's output as the engine reads it: `done` resolves once the
+  // engine has stopped reading it and its transcript stream has ended
+  // (published, or left unpublished); `stop` makes the engine stop reading.
+  output: { done: Promise<void>; stop: () => void } | null;
+  // Set when the role sent a valid result that could not be recorded
+  // however often it was tried: why (SEAM.md §61).
+  resultLost: string | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -101,6 +108,8 @@ export function newHandle(claim: Claim): RunHandle {
     accepting: false,
     pipeline: null,
     baseline: null,
+    output: null,
+    resultLost: null,
   };
 }
 
@@ -111,6 +120,7 @@ export function newHandle(claim: Claim): RunHandle {
 // `failed` / `infra_error`.
 export function earnedEnd(handle: RunHandle): RunEnd {
   if (handle.intended) return handle.intended;
+  if (handle.resultLost !== null) return { outcome: 'failed', reason: 'infra_error', reasonText: handle.resultLost };
   if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result' };
   if (handle.result?.valid === true && handle.exit?.code === 0) return { outcome: 'completed', reason: 'none' };
   return { outcome: 'failed', reason: 'infra_error' };

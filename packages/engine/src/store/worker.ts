@@ -15,7 +15,7 @@ import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from '
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
 import { liftToFull, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
-import { bootstrapProject, policyFacts, setPaused, submitPolicy } from './transitions/project.js';
+import { bootstrapProject, policyFacts, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
   acceptFacts,
   beginIntegration,
@@ -63,6 +63,20 @@ import {
   renewLease,
   unendedRuns,
 } from './transitions/runs.js';
+import { budgetCheck, ledgerView } from './transitions/ledger.js';
+import {
+  chunkReceipt,
+  expirableRecords,
+  expireRecord,
+  getRecord,
+  publishStream,
+  publishWhole,
+  recordAudited,
+  recordScan,
+  referencedRecords,
+  registerStream,
+  storedRecords,
+} from './transitions/records.js';
 import { type EngineSettings, setEngineSettings } from './transitions/settings.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
@@ -103,6 +117,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
+  'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
 };
 
 const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
@@ -115,6 +130,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'run.state': (d, a: { run: string }) => (d.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(a.run) as { state: string } | undefined)?.state ?? null,
   'journal.unfinished': (d, a: { project: string | null }) => unfinishedOperations(d, a.project ?? undefined),
   'nomination.due': (d) => nominationDue(d),
+  'ledger.view': (d, a: { project: string; day: string | null }) => ledgerView(d, a),
+  'budget.check': (d, a: { run: string; invocation: string }) => budgetCheck(d, a),
+  'record.get': (d, a: { project: string; record: string }) => getRecord(d, a),
+  'record.row': (d, a: { record: string }) => d.prepare('SELECT * FROM "records" WHERE "id" = ?').get(a.record) ?? null,
+  'records.stored': (d) => storedRecords(d),
+  'records.expirable': (d, a: { now: string }) => expirableRecords(d, a.now),
+  'records.referenced': (d) => referencedRecords(d),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -160,6 +182,13 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'domain.terminated': (tx, a) => domainTerminated(tx, a),
   'run.quarantine': (tx, a) => quarantineRun(tx, a),
   'run.finish': (tx, a) => finishRun(tx, a),
+  'record.register_stream': (tx, a) => registerStream(tx, a),
+  'record.chunk': (tx, a) => chunkReceipt(tx, a),
+  'record.publish_stream': (tx, a) => publishStream(tx, a),
+  'record.publish_whole': (tx, a) => publishWhole(tx, a),
+  'record.scan': (tx, a) => recordScan(tx, a),
+  'record.expire': (tx, a) => expireRecord(tx, a),
+  'record.audited': (tx, a) => recordAudited(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

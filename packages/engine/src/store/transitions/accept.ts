@@ -56,7 +56,7 @@ export function movingRefs(db: Tx['db'], project: string): Record<string, string
 export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
   const run = getRun(tx, args.run);
   if (!run) throw notFound('run', args.run);
-  const extra = tx.db.prepare('SELECT "result", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result: string | null; chain: number };
+  const extra = tx.db.prepare('SELECT "result_value", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result_value: string | null; chain: number };
   const item = getWorkItem(tx, run.work_item)!;
   const subject = JSON.parse(item.subject) as { stage?: string };
   const stage = subject.stage ? (tx.db.prepare('SELECT "goal" FROM "stages" WHERE "id" = ?').get(subject.stage) as { goal: string } | undefined) : undefined;
@@ -98,7 +98,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
   return {
     run: { id: run.id, state: run.state, role: run.role, work_item: run.work_item, base_revision: run.base_revision, chain: extra.chain, project: run.project, seq: run.seq },
     work: { id: item.id, kind: item.kind, status: item.status, seq: item.seq, stage: subject.stage ?? null, goal: stage?.goal ?? null },
-    result: extra.result ? (JSON.parse(extra.result) as RunResult) : null,
+    result: extra.result_value ? (JSON.parse(extra.result_value) as RunResult) : null,
     project: { id: p.id, repo: p.dev_repo_path, branch: p.integration_branch, tier: p.tier },
     caps: { files: policy.snapshot_max_files!, bytes: policy.snapshot_max_bytes!, fileBytes: policy.snapshot_max_file_bytes! },
     workspace: ws
@@ -217,8 +217,8 @@ export function intendIntegration(
   args: { run: string; repo: string; head: string; commit: string; plans: PlanInput[]; deadlineSeconds: number },
 ): IntentResult {
   const run = getRun(tx, args.run)!;
-  const extra = tx.db.prepare('SELECT "result", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result: string | null; chain: number };
-  const result = extra.result ? (JSON.parse(extra.result) as RunResult) : null;
+  const extra = tx.db.prepare('SELECT "result_value", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result_value: string | null; chain: number };
+  const result = extra.result_value ? (JSON.parse(extra.result_value) as RunResult) : null;
   const item = getWorkItem(tx, run.work_item)!;
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
@@ -293,5 +293,5 @@ export function storeResult(tx: Tx, args: { run: string; result: RunResult }): v
   const run = getRun(tx, args.run);
   if (!run) throw notFound('run', args.run);
   if (run.state === 'ended') throw illegal('a result for an ended run', { run: args.run });
-  tx.db.prepare('UPDATE "runs" SET "result" = ? WHERE "id" = ? AND "result" IS NULL').run(JSON.stringify(args.result), args.run);
+  tx.db.prepare('UPDATE "runs" SET "result_value" = ? WHERE "id" = ? AND "result_value" IS NULL').run(JSON.stringify(args.result), args.run);
 }

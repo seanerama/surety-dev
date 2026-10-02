@@ -12,11 +12,14 @@
 //      not failed, and that nothing in this engine is driving, is probed and
 //      taken on its way (correction 14); a nomination that is due is made.
 //   3. Repository integrity (D1 §7.6).
-//   (4. budgets arrive with the slice that builds them.)
+//   (4. budgets: a project whose day has passed a day limit is not
+//      dispatched; the select step and the claim check it, and a check whose
+//      read fails dispatches nothing of the project.)
 //   8. Select, and 9. dispatch: at most one run per project and
 //      max_concurrent_runs engine-wide; work at its chaining boundary is not
 //      dispatched and gets one decision instead (D1-34); the tick waits for
 //      what a dispatch writes before its spawn, never for the spawn or the run.
+//  Then records whose retention has passed expire, and
 //  10. engine.tick, after everything else the tick wrote.
 //
 // Steps 1 to 3 are safety prerequisites: one that overruns tick_step_budget
@@ -31,6 +34,7 @@ import { observeIntegrity } from '../git/integrity.js';
 import { Launcher } from '../invoke/choke.js';
 import type { Journal } from '../journal/driver.js';
 import type { ProjectCandidates } from '../store/reads.js';
+import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { seamStepDelay } from '../testing/seam.js';
@@ -148,6 +152,9 @@ export class Scheduler {
         }
       }
     }
+    // Records nothing live refers to expire once their retention has passed
+    // (D1 §14.3). Not a prerequisite of dispatch.
+    await expireRecords(this.rt).catch((err) => log('record expiry', err));
     await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched });
   }
 }

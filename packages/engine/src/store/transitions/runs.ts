@@ -4,11 +4,13 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
+import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
@@ -26,7 +28,8 @@ export type ReasonClass =
   | 'recovered'
   | 'diff_violation'
   | 'ref_violation'
-  | 'integration_conflict';
+  | 'integration_conflict'
+  | 'budget';
 export type DomainStatus = 'allocated' | 'launched' | 'terminated' | 'quarantined';
 export type InvocationStatus = 'dispatch_started' | 'refused' | 'launched' | 'ended' | 'unknown';
 
@@ -52,6 +55,8 @@ export interface RunRow {
   reason_text: string | null;
   reason_detail: string | null;
   chain: number;
+  transcript: string | null;
+  result: string | null;
 }
 
 export interface LeaseRow {
@@ -174,6 +179,10 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   if (!ROLE_OF[item.kind]) return `kind ${item.kind} is not dispatched`;
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
+  // A project whose day has passed a day limit is not dispatched (D1 §13.3;
+  // SEAM.md §55). The check reads the ledger; a read that fails throws, and
+  // nothing is dispatched on it (D1 §6.6).
+  if (exhaustedLimits(db, item.project, { check: true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -320,6 +329,7 @@ export function dispatchStarted(tx: Tx, args: { run: string; invocation: string 
 }
 
 export function leaseActive(tx: Tx, args: { run: string; generation: number }): boolean {
+  seamLeaseRead();
   return liveLease(tx, args.run, args.generation) !== null;
 }
 
@@ -400,11 +410,18 @@ export function recordUsage(tx: Tx, args: { run: string; generation: number; inv
 // result is a role effect: refused once the lease is closing or has expired
 // (D1 §8.3), so a success that arrives after Stop, a deadline or the expiry
 // of the lease has no effect.
-export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean; result?: Record<string, unknown> | null }): boolean {
+export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean; result?: Record<string, unknown> | null; record?: string | null }): boolean {
   if (!liveLease(tx, args.run, args.generation)) return false;
   const run = mustRun(tx, args.run);
   if (run.state !== 'executing') return false;
-  setRunState(tx, run, 'validating', args.valid && args.result ? { result: JSON.stringify(args.result) } : {});
+  // The result record is referenced only once it is published (SEAM.md §56).
+  const record = args.record
+    ? (tx.db.prepare(`SELECT "id" FROM "records" WHERE "id" = ? AND "run" = ? AND "kind" = 'result' AND "published" = 1`).get(args.record, run.id) as { id: string } | undefined)
+    : undefined;
+  setRunState(tx, run, 'validating', {
+    ...(args.valid && args.result ? { result_value: JSON.stringify(args.result) } : {}),
+    ...(record ? { result: record.id } : {}),
+  });
   tx.emit('run.validating', runSubject(run), { valid: args.valid });
   return true;
 }
@@ -582,7 +599,7 @@ export function finishRun(
     if (terminal === undefined) terminal = seen.includes('launched') ? 'ended' : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     if (seen.includes('launched') && terminal === 'refused') terminal = 'unknown';
     observe(tx, run, receipt.id, terminal);
-    if (terminal !== 'refused') charge(tx, run, receipt);
+    if (terminal !== 'refused') chargeInvocation(tx, run, receipt);
   }
 
   tx.db
@@ -592,7 +609,12 @@ export function finishRun(
   if (args.baseline) rebaselineRunCheckout(tx, run.id, args.baseline);
   tx.db.prepare('UPDATE "capability_grants" SET "revoked_at" = ? WHERE "run" = ? AND "revoked_at" IS NULL').run(tx.at, run.id);
   tx.db.prepare('UPDATE "leases" SET "released_at" = ? WHERE "resource_id" = ? AND "released_at" IS NULL').run(tx.at, run.id);
-  setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0 });
+  // The run's transcript, once it is a published record (SEAM.md §56). A
+  // stream that was not published is never named.
+  const transcript = tx.db
+    .prepare(`SELECT "id" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+    .get(run.id) as { id: string } | undefined;
+  setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0, ...(transcript ? { transcript: transcript.id } : {}) });
   const payload: Record<string, unknown> = { outcome: run.outcome, reason_class: run.reason_class };
   if (args.recovery !== null) payload.recovery = { incarnation: args.recovery };
   tx.emit('run.ended', runSubject(run), payload);
@@ -602,29 +624,6 @@ export function finishRun(
 
   workAfterRun(tx, run);
   return { ended: true };
-}
-
-// One original ledger row per launched invocation (D1 §13.1). Usage is kept
-// raw; normalized amounts are the ledger slice's (slice 4), so the token
-// fields stay null (unknown, never zero) and the cost is unknown.
-function charge(tx: Tx, run: RunRow, receipt: { id: string; turn: string | null }): void {
-  const exists = tx.db.prepare('SELECT 1 FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(receipt.id);
-  if (exists) return;
-  const usage = tx.db.prepare('SELECT "seq", "semantics", "raw" FROM "usage_observations" WHERE "invocation" = ? ORDER BY "seq"').all(receipt.id) as {
-    seq: number;
-    semantics: string;
-    raw: string;
-  }[];
-  const raw = { observations: usage.map((u) => ({ seq: u.seq, semantics: u.semantics, raw: JSON.parse(u.raw) as unknown })) };
-  const id = tx.newId('led_');
-  tx.db
-    .prepare(
-      `INSERT INTO "ledger_rows" ("id", "created_at", "project", "invocation", "run", "turn", "role", "provider", "model_requested", "raw_usage",
-         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "day_utc")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unnormalized', NULL, NULL, NULL, 0, 'unknown', ?)`,
-    )
-    .run(id, tx.at, run.project, receipt.id, run.id, receipt.turn, run.role, run.backend, run.model_requested, JSON.stringify(raw), tx.at.slice(0, 10));
-  tx.emit('ledger.row', { project: run.project, run: run.id, invocation: receipt.id }, { ledger_row: id, observations: usage.length });
 }
 
 // What a run's outcome does to its work item (D1 §4.3, §8.4; SEAM.md §§15,
@@ -698,6 +697,12 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       return;
     case 'stopped':
       if (item.status === 'verifying') return;
+      // A budget stops the run at its enforceable boundary; the work parks
+      // behind a blocker that names the limit (D1 §13.3; SEAM.md §55).
+      if (run.reason_class === 'budget') {
+        parkWork(tx, item, run.reason_text ?? 'budget', cause);
+        return;
+      }
       transitionWork(tx, item, 'held', {}, cause);
       return;
     case 'abandoned':
@@ -762,6 +767,10 @@ const PARK_REASONS: Record<string, string> = {
   preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
   deadline: 'its run passed its deadline',
   no_progress_max: 'its repairs left the same rejected result as often as policy allows',
+  budget_run_billable_tokens: "its run passed the project's limit of billable tokens per run (budget_run_billable_tokens) and was stopped",
+  budget_day_unknown_tokens: "the project's tokens of unknown cost today passed their limit (budget_day_unknown_tokens), and its run was stopped",
+  budget_day_verified_usd: "the project's verified cost today passed its limit (budget_day_verified_usd), and its run was stopped",
+  budget_unreadable: 'its budget could not be read, and its run was stopped rather than run on without one',
   integration_conflict: 'its result could not be integrated: the integration branch moved, and the change does not apply to it, or the compare-and-swap failed. No role resolves it',
 };
 
