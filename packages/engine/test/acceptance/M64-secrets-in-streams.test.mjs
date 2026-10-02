@@ -9,18 +9,27 @@
 // produced, and a client that follows the event stream, are never sent the
 // secret; the text around it arrives, live, and is what the transcript holds.
 // The value is synthetic: no real secret is used.
+//
+// The second case is the slice-6 review's (E42 item 1): a transcript that a
+// detector registered later marked as a hit is refused by the record read
+// (slice 4), and the run's tail still served every byte of it. A quarantined
+// record is served by no route: the tail is refused as the record read is.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { assertRefused } from './harness/fixtures.mjs';
 import { until } from './harness/mono.mjs';
-import { holdSecret, readRecord } from './harness/records.mjs';
-import { addProject, addWork, run as runRow, scriptedEngine, tick, waitForRun } from './harness/runs.mjs';
-import { step } from './harness/scripted.mjs';
+import { holdSecret, readRecord, registerDetector, waitForPostScan } from './harness/records.mjs';
+import { addProject, addWork, run as runRow, runsOf, scriptedEngine, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { eventsPath, streamOf, tailPath } from './harness/sse.mjs';
 
 const SECRET = `sk-test-${'Z9y8'.repeat(9)}`;
 const SPLIT = 17;
+// What the later detector matches. It is not a secret the engine holds, so
+// the transcript is stored and served with it until the detector exists.
+const MARKER = 'MARKER-482913';
 
 // The bytes a tail has delivered so far, and whether its offsets are the
 // byte offsets they claim to be.
@@ -92,5 +101,39 @@ describe('M64 known secrets in the output tail and the event stream', () => {
     assert.equal(delivered.bytes.toString('utf8'), record.text, 'the tail delivered exactly what the transcript holds');
 
     assert.equal(events.text().includes(SECRET), false, 'the secret is in no event a client received, the usage it was reported in included');
+  });
+
+  test("a transcript a later detector matched is not served by the run's output tail: the tail is refused as the record read is, and delivers none of the transcript's bytes", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+    const project = (await addProject(fx)).id;
+    const item = await addWork(engine, project, 'verification');
+    fx.scripted.script(item, [script.complete([step.stdout(`ticket ${MARKER} filed\n`)])]);
+    await tickUntil(engine, project, () => workItem(fx.home, item).status === 'complete', { what: 'the item to complete' });
+    const [run] = runsOf(fx.home, item);
+    assert.ok(run.transcript, 'the run has its transcript');
+    await waitForPostScan(fx.home, run.transcript, 'clean');
+
+    // Before the detector exists, the tail of the ended run serves its output, the marker included.
+    const served = await streamOf(engine, tailPath(project, run.id, 0), { keepRaw: true });
+    t.after(() => served.close());
+    assert.equal(served.status, 200, `the tail of the ended run opens (refusal: ${JSON.stringify(served.refusal)})`);
+    await served.waitEnd({ timeoutMs: 20_000, what: 'the tail of the ended run to end' });
+    assert.ok(tailBytes(served).bytes.includes(MARKER), 'the fixture: the tail serves the output the detector will match');
+
+    await registerDetector(engine, 'fixture-marker', 'MARKER-[0-9]{6}');
+    await waitForPostScan(fx.home, run.transcript, 'hit');
+    assertRefused(await readRecord(engine, project, run.transcript), 409, 'record_quarantined', 'reading the transcript a detector matched');
+
+    // The same request now.
+    const tail = await streamOf(engine, tailPath(project, run.id, 0), { keepRaw: true });
+    t.after(() => tail.close());
+    // An engine that still serves it is let finish, so that the failure can say what it delivered.
+    if (tail.status === 200) await tail.waitEnd({ timeoutMs: 20_000, what: 'the tail to end' }).catch(() => {});
+    const delivered = tailBytes(tail).bytes;
+    const answer = { status: tail.status, body: tail.refusal ?? null, text: tail.status === 200 ? `a stream that delivered ${delivered.length} bytes: ${JSON.stringify(delivered.toString('utf8').slice(0, 200))}` : JSON.stringify(tail.refusal) };
+    assertRefused(answer, 409, 'record_quarantined', "the tail of a run whose transcript a detector matched");
+    assert.equal(delivered.length, 0, 'the tail delivered no output');
+    assert.equal(answer.text.includes(MARKER), false, 'and nothing of the transcript is in the refusal');
   });
 });
