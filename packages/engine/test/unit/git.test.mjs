@@ -85,6 +85,22 @@ test('engine git runs no hook, in the hooks directory or in one core.hooksPath n
   assert.equal(existsSync(evidence), true);
 });
 
+test('engine git does not run the program the repository names as core.fsmonitor', async (t) => {
+  const { dir, repo, head } = scratchRepo(t);
+  const evidence = join(dir, 'fsmonitor-evidence.txt');
+  const program = join(dir, 'fsmonitor');
+  writeFileSync(program, `#!/bin/sh\necho ran >> '${evidence}'\nprintf 'token\\0/\\0'\n`);
+  chmodSync(program, 0o755);
+  execFileSync('git', ['-C', repo, 'config', 'core.fsmonitor', program]);
+  const ctx = repoContext(repo);
+  assert.equal(await addWorktree(ctx, join(dir, 'ws-fsm-1'), head), 'present');
+  assert.equal(await removeWorktree(ctx, join(dir, 'ws-fsm-1')), 'absent');
+  assert.equal(existsSync(evidence), false, 'the fsmonitor program did not run');
+  // The program is live: git run the ordinary way executes it.
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', join(dir, 'ws-fsm-2'), head], { env: { PATH: process.env.PATH, HOME: dir } });
+  assert.equal(existsSync(evidence), true);
+});
+
 test('a worktree under a symbolic link is probed present when added and absent when removed', async (t) => {
   const { dir, repo, head } = scratchRepo(t);
   mkdirSync(join(dir, 'real'));

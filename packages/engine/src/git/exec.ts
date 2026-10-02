@@ -37,9 +37,16 @@ export interface GitResult {
   timedOut: boolean;
 }
 
-// The hooks directory engine git is given: not a directory, so no hook can
-// exist in it.
-const NO_HOOKS = '/dev/null';
+// Settings given on every engine git command line. A command-line setting
+// outranks every configuration file, so these hold whatever the repository's
+// configuration says (D1 §7.1; E25 item 3; E27 item 4):
+// - core.hooksPath: a hooks directory that is not a directory, so no hook can
+//   exist in it, wherever the repository keeps or names its hooks;
+// - core.fsmonitor: off. Git runs the program this names whenever it refreshes
+//   an index, a checkout into a new worktree included, and core.hooksPath
+//   does not govern it.
+// Filter drivers are deliberately not touched yet (E26 item 4).
+const NO_REPOSITORY_CODE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
 function gitEnv(home: string): NodeJS.ProcessEnv {
   return {
@@ -60,11 +67,9 @@ export function git(ctx: GitContext, args: string[], opts: { deadlineSeconds?: n
   return new Promise((resolve) => {
     // Engine git runs no code from the repository (D1 §7.1; E25 item 3): a
     // role can write the repository's hooks directory and its configuration,
-    // and a hook would run in the engine's own process tree, outside every
-    // execution domain. A command-line setting outranks every configuration
-    // file, so hooks are off wherever the repository keeps or names them.
-    // Filter drivers are deliberately not touched yet (E26 item 4).
-    const child = spawn('git', ['-c', `core.hooksPath=${NO_HOOKS}`, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
+    // and what they name would run in the engine's own process tree, outside
+    // every execution domain (NO_REPOSITORY_CODE).
+    const child = spawn('git', [...NO_REPOSITORY_CODE, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
       env: gitEnv(home),
       cwd: ctx.workTree,
       stdio: ['ignore', 'pipe', 'pipe'],
