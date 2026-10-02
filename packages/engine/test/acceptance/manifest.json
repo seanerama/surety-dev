@@ -120,7 +120,19 @@
       "M57-own-consumption-versus-external-preconditions.test.mjs",
       "M58-aging-and-notification-ambiguity.test.mjs"
     ],
-    "6": [],
+    "6": [
+      "M68-browser-bootstrap.test.mjs",
+      "M69-boundary-matrix.test.mjs",
+      "M70-scoped-reads-and-now.test.mjs",
+      "M71-latency-under-declared-load.test.mjs",
+      "M72-bounded-event-streams.test.mjs",
+      "M64-secrets-in-streams.test.mjs",
+      "M71-role-output-memory.test.mjs",
+      "M67-unsafe-filesystem-refused.test.mjs",
+      "M73-executable-contract.test.mjs",
+      "M74-fixture-semantics.test.mjs",
+      "M74-invocation-boundary.test.mjs"
+    ],
     "7": [
       "M01-kernel-journey.test.mjs"
     ]
