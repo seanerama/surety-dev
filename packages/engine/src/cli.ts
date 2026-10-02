@@ -6,6 +6,7 @@ import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 import { EXIT, serve } from './engine.js';
+import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
 import { configureHarness } from './testing/seam.js';
 
@@ -19,6 +20,9 @@ const [command, ...args] = process.argv.slice(2);
 if (command === '--version' || command === '-v') {
   process.stdout.write(`${ENGINE_VERSION}\n`);
   process.exit(0);
+}
+if (command === 'store') {
+  await storeCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -80,4 +84,54 @@ try {
     })}\n`,
   );
   process.exit(6);
+}
+
+// `surety store backup [--database-only]` and `surety store restore --from
+// <dir> --bind <project>=<path>...` (SEAM.md §59), against $SURETY_HOME while
+// no engine holds it. The last line on stdout is a JSON object; a refusal is
+// one JSON line on stderr, with exit status 7 (3 while an engine holds the
+// home).
+async function storeCommand(argv: string[]): Promise<never> {
+  const [sub, ...rest] = argv;
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    if (sub === 'backup') {
+      const unknown = rest.find((a) => a !== '--database-only');
+      if (unknown !== undefined) usage(`unknown flag ${unknown} for store backup`);
+      const done = await backupStore(home, { databaseOnly: rest.includes('--database-only') });
+      process.stdout.write(`${JSON.stringify(done)}\n`);
+      process.exit(STORE_EXIT.ok);
+    }
+    if (sub === 'restore') {
+      let from: string | null = null;
+      const bind = new Map<string, string>();
+      for (let i = 0; i < rest.length; i++) {
+        const flag = rest[i]!;
+        const value = rest[++i];
+        if (value === undefined) usage(`${flag} needs a value`);
+        if (flag === '--from') from = isAbsolute(value) ? value : resolve(value);
+        else if (flag === '--bind') {
+          const at = value.indexOf('=');
+          const path = value.slice(at + 1);
+          if (at <= 0 || !isAbsolute(path)) usage('--bind takes <project id>=<absolute repository path>');
+          bind.set(value.slice(0, at), path);
+        } else usage(`unknown flag ${flag} for store restore`);
+      }
+      if (from === null) usage('store restore needs --from <backup directory>');
+      const done = await restoreStore(home, { from, bind });
+      process.stdout.write(`${JSON.stringify(done)}\n`);
+      process.exit(STORE_EXIT.ok);
+    }
+    usage(sub === undefined ? 'store needs a command: backup or restore' : `"store ${sub}" is not a store command`);
+  } catch (err) {
+    if (err instanceof StoreCommandRefused) {
+      process.stderr.write(`${JSON.stringify(err.refusal.body())}\n`);
+      process.exit(err.status);
+    }
+    process.stderr.write(
+      `${JSON.stringify({ code: 'store_command_failed', reason: `The store command failed: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Check the engine home and the backup, and run it again.', subject: {} })}\n`,
+    );
+    process.exit(STORE_EXIT.refused);
+  }
 }
