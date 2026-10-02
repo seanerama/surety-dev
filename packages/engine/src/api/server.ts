@@ -77,6 +77,9 @@ const unsupported = (what: string) =>
     { capability: what },
   );
 
+const quarantinedRecord = (id: string) =>
+  new Refusal(409, 'record_quarantined', `Record ${id} matched a secret detector and is no longer served.`, 'Inspect the record through the engine home; resolve the finding.', { record: id });
+
 // A path segment, percent-decoded; null if the escape is malformed.
 const decodeSegment = (segment: string): string | null => {
   try {
@@ -351,7 +354,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     };
     if (row.published !== 1) refuse(409, 'record_unpublished', `Record ${id} is a stream that was never published, so it is not known to be whole.`, 'Nothing depends on it; read a published record.');
     if (row.path === null) refuse(410, 'record_expired', `Record ${id} has expired: its retention passed and its content was removed.`, 'Its row says what it was; its bytes are gone.');
-    if (row.post_scan === 'hit') refuse(409, 'record_quarantined', `Record ${id} matched a secret detector and is no longer served.`, 'Inspect the record through the engine home; resolve the finding.');
+    if (row.post_scan === 'hit') throw quarantinedRecord(id);
     const bytes = await readRecordBytes(runtime().home, { path: row.path!, sha256: row.sha256, bytes: row.bytes });
     if (bytes === null) refuse(409, 'record_missing', `The bytes of record ${id} are missing or do not have the recorded hash.`, 'Restore the record from a backup; it is not served as anything else.');
     return { status: 200, body: null, raw: bytes! };
@@ -362,9 +365,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   // has no output to serve, which is not an empty output.
   async function openTail(project: string, run: string, query: string): Promise<(res: ServerResponse) => Promise<void>> {
     const offset = integerParam(query, 'offset', 0, 0)!;
-    type Source = { ended: boolean; record: { path: string; sha256: string | null; bytes: number | null } | null };
+    type Source = { ended: boolean; record: { id: string; path: string; sha256: string | null; bytes: number | null; quarantined: boolean } | null };
     const source = () => store().call<Source>('read', { name: 'run.tail', args: { project, run } });
     const first = await source();
+    // A quarantined record is served by no route (E42 item 1): the tail is
+    // refused as the record read is, and delivers none of its bytes.
+    if (first.record?.quarantined) throw quarantinedRecord(first.record.id);
     if (first.ended && first.record === null && !liveTranscript(run)) {
       throw new Refusal(409, 'record_unpublished', `The output of run ${run} was not kept whole, so there is none to serve.`, 'Read the run for how it ended.', { run });
     }
@@ -372,6 +378,8 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       const now = await source();
       if (now.record !== null) {
         const record = now.record;
+        // Quarantined while the tail was open: nothing more of it is served.
+        if (record.quarantined) return 'ended';
         const bytes = await readRecordBytes(runtime().home, { path: record.path, sha256: record.sha256, bytes: record.bytes });
         if (bytes === null) return 'ended';
         return { kind: 'file', total: bytes.length, read: async (at, max) => bytes.subarray(at, at + max) };

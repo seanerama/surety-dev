@@ -260,7 +260,7 @@ export function runTail(db: Db, args: { project: string; run: string }) {
   const run = db.prepare('SELECT "project", "state" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; state: string } | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
   const record = db
-    .prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
-    .get(args.run) as { path: string; sha256: string | null; bytes: number | null } | undefined;
-  return { ended: run.state === 'ended', record: record ?? null };
+    .prepare(`SELECT "id", "path", "sha256", "bytes", "post_scan" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+    .get(args.run) as { id: string; path: string; sha256: string | null; bytes: number | null; post_scan: string } | undefined;
+  return { ended: run.state === 'ended', record: record ? { id: record.id, path: record.path, sha256: record.sha256, bytes: record.bytes, quarantined: record.post_scan === 'hit' } : null };
 }
