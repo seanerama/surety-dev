@@ -24,7 +24,7 @@ All paths are from the repository root. The short names are used throughout this
 | Short name | Document | What it is |
 |---|---|---|
 | **F** | `docs/foundations/sdlc-framework-foundations-v1.0.md` | The agreed principles, roles, state model and testing rules. |
-| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E37 that amend F. The merged v1.1 text has not been produced; read F with E. |
+| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E38 that amend F. The merged v1.1 text has not been produced; read F with E. |
 | **RN** | `docs/design/sdlc-design-D1-resolution-note.md` | Seven design corrections to D1 (R1 to R7) and the rule that ended prose review. |
 | **Plan** | `docs/acceptance/sdlc-M1-acceptance-plan-Astra.md` | The M1 acceptance matrix: 74 rows, each a scenario with a required observable result. Written by Astra, the second architect. |
 | **D1** | `docs/design/sdlc-design-D1-engine-core.md` | The engine architecture, draft 3: entities, store, git, scheduler, gate function, decisions, API, recovery. |
@@ -292,7 +292,7 @@ None of these blocks slice 1.
 | Power-loss harness for row M67 | It must distinguish synced from unsynced state on real SQLite and real git. That may need a privileged device or filesystem setup on this WSL2 host, which is Sean's call. Without it M67 stays unpassed and M1 is not accepted. | Slice 4 |
 | Browser driver for row M68 | **Decided (E36 item 1):** Playwright, one development dependency pinned exactly, driving Chromium and Firefox; both versions are recorded in the report. | Slice 6 |
 | Numeric load limits for row M71 | **Decided (E36 item 2):** 5 projects, 20 connected clients, a 1 GB database, at the default 250 ms latency bound. Nothing larger is qualified. | Slice 6 |
-| Foundations v1.1 text | E1 to E37 are not yet merged into one document. | Whenever convenient |
+| Foundations v1.1 text | E1 to E38 are not yet merged into one document. | Whenever convenient |
 | Package name | "surety" has not been checked on npm. Both packages are private until it is. | Before any publication |
 | `.surety/project.json` for this repository | Not created. The engine's own bootstrap or adoption transition is its only writer (E2), and Surety adopts itself only after M3. | After M3 |
 

@@ -3,9 +3,12 @@
 //
 // A secret the engine holds never reaches its disk or its API, wherever the
 // role's output happens to be cut: between two writes, at the boundary of a
-// stored chunk, or inside a multibyte character. A detector registered
-// later is run over what is already stored; a record it matches is marked
-// and is no longer served. Every secret here is synthetic.
+// stored chunk, or inside a multibyte character; and in whatever form the
+// role's output encodes it: a secret with a character JSON escapes, sent
+// inside a JSON protocol line, is on the wire in its escaped form (the
+// slice-4 review; E37 item 2). A detector registered later is run over what
+// is already stored; a record it matches is marked and is no longer served.
+// Every secret here is synthetic.
 //
 // Deferred (COVERAGE.md): the Critical finding a later hit raises and the
 // quarantine of evidence and gates that depend on the record, to slice 5;
@@ -22,12 +25,21 @@ import { VALID_RESULT, script, step } from './harness/scripted.mjs';
 
 const SECRET = 'SURETY-SYNTHETIC-SECRET-4f9a1c7e2b6d';
 const MULTIBYTE_SECRET = 'clé-synthétique-ß9Zq7-ünïcode-3d8e5a';
+// Two secrets with a character that a JSON string must escape.
+const QUOTE_SECRET = 'SURETY-SYNTHETIC"QUOTE-secret-7731c2';
+const BACKSLASH_SECRET = 'SURETY-SYNTHETIC\\BACKSLASH-secret-90d4e1';
 
-// One verification run with `steps`, in an engine that holds `secret`. Returns what the checks need.
+// The forms in which a role's output can carry a secret: as it is, and as a
+// JSON string holds it. They differ only for a secret with a character JSON
+// escapes.
+const formsOf = (secret) => [...new Set([secret, JSON.stringify(secret).slice(1, -1)])];
+
+// One verification run with `steps`, in an engine that holds `secret` (one
+// value, or several). Returns what the checks need.
 async function runHolding(t, secret, steps, result = VALID_RESULT) {
   const fx = await scriptedEngine(t);
   const project = (await addProject(fx)).id;
-  await holdSecret(fx.engine, 'FIXTURE_SECRET', secret);
+  for (const [i, value] of [secret].flat().entries()) await holdSecret(fx.engine, i === 0 ? 'FIXTURE_SECRET' : `FIXTURE_SECRET_${i + 1}`, value);
   const item = await addWork(fx.engine, project, 'verification');
   fx.scripted.script(item, [{ steps: [...steps, step.result(result)] }]);
   await tickUntil(fx.engine, project, () => workItem(fx.home, item).status === 'complete', { what: 'the item to complete' });
@@ -36,21 +48,23 @@ async function runHolding(t, secret, steps, result = VALID_RESULT) {
   return { fx, project, run };
 }
 
-// The secret is nowhere under the engine home and in nothing the API returns
-// about the run; the text around it is retained; the post-write scan is clean.
+// The secret (one value, or several) is nowhere under the engine home and in
+// nothing the API returns about the run, in neither of its forms; the text
+// around it is retained; the post-write scan is clean.
 async function assertRedacted({ fx, project, run }, secret, around) {
   await waitForPostScan(fx.home, run.transcript, 'clean');
   await waitForPostScan(fx.home, run.result, 'clean');
-  assert.deepEqual(filesHolding(fx.home, secret), [], 'no file under the engine home holds the secret: not the store, not a record, not a log');
+  const forms = [secret].flat().flatMap(formsOf);
+  for (const form of forms) assert.deepEqual(filesHolding(fx.home, form), [], `no file under the engine home holds the secret, here in the form ${JSON.stringify(form)}: not the store, not a record, not a log`);
   assertRecordsSound(fx.home, project);
   const transcript = await readRecord(fx.engine, project, run.transcript);
   assert.equal(transcript.status, 200, `GET the transcript (body: ${transcript.text.slice(0, 200)})`);
-  assert.ok(!transcript.text.includes(secret), 'the transcript the API serves does not hold the secret');
+  for (const form of forms) assert.ok(!transcript.text.includes(form), `the transcript the API serves does not hold the secret, here in the form ${JSON.stringify(form)}`);
   for (const text of around) assert.ok(transcript.text.includes(text), `the text around the secret is retained: ${JSON.stringify(text)}`);
   for (const path of [`/v1/projects/${project}/runs/${run.id}`, `/v1/projects/${project}/records/${run.result}`]) {
     const res = await fx.engine.get(path);
     assert.equal(res.status, 200, `GET ${path}`);
-    assert.ok(!res.text.includes(secret), `GET ${path} does not return the secret`);
+    for (const form of forms) assert.ok(!res.text.includes(form), `GET ${path} does not return the secret, here in the form ${JSON.stringify(form)}`);
   }
 }
 
@@ -77,6 +91,15 @@ describe('M64 a secret the engine holds is redacted before it is stored or serve
     const steps = [step.stdoutBytes(bytes.subarray(0, cut)), step.sleep(400), step.stdoutBytes(bytes.subarray(cut))];
     const seen = await runHolding(t, MULTIBYTE_SECRET, steps);
     await assertRedacted(seen, MULTIBYTE_SECRET, ['x ', ' y\n']);
+  });
+
+  test('inside a JSON protocol line: a secret with a quote and one with a backslash, which the line carries escaped, are stored and served in neither form', async (t) => {
+    // The role's result line is JSON: on the role's standard output the quote
+    // is \" and the backslash is \\, so neither secret is there byte for byte.
+    const result = { status: 'completed', summary: `quoted: ${QUOTE_SECRET} ; backslashed: ${BACKSLASH_SECRET} ; end of summary` };
+    for (const secret of [QUOTE_SECRET, BACKSLASH_SECRET]) assert.equal(formsOf(secret).length, 2, 'the fixture: the escaped form differs from the secret itself');
+    const seen = await runHolding(t, [QUOTE_SECRET, BACKSLASH_SECRET], [step.stdout('a plain line\n')], result);
+    await assertRedacted(seen, [QUOTE_SECRET, BACKSLASH_SECRET], ['a plain line\n', 'quoted: ', ' ; backslashed: ', ' ; end of summary']);
   });
 });
 
