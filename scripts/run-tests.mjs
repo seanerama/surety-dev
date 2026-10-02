@@ -15,10 +15,11 @@
 //   - a file that ran contains no passing test;
 //   - full run (no --slice): any row in ROWS has no file.
 // --slice n runs exactly the files listed for slices 1..n.
+// The full report of every run is also written under test-results/ (not tracked).
 // Exit 0 pass, 1 fail, 2 usage error.
 
 import { spawnSync } from 'node:child_process';
-import { globSync, readFileSync } from 'node:fs';
+import { createWriteStream, globSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
@@ -106,9 +107,20 @@ stream.on('test:pass', (t) => {
     passedIn.set(t.file, passedIn.get(t.file) + 1);
   }
 });
+// Keep the whole report of every run, so a failure that does not repeat can still be named.
+const failures = [];
+stream.on('test:fail', (t) => {
+  if (t.todo === undefined && t.details?.type !== 'suite') failures.push(`${relative(root, t.file ?? '')}: ${t.name}`);
+});
+mkdirSync(join(root, 'test-results'), { recursive: true });
+const logPath = join('test-results', `${suite}${slice === null ? '' : `-slice${slice}`}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+const log = createWriteStream(join(root, logPath));
 const report = stream.compose(spec);
 report.pipe(process.stdout);
+report.pipe(log);
 await new Promise((resolve) => report.on('end', resolve));
+await new Promise((resolve) => log.end(resolve));
+if (failures.length > 0) console.error(`failed:\n  ${failures.join('\n  ')}\nfull report: ${logPath}`);
 
 if (counts.failed > 0 || counts.failedGroups > 0) {
   fail(`${suite}: ${counts.failed} test(s) failed or were cancelled, in ${counts.failedGroups} failing group(s).`);
