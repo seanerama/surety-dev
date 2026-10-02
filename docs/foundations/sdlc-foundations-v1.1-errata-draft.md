@@ -768,3 +768,4 @@ Also noted: the journey reads the event history from the store, because the publ
 Sean went through the items waiting for him one at a time. Each entry records his choice and what it changes.
 
 1. **Browser driver for row M68: Playwright.** One development dependency, pinned to an exact version, used only by the acceptance tests. It drives Chromium and Firefox, the two browser families whose versions the M1 report records. The engine's runtime dependencies stay at `better-sqlite3` alone. This settles the first open item of build spec section 11.
+2. **Load limits for row M71: 5 projects, 20 connected clients, a 1 GB database.** These are the limits the M1 report claims; nothing larger is qualified. The latency bound stays at its default of 250 ms. This settles the second open item of build spec section 11.
