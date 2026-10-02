@@ -236,9 +236,6 @@ describe('M71 latency under the declared maximum load', () => {
     }
     const projectOf = { hashing: hashing.id, quick: quick.id, stubborn: stubborn.id };
 
-    // Project 2: eligible work, created after that tick, so nothing has dispatched it yet.
-    items.held = await addWork(engine, held.id, 'verification');
-
     // Twenty clients: seventeen follow the stream, two read the whole log
     // again and again in large pages, one asks for the whole log and reads nothing.
     const clients = await startStreamClients(t, engine, { followers: LIMITS.clients - 3, pagers: 2, slow: 1, since: maxEventSeq(fx.home), limit: 1_000_000 });
@@ -254,6 +251,11 @@ describe('M71 latency under the declared maximum load', () => {
     // The second project's git is held before the backup starts, and until it has ended.
     const releaseGit = holdGit(held.repo.path);
     fx.beforeCleanup.push(releaseGit);
+    // Project 2: eligible work, created only now that its git is held. The
+    // engine may still be running a tick of its own asking when `tick`
+    // returns (one it requested itself after the dispatches above); work
+    // created before the hold could be dispatched by that tick, and was.
+    items.held = await addWork(engine, held.id, 'verification');
     const backup = await engine.post('/v1/harness/backup', {});
     assert.equal(backup.status, 202, `the backup is started (body: ${backup.text})`);
     await passAll(engine, gated.id, cand.candidate.id, [checks.id.login]);
