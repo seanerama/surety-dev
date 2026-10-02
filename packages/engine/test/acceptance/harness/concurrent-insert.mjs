@@ -1,7 +1,9 @@
 // Child process for the concurrent-allocation case of row M02. Usage:
-//   node concurrent-insert.mjs <store.db> <table> <row-json> <start-at-epoch-ms>
-// Waits until the start time so all children contend at once, inserts the row
-// on its own connection, and prints {"ok":true} or {"ok":false,"code":...}.
+//   node concurrent-insert.mjs <store.db> <table> <row-json> <start-at>
+// <start-at> is an instant of the monotonic clock in nanoseconds, as
+// process.hrtime.bigint() gives it (concurrent.mjs). Waits until then so all
+// children contend at once, inserts the row on its own connection, and
+// prints {"ok":true} or {"ok":false,"code":...}.
 
 import Database from 'better-sqlite3';
 
@@ -14,7 +16,8 @@ const cols = Object.keys(row);
 const stmt = db.prepare(
   `INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
 );
-while (Date.now() < Number(startAt)) {
+const startAtNs = BigInt(startAt);
+while (process.hrtime.bigint() < startAtNs) {
   // spin briefly so every child issues its write at nearly the same instant
 }
 try {

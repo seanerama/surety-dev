@@ -83,8 +83,17 @@ export async function within(promise, ms) {
   }
 }
 
+// How long a wait has lasted is read from the monotonic clock, never from
+// the wall clock (SEAM.md §24, "The harness's own waits"). The host's wall
+// clock steps: back by about a second at every time-sync correction, and
+// forward by minutes when the virtual machine resumes after its host slept.
+// A deadline computed from Date.now() is over at once after a forward step,
+// with the engine healthy, and is late after a step back. performance.now()
+// does neither.
+const monotonicMs = () => performance.now();
+
 export async function waitFor(probe, { timeoutMs = DEFAULT_WAIT_MS, intervalMs = 50, what = 'condition' } = {}) {
-  const deadline = Date.now() + timeoutMs;
+  const started = monotonicMs();
   let lastError;
   for (;;) {
     try {
@@ -93,7 +102,7 @@ export async function waitFor(probe, { timeoutMs = DEFAULT_WAIT_MS, intervalMs =
     } catch (err) {
       lastError = err;
     }
-    if (Date.now() > deadline) {
+    if (monotonicMs() - started > timeoutMs) {
       throw new Error(`timed out after ${timeoutMs} ms waiting for ${what}${lastError ? `: ${lastError.message}` : ''}`);
     }
     await sleep(intervalMs);
@@ -351,14 +360,14 @@ export class Engine {
       }
       throw new Error(`unknown wait state ${state}`);
     };
-    const deadline = Date.now() + timeoutMs;
+    const started = monotonicMs();
     for (;;) {
       try {
         if (await probe()) return;
       } catch (err) {
         if (err.fatal) throw new Error(this.failureMessage(`engine exited while waiting for ${state}`));
       }
-      if (Date.now() > deadline) throw new Error(this.failureMessage(`timed out waiting for ${state}`));
+      if (monotonicMs() - started > timeoutMs) throw new Error(this.failureMessage(`timed out after ${timeoutMs} ms waiting for ${state}`));
       await sleep(50);
     }
   }
@@ -382,10 +391,24 @@ export class Engine {
 
 // Start an engine and wait for `until`: 'full' (default), 'listening',
 // 'failed', 'barrier:<name>', or 'none'.
+//
+// If the wait throws, the engine is killed before the error is passed on. A
+// caller learns of the engine only from the value returned here, so an engine
+// whose start-up wait failed is in nobody's cleanup list: left running, it
+// outlived its test and kept the test file's process alive until the runner's
+// limit. The error still says what the engine was doing when the wait gave
+// up: its message is made before the kill.
 export async function startEngine({ home, port, harness = true, args = [], authority, until = 'full', timeoutMs, cli, env, cwd } = {}) {
   const proc = spawnEngine({ home, harness, args, cli, env, cwd });
   const engine = new Engine({ home, port, authority, proc });
-  if (until !== 'none') await engine.waitUntil(until, { timeoutMs });
+  if (until !== 'none') {
+    try {
+      await engine.waitUntil(until, { timeoutMs });
+    } catch (err) {
+      await engine.kill();
+      throw err;
+    }
+  }
   return engine;
 }
 

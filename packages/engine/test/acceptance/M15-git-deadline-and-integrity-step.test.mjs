@@ -114,7 +114,7 @@ describe('M15 repository integrity as the prerequisite step that overruns', () =
 
     const delay = 4000;
     await armFault(fx.engine, { point: 'tick_step', step: 'integrity', project: a, delay_ms: delay });
-    const requested = Date.now();
+    const requested = performance.now();
     const before = tickEvents(fx.home).at(-1) ?? 0;
     await requestTick(fx.engine, a);
     const tickSeq = await waitFor(() => tickEvents(fx.home).find((seq) => seq > before), { what: 'the requested tick to finish' });
@@ -126,7 +126,7 @@ describe('M15 repository integrity as the prerequisite step that overruns', () =
     assert.equal(runsOf(fx.home, itemA).length, 0, 'the project whose integrity step overran was not dispatched in that tick');
 
     // The slow step completes late. Nothing is dispatched on the strength of it.
-    await sleep(Math.max(0, requested + delay + 1500 - Date.now()));
+    await sleep(Math.max(0, requested + delay + 1500 - performance.now()));
     assert.equal(runsOf(fx.home, itemA).length, 0, 'a late completion does not dispatch');
     assert.equal(workItem(fx.home, itemA).status, 'eligible');
     await waitForWork(fx.home, itemB, 'complete');

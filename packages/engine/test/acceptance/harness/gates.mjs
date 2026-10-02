@@ -214,10 +214,11 @@ export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages
 }
 
 // A later candidate of a T1 project: a fix is integrated on top and the
-// Builder asks for its nomination. Returns the new candidate.
-export async function successor(fx, ctx) {
+// Builder asks for its nomination. With `finding`, the fix's work item names
+// the finding it fixes (`subject.finding`). Returns the new candidate.
+export async function successor(fx, ctx, { finding } = {}) {
   const count = candidatesOf(fx.home, ctx.project.id).length;
-  const fix = await addItem(fx, ctx.project.id, 'fix');
+  const fix = finding === undefined ? await addItem(fx, ctx.project.id, 'fix') : await addWork(fx.engine, ctx.project.id, 'fix', { subject: { finding } });
   fx.scripted.script(fix, [roleThat([step.write(`src/fix-${count}.js`, `export const fix = ${count};\n`)], { nominate: true })]);
   await tickUntil(fx.engine, ctx.project.id, () => runsOf(fx.home, fix)[0]?.state === 'ended', { what: 'the fix to be built' });
   return (await waitForCandidates(fx, ctx.project.id, count + 1)).at(-1);

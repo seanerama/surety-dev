@@ -11,6 +11,10 @@
 // invalidated reopens the finding. An exclusion that is proposed and
 // assessed, and not approved, excludes nothing.
 //
+// The fourth case also pins what completes a fix's work (E36 item 4, which
+// settles E34 item 2): the evaluation that resolves the finding it names,
+// and nothing before it.
+//
 // Findings, dispositions and assessments are reported by scripted Reviewer
 // and Verifier runs, as agents would report them; the engine records them.
 // Medium and Low findings are read at the stage gate; the High finding of
@@ -40,9 +44,12 @@ import {
   stageGate,
   successor,
 } from './harness/gates.mjs';
-import { eventsOfType, outOfBand } from './harness/journal.mjs';
+import { assertWorkHistory } from './harness/invariants.mjs';
+import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { commitOnRef } from './harness/repos.mjs';
-import { advanceClock, answerDecision, scriptedEngine, tick } from './harness/runs.mjs';
+import { advanceClock, answerDecision, scriptedEngine, tick, workItem } from './harness/runs.mjs';
+import { withStore } from './harness/store.mjs';
+import { WORK } from './harness/transitions.mjs';
 
 const DAY = 86_400;
 const inDays = (n) => new Date(Date.now() + n * DAY * 1000).toISOString();
@@ -127,22 +134,32 @@ describe('M42 the findings a gate asks about', () => {
     assert.equal((await stageGate(fx, ctx)).outcome, 'satisfied');
   });
 
-  test('a fix is resolved by a verification on the candidate that holds it, and a resolution whose verification is invalidated reopens the finding', async (t) => {
+  test("a fix is resolved by a verification on the candidate that holds it, and the fix's work is complete with that resolution and not before; a resolution whose verification is invalidated reopens the finding", async (t) => {
     const { fx, ctx, project, k, c1 } = await clean(t, [check('login', { requirements: ['R1'] }), check('regress', { requirements: ['R1'] })]);
     await passAll(fx.engine, project, c1.id, [k.login]);
     await postResult(fx.engine, project, { candidate: c1.id, check: k.regress, exit_status: 1 });
     const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'regress' })]);
     await review(fx, project, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
 
-    // The fix is built and nominated, and the check that showed the defect passes on it.
-    const c2 = await successor(fx, ctx);
-    const [, proof] = await passAll(fx.engine, project, c2.id, [k.login, k.regress]);
+    // The fix is built, as work that names the finding, and nominated.
+    const c2 = await successor(fx, ctx, { finding: found.id });
+    const fix = workItemsOf(fx.home, project).find((work) => work.kind === 'fix' && work.subject?.finding === found.id);
+    assert.equal(fix?.status, 'verifying', 'the fixture is live: the fix is integrated and held by candidate 2');
+
+    // An evaluation in which the check the finding names has not passed resolves nothing, and the fix stays open.
+    await passAll(fx.engine, project, c2.id, [k.login]);
+    await stageGate(fx, ctx, c2);
+    assert.deepEqual([finding(fx.home, found.id).status, workItem(fx.home, fix.id).status], ['dispositioned', 'verifying'], 'no execution of the named check on candidate 2: the finding is not resolved and its fix is not complete');
+
+    // The check that showed the defect passes on candidate 2: the evaluation resolves the finding and completes the fix.
+    const [proof] = await passAll(fx.engine, project, c2.id, [k.regress]);
     const verified = await stageGate(fx, ctx, c2);
     assert.equal(verified.outcome, 'satisfied', `reasons: ${reasonCodes(verified).join(', ')}`);
     const resolved = finding(fx.home, found.id);
     assert.equal(resolved.status, 'resolved');
     assert.deepEqual(JSON.parse(resolved.resolution_verification), { evaluation: verified.id, check_result: proof.id }, 'the resolution names the evaluation and the execution that verified it');
     assert.equal(eventsOfType(fx.home, 'finding.resolved').length, 1);
+    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, fix.id)), WORK.kinds.fix.path, "the fix's work is complete with the evaluation that resolved its finding");
 
     // The verification is invalidated: a developer's commit on the integration branch is adopted.
     commitOnRef(ctx.project.repo.path, ctx.project.repo.ref, { 'src/hotfix.js': 'export const hotfix = true;\n' }, { message: 'developer: a commit the engine did not make' });

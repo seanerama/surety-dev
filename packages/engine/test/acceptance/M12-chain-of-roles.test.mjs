@@ -92,7 +92,7 @@ describe('M12 chaining stops at max_chained_roles', () => {
     assert.equal(launchesOf(fx, verification), 0, 'the answer launches nothing by itself: the scheduler dispatches');
     await tickUntil(fx.engine, project.id, () => workItem(fx.home, verification).status === 'complete', { max: 6, what: 'the verification to complete' });
     assert.deepEqual([runsOf(fx.home, verification).length, launchesOf(fx, verification)], [1, 1], 'it was dispatched and launched once');
-    assert.equal(workItem(fx.home, built).status, 'complete');
+    assert.equal(workItem(fx.home, built).status, 'verifying', "the verification's completion does not complete the stage's work: that is its stage gate's (row M44), and this fixture declares no check");
     assert.equal(boundaryDecisions(fx, verification).length, 1, 'and no second decision was raised');
     withStore(fx.home, (db) => assertWorkHistory(db, verification));
   });
