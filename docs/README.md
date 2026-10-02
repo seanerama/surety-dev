@@ -7,6 +7,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | Document | Purpose |
 |---|---|
 | [spec/M1-build-spec.md](spec/M1-build-spec.md) | How M1 is built: scope, roles, corrections to the design, slices, definition of done. Start here. |
+| [spec/templates/project-spec-template.md](spec/templates/project-spec-template.md) | The specification a project gives Surety: the identifiers the engine registers and the prose around them. |
 | [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 must pass. |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
