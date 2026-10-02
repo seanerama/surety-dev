@@ -13,7 +13,15 @@
 //
 // The fourth case also pins what completes a fix's work (E36 item 4, which
 // settles E34 item 2): the evaluation that resolves the finding it names,
-// and nothing before it.
+// and nothing before it. Since E43 the fix it builds is the work the engine
+// registered for the disposition, let through the chain boundary by a
+// person, and no longer a fixture's.
+//
+// The sixth case is E43: a Reviewer's "fix" disposition is recorded at once,
+// and the engine registers the fix work itself, in that transaction: one
+// `fix` item naming the finding, not a fixture, chained like the review the
+// engine queues (E36 item 3), so it waits at the chain boundary for a
+// person; one still after ticks and a restart; none before the disposition.
 //
 // The last case is the slice-5 review's finding (E41 item 3): a Verifier
 // whose domain the boundary could not at first report as terminated is
@@ -32,7 +40,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
-import { consume, openDecision } from './harness/decisions.mjs';
+import { consume, decisionsOn, openDecision } from './harness/decisions.mjs';
 import {
   acceptedRun,
   alphaTarget,
@@ -57,7 +65,7 @@ import { roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { commitOnRef } from './harness/repos.mjs';
-import { advanceClock, answerDecision, assertRunEnded, assertRunQuarantined, scriptedEngine, tick, tickUntil, waitForQuarantine, waitForRunState, workItem } from './harness/runs.mjs';
+import { advanceClock, answerDecision, assertRunEnded, assertRunQuarantined, runsOf, scriptedEngine, tick, tickUntil, waitForQuarantine, waitForRunState, workItem } from './harness/runs.mjs';
 import { BOUNDARY } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
@@ -152,10 +160,11 @@ describe('M42 the findings a gate asks about', () => {
     const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'regress' })]);
     await review(fx, project, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
 
-    // The fix is built, as work that names the finding, and nominated.
-    const c2 = await successor(fx, ctx, { finding: found.id });
+    // The fix is the work the engine registered for the disposition (E43; the sixth case): a person lets it through the chain boundary, its Builder builds it and asks for the nomination.
     const fix = workItemsOf(fx.home, project).find((work) => work.kind === 'fix' && work.subject?.finding === found.id);
-    assert.equal(fix?.status, 'verifying', 'the fixture is live: the fix is integrated and held by candidate 2');
+    assert.ok(fix, 'the engine registered fix work naming the finding (the sixth case pins it)');
+    const c2 = await successor(fx, ctx, { work: fix.id });
+    assert.equal(workItem(fx.home, fix.id).status, 'verifying', 'the fix is integrated and held by candidate 2');
 
     // An evaluation in which the check the finding names has not passed resolves nothing, and the fix stays open.
     await passAll(fx.engine, project, c2.id, [k.login]);
@@ -202,6 +211,48 @@ describe('M42 the findings a gate asks about', () => {
     await review(fx, project, c2.id, { assessments: [{ assessment: proposed.id, verdict: 'not_applicable' }] });
     assert.equal(assessmentsOf(fx.home, project)[0].status, 'assessed', 'assessed is not approved: this finding blocks a gate, so the human owner must authorize the exclusion');
     onlyReason(await alpha.evaluate(), 'FINDING_BLOCKING', found.id);
+  });
+
+  test("a Reviewer's fix disposition is recorded at once, and the engine registers the fix work with it: one fix item naming the finding, no fixture, chained and waiting at the chain boundary; one still after ticks and a restart; none before the disposition", async (t) => {
+    const { fx, ctx, project, k, c1 } = await clean(t);
+    await passAll(fx.engine, project, c1.id, [k.login]);
+    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'login' })]);
+    const fixes = () => workItemsOf(fx.home, project).filter((work) => work.kind === 'fix');
+
+    // An open finding with no disposition has no fix work, however many ticks run.
+    await tick(fx.engine, project);
+    await tick(fx.engine, project);
+    assert.deepEqual(fixes(), [], 'no fix work before a fix disposition is recorded');
+
+    // The Reviewer proposes to fix it. Asking to fix relaxes nothing, so the disposition is recorded with the Reviewer's authority and no decision (E43); the engine registers the fix work in the same transaction.
+    await review(fx, project, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
+    const row = finding(fx.home, found.id);
+    assert.deepEqual([row.status, row.disposition, row.disposition_authority], ['dispositioned', 'fix', 'reviewer'], 'the fix is a disposition the Reviewer records');
+    const registered = fixes();
+    assert.equal(registered.length, 1, 'with the disposition recorded, exactly one fix item exists, and no tick was needed');
+    const [fix] = registered;
+    assert.deepEqual(
+      [fix.project, fix.subject?.finding, fix.status, fix.trigger_source, fix.trigger_id, fix.trigger_generation],
+      [project, found.id, 'eligible', 'finding', found.id, 1],
+      "the fix is on the candidate's project, names the finding it fixes, is eligible, and its trigger is the finding",
+    );
+    const created = eventsOfType(fx.home, 'work.created').find((event) => event.subject.work_item === fix.id);
+    assert.ok(created && created.payload?.test_fixture !== true, 'the engine registered it: it is no fixture');
+    assert.deepEqual(decisionsOn(fx.home, 'finding_disposition', found.id), [], 'no decision was asked of the human for the disposition');
+
+    // It is work that a run's outcome created: at the default chain limit it waits for a person, with no run.
+    const boundary = await openDecision(fx, project, 'blocker', fix.id);
+    assert.deepEqual(boundary.options.map((option) => option.key).sort(), ['cancel', 'continue'], 'the fix waits at the chain boundary');
+    assert.deepEqual([fixes()[0].status, fixes()[0].blocker?.reason, runsOf(fx.home, fix.id).length], ['eligible', 'max_chained_roles', 0], 'eligible, blocked at the chain limit, and not dispatched without a human step');
+
+    // Once: further ticks and a restart register no second fix and ask no second question.
+    await tick(fx.engine, project);
+    await fx.engine.kill();
+    await fx.start();
+    await tick(fx.engine, project);
+    assert.deepEqual(fixes().map((work) => work.id), [fix.id], 'one fix item for the disposition, however many ticks run and across a restart');
+    assert.deepEqual(decisionsOn(fx.home, 'blocker', fix.id).map((row) => row.id), [boundary.id], 'and one decision about it');
+    assert.equal(runsOf(fx.home, fix.id).length, 0, 'still no run');
   });
 });
 
