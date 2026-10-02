@@ -24,7 +24,7 @@ All paths are from the repository root. The short names are used throughout this
 | Short name | Document | What it is |
 |---|---|---|
 | **F** | `docs/foundations/sdlc-framework-foundations-v1.0.md` | The agreed principles, roles, state model and testing rules. |
-| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E26 that amend F. The merged v1.1 text has not been produced; read F with E. |
+| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E27 that amend F. The merged v1.1 text has not been produced; read F with E. |
 | **RN** | `docs/design/sdlc-design-D1-resolution-note.md` | Seven design corrections to D1 (R1 to R7) and the rule that ended prose review. |
 | **Plan** | `docs/acceptance/sdlc-M1-acceptance-plan-Astra.md` | The M1 acceptance matrix: 74 rows, each a scenario with a required observable result. Written by Astra, the second architect. |
 | **D1** | `docs/design/sdlc-design-D1-engine-core.md` | The engine architecture, draft 3: entities, store, git, scheduler, gate function, decisions, API, recovery. |
@@ -290,7 +290,7 @@ None of these blocks slice 1.
 | Power-loss harness for row M67 | It must distinguish synced from unsynced state on real SQLite and real git. That may need a privileged device or filesystem setup on this WSL2 host, which is Sean's call. Without it M67 stays unpassed and M1 is not accepted. | Slice 4 |
 | Browser driver for row M68 | A pinned development dependency, and two browser families whose versions are recorded. | Slice 6 |
 | Numeric load limits for row M71 | The Plan requires them stated in the fixture. Qualifying a small store proves nothing about a larger one. | Slice 6 |
-| Foundations v1.1 text | E1 to E26 are not yet merged into one document. | Whenever convenient |
+| Foundations v1.1 text | E1 to E27 are not yet merged into one document. | Whenever convenient |
 | Package name | "surety" has not been checked on npm. Both packages are private until it is. | Before any publication |
 | `.surety/project.json` for this repository | Not created. The engine's own bootstrap or adoption transition is its only writer (E2), and Surety adopts itself only after M3. | After M3 |
 

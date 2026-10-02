@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 import { freePort, startEngine, waitFor, writeEngineConfig } from '../engine.mjs';
-import { git, gitEnv, makeRepo, plantHook } from '../git.mjs';
+import { git, gitEnv, makeRepo, plantFsmonitor, plantHook } from '../git.mjs';
 import { isoNow, newId } from '../ids.mjs';
 import {
   assertDispatched,
@@ -50,8 +50,9 @@ import {
   unownedWorktrees,
   worktreeOperations,
 } from '../runs.mjs';
-import { BOUNDARY, Scripted, VALID_RESULT, lateSuccess, processIsLive, script, step } from '../scripted.mjs';
+import { BOUNDARY, RESULT_LINE, Scripted, VALID_RESULT, lateSuccess, processIsLive, script, step } from '../scripted.mjs';
 import {
+  LIFECYCLE,
   WORK,
   assertRunPathLegal,
   assertWorkPathLegal,
@@ -61,6 +62,7 @@ import {
   isLegalDomainEdge,
   legalEdges,
   m1Kinds,
+  outcomeSpec,
   owningStatuses,
   reachable,
   routeTo,
@@ -181,6 +183,16 @@ export async function slice2Checks(check, work) {
     const path = ['eligible', 'claimed', 'executing', 'integrating'];
     assertWorkPathLegal('review', path, 'mutant', mutant);
     assert.throws(() => assertWorkPathLegal('review', path), /executing → integrating is not a legal review transition/);
+  });
+
+  await check('contract: what the expiry of a run lease leaves is an outcome the tables know, with that outcome\'s consequence for the work (E27 item 3)', () => {
+    const expiry = LIFECYCLE.lease_expiry;
+    assert.deepEqual([expiry.outcome, expiry.reason_class, expiry.work, expiry.repair_attempts], ['recovered', 'recovered', 'held', 'unchanged']);
+    assert.ok(outcomeSpec(expiry.outcome).reason_class.includes(expiry.reason_class), 'the reason class belongs to the outcome');
+    assert.equal(outcomeSpec(expiry.outcome).workspace, 'retained');
+    assert.equal(LIFECYCLE.work_after_run[expiry.outcome], expiry.work, 'the work follows the outcome, as after a startup recovery');
+    assert.ok(isLegal('verification', 'executing', expiry.work) && isLegal('verification', 'claimed', expiry.work), 'and the work table has the edge from both statuses a slice-2 run can own');
+    assert.ok(Array.isArray(expiry.decided_before_expiry) && expiry.decided_before_expiry.length > 0);
   });
 
   await check('transitions: path checks accept legal histories and name the illegal step', () => {
@@ -576,6 +588,52 @@ export async function slice2Checks(check, work) {
     await waitFor(() => !scripted.isLive(d), { what: 'the descendant to be gone' });
   });
 
+  await check('scripted child: a role can close its stdout and go on: the reader sees the end of the stream while the role lives, nothing is written afterwards, and signals still reach it', async () => {
+    const { scripted, ws } = scriptedDir('close-stdout');
+    const closing = { steps: [step.result(), step.closeStdout(), step.heartbeat(), step.usage({ input_tokens: 1 }), step.hold('gate', { heartbeat_ms: 50 }), step.result({ late: true })] };
+    scripted.script('wi_X', [closing, { steps: [step.result(), step.closeStdout(), step.hold('stay', { heartbeat_ms: 0 })] }]);
+    const run = launch(scripted, ws);
+    const ended = new Promise((resolve) => run.child.stdout.on('close', resolve));
+    const entry = await scripted.waitForHolding({ work_item: 'wi_X' }, 'gate');
+    await ended;
+    assert.equal(scripted.isLive(entry), true, 'the stream has ended and the role is still running');
+    assert.equal(scripted.eventsOf(entry.pid, 'stdout_closed').length, 1, 'it logged that it closed its stdout');
+    await sleep(300);
+    assert.equal(run.child.exitCode, null, 'the role goes on, holding, after its output has ended');
+    scripted.release('wi_X', 'gate');
+    assert.deepEqual(await run.exited, { code: 0, signal: null }, run.out.stderr);
+    assert.deepEqual(run.out.lines, [{ type: 'result', result: VALID_RESULT }], 'what it wrote before the close arrived; the heartbeats, the usage and the result after it were not written');
+    assert.equal(run.out.stderr, '', 'and writing nothing to a closed descriptor raises nothing');
+    assert.deepEqual(scripted.eventsOf(entry.pid, 'exit').map((e) => e.code), [0]);
+
+    // A role signalled while it holds with its stdout closed.
+    const second = launch(scripted, ws);
+    await waitFor(() => scripted.eventsOf(second.child.pid, 'holding').some((e) => e.hold === 'stay'), { what: 'the second launch to hold' });
+    second.child.kill('SIGTERM');
+    assert.deepEqual(await second.exited, { code: 143, signal: null });
+    assert.deepEqual(scripted.eventsOf(second.child.pid, 'signal').map((e) => e.signal), ['SIGTERM'], 'a SIGTERM is logged and ends it, as for any role');
+  });
+
+  await check('scripted child: raw stdout is written as given, so a role can end its output with a line that has no line ending, with or without a descendant holding the stream', async () => {
+    for (const withDescendant of [false, true]) {
+      const { scripted, ws } = scriptedDir(`unterminated-${withDescendant}`);
+      scripted.script('wi_X', [script.completeUnterminated([step.usage({ input_tokens: 1 }), ...(withDescendant ? [step.descendant()] : [])])]);
+      const run = launch(scripted, ws);
+      let raw = '';
+      run.child.stdout.on('data', (c) => (raw += c));
+      assert.deepEqual(await run.exited, { code: 0, signal: null }, run.out.stderr);
+      await waitFor(() => raw.endsWith('}') && raw.includes('"result"'), { timeoutMs: 5000, what: 'the output written before the exit to be read' });
+      assert.equal(raw, `${JSON.stringify({ type: 'usage', semantics: 'cumulative', raw: { input_tokens: 1 } })}\n${RESULT_LINE}`, 'the last line is the result, and nothing follows it');
+      assert.deepEqual(JSON.parse(RESULT_LINE), { type: 'result', result: VALID_RESULT });
+      assert.deepEqual(run.out.lines, [{ type: 'usage', semantics: 'cumulative', raw: { input_tokens: 1 } }], 'a reader that waits for a line ending never sees the result');
+      if (withDescendant) {
+        const d = await scripted.waitForDescendant({ parent: run.child.pid });
+        assert.equal(scripted.isLive(d), true, 'the descendant holds the stream open after the role has exited');
+        assert.deepEqual(scripted.killStrays(), [d.pid]);
+      }
+    }
+  });
+
   await check('scripted helper: boundary instructions are merged, validated and written whole; liveness needs the same start time', async () => {
     const { scripted } = scriptedDir('boundary');
     const file = join(scripted.dir, 'boundary.json');
@@ -649,6 +707,30 @@ export async function slice2Checks(check, work) {
       assert.equal(existsSync(evidence), false, `${where}: switched off on the command line, the hook does not run`);
     }
     assert.throws(() => plantHook('/nonexistent', 'post-checkout', '/nonexistent/e', { where: 'elsewhere' }), /unknown hook place/);
+  });
+
+  await check('fsmonitor fixture: the program a repository names as core.fsmonitor runs when git adds a worktree the ordinary way, also with hooks switched off, and can be switched off per call', async () => {
+    const root = mkdtempSync(join(work, 'fsmonitor-'));
+    const repo = makeRepo(join(root, 'repo'));
+    const evidence = join(root, 'evidence.txt');
+    const file = plantFsmonitor(repo.path, evidence, { dir: join(root, 'planted') });
+    assert.ok(!file.startsWith(`${repo.path}/`), 'the program is outside the repository');
+    assert.equal(git(repo.path, ['config', '--local', 'core.fsmonitor']), file, "it is named in the repository's own configuration");
+    const add = (name, options = []) => execFileSync('git', [...options, '-C', repo.path, 'worktree', 'add', '--quiet', '--detach', join(root, name), 'HEAD'], { env: gitEnv(repo.path), stdio: ['ignore', 'pipe', 'pipe'] });
+    add('wt-1');
+    assert.match(readFileSync(evidence, 'utf8'), /^fsmonitor ran: pid \d+ in .*wt-1 with HOME=.*, run by: .*git.*$/m, 'the program left its evidence, and names the git command that ran it');
+    rmSync(evidence);
+    // Switching hooks off does not switch it off.
+    add('wt-2', ['-c', 'core.hooksPath=/dev/null']);
+    assert.ok(existsSync(evidence), 'with hooks switched off on the command line the program still runs');
+    rmSync(evidence);
+    // What an engine can do about it.
+    add('wt-3', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']);
+    assert.equal(existsSync(evidence), false, 'switched off on the command line, the program does not run');
+    // Removing a worktree and listing worktrees do not run it, so a test may do both without leaving evidence.
+    git(repo.path, ['worktree', 'remove', '--force', join(root, 'wt-1')]);
+    git(repo.path, ['worktree', 'list', '--porcelain']);
+    assert.equal(existsSync(evidence), false);
   });
 
   await check('run fixture: with homeSymlink the engine home is a symbolic link to the directory that holds its files', async () => {
