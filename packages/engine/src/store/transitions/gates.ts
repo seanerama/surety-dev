@@ -238,6 +238,8 @@ export interface EvaluateArgs {
   // effective roots, as the main thread read it; null if not read.
   headFingerprint?: string | null;
   head?: string | null;
+  // What the main thread could not read (E41 item 2).
+  unreadable?: { head?: boolean; ancestry?: boolean; records?: string[] } | undefined;
 }
 
 export interface EvaluationBody {
@@ -298,11 +300,18 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const reasons: Reason[] = [];
   const add = (code: string, subjects: string[]) => reasons.push({ code, subjects });
 
-  // (1) The scope is complete.
-  if (scope.required.length === 0 || scope.uncovered.length > 0) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...scope.uncovered]);
+  // An evaluation made without these facts (a request from inside the
+  // store) cannot establish them: unknown, not a pass (E41 item 2).
+  const unreadable = args.unreadable ?? { head: args.headFingerprint === undefined || args.headFingerprint === null, ancestry: false, records: [] };
 
-  // (2) The protected path is authorized and effective.
+  // (1) The scope is complete. Delivery whose ancestry git could not tell
+  // is not known, so the scope is not complete.
+  if (scope.required.length === 0 || scope.uncovered.length > 0 || unreadable.ancestry === true) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...scope.uncovered]);
+
+  // (2) The protected path is authorized and effective. A protected set
+  // that could not be read is not shown authorized.
   const pending = unfinishedOperations(db, args.project);
+  if (pending.length === 0 && unreadable.head === true) add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
   if (pending.length === 0 && typeof args.headFingerprint === 'string' && args.headFingerprint !== scope.effective.fingerprint) {
     add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
     const seen = (db.prepare(`SELECT "payload" FROM "events" WHERE "type" = 'protected.unauthorized_detected' AND json_extract("subject", '$.project') = ?`).all(args.project) as { payload: string }[]).some(
@@ -388,7 +397,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     const row = db.prepare('SELECT "path", "post_scan", "missing_at", "published" FROM "records" WHERE "id" = ?').get(record) as
       | { path: string | null; post_scan: string; missing_at: string | null; published: number }
       | undefined;
-    if (!row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit') evidence.push(record);
+    if (!row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit' || (unreadable.records ?? []).includes(record)) evidence.push(record);
   }
   if (evidence.length > 0) add('EVIDENCE_MISSING', evidence);
 

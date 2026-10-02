@@ -43,13 +43,18 @@ export async function ensureAncestry(rt: Runtime, project: string): Promise<void
 export interface GateFacts {
   headFingerprint: string | null;
   head: string | null;
+  // What could not be read (E41 item 2): an unknown is never a pass, so each
+  // of these makes the evaluation not satisfied.
+  unreadable: { head: boolean; ancestry: boolean; records: string[] };
 }
 
 // The facts of one evaluation of `candidate`. Never throws for what git or a
-// file cannot say: an unreadable head has no fingerprint (and the gate is
-// not judged unauthorized on it), and an unreadable record is missing.
+// file cannot say; what it could not read is named in `unreadable`.
 export async function gateFacts(rt: Runtime, project: string, candidate: string): Promise<GateFacts> {
   await ensureAncestry(rt, project);
+  const unknownPairs = await rt.read<{ ancestor: string; descendant: string }[]>('ancestry.pairs', { project });
+  const revision = await rt.read<string | null>('candidate.revision', { candidate });
+  const unreadable = { head: false, ancestry: revision !== null && unknownPairs.some((p) => p.descendant === revision), records: [] as string[] };
   const facts = await rt.read<{ repo: string; head: string | null; roots: string[] | null; records: { id: string; path: string | null; sha256: string | null; bytes: number | null; missing_at: string | null }[] }>(
     'gate.facts',
     { project, candidate },
@@ -62,9 +67,11 @@ export async function gateFacts(rt: Runtime, project: string, candidate: string)
       else if (bytes !== null && r.missing_at !== null) await rt.engine('record.audited', { record: r.id, whole: true });
     } catch (err) {
       log('evidence read', err, { record: r.id });
+      unreadable.records.push(r.id);
     }
   }
   let headFingerprint: string | null = null;
   if (facts.head !== null && facts.roots !== null) headFingerprint = (await protectedSetAt(facts.repo, facts.head, facts.roots))?.fingerprint ?? null;
-  return { headFingerprint, head: facts.head };
+  unreadable.head = headFingerprint === null;
+  return { headFingerprint, head: facts.head, unreadable };
 }

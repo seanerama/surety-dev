@@ -154,6 +154,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   },
   'gate.facts': (d, a: { project: string; candidate: string }) => gateFactsRead(d, a),
   'gates.due': (d, a: { project: string }) => dueStageGates(d, a),
+  'candidate.revision': (d, a: { candidate: string }) => (d.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ?').get(a.candidate) as { revision: string } | undefined)?.revision ?? null,
   'decision.subject': (d, a: { project: string; decision: string }) => decisionSubjectRead(d, a),
   'intent.row': (d, a: { intent: string }) => intentRow(d, a),
   'effects.due': (d, a: { project: string }) => effectsDue(d, a),
