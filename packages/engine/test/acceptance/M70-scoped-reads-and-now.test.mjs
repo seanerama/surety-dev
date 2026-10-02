@@ -1,7 +1,7 @@
 // M70, scoped reads, NOW and source ages (slice 6). Plan §3.7 M70; D1 §§11.1,
 // 11.3, 12.2 to 12.4, 13.1, 14, D1-28; Review §8.3 and N03; SEAM.md §91.
 //
-// Three fixtures.
+// Four fixtures.
 //
 // One engine with six projects in the states the row names, read by four
 // cases: NOW is one of five values by a fixed priority (refused, waiting on
@@ -23,6 +23,13 @@
 // in the engine's form, discloses nothing, and leaves the engine answering.
 // A real device node cannot be made without privilege; a link to one is as
 // far as an unprivileged test reaches, and that is what the case builds.
+//
+// One engine with two projects, each with a Stop asked for and not confirmed,
+// for the decisions read (D1 §11.3; E39): a project's open decisions are
+// listed with what a person needs to answer one, another project's are not
+// shown, and a consumed decision is no longer listed. The other reads D1
+// §11.3 lists (one decision, work, operations, a gate, environments) are not
+// pinned.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -32,11 +39,12 @@ import { after, describe, test } from 'node:test';
 
 import { isRefusalBody } from './harness/engine.mjs';
 import { assertRefused, eventsSince, maxEventSeq } from './harness/fixtures.mjs';
+import { decision } from './harness/decisions.mjs';
 import { addEnvironment, sharedFixture } from './harness/gates.mjs';
 import { runToEnd } from './harness/gitruns.mjs';
 import { awayFromMidnight, getLedger } from './harness/ledger.mjs';
 import { sleep, timed } from './harness/mono.mjs';
-import { boundedGet, listProjects, readProject, readRun } from './harness/reads.mjs';
+import { boundedGet, listDecisions, listProjects, readProject, readRun } from './harness/reads.mjs';
 import { readRecord, recordFile, recordRow } from './harness/records.mjs';
 import { addProject, addWork, advanceClock, scriptedEngine, tick, waitForQuarantine, waitForRun } from './harness/runs.mjs';
 import { BOUNDARY, script } from './harness/scripted.mjs';
@@ -191,6 +199,66 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
     const written = [...new Set(eventsSince(fx.home, seq).map((event) => event.type))];
     assert.deepEqual(written.filter((type) => !['run.heartbeat', 'engine.tick'].includes(type)), [], 'no event was written for a read');
     assert.equal(fx.scripted.launches().length, launches, 'no role was launched by a read');
+  });
+});
+
+describe('M70 the decisions read', () => {
+  test("a project's open decisions are listed with what a person needs to answer one: kind, subject, question, options and preview hash; another project's are not shown; a consumed decision is no longer listed", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+
+    // Two projects, each with a role under way and a Stop asked for and not confirmed: one open decision each.
+    const p = {};
+    const item = {};
+    const run = {};
+    const row = {};
+    for (const key of ['mine', 'other']) {
+      p[key] = (await addProject(fx)).id;
+      item[key] = await addWork(engine, p[key], 'verification');
+      fx.scripted.script(item[key], [script.hold('gate', { heartbeat_ms: 0 })]);
+    }
+    await tick(engine, p.mine);
+    for (const key of ['mine', 'other']) {
+      run[key] = await waitForRun(fx.home, item[key], { state: 'executing' });
+      await fx.scripted.waitForHolding({ run: run[key].id });
+      const asked = await engine.post(`/v1/projects/${p[key]}/runs/${run[key].id}/stop`, {});
+      assertRefused(asked, 409, 'confirm_required', `the unconfirmed Stop of the ${key} project`);
+      row[key] = decision(fx.home, asked.body.subject?.decision);
+      assert.equal(row[key]?.status, 'open', `the fixture is live: the ${key} project has an open decision`);
+    }
+
+    // The read shows each project its own open decision, as its row has it, and nothing of the other's.
+    const shownTo = async (key) => (await listDecisions(engine, p[key])).decisions;
+    for (const key of ['mine', 'other']) {
+      const listed = await shownTo(key);
+      assert.deepEqual(listed.map((shown) => shown.id), [row[key].id], `the ${key} project is shown its own open decision and no other project's`);
+      const [shown] = listed;
+      assert.deepEqual(
+        [shown.kind, shown.subject_type, shown.subject_id, shown.question, shown.preview_hash],
+        ['stop_confirm', 'run', run[key].id, row[key].question, row[key].preview_hash],
+        'with its kind, its subject, its question and its preview hash, as its row has them',
+      );
+      assert.ok(typeof shown.question === 'string' && shown.question.length > 0, 'the question is a sentence a person can read');
+      assert.ok(Array.isArray(shown.options), `and its options (${JSON.stringify(shown.options)})`);
+      assert.deepEqual(
+        shown.options.map((option) => [option.key, option.plan_hash, option.effect_plan]),
+        row[key].options.map((option) => [option.key, option.plan_hash, option.effect_plan]),
+        "each option with its key, its effect plan and that plan's hash, as stored",
+      );
+      assert.deepEqual(shown.options.map((option) => option.key), ['confirm'], 'a Stop offers its confirmation');
+      assert.equal((await readProject(engine, p[key])).project.open_decisions?.count, 1, "the project's own projection counts the decision the read lists");
+    }
+
+    // What the read showed is enough to answer: the Stop is confirmed with the preview hash taken from the read, not from the store.
+    const [mine] = await shownTo('mine');
+    const confirmed = await engine.post(`/v1/projects/${p.mine}/runs/${run.mine.id}/stop`, { preview_hash: mine.preview_hash });
+    assert.equal(confirmed.status, 200, `the Stop confirmed with the preview hash the read showed (body: ${confirmed.text})`);
+    assert.equal(decision(fx.home, row.mine.id).status, 'consumed', 'the fixture is live: the decision is consumed');
+
+    // A consumed decision is not among the open decisions; the other project's list is as it was.
+    assert.deepEqual(await shownTo('mine'), [], 'the consumed decision is no longer listed');
+    assert.equal((await readProject(engine, p.mine)).project.open_decisions?.count, 0, "and the project's own projection counts none");
+    assert.deepEqual((await shownTo('other')).map((shown) => [shown.id, shown.preview_hash]), [[row.other.id, row.other.preview_hash]], "the other project's open decision is still listed, unchanged");
   });
 });
 

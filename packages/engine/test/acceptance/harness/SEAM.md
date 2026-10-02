@@ -207,7 +207,7 @@ Build spec §8: "Production code reaches the seam through one module. Nothing el
 
 **What it does not prove.**
 
-- That production code never branches on what a seam function returned. The inspection cannot tell a hook from a question about the mode: a seam export that reports the mode under another name and is only ever called passes all three rules (the harness self-check pins this limit). The behaviour is observed from outside by row M08, "the test seam is unreachable outside harness mode".
+- That production code never branches on what a seam function returned. The inspection cannot tell a hook from a question about the mode: a seam export that reports the mode under another name and is only ever called passes all three rules (the harness self-check pinned this limit while it existed; section 21). The behaviour is observed from outside by row M08, "the test seam is unreachable outside harness mode".
 - Anything about a name assembled at run time, about `dist/`, or about the seam folder's own code, including that every seam function is inert outside harness mode.
 - Anything about behaviour selected by a plain parameter that only a harness flag sets. `--harness-migrations` reaches the store as an ordinary migrations directory.
 - Scope. The inspection is lexical and does not resolve bindings, so a local name that shadows a seam import is reported as a use of it.
@@ -278,7 +278,7 @@ A Reviewer found four behaviors of the slice-1 build that the tests did not catc
 | An `api.token` with group or other bits crashed the engine and left a lock behind | section 1 (status 5), section 3, section 6 | `M69-boundary-core.test.mjs`: "a token file open to group or others refuses the start and is left as it was"; `M06-engine-lock.test.mjs`: "a start refused for its token file takes no lock and does not block the next start" |
 | `"decision_targets": {}` was reported with source `"file"` | section 2, "Inspection" | `M07-closed-configuration.test.mjs`: "an empty decision-target map is valid and is reported as the default" |
 
-The harness gained one capability for these: `rawRequest` in `engine.mjs` now reports interim (1xx) responses and can hold a body back until `100 Continue` arrives. `selfcheck/run.mjs` checks it against a byte-level server.
+The harness gained one capability for these: `rawRequest` in `engine.mjs` now reports interim (1xx) responses and can hold a body back until `100 Continue` arrives. The self-check of slices 1 to 3 checked it against a byte-level server (section 21).
 
 The owner's decisions on the review's other findings (E23) changed this file as follows:
 
@@ -546,13 +546,15 @@ Each of these was open in the sources. The Builder may object. The first five ca
 
 ## 21. What stands behind these tests before the engine exists
 
-Build spec §8 warns that a test written before its engine cannot be shown right by running it. For slice 2 the harness self-check (`selfcheck/run.mjs`) does what can be done without the engine:
+**The self-check and the witness engine no longer exist.** Through slice 3 the directory `harness/selfcheck/` held a harness self-check and a stand-in ("witness") engine. E31 froze them from slice 4 on, and they were deleted in the Verifier pass after slice 6 was verified; they are in git history (present on `main` at commit `bd43265`). Nothing is to be run or extended in their place. This section and sections 22 to 24, 38 and 51 record what stood behind the tests of slices 1 to 3 when they were written, and the file names they give under `selfcheck/` are of that directory.
 
-- every helper with logic is run against something real: the case generators against mutants of the contract table, each store assertion against a witness store and one mutant per defect, the role program launched as a process, the HTTP helpers against a stand-in;
-- every slice-2 test file is run against a **witness engine** (`selfcheck/witness-engine.mjs`), a single-file stand-in that does what sections 12 to 18 ask. Every test passes against it, so the tests and this file do not contradict each other;
-- the witness has defects that can be switched on one at a time (`selfcheck/witness.mjs` lists them). With each one on, the test meant to catch it fails.
+Build spec §8 warns that a test written before its engine cannot be shown right by running it. For slice 2 the harness self-check (`selfcheck/run.mjs`) did what could be done without the engine:
 
-The witness engine is not the engine, not a design for it and not a contract. It keeps no transaction discipline, journals nothing it could recover, runs its store on the main thread, and takes its legal transitions from the Verifier's own table. The Builder builds from the sources and from this file. A run against the witness can never count as an acceptance run: when the harness is pointed at it, every test file gains one test that fails (`engine.mjs`).
+- every helper with logic was run against something real: the case generators against mutants of the contract table, each store assertion against a witness store and one mutant per defect, the role program launched as a process, the HTTP helpers against a stand-in;
+- every slice-2 test file was run against a **witness engine** (`selfcheck/witness-engine.mjs`), a single-file stand-in that did what sections 12 to 18 ask. Every test passed against it, so the tests and this file did not contradict each other;
+- the witness had defects that could be switched on one at a time (`selfcheck/witness.mjs` listed them). With each one on, the test meant to catch it failed.
+
+The witness engine was not the engine, not a design for it and not a contract. It kept no transaction discipline, journaled nothing it could recover, ran its store on the main thread, and took its legal transitions from the Verifier's own table. The Builder builds from the sources and from this file. A run against a stand-in can never count as an acceptance run: when the harness is pointed at one (the environment variable `SURETY_WITNESS_ENGINE`, which `engine.mjs` still reads), every test file gains one test that fails.
 
 The four carried-over cases of sections 1 and 6 were also run against the slice-1 engine on `main`, where each fails for the reason this file gives.
 
@@ -573,7 +575,7 @@ A Reviewer probed the slice-2 engine (`build/slice-2`, 642320f), on which every 
 
 **On the `unknown` finding.** Section 14 already said that an `unknown` report means quarantine. The sentence named two conditions, the grace periods passing and an `unknown` report; if the second had to wait for the first it would add nothing to it. The slice-2 engine's reading (keep signalling, quarantine only if the last report is not `terminated`) is safe in one sense, since nothing is released before a `terminated` report either way. It is still not what the sentence said, and it loses the record that the boundary could not be read. The sentence is now two sentences.
 
-**What the harness gained.** The role program (`scripted/child.mjs`) has one new script step, `{"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore"}}`; the head of that file documents it. It starts the program again in descendant mode: a process of the role's process group that carries the role's domain marker, outlives the role and, unless told otherwise, keeps the role's stdout open. The role logs a `descendant` entry for it; `Scripted.descendants()` reads the entries and `killStrays()` kills what is left. `runs.mjs` gained `scriptedEngine(t, {homeSymlink: true})`, `unownedWorktrees`, `worktreeOperations` and `resolvedPath`; `git.mjs` gained `plantHook`. `invariants.mjs` no longer counts the `work.resumed` of a lifted dispatch hold as a step of an item's path. The self-check exercises each, and the witness engine has one defect for each new case.
+**What the harness gained.** The role program (`scripted/child.mjs`) has one new script step, `{"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore"}}`; the head of that file documents it. It starts the program again in descendant mode: a process of the role's process group that carries the role's domain marker, outlives the role and, unless told otherwise, keeps the role's stdout open. The role logs a `descendant` entry for it; `Scripted.descendants()` reads the entries and `killStrays()` kills what is left. `runs.mjs` gained `scriptedEngine(t, {homeSymlink: true})`, `unownedWorktrees`, `worktreeOperations` and `resolvedPath`; `git.mjs` gained `plantHook`. `invariants.mjs` no longer counts the `work.resumed` of a lifted dispatch hold as a step of an item's path. The self-check exercised each, and the witness engine had one defect for each new case (section 21: both are deleted since).
 
 **Names and rules the Verifier fixed in this pass.** The Builder may object; the first three carry a question for the owner in the Verifier's report.
 
@@ -606,7 +608,7 @@ A second Reviewer probed the slice-2 engine after its first fix round (`build/sl
 
 **What an ended-by-expiry run records, and what it does not.** `outcome` and `reason_class` are `recovered`. The `recovery` key of `run.ended` stays what section 16 says it is: the mark of a *startup* recovery, naming the recovering incarnation. A run that a live engine's tick ended because its lease expired has no such key. The owner may prefer one record for both; see the Verifier's report.
 
-**What the harness gained.** The role program (`scripted/child.mjs`) has one new step, `{"close_stdout": true}`, which closes the role's stdout for good while the role goes on, and `{"stdout": <text>}` is now documented as writing its text with no line ending added. `scripted.mjs` gained `step.stdout`, `step.closeStdout`, `RESULT_LINE` and `script.completeUnterminated`. `git.mjs` gained `plantFsmonitor`. `../contract/run-lifecycle.json` gained `lease_expiry`. The self-check exercises each, and the witness engine has one defect for each new or changed case.
+**What the harness gained.** The role program (`scripted/child.mjs`) has one new step, `{"close_stdout": true}`, which closes the role's stdout for good while the role goes on, and `{"stdout": <text>}` is now documented as writing its text with no line ending added. `scripted.mjs` gained `step.stdout`, `step.closeStdout`, `RESULT_LINE` and `script.completeUnterminated`. `git.mjs` gained `plantFsmonitor`. `../contract/run-lifecycle.json` gained `lease_expiry`. The self-check exercised each, and the witness engine had one defect for each new or changed case (section 21: both are deleted since).
 
 **The host's clock.** The engine's clock is the host's wall clock plus the offset of section 18. On the host these tests were written on (WSL2), the wall clock steps back by about three quarters of a second roughly every half minute, when the guest's time is synchronised (measured: 0.74 to 0.78 s, 31.5 s apart, against the monotonic clock). A timestamp the engine takes just after answering a clock advance can then be earlier than the `now` of that answer. One case written after the first review compared the two exactly ("a role that sends no heartbeat for longer than lease_ttl keeps its lease …") and failed on the unchanged slice-2 engine in about one run in ten for that reason alone. It now allows two seconds, which cannot hide a missing renewal: a renewal made before the advance is at least `lease_ttl`/3 older. The cases added in this pass are written the same way. Nothing else about the engine's clock is pinned here; whether the engine should take durations from a monotonic clock is not a slice-2 question.
 
@@ -707,7 +709,7 @@ Left on the wall clock because they are about the wall clock: the ids and timest
 
 Both were checked directly, old harness against new, outside any test: with `Date.now` made to step forward by 900 s during a wait, the old `waitFor` and `waitUntil` threw at once (the engine then reached full mode) and the new ones returned when their condition came true; with a start-up wait of 1 ms, the old `startEngine` left its engine running and the new one left none.
 
-**What the harness gained.** `endings.mjs` (the drivers for the ten endings, `projectFacts`, `assertEndingExpectations`, `matrixCells`, the lazily produced reference). In the role program: the exit that drops nothing; `{"stdout_fill": {"bytes": n}}`; a descendant's `chatter_ms`; and the file and git steps the slice-3 rows use (section 26). `scripted.mjs` gained `step.stdoutFill`, `step.writeFill`, `step.delete`, `step.rename`, `step.symlink` and `step.git`. The self-check runs each against something real (`selfcheck/slice3.mjs`), and the witness engine, which now retries a failed run end as this section says, has one defect for each kind of failure the cases are meant to catch (`selfcheck/witness.mjs`).
+**What the harness gained.** `endings.mjs` (the drivers for the ten endings, `projectFacts`, `assertEndingExpectations`, `matrixCells`, the lazily produced reference). In the role program: the exit that drops nothing; `{"stdout_fill": {"bytes": n}}`; a descendant's `chatter_ms`; and the file and git steps the slice-3 rows use (section 26). `scripted.mjs` gained `step.stdoutFill`, `step.writeFill`, `step.delete`, `step.rename`, `step.symlink` and `step.git`. The self-check ran each against something real (`selfcheck/slice3.mjs`), and the witness engine, which then retried a failed run end as this section says, had one defect for each kind of failure the cases are meant to catch (`selfcheck/witness.mjs`). Both are deleted since (section 21).
 
 **Against the slice-2 engine** (`main`, 656bd26). All ten references pass. Of the 77 cells, 62 pass and 15 fail: the two cells the final review named (an Abandon whose worktree removal succeeded on disk and whose record failed stays `finalizing` until a restart: six cells, the three settle events from claimed and from executing; a run stopped at `launch.before_spawn` whose end failed once is recorded `dispatch_started`, `unknown` and charged: three cells) and two failures the reviews had not found (a run abandoned before its spawn is recorded and charged the same way whichever of its end's transactions fails: four cells; a preflight refusal whose record fails ends the run `failed` / `infra_error`: two cells). Of the single cases, three fail there as stated (the Stop during a deadline retry is answered 200 and the run ends `stopped`; the role that exited 0 ends `recovered`; the 64 MiB line takes fifteen seconds) and five pass (the two E28 item 2 cases and the three token files): the slice-2 engine already does what those pin.
 
@@ -951,7 +953,7 @@ What this session fixed and that session builds on, without renaming: the barrie
 
 ## 38. What stands behind these tests before the engine exists
 
-As in section 21. The helpers with logic are run against real repositories and witness stores (`selfcheck/slice3.mjs`); every test file of this session is run against the witness engine, which was extended to do what sections 25 to 35 ask, as plainly as it can (`selfcheck/witness-git.mjs` holds its git side, `selfcheck/witness-slice3.sql` its tables), and passes there; and for every case the witness has a defect that makes that case fail (`selfcheck/witness.mjs`). The witness engine is still not the engine and not a design for it: its journal is rows written around synchronous git calls, it recovers nothing it journaled, and its integrity is a handful of comparisons. The part-1 cases were run against the slice-2 engine (section 24). Of the 84 cases of sections 25 to 35, 83 fail there at their first slice-3 step, which shows nothing about them; one passes, the git call killed at its deadline (section 34), which the slice-2 engine already does for the one git effect it has.
+As in section 21, and like it a record of what was done then: the self-check and the witness engine are deleted since. The helpers with logic were run against real repositories and witness stores (`selfcheck/slice3.mjs`); every test file of this session was run against the witness engine, which was extended to do what sections 25 to 35 ask, as plainly as it could (`selfcheck/witness-git.mjs` held its git side, `selfcheck/witness-slice3.sql` its tables), and passed there; and for every case the witness had a defect that made that case fail (`selfcheck/witness.mjs`). The witness engine was still not the engine and not a design for it: its journal was rows written around synchronous git calls, it recovered nothing it journaled, and its integrity was a handful of comparisons. The part-1 cases were run against the slice-2 engine (section 24). Of the 84 cases of sections 25 to 35, 83 fail there at their first slice-3 step, which shows nothing about them; one passes, the git call killed at its deadline (section 34), which the slice-2 engine already does for the one git effect it has.
 
 ## 39. What the second slice-3 session's tests assume throughout
 
@@ -1173,11 +1175,11 @@ Each of these was open in the sources. The Builder may object. Those marked † 
 
 ## 51. What stands behind these tests before the engine exists
 
-As in sections 21 and 38. The witness engine was extended to do what sections 39 to 48 ask (`selfcheck/witness-journal.mjs` holds its journal, attempts, probes and recovery; `selfcheck/witness-slice3b.sql` its tables), every file of this session passes against it, and for every case it has a defect that makes the case fail: one mutant entry per probe cell, per crash cell and per fault-matrix cell among them (`selfcheck/witness.mjs`). `selfcheck/slice3b.mjs` checks the tables for the properties the cases rely on (the transition table is closed and carries correction 14; no outcome lets a conflicting or unknown effect proceed; the derivation gives a status for every combination), runs every hand-built git state against real git, and runs the operation reads against witness stores with one unsound history per assertion.
+As in sections 21 and 38, and like them a record of what was done then: the self-check and the witness engine are deleted since. The witness engine was extended to do what sections 39 to 48 ask (`selfcheck/witness-journal.mjs` held its journal, attempts, probes and recovery; `selfcheck/witness-slice3b.sql` its tables), every file of this session passed against it, and for every case it had a defect that made the case fail: one mutant entry per probe cell, per crash cell and per fault-matrix cell among them (`selfcheck/witness.mjs`). `selfcheck/slice3b.mjs` checked the tables for the properties the cases rely on (the transition table is closed and carries correction 14; no outcome lets a conflicting or unknown effect proceed; the derivation gives a status for every combination), ran every hand-built git state against real git, and ran the operation reads against witness stores with one unsound history per assertion.
 
 Two things found on the way, both in the harness and neither about the engine. `holdGit`'s release could leave the held git call waiting for ever: git reads its configuration more than once, and the second read could arrive while the pipe was still under the name (10 of 40 releases hung before the change; `repos.mjs` now renames the file into place first). And the fact that says whether a registered ref is where the registry expects it was worded so that the expectation accepted both answers; the self-check for it found that.
 
-The witness is still not the engine and not a design for it: it runs its git synchronously inside one process, finds a dead incarnation's children by a marker in their environment, freezes a finalizer's inputs in a column of its own, and knows nothing of gates. Against the slice-2 engine on `main` every case of this session fails at its first slice-3 step, which shows nothing about the cases.
+The witness was still not the engine and not a design for it: it ran its git synchronously inside one process, found a dead incarnation's children by a marker in their environment, froze a finalizer's inputs in a column of its own, and knew nothing of gates. Against the slice-2 engine on `main` every case of this session fails at its first slice-3 step, which shows nothing about the cases.
 
 ---
 
@@ -1185,7 +1187,7 @@ The witness is still not the engine and not a design for it: it runs its git syn
 
 Sections 52 to 64 were written with the slice-4 acceptance tests (2026-10-02): rows M59 to M67, and the cases of rows M02, M04, M12 and M61 that earlier slices left for this one. They follow D1 §§3.6, 6.5, 6.6, 13, 14 and 16.2, E16b and E16c, with build spec §6 correction 21. Where those left something open, the choice is listed in section 63.
 
-**The procedure changed with this slice** (E31). Nothing stands behind these tests but the sources and a reading of the test: there is no stand-in engine and no self-check for them, and the frozen one under `selfcheck/` was neither extended nor run. The cases are few, by the owner's decision: one test per row, and a separately reported case only where the Plan names a finite case set. Only the five shim cases of row M67 were run, because only they need no engine (section 60). A defect in any other test will show during the build and goes through the objection procedure (build spec §4).
+**The procedure changed with this slice** (E31). Nothing stands behind these tests but the sources and a reading of the test: there is no stand-in engine and no self-check for them, and the frozen one under `selfcheck/` was neither extended nor run (it was deleted later; section 21). The cases are few, by the owner's decision: one test per row, and a separately reported case only where the Plan names a finite case set. Only the five shim cases of row M67 were run, because only they need no engine (section 60). A defect in any other test will show during the build and goes through the objection procedure (build spec §4).
 
 ## 52. What the slice-4 tests assume throughout
 
@@ -1855,22 +1857,40 @@ The cases are few by decision (E31), and several pin a name this file fixed rath
 
 ---
 
-# Slice 7: the journey
+# The journey: slice 5, and slice 7 for the same journey read through the API
 
-## 86. The journey adds nothing
+## 86. The journey: a slice-5 target, read again through the API in slice 7
 
-Section 86 was written with the slice-7 acceptance test (2026-10-02): row M01, `M01-kernel-journey.test.mjs`. It fixes no name and asks for no route, fixture, barrier, table or column that sections 1 to 85 do not already give. The procedure is E31's: one file, the fewest cases, no stand-in engine, no self-check. The file was checked for syntax and every name it imports was resolved against the module that exports it. It was not run: it needs slice 5.
+Section 86 was written with the journey's acceptance test (2026-10-02), row M01, and rewritten in place when the journey became a target of the slice-5 build (the Verifier pass after slice 6 was verified; the owner's response to the milestone review, which found that components had been proved before the complete workflow). It fixes no name and asks for no route, fixture, barrier, table or column that the other sections do not already give. The procedure is E31's: the fewest cases, no stand-in engine, no self-check.
+
+**Two files, one journey.** `journey.mjs` makes the journey; both files call it once, in a `before` hook, and each of their cases reads one clause of the row's required result from it.
+
+| File | Listed under | What it reads the journey from | Needs |
+|---|---|---|---|
+| `M01-kernel-journey.test.mjs` (seven cases) | slice 5, first in its list | the store, the repository, the scripted roles' launches, the run read (section 17) and the answers of the gate and authorization commands (sections 70, 75) | slices 1 to 5 |
+| `M01-journey-through-the-api.test.mjs` (two cases) | slice 7 | the event stream in replay pages (section 92), the project read and the decisions read (section 91), the candidate read (section 95) | slice 6 as well |
+
+The first file is the central target of the slice-5 build: it is the one place where what slices 1 to 5 build is made to work together, from a project's creation to an issued Alpha authorization, and it needs nothing of slice 6. The second adds no behaviour. It is the same journey observed where a person would observe it, and it exists because the row's last clause, "API and event history agree with durable rows", could only be read from the store before slice 6 pinned the public reads. (The runner also refuses `--slice 7` when slice 7 lists nothing.)
 
 **What the journey uses,** in its order: `POST /v1/projects` (section 27); the plan fixture with a requirement, and the checks fixture (section 67); a scripted Builder's run, its commit and its integration (sections 28, 30); the T2 nomination and the verification work it registers (section 42); the chain boundary's `continue` (section 40); the review the engine queues once the check's execution is observed, let through the chain boundary like the verification, and the scripted Reviewer's sign-off (sections 40, 68, 70; changed with E36 item 3: the journey made this work with the trigger fixture before); the check-result and environment fixtures (section 67); the two gate routes and the authorization route (sections 70, 75); `GET /v1/projects/:p/runs/:r` (section 17).
+
+**How a decision is found at a chain boundary.** In the slice-5 file, in the store (`openDecision` in `decisions.mjs`, which also checks the preview against the contract). In the slice-7 file, in `GET /v1/projects/:p/decisions`: the journey ticks until that read lists an open `blocker` about the waiting work, and answers it with the `id` and the `preview_hash` the read showed. So the slice-7 journey is one a person could make with the API alone.
 
 **Two combinations no earlier test makes.** Each follows from the sections named; none is a new rule.
 
 - The plan, checks, check-result and environment fixtures are applied to a project created through `POST /v1/projects`, where the slice-5 tests use the project fixture. Such a project has its lineage and its first protected version (sections 42, 66).
 - The checks fixture is called before the project has a candidate. It declares checks of the effective protected version, whatever candidates exist (section 67).
 
-A third, a sign-off recorded before the check's execution, went with E36 item 3: the engine queues the review only once the check has passed, so in the journey the execution now comes first. The first stage-gate evaluation of the journey, made with the candidate verified and no execution on record, therefore lacks the check and the sign-off both (`CHECK_NOT_PASSED`, `SIGNOFF_MISSING`). Engine-made review work, which the paragraph below still names as something the seam does not reach, is in the seam since that decision (section 70).
+A third, a sign-off recorded before the check's execution, went with E36 item 3: the engine queues the review only once the check has passed, so in the journey the execution now comes first. The first stage-gate evaluation of the journey, made with the candidate verified and no execution on record, therefore lacks the check and the sign-off both (`CHECK_NOT_PASSED`, `SIGNOFF_MISSING`).
 
-**What the row names and the seam does not reach** is in `../COVERAGE.md`, under row M01: the event history read over HTTP, a candidate read, and engine-made review work.
+**What the slice-7 file reads, and how far that goes beyond the rows that own the routes.** Each route is pinned by its own row (M70, M72, M74). The journey's two cases compare what the routes show of one whole journey with the durable rows, and in doing so read four things those rows' own cases do not; each follows from the section named:
+
+- every stored event up to the read is one message of the replay, in `seq` order, and its `data` holds the stored `seq`, `type` and `at` and the stored `subject` and `payload` as objects (section 92 says the data is the event; row M72 compares `seq`, `type` and the subject's project);
+- a project whose work is all complete, with no run under way and no open decision, is `idle`, and its `spend_today.invocations` is the number of original ledger rows of the day, three here (section 91; the journey is not started within two minutes of midnight UTC);
+- while work waits at a chain boundary, the decisions read lists exactly the one open `blocker` about it, and at the journey's end it lists nothing (section 91);
+- a candidate's `gates` entry for a kind is the latest stored evaluation of that kind, with the stored `outcome` and `stale` (section 95), and `protected_version.effective` is the project's effective version, here the one the candidate was nominated under.
+
+**What stands behind the two files.** Both were run once against the slice-4 engine with `node --test`: both load, and both fail in their `before` hook at the plan fixture, which that engine has without requirements (`unknown_field`), as they must. `replayMessages` (`sse.mjs`) and the event comparison of the first slice-7 case were exercised outside any test, against a scratch server that served a real slice-4 store's events in section 92's wire form in pages shorter than asked for: 33 events, each compared field by field. Nothing else of the slice-7 file can be run before slices 5 and 6 are built. A defect in either file will show then and goes through the objection procedure.
 
 ---
 
@@ -1952,7 +1972,7 @@ It reaches production code as an ordinary parameter, the directory of static fil
 
 ## 91. Reads: projects, NOW, facts beside it, an observation, and record reads that refuse
 
-(D1 §§11.3, 12.2 to 12.4, 13.1, 14, A.10, D1-28; Review N03; `M70-scoped-reads-and-now.test.mjs`; the spend keys also `M74-fixture-semantics.test.mjs`.)
+(D1 §§11.3, 12.2 to 12.4, 13.1, 14, A.10, D1-28; Review N03; E39; `M70-scoped-reads-and-now.test.mjs`; the spend keys also `M74-fixture-semantics.test.mjs`; the project and decisions reads also `M01-journey-through-the-api.test.mjs`.)
 
 **Every read** of this section is a JSON object with `served_at` (a timestamp of the engine's clock) and `snapshot_seq` (the highest event `seq` of the store snapshot it was computed from). A read writes nothing: no row changes, no event is appended, no adapter is called (the tests count the launches of the scripted role, which is the adapter call a test can count from outside).
 
@@ -1970,6 +1990,19 @@ It reaches production code as an ordinary parameter, the directory of static fil
 **NOW** (D1 §12.3) is exactly one state, by this priority. `refused`: the engine cannot act on the project; the tests pin a quarantined run. `waiting_on_you`: the project has an open decision. `running`: a run of it is under way. `ready`: it has eligible work that the next tick could dispatch. `idle`: otherwise. So a project with a quarantined run is `refused` although its blocker is open, and a project with a run executing and an open decision (a Stop asked for and not confirmed) is `waiting_on_you`. The other causes of `refused` D1 names (an unreadable repository, an integrity block, a store error) and `unknown` are not pinned.
 
 **The facts beside NOW stay what they are.** `execution.runs` lists a run as `executing` whatever NOW says, and a quarantined run as `{"state": "finalizing", "quarantined": true}`.
+
+**A project's open decisions** (D1 §11.3; E39, "one addition"; added by the Verifier pass after slice 6 was verified). **`GET /v1/projects/:p/decisions`** → **200** `{"served_at", "snapshot_seq", "decisions": [...]}`: the decisions of project `:p` whose `status` is `open`, and no decision of another project. Each has at least:
+
+| Key | Value |
+|---|---|
+| `id` | the decision |
+| `kind` | its `DecisionKind` |
+| `subject_type`, `subject_id` | the stored ones: what the decision is about |
+| `question` | the stored question, a non-empty string |
+| `options` | an array in the stored order; each option has at least the stored `key`, `effect_plan` and `plan_hash` (section 76) |
+| `preview_hash` | the stored one. It is the value an answer must carry (section 76), so a person can answer from this read alone: the test confirms a Stop with the hash the read showed |
+
+A decision that is no longer open is not in the list: the test consumes one and it is gone, and the list is then `[]`. D1's table says the route returns "open decisions", so this is D1's rule and not a choice. The number of entries is the project read's `open_decisions.count`. Not pinned: the order of several open decisions (each test project has one at a time); D1's consolidation by batch key and "evidence resolved to records"; any further key (`semantic_generation`, `dependency_manifest`, `blocked_while_open`, an option's `blockers`); a read of consumed or invalidated decisions; `GET /v1/projects/:p/decisions/:d`; what the route answers for a project that does not exist. The other reads D1 §11.3 lists and no row names (a project's work and operations, a candidate's gate, environments as a route of their own) are not part of the seam: E39 leaves them unbuilt in M1 unless the owner asks.
 
 **No dispatch is a fact of its own** (D1 §13.1). `spend_today.no_dispatch` is true when none of the day's invocations of the project was launched; the amounts are then null and `invocations` is 0. A project whose launched role reported nothing has `no_dispatch` false, `invocations` 1, `unknown_cost_invocations` 1 and `reported_usd` null. One whose role reported a cost of exactly zero has `reported_usd` 0, the number, and its ledger row is `measured_zero` (section 53). Null is never shown as zero and zero never as null. A dispatch whose launch is unknown, and a day with only a refused dispatch, are not pinned.
 
@@ -2141,6 +2174,7 @@ Each of these was open in the sources. The Builder may object. Those marked † 
 | The shell's content security policy | Properties, not a text: default `'none'` or `'self'`, no inline, no eval, no other origin, `frame-ancestors 'none'` | D1 §17(13): "the UI's CSP is restrictive". |
 | The bootstrap's answer | 200 `{"token"}`; 403 `origin_refused` otherwise | D1 §11.1 gives the predicate and not the body. |
 | The project list and projection † | Section 91: `now`, `execution.runs`, `open_decisions.count`, `spend_today`, `environments` | D1 §11.3 names what the routes return in words. Only what row M70 reads is fixed. |
+| The decisions read (added after slice 6 was verified; E39) | Section 91: `GET /v1/projects/:p/decisions` lists the project's open decisions with `id`, `kind`, `subject_type`, `subject_id`, `question`, `options` and `preview_hash`; a consumed decision is not listed | D1 §11.3 names the route and says it returns open decisions with their options, effect plans and preview hash. The keys are the stored column names (D1 A.3). Only what a person needs to see and answer a decision is fixed. |
 | `no_dispatch` | A boolean beside the ledger's totals | D1 §13.1: "no dispatch is a projection fact with no row". |
 | What `refused` is, as pinned | A quarantined run | D1 §12.3 lists four causes; the row needs one. |
 | The observation fixture † | `POST /v1/harness/fixtures/observation`; the current observation on `environment_records.observed` | The Plan seeds "historical observation fixtures"; M1 has no observation job and no history table. |

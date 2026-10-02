@@ -1,8 +1,9 @@
 // Store-boundary cases for rows M02, M03 and M04. Each case takes an open
 // read-write connection to a store and the id of a project row in it. The
 // acceptance tests run them against the engine's own store file; the harness
-// self-check runs them against a witness schema to show they are satisfiable
-// and that they fail when the constraint they pin is missing.
+// self-check of slices 1 to 3 ran them against a witness schema to show they
+// were satisfiable and that they fail when the constraint they pin is missing
+// (it is deleted since; SEAM.md §21).
 
 import assert from 'node:assert/strict';
 

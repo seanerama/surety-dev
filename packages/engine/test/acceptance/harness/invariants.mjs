@@ -2,8 +2,8 @@
 // (SEAM.md §16; D1 §§4.5, 16.2; ../contract/run-lifecycle.json). A crash or
 // interruption test asserts identities, counts and dispositions, not a state
 // label (Plan §2), so these read every row a run owns. They take a database
-// handle so the harness self-check can run each of them against a witness
-// store and against mutants of it.
+// handle: the harness self-check of slices 1 to 3 ran each of them against a
+// witness store and against mutants of it (it is deleted since; SEAM.md §21).
 
 import assert from 'node:assert/strict';
 
