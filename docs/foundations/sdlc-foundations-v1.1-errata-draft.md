@@ -921,3 +921,13 @@ The one review of slice 6 found three serious defects and reproduced each by run
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E43. The engine creates fix work; the journey covers the fix loop (decided by Sean, 2026-10-02)
+
+**Decision.** When a finding's disposition "fix" is recorded (proposed by a role, approved by the human, E34 item 6), the engine registers the fix work itself, naming the finding (E38 item 6). This closes the gap E38 recorded, the second of the two workflow gaps Astra's review named (E40). Built before M1 is accepted.
+
+**The journey gains a second path.** A Reviewer raises a finding against the candidate; the owner approves "fix"; the engine creates the fix work; a Builder run fixes it; the finding is resolved by the gate evaluation in which its check passes (E34 item 7, E36 item 4); the fix completes; the stage gate and the Alpha authorization are satisfied. The end-to-end test (row M01) covers this path as well as the path where nothing goes wrong.
+
+**Consequences elsewhere.** `docs/acceptance/reports/M1-not-claimed.md` and the M1 report are updated when the path passes. No change to D1.
+
+---
