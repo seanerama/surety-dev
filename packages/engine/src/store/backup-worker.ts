@@ -4,8 +4,8 @@
 // The store is copied by SQLite's online backup in one step, so the copy is
 // one read snapshot whatever the engine writes meanwhile; it is synced and
 // hashed as a stream. The records the snapshot refers to are copied, synced
-// and checked against their recorded length and hash; every commit it lists
-// is looked for in its repository's object store.
+// and checked against their recorded length and hash. The commits it lists
+// are confirmed afterwards, by engine git (store/backup.ts).
 
 import { createHash } from 'node:crypto';
 import { createReadStream, closeSync, constants, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync } from 'node:fs';
@@ -15,7 +15,6 @@ import { parentPort, workerData } from 'node:worker_threads';
 import Database from 'better-sqlite3';
 
 import { type Manifest, closureOf } from './backup.js';
-import { commitPresent } from './objects.js';
 
 const data = workerData as { home: string; store: string; dir: string };
 
@@ -74,14 +73,6 @@ async function run(): Promise<{ manifest: Manifest; repos: [string, string][] }>
     manifest.records.push({ id: r.id, file, ...d });
   }
   syncPath(join(data.dir, 'records'), constants.O_RDONLY | constants.O_DIRECTORY);
-  // Complete only if every commit the snapshot refers to is in its project's
-  // repository (E37 item 4), seen in the object store itself.
-  for (const entry of closure.git) {
-    const repo = closure.repos.get(entry.project);
-    for (const oid of entry.objects) {
-      if (repo === undefined || !commitPresent(repo, oid)) throw new Error(`commit ${oid} of project ${entry.project} is not in its repository (${repo ?? 'none'})`);
-    }
-  }
   manifest.git = closure.git;
   return { manifest, repos: [...closure.repos.entries()] };
 }
