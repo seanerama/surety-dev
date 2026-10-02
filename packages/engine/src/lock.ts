@@ -9,11 +9,12 @@
 // kernel releases if this process dies, so simultaneous starts produce exactly
 // one owner whether or not a stale lock exists.
 
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 
 import Database from 'better-sqlite3';
 
 import { nowIso } from './clock.js';
+import { writeFileDurable } from './durable.js';
 import { newId } from './ids.js';
 import { homePaths } from './paths.js';
 import { Refusal, homeUnusable } from './refusal.js';
@@ -130,9 +131,9 @@ export function acquireLock(home: string, beforeTake: () => void = () => {}): Lo
         started_at: nowIso(),
         host_boot_id: bootId,
       };
-      const temp = `${paths.lock}.${process.pid}.tmp`;
-      writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-      renameSync(temp, paths.lock);
+      // Synced before it is relied on: after a power loss the next start
+      // must find a record it can judge, not an empty file (SEAM.md §60).
+      writeFileDurable(paths.lock, `${JSON.stringify(record)}\n`);
       return record;
     } finally {
       guard.exec('ROLLBACK');

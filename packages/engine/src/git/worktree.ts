@@ -9,6 +9,7 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
+import { syncDirectory, syncTree } from '../durable.js';
 import { type GitContext, SHA, git, gitOk, repoContext, worktreeContext } from './exec.js';
 import { listWorktrees, readHeadFile } from './repo.js';
 
@@ -148,7 +149,21 @@ export async function addWorktree(repo: string, path: string, base: string, oper
   if (!SHA.test(base) || !path.startsWith('/')) return 'failed';
   const r = await git(repoContext(repo), ['worktree', 'add', '--detach', '--', path, base], { operation });
   if (r.timedOut) return 'timeout';
-  return r.code === 0 ? 'ok' : 'failed';
+  if (r.code !== 0) return 'failed';
+  // git syncs none of what `worktree add` writes: the checked-out files, the
+  // workspace's .git file, the worktree's metadata (SEAM.md §60). The engine
+  // syncs them before the journal records the effect, so that a workspace
+  // the store says exists survives a power loss as git made it. A sync that
+  // fails throws: whether the effect is durable is then unknown, and the
+  // journal treats the attempt as ambiguous.
+  syncTree(path);
+  const metadata = worktreeMetadata(repo, path);
+  if (typeof metadata === 'string') {
+    syncTree(metadata);
+    syncDirectory(dirname(metadata));
+  }
+  syncDirectory(dirname(path));
+  return 'ok';
 }
 
 // `git worktree remove --force --force <path>`: the run's files go with it

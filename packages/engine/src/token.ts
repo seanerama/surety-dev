@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
+import { syncDirectory } from './durable.js';
 import { Refusal } from './refusal.js';
 
 export const TOKEN_MIN_LENGTH = 32;
@@ -117,11 +118,3 @@ export function createToken(file: string): string {
   return token;
 }
 
-function syncDirectory(dir: string): void {
-  const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY);
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
