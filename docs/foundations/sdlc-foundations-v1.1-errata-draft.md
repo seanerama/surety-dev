@@ -715,3 +715,17 @@ Slice 2 was merged after three reviews and two fix rounds, the limit the driver 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E33. Slice 3 merged; what its review carries into slice 4 (provisional, 2026-10-02)
+
+**Status: provisional**, like E23 to E30 and E32.
+
+Slice 3 was merged after its one review (E31). The review confirmed as sound: every ref move is a compare-and-swap; what is validated is exactly what is committed; a retried commit is the identical commit; hostile git settings in the engine's environment never reach git; no in-process timing uses the wall clock.
+
+1. **Serious, carried to slice 4 as a failing test and fixed there first.** Engine git still runs a filter driver planted in the repository's configuration when the configuration spells it in a way the engine's own reading misses (a section name in capitals, two section headers on one line, an include on one line, an included file behind a symbolic link). The rule of E29 item 1 is about what git honours, not what the engine can parse.
+2. **The nomination finalizer's inputs are frozen at intent,** like every other finalizer's (build spec section 6, correction 14). Today it reads the set of work it moves from live state when it runs.
+3. **Accepted as built, noted so they are seen:** while a finished role's work is being snapshotted, validated and integrated, its lease is not renewed and lease-expiry reconciliation leaves the run alone; a run whose end throws during startup recovery is logged and retried rather than keeping the engine restricted; raising a policy limit and answering a checkout observation are refused until slice 5.
+
+**Consequences elsewhere.** No change to D1.
+
+---
