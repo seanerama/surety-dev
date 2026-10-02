@@ -1,7 +1,8 @@
 // The Verifier's transition tables as code (build spec §4, Plan §2). Cases
 // are generated from ../contract/*.json, never from the engine's own tables.
-// The harness self-check exercises every function here, and shows that a
-// wrong table or a wrong path is caught.
+// The harness self-check of slices 1 to 3 exercised every function here, and
+// showed that a wrong table or a wrong path is caught (it is deleted since,
+// and in git history; SEAM.md §21).
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

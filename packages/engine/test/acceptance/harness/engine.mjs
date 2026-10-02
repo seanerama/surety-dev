@@ -14,11 +14,13 @@ import { fileURLToPath } from 'node:url';
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
 
-// The harness self-check can point the tests at its witness engine
-// (selfcheck/witness-engine.mjs) to show that they are satisfiable and that
-// they catch defects. Such a run is never an acceptance run: with the variable
-// set, every test file gains one test that fails, so no runner can report a
-// pass that the real engine did not earn.
+// Through slice 3 the harness self-check pointed the tests at its witness
+// engine with this variable, to show that they were satisfiable and that
+// they caught defects. The self-check and the witness are deleted since (in
+// git history; SEAM.md §21); the variable is still read. A run with it is
+// never an acceptance run: with the variable set, every test file gains one
+// test that fails, so no runner can report a pass that the real engine did
+// not earn.
 const WITNESS = process.env.SURETY_WITNESS_ENGINE;
 export const WITNESS_MARKER = 'NOT AN ACCEPTANCE RUN: the harness is driving the self-check witness engine';
 if (WITNESS) {
@@ -263,7 +265,8 @@ export function isRefusalBody(body) {
   );
 }
 
-// `cli` is overridable only so the harness self-check can drive a stand-in.
+// `cli` was made overridable so the harness self-check could drive a stand-in
+// (deleted since; SEAM.md §21).
 // `env` adds variables to the constructed environment and `cwd` replaces the
 // working directory: only row M23 uses them, to start an engine in a hostile
 // ambient environment (SEAM.md §31).

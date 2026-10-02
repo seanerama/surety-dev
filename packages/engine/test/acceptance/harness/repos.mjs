@@ -439,8 +439,8 @@ export function holdGit(repo) {
 // A probe is tested from states the engine did not get to by itself: an
 // effect that was applied behind a journal that never recorded it, half of
 // one, something foreign in its place, a repository that cannot be read. The
-// helpers below build those states with real git and real files. Each is run
-// against real git in the harness self-check.
+// helpers below build those states with real git and real files. Each was run
+// against real git by the harness self-check of slice 3 (deleted since; SEAM.md §21).
 
 // Does the object exist in the repository's object store?
 export const objectExists = (repo, oid) => {
