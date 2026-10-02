@@ -13,19 +13,27 @@
 // work is complete when its `stage` gate is satisfied, and its candidate's
 // verification completing is not enough. The last case is the gate half of
 // row M08: every other gate kind is refused before any effect. A store
-// failure in the evaluation's transaction (row M61) is in the second case.
+// failure in the evaluation's transaction (row M61) is in the Alpha group's
+// first case.
+//
+// The second case of the first group is the slice-5 review's finding (E41
+// item 5): a stage gate that an out-of-band change blocked is evaluated
+// again by the ticks once the change is reconciled. The engine the review
+// ran never looked again, so the stage's work stayed `verifying` although
+// the same gate, asked for by its route, was satisfied.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { armFault } from './harness/engine.mjs';
+import { armFault, waitFor } from './harness/engine.mjs';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { assertNoEffect, assertRefused, maxEventSeq, storeState } from './harness/fixtures.mjs';
-import { addEnvironment, alphaTarget, authorizationsOf, check, effectiveVersion, evaluationsOf, installChecks, installGatedPlan, nominated, passAll, postResult, proposeAuthorization, reasonCodes, review } from './harness/gates.mjs';
+import { addEnvironment, alphaTarget, authorizationsOf, check, effectiveVersion, evaluationsOf, installChecks, installGatedPlan, nominated, passAll, postResult, proposeAuthorization, reasonCodes, review, stageGate } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
-import { candidatesOf, eventsOfType, workItemsOf } from './harness/journal.mjs';
-import { countOf, getRow, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
+import { candidatesOf, eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
+import { commitOnRef, refOid } from './harness/repos.mjs';
+import { answerDecision, countOf, getRow, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
@@ -80,6 +88,35 @@ describe('M44 the stage gate', () => {
     assert.deepEqual(authorizationsOf(fx.home, c.id), [], 'stage success issues no authorization');
     assert.equal(eventsOfType(fx.home, 'authorization.issued').length, 0);
     notDeployed(fx, project, c);
+  });
+
+  test("a stage gate that an out-of-band change blocked is evaluated again once the change is discarded: the next ticks complete the stage's work, whose check has passed, and nobody asks for the gate", async (t) => {
+    const { fx, ctx, project, c, k } = await candidate(t, { pass: false });
+    const stageWork = ctx.items[0];
+    const repo = ctx.project.repo;
+    const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === c.id);
+    await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
+    await tickUntil(fx.engine, project, () => workItem(fx.home, verification.id).status === 'complete', { what: "the candidate's verification to complete" });
+    await tickUntil(fx.engine, project, () => evaluationsOf(fx.home, c.id, 'stage').at(-1), { max: 4, what: 'the engine to evaluate the stage gate' });
+    const head = refOid(repo.path, repo.ref);
+
+    // A developer commits to the integration branch behind the engine's back, and the engine observes it. Then the check passes.
+    commitOnRef(repo.path, repo.ref, { 'notes.txt': 'a note\n' }, { message: 'developer: a commit the engine did not make' });
+    const [observed] = await tickUntil(fx.engine, project, () => (outOfBand(fx.home, project).length > 0 ? outOfBand(fx.home, project) : undefined), { max: 4, what: 'the commit to be observed out of band' });
+    await passAll(fx.engine, project, c.id, [k.login]);
+    await tick(fx.engine, project);
+    assert.deepEqual(reasonCodes(await stageGate(fx, ctx)), ['OUT_OF_BAND_CHANGE'], 'the fixture is live: the check has passed, and the unreconciled observation is all that blocks the gate');
+    assert.equal(workItem(fx.home, stageWork).status, 'verifying');
+
+    // The person discards the commit: the branch is put back, and the observation is reconciled.
+    await answerDecision(fx.engine, project, observed.decision.id, 'discard');
+    await waitFor(() => outOfBand(fx.home, project)[0].disposition === 'discard', { what: 'the discard to be recorded' });
+    assert.equal(refOid(repo.path, repo.ref), head, 'the fixture is live: the integration branch is back where the engine left it');
+
+    // Nobody asks for the gate again. The ticks that follow evaluate it, and the stage's work completes.
+    for (let i = 0; i < 4 && workItem(fx.home, stageWork).status !== 'complete'; i++) await tick(fx.engine, project);
+    assert.equal(workItem(fx.home, stageWork).status, 'complete', "four ticks after the block cleared, the stage's work is still not complete: the blocked stage gate was not evaluated again");
+    assert.equal(evaluationsOf(fx.home, c.id, 'stage').at(-1).outcome, 'satisfied', 'the evaluation that completed it is satisfied');
   });
 });
 

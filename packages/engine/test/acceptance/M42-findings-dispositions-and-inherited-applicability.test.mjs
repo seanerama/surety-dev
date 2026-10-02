@@ -15,6 +15,13 @@
 // settles E34 item 2): the evaluation that resolves the finding it names,
 // and nothing before it.
 //
+// The last case is the slice-5 review's finding (E41 item 3): a Verifier
+// whose domain the boundary could not at first report as terminated is
+// quarantined with the outcome it earned, and what it reported is recorded
+// like any other run's. The engine the review ran dropped the report: a
+// Critical finding vanished, the verification completed, and the gate was
+// satisfied.
+//
 // Findings, dispositions and assessments are reported by scripted Reviewer
 // and Verifier runs, as agents would report them; the engine records them.
 // Medium and Low findings are read at the stage gate; the High finding of
@@ -32,7 +39,9 @@ import {
   assessmentsOf,
   check,
   checkResult,
+  evaluationsOf,
   finding,
+  findingsOf,
   installChecks,
   nominated,
   passAll,
@@ -44,10 +53,12 @@ import {
   stageGate,
   successor,
 } from './harness/gates.mjs';
+import { roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { commitOnRef } from './harness/repos.mjs';
-import { advanceClock, answerDecision, scriptedEngine, tick, workItem } from './harness/runs.mjs';
+import { advanceClock, answerDecision, assertRunEnded, assertRunQuarantined, scriptedEngine, tick, tickUntil, waitForQuarantine, waitForRunState, workItem } from './harness/runs.mjs';
+import { BOUNDARY } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
 
@@ -191,5 +202,59 @@ describe('M42 the findings a gate asks about', () => {
     await review(fx, project, c2.id, { assessments: [{ assessment: proposed.id, verdict: 'not_applicable' }] });
     assert.equal(assessmentsOf(fx.home, project)[0].status, 'assessed', 'assessed is not approved: this finding blocks a gate, so the human owner must authorize the exclusion');
     onlyReason(await alpha.evaluate(), 'FINDING_BLOCKING', found.id);
+  });
+});
+
+describe('M42 the report of a run that was quarantined', () => {
+  test("a Verifier whose domain could not at first be shown empty has its report recorded all the same: the Critical finding it reported is there when its verification completes, and the stage gate is not satisfied", async (t) => {
+    const fx = await scriptedEngine(t, { config: { terminate_grace: 1, kill_grace: 1 } });
+    const ctx = await nominated(fx);
+    const project = ctx.project.id;
+    const c1 = ctx.candidate;
+    const stageWork = ctx.items[0];
+    const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+    // The one required check has passed: nothing but a finding can stand between this candidate and its stage gate.
+    await passAll(fx.engine, project, c1.id, [k.login]);
+
+    // The candidate's own verification, let through the chain boundary by a person. Its Verifier reports a Critical finding.
+    const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === c1.id);
+    assert.ok(verification, 'the fixture is live: the nomination registered verification work');
+    fx.scripted.script(verification.id, [roleThatHolds([], [], { findings: [{ category: 'security', severity: 'critical', message: 'the login accepts any password' }] })]);
+    await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
+    const { run, launch } = await runToHold(fx, project, verification.id);
+    const domain = withStore(fx.home, (db) => db.prepare('SELECT "id" FROM "execution_domains" WHERE "run" = ?').get(run.id).id);
+
+    // Whenever the verification work is found complete, the report is already recorded.
+    const neverCompleteUnreported = () =>
+      assert.ok(workItem(fx.home, verification.id).status !== 'complete' || findingsOf(fx.home, project).length === 1, "the verification work is complete and the finding its Verifier reported is not recorded");
+
+    // The role sends its valid result and exits; the boundary cannot say whether its domain is empty.
+    fx.scripted.boundary({ domains: { [domain]: BOUNDARY.unknown } });
+    fx.scripted.release(verification.id);
+    await waitFor(() => !fx.scripted.isLive(launch), { what: 'the role to send its result and exit' });
+    await waitForQuarantine(fx.home, run.id);
+    assertRunQuarantined(fx.home, run.id, { outcome: 'completed' });
+    neverCompleteUnreported();
+
+    // Termination is observed: the run ends with the outcome it had, and its work completes.
+    fx.scripted.boundary({ domains: { [domain]: BOUNDARY.terminated } });
+    await tick(fx.engine, project);
+    await waitForRunState(fx.home, run.id, 'ended');
+    assertRunEnded(fx.home, run.id, { outcome: 'completed', reason_class: 'none' });
+    neverCompleteUnreported();
+    await tickUntil(fx.engine, project, () => workItem(fx.home, verification.id).status === 'complete', { max: 4, what: "the candidate's verification to complete" });
+
+    // What the Verifier reported is recorded, as it is for a run that was never quarantined.
+    const reported = findingsOf(fx.home, project);
+    assert.equal(reported.length, 1, 'the Critical finding the quarantined Verifier reported is recorded');
+    const [found] = reported;
+    assert.deepEqual([found.status, found.effective_severity, found.candidate, found.source_run], ['open', 'critical', c1.id, run.id]);
+
+    // The stage gate the engine evaluates by itself when the verification completes counts the finding, and so does one asked for.
+    const own = await tickUntil(fx.engine, project, () => evaluationsOf(fx.home, c1.id, 'stage').at(-1), { max: 4, what: 'the engine to evaluate the stage gate' });
+    assert.deepEqual(evaluationsOf(fx.home, c1.id, 'stage').filter((evaluation) => evaluation.outcome === 'satisfied'), [], 'no evaluation of the stage gate was satisfied');
+    assert.equal(own.outcome, 'not_satisfied');
+    onlyReason(await stageGate(fx, ctx), 'FINDING_BLOCKING', found.id);
+    assert.equal(workItem(fx.home, stageWork).status, 'verifying', "the stage's work is not complete");
   });
 });
