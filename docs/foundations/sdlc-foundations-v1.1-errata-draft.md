@@ -833,3 +833,23 @@ The one review of slice 4 (E31) found five serious defects and reproduced each b
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E39. Slice-6 seam decisions (provisional, 2026-10-02)
+
+**Status: provisional.** The slice-6 Verifier fixed these in its tests and flagged them; the driver accepted its recommendations. Sean confirms or overturns them.
+
+1. **The engine serves no page of its own in M1.** The page the browser test loads is the test harness's, served through a harness flag. A production M1 engine serves the API only.
+2. **The executable contract is new public surface:** the commands `surety contract export`, `check` and `appendix`, exit status 8 for an invalid contract, and a committed contract file and generated appendix under `packages/engine/api/`. D1's hand-written Appendix A stays in D1 and has no authority over the generated one (resolution note section 3).
+3. **A stream client that takes nothing for 5 seconds while data waits is disconnected,** with a cursor it can resume from. D1 gives no number.
+4. **Filesystem kinds refused for the engine home** (E36 item 7): `tmpfs`, `ramfs`, `nfs`, `nfs4`, `cifs`, `smb3`, `fuse`, `fuse.<subtype>`, `fuseblk`, `9p`. The refusal is `unsafe_filesystem`, exit status 6, before anything is written. `fuseblk` includes an NTFS drive mounted through ntfs-3g.
+5. **How the latency test judges** (row M71): each sample is paired with a control request inside the test process; a sample whose control took over 50 ms is void; every valid sample must be within the 250 ms bound, with nothing subtracted; too few valid samples fails the case as not judged. The 1 GB store builds in about 2 seconds on this machine.
+6. **A historical observation enters through a fixture** in row M70, since M1 has no observation job or history.
+7. **A process may be started only under `src/invoke/`, in `src/git/exec.ts` and under `src/testing/`.** This places the scripted notification sink of slice 5 in the testing folder.
+
+**One addition the driver is making:** D1 section 11.3 lists reads for a project's decisions, work, operations, gates and environments, and no acceptance row names them, so none was pinned. Without a read for decisions nobody can see an open decision or its preview except in the store, and Sean's hands-on run needs it. One case for `GET /v1/projects/:p/decisions` is added before the slice-6 build. The other reads stay unbuilt in M1 unless Sean asks for them.
+
+**What M1's tests cannot show, recorded for the report:** that the engine's durations are on a monotonic clock (the controlled clock only moves forward); that storage honours a sync; a block of the event loop that falls between two latency samples.
+
+**Consequences elsewhere.** No change to D1.
+
+---
