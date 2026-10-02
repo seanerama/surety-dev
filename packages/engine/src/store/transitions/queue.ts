@@ -532,19 +532,23 @@ export function recordDisposition(
     )
     .run(args.disposition, args.authority, args.by, tx.at, n, args.linked_issue, args.defer_target, f.id);
   tx.emit('finding.dispositioned', { project: f.project, finding: f.id }, { disposition: args.disposition, authority: args.authority });
-  if (args.disposition === 'fix' && args.authority === 'human') registerFixWork(tx, f);
+  if (args.disposition === 'fix') registerFixWork(tx, f, args.by);
   markStale(tx, { project: f.project });
 }
 
-// The engine creates the fix work an approved "fix" disposition plans (E43;
-// E38 item 6): one `fix` item on the finding's project, naming the finding,
-// in the transaction that records the disposition. The trigger identity
-// ("disposition", <finding>, n) is the durable fact: the store's uniqueness
-// on it and the disposition's own transaction make it exactly once, across a
-// restart as before. A finding that already has open fix work gets no second
-// item; one whose fix completed and that was reopened gets the next
-// generation (E38 item 7).
-function registerFixWork(tx: Tx, f: FindingRow): void {
+// The engine creates the fix work a "fix" disposition plans (E43; E38 item
+// 6): one `fix` item on the finding's project, naming the finding, in the
+// transaction that records the disposition, whoever's authority recorded it.
+// The trigger identity ("disposition", <finding>, n) is the durable fact: the
+// store's uniqueness on it and the disposition's own transaction make it
+// exactly once, across a restart as before. A finding that already has open
+// fix work gets no second item; one whose fix completed and that was reopened
+// gets the next generation (E38 item 7). The work is chained (E43, like the
+// engine-made review of E36 item 3): created on the outcome of the
+// Reviewer's run, it carries that run's chain; one the human approved from a
+// proposal carries 1. At the default chain limit it waits at the boundary for
+// the owner's "continue".
+function registerFixWork(tx: Tx, f: FindingRow, by: string): void {
   const open = tx.db
     .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "status" NOT IN ('complete', 'cancelled')`)
     .get(f.project, f.id);
@@ -552,7 +556,12 @@ function registerFixWork(tx: Tx, f: FindingRow): void {
   const { n } = tx.db
     .prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) + 1 AS n FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'disposition' AND "trigger_id" = ?`)
     .get(f.project, f.id) as { n: number };
-  observeTrigger(tx, { project: f.project, kind: 'fix', trigger_source: 'disposition', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id } }, { finding: f.id });
+  const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(by) as { chain: number } | undefined;
+  observeTrigger(
+    tx,
+    { project: f.project, kind: 'fix', trigger_source: 'disposition', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id }, chain: Math.max(run?.chain ?? 1, 1) },
+    { finding: f.id },
+  );
 }
 
 // A severity change is applied and recorded (D1 §9.4; F §6.3).

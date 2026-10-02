@@ -1,6 +1,6 @@
-// Developer tests for the fix work the engine creates when the human owner
-// approves a "fix" disposition (E43; E38 items 6 and 7), against a scratch
-// store with the engine's migrations.
+// Developer tests for the fix work the engine creates when a "fix"
+// disposition is recorded (E43; E38 items 6 and 7), against a scratch store
+// with the engine's migrations.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -43,16 +43,16 @@ function store(t) {
 const row = (db, id) => db.prepare('SELECT * FROM findings WHERE id = ?').get(id);
 const fixes = (db, finding) =>
   db.prepare(`SELECT * FROM work_items WHERE kind = 'fix' AND json_extract(subject, '$.finding') = ? ORDER BY seq`).all(finding);
-const dispose = (db, id, disposition, authority) =>
-  transact(db, ENGINE_ACTOR, (tx) => recordDisposition(tx, row(db, id), { disposition, authority, by: 'human', linked_issue: null, defer_target: null }));
+const dispose = (db, id, disposition, authority, by = 'human') =>
+  transact(db, ENGINE_ACTOR, (tx) => recordDisposition(tx, row(db, id), { disposition, authority, by, linked_issue: null, defer_target: null }));
 
-test('an approved fix registers one fix item naming the finding, in the transaction of the disposition', (t) => {
+test('a fix the human approved registers one chained fix item naming the finding, in the transaction of the disposition', (t) => {
   const db = store(t);
   dispose(db, 'fnd_A', 'fix', 'human');
   const [item, ...more] = fixes(db, 'fnd_A');
   assert.deepEqual(more, []);
   assert.deepEqual(JSON.parse(item.subject), { finding: 'fnd_A' });
-  assert.deepEqual([item.status, item.trigger_source, item.trigger_id, item.trigger_generation, item.chain], ['eligible', 'disposition', 'fnd_A', 1, 0]);
+  assert.deepEqual([item.status, item.trigger_source, item.trigger_id, item.trigger_generation, item.chain], ['eligible', 'disposition', 'fnd_A', 1, 1]);
   const events = db.prepare('SELECT type, tx FROM events ORDER BY seq').all();
   assert.deepEqual(events.map((e) => e.type), ['finding.dispositioned', 'work.created']);
   assert.equal(events[0].tx, events[1].tx, 'one transaction');
@@ -81,9 +81,10 @@ test('no second item while one is open; a reopened finding whose fix completed g
   assert.deepEqual(fixes(db, 'fnd_A').map((w) => [w.trigger_generation, w.status]), [[1, 'complete'], [2, 'eligible']]);
 });
 
-test('only a fix approved by the human creates work; other dispositions create none', (t) => {
+test("a Reviewer's fix creates the work too, carrying its run's chain; other dispositions create none", (t) => {
   const db = store(t);
-  dispose(db, 'fnd_A', 'fix', 'reviewer');
   dispose(db, 'fnd_B', 'accept', 'human');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get().n, 0);
+  dispose(db, 'fnd_A', 'fix', 'reviewer', 'run_R');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get().n, 1);
+  assert.deepEqual(fixes(db, 'fnd_A').map((w) => [w.trigger_source, w.chain]), [['disposition', 1]], 'a run the store does not have counts as chain 1');
 });
