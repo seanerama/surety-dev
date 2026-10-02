@@ -643,3 +643,37 @@ Slice 2 was merged after three reviews and two fix rounds, the limit the driver 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E30. Slice-3 seam decisions (provisional, 2026-10-02)
+
+**Status: provisional**, on the same footing as E23 to E29. The two slice-3 Verifier sessions fixed these points in `harness/SEAM.md` and their tests and flagged them for the owner. The driver accepted the Verifier's recommendation on each. Sean confirms or overturns them.
+
+**What a project owner will notice:**
+
+1. **At the default setting, every hand-off between roles waits for a person.** With `max_chained_roles` at its default of 1, each candidate's verification and each stage a committed plan registers waits for a "continue" decision. This is the supervised default the design intends. Raising the limit is a policy change that arrives in slice 5.
+2. **A crash and a timeout are treated differently.** Work whose run was interrupted by a crash is held for an explicit Resume. Work whose workspace creation was killed at its deadline is repaired automatically. Both follow earlier decisions; the difference is recorded so it is seen.
+3. **Merge drivers named by a repository are not run** when the engine rebases, for the same reason as filter drivers (E29 item 1). Repositories that depend on one are not supported in M1.
+4. **A Stop that arrives after the engine has already decided how a run ends is refused** (409), so the operator is never told a Stop took effect when it did not.
+5. **A request to nominate that comes at the wrong point is ignored without an error** at the standard tier. A visible refusal would be a design change.
+
+**Contract detail, accepted as the Verifier fixed it:**
+
+6. Verifier and Reviewer role path prohibitions are tested in slice 5, with proposal capture.
+7. A run whose processes cannot be shown gone before its snapshot is quarantined as failed and never snapshotted; its work is repaired from scratch. Revisit with the E27 question before a real backend.
+8. Integration refused because the branch is checked out elsewhere parks the work; retrying re-runs the role.
+9. One failed write while recording a role's result is retried.
+10. Recovery records the snapshot tree as evidence. Resume does not continue from it in M1. Revisit with the E27 question, since with a real backend that tree is paid work.
+11. A violation found in the captured diff is a diff violation; one found outside it is a ref violation. A Builder may write nothing under `.surety/`; an Architect only the design, roadmap and plan folders.
+12. A run recovered after its integration had already taken effect ends as recovered with its work integrated, not held: nothing is left to resume.
+13. A workspace creation found absent or half-made at recovery is withdrawn, not retried: the run is over by then.
+14. Before an allowed retry, an operation's status is `intended`, or `partial` after a partial result. A later integration of the same work into the same ref names the failed one as its prior, which becomes superseded.
+15. The plan file's format, and a malformed plan being a diff violation.
+16. Until slice 5 adds the stage gate, a Builder's work completes when its candidate's verification completes. This is interim by necessity.
+
+**Timekeeping, brought forward.** This machine's wall clock now steps back about 1.8 seconds every half minute. The engine measures every in-process duration (tick and step budgets, grace periods, drains, retry intervals) on the monotonic clock from slice 3, not slice 6 as E27 item 8 said. Stored timestamps and lease expiries stay on the wall clock. The tests tolerate a 2-second step; fixing the machine's time synchronisation is the owner's.
+
+**Still open:** the intermittent failure of E29 item 2. The timing audit removed a plausible cause without proving it was the one.
+
+**Consequences elsewhere.** No change to D1.
+
+---
