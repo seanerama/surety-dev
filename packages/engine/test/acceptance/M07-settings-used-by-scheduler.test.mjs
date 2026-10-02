@@ -10,7 +10,7 @@ import { describe, test } from 'node:test';
 
 import { CONTRACT } from './harness/fixtures.mjs';
 import { assertOneRunAtATime, maxConcurrentRuns } from './harness/invariants.mjs';
-import { addProject, addWork, runsOf, runsOfProject, scriptedEngine, tick, waitForIdle, waitForWork } from './harness/runs.mjs';
+import { addProject, addWork, runsOf, runsOfProject, scriptedEngine, tick, tickUntil, waitForIdle, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -43,8 +43,7 @@ describe('M07 the scheduler uses the effective settings', () => {
 
     // Release everything; the third is dispatched once a slot is free.
     fx.scripted.release('all');
-    for (let i = 0; i < 3; i++) await tick(fx.engine, projects);
-    for (const item of items) await waitForWork(fx.home, item, 'complete');
+    await tickUntil(fx.engine, projects, () => items.every((item) => workItem(fx.home, item).status === 'complete'), { what: 'every item to complete once slots are free' });
     await waitForIdle(fx.home, projects);
     assert.equal(withStore(fx.home, (db) => maxConcurrentRuns(db)), limit, 'never more than the limit at one time');
   });
@@ -62,8 +61,7 @@ describe('M07 the scheduler uses the effective settings', () => {
     assert.equal(runsOf(fx.home, extra).length + runsOf(fx.home, items[0]).length, 1);
 
     fx.scripted.release('all');
-    for (let i = 0; i < 3; i++) await tick(fx.engine, projects);
-    for (const item of [...items, extra]) await waitForWork(fx.home, item, 'complete');
+    await tickUntil(fx.engine, projects, () => [...items, extra].every((item) => workItem(fx.home, item).status === 'complete'), { what: 'every item to complete once slots are free' });
     await waitForIdle(fx.home, projects);
     withStore(fx.home, (db) => {
       assert.equal(maxConcurrentRuns(db), 3);
