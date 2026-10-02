@@ -4,7 +4,9 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not started` (row not yet split).
 
-Last updated: slice 3, first Verifier session, 2026-10-02. Slice 3 is written by two Verifier sessions in sequence. This one wrote, first, what the final slice-2 review carried forward (E28): the run-end fault matrix and five single cases, marked "(final review)" below, listed under slice 3 because they must first pass when slice 3 is built; and the audit of the existing tests for timing sensitivity (E29 item 2; `harness/SEAM.md` §24). Then rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity. Rows M26 to M34 and the cases listed under "Left for the second slice-3 session" are that session's. The paragraph that follows is the previous one.
+Last updated: slice 3, second Verifier session, 2026-10-02. This session wrote rows M26 to M34 and every case the first session left for it: 221 cases in 19 files, all listed under slice 3 (the section "Slice-3 rows, second session" below). The probe cases (M29 to M32), the crash cases (M33) and the fault-matrix cells through integration (M15) are generated from `contract/journal.json` and `contract/run-end-faults.json`, one separately reported case per cell. Cases that cannot pass before slice 4 or 5 were not written; each is recorded under "Obligations recorded by the second slice-3 session" with the slice it waits for. `harness/SEAM.md` §§39 to 51 state the contract and list every name this session fixed. The paragraph that follows is the first session's.
+
+Slice 3, first Verifier session, 2026-10-02. Slice 3 is written by two Verifier sessions in sequence. This one wrote, first, what the final slice-2 review carried forward (E28): the run-end fault matrix and five single cases, marked "(final review)" below, listed under slice 3 because they must first pass when slice 3 is built; and the audit of the existing tests for timing sensitivity (E29 item 2; `harness/SEAM.md` §24). Then rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity. Rows M26 to M34 and the cases listed under "Left for the second slice-3 session" are that session's. The paragraph that follows is the previous one.
 
 Slice 2, 2026-10-02, after the second slice-2 review. A second Reviewer probed the slice-2 engine after its first fix round and confirmed four more defects; the owner decided the questions that came with them (E27). The defects and the decisions that needed a test became eight new cases, marked "(review 2)" below: three in the lease file of row M15, four in M16, one in M23. Three existing M15 cases changed with E27 item 3 (what a lease expiry leaves), and one was made independent of a host clock that steps back. What that review found and no test pins yet is under "Obligations recorded after the second slice-2 review". `harness/SEAM.md` §23 lists what changed in the contract. The paragraph that follows is the first review's.
 
@@ -59,7 +61,8 @@ Row closes in slice 1.
 | A failure between the domain write and the event write leaves nothing behind | `M04-atomic-transition.test.mjs` | 1 | written |
 | A committed transition changes the projection only with its new event (project pause/resume) | same | 1 | written |
 | Chunk receipts cannot be updated or deleted | — | 4 | deferred → 4: the parent is the pre-publication stream identity of build spec §6 correction 21 (row M63), not yet fixed |
-| The git journal state projection changes only with a new journal event | — | 3 | deferred → 3, second session: needs the journal's transition table (`contract/journal.json` holds only the ordinary course so far) |
+| The git journal state projection changes only with a new journal event: after operations of every journal kind, ended well and ended failed, each operation has one projection row at its last journal event (bootstrap, policy change, an integrated run, a checkpoint, an abandon, a refused integration) | `M04-journal-state-projection.test.mjs` | 3 | written |
+| The transaction that appends `applied`, `confirmed` or `finalized` fails once: neither a second event nor a projection that ran ahead is left, and the journal goes on from where it was (3 cases) | same | 3 | written |
 
 ### M05. Migrations and restricted startup
 
@@ -200,7 +203,12 @@ Kinds: "each dispatched kind" is `stage_build`, `fix`, `verification`, `review`,
 | Retry on a parked item's blocker returns it to eligible, and only the next tick launches it; a stale preview and a second answer are refused; nothing unrelated is launched | `M09-blocked-continuation.test.mjs` | 2 | written |
 | Cancel on a parked item's blocker cancels it without another launch | same | 2 | written |
 | Legal paths that integrate, as far as `integrated`: a valid result of a `stage_build`, `fix` (Builder), `replan` or `assessment` (Architect) run is snapshotted, validated, committed with its role's revision kind and integrated (4 cases, generated from `contract/snapshot-validation.json`) | `M09-integrating-paths.test.mjs` | 3 | written |
-| What follows `integrated`: `verifying` and `complete` for `stage_build` and `fix`, `complete` for `replan` and `assessment` | — | 3 | deferred → 3, second session: `verifying` needs a chain of roles (E24 item 1), and the plan and stage finalizers are row M26 |
+| What follows `integrated`: a `replan` and an `assessment` item run their whole path to `complete` (2 cases) | `M09-after-integrated.test.mjs` | 3 | written |
+| A `stage_build` item runs its whole path: `verifying` at the nomination that holds it, `complete` when that candidate's verification completes | same | 3 | written |
+| A verification that fails completes nothing: the Builder's work is still `verifying` when the failed run is over and its repair has begun | same | 3 | written |
+| A `fix` item stays `integrated` until a candidate that holds it is nominated, and is verified with that candidate | same | 3 | written |
+| Work integrated after a nomination is not held by that candidate: it stays `integrated` when the candidate is verified | same | 3 | written |
+| A stage's work is `complete` only when its `stage` gate is satisfied | — | 5 | deferred → 5: M1 computes gates in slice 5; the four Builder cases above change with it |
 | `check_correction` dispatched and completed | — | 5 | deferred → 5: needs a protected proposal |
 | An engine-raised `awaiting_decision` answered through the queue restores its stored continuation | — | 5 | deferred → 5: slice 2 has no engine path into `awaiting_decision` (the first is a typed conflict finding); the stored-continuation rule itself is pinned at the table, above |
 
@@ -240,7 +248,11 @@ Row closes in slice 2.
 | Concurrency across projects is bounded by the engine setting | same | 2 | written |
 | Simultaneous tick requests run one scheduler and dispatch each item once | same | 2 | written |
 | A project that is over budget | — | 4 | deferred → 4: budgets |
-| A project at `max_chained_roles`: chaining stops at the declared human boundary | — | 3 | deferred → 3, second session: in slice 2 no run's outcome creates further work, so there is no chain to stop (`harness/SEAM.md` §12). What a chain is needs the owner's answer first; see the slice-2 report |
+| Work that a run's outcome created (a candidate's verification) is not launched without a human step: one decision, asked once, also across a restart, while another project's work progresses; after `continue` it is launched once | `M12-chain-of-roles.test.mjs` | 3 | written |
+| `cancel` at the boundary cancels the work without a launch | same | 3 | written |
+| The work a committed plan registers is chained too: its stages are not built without a human step | same | 3 | written |
+| What is not a chain: work a fixture created, the repair of a failed run and a Resume are dispatched without a human step, also while chained work waits | same | 3 | written |
+| A limit above 1: a chain of two or more roles runs unasked up to the limit and stops there | — | 5 | deferred → 5: raising `max_chained_roles` widens authority and takes the `policy_widening` route (row M49); slice 3 can only run the default |
 
 ### M13. Stop from every owning state
 
@@ -250,7 +262,10 @@ Row closes in slice 2.
 | Stop from `claimed`, for each dispatched kind: a run stopped before its role was spawned leaves no role running and holds the work (6 cases) | same | 2 | written |
 | While the boundary still reports the domain running, the stopped run is not ended and the work is not held (the delayed acknowledgement) | same | 2 | written |
 | Stop needs its confirmation, a stale confirmation does nothing, and a run is stopped only through its own project | same | 2 | written |
-| Stop from `integrating`, `integrated`, `verifying`; with a journal operation in flight | — | 3 | deferred → 3, second session |
+| Stop while the work is `integrating`, before the swap: the integration is not made, its operation is failed, the work is held, Resume integrates a new run | `M13-stop-during-integration.test.mjs` | 3 | written |
+| Stop while the work is `integrating`, with the swap made and not yet recorded: the operation in flight is reconciled and finalized, the work is integrated and then held, nothing is undone | same | 3 | written |
+| Stop while the work is `integrated` and its run has not ended: the run ends stopped, the work is held, the integration stands | same | 3 | written |
+| Work that is `verifying` is owned by no run of its own: stopping the candidate's verification run holds the verification work and leaves the Builder's work `verifying`; the Builder's ended run cannot be stopped | same | 3 | written |
 | Stop from `awaiting_decision` while a run still owns the work | — | 5 | deferred → 5: no engine path into it before slice 5; the edge is pinned at the table (M09) |
 
 ### M14. Abandon and durable dispatch hold
@@ -261,7 +276,10 @@ Row closes in slice 2.
 | Abandon from `claimed`, for each dispatched kind (6 cases) | same | 2 | written |
 | While the boundary reports the domain running nothing is discarded, and no new trigger generation is dispatched onto the project; when termination is observed the abandon completes and the new generation runs | same | 2 | written |
 | Resume of an eligible item on dispatch hold writes exactly one `work.resumed` event, in the transaction that clears the hold: with the event's write failing, the hold stays (review) | same | 2 | written |
-| Abandon from `integrating`, `integrated`, `verifying`; with a journal operation in flight | — | 3 | deferred → 3, second session |
+| Abandon while the work is `integrating`, before the swap: the integration is not made, its operation is failed, the workspace is discarded, the work returns to `eligible` under a dispatch hold | `M14-abandon-during-integration.test.mjs` | 3 | written |
+| Abandon while the work is `integrating`, with the swap made and not yet recorded: the operation in flight is reconciled and finalized before anything is discarded | same | 3 | written |
+| Abandon while the work is `integrated` and its run has not ended: the workspace is discarded, the integration stands | same | 3 | written |
+| Abandon from `verifying` | — | — | not a case: no run owns work that is being verified (`harness/SEAM.md` §47); the M13 case above pins that for Stop, and an ended run refuses Abandon as it refuses Stop (slice 2) |
 | Abandon from `awaiting_decision` while a run still owns the work | — | 5 | deferred → 5 |
 
 ### M15. Deadlines and stale generations
@@ -287,7 +305,10 @@ Row closes in slice 2.
 | A role that exited 0 after its result was accepted ends `completed` although the clock jumps past `lease_ttl` before the engine has acted on the exit (final review) | same | 3 | written |
 | A `worktree add` held open is killed at `git_deadline`, its operation is marked ambiguous, no role is launched on it, and another project and the API go on | `M15-git-deadline-and-integrity-step.test.mjs` | 3 | written |
 | An integrity step that overruns its budget suppresses that project for the tick, late completion included, while the other project is dispatched | same | 3 | written |
-| How an operation made ambiguous by a deadline is reconciled, and what its run ends as | — | 3 | deferred → 3, second session: the probes and attempt statuses are rows M31 and M34 |
+| An operation that a git deadline left ambiguous stays ambiguous and blocks its project while the repository does not answer; once it does, the next tick reconciles it absent and withdraws it; its run had ended `failed` / `infra_error`, never launched, and the work is repaired by a new run in a workspace of its own | `M15-ambiguous-git-call-reconciled.test.mjs` | 3 | written |
+| A late completion launches nothing: a worktree that turns out complete is adopted as the ended run's retained workspace, and the work is still repaired by a new run | same | 3 | written |
+| The run-end fault matrix for the five endings that pass through a commit or an integration (a role completes and its work integrates; an integration refused; Stop and Abandon from `integrating`; a checkpoint): one reference case per ending and one case per store transaction on its path (61 cells, generated from `contract/run-end-faults.json`); the compared facts include the repository and the journal (E28 item 1) | `M15-run-end-fault-matrix-integration.test.mjs` (66 cases) | 3 | written |
+| A commit or a ref update left ambiguous by a deadline in a running engine | — | — | not written: see "What the second session could not turn into a test" |
 
 ### M16. Unknown termination is never success
 
@@ -346,7 +367,7 @@ The slice-2 review found two defects in the one git effect slice 2 makes, the ru
 | The program named as `core.fsmonitor` is not run | same | 3 | written |
 | A filter driver named in the repository's configuration is not run, and its files are committed unfiltered (2 cases: clean and smudge programs; a long-running process filter). E29 item 1: a repository that needs one is not supported in M1 | same | 3 | written |
 | An external diff program, a textconv program, a signing program, an editor and a pager named in the repository's configuration are not run | same | 3 | written |
-| `core.sshCommand`, credential helpers, `core.askPass`, merge drivers | — | — | not a case: no git call M1 makes reaches them (no remote operation, no merge); a rebase is row M28's, second session |
+| `core.sshCommand`, credential helpers, `core.askPass` | — | — | not a case: no git call M1 makes reaches them (no remote operation). A merge driver is reached by the rebase and is pinned in `M28-integration-race-and-compare-and-swap.test.mjs` |
 | Two repositories with identifiable content, hostile `GIT_*`, `GH_*`, editor and pager variables, hostile global and counted configuration, and the engine started inside a third repository: each project is committed and integrated in its own repository, nothing reaches the other or the third, no ambient program runs, no commit carries an ambient identity | `M23-two-repositories-hostile-environment.test.mjs` | 3 | written |
 
 ### M31. Worktree-add probe (the engine home behind a symbolic link, moved forward)
@@ -355,7 +376,8 @@ The slice-2 review found two defects in the one git effect slice 2 makes, the ru
 |---|---|---|---|
 | With `$SURETY_HOME` a symbolic link, a dispatch launches, its `worktree_add` operation is recorded `succeeded`, the role runs in the workspace, and no worktree is registered in the repository that no `workspaces` row names, also after a second dispatch (review) | `M31-worktree-add-symlinked-home.test.mjs` | 2 | written |
 | A symbolic link at a new run's workspace path, pointing at another run's retained worktree, is refused: the worktree add does not succeed, no role runs there, and the other worktree is untouched (second slice-2 review; E27) | `M31-workspace-path-symlink.test.mjs` | 3 | written |
-| The five probe outcomes at recovery: no artifacts, complete valid worktree, partial directory or metadata, foreign or conflicting occupancy, unreadable metadata | — | 3 | deferred → 3, second session (not yet split into cases) |
+| The five probe outcomes at recovery, from each of three durable journal states (15 cases, generated) | `M31-worktree-add-probe.test.mjs` | 3 | written (below, "M29 to M32") |
+| An engine killed during `git worktree add` leaves the git child alive: recovery does not act on a probe while that child lives, and no worktree appears afterwards that no row names (slice-2 review) | `M31-git-child-outlives-engine.test.mjs` | 3 | written |
 
 ## Slice-3 rows, first session (M19 to M25)
 
@@ -421,7 +443,8 @@ Its cases are in the table "Rows of slice 3 with a case moved forward to slice 2
 | The integration branch deleted: observed with nothing found, the project blocked, and `discard` restores it | same | 3 | written |
 | A ref the engine created for a checkpoint, moved and then deleted by someone else, is observed each time and never absorbed | same | 3 | written |
 | After a bootstrap, a policy change, a checkpoint and an integration, through ticks and a restart, nothing is out of band and every registered ref is where the registry expects it | same | 3 | written |
-| An immutable nomination ref moved or deleted | — | 3 | deferred → 3, second session: nomination is row M27 |
+| An immutable nomination ref moved: observed once, not absorbed, also across a restart; `discard` is the only answer offered; it puts the ref back through the journal and keeps the stray commit; the candidate is untouched | `M24-nomination-ref-moved-or-deleted.test.mjs` | 3 | written |
+| An immutable nomination ref deleted: observed with nothing found; `discard` restores it | same | 3 | written |
 | "Block affected gates" | — | 5 | deferred → 5 (build spec §9) |
 
 ### M25. Checkout edits and unreadable repository
@@ -434,9 +457,113 @@ Its cases are in the table "Rows of slice 3 with a case moved forward to slice 2
 | A ref that was moved while the repository could not be read is found when it can be read again, before anything is dispatched | same | 3 | written |
 | The answers to a checkout observation (`stash`, `adopt`), and what the decision binds | — | 5 | deferred → 5: row M46 |
 
+## Slice-3 rows, second session (M26 to M34, and the cases that pass through an integration)
+
+The probe cases, the crash cases and the fault-matrix cells are generated from `contract/journal.json` and `contract/run-end-faults.json`; each cell is its own reported case. Every case that brings an operation to an end checks it, and usually every operation of its project, with `assertOperation` (`harness/journal.mjs`): a legal journal, the state projection at its last event, attempts numbered and admitted by the rule, the status the table derives, one `git.journal_*` event per journal event. The cases of rows M04, M09, M12, M13, M14, M15, M24 and M31 that this session wrote are listed in the tables of those rows above.
+
+### M26. Stage and intent finalizers
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| The integration of a commit that holds a phase plan registers the plan, one stage row per stage and one `stage_build` item per stage, and the `replan` work is complete; ticks and a restart register nothing again | `M26-plan-and-stage-finalizers.test.mjs` | 3 | written |
+| The finalizer is delayed while a newer plan is introduced: it registers the committed plan, exactly, and nothing of the newer one | same | 3 | written |
+| Killed after the integration of a plan was confirmed and before its finalizer, with the plan file in the workspace rewritten meanwhile: the restart registers the plan once, from the commit; the `replan` work is complete (no ownerless plan); a second restart writes nothing again | same | 3 | written |
+| A plan file that is not JSON, or has a stage with no goal, rejects the whole result: nothing is committed that could not be registered (2 cases) | same | 3 | written |
+| The integration of a stage's work marks that stage integrated at the run's commit | same | 3 | written |
+| The finalizer is delayed while a newer plan with a stage of the same number is introduced: the stage the run built is the one finalized, the newer stage and its work are untouched | same | 3 | written |
+
+### M27. Nomination identity and cadence
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| T2: the completion of a stage nominates the integrated revision; candidate, immutable ref, registry and lineage succession agree; one verification item; the stage's work is `verifying`; ticks and a restart nominate nothing again and observe nothing out of band | `M27-nomination-identity-and-cadence.test.mjs` | 3 | written |
+| T1: the completion of a stage nominates nothing; the work stays `integrated` | same | 3 | written |
+| T1: a Builder's `nominate: true` is performed by the engine, `nominated_by` `builder_request` | same | 3 | written |
+| T2: a Builder's request before the cadence point is not a nomination: no candidate, ref or journaled nomination | same | 3 | written |
+| T1: a checkpoint is never a candidate, although the Builder asked for a nomination with it | same | 3 | written |
+| A `nominate` that is not a boolean makes the result invalid | same | 3 | written |
+| A second stage integrated after a nomination is recorded on the successor lineage and nominated as the next candidate; the first candidate, its ref and its lineage are as they were | same | 3 | written |
+| Killed after the nomination ref was written and confirmed, before the finalizer: the restart's recovery step writes the candidate, registers the ref and succeeds the lineage before full mode; a second restart writes nothing again (D1-18) | same | 3 | written |
+| Killed after a T2 stage was integrated and before it was nominated: the stage is still nominated after the restart, once | same | 3 | written |
+| T1's nomination at phase completion | — | — | not a case in M1: phase verification is not in M1 (build spec §3) |
+| The evidence of an earlier candidate is retained when the source changes after its nomination | — | 4 | deferred → 4: no evidence record exists before the records slice; slice 3 pins that the candidate, its ref and its lineage are retained |
+
+### M28. Integration race and compare-and-swap
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| The branch moved by the engine's own commit while the run was under way: the result is rebased onto the head, the rebased tree is the head's tree plus the run's changes, it is committed on the head through the journal, and the swap is made from the head | `M28-integration-race-and-compare-and-swap.test.mjs` | 3 | written |
+| The branch moved to an adopted commit that changes the same file another way: the rebase conflicts, nothing is integrated, the work parks, no role is launched and no work created to resolve it; after `retry` the work runs again from the new head | same | 3 | written |
+| The branch moved between the journaled intent and the swap: the compare-and-swap fails, the unexpected head is not overwritten, the operation is failed, the registry is not told, the move is observed out of band; after adopt and `retry` the work is integrated on top | same | 3 | written |
+| A merge driver the repository's configuration names is not run by the rebase | same | 3 | written |
+| A rebased tree that fails validation where the run's own snapshot passed (the protected set) | — | 5 | deferred → 5: in slice 3 the rebased diff against the head is the run's own diff, which already passed; it can differ in what it may touch only once protected paths exist |
+
+### M29 to M32. The four probes, five outcomes each
+
+One case per journal kind, durable journal state (`intended`, `applied`, `ambiguous`) and probe outcome: 4 × 3 × 5 = 60 cases. Each builds the outcome in real git by hand, starts the engine, and compares what recovery made of the operation with `contract/journal.json`. A case whose outcome blocks then removes what blocked it and shows the operation going through; every case ends with the project going on through the public API.
+
+| Kind (file, 15 cases each) | `absent` | `applied` | `partial` | `conflicting` | `unknown` |
+|---|---|---|---|---|---|
+| `ref_update`: the integration of a Builder's run (`M29-ref-update-probe.test.mjs`) | ref at the old commit: retried once | ref at the new commit: finalized, the swap not repeated | claimed, no remainder declared: blocks | ref at a third commit: blocks, not overwritten | repository unreadable: blocks |
+| `commit_tree`: the commit of a Builder's run (`M30-commit-tree-probe.test.mjs`) | object and keep ref removed: retried, the same commit id | as the effect left it: finalized | keep ref removed: completed by publishing | keep ref at another commit: blocks | object store unreadable: blocks |
+| `worktree_add`: the workspace of a dispatch (`M31-worktree-add-probe.test.mjs`) | no artifacts: withdrawn | complete worktree: adopted once | metadata without directory: residue removed, withdrawn | unrelated directory at the path: blocks, content untouched | worktree metadata unreadable: blocks |
+| `worktree_remove`: an abandoned run's workspace (`M32-worktree-remove-probe.test.mjs`) | worktree still there: retried | nothing left: finalized | metadata without directory: completed | unrelated directory at the path: blocks | worktree metadata unreadable: blocks |
+
+All 60 are written, slice 3. Not written: the second form of `partial` for the two worktree kinds, a directory that still has its link and no metadata in the repository (see "What the second session could not turn into a test").
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| A workspace removal that a git deadline left ambiguous, followed by a crash before the run had ended: recovery completes, the engine reaches full mode, the same operation is retried and the workspace discarded once, the run ends abandoned (slice-2 review) | `M32-ambiguous-removal-then-crash.test.mjs` | 3 | written |
+| The same with the engine still running: while the repository does not answer the removal stays blocked and the run is not ended; once it answers the next tick retries the same operation | same | 3 | written |
+
+### M33. Crash across journal and finalizer boundaries
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| For each of the four journal kinds, the engine killed at each of the five boundaries (20 cases, generated). Each reads what is durable (journal, projection, attempts, the effect in git, the finalizer's receipts), restarts, requires the way on the table gives, restarts a second time and requires every receipt to have the identity and content it had, and lets the project go on | `M33-crash-across-journal-and-finalizer-boundaries.test.mjs` | 3 | written |
+
+### M34. Operation attempt semantics
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| An operation is committed before its first attempt is issued; the attempt is number 1, admitted once, and succeeds when the probe confirms its effect | `M34-operation-attempt-semantics.test.mjs` | 3 | written |
+| The store refuses a second attempt with a number already used, and a second journal event with a sequence number already used | same | 3 | written |
+| A failure before any effect leaves the attempt and the operation failed; no tick and no restart retries it; a new operation that does its work names it as its prior and supersedes it | same | 3 | written |
+| An attempt whose command was killed at its deadline is ambiguous, and so is its operation: not retried before a probe has reconciled it, and it completes nothing | same | 3 | written |
+| Reconciled succeeded: an attempt whose effect was applied and never recorded is reconciled, not repeated | same | 3 | written |
+| Reconciled absent: between the reconciliation and the retry the operation is `intended` again; the retry is attempt 2 of the same operation | same | 3 | written |
+| Reconciled partial: with the remainder declared the operation is `partial`, and completes nothing, until a new attempt has completed it | same | 3 | written |
+| The derivation gives a status for every combination of latest attempt, journal state and successor | `harness/selfcheck/slice3b.mjs` (not an acceptance case) | — | checked on the contract table: no engine is involved in it |
+
 ## Left for the second slice-3 session
 
-Rows M26 to M34, and these cases of earlier rows, none of which is written: what follows `integrated` on the integrating paths and the plan and stage finalizers (M09 with M26); the chain of roles and `max_chained_roles` (M12; E24 item 1); Stop and Abandon from `integrating`, `integrated` and `verifying`, and with a journal operation in flight (M13, M14); the reconciliation of an operation a git deadline made ambiguous (M15 with M31, M34); the journal state projection changing only with a journal event (M04); a nomination ref moved or deleted (M24 with M27); the five outcomes of the worktree-add probe beyond the symbolic link (M31); and the two recovery obligations of the slice-2 review (an ambiguous worktree removal followed by a crash; a git child that outlives a killed engine). `harness/SEAM.md` §37 says what this session fixed for that one to build on: the journal barrier names and their arming while the engine runs, `harness/journal.mjs`, `contract/journal.json`.
+Nothing: the second session wrote every case listed here by the first (the section above, and the rows of M04, M09, M12, M13, M14, M15, M24 and M31).
+
+## Obligations recorded by the second slice-3 session
+
+Cases this session did not write because they cannot pass before a later slice, and questions the tests answer one way for now.
+
+| Slice | Row (suggested home) | Obligation | Why it is recorded |
+|---|---|---|---|
+| 5 | M09, with M38 and M44 | A stage's work is `complete` only when its `stage` gate is satisfied. Slice 3 completes the Builder's work when its candidate's `verification` item completes (`M09-after-integrated.test.mjs`, four cases; `M12-chain-of-roles.test.mjs`; `M13-stop-during-integration.test.mjs`, last case). Those assertions change when the gate exists. | Nothing computes a gate before slice 5, and the path of D1 A.5 has to end somewhere until then. |
+| 5 | M12, with M49 | A limit above 1: with `max_chained_roles` raised, a chain runs unasked up to the limit and stops there. Raising it is a widening and takes the `policy_widening` route. | Slice 3 can only run the default; `PUT` of a higher value is not a valid plain change. |
+| 5 | M24, M40, M44 | A candidate whose lineage has a journal operation that is not finalized, or an unreconciled observation of its nomination ref, has its gates blocked (`GIT_JOURNAL_PENDING`, `OUT_OF_BAND_CHANGE`; D1 §9.3). | No gates before slice 5. Slice 3 pins the journal and the observation themselves. |
+| 5 | M28, with M35 to M37 | A rebase whose result must be validated again and fails: the rebased tree touches a path the run may not change once the protected set at the head differs from the one at the run's base. | Slice 3 has no protected set that can move between base and head. |
+| 4 | M27, with M64 and M65 | "Source changes after nomination retain the old candidate/evidence": the evidence half. | No evidence record before slice 4. |
+| 4 | M12 | Budgets: the over-budget project at the scheduling boundary. Unchanged from slice 2's deferral; nothing of it was reachable here. | Listed so that the slice-4 Verifier does not look for it in slice 3. |
+| before M2 (owner) | M31, M15 | A `worktree_add` that recovery finds absent or half made is withdrawn, not retried, because its run is over. If held work were ever to resume in the run that was interrupted, this would change. | The same kind of question as E24 item 3 and E27's last question: how much a crash costs. |
+| before M2 (owner) | M33, M29 | A run whose integration was completed by recovery ends `recovered` with its work `integrated`, not `held`. E24 item 3 reads "work whose run was recovered after a crash is held"; this is the one exception, taken because integrated work has nothing left to resume. | A departure from the letter of E24 item 3 that the owner should see. |
+| report | M31 | What the engine does to find a dead incarnation's git children is not pinned; only that by full mode none is alive or the operation is blocked. The case covers `git worktree add`, the one git call that can be held before it writes; a surviving `update-ref` or `commit-tree` is not constructed. | A limit of the fixture, recorded so that it is not read as coverage of all four kinds. |
+
+## What the second session could not turn into a test
+
+- **A commit or a ref update left ambiguous by a deadline while the engine runs.** `holdGit` holds every git call on a repository, and an acceptance makes reads before it makes its commit and its swap; the first held call is then a read, which fails, and the write is never reached. The `ambiguous` journal state of those two kinds is reached the other way, by a restart whose probe can only find `unknown` (15 cases each). A deadline on a write is pinned for the two worktree kinds, which are the first git call of their step.
+- **The second form of a partial worktree**: the directory with its link, and no metadata for it in the repository (`removeWorktreeMetadata` in `harness/repos.mjs` builds it, and the self-check runs it against real git). The contract table names both forms under `partial`; the generated cases use the first (metadata without its directory) for both worktree kinds. A case for the second form would be one more fixture per kind and durable state; it is not written, and the row's "partial directory/metadata" is covered for metadata only.
+- **Stop or Abandon of work that is `verifying`.** No run owns such work, so no command can reach those edges of the transition table; the last M13 case pins that. The edges stay in `contract/work-items.json` as the table's, exercised only by the slice-2 transition cases that force edges through the harness.
+- **That the rebased tree is validated again** (row M28) is pinned by its result only: the rebased commit holds what it should and nothing else. No case makes a rebased tree fail (above, deferred to slice 5).
+- **The cap on a git command's output** (`git_output_cap`), which the first session left for "a rebase's conflict listing in M28". The conflict case does not reach it: what the engine prints or reads while rebasing is its own choice, and a test cannot make an unknown command print 64 KiB. Still not written; the first git call with unbounded output that a test can aim at is a diff in slice 5.
+- **Whether an observation of a moved nomination ref blocks dispatch of its project.** The first session pinned that for the integration branch and the repository; for a nomination ref the sources say only that it blocks the affected gates (slice 5). The M24 cases assert the observation and its one answer, not what is dispatched meanwhile.
+- **How long a blocked operation may stay unexamined.** The cases require that the next tick's journal step probes it again. Nothing pins a bound on that step's own duration beyond `tick_step_budget`.
 
 ## Obligations recorded by the first slice-3 session
 
@@ -446,7 +573,7 @@ Rows M26 to M34, and these cases of earlier rows, none of which is written: what
 | 5 | M46 | The answers to a checkout observation (`stash`, `adopt`), the dependency manifest of `out_of_band_change`, and the fresh comparison before the effect. Slice 3 pins the two answers for a ref without a manifest. | D1-11 needs `discard` and `adopt` for a ref to make row M24 meaningful; the rest is the decision slice's. |
 | 5 | M24, M40 | That an out-of-band observation blocks the gates it affects, and that `adopt` invalidates the evaluations and results of the lineage. | No gates before slice 5. |
 | 5 | M49 | Which policy changes widen authority. Slice 3's cases only lower limits; raising one must take the `policy_widening` route. | So that the slice-5 Verifier does not take "a valid change is answered 200" for the whole rule. |
-| 3, second session | M26, M27 | What `revisions.lineage` holds, the stage's status and `integrated_revision`, and what a committed phase plan under `.surety/phases/` must contain. The first session's cases write no plan and read no lineage. | Left open on purpose, so the finalizer rows fix them. |
+| 3, second session | M26, M27 | **Done in slice 3, second session** (`harness/SEAM.md` §§41, 42). What `revisions.lineage` holds, the stage's status and `integrated_revision`, and what a committed phase plan under `.surety/phases/` must contain. The first session's cases write no plan and read no lineage. | Left open on purpose, so the finalizer rows fix them. |
 | before M2 (owner) | M18 | Recovery records the snapshot tree of what a role left (D1-32). What a Resume does with it is not pinned: the new run starts from the branch, in a workspace of its own, as in slice 2. | A snapshot nobody uses yet; whether resumed work continues from it is a design question. |
 | before M2 (owner) | M16, M21 | A run whose domain cannot be shown empty before its snapshot fails (`failed` / `infra_error`) and its work is repaired from the start. The alternative, snapshotting when the quarantine clears, would save the role's work and needs a run that leaves `finalizing`, which D1 A.5 does not have. | The strict reading costs paid work on a real backend, like the lease question of E27. |
 | report | — | M1 does not keep a role inside its workspace and does not see what it writes outside the repository and the managed checkouts (E25 item 2). `M20`, "what a role wrote outside its workspace is in no commit", pins only that none of it is accepted. | A limit, recorded so it is not read as containment. |
@@ -476,8 +603,8 @@ What the slice-2 review found, or the owner decided (E25), that no test pins yet
 
 | Slice | Row (suggested home) | Obligation | Why it is recorded |
 |---|---|---|---|
-| 3, second session | M32, M33 (journal matrix, M29–M33) | After a `worktree_remove` settles `ambiguous` and the engine crashes before the run finishes, recovery must complete and the engine must reach full mode. In the slice-2 engine a second removal intent for the same run collides on the operation's idempotency key, so recovery fails on every restart. | Confirmed by the Reviewer. The journal's probe and retry rules are slice 3's (build spec §6 correction 14); a slice-2 test would pin a retry rule before its row is written. |
-| 3, second session | M31, M33 | An engine killed during `git worktree add` leaves the git child running. Recovery can then probe `absent` while the child is still writing, and the worktree appears afterwards as one no row names. Recovery must account for a git child that outlived its engine before it trusts a probe. | Same review. Needs a barrier inside a git call, which slice 3's harness adds. |
+| 3, second session | M32, M33 (journal matrix, M29–M33) | **Done in slice 3, second session** (`M32-ambiguous-removal-then-crash.test.mjs`, two cases: with a crash, and with the engine still running). After a `worktree_remove` settles `ambiguous` and the engine crashes before the run finishes, recovery must complete and the engine must reach full mode. In the slice-2 engine a second removal intent for the same run collides on the operation's idempotency key, so recovery fails on every restart. | Confirmed by the Reviewer. The journal's probe and retry rules are slice 3's (build spec §6 correction 14); a slice-2 test would pin a retry rule before its row is written. |
+| 3, second session | M31, M33 | **Done in slice 3, second session** (`M31-git-child-outlives-engine.test.mjs`). An engine killed during `git worktree add` leaves the git child running. Recovery can then probe `absent` while the child is still writing, and the worktree appears afterwards as one no row names. Recovery must account for a git child that outlived its engine before it trusts a probe. | Same review. Needs a barrier inside a git call, which slice 3's harness adds. |
 | 3 | M23 | **Done in slice 3, first session** (`M23-no-repository-code-snapshot-commit.test.mjs`; the owner decided the filter question, E29 item 1). Extend `M23-engine-git-runs-no-repository-code.test.mjs` to commits, ref updates and snapshots, and decide with the owner how far "other repository-configured execution" reaches: filter drivers (`filter.*.clean`, `smudge`, `process`) run on checkout and on `git add`, so they are reachable from slice 3's snapshot; disabling them also disables Git LFS in a governed repository. | E25 item 3 states the rule generally and pins it now for the worktree calls only. |
 | 5 | M47, M48 | What a Stop or Abandon confirmation binds: the run's identity, whether it can still be stopped, and the workspace's fate, not the difference between `claimed` and `executing` (E25 item 4). Until then the slice-2 behaviour stands: a confirmation raised while the run was `claimed` may be refused as stale once it is `executing`. | The owner settled the rule and put the test in slice 5, with the decision manifests. |
 | 5 | M09 (`check_correction`), M35–M37 | `check_correction` is in the transition table and the slice-2 engine will dispatch one and complete it with no proposal captured. Only a fixture can create one today (`harness/SEAM.md` §12 says the slice-2 tests never dispatch it). The first slice-5 case for this kind must show that a `check_correction` run completes only through proposal capture. | A kind that completes without doing what it exists for must not be read as built. |
@@ -504,9 +631,6 @@ The owner's decisions on the slice-1 review (E23). Each is work for the Verifier
 | Row | Introduced in slice | Known straddles (build spec §9 and slice-1 deferrals) |
 |---|---|---|
 | M01 | 7 | — |
-| M26–M30 | 3, second session | — |
-| M31 | 3, second session | The symlinked-home case is written in slice 2 and the symbolic-link path in slice 3 (above); the five probe outcomes → second session |
-| M32–M34 | 3, second session | — |
 | M35–M58 | 5 | — |
 | M59, M60 | 4 | — |
 | M61 | 4 | Faults in gate and decision transactions → 5 |
@@ -521,7 +645,7 @@ The owner's decisions on the slice-1 review (E23). Each is work for the Verifier
 
 Deferred cases that later slices must pick up, by slice:
 
-- **Slice 3, second session** (the first session wrote the rest of what was listed here; see "Left for the second slice-3 session"): rows M26 to M34; M04 (journal state projection); M09 (what follows `integrated`); M12 (the chaining boundary); M13 and M14 (Stop and Abandon from `integrating`, `integrated`, `verifying`; a journal operation in flight); M15 (the reconciliation of an operation made ambiguous by a deadline); M24 (a nomination ref moved or deleted); M31 (the five probe outcomes); the two recovery obligations of the slice-2 review (an ambiguous worktree removal followed by a crash; a git child that outlives its engine).
-- **Slice 4:** M02 (record identities); M04 (chunk receipts); M12 (the over-budget project); the fsync open item; a cap on buffered role output (slice-2 review); a transient store failure while recording a role's result must not drop the result (second slice-2 review).
-- **Slice 5:** M20 and M36 (role prohibitions for the Verifier and the Reviewer, with the four slice-2 scripts that change then); M24 (gates blocked by an observation); M25 and M46 (the answers to a checkout observation, the manifest); M07 and M49 (policy widening); M11 (the findings part of the progress key); M21 (a continuation implies no gate success); M08 (gate kinds, reserved decision kinds); M09 (a dispatched `check_correction`; an engine-raised `awaiting_decision` answered through the queue); M11 (findings in the progress key; a typed conflict); M13 and M14 (Stop and Abandon from `awaiting_decision` while a run owns the work); the decision manifests of `blocker`, `stop_confirm` and `abandon_confirm` (rows M45, M47, M48), with what a Stop or Abandon confirmation binds (E25 item 4) and the code a quarantined run answers Stop with; a `check_correction` run that cannot complete without a captured proposal.
+- **Slice 3, second session:** written; nothing is left for slice 3.
+- **Slice 4:** M02 (record identities); M04 (chunk receipts); M12 (the over-budget project); M27 (evidence retained with an earlier candidate); the fsync open item; a cap on buffered role output (slice-2 review); a transient store failure while recording a role's result must not drop the result (second slice-2 review).
+- **Slice 5:** M09 (a stage's work complete only with its `stage` gate); M12 (a chain limit above 1, with M49); M24 and M40 (gates blocked by a pending journal operation or by an observation of a nomination ref); M28 (a rebased tree that fails validation against the protected set); M20 and M36 (role prohibitions for the Verifier and the Reviewer, with the four slice-2 scripts that change then); M24 (gates blocked by an observation); M25 and M46 (the answers to a checkout observation, the manifest); M07 and M49 (policy widening); M11 (the findings part of the progress key); M21 (a continuation implies no gate success); M08 (gate kinds, reserved decision kinds); M09 (a dispatched `check_correction`; an engine-raised `awaiting_decision` answered through the queue); M11 (findings in the progress key; a typed conflict); M13 and M14 (Stop and Abandon from `awaiting_decision` while a run owns the work); the decision manifests of `blocker`, `stop_confirm` and `abandon_confirm` (rows M45, M47, M48), with what a Stop or Abandon confirmation binds (E25 item 4) and the code a quarantined run answers Stop with; a `check_correction` run that cannot complete without a captured proposal.
 - **Slice 6:** M69 (the rest of the boundary matrix, with the two cases the second slice-1 review found); M74 (fixture semantics and the invocation boundary); M71 (the cost of the boundary's process scan under load).
