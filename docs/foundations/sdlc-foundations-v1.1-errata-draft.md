@@ -753,7 +753,7 @@ Slice 3 was merged after its one review (E31). The review confirmed as sound: ev
 
 ---
 
-## E35. A gap the journey test exposed (open, 2026-10-02)
+## E35. A gap the journey test exposed (closed by E36 item 3, 2026-10-02)
 
 Writing the end-to-end test for M1 (acceptance row M01) showed that **nothing in the engine creates review work.** A T2 candidate needs a Reviewer's sign-off before its gates can be satisfied, and the engine registers a candidate's verification at nomination, but no source says what schedules the review. The tests create it with a fixture.
 
@@ -769,3 +769,4 @@ Sean went through the items waiting for him one at a time. Each entry records hi
 
 1. **Browser driver for row M68: Playwright.** One development dependency, pinned to an exact version, used only by the acceptance tests. It drives Chromium and Firefox, the two browser families whose versions the M1 report records. The engine's runtime dependencies stay at `better-sqlite3` alone. This settles the first open item of build spec section 11.
 2. **Load limits for row M71: 5 projects, 20 connected clients, a 1 GB database.** These are the limits the M1 report claims; nothing larger is qualified. The latency bound stays at its default of 250 ms. This settles the second open item of build spec section 11.
+3. **The engine queues a candidate's review when its verification passes** (closes E35). At the tiers that require a Reviewer's sign-off, the engine registers the review work itself, once the candidate's verification has completed with its required checks passed. A candidate whose verification fails gets no review. This replaces the driver's earlier suggestion in E35 of registering it at nomination: the Reviewer judges what the Verifier produced, and a real backend should not be paid to review a candidate that then fails its checks. **Built in slice 5.** The Verifier adds one case and makes the journey test (M01) stop creating the review with a fixture.
