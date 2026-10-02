@@ -1010,6 +1010,7 @@ The Builder was fixing the same three items on `build/slice-6` meanwhile, from E
 |---|---|
 | Whether a backup that is not complete leaves its directory behind | As for the command (E37): either way nothing it leaves says `complete`, and the event's `backup` is the directory or null. |
 | A reason or a code in the `engine.backup` event of a backup that is not complete | The label is enough for a test; what a person is told is the engine's. |
+| The event of a backup that ends for a reason other than an unconfirmed commit (a record's bytes missing; the copy failing) | The seam asks for one event per backup started, however it ended; no case makes a backup end that way. |
 | Whether the engine goes on asking git for the remaining commits after one is unconfirmed | The bound allows one git deadline for each listed commit. |
 | A tail that is open when its transcript is marked | The case opens the tail after the hit. The branch's fix ends such a tail; no case asks for it. |
 | A planted file that git itself reads without end | None was found: at a link to `/dev/zero` git stops at once. The memory bound is pinned on the form the review used. |
