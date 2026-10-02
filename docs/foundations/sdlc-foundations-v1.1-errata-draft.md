@@ -853,3 +853,23 @@ The one review of slice 4 (E31) found five serious defects and reproduced each b
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E40. Journey first, scope frozen, and an explicit list of what M1 does not claim (2026-10-02)
+
+**Status: applied by the driver on Astra's recommendation, which Sean relayed; one point waits for Sean.**
+
+Astra reviewed the build at the slice-4 point and made three observations. The verification machinery had grown large: about 7,500 lines of stand-in engine beside about 11,800 lines of engine. Detailed component work came before the complete workflow was proven, so two workflow gaps (nothing queued a review; nothing creates fix work) surfaced only when the journey test was written. And cutting test cases under E31 without cutting scope can hide incompleteness. She judged the core safety mechanisms justified by what the slice-4 review reproduced. Her recommendation: finish the current fixes, make the complete scripted journey the central target as gates land, freeze additional scope, keep focused tests for confirmed defects, and explicitly defer capabilities whose assurance is deferred.
+
+**Applied:**
+
+1. **The journey is the first target of slice 5.** The Builder makes the end-to-end journey (row M01) pass before the other slice-5 cases. The journey's manifest entry moves from slice 7 to slice 5; slice 7 keeps the same journey observed through the public reads that slice 6 adds. The order in which the acceptance plan and build spec section 9 list the slices is otherwise unchanged.
+2. **Scope is frozen.** From here a new finding is either something the journey needs or a recorded deferral. The one addition still in progress is the read for a project's open decisions (E39), which the journey's human steps need.
+3. **What M1 does not claim is listed.** `docs/acceptance/reports/M1-not-claimed.md` lists every case the coverage record marks as not written, classed as unreachable in M1, real behaviour that is not tested, or not observable from outside. Behaviour in the second class is not claimed by M1, the Builder does not build it for its own sake, and the M1 report carries the list.
+4. **The frozen stand-in engine is deleted** from the test tree (E31 allowed it). It remains in git history.
+5. **Confirmed defects keep their focused tests,** as in E37.
+
+**Waiting for Sean:** whether the journey gains a second path in M1, in which a finding is raised, the owner approves "fix", the engine creates the fix work, a Builder fixes it, the finding is resolved and the gates pass. This would settle the gap recorded in E38 (the engine creates fix work when a finding is dispositioned "fix"). Recommended yes. The alternative is to list the fix loop as not claimed in M1.
+
+**Consequences elsewhere.** No change to D1.
+
+---
