@@ -6,6 +6,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 Last updated: the pass before the slice-5 build, 2026-10-02 (E34, "Scheduled with the slice-5 build"). This session wrote no case. It changed the six existing files whose assertions slice 5's two rules make wrong (a stage's work stays `verifying` until its `stage` gate is satisfied; a Verifier's or Reviewer's run may not write outside the protected set), as "Obligations recorded by the slice-5 session" lists them with what was done to each, and looked for a seventh in the files of slices 1 to 4 and the harness and found none. Nothing was run; each changed file was checked for syntax. The changed assertions of `M09-after-integrated.test.mjs`, `M12-chain-of-roles.test.mjs` and `M13-stop-during-integration.test.mjs` fail against the engine of slices 3 and 4, so this change is merged only when the slice-5 build starts. The frozen self-check (`harness/selfcheck/witness.mjs`; E31) names three of these cases by titles they no longer have; it was neither touched nor run. The paragraph that follows is the previous session's.
 
+Last updated: slice 7, 2026-10-02. This session wrote row M01, the journey: seven cases in one file, listed under slice 7 (the section "Slice-7 row" below), by E31's procedure. It was not run: it needs slice 5, and the engine is not built that far. It adds nothing to the seam (`harness/SEAM.md` §86) and changes no helper and no other test. What the row names and the seam does not reach is recorded with the row. Slice 6 has not been verified when this is written; its rows are still under "Rows not yet split into cases". The paragraph that follows is the previous session's.
+
 Slice 5, 2026-10-02. This session wrote rows M35 to M58: 97 cases in 24 files, all listed under slice 5 (the section "Slice-5 rows" below), by E31's procedure: one file per row, the fewest cases that pin each row's required result, a separately reported case only where the Plan names a finite case set, no stand-in engine and no self-check. None of them was run: each fails at its first slice-5 step. Of the cases earlier slices left for slice 5, those that were cheap and belonged to one of these rows were folded into that row's file; the rest are marked `not written (slice 5)` in their own row's table, each with its reason, and listed again under "Obligations recorded by the slice-5 session". That section also lists the existing tests whose assertions slice 5's rules make wrong; this session did not change them. One file was added for the slice-3 review and listed under slice 4 (`M23-filter-driver-however-spelled.test.mjs`, four cases). `harness/SEAM.md` §§65 to 85 state the contract and list every name this session fixed. The paragraph that follows is the previous session's.
 
 Slice 4, 2026-10-02. This session wrote rows M59 to M67 and the cases of rows M02, M04, M12 and M61 that earlier slices left for slice 4: 39 cases in 13 files, all listed under slice 4 (the section "Slice-4 rows" below). The procedure changed with this slice (E31): the fewest cases that pin each row's required result, no generated matrix, no stand-in engine and no self-check. Only the five shim cases of row M67 were run; they need no engine and pass. Everything else fails until slice 4 is built, and a defect in a test surfaces then, through the objection procedure. Cases that wait for slice 5 or 6 were not written; each is in its row's table and under "Obligations recorded by the slice-4 session". `harness/SEAM.md` §§52 to 64 state the contract and list every name this session fixed. The paragraph that follows is the previous session's.
@@ -805,6 +807,41 @@ All written, slice 5. Not written for these rows, each because the Plan's case s
 | The sink cannot confirm and cannot be asked: the intent is `unknown` and is not sent again | same | 5 | written |
 | A delivery the sink refuses (`failed`) | — | — | not written (slice 5): the row's required result is about ambiguity; what follows a plain failure (a retry, a limit) is not in the sources |
 
+## Slice-7 row (M01)
+
+One file and one journey, at tier T2. The journey is made once, in a `before` hook, and each case reads one clause of the row's required result from it, as the cases of rows M38, M39 and M41 read one fixture; if the journey cannot be made, every case fails. Every step is one an earlier row pins by itself. Fixtures are used for what the Plan says enters as a fixture (the approved baseline and plan, the declared check, its execution, the Alpha test target) and for one thing more, the review's work item (below). The project is created through `POST /v1/projects`; the gates and the authorization go through their public routes. The file is listed under slice 7 and has not been run.
+
+### M01. Bootstrap and the minimum successful kernel journey
+
+| Case | File | Slice | Status |
+|---|---|---|---|
+| Runtime data stays outside tracked source: all the journey added to the integration branch is the project's identity file and the Builder's edit, and the developer's checkout holds exactly what it held before the project existed | `M01-kernel-journey.test.mjs` | 7 | written |
+| The engine commits the permitted output of the Builder: one commit, the tree of what the role left, on the base it ran on, and the integration branch is still at it when the journey ends | same | 7 | written |
+| The engine registers the work that follows the build and nominates once: one candidate and one nomination ref at the Builder's commit, and the candidate's verification work, registered by the nomination and not labelled a fixture | same | 7 | written |
+| The stage gate is satisfied by the observed execution of its check, and not before it: built, verified and signed off, it is unsatisfied for the missing execution alone; with the execution recorded it is satisfied and the stage's work is complete; the sign-off is the Reviewer's, from a run of its own | same | 7 | written |
+| The Alpha-authorization gate is satisfied from the same evidence and issues the one authorization that was proposed for the test target | same | 7 | written |
+| The candidate remains Developing, and no deployment or publication is attempted: no candidate advanced, no deploy, publish, rollback or teardown operation, and the three roles are the only processes launched | same | 7 | written |
+| The API and the event history agree with the durable rows: the run read and the gate commands' answers are the rows; each run's and each work item's events end where its row is; every journal event of every git operation is in the log; one project created and registered, one authorization issued | same | 7 | written |
+| The event history read over HTTP (`GET /v1/events`), and a read of the candidate, its gates or the project's work (D1 §11.3) | — | — | not written (slice 7): `harness/SEAM.md` has none of these routes. They belong to slice 6 (rows M70 and M72), which was not verified when the journey was written |
+
+Row closes in slice 7.
+
+**How the row's words were read.**
+
+- *"Registers work."* The plan is a fixture, as the row's setup says, so the work the engine itself registers in this journey is the candidate's verification, at the nomination (D1 §7.7). A committed plan that registers its stages (D1 §7.8) is row M26 and is not repeated here: it would need an Architect's run, which the row does not have.
+- *"Independent verification/review as required by the tier."* T2 requires the Reviewer's sign-off at candidate scope (`harness/SEAM.md` §70). The Verifier and the Reviewer each run once, as runs of their own. The Verifier's run changes nothing and reports nothing: no gate input comes from it in M1. Its completion is what makes the engine evaluate the stage gate by itself, which the journey does not rely on.
+- *"From observed fixture evidence."* The stage gate is evaluated twice: with everything in place but the check's execution, and again with it. Only the second is satisfied.
+- *"API and event history agree with durable rows."* The event history is the store's `events` table; the API is the run read and the answers of the gate and authorization commands. See the last line of the table.
+
+**What the journey needed and the seam lacks.** Nothing was added to the seam. Two things are recorded for the owner:
+
+| What | Why it matters |
+|---|---|
+| Nothing in M1 creates `review` work. The Reviewer's run that T2 requires is made with the trigger fixture, as in rows M43 and M44. | The row lists what enters as a fixture, and review work is not on the list. In the journey a tier's required review happens only because the test schedules it. Who schedules it outside a test is not in the sources: a design decision. |
+| No public read of the event history, of a candidate or of a gate evaluation is in the seam. | The row's last clause is pinned against the store and three routes. Once slice 6 fixes the event stream and the scoped reads, one read of each can be added to the journey's last case. That is a Verifier's change to this file, after slice 6 is verified. |
+
+**Not run.** `node --check` and a resolution of every imported name against the harness are all that stand behind the file. Three orderings in it have no earlier test (`harness/SEAM.md` §86): fixtures applied to a project created through the API, checks declared before a candidate exists, and a sign-off recorded before the check's execution. A defect in the test will show when slice 5 is built and goes through the objection procedure.
+
 ## Obligations recorded by the slice-5 session
 
 **Existing tests whose assertions slice 5 makes wrong.** This session changed none of them. Each must be changed by a Verifier before `node scripts/run-tests.mjs acceptance --slice 5` can pass, and none of the changes can be made before slice 5 is built, because the current assertions are right for the engine as slices 3 and 4 build it.
@@ -985,7 +1022,6 @@ The owner's decisions on the slice-1 review (E23). Each is work for the Verifier
 
 | Row | Introduced in slice | Known straddles (build spec §9 and slice-1 deferrals) |
 |---|---|---|
-| M01 | 7 | — |
 | M68 | 6 | Needs the browser driver (build spec §11) |
 | M70–M73 | 6 | M71 needs numeric load limits (build spec §11) |
 | M74 | 6 | Seam-confinement cases written in slice 1 (above); the rest → 6 |
@@ -996,3 +1032,4 @@ Deferred cases that later slices must pick up, by slice:
 - **Slice 4:** written, except M27's evidence half (moved to slice 5) and the fsync open item (the owner's; see "Obligations recorded by the slice-4 session").
 - **Slice 5:** written (rows M35 to M58). Every case an earlier slice left for slice 5 is either written, in the row's file named in its table, or marked `not written (slice 5)` with its reason; "Obligations recorded by the slice-5 session" lists both, and the existing tests that slice 5 makes wrong, which were changed in the pass before its build.
 - **Slice 6:** M64 (secrets in the event stream and the output tail); M71 (the memory used for a role's output); M69 (the rest of the boundary matrix, with the two cases the second slice-1 review found); M74 (fixture semantics and the invocation boundary); M71 (the cost of the boundary's process scan under load).
+- **Slice 7:** written (row M01, above, under "Slice-7 row"). When slice 6 has fixed the event stream and the scoped reads, the journey's last case can read them.
