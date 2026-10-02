@@ -8,6 +8,8 @@
 // keep the identities they were written with.
 
 import { illegal } from './common.js';
+import { markStale } from './evidence.js';
+import { type ApplicationInputs, completeIntent, effectiveVersion, finalizeApplication } from './protected.js';
 import type { IntentSpec, OpDetail } from './journal.js';
 import { intendOperation } from './journal.js';
 import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
@@ -29,7 +31,7 @@ export interface DiscardInputs {
 }
 
 export interface CommitInputs {
-  purpose: 'run' | 'bootstrap' | 'policy';
+  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash';
   run?: string;
   sha: string;
   parent: string;
@@ -50,7 +52,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'protected';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -73,6 +75,11 @@ export interface RefInputs {
   change?: Record<string, number>;
   // out-of-band
   oob?: string;
+  // a policy that widens authority, and the decision that confirmed it
+  widens?: boolean;
+  decision?: string;
+  // the effect intent this operation completes
+  intent?: string | null;
 }
 
 export function runFinalizer(tx: Tx, op: OpDetail): Record<string, unknown> {
@@ -154,13 +161,21 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
         .prepare(
           `INSERT INTO "policy_revisions" ("id", "created_at", "project", "revision", "git_path", "git_blob", "changed_by", "changed_at", "diff_summary",
              "widens_authority", "committed", "effective")
-           VALUES (?, ?, ?, ?, '.surety/policy.json', ?, 'human', ?, ?, 0, 1, ?)`,
+           VALUES (?, ?, ?, ?, '.surety/policy.json', ?, 'human', ?, ?, ?, 1, ?)`,
         )
-        .run(id, tx.at, op.project, inputs.revision, inputs.blob, tx.at, JSON.stringify(inputs.change ?? {}), JSON.stringify(inputs.effective ?? {}));
+        .run(id, tx.at, op.project, inputs.revision, inputs.blob, tx.at, JSON.stringify(inputs.change ?? {}), inputs.widens ? 1 : 0, JSON.stringify(inputs.effective ?? {}));
+      if (inputs.decision) tx.db.prepare('UPDATE "policy_revisions" SET "decision" = ? WHERE "id" = ?').run(inputs.decision, id);
       tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(id, op.project);
-      tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid });
+      tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
+      // The policy is part of every evaluation's inputs (D1 §9.5).
+      markStale(tx, { project: op.project });
+      if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }
+    case 'protected':
+      return finalizeApplication(tx, op, inputs as unknown as ApplicationInputs);
+    case 'oob_stash':
+      return {};
     case 'oob_keep':
       return {};
     case 'oob_discard': {
@@ -220,12 +235,14 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
       .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" IN ('stage_build', 'fix') AND "status" = 'integrated' ORDER BY "seq"`)
       .all(op.project) as { id: string }[]
   ).map((r) => r.id);
+  // The version it is nominated under is a historical fact (D1 §3.3).
+  const version = effectiveVersion(tx.db, op.project)?.id ?? null;
   tx.db
     .prepare(
-      `INSERT INTO "candidates" ("id", "created_at", "project", "seq", "revision", "lineage", "nominated_at", "nominated_by", "progress", "held_work")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
+      `INSERT INTO "candidates" ("id", "created_at", "project", "seq", "revision", "lineage", "nominated_at", "nominated_by", "nominated_protected_version", "progress", "held_work")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
     )
-    .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, JSON.stringify(held));
+    .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, version, JSON.stringify(held));
   tx.db.prepare('UPDATE "lineages" SET "open" = 0 WHERE "id" = ?').run(lineage);
   const branch = (tx.db.prepare('SELECT "branch" FROM "lineages" WHERE "id" = ?').get(lineage) as { branch: string }).branch;
   tx.db

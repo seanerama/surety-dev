@@ -6,7 +6,8 @@
 
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
-import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
+import { type DecisionRow, invalidateDecision } from './decisions.js';
+import { raiseQuestion } from './queue.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
@@ -547,7 +548,7 @@ export function quarantineRun(tx: Tx, args: { run: string; domains: string[]; pr
       .run(tx.newId('lease_'), tx.at, run.id, args.incarnation, tx.at, tx.at, FOREVER);
   }
   tx.db.prepare('UPDATE "capability_grants" SET "revoked_at" = ? WHERE "run" = ? AND "revoked_at" IS NULL').run(tx.at, run.id);
-  raiseDecision(tx, {
+  raiseQuestion(tx, {
     project: run.project,
     kind: 'blocker',
     subjectType: 'run',
@@ -557,23 +558,7 @@ export function quarantineRun(tx: Tx, args: { run: string; domains: string[]; pr
       `${args.domains.join(', ')} terminated` +
       (args.processes.length > 0 ? ` (processes seen: ${args.processes.join(', ')})` : '') +
       '. It stays quarantined until termination is observed; nothing of it is reused or discarded meanwhile.',
-    options: [
-      {
-        key: 'acknowledge',
-        label: 'Acknowledge',
-        consequence: 'Records that you have seen this. It establishes nothing: the quarantine ends only when termination is observed.',
-        effect: { record: 'acknowledgement' },
-      },
-    ],
-    manifest: runBlockerManifest(tx, run.id),
-    blockedWorkItems: [run.work_item],
   });
-}
-
-// A.8 blocker manifest for a run: its status and its quarantine state.
-export function runBlockerManifest(tx: Tx, runId: string): Record<string, unknown> {
-  const run = getRun(tx, runId);
-  return { run: runId, run_state: run?.state ?? null, quarantined: run?.quarantined ?? null };
 }
 
 // Steps 5 to 7, one transaction: every invocation gets its terminal
@@ -647,10 +632,11 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   const integrationPending = integration !== undefined && integration.state !== 'failed';
   switch (run.outcome) {
     case 'completed':
-      if (item.status === 'executing' && !KIND_INTEGRATES.includes(item.kind)) {
-        transitionWork(tx, item, 'complete', {}, cause);
-        completeCandidateWork(tx, item);
-      }
+      // A Verifier's or a Reviewer's work is complete with its accepted run.
+      // A candidate's verification no longer completes the work it holds: a
+      // stage's work completes with its stage gate, a fix's with its finding's
+      // resolution (SEAM.md §§70, 74).
+      if (item.status === 'executing' && !KIND_INTEGRATES.includes(item.kind)) transitionWork(tx, item, 'complete', {}, cause);
       return;
     case 'failed': {
       if ((item.status === 'integrating' && integrationPending) || item.status === 'integrated' || item.status === 'verifying') return;
@@ -716,20 +702,6 @@ function workAfterRun(tx: Tx, run: RunRow): void {
 
 const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];
 
-// A candidate's verification is complete: the work the candidate holds is
-// complete with it (SEAM.md §40). Slice 5 puts the stage gate between them.
-function completeCandidateWork(tx: Tx, item: WorkRow): void {
-  if (item.kind !== 'verification') return;
-  const subject = JSON.parse(item.subject) as { candidate?: string };
-  if (!subject.candidate) return;
-  const candidate = tx.db.prepare('SELECT "held_work" FROM "candidates" WHERE "id" = ?').get(subject.candidate) as { held_work: string } | undefined;
-  if (!candidate) return;
-  for (const id of JSON.parse(candidate.held_work) as string[]) {
-    const held = getWorkItem(tx, id);
-    if (held && held.status === 'verifying') transitionWork(tx, held, 'complete', {}, { candidate: subject.candidate, verification: item.id });
-  }
-}
-
 // A limit was reached, or a person must act: the item parks with a visible
 // blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;
 // SEAM.md §§15, 30).
@@ -741,44 +713,11 @@ function parkWork(
   extra: { preflight_refusals?: number; no_progress_count?: number; progress_key?: string | null } = {},
   worktree?: string,
 ): void {
-  const what =
-    reason === 'integration_branch_checked_out'
-      ? `its integration was refused: the integration branch is checked out in the worktree ${worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
-      : (PARK_REASONS[reason] ?? reason);
-  const decision = raiseDecision(tx, {
-    project: item.project,
-    kind: 'blocker',
-    subjectType: 'work_item',
-    subjectId: item.id,
-    question: `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
-    options: [
-      { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
-      { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
-    ],
-    manifest: { work_item: item.id, status: 'parked', reason },
-    blockedWorkItems: [item.id],
-  });
-  const blocker = JSON.stringify({ reason, raised_at: tx.at, decision: decision.id });
+  // The item parks with its blocker first; the decision is raised about the
+  // parked item, as it stands, and the blocker names it.
+  const blocker = JSON.stringify({ reason, raised_at: tx.at, decision: null, ...(worktree ? { worktree } : {}) });
   transitionWork(tx, item, 'parked', { blocker, ...extra }, { ...cause, reason });
-}
-
-const PARK_REASONS: Record<string, string> = {
-  repair_attempts_max: 'every permitted repair attempt failed',
-  preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
-  deadline: 'its run passed its deadline',
-  no_progress_max: 'its repairs left the same rejected result as often as policy allows',
-  budget_run_billable_tokens: "its run passed the project's limit of billable tokens per run (budget_run_billable_tokens) and was stopped",
-  budget_day_unknown_tokens: "the project's tokens of unknown cost today passed their limit (budget_day_unknown_tokens), and its run was stopped",
-  budget_day_verified_usd: "the project's verified cost today passed its limit (budget_day_verified_usd), and its run was stopped",
-  budget_unreadable: 'its budget could not be read, and its run was stopped rather than run on without one',
-  integration_conflict: 'its result could not be integrated: the integration branch moved, and the change does not apply to it, or the compare-and-swap failed. No role resolves it',
-};
-
-// A.8 blocker manifest for a work item.
-export function workBlockerManifest(tx: Tx, d: DecisionRow): Record<string, unknown> {
-  const item = getWorkItem(tx, d.subject_id);
-  const blocker = item?.blocker ? (JSON.parse(item.blocker) as { reason: string }) : null;
-  return { work_item: d.subject_id, status: item?.status ?? null, reason: blocker?.reason ?? null };
+  raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
 }
 
 // ---- reads for the run-end protocol and recovery -----------------------------------

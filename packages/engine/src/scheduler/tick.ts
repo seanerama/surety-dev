@@ -37,7 +37,10 @@ import type { ProjectCandidates } from '../store/reads.js';
 import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
-import { seamStepDelay } from '../testing/seam.js';
+import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
+import type { Effects } from '../decisions/effects.js';
+import { deliverNotifications } from '../decisions/notify.js';
+import { ensureAncestry, gateFacts } from '../gates/prepare.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -72,6 +75,7 @@ export class Scheduler {
     private readonly launcher: Launcher,
     private readonly ender: RunEnder,
     private readonly journal: Journal,
+    private readonly effects: Effects,
   ) {}
 
   start(): void {
@@ -117,6 +121,21 @@ export class Scheduler {
     }
   }
 
+  private async decide(project: string): Promise<void> {
+    await ensureAncestry(this.rt, project);
+    // Every stage gate that is due (SEAM.md §70): a candidate's verification
+    // is complete and the stage's work it holds is still verifying, with no
+    // evaluation or a stale one.
+    const due = await this.rt.read<{ candidate: string; stage: string }[]>('gates.due', { project });
+    for (const g of due) {
+      const facts = await gateFacts(this.rt, project, g.candidate);
+      await this.rt.engine('gate.evaluate', { project, candidate: g.candidate, kind: 'stage', stage: g.stage, ...facts }).catch((err) => log('stage gate', err, { project, ...g }));
+    }
+    await this.rt.engine('decisions.review', { project, channel: seamNotifyChannel() ?? 'none' });
+    await this.effects.step(project);
+    await deliverNotifications(this.rt, project);
+  }
+
   private async tick(): Promise<void> {
     const started = performance.now();
     const tickBudget = this.rt.setting('tick_budget') * 1000;
@@ -130,6 +149,13 @@ export class Scheduler {
         const limit = Math.min(stepBudget, remaining());
         if (limit <= 0 || !(await withinBudget(this.step(name, project), limit))) ineligible.add(project);
       }
+    }
+    // The gates, the attention queue, the effects of consumed decisions and
+    // the notifications of escalated ones (D1 §8.1 steps 5 to 7). Not
+    // prerequisites of dispatch: a failure is reported and the tick goes on.
+    for (const project of projects) {
+      if (remaining() <= 0) break;
+      await this.decide(project).catch((err) => log('tick decide', err, { project }));
     }
     let dispatched = 0;
     if (remaining() > 0) {

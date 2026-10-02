@@ -16,7 +16,8 @@ import { rmSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
 import { type GitContext, SHA, gitOk, repoContext, worktreeContext } from './exec.js';
-import { type Baseline, type TreeEntry, blobSizes, catBlob, checkoutBaseline, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
+import { isProtected } from '../protected/set.js';
+import { type Baseline, type Change, type TreeEntry, blobSizes, catBlob, checkoutBaseline, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
 import { workspaceLink } from './worktree.js';
 
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
@@ -96,15 +97,24 @@ export interface PlanFile {
   stages: { number: number; goal: string }[];
 }
 
-// What each role may change (F §4.1; SEAM.md §28).
+// What each role may change (F §4.1; D1 §7.3 steps 1 and 2; SEAM.md §§28,
+// 68). The protected set is judged by the roots of the effective, authorized
+// protected version, never by roots a diff proposes (SEAM.md §66). A
+// Verifier may change the protected set and nothing else (its change is
+// captured as a proposal); a Reviewer may change nothing.
 const ARCHITECT_PREFIXES = ['.surety/adrs/', '.surety/architecture/', '.surety/roadmap/', '.surety/phases/'];
-const PROTECTED_ROOTS = ['.surety/checks/'];
 const IDENTITY_FILE = '.surety/project.json';
 const PLAN_FILE = /^\.surety\/phases\/phase-([0-9]+)\.json$/;
 
-function pathRule(role: string, path: string): string | null {
-  if (PROTECTED_ROOTS.some((root) => path.startsWith(root))) return `${path} is under the protected root ${PROTECTED_ROOTS.find((r) => path.startsWith(r))}, which no ${role} may change`;
+function pathRule(role: string, path: string, roots: readonly string[]): string | null {
+  if (role === 'reviewer') return `${path} was changed, and a reviewer may change nothing`;
+  if (isProtected(path, roots)) {
+    if (role === 'verifier') return null;
+    const root = roots.find((r) => path.startsWith(r)) ?? path;
+    return `${path} is under the protected root ${root}, which no ${role} may change`;
+  }
   if (path === IDENTITY_FILE) return `${path} is the project's identity file, which no role may change`;
+  if (role === 'verifier') return `${path} is not in the protected set, and a verifier may change only the protected set`;
   if (role === 'builder' && path.startsWith('.surety/')) return `${path} is under .surety/, which a builder may not change`;
   if (role === 'architect' && !ARCHITECT_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${ARCHITECT_PREFIXES.join(', ')}, the only paths an architect may change`;
   return null;
@@ -169,17 +179,23 @@ function parsePlan(path: string, phase: number, text: string): PlanFile | string
 }
 
 // The captured diff: what the snapshot tree holds against the base.
-export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps): Promise<{ violation: Violation | null; plans: PlanFile[] }> {
+export interface DiffResult {
+  violation: Violation | null;
+  plans: PlanFile[];
+  changes: Change[];
+}
+
+export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps, roots: readonly string[]): Promise<DiffResult> {
   const ctx = repoContext(repo);
-  const unknown = (what: string): { violation: Violation; plans: PlanFile[] } => ({ violation: { klass: 'infra_error', text: `the snapshot could not be validated: ${what} could not be read` }, plans: [] });
+  const unknown = (what: string): DiffResult => ({ violation: { klass: 'infra_error', text: `the snapshot could not be validated: ${what} could not be read` }, plans: [], changes: [] });
   const changes = await diffTrees(ctx, base, tree);
   if (changes === null) return unknown('the diff');
   const entries = await listTree(ctx, tree);
   if (entries === null) return unknown('the snapshot tree');
-  const reject = (text: string) => ({ violation: { klass: 'diff_violation' as const, text }, plans: [] });
+  const reject = (text: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text }, plans: [], changes });
 
   for (const c of changes) {
-    const rule = pathRule(role, c.path);
+    const rule = pathRule(role, c.path, roots);
     if (rule) return reject(`the run changed ${c.path}: ${rule}`);
   }
   const added = changes.filter((c) => c.status !== 'D');
@@ -223,7 +239,7 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
     if (typeof plan === 'string') return reject(`${plan}: it could not be registered`);
     plans.push(plan);
   }
-  return { violation: null, plans };
+  return { violation: null, plans, changes };
 }
 
 export interface OtherCheckout {

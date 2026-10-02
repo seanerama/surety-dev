@@ -12,7 +12,8 @@
 // the probes between them; no transaction is held across a git call.
 
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
-import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
+import { type DecisionRow, invalidateDecision } from './decisions.js';
+import { raiseQuestion } from './queue.js';
 import { runFinalizer } from './finalize.js';
 import type { Tx } from './tx.js';
 
@@ -438,24 +439,17 @@ export function blockOperation(tx: Tx, args: { operation: string; outcome: Probe
     if (latest.status !== 'ambiguous' || reads.at(-1)?.result !== args.outcome) setAttempt(tx, latest, 'ambiguous', { outcome: args.outcome, read: args.read });
   }
   if (op.blocker === null) {
-    raiseDecision(tx, {
-      project: op.project,
-      kind: 'blocker',
-      subjectType: 'operation',
-      subjectId: op.id,
-      question: args.question,
-      options: [
-        {
-          key: 'acknowledge',
-          label: 'Acknowledge',
-          consequence: 'Records that you have seen this. It establishes nothing: the operation goes on only once a probe can tell what git holds.',
-          effect: { record: 'acknowledgement' },
-        },
-      ],
-      manifest: { operation: op.id, journal_kind: op.kind },
-      blockedWorkItems: args.workItems,
-      blockedOperation: op.id,
-    });
+    raiseQuestion(tx, { project: op.project, kind: 'blocker', subjectType: 'operation', subjectId: op.id, question: args.question });
+    if (args.workItems.length > 0) {
+      const d = tx.db.prepare(`SELECT "id", "blocked_while_open" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open'`).get(op.id) as
+        | { id: string; blocked_while_open: string }
+        | undefined;
+      if (d) {
+        const blocked = JSON.parse(d.blocked_while_open) as { work_items: string[] };
+        blocked.work_items = [...new Set([...blocked.work_items, ...args.workItems])];
+        tx.db.prepare('UPDATE "decisions" SET "blocked_while_open" = ? WHERE "id" = ?').run(JSON.stringify(blocked), d.id);
+      }
+    }
   }
   refreshStatus(tx, op.id);
 }

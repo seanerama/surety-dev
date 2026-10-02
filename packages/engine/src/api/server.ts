@@ -7,6 +7,8 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { inspectEngineConfig } from '../config/engine-config.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
+import { answerFacts } from '../decisions/facts.js';
+import { gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
 import { readRecordBytes } from '../records/files.js';
 import type { RecordRow } from '../store/transitions/records.js';
@@ -205,17 +207,55 @@ export function createApiServer(state: EngineState): http.Server {
           },
         };
       }
+      if (rest.length === 2 && rest[0] === 'decisions' && rest[1] === 'answer-batch' && post) {
+        return {
+          kind: 'prepared',
+          name: 'decision.answer_batch',
+          prepare: async (b) => {
+            const body = onlyFields(b, ['answers']);
+            const facts: Record<string, unknown> = {};
+            if (Array.isArray(body.answers)) {
+              for (const a of body.answers as { decision?: unknown }[]) {
+                if (typeof a?.decision === 'string') facts[a.decision] = await answerFacts(runtime(), project, a.decision);
+              }
+            }
+            return { project, answers: body.answers, facts };
+          },
+        };
+      }
       if (rest.length === 3 && rest[0] === 'decisions' && rest[2] === 'answer' && post) {
         const decision = decodeSegment(rest[1]!);
         if (decision === null) return null;
         return {
-          kind: 'command',
+          kind: 'prepared',
           name: 'decision.answer',
-          args: (b) => {
+          prepare: async (b) => {
             const body = onlyFields(b, ['option', 'preview_hash', 'note']);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts: await answerFacts(runtime(), project, decision) };
           },
         };
+      }
+      if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && post) {
+        const candidate = decodeSegment(rest[1]!);
+        const kind = decodeSegment(rest[3]!);
+        if (candidate === null || kind === null) return null;
+        // M1 computes two gate kinds; every other is refused before any
+        // effect, whatever the body (build spec §3; row M08).
+        if (kind !== 'stage' && kind !== 'alpha_authorize') return { kind: 'refuse', refusal: unsupported(`Evaluating the ${kind} gate`) };
+        return {
+          kind: 'prepared',
+          name: 'gate.evaluate',
+          prepare: async (b) => {
+            const body = onlyFields(b, kind === 'stage' ? ['stage'] : ['authorization']);
+            const facts = await gateFacts(runtime(), project, candidate);
+            return { project, candidate, kind, stage: body.stage, authorization: body.authorization, ...facts };
+          },
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'authorizations' && post) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'command', name: 'authorization.propose', args: (b) => ({ project, candidate, body: b }) };
       }
       if (rest.length === 1 && (rest[0] === 'pause' || rest[0] === 'resume') && post) {
         return {

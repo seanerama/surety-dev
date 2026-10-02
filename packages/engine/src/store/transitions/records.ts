@@ -5,6 +5,7 @@
 
 import { illegal, notFound } from './common.js';
 import { projectPolicy } from './settings.js';
+import { raiseFinding } from './findings.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -96,12 +97,32 @@ export function recordScan(tx: Tx, args: { record: string; hit: boolean; by: str
   }
   tx.db.prepare(`UPDATE "records" SET "post_scan" = 'hit' WHERE "id" = ?`).run(record.id);
   tx.emit('record.secret_found', { project: record.project, record: record.id }, { by: args.by });
+  // A secret found in a stored record raises one Critical security finding
+  // on the project, raised by the engine and no run (D1 §14.2; SEAM.md §72).
+  const finding = raiseFinding(tx, {
+    project: record.project,
+    scope: 'project',
+    candidate: null,
+    run: null,
+    role: null,
+    category: 'security',
+    severity: 'critical',
+    message: `A secret detector${args.by ? ` (${args.by})` : ''} matched the stored bytes of record ${record.id}.`,
+  });
+  tx.db.prepare('UPDATE "records" SET "post_scan_finding" = ? WHERE "id" = ?').run(finding, record.id);
 }
 
-// Is a record referred to by something live? In slice 4 the one such thing
-// is a run whose work item is not terminal (SEAM.md §58).
-const REFERENCED = `EXISTS (SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
-  WHERE r."id" = rec."run" AND w."status" NOT IN ('complete', 'cancelled'))`;
+// Is a record referred to by something live? A run whose work item is not
+// terminal (SEAM.md §58); and, from slice 5, the output of a check result
+// that a recorded evaluation used, the rationale of a proposal, the evidence
+// of an assessment or of an Alpha exception (SEAM.md §72).
+const REFERENCED = `(EXISTS (SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+  WHERE r."id" = rec."run" AND w."status" NOT IN ('complete', 'cancelled'))
+  OR EXISTS (SELECT 1 FROM "check_results" cr WHERE cr."output" = rec."id"
+    AND EXISTS (SELECT 1 FROM "gate_evaluations" g WHERE g."candidate" = cr."candidate"))
+  OR EXISTS (SELECT 1 FROM "protected_proposals" p WHERE p."rationale" = rec."id")
+  OR EXISTS (SELECT 1 FROM "applicability_assessments" a WHERE a."evidence" = rec."id")
+  OR EXISTS (SELECT 1 FROM "findings" f WHERE f."alpha_exception" IS NOT NULL AND json_extract(f."alpha_exception", '$.containment_evidence') = rec."id"))`;
 
 // Published records whose retention has passed and that nothing refers to.
 export function expirableRecords(db: Db, now: string): { id: string; project: string; path: string }[] {

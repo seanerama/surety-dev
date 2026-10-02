@@ -20,7 +20,8 @@ import { StringDecoder } from 'node:string_decoder';
 import { repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
-import { INTEGRATING_KINDS } from '../runs/accept.js';
+import { ACCEPTED_KINDS } from '../runs/accept.js';
+import { parseReport } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
@@ -43,13 +44,18 @@ export interface DispatchTarget {
 //
 // From slice 3 a result may carry `checkpoint` and `nominate`, each a JSON
 // boolean (SEAM.md §26); anything else there makes the result invalid.
+//
+// From slice 5 it may also carry what a Verifier or a Reviewer reports
+// (findings, sign-offs, ...; SEAM.md §68), each field in its form.
 function parseResult(value: unknown): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   if (r.status !== 'completed' || typeof r.summary !== 'string') return null;
   if (r.checkpoint !== undefined && typeof r.checkpoint !== 'boolean') return null;
   if (r.nominate !== undefined && typeof r.nominate !== 'boolean') return null;
-  return { summary: r.summary, checkpoint: r.checkpoint === true, nominate: r.nominate === true };
+  const report = parseReport(r);
+  if (report === null) return null;
+  return { summary: r.summary, checkpoint: r.checkpoint === true, nominate: r.nominate === true, ...(Object.keys(report).length > 0 ? { report } : {}) };
 }
 
 // The role's environment is constructed, never inherited (D1 §17(4)): no
@@ -456,11 +462,12 @@ export class Launcher {
   // run-end protocol then establishes termination, which the exit itself
   // never does.
   //
-  // A run of the Builder's or the Architect's kinds that earned `completed`
-  // is not ended yet: what its role left is accepted first (runs/accept.ts).
+  // A run that earned `completed` is not ended yet: what its role left is
+  // accepted first (runs/accept.ts). From slice 5 that is every dispatched
+  // kind: a Verifier's and a Reviewer's runs are validated too (SEAM.md §68).
   private childDone(handle: RunHandle): void {
     const end = earnedEnd(handle);
-    if (!handle.ending && end.outcome === 'completed' && INTEGRATING_KINDS.includes(handle.claim.work_kind) && this.rt.services) {
+    if (!handle.ending && end.outcome === 'completed' && ACCEPTED_KINDS.includes(handle.claim.work_kind) && this.rt.services) {
       this.rt.services.accept(handle);
       return;
     }

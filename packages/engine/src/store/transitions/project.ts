@@ -2,7 +2,6 @@
 // project policy command, whose valid changes commit through the journaled
 // git path that slice 3 builds.
 
-import { validatePolicySubmission } from '../../config/project-policy.js';
 import { newId } from '../../ids.js';
 import { Refusal } from '../../refusal.js';
 import { intendCommit } from './accept.js';
@@ -10,6 +9,9 @@ import type { IntentSpec } from './journal.js';
 import { journalBlocks } from './journal.js';
 import { type Baseline, addCheckout, blockingObservation, integrationRef, openLineage, projectRepoRow, registerRef } from './repo.js';
 import { policyRevision, projectPolicy } from './settings.js';
+import type { CommandResult } from './control.js';
+import { type ProtectedSet, captureProposal, recordInitialVersion } from './protected.js';
+import { raiseQuestion, widenScope } from './queue.js';
 import type { Tx } from './tx.js';
 
 export interface ProjectRow {
@@ -42,7 +44,7 @@ export interface NewProject {
 // what it holds as its baseline (SEAM.md §§25, 32). Returns the project id.
 export function createProject(
   tx: Tx,
-  project: NewProject & { id?: string; registration?: 'registered' | 'pending_bootstrap'; head: string; checkouts?: { path: string; baseline: Baseline }[] },
+  project: NewProject & { id?: string; registration?: 'registered' | 'pending_bootstrap'; head: string; checkouts?: { path: string; baseline: Baseline }[]; protectedSet: ProtectedSet },
   label: Record<string, unknown>,
 ): string {
   const id = project.id ?? newId('proj_');
@@ -59,6 +61,8 @@ export function createProject(
   registerRef(tx, { project: id, ref: integrationRef(project.integration_branch), kind: 'integration', expected: project.head });
   openLineage(tx, id);
   for (const c of project.checkouts ?? []) addCheckout(tx, { project: id, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
+  // The project's first protected version (SEAM.md §66).
+  recordInitialVersion(tx, id, project.protectedSet, label.test_fixture === true ? 'test fixture' : 'project creation');
   return id;
 }
 
@@ -74,10 +78,14 @@ export interface PreparedCommit {
 // in turn registers the project.
 export function bootstrapProject(
   tx: Tx,
-  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number },
+  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet },
 ): { project: { id: string; registration_state: string } } {
   const ref = integrationRef(args.branch);
-  createProject(tx, { id: args.id, name: args.name, tier: args.tier, dev_repo_path: args.repo, integration_branch: args.branch, registration: 'pending_bootstrap', head: args.head }, {});
+  createProject(
+    tx,
+    { id: args.id, name: args.name, tier: args.tier, dev_repo_path: args.repo, integration_branch: args.branch, registration: 'pending_bootstrap', head: args.head, protectedSet: args.protectedSet },
+    {},
+  );
   const follow: IntentSpec = {
     project: args.id,
     kind: 'ref_update',
@@ -145,34 +153,113 @@ export function policyRefusal(blocking: string): Refusal {
       );
 }
 
-// POST /v1/projects/:p/policy, a valid change (D1 §11.4; SEAM.md §27): the
-// file is committed through the journal, and the ref update's finalizer
-// records the policy revision.
+export interface PolicyCommit {
+  head: string;
+  revision: number;
+  commit: PreparedCommit;
+  blob: string;
+  effective: Record<string, number>;
+  change: Record<string, number>;
+  deadlineSeconds: number;
+}
+
+export interface GovernedEdit {
+  head: string;
+  tree: string;
+  diffHash: string;
+  changesRequiredSet: boolean;
+  rationale: string;
+}
+
+// POST /v1/projects/:p/policy (D1 §§10.1, 11.4; SEAM.md §§27, 66, 78). The
+// ungoverned part of a submission is committed through the journal, unless
+// it widens what the engine may do unasked: then it is not committed, and a
+// policy_widening decision is raised (409 confirm_required). A governed part
+// is never applied here: it becomes a protected proposal (202).
 export function submitPolicy(
   tx: Tx,
-  args: { project: string; body: unknown; prepared: { head: string; revision: number; commit: PreparedCommit; blob: string; effective: Record<string, number>; change: Record<string, number>; deadlineSeconds: number } },
-): { revision: number; committed: false } {
+  args: { project: string; body: unknown; ordinary: Record<string, number>; widens: string[]; governed: GovernedEdit | null; prepared: PolicyCommit | null },
+): CommandResult {
   getProject(tx, args.project);
-  validatePolicySubmission(args.body);
   const facts = policyFacts(tx, { project: args.project });
-  if (facts.blocking) throw policyRefusal(facts.blocking);
-  const pr = args.prepared;
-  if (facts.head !== pr.head || (facts.revision ?? 0) + 1 !== pr.revision) {
-    throw new Refusal(409, 'illegal_transition', 'The project policy or its branch changed while the change was prepared.', 'Send the change again.', { project: args.project });
+  let proposal: string | null = null;
+  if (args.governed) {
+    if (facts.head !== args.governed.head) {
+      throw new Refusal(409, 'illegal_transition', 'The integration branch moved while the edit was prepared.', 'Send the change again.', { project: args.project });
+    }
+    proposal = captureProposal(tx, {
+      project: args.project,
+      proposedBy: 'human',
+      run: null,
+      base: args.governed.head,
+      tree: args.governed.tree,
+      diffHash: args.governed.diffHash,
+      rationale: args.governed.rationale,
+      requested: 'unclassifiable',
+      changesRequiredSet: args.governed.changesRequiredSet,
+    }).id;
   }
-  const ref = integrationRef(facts.branch);
+  if (args.widens.length > 0) {
+    const decision = raiseQuestion(tx, {
+      project: args.project,
+      kind: 'policy_widening',
+      subjectType: 'project',
+      subjectId: args.project,
+      scope: widenScope(args.ordinary),
+      options: JSON.stringify([{ key: 'approve', effect_plan: { change: args.ordinary } }]),
+    })!;
+    const refusal = new Refusal(
+      409,
+      'confirm_required',
+      `The change widens what the engine may do unasked (${args.widens.join(', ')}): it needs confirmation through decision ${decision.id}.`,
+      'Answer the decision with its preview hash to commit the change.',
+      { decision: decision.id, preview_hash: decision.preview_hash, ...(proposal ? { proposal } : {}) },
+    );
+    return { status: 409, body: refusal.body() };
+  }
+  let revision: number | null = null;
+  if (args.prepared) {
+    if (facts.blocking) throw policyRefusal(facts.blocking);
+    const pr = args.prepared;
+    if (facts.head !== pr.head || (facts.revision ?? 0) + 1 !== pr.revision) {
+      throw new Refusal(409, 'illegal_transition', 'The project policy or its branch changed while the change was prepared.', 'Send the change again.', { project: args.project });
+    }
+    intendPolicyCommit(tx, { project: args.project, repo: facts.repo, branch: facts.branch, prepared: pr, widens: false });
+    revision = pr.revision;
+  }
+  if (proposal !== null) return { status: 202, body: { proposal: { id: proposal }, ...(revision !== null ? { revision } : {}) }, effects: revision !== null ? [{ kind: 'journal', project: args.project }] : [] };
+  return { status: 200, body: { revision, committed: false }, effects: [{ kind: 'journal', project: args.project }] };
+}
+
+// The commit of `.surety/policy.json` and the ref update whose finalizer
+// records the policy revision.
+export function intendPolicyCommit(tx: Tx, args: { project: string; repo: string; branch: string; prepared: PolicyCommit; widens: boolean; decision?: string; intent?: string }) {
+  const pr = args.prepared;
+  const ref = integrationRef(args.branch);
   const follow: IntentSpec = {
     project: args.project,
     kind: 'ref_update',
-    payload: { repo: facts.repo, ref, old_oid: pr.head, new_oid: pr.commit.sha },
-    target: { repo: facts.repo, ref },
+    payload: { repo: args.repo, ref, old_oid: pr.head, new_oid: pr.commit.sha },
+    target: { repo: args.repo, ref },
     subject: { policy_revision: pr.revision, new_oid: pr.commit.sha },
-    finalizer: { purpose: 'policy', ref, ref_kind: 'integration', new_oid: pr.commit.sha, revision: pr.revision, blob: pr.blob, effective: pr.effective, change: pr.change },
+    finalizer: {
+      purpose: 'policy',
+      ref,
+      ref_kind: 'integration',
+      new_oid: pr.commit.sha,
+      revision: pr.revision,
+      blob: pr.blob,
+      effective: pr.effective,
+      change: pr.change,
+      widens: args.widens,
+      ...(args.decision ? { decision: args.decision } : {}),
+      ...(args.intent ? { intent: args.intent } : {}),
+    },
     deadlineSeconds: pr.deadlineSeconds,
   };
-  intendCommit(tx, {
+  return intendCommit(tx, {
     project: args.project,
-    repo: facts.repo,
+    repo: args.repo,
     purpose: 'policy',
     tree: pr.commit.tree,
     parent: pr.head,
@@ -181,8 +268,8 @@ export function submitPolicy(
     revisionKind: 'engine_commit',
     follow,
     deadlineSeconds: pr.deadlineSeconds,
+    ...(args.intent ? { extra: { intent: args.intent } } : {}),
   });
-  return { revision: pr.revision, committed: false };
 }
 
 // A project's repository was moved, and is bound again explicitly at its new

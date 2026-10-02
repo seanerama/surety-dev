@@ -14,6 +14,7 @@ import { type EngineConfig, loadEngineConfig } from './config/engine-config.js';
 import { configureGit } from './git/exec.js';
 import { observeIntegrity } from './git/integrity.js';
 import { Launcher } from './invoke/choke.js';
+import { Effects } from './decisions/effects.js';
 import { Journal } from './journal/driver.js';
 import { nominate } from './journal/nominate.js';
 import { type LockRecord, acquireLock, releaseLock } from './lock.js';
@@ -193,7 +194,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const ender = new RunEnder(runtime);
   const acceptor = new Acceptor(runtime, ender, journal);
   const launcher = new Launcher(runtime);
-  scheduler = new Scheduler(runtime, launcher, ender, journal);
+  const effects = new Effects(runtime, journal);
+  scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
   runtime.services = {
     endRun: (run, end) => ender.endRun(run, end),
@@ -203,6 +205,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
     accept: (handle) => acceptor.start(handle),
     nominate: (project) => nominate(runtime, journal, project),
     journal: (project) => reconcileProject(runtime, journal, project),
+    effect: (intent) => effects.run(intent),
   };
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation

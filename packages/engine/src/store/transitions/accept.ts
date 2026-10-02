@@ -4,6 +4,8 @@
 // from durable facts, so a step repeated after a failure writes what it
 // would have written the first time (E28 item 1).
 
+import { type Report, recordReport } from './findings.js';
+import { type ChangeKind, captureProposal, effectiveVersion } from './protected.js';
 import { projectPolicy } from './settings.js';
 import { illegal, notFound } from './common.js';
 import { type CommitInputs, type PlanInput, type RefInputs, nextCandidateSeq } from './finalize.js';
@@ -17,6 +19,8 @@ export interface RunResult {
   summary: string;
   checkpoint: boolean;
   nominate: boolean;
+  // What a Verifier or a Reviewer reports (SEAM.md §68).
+  report?: Report;
 }
 
 export interface AcceptFacts {
@@ -33,6 +37,9 @@ export interface AcceptFacts {
   others: { kind: string; path: string; adminDir: string | null; baseline: Baseline }[];
   commits: { id: string; state: string; status: string; sha: string; parent: string; tree: string }[];
   integrations: { id: string; state: string; status: string; detail: Record<string, unknown> | null; new_oid: string }[];
+  // The protected roots of the effective version: what no Builder may
+  // change, and the only thing a Verifier may (SEAM.md §§66, 68).
+  roots: string[];
 }
 
 // Refs the engine's own unfinished journal is moving, with the commits it is
@@ -118,7 +125,44 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
     others,
     commits,
     integrations,
+    roots: (() => {
+      const v = effectiveVersion(tx.db, run.project);
+      return v ? (JSON.parse(v.roots) as string[]) : ['.surety/checks/'];
+    })(),
   };
+}
+
+// A Verifier's or a Reviewer's run that changed nothing: what its role
+// reported is recorded (SEAM.md §68).
+export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string | null)[] }): void {
+  const run = getRun(tx, args.run);
+  if (!run || run.state !== 'validating') return;
+  recordReport(tx, args);
+}
+
+// A Verifier's protected-only diff is captured as a proposal (D1 §§4.1, 7.3;
+// SEAM.md §68): the run is proposal_captured, the proposal recorded, and what
+// its role reported recorded. Capture is not a commit.
+export function captureRunProposal(
+  tx: Tx,
+  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[] },
+): void {
+  const run = getRun(tx, args.run);
+  if (!run || run.state !== 'validating') return;
+  tx.db.prepare(`UPDATE "runs" SET "state" = 'proposal_captured' WHERE "id" = ?`).run(run.id);
+  tx.emit('run.proposal_captured', { project: run.project, run: run.id, work_item: run.work_item }, {});
+  captureProposal(tx, {
+    project: run.project,
+    proposedBy: 'verifier_run',
+    run: run.id,
+    base: args.base,
+    tree: args.tree,
+    diffHash: args.diffHash,
+    rationale: args.rationale,
+    requested: args.requested,
+    changesRequiredSet: args.changesRequiredSet,
+  });
+  recordReport(tx, { run: run.id, evidence: args.evidence });
 }
 
 // The snapshot of a quiescent workspace, recorded once.
@@ -151,6 +195,8 @@ export function intendCommit(
     follow?: IntentSpec;
     fence?: boolean;
     deadlineSeconds: number;
+    // Further finalizer inputs, fixed with the intent.
+    extra?: Record<string, unknown>;
   },
 ): IntentResult {
   const target = { repo: args.repo, commit: args.sha };
@@ -163,6 +209,7 @@ export function intendCommit(
   if (existing) return { operation: existing.id, existing: true };
   const keep = `refs/surety/keep/${nextCounter(tx, args.project, 'keep')}`;
   const inputs: CommitInputs & { content: string; fence?: boolean } = {
+    ...(args.extra ?? {}),
     purpose: args.purpose,
     sha: args.sha,
     parent: args.parent,
