@@ -251,7 +251,7 @@ The API and the decision queue grow with every slice. Each slice adds the routes
 | **4. Ledger, records and backup** | Ledger corrections and normalization; budgets and fail-closed reads; the durable record path, chunk receipts, redaction and rescan; retention; backup and restore; power-loss durability. | M59–M67 | §§6.5, 6.6, 13, 14 |
 | **5. Protected path, gates and decisions** | Governed policy file; proposal capture and application; acceptance scope; check states; evidence invalidation and reuse; findings, severity, sign-offs; `stage` and `alpha_authorize` evaluation; the proposed authorization; every enabled decision kind with its manifest; dedupe, batching, consumption, pre-effect revalidation; aging and escalation. | M35–M58 | §§5, 7.9, 9, 10 |
 | **6. API, load and contract** | Browser bootstrap; the HTTP boundary matrix and audit; scoped reads and the NOW projection; latency under declared load; bounded event streams; the generated appendix and contract checks; fixture semantics and the invocation-boundary lint. | M68–M74 | §§11, 12, 17 |
-| **7. Journey** | Nothing new. One end-to-end run through the finished kernel. | M01 | — |
+| **7. Journey** | Nothing new. The end-to-end run observed through the public reads of slice 6. The journey itself (`M01-kernel-journey`) is the first target of slice 5 (E40). | M01 | — |
 
 **Cases known to belong to a later slice than their row.** This list is a starting point for the Verifier, not a complete analysis.
 
