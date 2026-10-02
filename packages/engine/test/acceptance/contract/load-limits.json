@@ -1,0 +1,7 @@
+{
+  "$comment": "The load limits row M71 qualifies, decided by the owner (E36 item 2; build spec §11): nothing larger is qualified by a pass. `store_bytes` is one gibibyte, which is not less than the decision's '1 GB' however that is read. `api_latency_bound_ms` is the engine's default (D1 A.9; ../contract/config.json), not a value the test configures. `clients` are connections to the event stream that are open at the same time. Tests read these numbers from this file through ../harness/load.mjs (`LIMITS`), show that their fixture is at them before they sample anything, and print them with what they measured.",
+  "projects": 5,
+  "clients": 20,
+  "store_bytes": 1073741824,
+  "api_latency_bound_ms": 250
+}
