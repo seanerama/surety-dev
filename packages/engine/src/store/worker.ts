@@ -35,7 +35,6 @@ import {
   recordLaunch,
   recordResult,
   recordUsage,
-  refuseInvocation,
   renewLease,
   settleWorktree,
   unendedRuns,
@@ -73,10 +72,10 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.resume': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: false })),
   'project.policy_submit': (tx, a: { project: string; body: unknown }) => ok(submitPolicy(tx, a)),
   'project.tick': (tx, a: { project: string }) => requestTick(tx, a),
-  'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined }) =>
-    controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash }),
-  'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined }) =>
-    controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash }),
+  'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
+    controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash, decided: a.decided }),
+  'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
+    controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
 };
@@ -97,7 +96,6 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
   'receipt.allocate': (tx, a: { run: string }) => allocateReceipt(tx, a.run),
-  'invoke.refuse': (tx, a) => refuseInvocation(tx, a),
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),
   'invoke.launched': (tx, a) => recordLaunch(tx, a),
   'invoke.found_process': (tx, a) => recordFoundProcess(tx, a),

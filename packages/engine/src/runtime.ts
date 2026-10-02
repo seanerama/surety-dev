@@ -19,6 +19,8 @@ export interface RunEnd {
   // that records it compares it with the lease: an end decided after the
   // lease had expired was not decided before the expiry (E27 item 3).
   decidedAt?: string;
+  // Recorded with the outcome (runs.reason_text).
+  reasonText?: string;
 }
 
 export interface RunHandle {
@@ -55,6 +57,10 @@ export interface RunHandle {
   startTime: string | null;
   result: { valid: boolean } | null;
   exit: { code: number | null; signal: string | null } | null;
+  // When the role's process exited, on the engine clock. An end the role
+  // earned by its exit was decided then, however long the engine goes on
+  // reading what the role wrote before it exited (SEAM.md §24).
+  exitAt: string | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -80,6 +86,7 @@ export function newHandle(claim: Claim): RunHandle {
     startTime: null,
     result: null,
     exit: null,
+    exitAt: null,
   };
 }
 
@@ -166,6 +173,13 @@ export class Runtime {
     handle.ending = true;
     handle.intended = { ...end, decidedAt: end.decidedAt ?? isoAt(nowMs()) };
     void this.services?.endRun(handle.claim.run, handle.intended).catch((err) => log('run end', err, { run: handle.claim.run }));
+  }
+
+  // Has this engine decided to end the run, whether or not the transaction
+  // that records the decision has succeeded (E27 item 5)? A Stop or Abandon
+  // confirmed after that is refused (SEAM.md §24).
+  endDecided(run: string): boolean {
+    return this.handles.get(run)?.ending === true;
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).

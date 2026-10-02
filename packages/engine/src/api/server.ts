@@ -148,7 +148,14 @@ export function createApiServer(state: EngineState): http.Server {
         return {
           kind: 'command',
           name: rest[2] === 'stop' ? 'run.stop' : 'run.abandon',
-          args: (b) => ({ project, run, preview_hash: optionalString(onlyFields(b, ['preview_hash']), 'preview_hash') }),
+          args: (b) => ({
+            project,
+            run,
+            preview_hash: optionalString(onlyFields(b, ['preview_hash']), 'preview_hash'),
+            // What the running engine has decided of the run, read when the
+            // command is sent; the store runs commands in the order sent.
+            decided: state.runtime?.endDecided(run) ?? false,
+          }),
         };
       }
       if (rest.length === 2 && rest[0] === 'runs' && get) {

@@ -273,14 +273,6 @@ export function allocateReceipt(tx: Tx, runId: string): string {
   return id;
 }
 
-// The choke point refused the backend (D1 §15.1): the invocation is recorded
-// refused, never launched, and the run enters finalizing with outcome refused.
-export function refuseInvocation(tx: Tx, args: { run: string; invocation: string; code: string }): void {
-  const run = mustRun(tx, args.run);
-  if (!statuses(tx, args.invocation).includes('refused')) observe(tx, run, args.invocation, 'refused');
-  beginEnd(tx, { run: args.run, outcome: 'refused', reason: 'preflight_refused', reasonText: args.code });
-}
-
 // ---- workspace through the journal ----------------------------------------------
 
 interface JournalPayload {
@@ -306,12 +298,16 @@ function journal(tx: Tx, project: string, operation: string, kind: 'worktree_add
 export function intendWorktree(
   tx: Tx,
   args: { run: string; kind: 'worktree_add' | 'worktree_remove'; repo: string; path: string; base?: string; workspace?: string; deadlineSeconds: number },
-): { operation: string } {
+): { operation: string; last: string } {
   const run = mustRun(tx, args.run);
-  const operation = tx.newId('op_');
   const target = { repo: args.repo, path: args.path };
   const subject = { run: args.run, action: args.kind };
   const key = createKey('git_worktree', target, subject, 1);
+  // One operation per effect: an intent repeated after a failure later in
+  // the protocol returns the operation recorded the first time.
+  const existing = tx.db.prepare('SELECT "id" FROM "operations" WHERE "idempotency_key" = ?').get(key) as { id: string } | undefined;
+  if (existing) return { operation: existing.id, last: operationPayload(tx, existing.id).last };
+  const operation = tx.newId('op_');
   tx.db
     .prepare(
       `INSERT INTO "operations" ("id", "created_at", "project", "seq", "kind", "target", "subject", "idempotency_key", "semantic_generation", "status", "deadline_at")
@@ -323,7 +319,7 @@ export function intendWorktree(
   if (args.base !== undefined) payload.base = args.base;
   if (args.workspace !== undefined) payload.workspace = args.workspace;
   journal(tx, run.project, operation, args.kind, 'intended', payload);
-  return { operation };
+  return { operation, last: 'intended' };
 }
 
 // D1 §2.5: sha256(kind, target, subject, semantic_generation).
@@ -558,13 +554,26 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
 
 // Step 2's result for one domain: termination established, by the boundary's
 // observation, or because the running engine knows it never spawned into it.
+//
+// When termination rests on the engine's knowledge that it never spawned into
+// the domain (`observed` false), that knowledge is made durable here, in the
+// same transaction: the domain's invocation is recorded `refused`, never
+// launched. A later step of the run-end protocol, repeated after a failure,
+// then reads it from the store and cannot charge an invocation that never ran
+// (SEAM.md §24).
 export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean }): void {
-  const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as { id: string; run: string; project: string; status: DomainStatus } | undefined;
+  const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
+    | { id: string; run: string; project: string; status: DomainStatus; invocation: string }
+    | undefined;
   if (!d) throw notFound('domain', args.domain);
   if (d.status === 'terminated') return;
   tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated' WHERE "id" = ?`).run(d.id);
   tx.db.prepare('UPDATE "process_ownership" SET "termination_confirmed_at" = ? WHERE "domain" = ?').run(tx.at, d.id);
   tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, { from: d.status, observed: args.observed });
+  if (!args.observed) {
+    const seen = statuses(tx, d.invocation);
+    if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
+  }
 }
 
 // Step 3: termination could not be established. The run stays finalizing and

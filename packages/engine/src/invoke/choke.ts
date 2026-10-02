@@ -19,6 +19,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 import { repoContext } from '../git/exec.js';
 import { addWorktree, branchHead } from '../git/worktree.js';
+import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
 import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
@@ -93,10 +94,10 @@ export class Launcher {
   }
 
   // The run will never be spawned into by this incarnation.
-  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never'): void {
+  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string): void {
     handle.phase = phase;
     handle.settle();
-    this.rt.requestEnd(handle, { outcome, reason });
+    this.rt.requestEnd(handle, reasonText === undefined ? { outcome, reason } : { outcome, reason, reasonText });
   }
 
   // Backend check, workspace, dispatch_started. Returns false if the run is
@@ -104,12 +105,11 @@ export class Launcher {
   private async prepare(handle: RunHandle, backend: BackendSpec | null, repo: string): Promise<boolean> {
     const { claim } = handle;
     if (!backend) {
-      // D1 §15.1: an unqualified backend is refused before launch.
-      await this.rt.engine('invoke.refuse', { run: claim.run, invocation: claim.invocation, code: 'backend_refused' });
-      handle.phase = 'never';
-      handle.settle();
-      handle.ending = true;
-      void this.rt.services?.completeEnd(claim.run).catch((err) => log('run end', err, { run: claim.run }));
+      // D1 §15.1: an unqualified backend is refused before launch. The
+      // refusal is the end the engine decided, and it is kept with the
+      // handle: if recording it fails, the engine's retry records the same
+      // refusal, never a failure (SEAM.md §24).
+      this.never(handle, 'refused', 'preflight_refused', 'never', 'backend_refused');
       return false;
     }
     if (handle.abort) {
@@ -211,6 +211,7 @@ export class Launcher {
     const exited = new Promise<void>((resolve) => {
       child.once('exit', (code, signal) => {
         handle.exit = { code, signal };
+        handle.exitAt = isoAt(nowMs());
         output.exited();
         resolve();
       });
@@ -323,7 +324,8 @@ export class Launcher {
   // run-end protocol then establishes termination, which the exit itself
   // never does.
   private childDone(handle: RunHandle): void {
-    this.rt.requestEnd(handle, earnedEnd(handle));
+    const end = earnedEnd(handle);
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
   }
 }
 
@@ -346,7 +348,10 @@ const RESULT_RETRY_MS = [100, 300];
 class RoleOutput {
   private readonly lines: string[] = [];
   private readonly decoder = new StringDecoder('utf8');
-  private partial = '';
+  // The text read after the last line ending, as the pieces it arrived in:
+  // joined once, when its line ends, so reading a line is linear in its
+  // length (SEAM.md §24).
+  private partial: string[] = [];
   private closed = false;
   private exitAt: number | null = null;
   private lastDataAt = 0;
@@ -368,8 +373,16 @@ class RoleOutput {
   }
 
   private take(text: string): void {
-    const parts = (this.partial + text).split('\n');
-    this.partial = parts.pop()!;
+    if (text === '') return;
+    const parts = text.split('\n');
+    if (parts.length === 1) {
+      this.partial.push(text);
+      return;
+    }
+    const last = parts.pop()!;
+    this.partial.push(parts[0]!);
+    parts[0] = this.partial.join('');
+    this.partial = last === '' ? [] : [last];
     for (const part of parts) this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
   }
 
@@ -379,8 +392,9 @@ class RoleOutput {
     if (this.closed) return;
     this.closed = true;
     this.take(this.decoder.end());
-    const last = this.partial.endsWith('\r') ? this.partial.slice(0, -1) : this.partial;
-    this.partial = '';
+    const rest = this.partial.join('');
+    const last = rest.endsWith('\r') ? rest.slice(0, -1) : rest;
+    this.partial = [];
     if (last !== '') this.lines.push(last);
     this.wake?.();
   }

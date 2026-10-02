@@ -60,11 +60,19 @@ function applyControl(tx: Tx, kind: Control, runId: string): CommandResult {
 // confirmation decision is raised (or the open one returned) and the answer
 // is 409 confirm_required; with the decision's preview hash it is consumed and
 // the run-end protocol begins. The route cannot bypass the queue (D1 §10.1).
-export function controlRun(tx: Tx, args: { project: string; run: string; kind: Control; previewHash: string | undefined }): CommandResult {
+//
+// `decided`: the engine has already decided to end the run for another cause,
+// whether or not it has recorded that yet (E27 item 5). The decided outcome
+// stands, and the command is refused as for a run that has ended (SEAM.md
+// §24).
+export function controlRun(tx: Tx, args: { project: string; run: string; kind: Control; previewHash: string | undefined; decided?: boolean }): CommandResult {
   const run = getRun(tx, args.run);
   if (!run || run.project !== args.project) throw notFound('run', args.run);
-  if (run.state === 'finalizing' || run.state === 'ended') {
-    throw illegal(`${args.kind === 'stop' ? 'Stop' : 'Abandon'} of a ${run.state} run`, { run: run.id, state: run.state });
+  if (run.state === 'finalizing' || run.state === 'ended' || args.decided === true) {
+    throw illegal(`${args.kind === 'stop' ? 'Stop' : 'Abandon'} of a ${args.decided === true && run.state !== 'ended' ? 'run whose end is already decided' : `${run.state} run`}`, {
+      run: run.id,
+      state: run.state,
+    });
   }
   const kind = CONFIRM[args.kind];
   if (args.previewHash === undefined) {

@@ -34,7 +34,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { repoContext } from '../git/exec.js';
-import { removeWorktree } from '../git/worktree.js';
+import { probeWorktree, removeWorktree } from '../git/worktree.js';
 import { markedProcesses, signalFound, signalRecordedGroup } from '../invoke/processes.js';
 import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../runtime.js';
 import type { EndFacts } from '../store/transitions/runs.js';
@@ -70,7 +70,7 @@ export class RunEnder {
 
   async endRun(run: string, end: RunEnd, opts: EndOptions = {}): Promise<void> {
     try {
-      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, decidedAt: end.decidedAt });
+      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, reasonText: end.reasonText, decidedAt: end.decidedAt });
     } catch (err) {
       this.failed(run, end, opts);
       throw err;
@@ -180,9 +180,13 @@ export class RunEnder {
     this.rt.handles.delete(run);
   }
 
+  // The removal is one operation per workspace: a repeated discard, after a
+  // failure in any of its transactions, finds the operation it recorded
+  // before, probes what the removal left, makes the removal only if the
+  // worktree is still there, and records what it finds (SEAM.md §24).
   private async discard(facts: EndFacts): Promise<void> {
     const ws = facts.workspace!;
-    const { operation } = await this.rt.engine<{ operation: string }>('worktree.intend', {
+    const { operation, last } = await this.rt.engine<{ operation: string; last: string }>('worktree.intend', {
       run: facts.run.id,
       kind: 'worktree_remove',
       repo: facts.repo,
@@ -190,7 +194,10 @@ export class RunEnder {
       workspace: ws.id,
       deadlineSeconds: this.rt.setting('git_deadline'),
     });
-    const probe = await removeWorktree(repoContext(facts.repo), ws.path);
+    if (last === 'finalized' || last === 'failed') return;
+    const ctx = repoContext(facts.repo);
+    let probe = await probeWorktree(ctx, ws.path);
+    if (probe === 'present') probe = await removeWorktree(ctx, ws.path);
     await this.rt.engine('worktree.settle', { operation, result: probe });
     if (probe !== 'absent') log('discard', new Error(`workspace ${ws.path} could not be removed (${probe}); it is retained`), { run: facts.run.id });
   }
