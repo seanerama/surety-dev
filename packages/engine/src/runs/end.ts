@@ -21,6 +21,7 @@
 //      ledger rows, disposes of the workspace, revokes the grant, releases
 //      every lease naming the run, ends the run and moves its work item.
 
+import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { repoContext } from '../git/exec.js';
@@ -147,7 +148,10 @@ export class RunEnder {
     };
     const graceMs = this.rt.setting('terminate_grace') * 1000;
     const killMs = this.rt.setting('kill_grace') * 1000;
-    const start = Date.now();
+    // The grace periods are real time, measured on the monotonic clock: a
+    // wall clock that steps back cannot stretch them, and one that jumps
+    // cannot cut them short.
+    const start = performance.now();
     let termSent = false;
     let killSent = false;
     for (;;) {
@@ -156,7 +160,7 @@ export class RunEnder {
         await this.rt.engine('domain.terminated', { domain: d.id, observed: true });
         return { terminated: true, seen };
       }
-      const elapsed = Date.now() - start;
+      const elapsed = performance.now() - start;
       if (!termSent) {
         signal('SIGTERM');
         termSent = true;
@@ -167,8 +171,24 @@ export class RunEnder {
       // The grace periods are time for signalled processes to exit. No signal
       // makes an unreadable boundary readable, so an `unknown` report means
       // quarantine when it is made (SEAM.md §14). A later `terminated` report
-      // clears the quarantine; it does not undo it.
-      if (observed === 'unknown') return { terminated: false, seen };
+      // clears the quarantine; it does not undo it. The report ends the wait
+      // for a report, not the signalling: what was sent TERM is still sent
+      // KILL once terminate_grace has passed (D1 §4.5 step 2), by a timer of
+      // this protocol, not by a tick. `signal` finds the processes again then
+      // and signals only those that are still the processes it found.
+      if (observed === 'unknown') {
+        if (!killSent) {
+          const timer = setTimeout(() => {
+            try {
+              signal('SIGKILL');
+            } catch (err) {
+              log('kill after unknown', err, { run: facts.run.id, domain: d.id });
+            }
+          }, Math.max(0, graceMs - elapsed));
+          timer.unref();
+        }
+        return { terminated: false, seen };
+      }
       if (elapsed >= graceMs + killMs) return { terminated: false, seen };
       await sleep(200);
     }
