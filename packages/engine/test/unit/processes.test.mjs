@@ -9,7 +9,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
-const { processState, scanDomain } = await import(join(dist, 'invoke', 'processes.js'));
+const { markedProcesses, processState } = await import(join(dist, 'invoke', 'processes.js'));
 const { processStartTime } = await import(join(dist, 'lock.js'));
 
 test('a recorded process is the same while it lives, and gone once it has exited or its start time differs', async (t) => {
@@ -29,8 +29,6 @@ test('a scan finds the live processes that carry the domain marker, and nothing 
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', env: { PATH: process.env.PATH, SURETY_DOMAIN: domain } });
   t.after(() => child.kill('SIGKILL'));
   await sleep(100);
-  const scan = scanDomain(domain);
-  assert.deepEqual(scan.members.map((p) => p.pid), [child.pid]);
-  assert.ok(!scan.unreadable.includes(child.pid));
-  assert.deepEqual(scanDomain('dom_UNITTESTNOBODY000000000000').members, []);
+  assert.deepEqual(markedProcesses(domain).map((p) => p.pid), [child.pid]);
+  assert.deepEqual(markedProcesses('dom_UNITTESTNOBODY000000000000'), []);
 });

@@ -45,18 +45,12 @@ export function isSameLiveProcess(pid: number, startTime: string): boolean {
   return processState(pid, startTime) === 'same';
 }
 
-export interface DomainScan {
-  // Live processes whose environment carries SURETY_DOMAIN=<domain>.
-  members: ProcessIdentity[];
-  // Live processes whose environment exists and could not be read. Whether
-  // they are members cannot be told from here; they are not counted as
-  // members, and not as gone (SEAM.md §14, "What `auto` does not see").
-  unreadable: number[];
-}
-
-// One pass over /proc for a domain's marker, as /proc/<pid>/environ shows it.
-// null when /proc itself cannot be listed.
-export function scanDomain(domain: string): DomainScan | null {
+// Every live process found carrying the domain's marker, in one pass over
+// /proc, as /proc/<pid>/environ shows it. null when /proc itself cannot be
+// listed. A process whose environment or start time cannot be read is not
+// counted: whether it is a member cannot be told from here (SEAM.md §14,
+// "What `auto` does not see").
+export function markedProcesses(domain: string): ProcessIdentity[] | null {
   const marker = `${DOMAIN_MARKER}=${domain}`;
   let names: string[];
   try {
@@ -64,7 +58,7 @@ export function scanDomain(domain: string): DomainScan | null {
   } catch {
     return null;
   }
-  const scan: DomainScan = { members: [], unreadable: [] };
+  const members: ProcessIdentity[] = [];
   for (const name of names) {
     if (!/^\d+$/.test(name)) continue;
     const pid = Number(name);
@@ -72,30 +66,19 @@ export function scanDomain(domain: string): DomainScan | null {
     let environ: string;
     try {
       environ = readFileSync(`/proc/${name}/environ`, 'latin1');
-    } catch (err) {
-      if (!isGone(err)) scan.unreadable.push(pid);
+    } catch {
       continue;
     }
     if (!environ.split('\0').includes(marker)) continue;
     let startTime: string | null;
     try {
       startTime = processStartTime(pid);
-    } catch (err) {
-      if (!isGone(err)) scan.unreadable.push(pid);
+    } catch {
       continue;
     }
-    if (startTime === null) continue;
-    const state = processState(pid, startTime);
-    if (state === 'same') scan.members.push({ pid, startTime });
-    else if (state === 'unreadable') scan.unreadable.push(pid);
+    if (startTime !== null && processState(pid, startTime) === 'same') members.push({ pid, startTime });
   }
-  return scan;
-}
-
-// Every live process found carrying the domain's marker. null when /proc
-// itself cannot be listed.
-export function markedProcesses(domain: string): ProcessIdentity[] | null {
-  return scanDomain(domain)?.members ?? null;
+  return members;
 }
 
 // Signal a process group whose leader is the recorded process, but only while
