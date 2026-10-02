@@ -1,7 +1,7 @@
 // M01, the minimum successful kernel journey (slice 7). Plan §3.1 M01; D1
 // §§3.1, 7.7, 7.8, 9, 19.3 and the M1 parts of D1-01, D1-18 and D1-25; RN §4;
 // build spec §3 and §5 ("engine home"); SEAM.md §§27, 28, 30, 40, 42, 67,
-// 68, 70, 75, 86.
+// 68, 70, 75, 86; E36 item 3.
 //
 // One journey at tier T2, and nothing new: every step is one an earlier row
 // pins by itself. A project is created through the public route in a
@@ -10,9 +10,11 @@
 // the Alpha test target enter as fixtures, labelled as test setup (Plan §1).
 // One scripted Builder builds the plan's stage; the engine commits what it
 // left, integrates it and nominates the commit. The candidate's verification
-// runs once a person lets it through the chain boundary, and a Reviewer
-// signs the candidate off, which T2 requires. The stage gate and the Alpha
-// authorization are then evaluated through the public routes.
+// runs once a person lets it through the chain boundary. When the check's
+// execution has been observed, the engine queues the review T2 requires, by
+// itself (E36 item 3); a person lets that through too, and the Reviewer signs
+// the candidate off. The stage gate and the Alpha authorization are evaluated
+// through the public routes.
 //
 // The journey is made once, in the `before` hook, and each case reads one
 // clause of the row's required result from it. If the journey cannot be
@@ -22,8 +24,8 @@
 //   - The plan is a fixture, as the row says, so the work the engine itself
 //     registers here is the candidate's verification. A committed plan that
 //     registers its stages is row M26.
-//   - The review's work item is made with the trigger fixture: nothing in M1
-//     creates review work.
+//   - The review's work item is the engine's: the journey makes none with
+//     the trigger fixture, and fails if the engine queues none.
 //   - The event history is the store's `events` table, and the API is the
 //     run read and the answers of the gate and authorization commands.
 //     SEAM.md has no event-stream route and no candidate read.
@@ -33,12 +35,12 @@ import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 import { consume, openDecision } from './harness/decisions.mjs';
-import { PROTECTED_FILES, alphaTarget, authorizationsOf, check, installChecks, installGatedPlan, passAll, reasonCodes, review, sharedFixture, signoffsOf, stageGate } from './harness/gates.mjs';
+import { PROTECTED_FILES, alphaTarget, authorizationsOf, check, installChecks, installGatedPlan, passAll, reasonCodes, sharedFixture, signoffsOf, stageGate } from './harness/gates.mjs';
 import { PERMITTED_EDIT, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { assertCommitted, assertOperations, candidatesOf, createProject, eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { changedPaths, checkoutState, makeProjectRepo, refOid, refsOf } from './harness/repos.mjs';
-import { assertRunEnded, countOf, getRow, runsOfProject, scriptedEngine, tickUntil, workItem } from './harness/runs.mjs';
+import { assertRunEnded, countOf, getRow, runsOf, runsOfProject, scriptedEngine, tickUntil, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
@@ -71,16 +73,33 @@ async function journey(t) {
   await consume(fx, id, await openDecision(fx, id, 'blocker', verification.id), 'continue');
   await tickUntil(fx.engine, id, () => workItem(fx.home, verification.id).status === 'complete', { what: "the candidate's verification to complete" });
 
-  // 5. Review, which T2 requires: a Reviewer signs the candidate off.
-  const reviewed = await review(fx, id, candidate.id, { signoffs: [{ scope: 'candidate' }] });
-
-  // 6. The stage gate, before and after an execution of the check is observed.
+  // 5. The stage gate before any execution of the check is observed. Verified, and its check not passed, the candidate has no review yet.
   const ctx = { project, candidate, stage: stage.id };
-  const unproven = { evaluation: await stageGate(fx, ctx), work: workItem(fx.home, stage.work_item).status };
+  const reviews = () => workItemsOf(fx.home, id).filter((work) => work.kind === 'review');
+  const unproven = { evaluation: await stageGate(fx, ctx), work: workItem(fx.home, stage.work_item).status, reviews: reviews().length };
+
+  // 6. The check's execution is observed. The engine now queues the review T2 requires, by itself: the journey creates none.
+  //    It waits at the chain boundary like the verification; a person lets it through, and the Reviewer signs the candidate off.
   await passAll(fx.engine, id, candidate.id, [checks.login]);
+  const queued = await tickUntil(fx.engine, id, () => reviews()[0], { max: 4, what: "the engine to queue the candidate's review" });
+  fx.scripted.script(queued.id, [roleThat([], { signoffs: [{ scope: 'candidate' }] })]);
+  await consume(fx, id, await openDecision(fx, id, 'blocker', queued.id), 'continue');
+  const reviewRun = await tickUntil(
+    fx.engine,
+    id,
+    () => {
+      const [first] = runsOf(fx.home, queued.id);
+      return first?.state === 'ended' ? first : undefined;
+    },
+    { what: "the Reviewer's run to end" },
+  );
+  assert.deepEqual([reviewRun.outcome, reviewRun.reason_class], ['completed', 'none'], `the Reviewer's run was accepted (${reviewRun.reason_text})`);
+  const reviewed = { item: queued.id, run: reviewRun };
+
+  // 7. The stage gate again, with the execution observed and the sign-off recorded.
   const stageEvaluation = await stageGate(fx, ctx);
 
-  // 7. The Alpha authorization for a test target: proposed first, then evaluated.
+  // 8. The Alpha authorization for a test target: proposed first, then evaluated.
   const alpha = await alphaTarget(fx, ctx);
   const alphaEvaluation = await alpha.evaluate();
 
@@ -123,25 +142,25 @@ describe('M01 the kernel journey: a T2 project from its creation to an issued Al
       [
         ['stage_build', 'plan', null, true],
         ['verification', 'nomination', candidate.id, false],
-        ['review', 'test', candidate.id, true],
+        ['review', 'verification', candidate.id, false],
       ],
-      "three work items: the plan fixture's stage, the candidate's verification, which the engine registered at the nomination and which is no fixture, and the review",
+      "three work items: the plan fixture's stage; the candidate's verification, which the engine registered at the nomination; and the candidate's review, which the engine queued once the verification had completed and the check had passed. Neither of the last two is a fixture",
     );
   });
 
   test('the stage gate is satisfied by the observed execution of its check, and not before it', () => {
     const { fx, candidate, checks, stage, unproven, stageEvaluation } = J;
     assert.deepEqual(
-      [unproven.evaluation.outcome, reasonCodes(unproven.evaluation), unproven.evaluation.check_states, unproven.work],
-      ['not_satisfied', ['CHECK_NOT_PASSED'], { [checks.login]: 'missing' }, 'verifying'],
-      "built, verified and signed off, with no execution of the check on record: the gate is not satisfied and the stage's work is not complete",
+      [unproven.evaluation.outcome, reasonCodes(unproven.evaluation), unproven.evaluation.check_states, unproven.work, unproven.reviews],
+      ['not_satisfied', ['CHECK_NOT_PASSED', 'SIGNOFF_MISSING'], { [checks.login]: 'missing' }, 'verifying', 0],
+      "built and verified, with no execution of the check on record: the gate is not satisfied, the stage's work is not complete, and no review has been queued, so the sign-off is missing too",
     );
-    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `with a passing execution recorded the gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
+    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `with a passing execution recorded, and the sign-off of the review that execution let the engine queue, the gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
     assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, stage.work_item)), WORK.kinds.stage_build.path, "and the stage's work is complete");
     assert.deepEqual(
       signoffsOf(fx.home, candidate.id).map((row) => [row.role, row.scope, row.revision, row.run]),
       [['reviewer', 'candidate', candidate.revision, J.reviewed.run.id]],
-      "the sign-off T2 requires is the Reviewer's, from a run of its own, on the nominated revision",
+      "the sign-off T2 requires is the Reviewer's, from the run of the review the engine queued, on the nominated revision",
     );
   });
 

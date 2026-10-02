@@ -14,19 +14,22 @@
 //   stage_build, fix     … integrated → verifying → complete. The Builder's
 //                        work is verified as part of a candidate. It becomes
 //                        `verifying` when a candidate that holds it is
-//                        nominated. A `fix` is `complete` when that
-//                        candidate's verification work is complete. A stage's
-//                        work is not: it stays `verifying` until its `stage`
-//                        gate is satisfied (SEAM.md §70).
+//                        nominated. The completion of that candidate's
+//                        verification work completes neither kind: a stage's
+//                        work stays `verifying` until its `stage` gate is
+//                        satisfied (SEAM.md §70), and a `fix` until the
+//                        finding it fixes is resolved (SEAM.md §74; E36
+//                        item 4).
 //
-// Nothing here asserts a gate, and no fixture here declares a check, so no
-// `stage` gate of these projects is ever satisfied: a stage's work ends these
-// cases `verifying`, and its completion is row M44's first case. (Slice 3
-// had it complete with its candidate's verification, the interim rule of E30
-// item 16; these cases changed with slice 5: COVERAGE.md.) What they pin is
-// the path: no Builder's work is complete without its candidate's
-// verification, that verification alone does not complete a stage's work, and
-// nothing is integrated or verified that was not.
+// Nothing here asserts a gate, and no fixture here declares a check or raises
+// a finding, so no `stage` gate of these projects is ever satisfied and no
+// finding is ever resolved: the Builder's work ends these cases `verifying`.
+// A stage's completion is row M44's first case; a fix's is row M42's fourth.
+// (Slice 3 had both complete with their candidate's verification, the interim
+// rule of E30 item 16 and, for a fix, of E34 item 2; these cases changed with
+// slice 5: COVERAGE.md.) What they pin is the path: the candidate's
+// verification alone completes no Builder's work, and nothing is integrated
+// or verified that was not.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -122,7 +125,7 @@ describe("M09 the Builder's kinds are verified with their candidate", () => {
     assert.deepEqual(pathOf(fx, items[0]), WORK.kinds.stage_build.path.slice(0, -1));
   });
 
-  test(`a fix item runs its whole path, ${WORK.kinds.fix.path.join(' → ')}: it stays integrated until a candidate that holds it is nominated, and is verified with that candidate`, async (t) => {
+  test(`a fix item runs its path as far as verifying, ${WORK.kinds.fix.path.slice(0, -1).join(' → ')}: it stays integrated until a candidate that holds it is nominated, and its candidate's verification does not complete it`, async (t) => {
     const fx = await scriptedEngine(t);
     // T1: nothing is nominated until the Builder asks.
     const project = await addGitProject(fx, { tier: 'T1' });
@@ -143,7 +146,7 @@ describe("M09 the Builder's kinds are verified with their candidate", () => {
     assert.deepEqual([pathOf(fx, fix), workItem(fx.home, stage).status], [WORK.kinds.fix.path.slice(0, -1), 'verifying'], 'the candidate holds both: both are being verified');
 
     await verify(fx, project, candidate);
-    assert.deepEqual(pathOf(fx, fix), WORK.kinds.fix.path, 'the fix is complete with its candidate\'s verification');
+    assert.deepEqual(pathOf(fx, fix), WORK.kinds.fix.path.slice(0, -1), "still verifying when its candidate's verification is complete: a fix completes when the finding it fixes is resolved (row M42), and nothing here resolves one");
     assert.deepEqual(pathOf(fx, stage), WORK.kinds.stage_build.path.slice(0, -1), "the stage nominated with it is still verifying: a stage's work completes with its stage gate (row M44)");
   });
 

@@ -10,12 +10,23 @@
 //
 // The check executions and the Alpha exception's evidence are fixtures and
 // are labelled as such. Who may lower a severity is row M51.
+//
+// The last group pins who schedules the review a tier requires (E36 item 3,
+// which closes E35; SEAM.md §70): the engine, once the candidate's
+// verification has completed with its required checks passed. It is here
+// because this row is the one that says which tiers need the Reviewer's
+// sign-off. The cases above make their Reviewer's work with the trigger
+// fixture and never let the candidate's verification run, so no review is
+// queued in them.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { consume, decisionsOn, openDecision } from './harness/decisions.mjs';
 import { acceptedRun, alphaException, alphaTarget, check, installChecks, nominated, passAll, postResult, raiseFindings, reasonCodes, reasonSubjects, review, scopeOf, signoffsOf, stageGate } from './harness/gates.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { eventsOfType, workItemsOf } from './harness/journal.mjs';
+import { runsOf, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
+import { script } from './harness/scripted.mjs';
 
 // One check of each kind F §5.7 names, with the tier from which it is required.
 const CHECKS = [
@@ -101,5 +112,81 @@ describe('M43 severity at Alpha', () => {
     assert.deepEqual([...reasonSubjects(evaluation, 'FINDING_UNSATISFIED')].sort(), [contained.id, medium.id].sort(), 'not blocking, and still in need of a disposition: the High one whose exception is recorded, and the Medium one');
     assert.deepEqual(reasonSubjects(evaluation, 'CHECK_NOT_PASSED'), [k.import], 'the exception waives no check: the failed one is still not passed');
     assert.equal(evaluation.check_states[k.import], 'failed');
+  });
+});
+
+// ---- who schedules the review (E36 item 3) --------------------------------------------
+
+const reviewsOf = (fx, project) => workItemsOf(fx.home, project).filter((work) => work.kind === 'review');
+
+// A nominated candidate of `tier` with one required check declared, and the
+// verification work its nomination registered, which waits at the chain
+// boundary. `verify()` is the person letting it through, and its run, which
+// changes nothing and reports completion.
+async function verifiable(t, tier) {
+  const fx = await scriptedEngine(t);
+  fx.scripted.defaultScript(script.complete());
+  const ctx = await nominated(fx, { tier });
+  const project = ctx.project.id;
+  const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+  const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === ctx.candidate.id);
+  assert.ok(verification, "the fixture is live: the nomination registered the candidate's verification work");
+  const verify = async () => {
+    await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
+    await tickUntil(fx.engine, project, () => workItem(fx.home, verification.id).status === 'complete', { what: "the candidate's verification to complete" });
+  };
+  return { fx, ctx, project, c: ctx.candidate, k, verify };
+}
+
+describe('M43 the engine queues the review a tier requires', () => {
+  test("T2: the candidate's review is queued by the engine once its verification has completed with its required check passed: not at the nomination, not while the check is failed, and once", async (t) => {
+    const { fx, ctx, project, c, k, verify } = await verifiable(t, 'T2');
+
+    // The check has passed and the Verifier has not run: nothing is queued at the nomination, or by the check alone.
+    await passAll(fx.engine, project, c.id, [k.login]);
+    await tick(fx.engine, project);
+    assert.deepEqual(reviewsOf(fx, project), [], "no review before the candidate's verification has completed");
+
+    // The candidate is verified with its required check failed: it gets no review, however many ticks run.
+    await postResult(fx.engine, project, { candidate: c.id, check: k.login, exit_status: 1 });
+    await verify();
+    await tick(fx.engine, project);
+    await tick(fx.engine, project);
+    assert.deepEqual(reviewsOf(fx, project), [], 'a candidate whose verification fails gets no review');
+
+    // A later execution passes. The engine queues the review itself.
+    await passAll(fx.engine, project, c.id, [k.login]);
+    const queued = await tickUntil(fx.engine, project, () => reviewsOf(fx, project)[0], { max: 4, what: "the engine to queue the candidate's review" });
+    assert.deepEqual(
+      [queued.subject?.candidate, queued.trigger_source, queued.trigger_id, queued.trigger_generation],
+      [c.id, 'verification', c.id, 1],
+      "the review is about the candidate, and its trigger is the candidate's verification",
+    );
+    const created = eventsOfType(fx.home, 'work.created').find((event) => event.subject.work_item === queued.id);
+    assert.ok(created && created.payload?.test_fixture !== true, 'the engine registered it: it is no fixture');
+    assert.deepEqual(reasonCodes(await stageGate(fx, ctx)), ['SIGNOFF_MISSING'], "the fixture is live: the Reviewer's sign-off is all the candidate's stage gate still lacks");
+
+    // It is work that a run's outcome led to: at the default chain limit it waits for a person, and no role is launched for it.
+    const boundary = await openDecision(fx, project, 'blocker', queued.id);
+    assert.deepEqual(boundary.options.map((option) => option.key).sort(), ['cancel', 'continue'], 'the review waits at the chain boundary');
+    assert.deepEqual([workItem(fx.home, queued.id).status, runsOf(fx.home, queued.id).length], ['eligible', 0], 'eligible, and not dispatched without a human step');
+
+    // Once: further ticks and a restart queue no second review and ask no second question.
+    await tick(fx.engine, project);
+    await fx.engine.kill();
+    await fx.start();
+    await tick(fx.engine, project);
+    assert.deepEqual(reviewsOf(fx, project).map((work) => work.id), [queued.id], 'one review for the candidate, however many ticks run and across a restart');
+    assert.deepEqual(decisionsOn(fx.home, 'blocker', queued.id).map((row) => row.id), [boundary.id], 'and one decision about it');
+  });
+
+  test('T1 requires no sign-off, and no review is queued: verified with its required check passed, the candidate has none', async (t) => {
+    const { fx, ctx, project, c, k, verify } = await verifiable(t, 'T1');
+    await passAll(fx.engine, project, c.id, [k.login]);
+    await verify();
+    await tick(fx.engine, project);
+    await tick(fx.engine, project);
+    assert.equal((await stageGate(fx, ctx)).outcome, 'satisfied', 'the fixture is live: the check has passed, and T1 asks for no sign-off');
+    assert.deepEqual(reviewsOf(fx, project), [], 'a tier that needs no sign-off gets no review');
   });
 });
