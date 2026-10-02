@@ -599,6 +599,12 @@ Also accepted without a decision being needed: answering a blocker is tested in 
 
 Neither changes M1's scripted runs, so the build continues on the stricter rule.
 
+**Added after the Verifier's pass (also provisional):**
+
+6. **A run ended for an expired lease carries no startup-recovery marker.** Its outcome is `recovered`, but the marker that names the restarting engine stays reserved for runs a restart ended, so the two cases remain distinguishable.
+7. **A result accepted while the role is still running does not make the run completed if the lease then expires.** Completion needs the role's clean exit. Such a run is `recovered`. This is decided together with the question below, since both concern a paused engine.
+8. **This machine's clock steps backwards.** The Verifier measured the WSL2 wall clock stepping back about three quarters of a second every half minute. One timing test was loosened by two seconds to stop a one-in-ten false failure; it still cannot hide a missing renewal. The engine measures grace periods and budgets on the wall clock; moving them to a monotonic clock is taken up in slice 6 with the load work.
+
 **Carried to slice 3, recorded in `COVERAGE.md`:** a workspace path that is itself a symbolic link should be refused, since resolving links lets a failed worktree creation adopt another run's worktree; a transient store failure while recording a role's result drops the result with no retry.
 
 **Consequences elsewhere.** No change to D1.
