@@ -14,6 +14,7 @@
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
+import { markBlockedStale } from './evidence.js';
 import { runFinalizer } from './finalize.js';
 import type { Tx } from './tx.js';
 
@@ -165,6 +166,8 @@ function append(tx: Tx, op: OpDetail, to: JournalState): void {
   if (to !== 'failed') tx.emit(`git.journal_${to}` as const, { project: op.project, operation: op.id, run: op.payload.run ?? null }, { journal_kind: op.kind, seq });
   op.state = to;
   op.seq = seq;
+  // A journal operation that is no longer pending no longer blocks a gate.
+  if (to === 'finalized' || to === 'failed') markBlockedStale(tx, op.project, ['GIT_JOURNAL_PENDING']);
 }
 
 const latestAttempt = (op: OpDetail): AttemptRow | undefined => op.attempts.at(-1);

@@ -181,6 +181,7 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     case 'oob_discard': {
       tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'discard' WHERE "id" = ? AND "disposition" IS NULL`).run(inputs.oob);
       tx.emit('repo.reconciled', { project: op.project, out_of_band_change: inputs.oob }, { disposition: 'discard', ref: inputs.ref, restored: inputs.new_oid });
+      markStale(tx, { project: op.project });
       return {};
     }
     default:

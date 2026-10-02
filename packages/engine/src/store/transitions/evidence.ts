@@ -15,6 +15,17 @@ export function markStale(tx: Tx, where: { project?: string; candidate?: string 
   else if (where.project !== undefined) tx.db.prepare('UPDATE "gate_evaluations" SET "stale" = 1 WHERE "project" = ? AND "stale" = 0').run(where.project);
 }
 
+// What blocked a gate from outside its evidence has cleared, or appeared: the
+// evaluations it applies to are stale (D1 §9.5; E41 item 5). `blockedBy`
+// limits this to evaluations that carry one of these reasons.
+export function markBlockedStale(tx: Tx, project: string, blockedBy: string[]): void {
+  const rows = tx.db.prepare('SELECT "id", "reasons" FROM "gate_evaluations" WHERE "project" = ? AND "stale" = 0').all(project) as { id: string; reasons: string }[];
+  for (const r of rows) {
+    const codes = (JSON.parse(r.reasons) as { code: string }[]).map((x) => x.code);
+    if (codes.some((c) => blockedBy.includes(c))) tx.db.prepare('UPDATE "gate_evaluations" SET "stale" = 1 WHERE "id" = ?').run(r.id);
+  }
+}
+
 export interface CandidateRow {
   id: string;
   project: string;
