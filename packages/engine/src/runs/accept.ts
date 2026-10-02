@@ -106,6 +106,10 @@ export class Acceptor {
     if (facts.domains.some((d) => d.status !== 'terminated')) {
       const terminated = await this.ender.terminateDomains(run);
       if (!terminated) {
+        // A Verifier's or a Reviewer's run whose termination cannot be
+        // established is quarantined with the outcome its role earned, and
+        // is not snapshotted (SEAM.md §68).
+        if (REPORTING_KINDS.includes(facts.work.kind)) return { outcome: 'completed', reason: 'none' };
         return failed('infra_error', "the termination of the run's domain could not be established, so what the role left cannot be known; nothing of it was captured");
       }
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });

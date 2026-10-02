@@ -299,8 +299,10 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   const v = tx.db.prepare('SELECT * FROM "protected_versions" WHERE "id" = ?').get(inputs.version) as VersionRow;
   if (v.authorized === 1) return { version: v.id };
   const previous = effectiveVersion(tx.db, op.project);
-  tx.db.prepare('UPDATE "protected_versions" SET "authorized" = 1, "effective_from" = ?, "applied_by_operation" = ? WHERE "id" = ?').run(tx.at, op.id, v.id);
+  // The previous version is superseded before the new one takes effect:
+  // exactly one is effective at every moment.
   if (previous && previous.id !== v.id) tx.db.prepare('UPDATE "protected_versions" SET "superseded_by" = ? WHERE "id" = ?').run(v.id, previous.id);
+  tx.db.prepare('UPDATE "protected_versions" SET "authorized" = 1, "effective_from" = ?, "applied_by_operation" = ? WHERE "id" = ?').run(tx.at, op.id, v.id);
   tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'applied', "resulting_version" = ? WHERE "id" = ?`).run(v.id, inputs.proposal);
   // The evidence that depended on the old version (SEAM.md §72).
   if (previous) {
