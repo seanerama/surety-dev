@@ -64,6 +64,10 @@ interface Retry {
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
 
+// How long the end of a run waits for the engine to finish reading its
+// role's output by itself before it stops reading.
+const OUTPUT_GRACE_MS = 5000;
+
 export class RunEnder {
   private readonly ending = new Map<string, Promise<void>>();
   private readonly retries = new Map<string, Retry>();
@@ -193,6 +197,18 @@ export class RunEnder {
       }
       // What the role left is the retained workspace's baseline from now on.
       baseline = await checkoutBaseline(ctx, this.rt.scratch).catch(() => null);
+    }
+    // The run's transcript ends where the engine stops reading the role's
+    // output (SEAM.md §56). Termination is established by now, so what the
+    // role wrote is read within the drain; should a descendant still hold
+    // the output open, the engine stops reading it.
+    const handle = this.rt.handles.get(run);
+    if (handle?.output) {
+      const done = await Promise.race([handle.output.done.then(() => true), sleep(OUTPUT_GRACE_MS).then(() => false)]);
+      if (!done) {
+        handle.output.stop();
+        await handle.output.done;
+      }
     }
     await pausePoint('run_end.before_ended');
     await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null, baseline });

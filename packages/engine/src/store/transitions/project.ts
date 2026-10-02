@@ -184,3 +184,16 @@ export function submitPolicy(
   });
   return { revision: pr.revision, committed: false };
 }
+
+// A project's repository was moved, and is bound again explicitly at its new
+// path (Plan M62; SEAM.md §59), by the API or by a restore. The next
+// integrity observation is made there; nothing else about the project
+// changes.
+export function rebindProject(tx: Tx, args: { project: string; dev_repo_path: string }) {
+  const row = projectRepoRow(tx, args.project);
+  if (row.dev_repo_path !== args.dev_repo_path) {
+    tx.db.prepare('UPDATE "projects" SET "dev_repo_path" = ? WHERE "id" = ?').run(args.dev_repo_path, args.project);
+    tx.emit('project.rebound', { project: args.project }, { from: row.dev_repo_path, to: args.dev_repo_path });
+  }
+  return { project: { id: args.project, dev_repo_path: args.dev_repo_path } };
+}

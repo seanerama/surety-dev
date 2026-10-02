@@ -138,3 +138,23 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
   if (blob === null) throw policyRefusal('repository');
   return { project, body, prepared: { head: facts.head, revision, commit, blob, effective: sorted, change, deadlineSeconds: rt.setting('git_deadline') } };
 }
+
+// POST /v1/projects/:p/rebind: the new path must be a readable repository
+// that holds the commit the engine expects the project's integration branch
+// at. Nothing is changed in the repository.
+export async function prepareRebind(rt: Runtime, project: string, body: unknown): Promise<Record<string, unknown>> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw invalid('body', 'must be a JSON object');
+  const b = body as Record<string, unknown>;
+  for (const key of Object.keys(b)) {
+    if (key !== 'dev_repo_path') throw new Refusal(400, 'unknown_field', `"${key}" is not a field of this command.`, 'Send only dev_repo_path.', { field: key });
+  }
+  const path = b.dev_repo_path;
+  if (typeof path !== 'string' || !isAbsolute(path)) throw invalid('dev_repo_path', 'must be an absolute path');
+  const facts = await rt.engine<{ head: string | null }>('project.policy_facts', { project });
+  if (facts.head === null) throw repoUnreadable(path);
+  const found = await gitOk(repoContext(path), ['cat-file', '-e', `${facts.head}^{commit}`]);
+  if (found === null) {
+    throw new Refusal(409, 'repo_unreadable', `${path} is not this project's repository: it does not hold the commit ${facts.head} the engine expects the integration branch at.`, 'Give the path the repository was moved to.', { path });
+  }
+  return { project, dev_repo_path: path };
+}

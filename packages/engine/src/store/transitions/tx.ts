@@ -20,6 +20,7 @@ export type EventType =
   | 'project.registered'
   | 'project.paused'
   | 'project.resumed'
+  | 'project.rebound'
   | 'work.created'
   | 'work.claimed'
   | 'work.advanced'
@@ -63,7 +64,12 @@ export type EventType =
   | 'invocation.receipt'
   | 'invocation.status'
   | 'invocation.usage'
-  | 'ledger.row';
+  | 'ledger.row'
+  | 'ledger.correction'
+  | 'record.written'
+  | 'record.expired'
+  | 'record.secret_found'
+  | 'record.missing';
 
 export type ActorKind = 'engine' | 'human' | 'run';
 

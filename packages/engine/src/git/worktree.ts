@@ -9,6 +9,7 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
+import { syncDirectory, syncTree } from '../durable.js';
 import { type GitContext, SHA, git, gitOk, repoContext, worktreeContext } from './exec.js';
 import { listWorktrees, readHeadFile } from './repo.js';
 
@@ -142,13 +143,33 @@ export async function probeRemove(repo: string, path: string): Promise<ProbeOutc
   return metadata === null ? 'partial' : 'absent';
 }
 
-// `git worktree add --detach <path> <base>`. Returns whether the command
-// reported success, or 'timeout' when it was killed at its deadline.
+// `git worktree add --detach <path> <base>`, in the two steps git itself
+// takes: the worktree is registered with no checkout, which runs nothing a
+// repository could name, and then checked out by `reset --hard` in it, as
+// `worktree add` does in its own child, with every filter driver git reports
+// for that worktree switched off (exec.ts). Returns whether both reported
+// success, or 'timeout' when one was killed at its deadline.
 export async function addWorktree(repo: string, path: string, base: string, operation: string): Promise<'ok' | 'failed' | 'timeout'> {
   if (!SHA.test(base) || !path.startsWith('/')) return 'failed';
-  const r = await git(repoContext(repo), ['worktree', 'add', '--detach', '--', path, base], { operation });
+  const r = await git(repoContext(repo), ['worktree', 'add', '--no-checkout', '--detach', '--', path, base], { operation });
   if (r.timedOut) return 'timeout';
-  return r.code === 0 ? 'ok' : 'failed';
+  if (r.code !== 0) return 'failed';
+  const metadata = worktreeMetadata(repo, path);
+  if (typeof metadata !== 'string') return 'failed';
+  const checkout = await git(worktreeContext(repo, metadata, path), ['reset', '--hard', '--quiet', '--no-recurse-submodules'], { operation });
+  if (checkout.timedOut) return 'timeout';
+  if (checkout.code !== 0) return 'failed';
+  // git syncs none of what `worktree add` writes: the checked-out files, the
+  // workspace's .git file, the worktree's metadata (SEAM.md §60). The engine
+  // syncs them before the journal records the effect, so that a workspace
+  // the store says exists survives a power loss as git made it. A sync that
+  // fails throws: whether the effect is durable is then unknown, and the
+  // journal treats the attempt as ambiguous.
+  syncTree(path);
+  syncTree(metadata);
+  syncDirectory(dirname(metadata));
+  syncDirectory(dirname(path));
+  return 'ok';
 }
 
 // `git worktree remove --force --force <path>`: the run's files go with it
