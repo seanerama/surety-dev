@@ -5,6 +5,14 @@
 # here is new. Each step prints what it ran and what came back, and stops at
 # the first answer that is not the expected one.
 #
+# Two parts, like the journey's two paths. Part one (steps 1 to 12) is the
+# path where nothing goes wrong (`journey()`). Part two (steps 13 to 21) is
+# the fix loop (`fixLoop()`, E43): in a fresh engine home the same project is
+# made and built, the Verifier reports a Critical finding, the Reviewer
+# proposes to fix it, the engine creates the fix work, a person lets it
+# through, a Builder fixes it, the fixed code is nominated and verified, the
+# finding resolves, and the gates pass on the fixed candidate.
+#
 # Usage, from a checkout of the repository that has been built:
 #   bash docs/acceptance/reports/M1-hands-on.sh
 # Everything it makes is under one temporary directory, printed at the start
@@ -183,4 +191,177 @@ kill -TERM "$ENGINE_PID"; wait "$ENGINE_PID" || true; ENGINE_PID=
 BACKUP=$(tail -1 "$WORK/backup.out" | jq -r '.backup')
 jq '{label, store: .store | {file, bytes}, records: (.records | length), git}' "$BACKUP/manifest.json"
 
-say "Done. The journey ran end to end."
+say "Part one done. The journey ran end to end."
+
+# ---------------------------------------------------------------------------
+# Part two: the fix loop (E43), the journey's second path. It begins as the
+# first did, in a fresh engine home, a scripted directory and a repository of
+# its own, on the same port (the first engine is stopped). The helpers above
+# read SURETY_HOME, API and P when they run, so they need no change.
+# ---------------------------------------------------------------------------
+
+say "13. Part two, the fix loop: a fresh engine home, and steps 1 to 5 again (a project, its plan and check, the stage built and nominated)"
+SURETY_HOME=$WORK/home2; SCRIPTED=$WORK/scripted2; PROJ_REPO=$WORK/repo2
+mkdir -p "$SURETY_HOME" "$SCRIPTED/scripts" "$SCRIPTED/release"
+cat > "$SURETY_HOME/config.json" <<EOF
+{"api_port": $PORT, "tick_interval": 600, "terminate_grace": 2, "kill_grace": 1}
+EOF
+cp "$REPO/packages/engine/test/acceptance/harness/scripted/child.mjs" "$SCRIPTED/"
+cat > "$SCRIPTED/scripts/default.json" <<'EOF'
+{"steps": [{"result": {"status": "completed", "summary": "scripted role finished"}}]}
+EOF
+git init -q -b main "$PROJ_REPO"
+mkdir -p "$PROJ_REPO/.surety/checks"
+printf '# hands-on\n' > "$PROJ_REPO/README.md"
+printf '{"protected_paths": [".surety/checks/"], "required_checks": ["login"]}\n' > "$PROJ_REPO/.surety/checks/protected-policy.json"
+printf '{"expect": 200}\n' > "$PROJ_REPO/.surety/checks/login.check.json"
+git -C "$PROJ_REPO" add -A && git -C "$PROJ_REPO" commit -q -m 'fixture: initial commit'
+git -C "$PROJ_REPO" checkout -q --detach
+( cd "$SURETY_HOME" && exec env -i SURETY_HOME="$SURETY_HOME" PATH="$PATH" HOME="$SURETY_HOME" LANG=C.UTF-8 TZ=UTC \
+    node "$CLI" serve --harness --harness-scripted "$SCRIPTED" > "$WORK/engine2.log" 2>&1 ) &
+ENGINE_PID=$!
+for i in $(seq 1 100); do [ -f "$SURETY_HOME/api.token" ] && break; sleep 0.2; done
+[ -f "$SURETY_HOME/api.token" ] || die "no api.token after 20 s; see $WORK/engine2.log"
+until_read /v1/health '.mode == "full"' 'the second engine to reach full mode'
+S "$API/v1/engine" | jq '{mode, harness, backends, incarnation}'
+CREATED=$(S -X POST "$API/v1/projects" -d "{\"name\": \"hands-on-fix\", \"tier\": \"T2\", \"dev_repo_path\": \"$PROJ_REPO\", \"integration_branch\": \"main\"}")
+P=$(echo "$CREATED" | jq -r '.project.id'); echo "project: $P"
+[[ $P == proj_* ]] || die "no project id"
+for i in $(seq 1 100); do events | jq -e 'select(.type == "project.registered")' >/dev/null 2>&1 && break; sleep 0.2; done
+PLAN=$(S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P\", \"requirements\": [{\"key\": \"R1\"}], \"stages\": [{\"number\": 1, \"goal\": \"the first stage\", \"implements\": [\"R1\"]}]}")
+STAGE=$(echo "$PLAN" | jq -r '.stages[0].id'); BUILD=$(echo "$PLAN" | jq -r '.stages[0].work_item'); echo "stage: $STAGE, its work: $BUILD"
+CHECKS=$(S -X POST "$API/v1/harness/fixtures/checks" -d "{\"project\": \"$P\", \"checks\": [{\"key\": \"login\", \"kind\": \"acceptance\", \"gate_kinds\": [\"stage\", \"alpha_authorize\"], \"requirements\": [\"R1\"]}]}")
+CHK=$(echo "$CHECKS" | jq -r '.checks[0].id'); echo "check: $CHK"
+cat > "$SCRIPTED/scripts/$BUILD.json" <<'EOF'
+[{"steps": [{"write": {"path": "src/app.js", "content": "export const answer = 42;\n"}},
+            {"result": {"status": "completed", "summary": "scripted role finished"}}]}]
+EOF
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the Builder's run to end"
+tick   # the nomination is made at the next tick
+for i in $(seq 1 100); do events | jq -e 'select(.type == "candidate.nominated")' >/dev/null 2>&1 && break; sleep 0.2; done
+C1=$(events | jq -r 'select(.type == "candidate.nominated") | .subject.candidate' | head -1)
+[[ $C1 == cand_* ]] || die "no candidate nominated (events: $(events | jq -c '{type, subject}' | tail -5))"
+echo "the first candidate: $C1"
+run git -C "$PROJ_REPO" log --oneline main
+
+say "14. The chain boundary, with the Verifier scripted to report a Critical finding that names the check; let the verification through"
+for i in $(seq 1 4); do S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null && break; tick >/dev/null; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, preview_hash}'
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash'); VERIFICATION=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$VERIFICATION.json" <<'EOF'
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished",
+                        "findings": [{"category": "security", "severity": "critical", "message": "the login accepts an expired session", "check": "login"}]}}]}]
+EOF
+run S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the Verifier's run to end"
+for i in $(seq 1 6); do events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$VERIFICATION\")" >/dev/null 2>&1 && break; tick >/dev/null; until_read "/v1/projects/$P" '.project.execution.runs == []' 'runs to end'; done
+events | jq -c 'select(.type == "finding.raised") | {seq, type, subject, payload}'
+FINDING=$(events | jq -r 'select(.type == "finding.raised") | .subject.finding' | head -1)
+[[ $FINDING == fnd_* ]] || die "no finding raised"
+echo "the finding: $FINDING"
+S -X POST "$API/v1/projects/$P/candidates/$C1/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+
+say "15. Record the check's execution; the engine queues the review; the Reviewer proposes to fix the finding and signs nothing off"
+S -X POST "$API/v1/harness/fixtures/check-result" -d "{\"project\": \"$P\", \"check\": \"$CHK\", \"candidate\": \"$C1\", \"exit_status\": 0}" | jq .
+for i in $(seq 1 4); do tick >/dev/null; S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null && break; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, preview_hash}'
+REVIEW=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$REVIEW.json" <<EOF
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished",
+                        "dispositions": [{"finding": "$FINDING", "disposition": "fix"}]}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash')
+run S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the Reviewer's run to end"
+for i in $(seq 1 50); do events | jq -e 'select(.type == "finding.dispositioned")' >/dev/null 2>&1 && break; sleep 0.2; done
+events | jq -c 'select(.type == "finding.dispositioned") | {seq, type, subject, payload}'
+events | jq -c 'select(.type == "work.created" and .payload.kind == "fix") | {seq, type, subject, payload}'
+FIX=$(events | jq -r 'select(.type == "work.created" and .payload.kind == "fix") | .subject.work_item' | head -1)
+[[ $FIX == wi_* ]] || die "the engine registered no fix work (E43)"
+echo "the fix work the engine registered: $FIX"
+echo "sign-offs recorded: $(events | jq -c 'select(.type == "signoff.recorded")' | wc -l)"
+
+say "16. The stage gate on the first candidate: blocked by the finding"
+S -X POST "$API/v1/projects/$P/candidates/$C1/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+
+say "17. The fix waits at the chain boundary; script its Builder, let it through; the engine integrates the fix and nominates the fix's candidate"
+for i in $(seq 1 4); do S "$API/v1/projects/$P/decisions" | jq -e ".decisions[] | select(.subject_id == \"$FIX\")" >/dev/null 2>&1 && break; tick >/dev/null; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, question, preview_hash}'
+S "$API/v1/projects/$P" | jq '.project.now'
+cat > "$SCRIPTED/scripts/$FIX.json" <<'EOF'
+[{"steps": [{"write": {"path": "src/session.js", "content": "export const expiresSessions = true;\n"}},
+            {"result": {"status": "completed", "summary": "scripted role finished"}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r ".decisions[] | select(.subject_id == \"$FIX\") | .id"); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r ".decisions[] | select(.subject_id == \"$FIX\") | .preview_hash")
+run S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the fix's Builder run to end"
+FIXRUN=$(events | jq -r "select(.type == \"run.ended\") | select(.subject.work_item == \"$FIX\") | .subject.run" | head -1)
+S "$API/v1/projects/$P/runs/$FIXRUN" | jq '.run | {id, role, state, outcome, reason_class}'
+tick   # the fix's integration is a cadence point: the nomination follows
+for i in $(seq 1 6); do [ "$(events | jq -c 'select(.type == "candidate.nominated")' | wc -l)" -ge 2 ] && break; tick >/dev/null; done
+events | jq -c 'select(.type == "candidate.nominated") | {seq, type, subject, payload}'
+C2=$(events | jq -r 'select(.type == "candidate.nominated") | .subject.candidate' | sed -n 2p)
+[[ $C2 == cand_* ]] || die "the fix's integration nominated no second candidate (E43; SEAM.md section 42)"
+echo "the fix's candidate: $C2"
+run git -C "$PROJ_REPO" log --oneline main
+git -C "$PROJ_REPO" for-each-ref 'refs/surety/cand/'
+events | jq -c "select(.subject.work_item == \"$FIX\") | {seq, type, from: .payload.from, to: .payload.to}"
+
+say "18. The fix's candidate is verified: its verification waits at the chain boundary; let it through (its Verifier reports nothing)"
+for i in $(seq 1 4); do S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null && break; tick >/dev/null; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, preview_hash}'
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash'); VERIFICATION2=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+run S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the second Verifier's run to end"
+for i in $(seq 1 6); do events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$VERIFICATION2\")" >/dev/null 2>&1 && break; tick >/dev/null; until_read "/v1/projects/$P" '.project.execution.runs == []' 'runs to end'; done
+echo "before the check is executed on the fix's candidate: the fix's work is at $(events | jq -r "select(.subject.work_item == \"$FIX\") | .payload.to // empty" | tail -1); findings resolved: $(events | jq -c 'select(.type == "finding.resolved")' | wc -l)"
+
+say "19. The check passes on the fix's candidate: the finding is resolved and the fix's work completes; the engine queues the review; the Reviewer signs off"
+S -X POST "$API/v1/harness/fixtures/check-result" -d "{\"project\": \"$P\", \"check\": \"$CHK\", \"candidate\": \"$C2\", \"exit_status\": 0}" | jq .
+for i in $(seq 1 4); do tick >/dev/null; S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null && break; done
+events | jq -c 'select(.type == "finding.resolved") | {seq, type, subject, payload}'
+events | jq -c "select(.subject.work_item == \"$FIX\") | {seq, type, from: .payload.from, to: .payload.to}" | tail -1
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, preview_hash}'
+REVIEW2=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$REVIEW2.json" <<'EOF'
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished", "signoffs": [{"scope": "candidate"}]}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash')
+run S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until_read "/v1/projects/$P" '.project.execution.runs == []' "the second Reviewer's run to end"
+for i in $(seq 1 50); do events | jq -e 'select(.type == "signoff.recorded")' >/dev/null 2>&1 && break; sleep 0.2; done
+events | jq -c 'select(.type == "signoff.recorded") | {seq, type, subject, payload}'
+
+say "20. The stage gate on the fix's candidate: satisfied, and the stage's work completes; the Alpha authorization for the fix's candidate"
+S -X POST "$API/v1/projects/$P/candidates/$C2/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+for i in $(seq 1 6); do events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$BUILD\")" >/dev/null 2>&1 && break; tick >/dev/null; done
+events | jq -c "select(.subject.work_item == \"$BUILD\") | {seq, type, from: .payload.from, to: .payload.to}"
+ENV=$(S -X POST "$API/v1/harness/fixtures/environment" -d "{\"project\": \"$P\", \"name\": \"alpha\", \"target_set\": [\"alpha-1\"]}" | jq -r '.environment.id')
+AUTH=$(S -X POST "$API/v1/projects/$P/candidates/$C2/authorizations" -d "{\"environment\": \"$ENV\", \"artifact_digest\": \"sha256:$(printf 'a%.0s' $(seq 1 64))\", \"config_identity\": \"config-1\", \"target_set\": [\"alpha-1\"]}")
+echo "$AUTH" | jq '.authorization | {id, status, generation}'
+DAUTH=$(echo "$AUTH" | jq -r '.authorization.id')
+S -X POST "$API/v1/projects/$P/candidates/$C2/gates/alpha_authorize" -d "{\"authorization\": \"$DAUTH\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+events | jq -c 'select(.type == "authorization.issued") | {seq, type, subject, payload}'
+
+say "21. What the API shows at the end of the fix loop, then stop the engine and take a backup"
+S "$API/v1/projects/$P/candidates/$C1" | jq '.candidate | {id, seq, successor, gates: (.gates | map_values({outcome, stale}))}'
+S "$API/v1/projects/$P/candidates/$C2" | jq '.candidate | {id, seq, progress, successor, gates: (.gates | map_values({outcome, stale}))}'
+S "$API/v1/projects/$P" | jq '.project | {now, execution, open_decisions, spend_today: {invocations: .spend_today.invocations, no_dispatch: .spend_today.no_dispatch, usage_incomplete: .spend_today.usage_incomplete}}'
+S "$API/v1/projects/$P/decisions" | jq '.decisions'
+echo "the fix loop as the event stream tells it (seq, type, subject):"
+events | jq -c 'select(.type | test("^(project|run\\.(created|ended)|candidate|decision\\.(raised|consumed)|work\\.(created|complete)|gate\\.evaluated|finding|signoff|authorization)")) | [.seq, .type, (.subject | to_entries | map(.value) | join(" "))]'
+echo "candidates advanced: $(events | jq -c 'select(.type == "candidate.advanced")' | wc -l) (nothing is deployed in M1)"
+run git -C "$PROJ_REPO" log --oneline main
+run git -C "$PROJ_REPO" status --short
+kill -TERM "$ENGINE_PID"; wait "$ENGINE_PID" || true; ENGINE_PID=
+( cd "$SURETY_HOME" && env -i SURETY_HOME="$SURETY_HOME" PATH="$PATH" HOME="$SURETY_HOME" LANG=C.UTF-8 TZ=UTC node "$CLI" store backup ) | tee "$WORK/backup2.out"
+BACKUP=$(tail -1 "$WORK/backup2.out" | jq -r '.backup')
+jq '{label, store: .store | {file, bytes}, records: (.records | length), git}' "$BACKUP/manifest.json"
+
+say "Done. Both paths of the journey ran end to end."
