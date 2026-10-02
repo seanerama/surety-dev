@@ -132,7 +132,10 @@
         "$comment": "A workspace is added for one run, and a probe of its operation is only ever made when that run is over: recovery ends every run it finds (SEAM.md §16), and a run whose `worktree add` was killed at its deadline is ended then (SEAM.md §45). So nothing is added again: a complete worktree is adopted, once, as the ended run's retained workspace (Plan M31), and absence and owned residue are reconciled and the operation withdrawn.",
         "absent": { "means": "nothing is at the owned path and the repository has no worktree metadata for it", "fixture": "no artifacts", "leads_to": "withdraw" },
         "applied": { "means": "a complete worktree of the repository is at the owned path, detached at the intent's base", "fixture": "git worktree add --detach, complete", "leads_to": "finalize" },
-        "partial": { "means": "residue that is verifiably the operation's own: the repository's metadata for the owned path without its directory, or the directory with its link to that metadata and no complete checkout", "fixture": "the worktree's directory removed, its metadata left", "leads_to": "withdraw" },
+        "partial": { "means": "residue that is verifiably the operation's own: the repository's metadata for the owned path without its directory, or the directory with its link to that metadata and no complete checkout", "fixture": "the worktree's directory removed, its metadata left", "leads_to": "withdraw",
+          "other_forms": [
+            { "form": "unfinished_checkout", "fixture": "a worktree add cut short before its checkout: the metadata and the directory with its link, and no file checked out" }
+          ] },
         "conflicting": { "means": "something that is not the operation's is at the owned path: a file, a link, a directory with no link to the repository's metadata for it, another repository's worktree", "fixture": "a directory with unrelated content at the owned path", "leads_to": "block" },
         "unknown": { "means": "the repository's worktree metadata cannot be read", "fixture": "the worktree metadata made unreadable", "leads_to": "block" }
       },

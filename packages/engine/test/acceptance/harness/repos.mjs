@@ -581,6 +581,14 @@ export function addWorktreeByHand(repo, path, base) {
   gitQuiet(repo, ['worktree', 'add', '-q', '--detach', path, base]);
 }
 
+// A worktree whose `git worktree add` was cut short before its checkout: the
+// repository's metadata and the directory with its .git link are there, HEAD
+// is at `base`, and no tracked file is checked out. Real git stops at exactly
+// that point when it is told not to check out.
+export function addWorktreeUnfinished(repo, path, base) {
+  gitQuiet(repo, ['worktree', 'add', '-q', '--no-checkout', '--detach', path, base]);
+}
+
 // The worktree at `path` removed completely: directory and metadata.
 export function removeWorktreeByHand(repo, path) {
   if (worktreeMetadata(repo, path) !== null && existsSync(path)) gitQuiet(repo, ['worktree', 'remove', '--force', path]);

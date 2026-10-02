@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ENDINGS, matrixCells, throughIntegration } from '../endings.mjs';
 import { WITNESS_MARKER } from '../engine.mjs';
-import { BOUNDARIES, KINDS, crashTitle, crashWay, probeCells } from '../probes.mjs';
+import { BOUNDARIES, KINDS, crashTitle, crashWay, otherFormCells, probeCells } from '../probes.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ACCEPTANCE = join(here, '..', '..');
@@ -287,6 +287,10 @@ const PROBE_FILE = { ref_update: 'M29-ref-update-probe', commit_tree: 'M30-commi
 const PROBE_DEFECT = { absent: 'probe_absent_fails', applied: 'probe_applied_repeats', partial: 'probe_partial_is_applied', conflicting: 'probe_conflict_overwrites', unknown: 'probe_unknown_is_absent' };
 for (const kind of KINDS) {
   for (const cell of probeCells(kind)) MUTANTS.push([cell.way === 'withdraw' && cell.outcome === 'absent' ? 'withdrawn_is_retried' : PROBE_DEFECT[cell.outcome], PROBE_FILE[kind], cell.title]);
+}
+// The further forms of an outcome: each fails against the defect that takes it for the complete effect.
+for (const kind of KINDS) {
+  for (const cell of otherFormCells(kind)) MUTANTS.push([cell.form === 'unfinished_checkout' ? 'unfinished_checkout_adopted' : PROBE_DEFECT[cell.outcome], PROBE_FILE[kind], cell.title]);
 }
 // The crash matrix (row M33): every cell fails against the defect of recovery at its boundary.
 const CRASH_DEFECT = { intent_committed: 'probe_absent_fails', effect_applied: 'receipt_not_reconstructed', receipt_committed: 'recovery_skips_applied', probe_confirmed: 'recovery_skips_confirmed', finalizer_committed: 'recovery_refinalizes' };

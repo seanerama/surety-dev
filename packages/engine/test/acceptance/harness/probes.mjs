@@ -36,6 +36,7 @@ import {
 import {
   addLinkedWorktree,
   addWorktreeByHand,
+  addWorktreeUnfinished,
   changedPaths,
   commitOnRef,
   commitsNaming,
@@ -129,6 +130,22 @@ const WAY_TEXT = {
 export function probeTitle(kind, state, outcome) {
   const spec = PROBE.kinds[kind][outcome];
   return `${kind}, journal ${state}, effect found ${outcome} (${spec.fixture}): ${WAY_TEXT[spec.leads_to]}`;
+}
+// The cases for the further forms an outcome can take in git (contract
+// `other_forms`): the same outcome and the same way on, from another fixture.
+// One per durable state and form; none for a kind and outcome with one form.
+export function otherFormCells(kind) {
+  if (!(kind in PROBE.kinds)) throw new Error(`no probe table for ${kind}`);
+  const cells = [];
+  for (const state of STATES) {
+    for (const outcome of OUTCOMES) {
+      const spec = PROBE.kinds[kind][outcome];
+      for (const other of spec.other_forms ?? []) {
+        cells.push({ kind, state, outcome, way: spec.leads_to, means: spec.means, form: other.form, fixture: other.fixture, title: `${kind}, journal ${state}, effect found ${outcome} (${other.fixture}): ${WAY_TEXT[spec.leads_to]}` });
+      }
+    }
+  }
+  return cells;
 }
 // The way on after a kill at a boundary: what the probe finds of the effect
 // there decides it; a confirmed or finalized operation is never probed.
@@ -282,7 +299,9 @@ const unreadable = (ctx, undo) => {
 // (contract `probe.kinds.<kind>.<outcome>.fixture`). Returns {args, undo}:
 // `args` are flags the next start of the engine needs; `undo` restores
 // readability. The arrangement is checked at once with a test-side look.
-export function arrange(ctx, outcome) {
+// `form` names one of the outcome's other forms (contract `other_forms`).
+export function arrange(ctx, outcome, form) {
+  if (form !== undefined && !(PROBE.kinds[ctx.kind][outcome].other_forms ?? []).some((other) => other.form === form)) throw new Error(`no form ${form} of ${ctx.kind} ${outcome} in the contract table`);
   const { kind, repo } = ctx;
   let made = {};
   if (kind === 'ref_update') {
@@ -314,7 +333,10 @@ export function arrange(ctx, outcome) {
     const notThere = kind === 'worktree_add' ? 'absent' : 'applied';
     if (outcome === there) present(ctx);
     else if (outcome === notThere) gone(ctx);
-    else if (outcome === 'partial') {
+    else if (outcome === 'partial' && form === 'unfinished_checkout') {
+      gone(ctx);
+      addWorktreeUnfinished(repo, ctx.workspace, ctx.project.base);
+    } else if (outcome === 'partial') {
       present(ctx);
       removeWorktreeDirectory(repo, ctx.workspace);
     } else if (outcome === 'conflicting') {
@@ -325,6 +347,7 @@ export function arrange(ctx, outcome) {
   // The fixture is live: a test-side look finds what the outcome names.
   if (outcome === 'absent' || outcome === 'applied') assert.equal(effectOf(ctx), outcome, `the fixture for ${kind} ${outcome}`);
   else if (outcome === 'partial' && kind === 'commit_tree') assert.deepEqual([commitsNaming(repo, `Surety-Run: ${ctx.run.id}`), keepRefsAt(repo, ctx.sha)], [[ctx.sha], []], 'the fixture: the commit without its keep ref');
+  else if (outcome === 'partial' && form === 'unfinished_checkout') assert.equal(workspaceState(repo, ctx.workspace, ctx.project.base), 'incomplete', 'the fixture: a worktree the repository lists, with nothing checked out');
   else if (outcome === 'partial' && kind !== 'ref_update') assert.equal(workspaceState(repo, ctx.workspace), 'metadata_only', 'the fixture: the metadata without the directory');
   else if (outcome === 'conflicting' && kind !== 'ref_update' && kind !== 'commit_tree') assert.equal(workspaceState(repo, ctx.workspace), 'foreign', 'the fixture: something foreign at the owned path');
   return { args: [], undo: () => {}, ...made };
@@ -609,7 +632,7 @@ export async function probeCase(t, cell) {
   const before = ctx.op;
   const underlying = effectOf(ctx);
   assert.ok(['absent', 'applied'].includes(underlying), `the fixture: git holds nothing or all of the effect (${underlying})`);
-  const arrangement = arrange(ctx, outcome);
+  const arrangement = arrange(ctx, outcome, cell.form);
   await ctx.fx.start({ args: arrangement.args });
   let went = way;
   if (way === 'block') {

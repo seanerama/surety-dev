@@ -1699,7 +1699,8 @@ function removeOwnedResidue(plan) {
 const worktreeProbe = (kind) => (plan) => {
   if (!G.readable(plan.repo)) return { outcome: 'unknown', detail: 'the repository cannot be read' };
   if (!G.worktreesReadable(plan.repo)) return { outcome: 'unknown', detail: "the repository's worktree metadata cannot be read" };
-  const state = G.ownedState(plan.repo, plan.path, plan.base);
+  // The defect `unfinished_checkout_adopted`: a worktree is taken for complete because the repository lists it at the base.
+  const state = G.ownedState(plan.repo, plan.path, plan.base, { headOnly: mutant('unfinished_checkout_adopted') });
   if (state.kind === 'foreign') return { outcome: 'conflicting', detail: `${plan.path} holds something that is not this operation's` };
   if (kind === 'worktree_add') {
     if (state.kind === 'none') return { outcome: 'absent' };

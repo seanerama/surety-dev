@@ -257,7 +257,7 @@ export function makeGit({ home, cfg, mutant, incarnation = null }) {
   //   metadata_only  the repository's metadata for the path, and no directory
   //   dir_only       a directory whose .git file names this repository's worktree metadata, which is gone
   //   foreign        anything else: a file, a link, a directory that is not this repository's worktree
-  function ownedState(repo, path, base) {
+  function ownedState(repo, path, base, { headOnly = false } = {}) {
     const meta = worktreeMeta(repo, path);
     let st = null;
     try {
@@ -279,7 +279,8 @@ export function makeGit({ home, cfg, mutant, incarnation = null }) {
     if (!meta || !existsSync(link)) return { kind: 'dir_only' };
     let complete = false;
     try {
-      complete = run(meta, ['rev-parse', 'HEAD']) === base && existsSync(join(meta, 'index'));
+      // Complete means checked out: git writes a worktree's HEAD before it checks anything out, and its index when it has.
+      complete = run(meta, ['rev-parse', 'HEAD']) === base && (headOnly || existsSync(join(meta, 'index')));
     } catch {
       // no HEAD to read
     }

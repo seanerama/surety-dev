@@ -42,10 +42,11 @@ import {
   receiptSnapshot,
   recoveryBarrier,
 } from '../journal.mjs';
-import { BOUNDARIES, KINDS, OUTCOMES, REACH, STATES, arrange, crashTitle, crashWay, effectOf, probeCells } from '../probes.mjs';
+import { BOUNDARIES, KINDS, OUTCOMES, REACH, STATES, arrange, crashTitle, crashWay, effectOf, otherFormCells, probeCells } from '../probes.mjs';
 import {
   addLinkedWorktree,
   addWorktreeByHand,
+  addWorktreeUnfinished,
   commitOnRef,
   commitsNaming,
   deleteLooseObject,
@@ -184,8 +185,18 @@ export async function slice3bChecks(check, work) {
       assert.equal(JOURNAL.durable[REACH[kind].intended].events.at(-1), 'intended');
     }
     assert.equal(titles.length, 60);
-    assert.equal(new Set(titles).size, 60, 'no probe title twice');
+    // The further forms of an outcome: one case per durable state, the same way on, a title of its own.
+    for (const kind of KINDS) {
+      const others = otherFormCells(kind);
+      assert.equal(others.length, kind === 'worktree_add' ? STATES.length : 0, `${kind}: other forms`);
+      for (const c of others) {
+        assert.deepEqual([c.outcome, c.form, c.way], ['partial', 'unfinished_checkout', PROBE.kinds[kind].partial.leads_to]);
+        titles.push(c.title);
+      }
+    }
+    assert.equal(new Set(titles).size, 63, 'no probe title twice');
     assert.throws(() => probeCells('push'), /no probe table/);
+    assert.throws(() => otherFormCells('push'), /no probe table/);
     const crashes = KINDS.flatMap((kind) => BOUNDARIES.map((boundary) => crashTitle(kind, boundary)));
     assert.equal(new Set(crashes).size, 20, 'no crash title twice');
     for (const kind of KINDS) {
@@ -365,6 +376,16 @@ export async function slice3bChecks(check, work) {
     // At another commit than the base.
     const other = commitOnRef(repo.path, null, { 'c.txt': 'c\n' }, { parent: repo.head });
     assert.equal(workspaceState(repo.path, dir, other), 'incomplete');
+    // What a `worktree add` cut short before its checkout leaves: listed, at the base, and nothing checked out.
+    const unfinished = join(repo.path, '..', 'ws-unfinished');
+    addWorktreeUnfinished(repo.path, unfinished, repo.head);
+    assert.ok(listed(repo.path, unfinished) && !prunable(), 'git lists it as a worktree like any other');
+    assert.equal(real(unfinished, ['rev-parse', 'HEAD']), repo.head);
+    assert.ok(existsSync(join(unfinished, '.git')) && !existsSync(join(unfinished, 'README.md')) && !existsSync(join(unfinished, 'src')), 'its directory holds the link and no tracked file');
+    assert.notEqual(real(unfinished, ['status', '--porcelain', '--untracked-files=no']), '', 'git reports every tracked file missing');
+    assert.equal(workspaceState(repo.path, unfinished, repo.head), 'incomplete');
+    removeWorktreeByHand(repo.path, unfinished);
+    assert.equal(workspaceState(repo.path, unfinished), 'absent');
 
     removeWorktreeDirectory(repo.path, dir);
     assert.equal(workspaceState(repo.path, dir, repo.head), 'metadata_only');
@@ -545,6 +566,15 @@ export async function slice3bChecks(check, work) {
             assert.equal(listed(ctx.repo, ctx.workspace), start === 'worktree', `${what}: restored, the repository is as it was`);
           } else if (outcome === 'unknown') made.undo();
         }
+        if (kind === 'worktree_add') {
+          // The second form of `partial`: the checkout not finished.
+          const ctx = fakeContext(kind);
+          if (start === 'worktree') addWorktreeByHand(ctx.repo, ctx.workspace, ctx.project.base);
+          assert.deepEqual(arrange(ctx, 'partial', 'unfinished_checkout').args, []);
+          assert.ok(listed(ctx.repo, ctx.workspace) && real(ctx.workspace, ['rev-parse', 'HEAD']) === ctx.project.base, 'git lists the worktree at the base');
+          assert.ok(!existsSync(join(ctx.workspace, 'README.md')) && real(ctx.workspace, ['status', '--porcelain', '--untracked-files=no']) !== '', 'and nothing is checked out in it');
+          assert.equal(effectOf(ctx), 'incomplete');
+        } else assert.throws(() => arrange(fakeContext(kind), 'partial', 'unfinished_checkout'), /no form unfinished_checkout/);
       }
     });
   }

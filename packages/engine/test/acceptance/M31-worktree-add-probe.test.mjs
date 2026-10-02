@@ -17,8 +17,10 @@
 //   applied      a complete worktree. It is adopted once: one workspaces row,
 //                one worktree in the repository, nothing added again.
 //   partial      the repository's metadata for the path without its
-//                directory. The owned residue is removed, under owned-path
-//                checks, and the operation withdrawn.
+//                directory; or, as three further cases, the metadata and the
+//                directory with nothing checked out. The owned residue is
+//                removed, under owned-path checks, and the operation
+//                withdrawn.
 //   conflicting  a directory with unrelated content at the owned path. It
 //                blocks; the unrelated content is neither removed nor
 //                absorbed.
@@ -34,7 +36,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { PROBE } from './harness/journal.mjs';
-import { OUTCOMES, STATES, probeCase, probeCells } from './harness/probes.mjs';
+import { OUTCOMES, STATES, otherFormCells, probeCase, probeCells } from './harness/probes.mjs';
 
 const KIND = 'worktree_add';
 const cells = probeCells(KIND);
@@ -51,3 +53,18 @@ for (const state of STATES) {
     }
   });
 }
+
+// `partial` has a second form for this kind, and it is the one a `git
+// worktree add` leaves when it is cut short: git writes the metadata and the
+// directory's link first and checks the files out last. The repository lists
+// such a worktree, and its HEAD is at the base. It is not complete, and it is
+// not adopted: it is the operation's own residue, removed like the first form.
+const others = otherFormCells(KIND);
+assert.deepEqual([...new Set(others.map((c) => `${c.outcome}/${c.form}`))], ['partial/unfinished_checkout'], 'the other forms the contract table names for this kind');
+describe('M31 the worktree_add probe, a worktree whose checkout was not finished', () => {
+  for (const cell of others) {
+    test(cell.title, async (t) => {
+      await probeCase(t, cell);
+    });
+  }
+});
