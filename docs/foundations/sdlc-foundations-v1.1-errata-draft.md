@@ -729,3 +729,26 @@ Slice 3 was merged after its one review (E31). The review confirmed as sound: ev
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E34. Slice-5 seam decisions (provisional, 2026-10-02)
+
+**Status: provisional**, like E23 to E30, E32 and E33. The slice-5 Verifier fixed these in its tests and flagged them; the driver accepted its recommendations. Sean confirms or overturns them.
+
+1. **The governed policy file is always protected,** whatever the protected roots are changed to.
+2. **How a `fix` completes is undecided.** A fix has no stage and so no stage gate; for now it completes with its candidate's verification, with no evidence of its own. To decide before M2; the Verifier suggests a fix completes when the finding it fixes is resolved.
+3. **A T3 security review is a sign-off with its own scope,** `security`, which the design's list of sign-off scopes lacks.
+4. **Who records the Alpha exception for a High finding** is not settled by the foundations. In M1 it enters as a test fixture. Recommended for later: the human owner, through a finding disposition.
+5. **Adopting an out-of-band commit invalidates the passed results of the candidate the open lineage started from.** Whether it should reach every candidate not yet superseded is open.
+6. **Dispositions, severity lowerings and exclusions start with a role's proposal;** the engine then asks the human to approve or reject. A human cannot accept or defer a finding without a Reviewer having proposed it. Accepted for M1.
+7. **A fix is resolved only by a gate evaluation in which the check the finding names passes.** A finding that names no check can only be deferred, accepted or excluded.
+8. **When the effect of an approved check correction is invalidated, the proposal goes back to awaiting approval.** The design's table has no such edge; without it the proposal could never be approved again.
+9. **A Stop or Abandon confirmation binds** the run, its workspace, what the workspace holds, and what will happen to each. Whether the run is claimed or executing is not bound. This is the reading of E25 item 4.
+10. **New public surface:** routes to evaluate a gate, to propose an Alpha authorization, and to answer a batch of decisions; the policy route answers 202 for a governed edit and asks for confirmation on a widening.
+
+**Scheduled with the slice-5 build:** seven existing test files assert things slice 5 changes on purpose. Stage work will stay `verifying` until its stage gate is satisfied (replacing the interim rule of E30 item 16), and a Verifier or Reviewer run may no longer write outside the protected set. A short Verifier pass updates those files just before the slice-5 build starts; changing them earlier would break slices 3 and 4.
+
+**Not written, by the lean rules, and recorded in `COVERAGE.md`:** about fifteen cases the plan's rows mention only in passing, and the nomination finalizer freezing its inputs (E33 item 2), which needs more machinery than one case.
+
+**Consequences elsewhere.** No change to D1.
+
+---
