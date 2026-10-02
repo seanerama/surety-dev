@@ -6,6 +6,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 
 import Database from 'better-sqlite3';
 
+import { nowIso } from '../clock.js';
 import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
@@ -22,6 +23,8 @@ import {
   dispatchStarted,
   domainTerminated,
   endFacts,
+  expireRun,
+  expiredRunLeases,
   finishRun,
   heartbeat,
   intendWorktree,
@@ -33,6 +36,7 @@ import {
   recordResult,
   recordUsage,
   refuseInvocation,
+  renewLease,
   settleWorktree,
   unendedRuns,
 } from './transitions/runs.js';
@@ -83,6 +87,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'scheduler.candidates': (d, a: { maxConcurrentRuns: number }) => dispatchCandidates(d, a),
   'scheduler.projects': (d) => projectIds(d),
   'runs.quarantined': (d) => quarantinedRuns(d),
+  'runs.expired_leases': (d) => expiredRunLeases(d, nowIso()),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -100,6 +105,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'worktree.settle': (tx, a) => settleWorktree(tx, a),
   'worktree.pending': (tx) => pendingWorktreeOperations(tx),
   'run.lease_active': (tx, a) => leaseActive(tx, a),
+  'run.renew': (tx, a) => renewLease(tx, a),
+  'run.expire': (tx, a) => expireRun(tx, a),
   'run.begin_end': (tx, a) => beginEnd(tx, a),
   'run.end_facts': (tx, a: { run: string }) => endFacts(tx, a.run),
   'run.unended': (tx) => unendedRuns(tx),

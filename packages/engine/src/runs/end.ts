@@ -1,7 +1,9 @@
 // The run-end protocol (D1 §4.5; build spec §6 corrections 1, 2, 12, 13).
 // `endRun` is the only way a run ends and is idempotent; it is used for every
-// outcome, by the choke point, Stop and Abandon, deadlines, quarantine
-// clearance and startup recovery.
+// outcome, by the choke point, Stop and Abandon, deadlines, the tick's
+// reconciliation of expired leases, quarantine clearance and startup
+// recovery. If a step fails, the run's lease (closing, or no longer renewed)
+// expires and the tick resumes the protocol (`reconcileExpired`).
 //
 //   1. The run lease becomes closing and the run enters finalizing with its
 //      outcome (one transaction, `run.begin_end`).
@@ -11,8 +13,9 @@
 //      the domain. Processes are signalled TERM, then KILL after
 //      terminate_grace, and never by a pid whose start time has changed.
 //   3. If termination is not established within terminate_grace + kill_grace,
-//      the run is quarantined and stays so until the boundary reports its
-//      domains terminated (`clearQuarantine`, at every tick and at startup).
+//      or the boundary reports `unknown`, the run is quarantined and stays so
+//      until the boundary reports its domains terminated (`clearQuarantine`,
+//      at every tick and at startup).
 //   4. An abandoned run's workspace is discarded through the journal.
 //   5–7. One transaction (`run.finish`) records the terminal observations and
 //      ledger rows, disposes of the workspace, revokes the grant, releases
@@ -23,7 +26,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { repoContext } from '../git/exec.js';
 import { removeWorktree } from '../git/worktree.js';
 import { markedProcesses, signalFound, signalRecordedGroup } from '../invoke/processes.js';
-import { type RunHandle, type Runtime, log } from '../runtime.js';
+import { type RunHandle, type Runtime, earnedEnd, log } from '../runtime.js';
 import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 
@@ -118,7 +121,7 @@ export class RunEnder {
     });
     const probe = await removeWorktree(repoContext(facts.repo), ws.path);
     await this.rt.engine('worktree.settle', { operation, result: probe });
-    if (probe !== 'absent') log('discard', new Error(`workspace ${ws.path} could not be removed (${probe}); it is retained`));
+    if (probe !== 'absent') log('discard', new Error(`workspace ${ws.path} could not be removed (${probe}); it is retained`), { run: facts.run.id });
   }
 
   // Step 2 for one domain. Returns whether termination was established.
@@ -148,7 +151,8 @@ export class RunEnder {
     let termSent = false;
     let killSent = false;
     for (;;) {
-      if (seamObserveDomain(d.id) === 'terminated') {
+      const observed = seamObserveDomain(d.id);
+      if (observed === 'terminated') {
         await this.rt.engine('domain.terminated', { domain: d.id, observed: true });
         return { terminated: true, seen };
       }
@@ -160,6 +164,11 @@ export class RunEnder {
         signal('SIGKILL');
         killSent = true;
       }
+      // The grace periods are time for signalled processes to exit. No signal
+      // makes an unreadable boundary readable, so an `unknown` report means
+      // quarantine when it is made (SEAM.md §14). A later `terminated` report
+      // clears the quarantine; it does not undo it.
+      if (observed === 'unknown') return { terminated: false, seen };
       if (elapsed >= graceMs + killMs) return { terminated: false, seen };
       await sleep(200);
     }
@@ -185,12 +194,39 @@ export class RunEnder {
     if (after.domains.every((d) => d.status === 'terminated')) await this.complete(run, opts);
   }
 
+  // D1 §8.1 step 1: every unreleased run lease of the project past its expiry
+  // is reconciled through the run-end protocol, whether or not the engine
+  // that owns it is alive and whatever that engine is doing with the run. An
+  // outcome already recorded is kept; otherwise the run gets the end this
+  // engine already decided for it, or the one its role earned (earnedEnd).
+  // The tick waits for the transaction that begins the end, not for the rest
+  // of the protocol: a launch stalled before its spawn is not waited for, and
+  // finds its run ending when it comes back (SEAM.md §16, "The run lease").
+  // This is also what resumes a run-end protocol that a failed store
+  // transaction interrupted: such a run's lease is no longer renewed.
+  async reconcileExpired(project: string): Promise<void> {
+    const expired = await this.rt.read<{ run: string; project: string }[]>('runs.expired_leases');
+    for (const e of expired) {
+      if (e.project !== project) continue;
+      const handle = this.rt.handles.get(e.run);
+      const end = earnedEnd(handle);
+      if (handle) {
+        handle.leaseLost = true;
+        handle.ending = true;
+        handle.intended ??= end;
+      }
+      const begun = await this.rt.engine<{ run: string; state: string } | null>('run.expire', { run: e.run, outcome: end.outcome, reason: end.reason });
+      if (begun === null) continue;
+      void this.complete(e.run).catch((err) => log('run end', err, { run: e.run, cause: 'lease_expired' }));
+    }
+  }
+
   // Every quarantined run of a project, observed again (D1 §8.1 step 1).
   async observeQuarantines(project: string): Promise<void> {
     const runs = await this.rt.read<{ id: string; project: string }[]>('runs.quarantined');
     for (const r of runs) {
       if (r.project !== project) continue;
-      await this.clearQuarantine(r.id).catch((err) => log('quarantine', err));
+      await this.clearQuarantine(r.id).catch((err) => log('quarantine', err, { run: r.id }));
     }
   }
 }

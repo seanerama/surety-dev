@@ -43,6 +43,8 @@ export interface LeaseRow {
   resource_kind: string;
   resource_id: string;
   generation: number;
+  renewed_at: string;
+  expires_at: string;
   released_at: string | null;
   closing: number;
 }
@@ -66,6 +68,19 @@ function runLease(tx: Tx, run: string): LeaseRow | undefined {
   return tx.db
     .prepare(`SELECT * FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`)
     .get(run) as LeaseRow | undefined;
+}
+
+// A lease past its expiry is expired, and expiry is final: it is never
+// renewed again and no callback presenting it is accepted (D1 §8.3; E26
+// item 1). Timestamps share one format, so they compare as strings.
+const expired = (lease: LeaseRow, at: string): boolean => lease.expires_at <= at;
+
+// Execution authority for a run at `at`: the run lease, unreleased, not
+// closing, of this generation, and not expired (D1 §8.3).
+function liveLease(tx: Tx, run: string, generation: number): LeaseRow | null {
+  const lease = runLease(tx, run);
+  if (!lease || lease.closing === 1 || lease.generation !== generation || expired(lease, tx.at)) return null;
+  return lease;
 }
 
 const runSubject = (run: RunRow) => ({ project: run.project, run: run.id, work_item: run.work_item });
@@ -124,6 +139,8 @@ export interface Claim {
   generation: number;
   deadline_at: string;
   base_revision: string;
+  // When the run lease was taken, on the engine clock.
+  lease_renewed_at: string;
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
@@ -227,6 +244,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     generation: 1,
     deadline_at: deadlineAt,
     base_revision: args.baseRevision,
+    lease_renewed_at: tx.at,
   };
 }
 
@@ -383,14 +401,13 @@ export function pendingWorktreeOperations(tx: Tx): { operation: string; kind: st
 export function dispatchStarted(tx: Tx, args: { run: string; invocation: string }): boolean {
   const run = mustRun(tx, args.run);
   const lease = runLease(tx, run.id);
-  if (!lease || lease.closing === 1) return false;
+  if (!lease || lease.closing === 1 || expired(lease, tx.at)) return false;
   if (!statuses(tx, args.invocation).includes('dispatch_started')) observe(tx, run, args.invocation, 'dispatch_started');
   return true;
 }
 
 export function leaseActive(tx: Tx, args: { run: string; generation: number }): boolean {
-  const lease = runLease(tx, args.run);
-  return lease !== undefined && lease.closing === 0 && lease.generation === args.generation;
+  return liveLease(tx, args.run, args.generation) !== null;
 }
 
 // ---- launch and callbacks ---------------------------------------------------------
@@ -410,7 +427,7 @@ export function recordLaunch(tx: Tx, args: { run: string; invocation: string; do
   const run = mustRun(tx, args.run);
   completeOwnership(tx, run, args);
   const lease = runLease(tx, run.id);
-  if (run.state === 'claimed' && lease && lease.closing === 0) {
+  if (run.state === 'claimed' && lease && lease.closing === 0 && !expired(lease, tx.at)) {
     setRunState(tx, run, 'executing', { started_at: tx.at });
     tx.emit('run.started', runSubject(run), {});
     const item = getWorkItem(tx, run.work_item)!;
@@ -425,14 +442,29 @@ export function recordFoundProcess(tx: Tx, args: { run: string; invocation: stri
   completeOwnership(tx, mustRun(tx, args.run), args);
 }
 
-// A role heartbeat renews the run lease (D1 §8.3) while it is active.
-export function heartbeat(tx: Tx, args: { run: string; generation: number }): boolean {
-  const lease = runLease(tx, args.run);
-  if (!lease || lease.closing === 1 || lease.generation !== args.generation) return false;
-  tx.db.prepare('UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "id" = ?').run(tx.at, addSeconds(tx.at, engineSettings().lease_ttl), lease.id);
+// One renewal of a live run lease: renewed now, expiring lease_ttl from now,
+// with run.heartbeat (D1 §4.1, §8.3). Returns the renewal time, or null if the
+// lease is not live: released, closing, of another generation, or expired.
+function renew(tx: Tx, args: { run: string; generation: number }, by: 'role' | 'engine'): string | null {
+  const lease = liveLease(tx, args.run, args.generation);
+  if (!lease) return null;
   const run = mustRun(tx, args.run);
-  tx.emit('run.heartbeat', runSubject(run), { generation: lease.generation });
-  return true;
+  if (run.state === 'finalizing' || run.state === 'ended') return null;
+  tx.db.prepare('UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "id" = ?').run(tx.at, addSeconds(tx.at, engineSettings().lease_ttl), lease.id);
+  tx.emit('run.heartbeat', runSubject(run), { generation: lease.generation, by });
+  return tx.at;
+}
+
+// A role heartbeat renews the run lease while it is live (D1 §8.3).
+export function heartbeat(tx: Tx, args: { run: string; generation: number }): string | null {
+  return renew(tx, args, 'role');
+}
+
+// The engine renews the lease of a run whose live process it supervises, at
+// least every lease_ttl/3, heartbeat or not (D1 §8.3; E25 item 1). Like a
+// heartbeat, it cannot bring back a lease that has expired.
+export function renewLease(tx: Tx, args: { run: string; generation: number }): string | null {
+  return renew(tx, args, 'engine');
 }
 
 // A usage observation (D1§3.6, §13.1). Accepted while the lease is unreleased,
@@ -452,11 +484,11 @@ export function recordUsage(tx: Tx, args: { run: string; generation: number; inv
 }
 
 // The role's structured result arrived (D1 §4.1): the run is validating. A
-// result is a role effect: refused once the lease is closing (D1 §8.3), so a
-// success that arrives after Stop or a deadline has no effect.
+// result is a role effect: refused once the lease is closing or has expired
+// (D1 §8.3), so a success that arrives after Stop, a deadline or the expiry
+// of the lease has no effect.
 export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean }): boolean {
-  const lease = runLease(tx, args.run);
-  if (!lease || lease.closing === 1 || lease.generation !== args.generation) return false;
+  if (!liveLease(tx, args.run, args.generation)) return false;
   const run = mustRun(tx, args.run);
   if (run.state !== 'executing') return false;
   setRunState(tx, run, 'validating');
@@ -475,8 +507,34 @@ export function beginEnd(tx: Tx, args: { run: string; outcome: Outcome; reason: 
   const lease = runLease(tx, run.id);
   if (lease) tx.db.prepare('UPDATE "leases" SET "closing" = 1, "cleanup_authority" = 1 WHERE "id" = ?').run(lease.id);
   setRunState(tx, run, 'finalizing', { outcome: args.outcome, reason_class: args.reason, reason_text: args.reasonText ?? null });
-  tx.emit('run.finalizing', runSubject(run), { outcome: args.outcome, reason_class: args.reason, from: run.state });
+  const payload: Record<string, unknown> = { outcome: args.outcome, reason_class: args.reason, from: run.state };
+  if (args.reasonText !== undefined) payload.reason_text = args.reasonText;
+  tx.emit('run.finalizing', runSubject(run), payload);
   return { run: run.id, state: 'finalizing', outcome: args.outcome };
+}
+
+// D1 §8.1 step 1: a run lease past its expiry is reconciled through the
+// run-end protocol, whether or not the engine that owns it is alive. This is
+// step 1 for such a run. An outcome already recorded is kept; a run without
+// one gets the outcome the main thread computed from what it knows of the
+// role (E26 item 2: failed / infra_error unless a valid result was accepted
+// while the lease was live). Returns null if the lease is not expired (or no
+// longer exists), in which case nothing is written.
+export function expireRun(tx: Tx, args: { run: string; outcome: Outcome; reason: ReasonClass }): { run: string; state: RunState } | null {
+  const lease = runLease(tx, args.run);
+  if (!lease || !expired(lease, tx.at)) return null;
+  const ended = beginEnd(tx, { run: args.run, outcome: args.outcome, reason: args.reason, reasonText: 'lease_expired' });
+  return { run: ended.run, state: ended.state };
+}
+
+// Unreleased run leases past their expiry, with their runs (D1 §8.1 step 1).
+export function expiredRunLeases(db: Tx['db'], at: string): { run: string; project: string; state: RunState }[] {
+  return db
+    .prepare(
+      `SELECT r."id" AS "run", r."project", r."state" FROM "leases" l JOIN "runs" r ON r."id" = l."resource_id"
+       WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ? ORDER BY r."created_at", r."id"`,
+    )
+    .all(at) as { run: string; project: string; state: RunState }[];
 }
 
 // Step 2's result for one domain: termination established, by the boundary's

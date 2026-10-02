@@ -157,9 +157,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
   };
 
   // No request or callback may crash the engine (D1 §11.1): from here on a
-  // failure the engine did not catch is reported and the engine goes on.
-  process.on('uncaughtException', (err) => log('uncaught', err));
-  process.on('unhandledRejection', (err) => log('unhandled', err));
+  // failure the engine did not catch is reported, with its stack, and the
+  // engine goes on. It cannot strand a run: a run is held only by a lease the
+  // engine renews while it supervises a live role process that has not exited
+  // and is not ending. Whatever such a failure interrupted, that lease is
+  // then no longer renewed, expires, and the tick's first step takes its run
+  // through the run-end protocol (D1 §8.1 step 1); a run-end protocol that
+  // failed part way is resumed the same way.
+  process.on('uncaughtException', (err, origin) => log('uncaught exception', err, { origin }));
+  process.on('unhandledRejection', (reason) => log('unhandled rejection', reason));
 
   // 3. store: open, migrate, record the incarnation
   state.step = 'store';
@@ -221,7 +227,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   } catch (err) {
     return fail('scheduler', err);
   }
-  runtime.startDeadlineWatch();
+  runtime.startWatch();
   scheduler.start();
   state.completed.push('scheduler');
 }

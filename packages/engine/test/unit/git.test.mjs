@@ -1,10 +1,12 @@
 // Developer tests for the engine's git layer (src/git/): a constructed
 // environment, worktrees added and removed with the probe deciding the
-// outcome, and an unreadable branch read as unknown, not as a commit.
+// outcome, and an unreadable branch read as unknown, not as a commit. Engine
+// git runs no hook of the repository, and the probe recognises a worktree
+// whose path is reached through a symbolic link.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -52,4 +54,46 @@ test('a base that is not a full commit id is refused without running git', async
   const { dir, repo } = scratchRepo(t);
   assert.equal(await addWorktree(repoContext(repo), join(dir, 'ws-2'), 'main'), 'absent');
   assert.equal(existsSync(join(dir, 'ws-2')), false);
+});
+
+// A hook that records that it ran, in the repository's hooks directory and in
+// a directory its configuration names as core.hooksPath.
+function plantHooks(dir, repo, evidence) {
+  const named = join(dir, 'named-hooks');
+  mkdirSync(named);
+  for (const hooks of [join(repo, '.git', 'hooks'), named]) {
+    for (const hook of ['post-checkout', 'reference-transaction']) {
+      writeFileSync(join(hooks, hook), `#!/bin/sh\necho "${hook} ran" >> '${evidence}'\n`);
+      chmodSync(join(hooks, hook), 0o755);
+    }
+  }
+  return named;
+}
+
+test('engine git runs no hook, in the hooks directory or in one core.hooksPath names', async (t) => {
+  const { dir, repo, head } = scratchRepo(t);
+  const evidence = join(dir, 'evidence.txt');
+  const named = plantHooks(dir, repo, evidence);
+  const ctx = repoContext(repo);
+  assert.equal(await addWorktree(ctx, join(dir, 'ws-hooks-1'), head), 'present');
+  execFileSync('git', ['-C', repo, 'config', 'core.hooksPath', named]);
+  assert.equal(await addWorktree(ctx, join(dir, 'ws-hooks-2'), head), 'present');
+  assert.equal(await removeWorktree(ctx, join(dir, 'ws-hooks-2')), 'absent');
+  assert.equal(existsSync(evidence), false, 'no hook ran');
+  // The hooks are live: git run the ordinary way executes them.
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', join(dir, 'ws-hooks-3'), head], { env: { PATH: process.env.PATH, HOME: dir } });
+  assert.equal(existsSync(evidence), true);
+});
+
+test('a worktree under a symbolic link is probed present when added and absent when removed', async (t) => {
+  const { dir, repo, head } = scratchRepo(t);
+  mkdirSync(join(dir, 'real'));
+  symlinkSync(join(dir, 'real'), join(dir, 'link'));
+  const ctx = repoContext(repo);
+  const ws = join(dir, 'link', 'ws');
+  assert.equal(await addWorktree(ctx, ws, head), 'present');
+  assert.equal(await probeWorktree(ctx, ws, head), 'present');
+  assert.equal(await probeWorktree(ctx, join(dir, 'real', 'ws'), head), 'present');
+  assert.equal(await removeWorktree(ctx, ws), 'absent');
+  assert.equal(existsSync(join(dir, 'real', 'ws')), false);
 });

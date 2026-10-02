@@ -10,16 +10,16 @@
 // supervision of the role's callbacks until it exits. No transaction is held
 // across the spawn, a git call or a read of the role's output.
 
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
+import { type Interface, createInterface } from 'node:readline';
 
 import { repoContext } from '../git/exec.js';
 import { addWorktree, branchHead } from '../git/worktree.js';
 import { processStartTime } from '../lock.js';
-import { type RunHandle, type Runtime, log, newHandle } from '../runtime.js';
-import type { Claim } from '../store/transitions/runs.js';
+import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
+import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { pausePoint, seamBackends } from '../testing/seam.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
@@ -82,22 +82,19 @@ export class Launcher {
     try {
       ready = await this.prepare(handle, backend, target.repo);
     } catch (err) {
-      log('dispatch', err);
+      log('dispatch', err, { run: claim.run });
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
-    if (ready && backend) void this.launch(handle, backend).catch((err) => log('launch', err));
+    if (ready && backend) void this.launch(handle, backend);
     return true;
   }
 
   // The run will never be spawned into by this incarnation.
-  private never(handle: RunHandle, outcome: string, reason: string, phase: 'never' | 'aborted' = 'never'): void {
+  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never'): void {
     handle.phase = phase;
     handle.settle();
-    if (!handle.ending) {
-      handle.ending = true;
-      void this.rt.services?.endRun(handle.claim.run, outcome, reason).catch((err) => log('run end', err));
-    }
+    this.rt.requestEnd(handle, { outcome, reason });
   }
 
   // Backend check, workspace, dispatch_started. Returns false if the run is
@@ -110,7 +107,7 @@ export class Launcher {
       handle.phase = 'never';
       handle.settle();
       handle.ending = true;
-      void this.rt.services?.completeEnd(claim.run).catch((err) => log('run end', err));
+      void this.rt.services?.completeEnd(claim.run).catch((err) => log('run end', err, { run: claim.run }));
       return false;
     }
     if (handle.abort) {
@@ -147,11 +144,28 @@ export class Launcher {
     return true;
   }
 
+  // The launch, from the barrier before the spawn to the role's exit. Every
+  // way out of it settles the handle, so a run-end protocol waiting on the
+  // launch is never left waiting; a failure ends the run (failed /
+  // infra_error) rather than leaving it to a lease nobody will renew.
   private async launch(handle: RunHandle, backend: BackendSpec): Promise<void> {
+    try {
+      await this.supervise(handle, backend);
+    } catch (err) {
+      log('launch', err, { run: handle.claim.run, phase: handle.phase });
+      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
+      else this.never(handle, 'failed', 'infra_error');
+    } finally {
+      handle.settle();
+    }
+  }
+
+  private async supervise(handle: RunHandle, backend: BackendSpec): Promise<void> {
     const { claim } = handle;
     await pausePoint('launch.before_spawn');
-    // The lease is checked again after the barrier: a run stopped or
-    // abandoned meanwhile is not left with a live child (SEAM.md §18).
+    // The lease is checked again after the barrier: a run stopped, abandoned
+    // or whose lease expired meanwhile is not left with a live child (SEAM.md
+    // §§16, 18).
     const active = await this.rt.engine<boolean>('run.lease_active', { run: claim.run, generation: claim.generation });
     if (handle.abort || !active) {
       handle.phase = 'aborted';
@@ -169,38 +183,33 @@ export class Launcher {
         stdio: ['pipe', 'pipe', 'ignore'],
       });
     } catch (err) {
-      log('spawn', err);
+      log('spawn', err, { run: claim.run });
       this.never(handle, 'failed', 'infra_error');
       return;
     }
     if (child.pid === undefined) {
-      child.once('error', (err) => log('spawn', err));
+      child.once('error', (err) => log('spawn', err, { run: claim.run }));
       this.never(handle, 'failed', 'infra_error');
       return;
     }
-    child.on('error', (err) => log('role process', err));
+    child.on('error', (err) => log('role process', err, { run: claim.run }));
     handle.child = child;
     handle.pid = child.pid;
     // Read before the event loop can reap the child, so it is there to read;
     // if it cannot be read it is recorded as unknown, and the process is then
     // reached only by its marker, never by a pid whose identity is unproven.
-    handle.startTime = processStartTime(child.pid);
+    try {
+      handle.startTime = processStartTime(child.pid);
+    } catch (err) {
+      log('process start time', err, { run: claim.run, pid: child.pid });
+      handle.startTime = null;
+    }
 
-    const lines: string[] = [];
-    let closed = false;
-    const reader = createInterface({ input: child.stdout! });
-    let wake: (() => void) | null = null;
-    reader.on('line', (line) => {
-      lines.push(line);
-      wake?.();
-    });
-    reader.on('close', () => {
-      closed = true;
-      wake?.();
-    });
+    const output = new RoleOutput(child);
     const exited = new Promise<void>((resolve) => {
       child.once('exit', (code, signal) => {
         handle.exit = { code, signal };
+        output.exited();
         resolve();
       });
     });
@@ -218,8 +227,8 @@ export class Launcher {
       })}\n`,
     );
 
-    await pausePoint('launch.before_ownership');
     try {
+      await pausePoint('launch.before_ownership');
       await this.rt.engine('invoke.launched', {
         run: claim.run,
         invocation: claim.invocation,
@@ -232,22 +241,19 @@ export class Launcher {
       handle.settle();
     }
 
-    // The role's callbacks, one at a time, in the order sent.
-    for (;;) {
-      const line = lines.shift();
-      if (line !== undefined) {
-        await this.callback(handle, line).catch((err) => log('callback', err));
-        continue;
+    // The role's callbacks, one at a time, in the order sent, until the role
+    // has exited and what it wrote before its exit has been read (SEAM.md §13).
+    try {
+      for (let line = await output.next(); line !== null; line = await output.next()) {
+        await this.callback(handle, line).catch((err) => log('callback', err, { run: claim.run }));
       }
-      if (closed) break;
-      await new Promise<void>((resolve) => {
-        wake = resolve;
-        if (lines.length > 0 || closed) resolve();
-      });
-      wake = null;
+    } finally {
+      // A descendant may still hold the role's output open; the engine stops
+      // reading it. The descendant is a member of the domain and is
+      // terminated by the run-end protocol.
+      output.close();
     }
-    // The output is closed; wait for the exit status, but not for ever: a
-    // descendant may hold nothing open and the exit has then already come.
+    // The output closed first: wait for the exit status, but not for ever.
     await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
     this.childDone(handle);
   }
@@ -263,7 +269,7 @@ export class Launcher {
     const m = message as Record<string, unknown>;
     const { run, generation, invocation } = handle.claim;
     if (m.type === 'heartbeat') {
-      await this.rt.role('run.heartbeat', run, { run, generation });
+      this.rt.renewedByRole(handle, await this.rt.role<string | null>('run.heartbeat', run, { run, generation }));
     } else if (m.type === 'usage') {
       if ((m.semantics !== 'cumulative' && m.semantics !== 'delta') || typeof m.raw !== 'object' || m.raw === null) return;
       await this.rt.role('run.usage', run, { run, generation, invocation, semantics: m.semantics, raw: m.raw });
@@ -282,15 +288,72 @@ export class Launcher {
   // run-end protocol then establishes termination, which the exit itself
   // never does.
   private childDone(handle: RunHandle): void {
-    if (handle.ending) return;
-    handle.ending = true;
-    let outcome = 'failed';
-    let reason = 'infra_error';
-    if (handle.result?.valid === false) reason = 'invalid_result';
-    else if (handle.result?.valid === true && handle.exit?.code === 0) {
-      outcome = 'completed';
-      reason = 'none';
+    this.rt.requestEnd(handle, earnedEnd(handle));
+  }
+}
+
+// How long, after the role's exit, the engine goes on reading what is already
+// in its output pipe: until the pipe closes, or nothing new has arrived for
+// DRAIN_QUIET_MS, and never longer than DRAIN_CAP_MS. A role's last lines may
+// still be in the pipe when its exit is reported; a descendant that holds the
+// pipe open does not hold the run (SEAM.md §13, "When the role exits").
+const DRAIN_QUIET_MS = 250;
+const DRAIN_CAP_MS = 2000;
+
+// The role's standard output, as protocol lines.
+class RoleOutput {
+  private readonly lines: string[] = [];
+  private closed = false;
+  private exitAt: number | null = null;
+  private lastLineAt = 0;
+  private wake: (() => void) | null = null;
+  private readonly reader: Interface;
+
+  constructor(private readonly child: ChildProcess) {
+    this.reader = createInterface({ input: child.stdout! });
+    this.reader.on('line', (line) => {
+      this.lines.push(line);
+      this.lastLineAt = Date.now();
+      this.wake?.();
+    });
+    this.reader.on('close', () => {
+      this.closed = true;
+      this.wake?.();
+    });
+  }
+
+  exited(): void {
+    this.exitAt = Date.now();
+    this.wake?.();
+  }
+
+  // The next line, or null once there are no more to act on.
+  async next(): Promise<string | null> {
+    for (;;) {
+      const line = this.lines.shift();
+      if (line !== undefined) return line;
+      if (this.closed) return null;
+      let waitMs: number | null = null;
+      if (this.exitAt !== null) {
+        const now = Date.now();
+        const quietFor = now - Math.max(this.exitAt, this.lastLineAt);
+        if (quietFor >= DRAIN_QUIET_MS || now - this.exitAt >= DRAIN_CAP_MS) return null;
+        waitMs = Math.min(DRAIN_QUIET_MS - quietFor, DRAIN_CAP_MS - (now - this.exitAt));
+      }
+      await new Promise<void>((resolve) => {
+        const timer = waitMs === null ? null : setTimeout(resolve, waitMs);
+        this.wake = () => {
+          if (timer) clearTimeout(timer);
+          resolve();
+        };
+        if (this.lines.length > 0 || this.closed) this.wake();
+      });
+      this.wake = null;
     }
-    void this.rt.services?.endRun(handle.claim.run, outcome, reason).catch((err) => log('run end', err));
+  }
+
+  close(): void {
+    this.reader.close();
+    if (!this.closed) this.child.stdout?.destroy();
   }
 }
