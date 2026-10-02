@@ -11,7 +11,7 @@
 // The rest of row M31 (the five probe outcomes at recovery) is slice 3.
 
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -28,7 +28,7 @@ import {
   waitForWork,
   worktreeOperations,
 } from './harness/runs.mjs';
-import { script, step } from './harness/scripted.mjs';
+import { script } from './harness/scripted.mjs';
 
 const registeredWorktrees = (repo) =>
   git(repo, ['worktree', 'list', '--porcelain'])
@@ -43,7 +43,7 @@ describe('M31 a worktree the engine made is recognised however the engine home i
     assert.notEqual(realpathSync(fx.home), fx.home, 'to a directory with another path');
     const project = await addProject(fx);
     const item = await addWork(fx.engine, project.id, 'verification');
-    fx.scripted.defaultScript(script.complete([step.write('report.txt', 'verified')]));
+    fx.scripted.defaultScript(script.complete());
 
     await tick(fx.engine, project.id);
     const first = await waitForRun(fx.home, item, { state: 'ended' });
@@ -69,7 +69,6 @@ describe('M31 a worktree the engine made is recognised however the engine home i
     assert.ok(resolvedPath(workspace.path).startsWith(`${join(realpathSync(fx.home), 'workspaces')}/`), 'and lies under the engine home');
     const [launch] = fx.scripted.launches({ run: first.id });
     assert.equal(resolvedPath(launch.cwd), resolvedPath(workspace.path), 'the role ran in the workspace');
-    assert.ok(existsSync(join(workspace.path, 'report.txt')), 'and its files are there');
     await waitForWork(fx.home, item, 'complete');
 
     // The next dispatch of the project is no different, and nothing accumulates.

@@ -53,7 +53,9 @@ describe('M31 a workspace path that is occupied by a symbolic link', () => {
     // The next run is stopped once it exists and before its workspace is created.
     await fx.engine.stop();
     await fx.start({ barriers: ['dispatch.run_created=pause'] });
-    const item = await addWork(fx.engine, project.id, 'verification');
+    // A Builder's item: its first launch writes a file, which shows where that role ran. (A Verifier may
+    // write no ordinary file, SEAM.md §68, so the item is a `fix`.)
+    const item = await addWork(fx.engine, project.id, 'fix');
     fx.scripted.script(item, [{ steps: [step.write('written-by-the-second-run.txt', 'x\n'), step.result()] }, script.complete()]);
     await requestTick(fx.engine, project.id);
     await fx.engine.waitUntil('barrier:dispatch.run_created');
@@ -74,9 +76,9 @@ describe('M31 a workspace path that is occupied by a symbolic link', () => {
     assert.equal(lstatSync(retained.path).isDirectory(), true);
     assert.equal(countOf(fx.home, 'workspaces', '"run" = ?', second.id), 0, "no workspace row claims the other run's worktree for the new run");
 
-    // The work is repaired by a run with a workspace of its own, at its own path.
+    // The work is repaired by a run with a workspace of its own, at its own path; what it wrote is integrated.
     await tick(fx.engine, project.id);
-    await waitForWork(fx.home, item, 'complete');
+    await waitForWork(fx.home, item, 'integrated');
     const third = runsOf(fx.home, item)[1];
     const own = getRow(fx.home, 'workspaces', third.workspace);
     assert.equal(own.path, join(fx.home, 'workspaces', third.id));

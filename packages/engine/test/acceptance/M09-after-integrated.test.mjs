@@ -14,13 +14,18 @@
 //   stage_build, fix     … integrated → verifying → complete. The Builder's
 //                        work is verified as part of a candidate. It becomes
 //                        `verifying` when a candidate that holds it is
-//                        nominated, and `complete` when that candidate's
-//                        verification work is complete.
+//                        nominated. A `fix` is `complete` when that
+//                        candidate's verification work is complete. A stage's
+//                        work is not: it stays `verifying` until its `stage`
+//                        gate is satisfied (SEAM.md §70).
 //
-// Nothing here asserts a gate. M1's `stage` gate arrives in slice 5; from
-// then on a stage's work is complete only when its gate is satisfied, and
-// these cases change with it (COVERAGE.md). What slice 3 pins is the path:
-// no Builder's work is complete without its candidate's verification, and
+// Nothing here asserts a gate, and no fixture here declares a check, so no
+// `stage` gate of these projects is ever satisfied: a stage's work ends these
+// cases `verifying`, and its completion is row M44's first case. (Slice 3
+// had it complete with its candidate's verification, the interim rule of E30
+// item 16; these cases changed with slice 5: COVERAGE.md.) What they pin is
+// the path: no Builder's work is complete without its candidate's
+// verification, that verification alone does not complete a stage's work, and
 // nothing is integrated or verified that was not.
 
 import assert from 'node:assert/strict';
@@ -76,8 +81,8 @@ describe("M09 the Architect's kinds are complete once their artifacts are integr
   }
 });
 
-describe("M09 the Builder's kinds are complete once their candidate is verified", () => {
-  test(`a stage_build item runs its whole path: ${WORK.kinds.stage_build.path.join(' → ')}`, async (t) => {
+describe("M09 the Builder's kinds are verified with their candidate", () => {
+  test(`a stage_build item runs its path as far as verifying, ${WORK.kinds.stage_build.path.slice(0, -1).join(' → ')}: its candidate's verification does not complete it`, async (t) => {
     const fx = await scriptedEngine(t);
     const { project, items } = await addStagedProject(fx, { tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
@@ -89,13 +94,13 @@ describe("M09 the Builder's kinds are complete once their candidate is verified"
     assert.equal(workItem(fx.home, items[0]).status, 'verifying', 'the work is not complete while its candidate is not verified');
 
     const verification = await verify(fx, project, candidate);
-    assert.deepEqual(pathOf(fx, items[0]), WORK.kinds.stage_build.path, 'complete once the candidate\'s verification is complete');
+    assert.deepEqual(pathOf(fx, items[0]), WORK.kinds.stage_build.path.slice(0, -1), "still verifying when the candidate's verification is complete: a stage's work completes with its stage gate (row M44), and this fixture declares no check");
     assert.deepEqual(pathOf(fx, verification), WORK.kinds.verification.path);
     assert.equal(runsOf(fx.home, items[0]).length, 1, 'the Builder ran once: verification is the Verifier\'s work, in a run of its own');
     assert.deepEqual(runsOf(fx.home, verification).map((r) => r.role), ['verifier']);
   });
 
-  test("a verification that fails completes nothing: the Builder's work stays verifying until a repaired verification completes", async (t) => {
+  test("a verification that fails completes nothing: the Builder's work stays verifying through the failed run and its repair", async (t) => {
     const fx = await scriptedEngine(t);
     const { project, items } = await addStagedProject(fx, { tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
@@ -110,11 +115,11 @@ describe("M09 the Builder's kinds are complete once their candidate is verified"
     const failedEnd = events.find((e) => e.type === 'run.ended' && e.run === runs[0].id);
     // The first thing the log says of the repairing run: it began after the failed one was over.
     const repairBegan = events.find((e) => e.run === runs[1].id);
-    assert.ok(builtComplete && failedEnd && repairBegan);
+    assert.ok(failedEnd && repairBegan);
     assert.ok(repairBegan.seq > failedEnd.seq, 'the repair began after the failed verification had ended');
-    assert.ok(builtComplete.seq > repairBegan.seq, "the Builder's work was still verifying when the failed verification was over and its repair began: a verification that fails completes nothing");
-    assert.equal(workItem(fx.home, items[0]).status, 'complete');
-    assert.deepEqual(pathOf(fx, items[0]), WORK.kinds.stage_build.path);
+    assert.equal(builtComplete, undefined, "the Builder's work was completed by neither run: a verification that fails completes nothing, and the repaired one leaves a stage's work to its stage gate (row M44)");
+    assert.equal(workItem(fx.home, items[0]).status, 'verifying');
+    assert.deepEqual(pathOf(fx, items[0]), WORK.kinds.stage_build.path.slice(0, -1));
   });
 
   test(`a fix item runs its whole path, ${WORK.kinds.fix.path.join(' → ')}: it stays integrated until a candidate that holds it is nominated, and is verified with that candidate`, async (t) => {
@@ -139,7 +144,7 @@ describe("M09 the Builder's kinds are complete once their candidate is verified"
 
     await verify(fx, project, candidate);
     assert.deepEqual(pathOf(fx, fix), WORK.kinds.fix.path, 'the fix is complete with its candidate\'s verification');
-    assert.deepEqual(pathOf(fx, stage), WORK.kinds.stage_build.path);
+    assert.deepEqual(pathOf(fx, stage), WORK.kinds.stage_build.path.slice(0, -1), "the stage nominated with it is still verifying: a stage's work completes with its stage gate (row M44)");
   });
 
   test('work integrated after a nomination is not held by that candidate: it stays integrated when the candidate is verified', async (t) => {
@@ -155,7 +160,7 @@ describe("M09 the Builder's kinds are complete once their candidate is verified"
     assertCommitted(fx, fixRun.id, { kind: 'engine_commit', parent: candidate.revision, integrated: true });
 
     await verify(fx, project, candidate);
-    assert.equal(workItem(fx.home, items[0]).status, 'complete', "the stage's work is complete: its candidate is verified");
+    assert.equal(workItem(fx.home, items[0]).status, 'verifying', "the stage's candidate is verified, and its work stays verifying until its stage gate is satisfied (row M44)");
     assert.deepEqual(pathOf(fx, fix), WORK.kinds.fix.path.slice(0, 5), 'the later fix is integrated and no more: the candidate that was verified does not hold it');
     assert.equal(candidatesOf(fx.home, project.id).length, 1, 'and nothing nominated it: a fix is no cadence point at T2');
   });

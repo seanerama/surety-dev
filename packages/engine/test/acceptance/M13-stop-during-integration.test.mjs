@@ -132,7 +132,7 @@ describe('M13 Stop while the work is integrated and its run has not ended', () =
 });
 
 describe('M13 work that is being verified is owned by no run of its own', () => {
-  test("stopping a candidate's verification run holds the verification work; the Builder's work stays verifying, its ended run cannot be stopped, and it is complete once a resumed verification completes", async (t) => {
+  test("stopping a candidate's verification run holds the verification work; the Builder's work stays verifying, its ended run cannot be stopped, and it is still verifying once a resumed verification completes", async (t) => {
     const fx = await scriptedEngine(t);
     const { project, items } = await addStagedProject(fx, { tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
@@ -155,7 +155,7 @@ describe('M13 work that is being verified is owned by no run of its own', () => 
 
     await resumeWork(fx.engine, project.id, verification.id);
     await tickUntil(fx.engine, project.id, () => workItem(fx.home, verification.id).status === 'complete', { max: 6, what: 'the resumed verification to complete' });
-    assert.equal(workItem(fx.home, items[0]).status, 'complete');
-    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, items[0])), ['eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying', 'complete']);
+    assert.equal(workItem(fx.home, items[0]).status, 'verifying', "the resumed verification's completion does not complete the stage's work: that is its stage gate's (row M44), and this fixture declares no check");
+    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, items[0])), ['eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying']);
   });
 });

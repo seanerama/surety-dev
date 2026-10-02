@@ -185,7 +185,7 @@ describe('M16 a descendant that outlives the role (review)', () => {
     const waiting = await addWork(fx.engine, project, 'review');
     // The role starts a background process that inherits its stdout and its
     // environment, sends a valid result and exits 0.
-    fx.scripted.script(item, [script.complete([step.write('report.txt', 'verified'), step.usage({ input_tokens: 5 }), step.descendant({ holds_stdout: true, on_term: 'exit' })])]);
+    fx.scripted.script(item, [script.complete([step.usage({ input_tokens: 5 }), step.descendant({ holds_stdout: true, on_term: 'exit' })])]);
     fx.scripted.script(waiting, [script.complete()]);
 
     await tick(fx.engine, project);
@@ -208,7 +208,6 @@ describe('M16 a descendant that outlives the role (review)', () => {
     assert.equal(fx.scripted.isLive(descendant), false, 'the descendant was terminated as a member of the domain before the run ended');
     const facts = assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', workspace: 'retained', launched: true, recovery: false });
     assert.equal(facts.receipts[0].usage.length, 1, 'the usage the role reported is kept');
-    assert.ok(existsSync(`${facts.workspaces[0].path}/report.txt`));
     assert.equal((await waitForWork(fx.home, item, 'complete')).status, 'complete', 'the work is complete, not parked behind a deadline');
     withStore(fx.home, (db) => assert.deepEqual(assertWorkHistory(db, item), ['eligible', 'claimed', 'executing', 'complete']));
 
@@ -315,7 +314,7 @@ describe("M16 the role's exit begins the run end, not the end of its output (sec
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
     // Result, end of output, and then the role is still there until released; it sends no heartbeat.
-    fx.scripted.script(item, [{ steps: [step.write('report.txt', 'verified'), step.result(), step.closeStdout(), step.hold('gate', { heartbeat_ms: 0 })] }]);
+    fx.scripted.script(item, [{ steps: [step.result(), step.closeStdout(), step.hold('gate', { heartbeat_ms: 0 })] }]);
 
     await tick(fx.engine, project);
     const launch = await fx.scripted.waitForHolding({ work_item: item });
@@ -341,8 +340,7 @@ describe("M16 the role's exit begins the run end, not the end of its output (sec
     await waitFor(() => !fx.scripted.isLive(launch), { what: 'the role to exit' });
     assert.deepEqual(fx.scripted.eventsOf(launch.pid, 'exit').map((e) => e.code), [0], 'the role exited 0');
     await waitForRunState(fx.home, first.id, 'ended');
-    const facts = assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', workspace: 'retained', launched: true, recovery: false });
-    assert.ok(existsSync(`${facts.workspaces[0].path}/report.txt`));
+    assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', workspace: 'retained', launched: true, recovery: false });
     assert.deepEqual(fx.scripted.eventsOf(launch.pid, 'signal'), [], 'it was never signalled');
     assert.equal((await waitForWork(fx.home, item, 'complete')).status, 'complete');
     withStore(fx.home, (db) => assertWorkHistory(db, item));
