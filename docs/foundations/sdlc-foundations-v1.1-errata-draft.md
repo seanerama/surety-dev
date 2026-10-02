@@ -928,6 +928,8 @@ The one review of slice 6 found three serious defects and reproduced each by run
 
 **The journey gains a second path.** A Reviewer raises a finding against the candidate with disposition "fix"; the engine creates the fix work and the owner lets it through at the chain boundary; a Builder run fixes it; the finding is resolved by the gate evaluation in which its check passes (E34 item 7, E36 item 4); the fix completes; the stage gate and the Alpha authorization are satisfied. The end-to-end test (row M01) covers this path as well as the path where nothing goes wrong.
 
+**Detail the Verifier fixed (provisional):** the engine-made fix item carries trigger `("finding", <finding id>, 1)` and waits at the chain boundary; **at T2 and T3 the integration of a fix that names a finding is a cadence point**: it nominates the integrated revision (`engine_cadence`) with verification work and lineage succession as a stage does, since nothing else would nominate the fixed code and a one-stage project could never close the loop (a fix naming no finding, and a Builder's `nominate: true` at T2, still nominate nothing); the stage's work completes on a satisfied stage evaluation of any candidate whose revision is, or descends from, the stage's integrated revision. In the journey the Verifier raises the finding and the Reviewer proposes `fix` by its id, because a finding's id is not known to the report that raises it; a result form in which a Reviewer raises and dispositions a finding in one report is a later name, if wanted.
+
 **Consequences elsewhere.** `docs/acceptance/reports/M1-not-claimed.md` and the M1 report are updated when the path passes. No change to D1.
 
 ---
