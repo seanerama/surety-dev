@@ -1952,7 +1952,7 @@ It reaches production code as an ordinary parameter, the directory of static fil
 
 ## 91. Reads: projects, NOW, facts beside it, an observation, and record reads that refuse
 
-(D1 §§11.3, 12.2 to 12.4, 13.1, 14, A.10, D1-28; Review N03; `M70-scoped-reads-and-now.test.mjs`; the spend keys also `M74-fixture-semantics.test.mjs`.)
+(D1 §§11.3, 12.2 to 12.4, 13.1, 14, A.10, D1-28; Review N03; E39; `M70-scoped-reads-and-now.test.mjs`; the spend keys also `M74-fixture-semantics.test.mjs`; the project and decisions reads also `M01-journey-through-the-api.test.mjs`.)
 
 **Every read** of this section is a JSON object with `served_at` (a timestamp of the engine's clock) and `snapshot_seq` (the highest event `seq` of the store snapshot it was computed from). A read writes nothing: no row changes, no event is appended, no adapter is called (the tests count the launches of the scripted role, which is the adapter call a test can count from outside).
 
@@ -1970,6 +1970,19 @@ It reaches production code as an ordinary parameter, the directory of static fil
 **NOW** (D1 §12.3) is exactly one state, by this priority. `refused`: the engine cannot act on the project; the tests pin a quarantined run. `waiting_on_you`: the project has an open decision. `running`: a run of it is under way. `ready`: it has eligible work that the next tick could dispatch. `idle`: otherwise. So a project with a quarantined run is `refused` although its blocker is open, and a project with a run executing and an open decision (a Stop asked for and not confirmed) is `waiting_on_you`. The other causes of `refused` D1 names (an unreadable repository, an integrity block, a store error) and `unknown` are not pinned.
 
 **The facts beside NOW stay what they are.** `execution.runs` lists a run as `executing` whatever NOW says, and a quarantined run as `{"state": "finalizing", "quarantined": true}`.
+
+**A project's open decisions** (D1 §11.3; E39, "one addition"; added by the Verifier pass after slice 6 was verified). **`GET /v1/projects/:p/decisions`** → **200** `{"served_at", "snapshot_seq", "decisions": [...]}`: the decisions of project `:p` whose `status` is `open`, and no decision of another project. Each has at least:
+
+| Key | Value |
+|---|---|
+| `id` | the decision |
+| `kind` | its `DecisionKind` |
+| `subject_type`, `subject_id` | the stored ones: what the decision is about |
+| `question` | the stored question, a non-empty string |
+| `options` | an array in the stored order; each option has at least the stored `key`, `effect_plan` and `plan_hash` (section 76) |
+| `preview_hash` | the stored one. It is the value an answer must carry (section 76), so a person can answer from this read alone: the test confirms a Stop with the hash the read showed |
+
+A decision that is no longer open is not in the list: the test consumes one and it is gone, and the list is then `[]`. D1's table says the route returns "open decisions", so this is D1's rule and not a choice. The number of entries is the project read's `open_decisions.count`. Not pinned: the order of several open decisions (each test project has one at a time); D1's consolidation by batch key and "evidence resolved to records"; any further key (`semantic_generation`, `dependency_manifest`, `blocked_while_open`, an option's `blockers`); a read of consumed or invalidated decisions; `GET /v1/projects/:p/decisions/:d`; what the route answers for a project that does not exist. The other reads D1 §11.3 lists and no row names (a project's work and operations, a candidate's gate, environments as a route of their own) are not part of the seam: E39 leaves them unbuilt in M1 unless the owner asks.
 
 **No dispatch is a fact of its own** (D1 §13.1). `spend_today.no_dispatch` is true when none of the day's invocations of the project was launched; the amounts are then null and `invocations` is 0. A project whose launched role reported nothing has `no_dispatch` false, `invocations` 1, `unknown_cost_invocations` 1 and `reported_usd` null. One whose role reported a cost of exactly zero has `reported_usd` 0, the number, and its ledger row is `measured_zero` (section 53). Null is never shown as zero and zero never as null. A dispatch whose launch is unknown, and a day with only a refused dispatch, are not pinned.
 
@@ -2141,6 +2154,7 @@ Each of these was open in the sources. The Builder may object. Those marked † 
 | The shell's content security policy | Properties, not a text: default `'none'` or `'self'`, no inline, no eval, no other origin, `frame-ancestors 'none'` | D1 §17(13): "the UI's CSP is restrictive". |
 | The bootstrap's answer | 200 `{"token"}`; 403 `origin_refused` otherwise | D1 §11.1 gives the predicate and not the body. |
 | The project list and projection † | Section 91: `now`, `execution.runs`, `open_decisions.count`, `spend_today`, `environments` | D1 §11.3 names what the routes return in words. Only what row M70 reads is fixed. |
+| The decisions read (added after slice 6 was verified; E39) | Section 91: `GET /v1/projects/:p/decisions` lists the project's open decisions with `id`, `kind`, `subject_type`, `subject_id`, `question`, `options` and `preview_hash`; a consumed decision is not listed | D1 §11.3 names the route and says it returns open decisions with their options, effect plans and preview hash. The keys are the stored column names (D1 A.3). Only what a person needs to see and answer a decision is fixed. |
 | `no_dispatch` | A boolean beside the ledger's totals | D1 §13.1: "no dispatch is a projection fact with no row". |
 | What `refused` is, as pinned | A quarantined run | D1 §12.3 lists four causes; the row needs one. |
 | The observation fixture † | `POST /v1/harness/fixtures/observation`; the current observation on `environment_records.observed` | The Plan seeds "historical observation fixtures"; M1 has no observation job and no history table. |

@@ -1,7 +1,8 @@
-// Reads of the engine's projections for rows M70 and M74 (SEAM.md §§91, 95):
-// the project list and one project's combined projection, a candidate, and a
-// read that gives up after a stated number of bytes or milliseconds, for the
-// record reads that must refuse instead of serving or waiting.
+// Reads of the engine's projections for rows M70, M74 and M01 (SEAM.md §§91,
+// 95): the project list and one project's combined projection, a project's
+// open decisions, a candidate, and a read that gives up after a stated number
+// of bytes or milliseconds, for the record reads that must refuse instead of
+// serving or waiting.
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -40,6 +41,16 @@ export async function readCandidate(engine, project, candidate) {
   assertReadEnvelope(res.body, `GET candidate ${candidate}`);
   assert.equal(res.body.candidate?.id, candidate, `the answer is the candidate in the path (body: ${res.text.slice(0, 300)})`);
   return res.body.candidate;
+}
+
+// GET /v1/projects/:p/decisions: {served_at, snapshot_seq, decisions: [...]},
+// the project's open decisions (SEAM.md §91; D1 §11.3; E39).
+export async function listDecisions(engine, project) {
+  const res = await engine.get(`/v1/projects/${project}/decisions`);
+  assert.equal(res.status, 200, `GET /v1/projects/${project}/decisions (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET /v1/projects/${project}/decisions`);
+  assert.ok(Array.isArray(res.body.decisions), `the read lists decisions (body: ${res.text.slice(0, 300)})`);
+  return res.body;
 }
 
 // GET /v1/projects/:p/runs/:r: the run (SEAM.md §17).
