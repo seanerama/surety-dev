@@ -132,7 +132,8 @@
       "M67-unsafe-filesystem-refused.test.mjs",
       "M73-executable-contract.test.mjs",
       "M74-fixture-semantics.test.mjs",
-      "M74-invocation-boundary.test.mjs"
+      "M74-invocation-boundary.test.mjs",
+      "M66-backup-in-a-running-engine.test.mjs"
     ],
     "7": [
       "M01-journey-through-the-api.test.mjs"
