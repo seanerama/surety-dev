@@ -16,6 +16,9 @@ const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'scripted', 'child.m
 // The slice-2 structured result (SEAM.md §13): exactly these two fields.
 export const VALID_RESULT = Object.freeze({ status: 'completed', summary: 'scripted role finished' });
 
+// The protocol line that carries a valid result, without its line ending.
+export const RESULT_LINE = JSON.stringify({ type: 'result', result: VALID_RESULT });
+
 // Script steps, as scripted/child.mjs documents them.
 export const step = {
   usage: (raw, semantics = 'cumulative') => ({ usage: { semantics, raw } }),
@@ -25,6 +28,10 @@ export const step = {
   hold: (name = 'gate', opts = {}) => ({ hold: name, ...opts }),
   result: (value = VALID_RESULT) => ({ result: value }),
   exit: (code) => ({ exit: code }),
+  // Raw text on the role's stdout, exactly as given: no line ending is added.
+  stdout: (text) => ({ stdout: text }),
+  // Close the role's stdout for good; the role goes on with its next steps.
+  closeStdout: () => ({ close_stdout: true }),
   // One more process that carries the role's domain marker and outlives the
   // role. By default it keeps the role's stdout open and ends on SIGTERM.
   descendant: (opts = {}) => ({ descendant: opts }),
@@ -45,6 +52,9 @@ export const script = {
   crash: (code = 3, before = []) => ({ steps: [...before, step.exit(code)] }),
   // Send something that is not a valid result.
   invalid: (value, before = []) => ({ steps: [...before, step.result(value)] }),
+  // Finish with a valid result whose line has no line ending, and exit 0: the
+  // last thing the role writes is an unterminated line (E27 item 1).
+  completeUnterminated: (before = []) => ({ steps: [...before, step.stdout(RESULT_LINE)] }),
 };
 
 // What SIGTERM does to a held role: send a late "success" and then go, or stay.

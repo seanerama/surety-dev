@@ -58,3 +58,24 @@ export function plantHook(repo, name, evidence, { where = 'hooks', dir } = {}) {
   if (where === 'hooksPath') git(repo, ['config', 'core.hooksPath', hooks]);
   return file;
 }
+
+// Name a program in the repository's own configuration as `core.fsmonitor`,
+// as a role that runs as the engine's user could through its linked worktree
+// (E27 item 4). Git runs such a program, with a version and a token, whenever
+// it refreshes an index of that repository: a checkout into a new worktree
+// does. The program is written into `dir`, outside the repository. Each time
+// git runs it, it appends one line to `evidence`, which names the git command
+// that ran it, and answers as the hook protocol (version 2) asks: a token,
+// then "/", which git takes as "everything may have changed". Returns the
+// program's path.
+export function plantFsmonitor(repo, evidence, { dir }) {
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'fsmonitor');
+  writeFileSync(
+    file,
+    `#!/bin/sh\necho "fsmonitor ran: pid $$ in $(pwd) with HOME=$HOME, run by: $(tr '\\0' ' ' < /proc/$PPID/cmdline)" >> '${evidence}'\nprintf 'fixture-token\\0/\\0'\n`,
+  );
+  chmodSync(file, 0o755);
+  git(repo, ['config', 'core.fsmonitor', file]);
+  return file;
+}

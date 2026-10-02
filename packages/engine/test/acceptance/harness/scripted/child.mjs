@@ -15,7 +15,7 @@
 //   release/<key>.<name>    a file whose existence releases the hold <name>;
 //                           <key> is the invocation id, the work item id or "all"
 //   launches.jsonl          appended by this program: launch, holding, signal, exit,
-//                           descendant
+//                           descendant, stdout_closed
 //   boundary.json           read by the engine's scripted boundary, never by this program
 //
 // With no script at all the program holds until it is killed: nothing
@@ -29,9 +29,19 @@
 //           {"hold": "<name>", "heartbeat_ms": <n, default 1000; 0 = silent>}
 //           {"result": <any JSON value>}
 //           {"stdout": "<raw text written as is>"}
+//           {"close_stdout": true}
 //           {"exit": <code>}
 //           {"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore"}}
 // After the last step the program exits 0.
+//
+// {"stdout": ...} writes its text and nothing else: no line ending is added,
+// so a script can end the role's output with a line that has none.
+// {"close_stdout": true} closes the role's standard output for good, once
+// what was written before it has left the process: whoever reads the pipe
+// sees the end of the stream (unless a descendant still holds it) while the
+// role goes on with its next steps. From then on the role writes nothing to
+// stdout: later usage, heartbeat, result and stdout steps, and the heartbeats
+// of a hold, are dropped. It logs a `stdout_closed` entry.
 //
 // A descendant is one more process the role starts and does not wait for:
 // this program again, as `child.mjs descendant <on_term>`. It stays in the
@@ -46,7 +56,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -100,13 +110,39 @@ if (process.argv[2] === 'descendant') {
 // engine keeps running, so a broken pipe is not an error here.
 process.stdout.on('error', () => {});
 process.stdin.on('error', () => {});
-const emit = (value) => {
+// Set by a {"close_stdout": true} step: descriptor 1 is gone, and nothing is
+// written to it again.
+let stdoutClosed = false;
+const writeOut = (text) => {
+  if (stdoutClosed) return;
   try {
-    process.stdout.write(`${JSON.stringify(value)}\n`);
+    process.stdout.write(text);
   } catch {
     // see above
   }
 };
+const emit = (value) => writeOut(`${JSON.stringify(value)}\n`);
+
+// Close the role's stdout while the role lives. What was written before has
+// left the process first; the descriptor itself is closed, because Node does
+// not close descriptor 1 when the stream object is ended or destroyed.
+async function closeStdout() {
+  if (stdoutClosed) return;
+  await new Promise((done) => {
+    try {
+      process.stdout.write('', () => done());
+    } catch {
+      done();
+    }
+  });
+  stdoutClosed = true;
+  try {
+    closeSync(1);
+    log('stdout_closed');
+  } catch (err) {
+    log('stdout_close_error', { message: err.message });
+  }
+}
 
 async function readRequest() {
   const chunks = [];
@@ -160,6 +196,7 @@ function chooseScript(workItem, index) {
 function finish(code) {
   log('exit', { code });
   const leave = () => process.exit(code);
+  if (stdoutClosed) leave();
   setTimeout(leave, 500);
   try {
     process.stdout.write('', leave);
@@ -226,7 +263,8 @@ async function runSteps(steps, ctx) {
       }
       log('released', { hold: step.hold });
     } else if (step.result !== undefined) emit({ type: 'result', result: step.result });
-    else if (step.stdout !== undefined) process.stdout.write(step.stdout);
+    else if (step.stdout !== undefined) writeOut(step.stdout);
+    else if (step.close_stdout !== undefined) await closeStdout();
     else if (step.descendant !== undefined) await startDescendant(step.descendant);
     else if (step.exit !== undefined) await finish(step.exit);
     else {

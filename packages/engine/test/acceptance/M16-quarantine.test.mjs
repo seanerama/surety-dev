@@ -16,10 +16,20 @@
 // run-end protocol begins then, whatever the descendant holds open, and the
 // descendant is terminated as a member of the domain. And an `unknown` report
 // is acted on when it is made, not after the grace periods.
+//
+// After the second slice-2 review (E27), four more. An `unknown` report ends
+// the wait for a report, not the signalling: the processes the engine found
+// still get SIGKILL once terminate_grace has passed (D1 §4.5 step 2), and
+// the quarantine clears when the boundary reads again. The end of the role's
+// output is not the role's exit: a role that closes its stdout and goes on is
+// not signalled, and its run ends by what it earned when it does exit. And a
+// last line without a line ending is a line, whether or not a descendant
+// holds the stream open (E27 item 1).
 
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { waitFor } from './harness/engine.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
@@ -231,4 +241,147 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     assertRunQuarantined(fx.home, first.id, { outcome: 'stopped' });
     assert.notEqual(workItem(fx.home, item).status, 'held', 'the work is not released');
   });
+
+  // The second review: the case above was met by returning at the first
+  // `unknown` report, after SIGTERM and before the SIGKILL that D1 §4.5 step 2
+  // requires. The report ends the wait for a report. It does not end the
+  // signalling: a process the engine found is still there to be killed.
+  test('with the boundary reporting unknown, a stopped role that ignores SIGTERM is still sent SIGKILL after terminate_grace, and the quarantine clears once the boundary reads again', async (t) => {
+    const config = { terminate_grace: 6, kill_grace: 2 };
+    const fx = await scriptedEngine(t, { config });
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(item, [script.hold('gate', { on_term: 'ignore' })]);
+    fx.scripted.script(waiting, [script.complete()]);
+    await tick(fx.engine, project);
+    const launch = await fx.scripted.waitForHolding({ work_item: item });
+    const first = await waitForRun(fx.home, item, { state: 'executing' });
+
+    fx.scripted.boundary({ default: BOUNDARY.unknown });
+    const stoppedAt = Date.now();
+    await stopRun(fx.engine, project, first.id);
+
+    // As before: quarantined at the report, inside terminate_grace. The role
+    // ignores SIGTERM, and SIGKILL is not due yet, so it is still running.
+    const row = await runSettles(fx, first.id, {
+      timeoutMs: (config.terminate_grace - 2) * 1000,
+      otherwise: `an unknown report means quarantine when it is made (terminate_grace is ${config.terminate_grace} s)`,
+    });
+    assert.equal(row.quarantined, 1, 'unknown is never termination');
+    assert.equal(fx.scripted.isLive(launch), true, `SIGKILL is not due before terminate_grace (${config.terminate_grace} s): the role that ignores SIGTERM is still running when the quarantine is recorded`);
+    assertRunQuarantined(fx.home, first.id, { outcome: 'stopped' });
+
+    // D1 §4.5 step 2: TERM, terminate_grace, KILL. No tick is asked for: the
+    // signalling is the run-end protocol's own, and a quarantine does not end it.
+    const killWithinMs = (config.terminate_grace + config.kill_grace + 6) * 1000;
+    await waitFor(() => !fx.scripted.isLive(launch), { timeoutMs: Math.max(1000, stoppedAt + killWithinMs - Date.now()), what: 'the role to be killed' }).catch(() => {});
+    const signals = fx.scripted.eventsOf(launch.pid, 'signal').map((e) => e.signal);
+    assert.equal(
+      fx.scripted.isLive(launch),
+      false,
+      `a role that ignores SIGTERM must be sent SIGKILL once terminate_grace (${config.terminate_grace} s) has passed, also when the boundary reports unknown: ` +
+        `${Math.round((Date.now() - stoppedAt) / 1000)} s after Stop it is still running (signals it logged: ${signals.join(', ') || 'none'}; ` +
+        `run ${runRow(fx.home, first.id).state}, quarantined ${runRow(fx.home, first.id).quarantined})`,
+    );
+    assert.ok(signals.includes('SIGTERM'), 'it was sent SIGTERM first');
+
+    // The role is gone and the boundary still cannot be read: nothing is
+    // concluded from the kill. The quarantine holds, however many ticks run.
+    await assertQuarantineHolds(fx, project, { runId: first.id, item, waiting, outcome: 'stopped' });
+
+    // The boundary reads again and finds the domain empty: the quarantine
+    // clears, and the run ends with the outcome it had.
+    fx.scripted.boundary({ default: BOUNDARY.auto });
+    await tick(fx.engine, project);
+    await waitFor(() => runRow(fx.home, first.id).state === 'ended', { timeoutMs: 10_000, what: 'the quarantine to clear' }).catch(() => {});
+    assert.equal(runRow(fx.home, first.id).state, 'ended', 'once the boundary reports the domain terminated, the quarantine clears and the run ends');
+    assertRunEnded(fx.home, first.id, { outcome: 'stopped', reason_class: 'human_stop', workspace: 'retained', launched: true, recovery: false });
+    assert.equal((await waitForWork(fx.home, item, 'held')).status, 'held', 'the stopped work is held');
+
+    // The project is free again.
+    await tick(fx.engine, project);
+    await waitForWork(fx.home, waiting, 'complete');
+    withStore(fx.home, (db) => assertWorkHistory(db, item));
+  });
+});
+
+describe("M16 the role's exit begins the run end, not the end of its output (second review)", () => {
+  // SEAM.md §13: the run-end protocol begins when the launched process exits.
+  // Reading the end of its output is not that: a role may close its stdout
+  // and go on working.
+  test('a role that sends a valid result, closes its stdout and exits 0 later is not signalled before it exits, and ends completed', async (t) => {
+    const fx = await scriptedEngine(t, { config: GRACE });
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    // Result, end of output, and then the role is still there until released; it sends no heartbeat.
+    fx.scripted.script(item, [{ steps: [step.write('report.txt', 'verified'), step.result(), step.closeStdout(), step.hold('gate', { heartbeat_ms: 0 })] }]);
+
+    await tick(fx.engine, project);
+    const launch = await fx.scripted.waitForHolding({ work_item: item });
+    const first = await waitForRun(fx.home, item);
+    assert.equal(fx.scripted.eventsOf(launch.pid, 'stdout_closed').length, 1, 'the role closed its stdout after sending its result');
+
+    // Three seconds with its output closed. The role has not exited, so
+    // nothing has ended: it is not signalled, and the run has no outcome.
+    await sleep(3000);
+    const during = runRow(fx.home, first.id);
+    const signalled = fx.scripted.eventsOf(launch.pid, 'signal').map((e) => e.signal);
+    assert.deepEqual(
+      signalled,
+      [],
+      `the run-end protocol begins when the role exits, not when its output ends: three seconds after closing its stdout the role, which had not exited, was signalled ` +
+        `(run ${during.state}, outcome ${during.outcome}/${during.reason_class})`,
+    );
+    assert.equal(fx.scripted.isLive(launch), true, 'the role is still running');
+    assert.equal(during.outcome, null, `a run whose role has not exited has no outcome yet (it is ${during.state}, ${during.outcome}/${during.reason_class})`);
+
+    // Now it exits 0, by itself.
+    fx.scripted.release(item);
+    await waitFor(() => !fx.scripted.isLive(launch), { what: 'the role to exit' });
+    assert.deepEqual(fx.scripted.eventsOf(launch.pid, 'exit').map((e) => e.code), [0], 'the role exited 0');
+    await waitForRunState(fx.home, first.id, 'ended');
+    const facts = assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', workspace: 'retained', launched: true, recovery: false });
+    assert.ok(existsSync(`${facts.workspaces[0].path}/report.txt`));
+    assert.deepEqual(fx.scripted.eventsOf(launch.pid, 'signal'), [], 'it was never signalled');
+    assert.equal((await waitForWork(fx.home, item, 'complete')).status, 'complete');
+    withStore(fx.home, (db) => assertWorkHistory(db, item));
+  });
+
+  // E27 item 1: a final line without a line ending is still a line, whether
+  // or not another process holds the stream open when the engine stops reading.
+  for (const withDescendant of [false, true]) {
+    const title = withDescendant
+      ? 'a valid result with no line ending, from a role that exits 0 and leaves a descendant holding its stdout, ends completed'
+      : 'a valid result with no line ending, from a role that exits 0, ends completed';
+    test(title, async (t) => {
+      const fx = await scriptedEngine(t, { config: GRACE });
+      const project = (await addProject(fx)).id;
+      const item = await addWork(fx.engine, project, 'verification');
+      const before = [step.usage({ input_tokens: 5 }), ...(withDescendant ? [step.descendant({ holds_stdout: true, on_term: 'exit' })] : [])];
+      fx.scripted.script(item, [script.completeUnterminated(before)]);
+
+      await tick(fx.engine, project);
+      const first = await waitForRun(fx.home, item);
+      const [launch] = await fx.scripted.waitForLaunch({ run: first.id });
+      const descendant = withDescendant ? await fx.scripted.waitForDescendant({ parent: launch.pid }) : null;
+      if (descendant) assert.deepEqual([descendant.ready, descendant.holds_stdout], [true, true], "the descendant was up, holding the role's stdout, before the role wrote its result");
+      await waitFor(() => !fx.scripted.isLive(launch), { what: 'the role process to exit' });
+      assert.ok(fx.scripted.eventsOf(launch.pid, 'exit').some((e) => e.code === 0), 'the role exited 0 after writing its result');
+
+      await runSettles(fx, first.id, { timeoutMs: 15_000, otherwise: 'the run-end protocol must begin when the role exits' });
+      await waitForRunState(fx.home, first.id, 'ended');
+      const ended = runRow(fx.home, first.id);
+      assert.deepEqual(
+        [ended.outcome, ended.reason_class],
+        ['completed', 'none'],
+        `a final line without a line ending is still a line: the role wrote a valid result as its last, unterminated line and exited 0${withDescendant ? ', and a descendant held its stdout open' : ''}`,
+      );
+      const facts = assertRunEnded(fx.home, first.id, { outcome: 'completed', reason_class: 'none', workspace: 'retained', launched: true, recovery: false });
+      assert.equal(facts.receipts[0].usage.length, 1, 'the usage the role reported is kept');
+      if (descendant) assert.equal(fx.scripted.isLive(descendant), false, 'the descendant was terminated as a member of the domain before the run ended');
+      assert.equal((await waitForWork(fx.home, item, 'complete')).status, 'complete');
+      assert.equal(runsOf(fx.home, item).length, 1, 'the work was done once');
+    });
+  }
 });

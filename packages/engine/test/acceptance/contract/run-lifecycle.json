@@ -34,7 +34,7 @@
       "abandoned": { "reason_class": ["human_abandon"], "workspace": "discarded" },
       "recovered": { "reason_class": ["recovered"], "workspace": "retained" }
     },
-    "$outcomes_comment": "D1 §4.1 and §4.5 step 6. `workspace` is the disposition once the run has ended; null means not pinned."
+    "$outcomes_comment": "D1 §4.1 and §4.5 step 6. `workspace` is the disposition once the run has ended; null means not pinned. `recovered` is the outcome of a run that startup recovery ends, and of a run ended because its lease expired, when no outcome had been decided before (`lease_expiry`, below)."
   },
   "domain": {
     "states": ["allocated", "launched", "terminated", "quarantined"],
@@ -60,8 +60,16 @@
       ["quarantine_reservation", "released"]
     ]
   },
+  "lease_expiry": {
+    "$comment": "E27 item 3, replacing E26 item 2; D1 §8.1 step 1; SEAM.md §16 'The run lease'. What the reconciliation of an expired run lease leaves when no outcome had been decided before the expiry: the run is treated as recovered, like a run found after a crash (E7 §3.9.4). Its work is held until an explicit Resume and no repair attempt is charged (`repair_attempts` is what it was). An outcome decided before the expiry (`decided_before_expiry`) stands, with that outcome's own consequence for the work.",
+    "outcome": "recovered",
+    "reason_class": "recovered",
+    "work": "held",
+    "repair_attempts": "unchanged",
+    "decided_before_expiry": ["an outcome already recorded", "a deadline", "a Stop or an Abandon", "a result accepted on a live lease"]
+  },
   "work_after_run": {
-    "$comment": "What a run's outcome does to its work item in slice 2 (SEAM.md §16). `complete` holds for kinds whose path does not integrate; the integrating kinds are pinned in slice 3.",
+    "$comment": "What a run's outcome does to its work item in slice 2 (SEAM.md §16). `complete` holds for kinds whose path does not integrate; the integrating kinds are pinned in slice 3. `recovered` covers both ways a run gets that outcome: startup recovery, and the expiry of its lease (`lease_expiry`).",
     "completed": "complete",
     "stopped": "held",
     "recovered": "held",

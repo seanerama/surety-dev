@@ -88,6 +88,20 @@ export const MUTANTS = [
   ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in the repository's hooks directory is not run when the engine creates a workspace"],
   ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in a directory the repository's configuration names as core.hooksPath is not run when the engine creates a workspace"],
   ['worktree_probe_literal_path', 'M31-worktree-add-symlinked-home', 'with the engine home behind a symbolic link, a dispatch launches, its worktree_add is recorded as succeeded, and no worktree is left without a workspaces row'],
+  // The cases written or changed after the second slice-2 review (SEAM.md §23).
+  ['heartbeat_renews_after_end_decided', 'M15-lease-supervision', 'after the engine has decided to end a run, a heartbeat of its role does not move the lease'],
+  ['heartbeat_renews_after_end_decided', 'M15-lease-supervision', 'a run past its deadline whose entry into finalizing fails once still ends timed_out, although its role keeps sending heartbeats and never exits by itself'],
+  ['expiry_forgets_decided_end', 'M15-lease-supervision', 'a run past its deadline whose entry into finalizing fails once still ends timed_out, although its role keeps sending heartbeats and never exits by itself'],
+  ['expiry_forgets_decided_end', 'M15-lease-supervision', 'the transaction that enters finalizing fails once: the run still ends, and the project dispatches its next item'],
+  ['no_renewal_while_preparing', 'M15-lease-supervision', 'the engine renews the lease of a run it is preparing: a launch held before the spawn for longer than lease_ttl keeps its lease, and the role is spawned and completes'],
+  ['lease_expiry_fails_run', 'M15-lease-supervision', 'a lease nobody renews expires, and the next tick puts its run through the run-end protocol, although the engine that owns it is alive'],
+  ['lease_expiry_fails_run', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
+  ['fsmonitor_runs', 'M23-engine-git-runs-no-repository-code', "a program the repository's configuration names as core.fsmonitor is not run when the engine creates a workspace"],
+  ['unknown_stops_signalling', 'M16-quarantine', 'with the boundary reporting unknown, a stopped role that ignores SIGTERM is still sent SIGKILL after terminate_grace, and the quarantine clears once the boundary reads again'],
+  ['unknown_waits_for_grace', 'M16-quarantine', 'with the boundary reporting unknown, a stopped role that ignores SIGTERM is still sent SIGKILL after terminate_grace, and the quarantine clears once the boundary reads again'],
+  ['stdout_eof_is_exit', 'M16-quarantine', 'a role that sends a valid result, closes its stdout and exits 0 later is not signalled before it exits, and ends completed'],
+  ['unterminated_line_dropped', 'M16-quarantine', 'a valid result with no line ending, from a role that exits 0 and leaves a descendant holding its stdout, ends completed'],
+  ['unterminated_line_dropped', 'M16-quarantine', 'a valid result with no line ending, from a role that exits 0, ends completed'],
 ];
 
 // The harness starts the engine with a constructed environment, so a defect
