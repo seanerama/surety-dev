@@ -1,10 +1,10 @@
 # Surety M1 acceptance report
 
-**Written by:** the Verifier, 2026-10-02, on branch `verify/report`. **For:** Sean, the owner, before his hands-on run and his decision whether to accept M1; and Astra, the architect who wrote the acceptance plan. **Status:** a record of what was run and what was observed. It decides nothing.
+**Written by:** the Verifier, 2026-10-02, on branch `verify/report`; updated the same day on branch `verify/report-2` after one addition landed on `main`, the fix loop (E43), with the suite run again on the new revision. **For:** Sean, the owner, before his hands-on run and his decision whether to accept M1; and Astra, the architect who wrote the acceptance plan. **Status:** a record of what was run and what was observed. It decides nothing.
 
 Surety is an evidence-gated delivery engine for AI coding agents: a program (the **engine**) that drives coding agents through a governed lifecycle and lets nothing advance on an agent's say-so. M1 is its first milestone. This report is the last deliverable of M1 before the owner's hands-on run (build specification, section 10). It is written for two readers who were not in the build, so terms are explained where they first appear and nothing is taken from the build's chat. Everything below that is described as passing was run by the Verifier on 2026-10-02 and its output kept; nothing is described as passing that was not run.
 
-The sources it cites: the **build specification** (`docs/spec/M1-build-spec.md`); the **acceptance plan** (`docs/acceptance/sdlc-M1-acceptance-plan-Astra.md`: Astra's 74 rows M01 to M74, each a scenario with a required observable result); the **errata** (`docs/foundations/sdlc-foundations-v1.1-errata-draft.md`, the owner's decisions E1 to E42, cited below as E-numbers); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`, every row split into named test cases, with the reason for every case that was left out); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, the prose contract between the tests and the engine, cited as "SEAM section N"); and the **not-claimed list** (`docs/acceptance/reports/M1-not-claimed.md`).
+The sources it cites: the **build specification** (`docs/spec/M1-build-spec.md`); the **acceptance plan** (`docs/acceptance/sdlc-M1-acceptance-plan-Astra.md`: Astra's 74 rows M01 to M74, each a scenario with a required observable result); the **errata** (`docs/foundations/sdlc-foundations-v1.1-errata-draft.md`, the owner's decisions E1 to E44, cited below as E-numbers); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`, every row split into named test cases, with the reason for every case that was left out); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, the prose contract between the tests and the engine, cited as "SEAM section N"); and the **not-claimed list** (`docs/acceptance/reports/M1-not-claimed.md`).
 
 ## 1. What M1 claims and does not claim
 
@@ -12,46 +12,46 @@ M1 is the engine's core loop running against a **scripted adapter**: a stand-in 
 
 ## 2. The run
 
-**Revision.** `9c0dbf6a61eb6a7fb1c18e4bae312b74bdd767fb`, the head of `main` on 2026-10-02 ("Merge build/slice-6: the API boundary, reads, streams, load, the contract, and the three review fixes (E42)"). The acceptance tests and the engine live in the same repository, so the test revision and the engine revision are this one commit. The last commit that touched the acceptance tests before it is `273f401` (2026-10-02 16:06 -0500); the last that touched the engine's source, migrations or API files is `0a4da14` (2026-10-02 16:09 -0500); the runner, `scripts/run-tests.mjs`, was last changed at `8fd8047` (2026-10-01).
+**Revision.** `17c6dc79369a9e7cde6640205b35ce9b654faaa5`, the head of `main` on 2026-10-02 ("Merge build/fix-loop: the engine creates fix work; a fix's integration nominates; the stage completes by ancestry (E43)"). The acceptance tests and the engine live in the same repository, so the test revision and the engine revision are this one commit. The last commit that touched the acceptance tests before it is `d11f8a6` (2026-10-02 17:48 -0500); the last that touched the engine's source, migrations or API files is `a1be77b` (2026-10-02 17:51 -0500); the runner, `scripts/run-tests.mjs`, was last changed at `8fd8047` (2026-10-01). Between this revision and the one the first version of this report ran, `9c0dbf6` (the head of `main` after slice 6 merged), the engine changed in three source files (the transitions that accept a role's report, that queue work, and that evaluate gates), the acceptance tests gained the fix loop (section 5) in the two M01 files, row M42's file and the harness, and the unit tests gained one file; the first version's run of `9c0dbf6` (795 acceptance cases, 75 unit cases, exit 0) is superseded by the run below and is not repeated here.
 
-**Command.** `npm test`, run from a clean git worktree of that revision at 21:48:22 UTC on 2026-10-02 with dependencies installed, its output written to a file. `npm test` runs the unit suite and then the whole acceptance suite; each is run by `scripts/run-tests.mjs`, which builds the engine with `tsc` first, runs one test file at a time, and refuses to report success if any test was skipped, if a file had no passing test, if a file is misnamed or not listed in the manifest, or if any of the 74 rows has no test file. Nothing else used the machine during the run, with one exception that is recorded so it is known: while the suite was in its slice-3 files, the Verifier, probing how the test reporter counts cases, ran one acceptance file by itself (`M16-quarantine.test.mjs`, nine cases, about 25 seconds) in a second process with its own engine homes and ports. It passed, the suite showed no failure, and since E41 item 1 an engine does not touch another home's processes (section 8); it is nonetheless a second engine on the machine during part of the run.
+**Command.** `npm test`, run from a clean git worktree of that revision at 23:29:48 UTC on 2026-10-02 with dependencies installed, its output written to a file. `npm test` runs the unit suite and then the whole acceptance suite; each is run by `scripts/run-tests.mjs`, which builds the engine with `tsc` first, runs one test file at a time, and refuses to report success if any test was skipped, if a file had no passing test, if a file is misnamed or not listed in the manifest, or if any of the 74 rows has no test file. Nothing else used the machine during the run: no second engine was started, and the walkthrough of section 9 was run only after the suite had ended.
 
 **Closing lines, verbatim.** The unit suite:
 
 ```
-ℹ tests 75
+ℹ tests 79
 ℹ suites 0
-ℹ pass 75
+ℹ pass 79
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 11849.758111
-unit: 16 file(s) passed.
+ℹ duration_ms 12299.039475
+unit: 17 file(s) passed.
 ```
 
 The acceptance suite, followed by the shell's `time` of the whole `npm test` and the line the Verifier's wrapper wrote with the command's exit status:
 
 ```
-ℹ tests 795
-ℹ suites 207
-ℹ pass 795
+ℹ tests 801
+ℹ suites 209
+ℹ pass 801
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 1157812.317662
+ℹ duration_ms 1184515.806364
 acceptance: 124 file(s) passed.
 
-real	18m27.070s
-user	8m56.981s
-sys	3m33.408s
+real	18m44.865s
+user	9m5.411s
+sys	3m44.480s
 exit=0
 ```
 
-`npm test` exited 0. No test failed, was cancelled, skipped or marked to-do. (The acceptance suite's own duration, 1,157.8 s measured on a clock that does not step, is longer than the shell's `real` 18 m 27 s for the whole command, which is measured on the host's wall clock; section 8 says why.) The runner kept the full reports under `test-results/` in that worktree, which git does not track: `test-results/unit-2026-10-02T21-48-22-678Z.log` and `test-results/acceptance-2026-10-02T21-48-35-013Z.log`.
+`npm test` exited 0. No test failed, was cancelled, skipped or marked to-do. The wrapper also recorded the command's start and end on the wall clock, 23:29:48 and 23:48:33 UTC. (The acceptance suite's own duration, 1,184.5 s measured on a clock that does not step, is longer than the shell's `real` 18 m 45 s for the whole command, which is measured on the host's wall clock; section 8 says why.) The runner kept the full reports under `test-results/` in that worktree, which git does not track: `test-results/unit-2026-10-02T23-29-49-080Z.log` and `test-results/acceptance-2026-10-02T23-30-01-882Z.log`.
 
-**Files and cases per slice.** The build was made in seven slices (build specification, section 9); `packages/engine/test/acceptance/manifest.json` lists each test file under the slice where it must first pass. The case counts are the passing tests of this run, attributed to files by the order in which the runner ran them; their total is the reporter's 795.
+**Files and cases per slice.** The build was made in seven slices (build specification, section 9); `packages/engine/test/acceptance/manifest.json` lists each test file under the slice where it must first pass. The case counts are the passing tests of this run, attributed to files by the order in which the runner ran them (the report's 209 group lines were matched to the files that declare them, and a group's tests counted inside it); their total is the reporter's 801. Against the first version's run, slice 5 has five more cases (the journey's second path, four; row M42's rule that the engine creates the fix work, one) and slice 7 one more (the second path read through the API); no other count changed.
 
 | Slice | Capability | Files | Cases passed |
 |---|---|---|---|
@@ -59,10 +59,10 @@ exit=0
 | 2 | Work, runs and interruption | 22 | 122 |
 | 3 | Git and the journal | 39 | 384 |
 | 4 | Ledger, records and backup | 15 | 47 |
-| 5 | Protected path, gates and decisions (and the journey, row M01) | 25 | 110 |
+| 5 | Protected path, gates and decisions (and the journey, row M01, both paths) | 25 | 115 |
 | 6 | API, load and contract | 12 | 61 |
-| 7 | The journey read through the API | 1 | 2 |
-| **Total** | | **124** | **795** |
+| 7 | The journey read through the API, both paths | 1 | 3 |
+| **Total** | | **124** | **801** |
 
 Every row M01 to M74 has at least one file, and the runner checked that before running anything.
 
@@ -85,13 +85,15 @@ Row M71 ("latency under the declared maximum load") qualifies the limits the own
 
 | Case | Measurement |
 |---|---|
-| Fixture | `5 projects, 20 clients, store 1025.5 MiB (limit 1024.0 MiB), api_latency_bound 250 ms`; the store was built from 16,256 filler events in one transaction in 1,800 ms |
-| Startup migration over the full store, restricted mode | health: 145 valid samples of 145, median 2.1 ms, **worst 4.7 ms**; Stop (refused with `engine_starting`, as it must be in restricted mode): 5 valid of 5, median 1.6 ms, **worst 2.1 ms** |
-| Full mode at the limits, a window of 37,181 ms | health: 467 valid samples of 467, median 3.5 ms, **worst 8 ms**; Stop admission: 6 valid of 6, median 18.3 ms, **worst 25 ms** |
-| Termination latency, measured apart and not judged against the bound | from a Stop's admission to the run's end: 300 ms for a run that exits on SIGTERM; 2,346 ms for one that ignores it (it is killed after the configured grace of 2 s); 2,338 ms for the run that was writing output being hashed |
-| The backup under way | ended 37,107 ms after its start with one project's git held, labelled `incomplete_for_recovery`, which is what E42 item 2 requires when git cannot confirm that project's commits in time |
-| The load that was on the engine during the window | a backup of 1,025.6 MiB; 29,848.8 MiB replayed to the paging clients; 7 chunks hashed; 20 clients, all still connected at the end |
-| A role's output is not held in memory | 512.0 MiB written by the role; the engine's peak resident memory 94.7 MiB before, 197.5 MiB after, a rise of 102.9 MiB against an allowed rise below 256.0 MiB |
+| Fixture | `5 projects, 20 clients, store 1025.5 MiB (limit 1024.0 MiB), api_latency_bound 250 ms`; the store was built from 16,256 filler events in one transaction in 1,853 ms |
+| Startup migration over the full store, restricted mode | health: 147 valid samples of 147, median 2.2 ms, **worst 3.8 ms**; Stop (refused with `engine_starting`, as it must be in restricted mode): 5 valid of 5, median 2.1 ms, **worst 3.1 ms** |
+| Full mode at the limits, a window of 37,827 ms | health: 475 valid samples of 475, median 3.5 ms, **worst 8.6 ms**; Stop admission: 6 valid of 6, median 16.9 ms, **worst 20.4 ms** |
+| Termination latency, measured apart and not judged against the bound | from a Stop's admission to the run's end: 319 ms for a run that exits on SIGTERM; 2,346 ms for one that ignores it (it is killed after the configured grace of 2 s); 2,349 ms for the run that was writing output being hashed |
+| The backup under way | ended 37,753 ms after its start with one project's git held, labelled `incomplete_for_recovery`, which is what E42 item 2 requires when git cannot confirm that project's commits in time |
+| The load that was on the engine during the window | a backup of 1,025.6 MiB; 29,775.6 MiB replayed to the paging clients; 7 chunks hashed; 20 clients, all still connected at the end |
+| A role's output is not held in memory | 512.0 MiB written by the role; the engine's peak resident memory 94.0 MiB before, 194.8 MiB after, a rise of 100.8 MiB against an allowed rise below 256.0 MiB |
+
+The first version of this report recorded the same cases from the run of `9c0dbf6`; the figures were of the same order (worst health sample 4.7 ms during the migration and 8 ms in full mode, worst Stop admission 25 ms), and none is repeated here.
 
 **The rule the test judges by** (E39 item 5; SEAM section 93, "How a latency is judged on a host that may be busy"). Every sample of the engine is paired with a control: at the same instant, from the same event loop, a request to a trivial server inside the test process. A sample whose control took more than 50 ms is void, because the host or the test process was not responsive at that moment and the sample says nothing about the engine. Every valid sample must be within the 250 ms bound, with whatever the control cost included; the bound is never widened and nothing is subtracted. A judgement needs a stated number of valid samples (thirty of health and four of the six Stop requests in full mode; five of health and two of Stop during the migration); with fewer, the case fails as not judged, which is not a pass. In this run no sample was void.
 
@@ -117,7 +119,7 @@ The rows below start a real engine process, kill it with SIGKILL at a chosen poi
 | M17, `M17-quarantine-clearance.test.mjs` | 2 | A quarantine clears only when the boundary reports the domain terminated, and nothing else clears it. |
 | M58, `M58-aging-and-notification-ambiguity.test.mjs` | 4 | The engine is killed before a notification's delivery and, separately, after the delivery and before its receipt: after each restart it asks the notification sink what happened and delivers exactly once; when the sink cannot say, the delivery is recorded as unknown and never blindly repeated. |
 
-The journal's recovery probes (rows M29 to M32, the four probe files, 48 cases in this run) plant each durable journal state and require each of the five probe outcomes to lead where the contract table says; they are recovery cases rather than kills and passed too.
+The journal's recovery probes (rows M29 to M32, the four probe files, 63 cases in this run: for each of the four kinds of operation, the five probe outcomes from each of three durable journal states, 60 generated from the contract table, and three more in the worktree-add file; the first version of this report counted 48, which was a miscount) plant each durable journal state and require each of the five probe outcomes to lead where the contract table says; they are recovery cases rather than kills and passed too.
 
 ### 4b. Power loss
 
@@ -153,6 +155,8 @@ From slice 4 the build had one Reviewer pass per slice (E31). A finding the revi
 
 The reviews also recorded findings that were not serious, and design questions for the owner; those are in E37, E41 and E42 and, where they concern a user, in section 7.
 
+**The fix loop, added after the slice-6 review** (E43). The milestone review at the slice-4 point (E40) named two workflow gaps that surfaced only when the journey test was written: nothing queued a review, and nothing created the work to fix a finding. The first was closed in slice 5 (E36 item 3). The second was closed after the run the first version of this report recorded: the owner decided that the engine creates the fix work itself when a finding's disposition "fix" is recorded, and that the journey of row M01 has a second path through the whole loop. In that path a Verifier raises a Critical finding against the candidate, naming the check it concerns; the Reviewer marks it "fix" and signs nothing off; the engine creates the fix work in the same transaction, and that work waits for the owner at the chain boundary, as the review does; the owner lets it through; a Builder fixes it; the engine commits and integrates the fix and nominates the fixed code as a second candidate; that candidate is verified; its check passes, which resolves the finding and completes the fix's work; the engine queues its review and the Reviewer signs it off; and the stage gate and the Alpha authorization are satisfied on the fixed candidate, which completes the stage. One rule had to be fixed for the loop to close, and it is recorded in E43 as the Verifier's provisional detail, not yet the owner's decision: **at tiers T2 and T3 the integration of a fix that names a finding is a cadence point, so it nominates the fixed code as a candidate** (SEAM section 42), as a stage's integration does; without it nothing in a one-stage project would ever nominate the fix, since at T2 a Builder may not ask for a nomination. A fix that names no finding still nominates nothing. The path is pinned by five cases (four in `M01-kernel-journey.test.mjs`, one in `M01-journey-through-the-api.test.mjs`), and the rule that creates the work by one more in `M42-findings-dispositions-and-inherited-applicability.test.mjs`; all six passed in the run of section 2, and the walkthrough of section 9 has a second part that does the loop by hand.
+
 ## 6. What M1 does not claim beyond the suite
 
 A passing suite supports no claim about behaviour that no test exercises. The not-claimed list (`docs/acceptance/reports/M1-not-claimed.md`) repeats every case of the acceptance plan that the coverage record marks as not written, 33 in all, each with the reason and in one of three classes:
@@ -174,15 +178,18 @@ The class-B cases the Verifier ranked most important for a hands-on run, most im
 
 The list also names three kinds of thing that are not claimed and are recorded elsewhere: capabilities M1 excludes by design (sessions, deployment, publication, any real backend, the user interface); limits of the test instruments (sections 3, 4 and 8 of this report); and details the tests leave open inside behaviour they do establish, which the coverage record and the seam mark as "not pinned".
 
+**The fix loop is now claimed.** The first version of this report said, of its walkthrough, that it "raises no finding and runs no fix", because nothing in the engine then created the work to fix a finding; that was an open question for the owner (E38, E40), never one of the 33 cases above, so the list's counts and classes are unchanged by its closing. Since E43 the loop is claimed by the six cases named in section 5, which passed in the run of section 2, and the list carries a note saying so. What the loop still leaves open is recorded as not pinned in the coverage record ("With E43: the fix loop"): among it, whether fix work is created for a finding that names no check, what a High (rather than Critical) finding does at the stage gate, and what the project's status line shows for the first candidate once the fix's candidate exists.
+
 ## 7. Deferred, by decision
 
-Each of these is a known gap that the owner chose to carry rather than close in M1. What a user would notice is said in plain words.
+Each of these is a known gap that the owner chose to carry rather than close in M1. What a user would notice is said in plain words. At the end of the build the owner confirmed the provisional decisions of the three slice reviews, E37, E41 and E42, as M1's rules, the deferrals below included (E44 item 2); each stays reversible, and one that is overturned becomes a changed test. Two of them are marked to be revisited before a real backend runs: that a Reviewer may lower a finding from Critical to High alone, and that a tightening a Reviewer approved is applied onto the current head without being classified again (E41). The owner also decided that the reads that are not built, for work items and for the reasons a gate was not satisfied (section 6, item 1), are decided after his hands-on run (E44 item 3).
 
 - **The filter-driver race** (E37 item 5). Engine git disables the filter drivers it finds in a repository's configuration before it runs a command that applies filters, in two steps. A process that rewrites the configuration between those steps gets its driver run. Closing the window inside M1 would mean rewriting the git layer. In M1 the only such process is a role, which runs without isolation and can already do anything the user can; the race is carried to D2, the isolation design, as a named requirement. A user would notice nothing unless a role, or another program with write access to the repository's configuration, raced the engine on purpose.
 - **Lease expiry after a pause** (E36 item 6). If the engine stops running for longer than a run's lease lasts (90 seconds by default), for example because the machine slept, every in-flight run is ended as `recovered` when the engine wakes and its work is held for an explicit Resume, even if the role's process was alive and well. The owner decided that a healthy supervised run will survive a pause, but that is built at the start of M2; M1 keeps the strict rule its tests pin. A user whose laptop sleeps during a run will find the run ended and its work held.
 - **The Alpha exception for a High finding** (E36 item 5). Only the human owner may approve an exception that lets a High finding not block an Alpha authorization. In M1 the exception enters as test data through a fixture; the approval flow is built in M2. A user cannot grant one through the API in M1.
-- **The bootstrap-token question** (E42, a design question not applied). The route that gives a browser page the API token trusts request headers a browser cannot forge but any other local program can. That defeats the token file's permissions for another user of the same machine, and for a role once roles are isolated. The build matches the design as written; it is to be settled with the isolation design, before the UI ships or a real backend runs. A user on a single-user machine would notice nothing; the gap matters once another person or an isolated role shares the machine.
-- **Audit growth** (E42, a design question not applied). Every refused request is audited, and nothing limits that: a web page that sends unauthenticated requests makes the store grow by about 1.6 KB per request, at several hundred requests a second. Whether to rate-limit or coalesce the audit is open. A user would notice the store growing under such a page.
+- **The bootstrap-token exposure** (E42, raised by the slice-6 review; accepted for M1 by E44 item 1). The route that gives a browser page the API token trusts request headers a browser cannot forge but any other local program can, so any process that can reach the engine's loopback port can obtain the operator token. That defeats the token file's permissions for another user of the same machine, and for a role once roles are isolated. The build matches the design as written. The owner accepted the exposure for M1 and made it a requirement of D2, the isolation design, which must ensure that an isolated role cannot reach that route and settles the question of other users of the same machine; nothing changes in M1. A user on a single-user machine would notice nothing; the gap matters once another person or an isolated role shares the machine.
+- **Audit growth** (E42; confirmed as M1's rule by E44 item 2). Every refused request is audited, and nothing limits that: a web page that sends unauthenticated requests makes the store grow by about 1.6 KB per request, at several hundred requests a second. Whether to rate-limit or coalesce the audit is open. A user would notice the store growing under such a page.
+- **The cadence rule for a fix** (E43, the Verifier's provisional detail; not among the decisions E44 confirms). At tiers T2 and T3 the integration of a fix that names a finding nominates the fixed code as a candidate, as a stage's integration does; a fix that names no finding nominates nothing (section 5). The tests fix it that way because nothing else in a one-stage project would ever nominate the fix; the alternatives the coverage record names are a fix that waits for an unrelated stage's nomination, or every fix integration at T2 nominating, which would overturn two cases rows M09 and M27 pin. The owner has not yet decided it. A user would notice it as a new candidate appearing when a fix is integrated, with verification and review work of its own.
 - **Git LFS, custom merge drivers and partial clones are unsupported** (E29 item 1, E30 item 3, E37 item 1). Engine git runs no program from a repository's configuration: no filter driver (which Git LFS needs), no merge driver when it rebases, and no fetch from a remote (which a partial clone needs for missing objects). A repository that depends on any of these is not supported in M1: an LFS-managed file would be checked out as its pointer, a custom merge would fall back to git's own, and a missing object would simply be missing.
 - **Estimated cost against the budget** (E32 item 4). Whether an estimated cost, as opposed to a reported one, counts against the verified daily spending limit is left open until M2. A user with a budget set would see estimated spend reported beside reported spend without knowing which of the two the limit is judged by.
 
@@ -190,14 +197,14 @@ Each of these is a known gap that the owner chose to carry rather than close in 
 
 The run of section 2 and the whole build were made on one machine, a WSL2 virtual machine, and four things about it bear on how a failure should be read.
 
-- **The wall clock steps.** This machine's wall clock steps back about 1.8 seconds every 30 seconds (a time-sync correction) and jumps forward, by about 15 minutes, when the virtual machine resumes after its host slept (E30, "Timekeeping"; E38). The engine measures every in-process duration on a monotonic clock since slice 3, and the harness's own waits do the same since the pass before the slice-5 build; stored timestamps and lease expiries stay on the wall clock by decision. The run in section 2 shows the step itself: the acceptance suite's own duration, 1,157.8 s on a clock that does not step, is 50 s longer than the shell's wall-clock `real` of 18 m 27 s for a command that also included the unit suite and two builds. Fixing the machine's time synchronisation is the owner's.
+- **The wall clock steps.** This machine's wall clock steps back about 1.8 seconds every 30 seconds (a time-sync correction) and jumps forward, by about 15 minutes, when the virtual machine resumes after its host slept (E30, "Timekeeping"; E38). The engine measures every in-process duration on a monotonic clock since slice 3, and the harness's own waits do the same since the pass before the slice-5 build; stored timestamps and lease expiries stay on the wall clock by decision. The run in section 2 shows the step itself: the acceptance suite's own duration, 1,184.5 s on a clock that does not step, is about 60 s longer than the shell's wall-clock `real` of 18 m 45 s for a command that also included the unit suite and two builds (the first version's run showed the same: 1,157.8 s against 18 m 27 s). Fixing the machine's time synchronisation is the owner's.
 - **A host sleep during a run can fail cases legitimately** (E38). Leases and stored timestamps are on the wall clock, so a sleep that outlasts a lease ends in-flight runs (section 7), and a case that was waiting on one then fails for a real reason, not a test defect. Run the suite on a machine that stays awake.
 - **Two engines on one machine disturbed each other until E41 item 1.** Through slice 5, an engine reconciling a journal operation killed every git process on the machine that carried another engine's marker, whatever its home. That made test files fail when several ran at once, and it is the likeliest cause of the unexplained one-off failures recorded in E29 item 2 and E36. It is fixed (section 5) and pinned by a case in `M31-git-child-outlives-engine.test.mjs`. The runner still runs files one at a time.
 - **The one-off failure of E29 item 2 is unresolved.** After the slice-2 merge the suite failed once on `main`, 190 of 191, and then passed six times in a row; the failing run's output had not been kept. The timing audit of the slice-3 Verifier removed a plausible cause without proving it was the one, and the clock did not jump in that window (E38). Its likeliest cause is the cross-engine kill above (E41 item 1): at the time of that run, a test engine that was reconciling an operation could kill a git child of another test's engine, which would be reported as an unknown or a failed git call. None of those runs was kept, so this is a likelihood and not a finding. Since then the runner keeps every run's full report under `test-results/`, so a failure that does not repeat can still be named. The run of section 2 had no failure.
 
 ## 9. Hands-on run
 
-This is the kernel journey of row M01, the same one `packages/engine/test/acceptance/harness/journey.mjs` makes for the two M01 test files, done by hand against a running engine with `curl`. Nothing in it is new: every step is one an earlier row pins by itself, and the fixtures used (the approved baseline and plan, the declared check, the check's execution, the Alpha test target) are the ones the plan says enter M1 as test setup. **The Verifier ran this walkthrough end to end, as the script below, four times on 2026-10-02 against the built engine of the revision in section 2, after the suite had finished; each run ended at the backup with the label `complete`, and the outputs quoted under "what you should see" are from those runs.** (A first attempt stopped at step 3 on a defect in the script's own wait, before the engine had done anything beyond creating the project; the wait was removed.)
+This is the kernel journey of row M01, in both of its paths, the same ones `packages/engine/test/acceptance/harness/journey.mjs` makes for the two M01 test files (`journey()` and `fixLoop()`), done by hand against a running engine with `curl`. Part one, steps 1 to 12, is the path where nothing goes wrong; part two, steps 13 to 21, is the fix loop (E43; section 5), which begins the same way in a fresh engine home and then goes through a finding, the fix the engine creates, and the gates on the fixed candidate. Nothing in it is new: every step is one an earlier row pins by itself, and the fixtures used (the approved baseline and plan, the declared check, the check's execution, the Alpha test target) are the ones the plan says enter M1 as test setup. **The Verifier ran part one end to end four times on 2026-10-02 against the built engine of `9c0dbf6`, the revision of the first version of this report, and then the whole script, both parts, three times the same day against the built engine of the revision in section 2, after the suite had finished; every run ended at its last backup with the label `complete` (two backups in a whole run), and the outputs quoted under "what you should see" are from those runs.** (A first attempt at part one stopped at step 3 on a defect in the script's own wait, before the engine had done anything beyond creating the project; the wait was removed. The first of the three whole runs printed one line differently from the two after it: at step 20 the script asked the authorization for a `candidate` field it does not carry and printed `null`; the line was corrected to match step 10 and the script run twice more.)
 
 The whole walkthrough is in `docs/acceptance/reports/M1-hands-on.sh`, which runs the steps below in order, prints each answer, and stops at the first answer that is not the expected one. The quickest way is to run it whole:
 
@@ -207,7 +214,7 @@ npm run build
 bash docs/acceptance/reports/M1-hands-on.sh
 ```
 
-It needs `node`, `git`, `curl` and `jq`, makes everything under one temporary directory (`/tmp/surety-hands-on-XXXXXX`, printed at its start), stops the engine it started, and removes the directory at the end unless `KEEP=1` is set in the environment, in which case the engine home, the repository and the engine's log stay for inspection. `PORT` chooses the API port (default 7301). The steps are repeated here, with what to expect, so they can also be pasted one at a time; paste the helper block first. The blocks are the script's own commands; only its bounded waits are written as plain `until` loops here, so a step that never reaches its expected state would wait rather than stop.
+It needs `node`, `git`, `curl` and `jq`, makes everything under one temporary directory (`/tmp/surety-hands-on-XXXXXX`, printed at its start), stops each engine it started, and removes the directory at the end unless `KEEP=1` is set in the environment, in which case the two engine homes, the two repositories and the engines' logs stay for inspection. `PORT` chooses the API port (default 7301); part two reuses it once part one's engine has stopped. A whole run took about 17 seconds on the Verifier's machine. The steps are repeated here, with what to expect, so they can also be pasted one at a time; paste the helper block first. The blocks are the script's own commands; only its bounded waits are written as plain `until` loops here, so a step that never reaches its expected state would wait rather than stop.
 
 **0. Helpers.** Paste once. `S` is one request with the API token from the engine home (curl adds the `Host` header itself; a client with no `Origin` or `Sec-Fetch-Site` header is an origin-less client and goes on to the token check, SEAM section 89). `events` reads one replay page of the event stream and prints the JSON of every event, one per line. `tick` asks the scheduler to run once; with `tick_interval` at its maximum the engine ticks only when asked, except for the ticks it requests of its own after the commands a tick commits.
 
@@ -380,9 +387,163 @@ kill -TERM "$ENGINE_PID"; wait "$ENGINE_PID"
 jq '{label, store: .store | {file, bytes}, records: (.records | length), git}' "$(tail -1 "$WORK/backup.out" | jq -r '.backup')/manifest.json"
 ```
 
-You should see `{"backup":"…/home/backups/<time>-bak_…","label":"complete"}` and a manifest with `"label": "complete"`, the store file and its size, the records (six in the Verifier's runs: a transcript and a result for each of the three roles), and the project's two commits, the bootstrap commit and the Builder's. Then `rm -rf "$WORK"` when you are done.
+You should see `{"backup":"…/home/backups/<time>-bak_…","label":"complete"}` and a manifest with `"label": "complete"`, the store file and its size, the records (six in the Verifier's runs: a transcript and a result for each of the three roles), and the project's two commits, the bootstrap commit and the Builder's. That is the end of part one; `rm -rf "$WORK"` now if you want only that, or go on.
 
-**What this walkthrough does not do,** so that it is not read as more than the journey: it raises no finding and runs no fix (the fix loop's engine-created work is the question E40 leaves for the owner); it answers no decision with `cancel` or any other negative option; it uses no out-of-band change, no Stop, no Abandon, no crash and no power cut; and it reads work items and gate reasons from the event stream and the gate's own answer, because the reads that would list them are not built (section 6, item 1).
+### Part two: the fix loop
+
+The second path is the first as far as the chain boundary of step 6, and then differs in what the roles report: the Verifier reports a Critical finding, the Reviewer proposes to fix it instead of signing off, and the engine does the rest. It is made in a fresh engine home so that its reads and its event stream show this path alone; the first engine is already stopped, so the port is reused. A **finding** is a defect a Verifier or Reviewer reports against a candidate, with a severity; a Critical one blocks every gate of the candidate it was raised on and of every later candidate descended from it. A **disposition** is what is to be done about a finding: "fix" is a plan and relaxes nothing; it is recorded at once with the Reviewer's own authority (SEAM section 74), and the engine creates the fix work in the same transaction.
+
+**13. A fresh engine home, and steps 1 to 5 again.** Point the three directories at new places; the helpers of step 0 read `SURETY_HOME`, `API` and `P` when they run, so they need no change. Then paste steps 1 to 5 as they are (the script does exactly that, printing less). Nothing differs yet: a project at tier T2, one stage, one check, the stage built by a scripted Builder and nominated as the first candidate.
+
+```bash
+SURETY_HOME=$WORK/home2; SCRIPTED=$WORK/scripted2; PROJ_REPO=$WORK/repo2
+# ... steps 1 to 5, unchanged (write the engine's log to "$WORK/engine2.log" if you want to keep part one's) ...
+C1=$C; echo "the first candidate: $C1"
+```
+
+You should see what steps 1 to 5 showed: a new incarnation, a new project id, the stage's and the check's ids, `git log` with the fixture commit, the bootstrap commit and `w-1 stage_build: the first stage`, and the first candidate's id (`refs/surety/cand/1` is at the Builder's commit, as in step 5).
+
+**14. The chain boundary again, with the Verifier scripted to report a Critical finding that names the check.** The decision is the same `blocker` as in step 6. Before answering it, give the verification work item a script of its own: its result carries one entry in `findings` with the category, the severity `critical`, a message, and `check: "login"`, the key of the check whose passing on a later candidate can resolve it (SEAM section 68). Then let the verification through as before.
+
+```bash
+until S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null; do tick >/dev/null; done
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash'); VERIFICATION=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$VERIFICATION.json" <<'EOF'
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished",
+                        "findings": [{"category": "security", "severity": "critical", "message": "the login accepts an expired session", "check": "login"}]}}]}]
+EOF
+S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$VERIFICATION\")" >/dev/null 2>&1; do sleep 0.5; done
+events | jq -c 'select(.type == "finding.raised") | {seq, type, subject, payload}'
+FINDING=$(events | jq -r 'select(.type == "finding.raised") | .subject.finding' | head -1); echo "the finding: $FINDING"
+S -X POST "$API/v1/projects/$P/candidates/$C1/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+```
+
+You should see the answer consumed; after the tick, one `finding.raised` event whose subject names the finding (`fnd_…`) and the Verifier's run, with `"severity": "critical"`, `"category": "security"`, `"scope": "candidate"` and the first candidate; and the verification's `work.complete`. The stage gate asked for now is `not_satisfied` with three reasons: `CHECK_NOT_PASSED` naming the check, `FINDING_BLOCKING` naming the finding, and `SIGNOFF_MISSING` naming the candidate; the check is `missing`.
+
+**15. Record the check's execution; the engine queues the review; the Reviewer proposes to fix the finding and signs nothing off.** As in step 8, the check's passing execution enters as a fixture and the engine registers the review by itself, which waits at the chain boundary. The Reviewer's script now reports one entry in `dispositions`, naming the finding by its id with `"disposition": "fix"`, and no `signoffs`. (This is why the Verifier raised the finding and the Reviewer dispositions it: a disposition names a finding by id, which a Reviewer cannot know for a finding in the same report; whether a Reviewer should be able to do both in one report is a question for the owner, recorded in the coverage record.)
+
+```bash
+S -X POST "$API/v1/harness/fixtures/check-result" -d "{\"project\": \"$P\", \"check\": \"$CHK\", \"candidate\": \"$C1\", \"exit_status\": 0}" | jq .
+until S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null; do tick >/dev/null; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, preview_hash}'
+REVIEW=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$REVIEW.json" <<EOF
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished",
+                        "dispositions": [{"finding": "$FINDING", "disposition": "fix"}]}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash')
+S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until events | jq -e 'select(.type == "finding.dispositioned")' >/dev/null 2>&1; do sleep 0.5; done
+events | jq -c 'select(.type == "finding.dispositioned") | {seq, type, subject, payload}'
+events | jq -c 'select(.type == "work.created" and .payload.kind == "fix") | {seq, type, subject, payload}'
+FIX=$(events | jq -r 'select(.type == "work.created" and .payload.kind == "fix") | .subject.work_item' | head -1); echo "the fix work the engine registered: $FIX"
+echo "sign-offs recorded: $(events | jq -c 'select(.type == "signoff.recorded")' | wc -l)"
+```
+
+You should see the check result (`cr_…`, `"execution_seq": 1`); the review's `blocker` decision; the answer consumed; and, after the tick, two events with consecutive sequence numbers: `finding.dispositioned` with `"disposition": "fix"` and `"authority": "reviewer"`, and the `work.created` of a new work item with `"kind": "fix"`, `"finding"` naming the finding, and no `test_fixture` label, because the engine created it in the same transaction. No sign-off was recorded.
+
+**16. The stage gate on the first candidate: blocked by the finding.** The check has passed on this candidate, and that is not enough.
+
+```bash
+S -X POST "$API/v1/projects/$P/candidates/$C1/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+```
+
+You should see `"outcome": "not_satisfied"` with exactly two reasons, `FINDING_BLOCKING` naming the finding and `SIGNOFF_MISSING` naming the candidate, and the check `passed`. This gate is never satisfied on the first candidate.
+
+**17. The fix waits at the chain boundary; script its Builder, let it through; the engine integrates the fix and nominates the fix's candidate.** The fix is chained work, created by the outcome of the Reviewer's run, so at the default chain limit it waits for a person like the review did: a third `blocker` decision, this time about the fix. The fix's Builder is scripted to write one new file, `src/session.js`. Once its run has ended, the engine has committed the fix on the first candidate's revision and integrated it into `main`; and because the integration of a fix that names a finding is a cadence point at tier T2 (section 5; SEAM section 42), the engine nominates the integrated commit as the second candidate, with verification work of its own.
+
+```bash
+until S "$API/v1/projects/$P/decisions" | jq -e ".decisions[] | select(.subject_id == \"$FIX\")" >/dev/null 2>&1; do tick >/dev/null; done
+S "$API/v1/projects/$P/decisions" | jq '.decisions[] | {id, kind, subject_type, subject_id, question, preview_hash}'
+S "$API/v1/projects/$P" | jq '.project.now'
+cat > "$SCRIPTED/scripts/$FIX.json" <<'EOF'
+[{"steps": [{"write": {"path": "src/session.js", "content": "export const expiresSessions = true;\n"}},
+            {"result": {"status": "completed", "summary": "scripted role finished"}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r ".decisions[] | select(.subject_id == \"$FIX\") | .id"); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r ".decisions[] | select(.subject_id == \"$FIX\") | .preview_hash")
+S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until S "$API/v1/projects/$P" | jq -e '.project.execution.runs == []' >/dev/null; do sleep 0.5; done
+FIXRUN=$(events | jq -r "select(.type == \"run.ended\") | select(.subject.work_item == \"$FIX\") | .subject.run" | head -1)
+S "$API/v1/projects/$P/runs/$FIXRUN" | jq '.run | {id, role, state, outcome, reason_class}'
+tick
+until [ "$(events | jq -c 'select(.type == "candidate.nominated")' | wc -l)" -ge 2 ]; do tick >/dev/null; done
+events | jq -c 'select(.type == "candidate.nominated") | {seq, type, subject, payload}'
+C2=$(events | jq -r 'select(.type == "candidate.nominated") | .subject.candidate' | sed -n 2p); echo "the fix's candidate: $C2"
+git -C "$PROJ_REPO" log --oneline main; git -C "$PROJ_REPO" for-each-ref 'refs/surety/cand/'
+events | jq -c "select(.subject.work_item == \"$FIX\") | {seq, type, from: .payload.from, to: .payload.to}"
+```
+
+You should see the decision about the fix, its question "Work item wi_… (fix) was created by the outcome of a run, and the project's max_chained_roles does not let it run without a person. Continue to let the scheduler dispatch it, or cancel it."; NOW `waiting_on_you`; the answer consumed; the fix's run `"role": "builder"`, `"outcome": "completed"`, `"reason_class": "none"`. Then two `candidate.nominated` events, both `"nominated_by": "engine_cadence"`: `"seq": 1` at the stage's commit and `"seq": 2` at the fix's. `git log` shows a fourth commit on `main`, `w-4 fix: scripted role finished` (the fix's work item is the project's fourth, and a fix's commit is titled with the role's summary), and `for-each-ref` shows `refs/surety/cand/1` and `refs/surety/cand/2` at the two commits. The fix's work path so far: `work.created` to `eligible`, `claimed`, `executing`, `integrating`, `work.integrated`, and `work.advanced` from `integrated` to `verifying` at the nomination. It stays there until the finding is resolved.
+
+**18. The fix's candidate is verified: its verification waits at the chain boundary; let it through.** The fourth decision. This Verifier has no script of its own, so it follows `default.json`: it changes nothing and reports nothing. Before the check is executed on this candidate the finding stands and the fix is open work.
+
+```bash
+until S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null; do tick >/dev/null; done
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash'); VERIFICATION2=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$VERIFICATION2\")" >/dev/null 2>&1; do sleep 0.5; done
+echo "the fix's work is at $(events | jq -r "select(.subject.work_item == \"$FIX\") | .payload.to // empty" | tail -1); findings resolved: $(events | jq -c 'select(.type == "finding.resolved")' | wc -l)"
+```
+
+You should see a `blocker` decision whose `subject_id` is a new verification work item, the answer consumed, and after the tick: "the fix's work is at verifying; findings resolved: 0". (No evaluation of this candidate's stage gate exists yet: in the Verifier's runs the engine made one by itself only on the tick after a check's execution was recorded, and nothing has asked for one.)
+
+**19. The check passes on the fix's candidate: the finding is resolved and the fix's work completes; the engine queues the review; the Reviewer signs off.** The check's passing execution on the second candidate enters as a fixture. The engine evaluates the stage gate itself on the tick after it records the execution (as in step 8), and because the finding names this check, is dispositioned "fix", applies to this candidate, and the execution is later than the disposition, that evaluation resolves the finding; the fix's work completes in the same transaction (SEAM section 74). The engine then queues the review, the fifth and last chain-boundary decision; the Reviewer's script signs the candidate off, as in step 8.
+
+```bash
+S -X POST "$API/v1/harness/fixtures/check-result" -d "{\"project\": \"$P\", \"check\": \"$CHK\", \"candidate\": \"$C2\", \"exit_status\": 0}" | jq .
+until S "$API/v1/projects/$P/decisions" | jq -e '.decisions | length > 0' >/dev/null; do tick >/dev/null; done
+events | jq -c 'select(.type == "finding.resolved") | {seq, type, subject, payload}'
+events | jq -c "select(.subject.work_item == \"$FIX\") | {seq, type, from: .payload.from, to: .payload.to}" | tail -1
+REVIEW2=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].subject_id')
+cat > "$SCRIPTED/scripts/$REVIEW2.json" <<'EOF'
+[{"steps": [{"result": {"status": "completed", "summary": "scripted role finished", "signoffs": [{"scope": "candidate"}]}}]}]
+EOF
+D=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].id'); HASH=$(S "$API/v1/projects/$P/decisions" | jq -r '.decisions[0].preview_hash')
+S -X POST "$API/v1/projects/$P/decisions/$D/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$HASH\"}"; echo
+tick
+until events | jq -e 'select(.type == "signoff.recorded")' >/dev/null 2>&1; do sleep 0.5; done
+events | jq -c 'select(.type == "signoff.recorded") | {seq, type, subject, payload}'
+```
+
+You should see the check result (`"execution_seq": 2`); one `finding.resolved` event naming the finding, with the `evaluation` that resolved it and the `check_result` just recorded; the fix's `work.complete` from `verifying` to `complete` with the next sequence number; the review's decision; and, after the tick, a `signoff.recorded` naming the second candidate, `"scope": "candidate"`.
+
+**20. The stage gate on the fix's candidate: satisfied, and the stage's work completes; the Alpha authorization for the fix's candidate.** The stage's work item was held by the first candidate, whose gate was never satisfied; a satisfied stage evaluation of a candidate that holds the work by ancestry completes it (SEAM section 74), and the fix's candidate descends from the first. The authorization is proposed and evaluated for the second candidate, as step 10 did for the first; nothing is deployed.
+
+```bash
+S -X POST "$API/v1/projects/$P/candidates/$C2/gates/stage" -d "{\"stage\": \"$STAGE\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+until events | jq -e "select(.type == \"work.complete\" and .subject.work_item == \"$BUILD\")" >/dev/null 2>&1; do tick >/dev/null; done
+events | jq -c "select(.subject.work_item == \"$BUILD\") | {seq, type, from: .payload.from, to: .payload.to}"
+ENV=$(S -X POST "$API/v1/harness/fixtures/environment" -d "{\"project\": \"$P\", \"name\": \"alpha\", \"target_set\": [\"alpha-1\"]}" | jq -r '.environment.id')
+AUTH=$(S -X POST "$API/v1/projects/$P/candidates/$C2/authorizations" -d "{\"environment\": \"$ENV\", \"artifact_digest\": \"sha256:$(printf 'a%.0s' $(seq 1 64))\", \"config_identity\": \"config-1\", \"target_set\": [\"alpha-1\"]}")
+echo "$AUTH" | jq '.authorization | {id, status, generation}'; DAUTH=$(echo "$AUTH" | jq -r '.authorization.id')
+S -X POST "$API/v1/projects/$P/candidates/$C2/gates/alpha_authorize" -d "{\"authorization\": \"$DAUTH\"}" | jq '.evaluation | {outcome, reasons, check_states, stale}'
+events | jq -c 'select(.type == "authorization.issued") | {seq, type, subject, payload}'
+```
+
+You should see the stage gate `"outcome": "satisfied"`, `"reasons": []`, the check `passed`; the stage's work path ending in `work.complete` from `verifying` to `complete`, long after its other events; the proposal `"status": "proposed"`, `"generation": 1`; the `alpha_authorize` gate `satisfied`; and one `authorization.issued` naming the second candidate.
+
+**21. What the API shows at the end of the fix loop; stop the engine and take a backup.**
+
+```bash
+S "$API/v1/projects/$P/candidates/$C1" | jq '.candidate | {id, seq, successor, gates: (.gates | map_values({outcome, stale}))}'
+S "$API/v1/projects/$P/candidates/$C2" | jq '.candidate | {id, seq, progress, successor, gates: (.gates | map_values({outcome, stale}))}'
+S "$API/v1/projects/$P" | jq '.project | {now, execution, open_decisions, spend_today: {invocations: .spend_today.invocations, no_dispatch: .spend_today.no_dispatch, usage_incomplete: .spend_today.usage_incomplete}}'
+S "$API/v1/projects/$P/decisions" | jq '.decisions'
+events | jq -c 'select(.type | test("^(project|run\\.(created|ended)|candidate|decision\\.(raised|consumed)|work\\.(created|complete)|gate\\.evaluated|finding|signoff|authorization)")) | [.seq, .type, (.subject | to_entries | map(.value) | join(" "))]'
+git -C "$PROJ_REPO" log --oneline main; git -C "$PROJ_REPO" status --short
+kill -TERM "$ENGINE_PID"; wait "$ENGINE_PID"
+( cd "$SURETY_HOME" && env -i SURETY_HOME="$SURETY_HOME" PATH="$PATH" HOME="$SURETY_HOME" LANG=C.UTF-8 TZ=UTC node "$CLI" store backup ) | tee "$WORK/backup2.out"
+jq '{label, store: .store | {file, bytes}, records: (.records | length), git}' "$(tail -1 "$WORK/backup2.out" | jq -r '.backup')/manifest.json"
+```
+
+You should see the first candidate with `"seq": 1`, its `successor` the second candidate, and one gate, `stage`, `not_satisfied`; the second with `"seq": 2`, `"progress": "developing"`, `"successor": null`, and both gates `satisfied` and not stale. The project is `idle` with no run, no open decision, `"invocations": 6` (Builder, Verifier, Reviewer, twice over) and `"usage_incomplete": 6`. The decisions read is `[]`. The event listing tells the loop in order: the project, the stage's build and the first nomination, the first verification's decision and run with its `finding.raised`, the `gate.evaluated` of step 14, then the review's `work.created` beside the engine's own `gate.evaluated` on the tick after the check's execution, the review's decision and run with `finding.dispositioned` followed at once by the fix's `work.created`, the `gate.evaluated` of step 16, the fix's decision and run, the second `candidate.nominated`, the second verification's decision and run, then `finding.resolved`, the fix's `work.complete` and the second review's `work.created` with consecutive sequence numbers and the engine's `gate.evaluated` that made them right after, the second review's decision, run and `signoff.recorded`, the stage's `work.complete` with the `gate.evaluated` of step 20, and `authorization.issued`; there is no `candidate.advanced`. The five `gate.evaluated` events of the stage kind are the three the script asked for and the two the engine made itself, one per check execution. `git log` shows four commits and `git status` nothing. The backup is `complete`, with twelve records (a transcript and a result for each of the six roles) and the project's three commits: the bootstrap commit, the stage's and the fix's. Then `rm -rf "$WORK"` when you are done.
+
+**What this walkthrough does not do,** so that it is not read as more than the journey's two paths: it answers no decision with `cancel` or any other negative option; its one finding is Critical, marked "fix" by a Reviewer and resolved by a passing check, so it shows no "defer", no "accept", no severity change, no High finding and no finding that names no check; it uses no out-of-band change, no Stop, no Abandon, no crash and no power cut; and it reads work items, findings and gate reasons from the event stream and the gate's own answer, because the reads that would list them are not built (section 6, item 1).
 
 ## 10. How to read the suite
 
