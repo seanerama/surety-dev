@@ -588,7 +588,7 @@ A Reviewer probed the slice-2 engine (`build/slice-2`, 642320f), on which every 
 
 ## 23. Amendments after the second slice-2 review
 
-A second Reviewer probed the slice-2 engine after its first fix round (`build/slice-2`, 906c563), on which all 183 slice-2 tests passed, and confirmed four more defects by running it. The owner's decisions on that review are E27. Each defect and each decision that needed a test became one (2026-10-02). Each new or changed test was run against that engine and fails there for the reason given, except the two marked "guard", which that engine already passes; the tests that passed before still pass.
+A second Reviewer probed the slice-2 engine after its first fix round (`build/slice-2`, 906c563), on which all 183 slice-2 tests passed, and confirmed four more defects by running it. The owner's decisions on that review are E27. Each defect and each decision that needed a test became one (2026-10-02). Each new or changed test was run against that engine. Nine fail there, each for the reason given in its row; three pass there, as they should: the two marked "guard", and the case changed only for the host's clock (below). Of the 183 tests that passed before, 181 still pass; the other two are the lease-expiry cases that E27 item 3 changed, counted among the nine.
 
 | Finding or decision | Now stated in | Test |
 |---|---|---|
