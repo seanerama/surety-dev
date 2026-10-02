@@ -13,10 +13,49 @@ import { beforeEventWrite } from '../../testing/seam.js';
 export type EventType =
   | 'engine.started'
   | 'engine.mode_changed'
+  | 'engine.tick'
+  | 'engine.quarantine'
   | 'api.act'
   | 'project.created'
   | 'project.paused'
-  | 'project.resumed';
+  | 'project.resumed'
+  | 'work.created'
+  | 'work.claimed'
+  | 'work.advanced'
+  | 'work.integrated'
+  | 'work.complete'
+  | 'work.held'
+  | 'work.resumed'
+  | 'work.parked'
+  | 'work.cancelled'
+  | 'run.created'
+  | 'run.claimed'
+  | 'run.started'
+  | 'run.heartbeat'
+  | 'run.validating'
+  | 'run.finalizing'
+  | 'run.ended'
+  | 'run.quarantined'
+  | 'domain.terminated'
+  | 'domain.quarantined'
+  | 'decision.raised'
+  | 'decision.answered'
+  | 'decision.consumed'
+  | 'decision.invalidated'
+  | 'operation.intended'
+  | 'operation.succeeded'
+  | 'operation.failed'
+  | 'operation.ambiguous'
+  | 'operation.finalized'
+  | 'git.journal_intended'
+  | 'git.journal_applied'
+  | 'git.journal_confirmed'
+  | 'git.journal_ambiguous'
+  | 'git.journal_finalized'
+  | 'invocation.receipt'
+  | 'invocation.status'
+  | 'invocation.usage'
+  | 'ledger.row';
 
 export type ActorKind = 'engine' | 'human' | 'run';
 
@@ -43,6 +82,10 @@ export class Tx {
     readonly db: Database,
     readonly actor: Actor,
   ) {}
+
+  newId(prefix: string): string {
+    return newId(prefix);
+  }
 
   // Append one event in this transaction. seq is store-wide and strictly
   // increasing: the store has one writer connection and the transaction is

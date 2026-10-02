@@ -29,18 +29,21 @@ if (command !== 'serve') {
 // migrations directory reaches the engine as an ordinary parameter.
 let harness = false;
 let migrationsDir: string | null = null;
+let scriptedDir: string | null = null;
 const barrierValues: string[] = [];
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
     harness = true;
-  } else if (flag === '--harness-migrations' || flag === '--harness-barrier') {
+  } else if (flag === '--harness-migrations' || flag === '--harness-barrier' || flag === '--harness-scripted') {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
     harnessOnly.push(flag);
     if (flag === '--harness-migrations') {
       migrationsDir = isAbsolute(value) ? value : resolve(value);
+    } else if (flag === '--harness-scripted') {
+      scriptedDir = isAbsolute(value) ? value : resolve(value);
     } else {
       barrierValues.push(value);
     }
@@ -49,7 +52,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
-const harnessProblem = configureHarness(harness, barrierValues);
+const harnessProblem = configureHarness(harness, barrierValues, scriptedDir);
 if (harnessProblem !== null) usage(harnessProblem);
 
 const home = process.env.SURETY_HOME;
@@ -60,4 +63,18 @@ try {
   usage('SURETY_HOME does not exist');
 }
 
-await serve({ home, migrationsDir });
+try {
+  await serve({ home, migrationsDir });
+} catch (err) {
+  // serve() handles every failure from the listener on; anything that reaches
+  // here stopped the start before it, and is reported as the one refusal line.
+  process.stderr.write(
+    `${JSON.stringify({
+      code: 'home_unusable',
+      reason: `The engine could not start: ${(err as Error)?.message ?? String(err)}.`,
+      what_to_do: 'Check that the engine home is a writable directory and start again.',
+      subject: { path: '.' },
+    })}\n`,
+  );
+  process.exit(6);
+}

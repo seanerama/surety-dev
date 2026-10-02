@@ -6,7 +6,7 @@
 // complete first start. The refusal is decided before the lock is taken.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
 import { Refusal } from './refusal.js';
@@ -20,12 +20,37 @@ function tokenFileRefused(why: string, whatToDo: string): Refusal {
 const REPLACE =
   'If the token may have been exposed, or the file is damaged, remove api.token so the next start creates a new one, and give clients the new token.';
 
+// A token is well formed when it has at least TOKEN_MIN_LENGTH characters and
+// every one is a visible ASCII character (0x21 to 0x7E): it travels in a
+// header (D1 §11.1, SEAM.md §6). A token this engine creates is hex, so it is
+// well formed by this rule.
+const WELL_FORMED = /^[\x21-\x7e]+$/;
+
+function malformedWhy(token: string): string | null {
+  if (token.length === 0) return 'it is empty';
+  if (!WELL_FORMED.test(token)) return 'it holds a character that is not visible ASCII (whitespace, a control character, or a non-ASCII character)';
+  if (token.length < TOKEN_MIN_LENGTH) return `it holds ${token.length} characters, fewer than ${TOKEN_MIN_LENGTH}`;
+  return null;
+}
+
 // The token held by an existing api.token, or null if there is none. Reads
 // only. Anything that makes the file untrustworthy, or unreadable, refuses.
+// The kind of file is judged before it is opened, and it is opened without
+// blocking: opening a named pipe for reading would wait for a writer.
 export function readToken(file: string): string | null {
+  let kind;
+  try {
+    kind = lstatSync(file);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    throw tokenFileRefused(`it could not be examined (${(err as Error).message})`, 'Make api.token readable by the engine user only, or remove it.');
+  }
+  if (kind.isSymbolicLink()) throw tokenFileRefused('it is a symbolic link', 'Replace it with a regular file of mode 0600, or remove it.');
+  if (!kind.isFile()) throw tokenFileRefused('it is not a regular file', 'Remove it so the next start creates api.token.');
   let fd: number;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return null;
@@ -48,12 +73,8 @@ export function readToken(file: string): string | null {
       throw tokenFileRefused(`it could not be read (${(err as Error).message})`, REPLACE);
     }
     const token = text.trimEnd();
-    if (token.length < TOKEN_MIN_LENGTH) {
-      throw tokenFileRefused(
-        token.length === 0 ? 'it is empty' : `it holds ${token.length} characters, fewer than ${TOKEN_MIN_LENGTH}`,
-        `The engine does not replace a token on its own. ${REPLACE}`,
-      );
-    }
+    const why = malformedWhy(token);
+    if (why !== null) throw tokenFileRefused(why, `The engine does not replace a token on its own. ${REPLACE}`);
     return token;
   } finally {
     closeSync(fd);

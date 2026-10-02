@@ -51,3 +51,15 @@ export function storeError(err: unknown): Refusal {
     'Nothing was changed. Retry the request; if it fails again, inspect the engine log and the store.',
   );
 }
+
+// A start that cannot use its engine home (SEAM.md §1, E23 item 11). `path`
+// is relative to the engine home; "." is the home itself.
+export function homeUnusable(path: string, detail: string): Refusal {
+  return new Refusal(
+    500,
+    'home_unusable',
+    `The engine home cannot be used: ${path === '.' ? 'the home itself' : path} (${detail}).`,
+    'Make the engine home a writable directory owned by the engine user, remove anything of the wrong kind at the named path, and start again.',
+    { path },
+  );
+}

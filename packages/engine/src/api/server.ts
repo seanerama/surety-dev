@@ -10,7 +10,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { seamDescribe, seamRoute } from '../testing/seam.js';
+import { seamBackends, seamDescribe, seamRoute } from '../testing/seam.js';
 import { checkTarget, checkToken, readJsonBody } from './boundary.js';
 
 interface Reply {
@@ -59,6 +59,25 @@ const decodeSegment = (segment: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const isObject = (b: unknown): b is Record<string, unknown> => typeof b === 'object' && b !== null && !Array.isArray(b);
+
+// A body that is absent or an object of only these fields.
+const onlyFields = (b: unknown, fields: string[]): Record<string, unknown> => {
+  if (b === undefined) return {};
+  if (!isObject(b)) throw new Refusal(400, 'invalid_value', 'The request body must be a JSON object.', 'Send a JSON object.', { field: null });
+  for (const key of Object.keys(b)) {
+    if (!fields.includes(key)) throw new Refusal(400, 'unknown_field', `"${key}" is not a field of this command.`, `Send only ${fields.join(', ') || 'an empty object'}.`, { field: key });
+  }
+  return b;
+};
+
+const optionalString = (b: Record<string, unknown>, field: string): string | undefined => {
+  const v = b[field];
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string') throw new Refusal(400, 'invalid_value', `"${field}" must be a string.`, `Send "${field}" as a string.`, { field });
+  return v;
 };
 
 const noFields = (b: unknown) => {
@@ -113,6 +132,54 @@ export function createApiServer(state: EngineState): http.Server {
         }
         if (post) return { kind: 'command', name: 'project.policy_submit', args: (b) => ({ project, body: b }) };
       }
+      if (rest.length === 1 && rest[0] === 'tick' && post) {
+        return {
+          kind: 'command',
+          name: 'project.tick',
+          args: (b) => {
+            noFields(b);
+            return { project };
+          },
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'runs' && (rest[2] === 'stop' || rest[2] === 'abandon') && post) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return {
+          kind: 'command',
+          name: rest[2] === 'stop' ? 'run.stop' : 'run.abandon',
+          args: (b) => ({ project, run, preview_hash: optionalString(onlyFields(b, ['preview_hash']), 'preview_hash') }),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'runs' && get) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'run.representation', args: { project, run } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'work' && rest[2] === 'resume' && post) {
+        const workItem = decodeSegment(rest[1]!);
+        if (workItem === null) return null;
+        return {
+          kind: 'command',
+          name: 'work.resume',
+          args: (b) => {
+            noFields(b);
+            return { project, work_item: workItem };
+          },
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'decisions' && rest[2] === 'answer' && post) {
+        const decision = decodeSegment(rest[1]!);
+        if (decision === null) return null;
+        return {
+          kind: 'command',
+          name: 'decision.answer',
+          args: (b) => {
+            const body = onlyFields(b, ['option', 'preview_hash', 'note']);
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note };
+          },
+        };
+      }
       if (rest.length === 1 && (rest[0] === 'pause' || rest[0] === 'resume') && post) {
         return {
           kind: 'command',
@@ -152,7 +219,11 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  async function handle(req: IncomingMessage, res: ServerResponse, expectsContinue: boolean): Promise<void> {
+  // expect: 'none' (no expectation), 'continue' (exactly `100-continue`), or
+  // 'refuse' (any other expectation, which the engine answers itself after
+  // the Host and token checks, SEAM.md §6).
+  async function handle(req: IncomingMessage, res: ServerResponse, expect: 'none' | 'continue' | 'refuse'): Promise<void> {
+    const expectsContinue = expect === 'continue';
     const requestId = newId('req_');
     const method = req.method ?? 'GET';
     const send = (reply: Reply) => {
@@ -198,6 +269,14 @@ export function createApiServer(state: EngineState): http.Server {
     } catch (err) {
       return refuseAudited(err);
     }
+    if (expect === 'refuse') {
+      const value = String(req.headers.expect ?? '');
+      return refuseAudited(
+        new Refusal(417, 'expect_refused', `The expectation "${value}" is not one this engine meets.`, 'Send the request without an Expect header, or with Expect: 100-continue.', {
+          expect: value,
+        }),
+      );
+    }
 
     const segments = target.path.split('/').slice(1);
     const r: Request = { method, path: target.path, req, res, actor, awaitingContinue: expectsContinue };
@@ -224,7 +303,9 @@ export function createApiServer(state: EngineState): http.Server {
           return refuseAudited(err);
         }
         try {
-          send(await store().call<Reply>('mutate', { name: route.name, args, actor, method, path: target.path }));
+          const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
+          send({ status: result.status, body: result.body });
+          if (result.effects && result.effects.length > 0) state.runtime?.afterCommit(result.effects);
         } catch (err) {
           refuse(err);
         }
@@ -239,8 +320,12 @@ export function createApiServer(state: EngineState): http.Server {
     }
   }
 
-  const serve = (expectsContinue: boolean) => (req: IncomingMessage, res: ServerResponse) => {
-    handle(req, res, expectsContinue).catch((err) => {
+  const serve = (mode: 'none' | 'continue' | 'expect') => (req: IncomingMessage, res: ServerResponse) => {
+    // Node routes an Expect header that merely contains `100-continue` here
+    // too; only the exact expectation earns a `100 Continue`.
+    const expect =
+      mode === 'none' ? 'none' : mode === 'continue' && String(req.headers.expect ?? '').trim().toLowerCase() === '100-continue' ? 'continue' : 'refuse';
+    handle(req, res, expect).catch((err) => {
       try {
         const refusal = err instanceof Refusal ? err : storeError(err);
         if (!res.headersSent) {
@@ -252,10 +337,11 @@ export function createApiServer(state: EngineState): http.Server {
       }
     });
   };
-  const server = http.createServer(serve(false));
-  // Without this listener Node answers `Expect: 100-continue` itself, before
-  // the Host check has run.
-  server.on('checkContinue', serve(true));
+  const server = http.createServer(serve('none'));
+  // Without these listeners Node answers an `Expect` header itself (`100
+  // Continue`, or 417 for anything else), before the Host check has run.
+  server.on('checkContinue', serve('continue'));
+  server.on('checkExpectation', serve('expect'));
   server.on('clientError', (_err, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     else socket.destroy();
@@ -268,8 +354,9 @@ function engineInfo(state: EngineState) {
     version: ENGINE_VERSION,
     incarnation: state.lock.incarnation_id,
     mode: state.mode,
-    // No backend is qualified in M1; the scripted adapter arrives in slice 2.
-    backends: [],
+    // The backends a dispatch may use: in M1 only the scripted backend, and
+    // only where the test seam provides it.
+    backends: seamBackends().map((b) => b.id),
     config: inspectEngineConfig(state.config),
     startup: { step: state.step, completed: [...state.completed], failed: state.failed },
   });

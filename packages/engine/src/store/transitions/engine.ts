@@ -16,3 +16,10 @@ export function liftToFull(tx: Tx, incarnation: string): void {
 export function schedulerStarted(tx: Tx, incarnation: string): void {
   tx.emit('engine.started', { incarnation }, {});
 }
+
+// The heartbeat that ends every tick (D1 §8.1 step 10), written after
+// everything else the tick wrote.
+export function recordTick(tx: Tx, args: { incarnation: string; dispatched: number }): { seq: number } {
+  const ref = tx.emit('engine.tick', { incarnation: args.incarnation }, { dispatched: args.dispatched });
+  return { seq: ref.seq };
+}
