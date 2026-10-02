@@ -9,6 +9,7 @@ import { intendCommit } from './accept.js';
 import type { IntentResult, IntentSpec } from './journal.js';
 import { type PolicyCommit, intendPolicyCommit, policyFacts } from './project.js';
 import { completeIntent } from './protected.js';
+import { markStale } from './evidence.js';
 import { type Facts, revalidateIntent } from './queue.js';
 import { nextCounter, projectRepoRow } from './repo.js';
 import type { Tx } from './tx.js';
@@ -127,5 +128,6 @@ export function stashed(tx: Tx, args: { intent: string }): void {
   const plan = JSON.parse(intent.plan) as { observation: string; checkout: string };
   tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'stash' WHERE "id" = ? AND "disposition" IS NULL`).run(plan.observation);
   tx.emit('repo.reconciled', { project: intent.project, out_of_band_change: plan.observation }, { disposition: 'stash', checkout: plan.checkout });
+  markStale(tx, { project: intent.project });
   completeIntent(tx, args.intent);
 }

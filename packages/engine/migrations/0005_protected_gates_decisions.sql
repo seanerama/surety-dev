@@ -362,3 +362,7 @@ CREATE TABLE notification_intents (
 -- Engine-owned columns on earlier tables: a run's report (findings,
 -- sign-offs, ...) is recorded once.
 ALTER TABLE runs ADD COLUMN report_recorded INTEGER NOT NULL DEFAULT 0 CHECK (report_recorded IN (0, 1));
+-- Engine-owned: the acceptance content of the run's subject candidate,
+-- fixed when the run is claimed. What a Reviewer signs off is what it was
+-- given to review (E41 item 4).
+ALTER TABLE runs ADD COLUMN content_hash TEXT;

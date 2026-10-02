@@ -6,6 +6,7 @@
 import { notFound } from './common.js';
 import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
 import { oobOptions } from './queue.js';
+import { markStale } from './evidence.js';
 import type { Tx } from './tx.js';
 
 export type RefKind = 'integration' | 'lineage' | 'nomination' | 'recovery' | 'oob' | 'keep';
@@ -189,6 +190,8 @@ export function recordObservation(tx: Tx, project: string, o: Observation): OobR
     )
     .run(id, tx.at, project, o.subject, o.ref ?? null, o.checkout ?? null, o.expected, o.found, tx.at, decision.id);
   tx.emit('repo.out_of_band', { project, out_of_band_change: id }, { subject_kind: o.subject, expected: o.expected, found: o.found, decision: decision.id });
+  // An observation is an input of every evaluation of the project (D1 §9.5).
+  markStale(tx, { project });
   return tx.db.prepare('SELECT * FROM "out_of_band_changes" WHERE "id" = ?').get(id) as OobRow;
 }
 
@@ -201,6 +204,7 @@ export function closeRepositoryObservation(tx: Tx, project: string): boolean {
   const d = tx.db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(row.decision) as DecisionRow;
   invalidateDecision(tx, d, 'the repository can be read again');
   tx.emit('repo.reconciled', { project, out_of_band_change: row.id }, { subject_kind: 'repository', closed: 'readable' });
+  markStale(tx, { project });
   return true;
 }
 

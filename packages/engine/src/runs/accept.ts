@@ -109,7 +109,12 @@ export class Acceptor {
         // A Verifier's or a Reviewer's run whose termination cannot be
         // established is quarantined with the outcome its role earned, and
         // is not snapshotted (SEAM.md §68).
-        if (REPORTING_KINDS.includes(facts.work.kind)) return { outcome: 'completed', reason: 'none' };
+        // Its report is recorded like any other, before the run can end and
+        // complete the work (E41 item 3).
+        if (REPORTING_KINDS.includes(facts.work.kind)) {
+          await this.recordReport(facts);
+          return { outcome: 'completed', reason: 'none' };
+        }
         return failed('infra_error', "the termination of the run's domain could not be established, so what the role left cannot be known; nothing of it was captured");
       }
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
@@ -236,19 +241,12 @@ export class Acceptor {
     const ws = facts.workspace!;
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
     if (outside) return failed(outside.klass, outside.text);
-    // What the report's records and content hashes need, made durable first.
-    await ensureAncestry(this.rt, facts.project.id);
-    const report = facts.result?.report ?? {};
-    const evidence: (string | null)[] = [];
-    if (facts.run.role === 'verifier') {
-      for (const a of report.applicability ?? []) {
-        evidence.push(await writeWholeRecord(this.rt, { project: facts.project.id, run, kind: 'assessment_evidence', content: Buffer.from(a.evidence) }).catch(() => null));
-      }
-    }
     if (diff.changes.length === 0) {
-      await this.rt.engine('accept.record_report', { run, evidence });
+      await this.recordReport(facts);
       return { outcome: 'completed', reason: 'none' };
     }
+    const report = facts.result?.report ?? {};
+    const evidence = await this.evidenceOf(facts);
     // Only a Verifier reaches here with changes, and only protected ones.
     const proposal = report.proposal;
     const rationale = await writeWholeRecord(this.rt, {
@@ -276,6 +274,23 @@ export class Acceptor {
       evidence,
     });
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  // The records an applicability proposal's evidence is published as.
+  private async evidenceOf(facts: AcceptFacts): Promise<(string | null)[]> {
+    // What the report's content hashes need, made durable first.
+    await ensureAncestry(this.rt, facts.project.id);
+    const evidence: (string | null)[] = [];
+    if (facts.run.role !== 'verifier') return evidence;
+    for (const a of facts.result?.report?.applicability ?? []) {
+      evidence.push(await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'assessment_evidence', content: Buffer.from(a.evidence) }).catch(() => null));
+    }
+    return evidence;
+  }
+
+  // What a Verifier's or a Reviewer's role reported, recorded with its run.
+  private async recordReport(facts: AcceptFacts): Promise<void> {
+    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts) });
   }
 
   // Drive every operation the run issued that has not settled, a few times

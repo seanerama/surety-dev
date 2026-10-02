@@ -895,3 +895,27 @@ The one review of slice 5 found five defects and reproduced each by running the 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E42. Slice-6 review: what is fixed before the merge and what is carried (provisional, 2026-10-02)
+
+**Status: provisional.** The driver's defaults under Sean's delegation. Sean confirms or overturns them.
+
+The one review of slice 6 found three serious defects and reproduced each by running the engine. All three are fixed before slice 6 merges.
+
+1. **A quarantined transcript is not served by the output tail either.** After a detector marked a run's transcript as holding a secret, the record read refused it and the run's tail still returned every byte. A quarantined record is served by no route.
+2. **The engine does not read a repository's object files itself; it asks git, within a deadline.** To let a backup finish while one project's git was held (an expectation of the row M71 test, not of the acceptance plan), the slice-6 build added its own reader of git's object store. The review showed two serious defects in it on first inspection: a corrupt commit was reported present, so a backup that could not be restored was labelled complete; and a link in the repository's pack directory could exhaust the engine's memory or hang the backup for ever. A second implementation of git inside the engine, parsing files a role can write, is machinery the scope freeze of E40 argues against. It is removed. The running engine's backup checks each listed commit with engine git, without blocking the event loop and within the git deadline. **A commit git cannot confirm in time is not confirmed, and the backup is not labelled complete** (E37 item 4; unknown is a value). The row M71 case is changed to match: with one project's git held, the backup ends within a bound, does not claim to be complete, and the latency bound holds throughout.
+3. **A backup started in a running engine always ends.** Whatever a repository's files are (a pipe, a device, a link), the backup ends within a bound with a truthful label, the engine's memory stays bounded and health keeps answering. With item 2 this follows from the git deadline; it is pinned by its own case.
+
+**Carried, not serious:** the status line shows "waiting on you" for a project whose repository cannot be read, with a decision nobody can answer, where D1 section 12.3 says "refused" (already on the not-claimed list); an observation dated in the future reads as fresh; a record file replaced by a pipe can block the post-write scan or a backup copy; VM shared-folder filesystem kinds (`virtiofs`, `vboxsf`) are not on the refused list of E39 item 4.
+
+**Design questions for Sean, not applied:**
+
+- **Any local process can obtain the operator token from the bootstrap route.** The route trusts request headers that a browser cannot forge and any other program can. That defeats the token file's permissions for another user of the same machine, and for a role once roles are isolated (D1 section 17 item 12). The build matches D1 section 11.1 and the resolution note's R6, which defend against web pages, not local programs. To settle with the isolation design, before the UI ships or a real backend runs. The M1 report states it.
+- **Refused requests are audited without limit.** A web page that sends unauthenticated requests makes the store grow by about 1.6 KB per request, at several hundred requests a second. The seam requires the audit; whether to rate-limit or coalesce it is open.
+- **`surety contract check --file` verifies a contract's tables against the engine and only the names of its transitions, decisions, events and settings.** A document that contradicts the engine's lifecycle can pass. The command reports those parts as not checked; the committed contract is still compared with the engine's export.
+
+**Checked and found sound by the review:** the stream redactor after the Builder's change (4,500 fuzzed secrets, none leaked); the order of the boundary checks and the defensive headers; reads scoped by project and safe against links and pipes; the event reader; the unsafe-filesystem refusal running before anything is written; the committed contract and appendix equal to what the engine generates.
+
+**Consequences elsewhere.** No change to D1.
+
+---

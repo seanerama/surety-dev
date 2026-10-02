@@ -356,6 +356,7 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
     recordRevision(tx, { project: row.project, sha: row.found, parent: null, kind: 'out_of_band', run: null });
     tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'adopt' WHERE "id" = ?`).run(row.id);
     if (reg.kind === 'integration') invalidateLineageEvidence(tx, row.project);
+    else markStale(tx, { project: row.project });
     tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'adopt', ref: reg.ref, adopted: row.found });
     return consumed(d, [{ kind: 'tick' }]);
   }
