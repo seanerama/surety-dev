@@ -581,3 +581,26 @@ Also accepted without a decision being needed: answering a blocker is tested in 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E27. Second slice-2 review: decisions and a question for Sean (provisional, 2026-10-02)
+
+**Status: provisional**, on the same footing as E23 to E26. The second review of slice 2 confirmed two more serious defects by running the engine (a run whose end failed once is never ended while its role keeps sending heartbeats; engine git runs a program the repository names as its file-system monitor). Both go back to the Verifier and Builder. The decisions below came with them.
+
+1. **A final line without a line ending is still a line.** If a role's last output has no trailing newline when the engine stops reading, it is processed like any other line, whether or not another process holds the stream open.
+2. **The engine renews a run's lease while it is preparing that run,** not only once the role is running. Preparing a workspace may legitimately take longer than the lease lasts.
+3. **A run ended because its lease expired is treated as recovered,** like a run found after a crash (E7, Section 3.9.4): outcome `recovered`, its work held for an explicit Resume, and no repair attempt charged. This replaces E26 item 2. Charging a repair attempt would let a few machine suspensions park healthy work.
+4. **Engine git disables the file-system monitor setting too.** The rule that engine git runs no repository code already covered it in words; the first fix covered only hooks.
+5. **Once the engine has decided to end a run, nothing renews that run's lease,** including the role's own heartbeats, and the engine retries the end itself. The lease expiring is the backstop, not the mechanism.
+
+**Question for Sean, to settle before any real backend runs.** The review measured what E26 item 1 costs: with the engine paused for 34 seconds against a 30-second lease, all three in-flight runs were ended on resume, including one whose role had written a valid result and exited cleanly during the pause. That result was refused. On a machine that sleeps, this will happen routinely, and with a real backend the refused result is paid work. Two linked choices:
+
+- Should a run that the engine is still supervising, with a live process, survive its lease expiring (the engine re-grants the lease after checking the process is alive)? D1 §8.1 can be read this way. Recommended yes, before M2.
+- After a crash or a pause, should held work resume by itself instead of waiting for an explicit Resume (E24 item 3)? Recommended yes for a pause, where nothing was lost; open for a crash.
+
+Neither changes M1's scripted runs, so the build continues on the stricter rule.
+
+**Carried to slice 3, recorded in `COVERAGE.md`:** a workspace path that is itself a symbolic link should be refused, since resolving links lets a failed worktree creation adopt another run's worktree; a transient store failure while recording a role's result drops the result with no retry.
+
+**Consequences elsewhere.** No change to D1.
+
+---
