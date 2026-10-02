@@ -87,18 +87,20 @@ async function withLock<T>(home: string, work: () => Promise<T>): Promise<T> {
 
 // The published, unexpired records a store refers to, and per project the
 // commits it refers to.
-function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[] } {
+function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
   const records = db
     .prepare('SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at", "id"')
     .all() as { id: string; path: string; sha256: string; bytes: number }[];
-  const projects = (db.prepare('SELECT "id" FROM "projects" ORDER BY "created_at", "id"').all() as { id: string }[]).map((p) => p.id);
+  const rows = db.prepare('SELECT "id", "dev_repo_path" FROM "projects" ORDER BY "created_at", "id"').all() as { id: string; dev_repo_path: string }[];
+  const projects = rows.map((p) => p.id);
+  const repos = new Map(rows.map((p) => [p.id, p.dev_repo_path]));
   const git = projects.map((project) => {
     const objects = new Set<string>();
     for (const r of db.prepare('SELECT "sha" FROM "revisions" WHERE "project" = ? ORDER BY "id"').all(project) as { sha: string }[]) objects.add(r.sha);
     for (const r of db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? ORDER BY "id"').all(project) as { expected_oid: string }[]) objects.add(r.expected_oid);
     return { project, objects: [...objects] };
   });
-  return { records, git, projects };
+  return { records, git, projects, repos };
 }
 
 export async function backupStore(home: string, opts: { databaseOnly: boolean }): Promise<{ backup: string; label: Manifest['label'] }> {
@@ -116,7 +118,7 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
         source.close();
       }
       syncFile(join(dir, 'store.db'));
-      const label: Manifest['label'] = opts.databaseOnly ? 'incomplete_for_recovery' : 'complete';
+      let label: Manifest['label'] = opts.databaseOnly ? 'incomplete_for_recovery' : 'complete';
       const manifest: Manifest = { label, store: { file: 'store.db', ...fileDigest(join(dir, 'store.db')) }, records: [], git: [] };
       if (!opts.databaseOnly) {
         const snapshot = new Database(join(dir, 'store.db'), { readonly: true, fileMustExist: true });
@@ -142,6 +144,13 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
         }
         syncDirectory(join(dir, 'records'));
         manifest.git = closure.git;
+        // The commits are not copied, so the backup is complete only if every
+        // commit it lists is in its project's repository now (E37 item 4). A
+        // commit that is gone, or a repository that cannot be read, makes it
+        // a backup that cannot be restored: labeled as one, as a copy of the
+        // database alone is (SEAM.md §59).
+        if (!(await commitsPresent(home, closure))) label = 'incomplete_for_recovery';
+        manifest.label = label;
       }
       writeFileDurable(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
       syncDirectory(dirname(dir));
@@ -151,6 +160,20 @@ export async function backupStore(home: string, opts: { databaseOnly: boolean })
       throw err;
     }
   });
+}
+
+// Is every commit the closure lists in the repository its project is bound to?
+async function commitsPresent(home: string, closure: { git: Manifest['git']; repos: Map<string, string> }): Promise<boolean> {
+  configureGit({ deadlineSeconds: 60, outputCap: 8 << 20, home, incarnation: 'backup' });
+  for (const entry of closure.git) {
+    const repo = closure.repos.get(entry.project);
+    if (repo === undefined) return false;
+    for (const oid of entry.objects) {
+      const found = await git(repoContext(repo), ['cat-file', '-e', `${oid}^{commit}`]);
+      if (found.code !== 0) return false;
+    }
+  }
+  return true;
 }
 
 function readManifest(dir: string): Manifest {
@@ -184,7 +207,12 @@ export async function restoreStore(home: string, opts: { from: string; bind: Map
     const dir = resolve(opts.from);
     const manifest = readManifest(dir);
     if (manifest.label === 'incomplete_for_recovery') {
-      throw refused('incomplete_for_recovery', 'The backup is a copy of the database alone, labeled incomplete for recovery: it holds no records and lists no repository objects.', 'Restore from a complete backup.', { label: manifest.label });
+      throw refused(
+        'incomplete_for_recovery',
+        'The backup is labeled incomplete for recovery: it is a copy of the database alone, or a commit it lists was not in its repository when it was taken.',
+        'Restore from a complete backup.',
+        { label: manifest.label },
+      );
     }
     if (manifest.label !== 'complete') throw incomplete(`its label is ${String(manifest.label)}`);
     const storeFile = verifyMember(dir, manifest.store);
