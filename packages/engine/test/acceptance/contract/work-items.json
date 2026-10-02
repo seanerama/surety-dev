@@ -9,7 +9,7 @@
     "review": { "m1": true, "role": "reviewer", "path": ["eligible", "claimed", "executing", "complete"] },
     "check_correction": { "m1": true, "role": "verifier", "path": ["eligible", "claimed", "executing", "complete"] },
     "replan": { "m1": true, "role": "architect", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
-    "assessment": { "m1": true, "role": null, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
+    "assessment": { "m1": true, "role": "architect", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
     "phase_verification": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
     "adoption_baseline": { "m1": false, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] },
     "conformance": { "m1": false, "path": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete"] },

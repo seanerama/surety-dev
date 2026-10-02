@@ -19,10 +19,13 @@ function encode(value, length) {
   return out;
 }
 
-// Monotonic within one millisecond, so ids made in a loop still sort in order.
+// Monotonic within one process: ids made in a loop sort in order, within one
+// millisecond and across a host clock that steps back (the time part never
+// goes below the last one used).
 export function ulid(now = Date.now()) {
   let random;
-  if (now === lastTime && lastRandom !== null) {
+  if (now <= lastTime && lastRandom !== null) {
+    now = lastTime;
     random = lastRandom + 1n;
   } else {
     random = BigInt(`0x${randomBytes(10).toString('hex')}`);

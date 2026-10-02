@@ -24,7 +24,9 @@ export const SLICE2_CONFIG = Object.freeze({ tick_interval: 600, terminate_grace
 // engine on the same home: after a kill, without --harness, or with barriers.
 // With `homeSymlink`, $SURETY_HOME is a symbolic link to the directory that
 // holds the engine's files; `fx.home` is the link, as the engine is given it.
-export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false } = {}) {
+// `env` and `cwd` give every engine of the fixture further environment
+// variables and another working directory (row M23 only; SEAM.md §31).
+export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false, env, cwd } = {}) {
   const root = makeTempDir('s2');
   const home = join(root, 'home');
   if (homeSymlink) {
@@ -34,15 +36,19 @@ export async function scriptedEngine(t, { config = {}, barriers = [], until = 'f
   const scripted = new Scripted(join(root, 'scripted'));
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, ...SLICE2_CONFIG, ...config });
-  const fx = { root, home, port, scripted, engine: null, engines: [], repos: 0 };
+  // `beforeCleanup` holds what a test must undo while its fixture still
+  // exists: restoring access to a repository it made unreadable, letting go
+  // of git calls it held.
+  const fx = { root, home, port, scripted, engine: null, engines: [], repos: 0, beforeCleanup: [] };
   t.after(async () => {
+    for (const undo of fx.beforeCleanup.reverse()) await undo();
     for (const e of fx.engines) await e.kill();
     scripted.killStrays();
     removeDir(root);
   });
   fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [] } = {}) => {
     const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b]), ...more];
-    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs });
+    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs, env, cwd });
     fx.engines.push(engine);
     fx.engine = engine;
     return engine;
@@ -122,10 +128,20 @@ const lastTickSeq = (home) => withStore(home, (db) => db.prepare(`SELECT COALESC
 // Run the scheduler and return once a tick that started after this call has
 // finished. Two request-and-wait rounds: the first engine.tick seen may
 // belong to a tick that was already under way; the second cannot.
+//
+// Each round sends one request, whatever the number of projects. The tick is
+// engine-wide (SEAM.md §15): one request runs every step for every project,
+// and the project in the route only has to exist. A request per project
+// asked for as many ticks as there were projects, the round returned at the
+// first one's end, and the others were still pending or under way when this
+// returned: a tick nobody waited for could then dispatch work that the test
+// had not finished setting up (SEAM.md §24, "Timing"). With one request per
+// round, and no tick under way when this is called, none is when it returns.
 export async function tick(engine, projects, { rounds = 2, timeoutMs } = {}) {
+  const [project] = [projects].flat();
   for (let i = 0; i < rounds; i++) {
     const before = lastTickSeq(engine.home);
-    for (const project of [projects].flat()) await requestTick(engine, project);
+    await requestTick(engine, project);
     await waitFor(() => lastTickSeq(engine.home) > before, { timeoutMs, what: 'a tick to finish (an engine.tick event)' });
   }
 }
@@ -195,17 +211,34 @@ export async function answerDecision(engine, project, decision, option) {
 
 export const advanceClock = async (engine, seconds) => expectStatus(await engine.post('/v1/harness/clock/advance', { seconds }), 200, 'clock advance');
 
+// The slack a comparison between an engine timestamp and the controlled
+// clock allows for a host clock that steps back (SEAM.md §23).
+export const CLOCK_SLACK_MS = 2000;
+
 // Move the clock forward by `seconds` in steps shorter than the lease TTL the
 // test configured, leaving real time between steps for the roles' heartbeats
 // to renew their leases. So nothing expires merely because the clock moved,
 // and what the test observes is the deadline it is about.
-export async function advanceClockInSteps(engine, seconds, { stepSeconds, pauseMs = 1200 } = {}) {
+//
+// The pause alone assumed that a renewal lands inside it. Before another
+// step is taken, this now also waits, for a bounded time, until every run
+// lease that is live (unreleased and not closing) has been renewed since the
+// step just taken: an engine that was slow for a moment gets its renewal in
+// before the clock moves again. A renewal that never comes is not waited for
+// beyond the bound, and the test's own assertions then say what is wrong.
+export async function advanceClockInSteps(engine, seconds, { stepSeconds, pauseMs = 1200, renewalWaitMs = 5000 } = {}) {
   let left = seconds;
   while (left > 0) {
     const stepNow = Math.min(left, stepSeconds);
-    await advanceClock(engine, stepNow);
+    const { now } = (await advanceClock(engine, stepNow)).body;
     left -= stepNow;
     await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    if (left <= 0) break;
+    const renewed = () =>
+      withStore(engine.home, (db) => db.prepare(`SELECT "renewed_at" FROM "leases" WHERE "resource_kind" = 'run' AND "released_at" IS NULL AND "closing" = 0`).all()).every(
+        (lease) => Date.parse(lease.renewed_at) >= Date.parse(now) - CLOCK_SLACK_MS,
+      );
+    await waitFor(renewed, { timeoutMs: renewalWaitMs, what: 'every live run lease to be renewed after a step of the clock' }).catch(() => {});
   }
 }
 

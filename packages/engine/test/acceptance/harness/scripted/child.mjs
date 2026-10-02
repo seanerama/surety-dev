@@ -24,15 +24,35 @@
 // A script: {"steps": [step, ...], "on_term": "exit" | "ignore" | {"steps": [...], "then": "exit" | "ignore"}}
 // Steps:    {"usage": {"semantics": "cumulative" | "delta", "raw": {...}}}
 //           {"heartbeat": true}
-//           {"write": {"path": "<relative to the workspace>", "content": "<text>"}}
+//           {"write": {"path": "<relative to the workspace, or absolute>", "content": "<text>"}}
+//           {"write": {"path": "...", "fill": <n>}}        n bytes of filler instead of content
+//           {"write_many": {"dir": "<path>", "count": <n>, "bytes": <m>}}   n files of m bytes each in a directory
+//           {"delete": "<path>"}                            a file or a whole directory
+//           {"rename": {"from": "<path>", "to": "<path>"}}
+//           {"symlink": {"path": "<path>", "target": "<target, written as given>"}}
+//           {"git": ["<argument>", ...]}                    git, run in the workspace
 //           {"sleep_ms": <n>}
 //           {"hold": "<name>", "heartbeat_ms": <n, default 1000; 0 = silent>}
 //           {"result": <any JSON value>}
 //           {"stdout": "<raw text written as is>"}
+//           {"stdout_fill": {"bytes": <n>}}                 n bytes of filler, no line ending
 //           {"close_stdout": true}
 //           {"exit": <code>}
-//           {"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore"}}
+//           {"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore", "chatter_ms": <n, default 0>}}
 // After the last step the program exits 0.
+//
+// The program exits, after its last step or at an {"exit": ...} step, only
+// once everything it wrote to stdout has left the process. However much it
+// wrote and however slowly it is read, nothing it wrote is dropped by its
+// own exit. (If the reader is gone, the write fails and the program leaves.)
+//
+// File steps ({"write"}, {"delete"}, {"rename"}, {"symlink"}) take paths
+// relative to the workspace, the program's working directory, or absolute
+// ones: a role runs as the engine's user and can reach outside its
+// workspace, which is what the validation tests script. {"git": [...]} runs
+// the git binary in the workspace with those arguments and a small
+// environment of its own, as a role with a shell could; its exit status and
+// output are logged as a `git` entry and never stop the script.
 //
 // {"stdout": ...} writes its text and nothing else: no line ending is added,
 // so a script can end the role's output with a line that has none.
@@ -47,16 +67,18 @@
 // this program again, as `child.mjs descendant <on_term>`. It stays in the
 // role's process group and inherits its environment, so it carries the
 // role's domain marker, and it outlives the role. It follows no script and
-// writes nothing to stdout, but unless holds_stdout is false it keeps the
-// role's stdout open, so whoever reads that pipe sees no end of file while
-// it lives. SIGTERM ends it, or is ignored, as on_term says. The role goes
+// writes nothing to stdout (unless chatter_ms is given: then it writes a
+// line that is no protocol line, "descendant chatter", that often), but
+// unless holds_stdout is false it keeps the role's stdout open, so whoever
+// reads that pipe sees no end of file while it lives. SIGTERM ends it, or is
+// ignored, as on_term says. The role goes
 // on to its next step once the descendant has installed its signal handling,
 // and logs a `descendant` entry with the descendant's pid, start time and
 // process group.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -102,6 +124,17 @@ if (process.argv[2] === 'descendant') {
     if (onTerm === 'exit') process.exit(143);
   });
   log('descendant_ready', { on_term: onTerm });
+  const chatterMs = Number(process.argv[4] ?? 0);
+  if (chatterMs > 0) {
+    process.stdout.on('error', () => {});
+    setInterval(() => {
+      try {
+        process.stdout.write('descendant chatter\n');
+      } catch {
+        // the reader is gone
+      }
+    }, chatterMs);
+  }
   setInterval(() => {}, 1 << 30);
   await new Promise(() => {});
 }
@@ -193,11 +226,12 @@ function chooseScript(workItem, index) {
 }
 
 // Exit once what was written to stdout has left the process. Never resolves.
+// There is no time limit: a reader that is slow gets everything, and a
+// reader that is gone fails the write, which ends the wait.
 function finish(code) {
   log('exit', { code });
   const leave = () => process.exit(code);
   if (stdoutClosed) leave();
-  setTimeout(leave, 500);
   try {
     process.stdout.write('', leave);
   } catch {
@@ -226,7 +260,8 @@ function loggedReady(pid) {
 // Start a descendant (see the head of this file) and wait until it is ready.
 async function startDescendant(spec) {
   const stdout = spec.holds_stdout === false ? 'ignore' : 'inherit';
-  const descendant = spawn(process.execPath, [fileURLToPath(import.meta.url), 'descendant', spec.on_term ?? 'exit'], { stdio: ['ignore', stdout, 'ignore'] });
+  const args = [fileURLToPath(import.meta.url), 'descendant', spec.on_term ?? 'exit', String(spec.chatter_ms ?? 0)];
+  const descendant = spawn(process.execPath, args, { stdio: ['ignore', stdout, 'ignore'] });
   descendant.on('error', (err) => log('descendant_error', { message: err.message }));
   descendant.unref();
   if (descendant.pid === undefined) return void log('descendant_error', { message: 'the descendant could not be started' });
@@ -241,29 +276,54 @@ async function startDescendant(spec) {
   });
 }
 
+// A path a file step names: relative to the workspace, or absolute.
+const at = (path) => (isAbsolute(path) ? path : resolve(process.cwd(), path));
+
 async function runSteps(steps, ctx) {
   for (const step of steps ?? []) {
     if (step.usage !== undefined) emit({ type: 'usage', semantics: step.usage.semantics ?? 'cumulative', raw: step.usage.raw ?? {} });
     else if (step.heartbeat !== undefined) emit({ type: 'heartbeat' });
     else if (step.write !== undefined) {
-      const target = isAbsolute(step.write.path) ? step.write.path : resolve(process.cwd(), step.write.path);
+      const target = at(step.write.path);
       mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, step.write.content ?? '');
+      writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : (step.write.content ?? ''));
+    } else if (step.write_many !== undefined) {
+      const target = at(step.write_many.dir);
+      mkdirSync(target, { recursive: true });
+      const content = Buffer.alloc(step.write_many.bytes ?? 1, 'x');
+      for (let i = 0; i < step.write_many.count; i++) writeFileSync(join(target, `file-${String(i).padStart(6, '0')}.txt`), content);
+    } else if (step.delete !== undefined) rmSync(at(step.delete), { recursive: true, force: true });
+    else if (step.rename !== undefined) {
+      mkdirSync(dirname(at(step.rename.to)), { recursive: true });
+      renameSync(at(step.rename.from), at(step.rename.to));
+    } else if (step.symlink !== undefined) {
+      mkdirSync(dirname(at(step.symlink.path)), { recursive: true });
+      symlinkSync(step.symlink.target, at(step.symlink.path));
+    } else if (step.git !== undefined) {
+      const done = spawnSync('git', step.git, { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
+      log('git', { args: step.git, status: done.status, stdout: (done.stdout ?? '').slice(0, 2000), stderr: (done.stderr ?? '').slice(0, 2000) });
     } else if (step.sleep_ms !== undefined) await sleep(step.sleep_ms);
     else if (step.hold !== undefined) {
       log('holding', { hold: step.hold });
       const every = step.heartbeat_ms ?? 1000;
-      let last = Date.now();
+      // Timed on the monotonic clock: by the wall clock, a host whose clock
+      // steps back (SEAM.md §§23, 39) made a held role skip its heartbeats for
+      // as long as the step, and a second and more went by without one.
+      let last = performance.now();
       while (!released(step.hold, ctx.keys)) {
         await sleep(25);
-        if (every > 0 && Date.now() - last >= every) {
+        if (every > 0 && performance.now() - last >= every) {
           emit({ type: 'heartbeat' });
-          last = Date.now();
+          last = performance.now();
         }
       }
       log('released', { hold: step.hold });
     } else if (step.result !== undefined) emit({ type: 'result', result: step.result });
     else if (step.stdout !== undefined) writeOut(step.stdout);
+    else if (step.stdout_fill !== undefined) {
+      const chunk = 'x'.repeat(1 << 20);
+      for (let left = step.stdout_fill.bytes; left > 0; left -= chunk.length) writeOut(left >= chunk.length ? chunk : chunk.slice(0, left));
+    }
     else if (step.close_stdout !== undefined) await closeStdout();
     else if (step.descendant !== undefined) await startDescendant(step.descendant);
     else if (step.exit !== undefined) await finish(step.exit);

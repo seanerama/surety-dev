@@ -25,6 +25,7 @@ import { armFault, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
 import { assertOneRunAtATime, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
+  CLOCK_SLACK_MS as RUNS_CLOCK_SLACK_MS,
   addProject,
   addWork,
   advanceClock,
@@ -60,7 +61,7 @@ const ms = (iso) => Date.parse(iso);
 // after it answered a clock advance can therefore be slightly earlier than
 // the `now` of that answer. Where a test asks "was this done after the
 // clock moved", it allows that much; the clock moves by many seconds.
-const CLOCK_SLACK_MS = 2000;
+const CLOCK_SLACK_MS = RUNS_CLOCK_SLACK_MS;
 const runLease = (home, runId) => leasesOf(home, runId).find((l) => l.resource_kind === 'run' && l.released_at === null);
 const describeLease = (l) => (l ? `renewed_at ${l.renewed_at}, expires_at ${l.expires_at}, closing ${l.closing}` : 'no unreleased run lease');
 
@@ -144,6 +145,10 @@ describe('M15 a failed store transaction in the run-end path does not strand the
       const [launch] = await fx.scripted.waitForLaunch({ run: first.id });
       await waitFor(() => !fx.scripted.isLive(launch), { what: 'the role to exit' });
       assert.ok(fx.scripted.eventsOf(launch.pid, 'exit').some((e) => e.code === 0), 'the role sent its result and exited 0');
+      // The case's premise is that the result was accepted on a live lease.
+      // The role's exit can be seen here before the engine has recorded the
+      // result it sent; the clock is moved only once that record exists.
+      await waitFor(() => withStore(fx.home, (db) => eventsAbout(db, 'run', first.id, 'run.validating').length) === 1, { what: 'the role\'s result to be accepted' });
 
       await endsWithinBoundedTicks(fx, project, first.id);
       // Ended as every run ends: one run.ended, one ledger row, lease released, grant revoked, a legal path.

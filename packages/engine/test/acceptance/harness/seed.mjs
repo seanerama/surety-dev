@@ -222,3 +222,18 @@ export function seedEvent(db) {
     tx: newId('tx_'),
   });
 }
+
+// One attempt of an operation (D1 A.3 operation_attempts), written directly:
+// the store must refuse a second one with the same number (D1 §6.2; row M34).
+export function seedAttempt(db, project, operation, attemptNumber = 1, status = 'started') {
+  return insert(db, 'operation_attempts', {
+    id: newId('att_'),
+    created_at: isoNow(),
+    project,
+    operation,
+    attempt_number: attemptNumber,
+    status,
+    started_at: isoNow(),
+    timeline: '[]',
+  });
+}

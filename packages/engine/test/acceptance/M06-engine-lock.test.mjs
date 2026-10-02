@@ -34,8 +34,11 @@ const STARTUP_STEPS = ['lock', 'listen', 'store', 'recovery', 'integrity', 'full
 
 const lockPath = (home) => join(home, 'engine.lock');
 const readLock = (home) => JSON.parse(readFileSync(lockPath(home), 'utf8'));
+// In the order they were recorded. Not by id: an id is time-ordered within
+// one process, and two engine processes take their time from a host clock
+// that can step back between them.
 const incarnations = (home) =>
-  withStore(home, (db) => db.prepare('SELECT "id", "pid", "started_at", "host_boot_id" FROM "engine_incarnations" ORDER BY "id"').all());
+  withStore(home, (db) => db.prepare('SELECT "id", "pid", "started_at", "host_boot_id" FROM "engine_incarnations" ORDER BY rowid').all());
 
 async function freshHome(t) {
   const home = makeTempDir('m06');
@@ -141,7 +144,6 @@ describe('M06 one engine incarnation per home', () => {
     const info = await waitForFullStartup(second);
     assert.notEqual(info.incarnation, firstInc);
     assert.ok(hasIdForm(info.incarnation, 'inc_'));
-    assert.ok(info.incarnation > firstInc, 'incarnation ids are time-ordered');
     assert.equal(readLock(home).incarnation_id, info.incarnation);
     assert.equal(readLock(home).pid, second.pid);
     assert.deepEqual(

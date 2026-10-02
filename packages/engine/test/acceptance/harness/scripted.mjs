@@ -24,12 +24,26 @@ export const step = {
   usage: (raw, semantics = 'cumulative') => ({ usage: { semantics, raw } }),
   heartbeat: () => ({ heartbeat: true }),
   write: (path, content) => ({ write: { path, content } }),
+  // A file of `bytes` bytes of filler.
+  writeFill: (path, bytes) => ({ write: { path, fill: bytes } }),
+  // `count` files of `bytes` bytes each in the directory `dir`.
+  writeMany: (dir, count, bytes = 1) => ({ write_many: { dir, count, bytes } }),
+  // Remove a file or a whole directory.
+  delete: (path) => ({ delete: path }),
+  rename: (from, to) => ({ rename: { from, to } }),
+  // A symbolic link at `path` whose target is written as given.
+  symlink: (path, target) => ({ symlink: { path, target } }),
+  // git, run by the role in its workspace with these arguments (the engine
+  // performs git; a role with a shell can still run it).
+  git: (...args) => ({ git: args }),
   sleep: (ms) => ({ sleep_ms: ms }),
   hold: (name = 'gate', opts = {}) => ({ hold: name, ...opts }),
   result: (value = VALID_RESULT) => ({ result: value }),
   exit: (code) => ({ exit: code }),
   // Raw text on the role's stdout, exactly as given: no line ending is added.
   stdout: (text) => ({ stdout: text }),
+  // `bytes` bytes of filler on the role's stdout, with no line ending.
+  stdoutFill: (bytes) => ({ stdout_fill: { bytes } }),
   // Close the role's stdout for good; the role goes on with its next steps.
   closeStdout: () => ({ close_stdout: true }),
   // One more process that carries the role's domain marker and outlives the
@@ -110,10 +124,14 @@ export class Scripted {
     this.#writeJson(join(this.dir, 'boundary.json'), this.instructions);
   }
 
-  // Everything the role program logged, in order.
+  // Everything the role program logged, in order. A last line that has no
+  // line ending yet is an entry a process is still writing: it is left for
+  // the next read.
   log() {
     if (!existsSync(this.logFile)) return [];
-    return readFileSync(this.logFile, 'utf8')
+    const text = readFileSync(this.logFile, 'utf8');
+    return text
+      .slice(0, text.lastIndexOf('\n') + 1)
       .split('\n')
       .filter((line) => line !== '')
       .map((line) => JSON.parse(line));

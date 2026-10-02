@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   ENGINE_MIGRATIONS,
@@ -22,6 +21,7 @@ import {
   sha256Hex,
   startEngine,
   waitFor,
+  within,
   writeEngineConfig,
 } from './harness/engine.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
@@ -139,7 +139,7 @@ describe('M05 migrations and restricted startup', () => {
     writeFileSync(join(migrations, UPGRADE.name), UPGRADE.sql);
 
     const dying = await start({ args: ['--harness-barrier', 'migration.before_commit=kill'], until: 'none' });
-    const status = await Promise.race([dying.exited, sleep(30_000).then(() => null)]);
+    const status = await within(dying.exited, 30_000);
     assert.ok(status, 'the engine reached the barrier and killed itself within 30 s');
     assert.equal(status.signal, 'SIGKILL', `engine killed itself at the barrier: ${JSON.stringify(status)}`);
     assert.deepEqual(applied(home), before, 'no history row for the interrupted migration');

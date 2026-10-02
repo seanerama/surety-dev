@@ -2,7 +2,7 @@
 // binary against a fresh $SURETY_HOME, talk to it over real loopback HTTP, and
 // stop or kill it with real signals.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -40,7 +40,15 @@ export function makeTempDir(label) {
 
 export function removeDir(dir) {
   if (process.env.SURETY_KEEP_TMP === '1') return;
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    // A test that made part of its fixture unreadable and failed before it
+    // restored access: give the owner its access back and remove again.
+    if (err.code !== 'EACCES' && err.code !== 'EPERM') throw err;
+    spawnSync('chmod', ['-R', 'u+rwx', dir]);
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export async function freePort() {
@@ -61,6 +69,18 @@ export function writeEngineConfig(home, config) {
 // The child gets a constructed environment, never the test runner's.
 export function engineEnv(home) {
   return { SURETY_HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', TZ: 'UTC' };
+}
+
+// The promise's value, or null if it has not settled after `ms`. The timer is
+// cancelled as soon as the promise settles, so a wait that was decided early
+// does not keep the test process alive until the timer would have fired.
+export async function within(promise, ms) {
+  const timer = new AbortController();
+  try {
+    return await Promise.race([promise, sleep(ms, null, { signal: timer.signal }).catch(() => null)]);
+  } finally {
+    timer.abort();
+  }
 }
 
 export async function waitFor(probe, { timeoutMs = DEFAULT_WAIT_MS, intervalMs = 50, what = 'condition' } = {}) {
@@ -235,16 +255,21 @@ export function isRefusalBody(body) {
 }
 
 // `cli` is overridable only so the harness self-check can drive a stand-in.
-export function spawnEngine({ home, harness = true, args = [], cli = CLI }) {
+// `env` adds variables to the constructed environment and `cwd` replaces the
+// working directory: only row M23 uses them, to start an engine in a hostile
+// ambient environment (SEAM.md §31).
+export function spawnEngine({ home, harness = true, args = [], cli = CLI, env = {}, cwd = home }) {
   const argv = [cli, 'serve', ...(harness ? ['--harness'] : []), ...args];
-  const child = spawn(process.execPath, argv, { env: engineEnv(home), cwd: home, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, argv, { env: { ...engineEnv(home), ...env }, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = { stdout: '', stderr: '' };
   child.stdout.on('data', (c) => (out.stdout += c));
   child.stderr.on('data', (c) => (out.stderr += c));
   const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+  // Its output streams have ended too: everything it wrote has been captured.
+  const closed = new Promise((resolve) => child.once('close', resolve));
   let status = null;
   exited.then((s) => (status = s));
-  return { child, out, exited, exitStatus: () => status };
+  return { child, out, exited, closed, exitStatus: () => status };
 }
 
 export class Engine {
@@ -342,7 +367,7 @@ export class Engine {
   async stop({ graceMs = 15_000 } = {}) {
     if (!this.isRunning()) return this.proc.exitStatus();
     this.proc.child.kill('SIGTERM');
-    const done = await Promise.race([this.exited, sleep(graceMs).then(() => null)]);
+    const done = await within(this.exited, graceMs);
     if (done) return done;
     this.proc.child.kill('SIGKILL');
     return this.exited;
@@ -357,8 +382,8 @@ export class Engine {
 
 // Start an engine and wait for `until`: 'full' (default), 'listening',
 // 'failed', 'barrier:<name>', or 'none'.
-export async function startEngine({ home, port, harness = true, args = [], authority, until = 'full', timeoutMs, cli } = {}) {
-  const proc = spawnEngine({ home, harness, args, cli });
+export async function startEngine({ home, port, harness = true, args = [], authority, until = 'full', timeoutMs, cli, env, cwd } = {}) {
+  const proc = spawnEngine({ home, harness, args, cli, env, cwd });
   const engine = new Engine({ home, port, authority, proc });
   if (until !== 'none') await engine.waitUntil(until, { timeoutMs });
   return engine;
@@ -368,7 +393,9 @@ export async function startEngine({ home, port, harness = true, args = [], autho
 // status, output and parsed refusal.
 export async function startRefused({ home, harness = true, args = [], timeoutMs = 20_000, cli }) {
   const proc = spawnEngine({ home, harness, args, cli });
-  const status = await Promise.race([proc.exited, sleep(timeoutMs).then(() => null)]);
+  const status = await within(proc.exited, timeoutMs);
+  // What it wrote before it exited is read to the end before it is parsed.
+  if (status !== null) await within(proc.closed, 2000);
   if (status === null) {
     proc.child.kill('SIGKILL');
     await proc.exited;
