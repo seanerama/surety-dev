@@ -18,14 +18,41 @@
 // sign-off. The cases above make their Reviewer's work with the trigger
 // fixture and never let the candidate's verification run, so no review is
 // queued in them.
+//
+// The group before it is the slice-5 review's finding (E41 item 4): a
+// sign-off binds the acceptance content its Reviewer's run was started on.
+// The engine the review ran bound it to the content in force when the report
+// was recorded, so a check added while the review was under way was covered
+// by a sign-off that never saw it.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume, decisionsOn, openDecision } from './harness/decisions.mjs';
-import { acceptedRun, alphaException, alphaTarget, check, installChecks, nominated, passAll, postResult, raiseFindings, reasonCodes, reasonSubjects, review, scopeOf, signoffsOf, stageGate } from './harness/gates.mjs';
+import { waitFor } from './harness/engine.mjs';
+import {
+  PROTECTED_FILES,
+  acceptedRun,
+  alphaException,
+  alphaTarget,
+  check,
+  classify,
+  effectiveVersion,
+  installChecks,
+  nominated,
+  passAll,
+  postResult,
+  raiseFindings,
+  reasonCodes,
+  reasonSubjects,
+  review,
+  scopeOf,
+  signoffsOf,
+  stageGate,
+} from './harness/gates.mjs';
+import { addGitProject, roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { eventsOfType, workItemsOf } from './harness/journal.mjs';
-import { runsOf, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
+import { addWork, runsOf, scriptedEngine, tick, tickUntil, waitForRunState, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 
 // One check of each kind F §5.7 names, with the tier from which it is required.
@@ -112,6 +139,64 @@ describe('M43 severity at Alpha', () => {
     assert.deepEqual([...reasonSubjects(evaluation, 'FINDING_UNSATISFIED')].sort(), [contained.id, medium.id].sort(), 'not blocking, and still in need of a disposition: the High one whose exception is recorded, and the Medium one');
     assert.deepEqual(reasonSubjects(evaluation, 'CHECK_NOT_PASSED'), [k.import], 'the exception waives no check: the failed one is still not passed');
     assert.equal(evaluation.check_states[k.import], 'failed');
+  });
+});
+
+// ---- what a sign-off binds (E41 item 4) --------------------------------------------------
+
+// Ask `probe` until it answers, with one tick between two asks. For use
+// while a role of the project is held: nothing here waits for the project's
+// runs to end.
+const askingForTicks = (fx, project, probe, what) =>
+  waitFor(
+    async () => {
+      const value = await probe();
+      if (value !== undefined && value !== null && value !== false) return value;
+      await tick(fx.engine, project, { rounds: 1 });
+      return undefined;
+    },
+    { intervalMs: 200, timeoutMs: 60_000, what },
+  );
+
+describe('M43 a sign-off binds the content its run was started on', () => {
+  test("a Reviewer whose run was started under one protected version, and who signs off after a tightening that adds a check has been applied, has not signed off the new content: the stage gate still lacks the sign-off", async (t) => {
+    const fx = await scriptedEngine(t);
+    const repo = await addGitProject(fx, { tier: 'T2', files: PROTECTED_FILES });
+    const ctx = await nominated(fx, { tier: 'T2', project: repo });
+    const project = repo.id;
+    const c = ctx.candidate;
+    const first = effectiveVersion(fx.home, project);
+    await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })]);
+    const reviewed = scopeOf(fx.home, await stageGate(fx, ctx)).acceptance_content_hash;
+
+    // The Reviewer's run is started on that content, and is held before it reports.
+    const item = await addWork(fx.engine, project, 'review', { subject: { candidate: c.id } });
+    fx.scripted.script(item, [roleThatHolds([], [], { signoffs: [{ scope: 'candidate' }] })]);
+    const { run } = await runToHold(fx, project, item);
+
+    // Meanwhile the owner tightens the protected checks: a governed edit, classified, approved and applied.
+    const edit = await fx.engine.post(`/v1/projects/${project}/policy`, { check_commands: { login: ['node', '.surety/checks/login.mjs'], audit: ['node', '.surety/checks/audit.mjs'] } });
+    assert.equal(edit.status, 202, `a governed edit becomes a proposal (body: ${edit.text})`);
+    const proposal = edit.body.proposal.id;
+    await classify(fx.engine, proposal, 'tightening');
+    const decision = await askingForTicks(fx, project, () => decisionsOn(fx.home, 'check_correction_tightening', proposal).find((row) => row.status === 'open'), 'the tightening to be offered for approval');
+    await consume(fx, project, decision, 'approve');
+    await askingForTicks(fx, project, () => effectiveVersion(fx.home, project).id !== first.id, 'the approved tightening to be applied');
+    // The new version's checks (what D3 would discover in it): the one there was, and a new one. Both pass.
+    const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('audit', { requirements: ['R1'] })])).id;
+    await passAll(fx.engine, project, c.id, Object.values(k));
+    const changed = await stageGate(fx, ctx);
+    assert.notEqual(scopeOf(fx.home, changed).acceptance_content_hash, reviewed, 'the fixture is live: the acceptance content changed while the review was under way');
+    assert.deepEqual(reasonCodes(changed), ['SIGNOFF_MISSING'], "the fixture is live: the Reviewer's sign-off is all the gate lacks under the new content");
+
+    // The Reviewer, whose run was started on the earlier content, now signs off.
+    fx.scripted.release(item);
+    await waitForRunState(fx.home, run.id, 'ended');
+    for (const row of signoffsOf(fx.home, c.id)) {
+      assert.equal(row.acceptance_content_hash, reviewed, 'a sign-off is bound to the content its run was started on, not to the content in force when its report was recorded');
+    }
+    assert.deepEqual(reasonCodes(await stageGate(fx, ctx)), ['SIGNOFF_MISSING'], 'a sign-off given on the earlier content does not count toward the new content');
+    assert.equal(workItem(fx.home, ctx.items[0]).status, 'verifying', "and the stage's work is not complete");
   });
 });
 

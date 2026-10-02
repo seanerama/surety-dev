@@ -11,17 +11,22 @@
 // protected route; a roots change is judged by the roots that are
 // authorized, not by the ones it proposes; and a protected set nobody
 // authorized blocks the gates of a candidate that holds it.
+//
+// The last case is the slice-5 review's finding (E41 item 2): a protected
+// set that could not be read is not an authorized one. The engine the review
+// ran skipped the question when the repository did not answer, and the stage
+// gate of a candidate whose head held an unauthorized set was satisfied.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
 import { decisionsOfKind } from './harness/decisions.mjs';
-import { GOVERNED_FILE, check, effectiveVersion, installChecks, nominated, passAll, proposalsOf, protectedFingerprint, protectedVersions, reasonCodes, stageGate } from './harness/gates.mjs';
+import { GOVERNED_FILE, alphaTarget, authorizationsOf, check, effectiveVersion, installChecks, nominated, passAll, proposalsOf, protectedFingerprint, protectedVersions, reasonCodes, stageGate } from './harness/gates.mjs';
 import { addGitProject, addItem, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { acceptanceState, assertNothingAccepted, changePolicy, eventsOfType, getPolicy, outOfBand } from './harness/journal.mjs';
-import { changedPaths, commitOnRef, fileAt, refOid } from './harness/repos.mjs';
-import { answerDecision, scriptedEngine, tick } from './harness/runs.mjs';
+import { changedPaths, commitOnRef, fileAt, holdGit, refOid } from './harness/repos.mjs';
+import { answerDecision, scriptedEngine, tick, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
 const GOVERNED = { protected_paths: ['.surety/checks/'], check_commands: { login: ['node', '.surety/checks/login.mjs'] }, required_checks: ['login'] };
@@ -124,5 +129,38 @@ describe('M35 the governed policy file is separate from the ordinary one', () =>
     assert.deepEqual(identity(effectiveVersion(fx.home, project.id)), identity(authorized), 'adopting the commit authorized nothing: the effective version is the one that was authorized');
     assert.notEqual(protectedFingerprint(project.repo.path, stray), authorized.fingerprint, 'the fixture is live: the adopted commit holds another protected set');
     assert.ok(eventsOfType(fx.home, 'protected.unauthorized_detected').length >= 1, 'the unauthorized set was reported');
+  });
+
+  test('a protected set that cannot be read is not an authorized one: with the repository not answering, the stage gate and the Alpha authorization of a candidate whose head holds an unauthorized set are not satisfied, nothing completes and nothing is issued', async (t) => {
+    const fx = await scriptedEngine(t, { config: { git_deadline: 2 } });
+    const project = await addGitProject(fx, { tier: 'T1', files: protectedFiles() });
+    const authorized = effectiveVersion(fx.home, project.id);
+    // As in the case above: a developer's edit of a check, adopted, and a candidate built on it whose one required check passes.
+    const stray = commitOnRef(project.repo.path, project.repo.ref, { '.surety/checks/login.check.json': '{"expect": "anything"}\n' }, { message: 'developer: an edit nobody approved' });
+    await tick(fx.engine, project.id);
+    const [observed] = outOfBand(fx.home, project.id);
+    assert.ok(observed, 'the fixture is live: the commit was observed out of band');
+    await answerDecision(fx.engine, project.id, observed.decision.id, 'adopt');
+    await waitFor(() => outOfBand(fx.home, project.id)[0].disposition === 'adopt', { what: 'the adoption to be recorded' });
+    const ctx = await nominated(fx, { project });
+    const checks = await installChecks(fx.engine, project.id, [check('login', { requirements: ['R1'] })]);
+    await passAll(fx.engine, project.id, ctx.candidate.id, Object.values(checks.id));
+    const alpha = await alphaTarget(fx, ctx);
+    assert.notEqual(protectedFingerprint(project.repo.path, refOid(project.repo.path, project.repo.ref)), authorized.fingerprint, 'the fixture is live: the head of the integration branch holds a protected set that is not the authorized one');
+    assert.notEqual(protectedFingerprint(project.repo.path, stray), authorized.fingerprint);
+
+    // The repository stops answering: every git call of the engine waits, and is ended at its deadline. Both gates are evaluated meanwhile.
+    const letGo = holdGit(project.repo.path);
+    fx.beforeCleanup.push(letGo);
+    const stage = await stageGate(fx, ctx);
+    const authorization = await alpha.evaluate();
+    letGo();
+
+    for (const [gate, evaluation] of [['stage gate', stage], ['Alpha authorization gate', authorization]]) {
+      assert.equal(evaluation.outcome, 'not_satisfied', `the ${gate}, evaluated while the protected set at the head could not be read: an input that could not be read is not a pass`);
+      assert.ok(reasonCodes(evaluation).includes('PROTECTED_PATH_UNAUTHORIZED'), `the ${gate} says which input was not shown: the protected path is not shown to be authorized (reasons: ${reasonCodes(evaluation).join(', ')})`);
+    }
+    assert.equal(workItem(fx.home, ctx.items[0]).status, 'verifying', "the stage's work is not complete");
+    assert.deepEqual(authorizationsOf(fx.home, ctx.candidate.id).map((row) => row.status), ['proposed'], 'and no authorization was issued');
   });
 });

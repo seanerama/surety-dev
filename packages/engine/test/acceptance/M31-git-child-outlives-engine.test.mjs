@@ -19,14 +19,26 @@
 // repository is put back in order, and the engine is restarted. The child is
 // then continued: if it is still there, it now creates the worktree, at a
 // path the store may already have judged.
+//
+// The second case is the other side of the same rule (E41 item 1; the
+// slice-5 review's finding): what an engine may end are the processes of its
+// own home, and no others. The engine the review ran sent SIGKILL, whenever
+// it reconciled a journal operation, to every process on the machine that
+// carried what another engine gives its git children, whatever home or
+// repository that engine had. So two engines on one machine killed each
+// other's git reads and writes. The case plants a process that sleeps, with
+// exactly the environment a git child of another engine home carries, and
+// requires it alive after this engine has reconciled.
 
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { releaseBarrier, waitFor } from './harness/engine.mjs';
-import { addGitProject, addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
-import { assertCommitted, assertOperation, assertOperations, operationDetails } from './harness/journal.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
+import { assertCommitted, assertOperation, assertOperations, changePolicy, operationDetails } from './harness/journal.mjs';
 import { procStartTime } from './harness/proc.mjs';
 import { gitProcessesNaming, holdGit, workspaceState, worktreeList } from './harness/repos.mjs';
 import { assertRunEnded, countOf, requestTick, resolvedPath, resumeWork, runsOf, scriptedEngine, tick, tickUntil, unownedWorktrees, waitForRun, workItem } from './harness/runs.mjs';
@@ -102,5 +114,71 @@ describe('M31 a git child that outlived its engine', () => {
     assertCommitted(fx, second.id, { kind: 'engine_commit', parent: project.base, integrated: true });
     assert.deepEqual(unownedWorktrees(fx.home, project.id), []);
     assertOperations(fx.home, { project: project.id });
+  });
+});
+
+// The environment of a live process, as /proc gives it: {NAME: value}.
+function environOf(pid) {
+  const pairs = readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter((pair) => pair.includes('='));
+  return Object.fromEntries(pairs.map((pair) => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)]));
+}
+
+describe('M31 a process of another engine home', () => {
+  test("an engine never signals a process that another engine home started: a process carrying what that home's engine gives its git children is alive after this engine's policy change, a run it commits and integrates, and its restart", async (t) => {
+    // Another engine, with a home and a repository of its own. One of its git
+    // reads is held at the repository's configuration, and what that child
+    // carries is read from it.
+    const other = await scriptedEngine(t, { config: { git_deadline: 30 } });
+    const theirs = await addGitProject(other);
+    const letGo = holdGit(theirs.repo.path);
+    other.beforeCleanup.push(letGo);
+    await requestTick(other.engine, theirs.id);
+    const carried = await waitFor(
+      () => {
+        const [child] = gitProcessesNaming(theirs.repo.path);
+        const environment = child ? environOf(child.pid) : {};
+        return Object.keys(environment).length > 0 ? environment : undefined;
+      },
+      { timeoutMs: 15_000, what: 'a git child of the other engine, held at its repository' },
+    );
+    letGo();
+
+    // A process with exactly that environment. Neither engine started it, and it does nothing but sleep.
+    const sleeper = spawn('sleep', ['600'], { env: carried, stdio: 'ignore' });
+    let ended = null;
+    sleeper.once('exit', (code, signal) => {
+      ended = { code, signal };
+    });
+    sleeper.once('error', (err) => {
+      ended = { error: err.message };
+    });
+    t.after(() => sleeper.kill('SIGKILL'));
+    assert.ok(Number.isInteger(sleeper.pid), 'the fixture is live: the process was started');
+    const started = procStartTime(sleeper.pid);
+    const assertAlive = async (after) => {
+      const alive = processIsLive(sleeper.pid, started);
+      if (!alive) await waitFor(() => ended !== null, { timeoutMs: 2000, what: 'the exit of the planted process to be reported' }).catch(() => {});
+      assert.ok(alive, `after ${after}, the process that carries another engine home's environment is gone (${JSON.stringify(ended)}): an engine may end only processes of its own home`);
+    };
+
+    // This engine, in a home of its own. An ordinary policy change: its commit and its ref update go through the journal.
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    await changePolicy(fx.engine, project.id, { budget_run_billable_tokens: 500_000 });
+    await tick(fx.engine, project.id);
+    await assertAlive('an ordinary policy change and a tick');
+
+    // A Builder's run: a workspace is added, a commit made, the branch moved.
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    const run = await runToEnd(fx, project.id, item);
+    assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the fixture is live: the run was committed and integrated (${run.reason_text})`);
+    await assertAlive('a run that was committed and integrated');
+
+    // A restart: recovery, and a tick of the next incarnation of this home.
+    await fx.engine.kill();
+    await fx.start();
+    await tick(fx.engine, project.id);
+    await assertAlive('a restart of this engine');
   });
 });
