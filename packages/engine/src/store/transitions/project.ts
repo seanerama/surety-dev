@@ -44,7 +44,7 @@ export interface NewProject {
 // what it holds as its baseline (SEAM.md §§25, 32). Returns the project id.
 export function createProject(
   tx: Tx,
-  project: NewProject & { id?: string; registration?: 'registered' | 'pending_bootstrap'; head: string; checkouts?: { path: string; baseline: Baseline }[]; protectedSet: ProtectedSet },
+  project: NewProject & { id?: string; registration?: 'registered' | 'pending_bootstrap'; head: string; checkouts?: { path: string; baseline: Baseline }[]; protectedSet: ProtectedSet; approvedBy?: string },
   label: Record<string, unknown>,
 ): string {
   const id = project.id ?? newId('proj_');
@@ -62,7 +62,7 @@ export function createProject(
   openLineage(tx, id);
   for (const c of project.checkouts ?? []) addCheckout(tx, { project: id, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
   // The project's first protected version (SEAM.md §66).
-  recordInitialVersion(tx, id, project.protectedSet, label.test_fixture === true ? 'test fixture' : 'project creation');
+  recordInitialVersion(tx, id, project.protectedSet, project.approvedBy ?? 'project creation');
   return id;
 }
 

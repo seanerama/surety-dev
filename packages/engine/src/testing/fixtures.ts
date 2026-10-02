@@ -84,7 +84,7 @@ export function installFixtureProject(
   actor: Actor,
   args: { body: ProjectBody; head: string; checkouts: { path: string; baseline: Baseline }[]; protectedSet: ProtectedSet },
 ): { project: { id: string } } {
-  const id = transact(db, actor, (tx) => createProject(tx, { ...args.body, head: args.head, checkouts: args.checkouts, protectedSet: args.protectedSet }, FIXTURE_LABEL));
+  const id = transact(db, actor, (tx) => createProject(tx, { ...args.body, head: args.head, checkouts: args.checkouts, protectedSet: args.protectedSet, approvedBy: 'test fixture' }, FIXTURE_LABEL));
   return { project: { id } };
 }
 

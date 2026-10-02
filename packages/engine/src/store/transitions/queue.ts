@@ -167,9 +167,10 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
       return null;
     }
     if (op.state !== 'ambiguous') return null;
-    const reads = JSON.parse(op.attempts.at(-1)?.reconciliation_reads ?? '[]') as { result: string }[];
+    // What the probe could not establish is the cause; which reading it made
+    // last is in the attempt's record, not in what the answer binds.
     return {
-      manifest: { operation: op.id, journal_kind: op.kind, subject_status: op.state, cause: reads.at(-1)?.result ?? 'unknown', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: null },
+      manifest: { operation: op.id, journal_kind: op.kind, subject_status: op.state, cause: 'effect_unconfirmed', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: null },
       options: [
         {
           key: 'acknowledge',
@@ -338,16 +339,13 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
   if (row.disposition !== null || row.closed_at !== null) throw stale(d);
   const repo = projectRepoRow(tx, row.project).dev_repo_path;
   if (row.subject_kind === 'checkout') {
-    consumeDecision(tx, d, option, note);
     if (option === 'stash') {
+      consumeDecision(tx, d, option, note);
       const checkout = tx.db.prepare('SELECT "path", "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string; baseline: string };
       return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found } })]);
     }
-    // adopt: what the checkout holds becomes its baseline.
-    if (row.found) tx.db.prepare('UPDATE "managed_checkouts" SET "baseline" = ? WHERE "id" = ?').run(row.found, row.checkout);
-    tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'adopt' WHERE "id" = ?`).run(row.id);
-    tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'adopt', checkout: row.checkout });
-    return consumed(d, [{ kind: 'tick' }]);
+    // `adopt` of a checkout is not built in M1 (SEAM.md §79: not exercised).
+    throw new Refusal(501, 'unsupported', 'Adopting what a checkout holds is not available in this engine revision.', 'Nothing was changed. Answer stash, or put the checkout back yourself.', { decision: d.id });
   }
   if (row.subject_kind !== 'ref') throw illegal('An answer to a repository observation', { decision: d.id });
   const reg = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(row.ref) as RegistryRow;
