@@ -1,5 +1,6 @@
 // M71, latency under the declared maximum load (slice 6). Plan §3.7 M71; D1
-// §§6.1, 8.1, 8.5, D1-20; Review N03 and B09; RN §4; E36 item 2; SEAM.md §93.
+// §§6.1, 8.1, 8.5, D1-20; Review N03 and B09; RN §4; E36 item 2; E42 item 2;
+// SEAM.md §93.
 //
 // The limits are numbers, in contract/load-limits.json: 5 projects, 20
 // connected clients, a store of one gibibyte, the default api_latency_bound
@@ -27,12 +28,19 @@
 // bound: a role that ignores SIGTERM is admitted at once and ends seconds
 // later, and the run does not report `ended` before its process is gone.
 //
+// The backup of the second case runs while one project's git is held (the
+// slice-6 review; E42 item 2). The engine confirms a backup's commits by
+// asking git within the git deadline, so this backup cannot confirm that
+// project's commits: it copies the store, waits for git without holding up
+// the engine, ends when the deadline has passed, and does not say complete.
+// Health is sampled, and judged, until it has ended.
+//
 // The obligation the slice-2 review left with this row (the scripted
 // boundary's process scan while a run is ending; COVERAGE.md) is covered by
 // the second case: health is sampled while two runs are being terminated.
 
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
@@ -45,7 +53,7 @@ import { newId } from './harness/ids.mjs';
 import { eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { Control, LIMITS, assertWithinBound, fillStore, mib, now, sample, sleep, startStreamClients, storeBytes, summary, until } from './harness/load.mjs';
 import { gitProcessesNaming, holdGit } from './harness/repos.mjs';
-import { addWork, leasesOf, requestTick, run as runRow, runsOf, scriptedEngine, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
+import { addWork, leasesOf, requestTick, run as runRow, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -61,6 +69,36 @@ const SCAN_SQL = [
 ].join('\n');
 
 const CONFIG = { max_concurrent_runs: 8, tick_step_budget: 1, git_deadline: 30 };
+
+// How long the backup of the second case may take from its start. It is the
+// wait this case has always given the backup: the copy of the gibibyte takes
+// seconds, and each commit of the held repository that the engine asks git
+// for costs one git deadline of thirty seconds.
+const BACKUP_ENDS_WITHIN_MS = 180_000;
+
+// The bytes of the regular files under a directory, now. The directory, or
+// anything in it, may go while it is being read.
+function bytesUnder(dir) {
+  let total = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) total += bytesUnder(path);
+    else if (entry.isFile()) {
+      try {
+        total += statSync(path).size;
+      } catch {
+        // gone meanwhile
+      }
+    }
+  }
+  return total;
+}
 
 // The bound the engine was configured with: its default, which is the limit
 // the row qualifies. Read from the engine, compared with the contract.
@@ -157,7 +195,7 @@ describe('M71 latency under the declared maximum load', () => {
     assert.equal(withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "schema_migrations" WHERE "name" = ?').get(SCAN_MIGRATION).n), 1, 'the migration is recorded once');
   });
 
-  test('in full mode at the limits, with git held, a backup, replay, a slow reader, output being hashed and a gate recomputed, health and Stop are admitted within the bound; termination takes its own time; a prerequisite that timed out dispatches nothing, even when it completes late', async (t) => {
+  test('in full mode at the limits, with git held, a backup, replay, a slow reader, output being hashed and a gate recomputed, health and Stop are admitted within the bound; termination takes its own time; the backup, which cannot confirm the commits of the held repository, ends and does not say complete; a prerequisite that timed out dispatches nothing, even when it completes late', async (t) => {
     const { fx, control, projects, migrations } = ctx;
     assertAtLimits(t);
     const engine = await fx.start({ args: ['--harness-migrations', migrations], timeoutMs: 180_000 });
@@ -198,9 +236,6 @@ describe('M71 latency under the declared maximum load', () => {
     }
     const projectOf = { hashing: hashing.id, quick: quick.id, stubborn: stubborn.id };
 
-    // Project 2: eligible work, created after that tick, so nothing has dispatched it yet.
-    items.held = await addWork(engine, held.id, 'verification');
-
     // Twenty clients: seventeen follow the stream, two read the whole log
     // again and again in large pages, one asks for the whole log and reads nothing.
     const clients = await startStreamClients(t, engine, { followers: LIMITS.clients - 3, pagers: 2, slow: 1, since: maxEventSeq(fx.home), limit: 1_000_000 });
@@ -213,14 +248,23 @@ describe('M71 latency under the declared maximum load', () => {
     const receiptsBefore = receipts();
     const windowStart = now();
     fx.scripted.release(items.hashing, 'start');
-    const backup = await engine.post('/v1/harness/backup', {});
-    assert.equal(backup.status, 202, `the backup is started (body: ${backup.text})`);
+    // The second project's git is held before the backup starts, and until it has ended.
     const releaseGit = holdGit(held.repo.path);
     fx.beforeCleanup.push(releaseGit);
+    // Project 2: eligible work, created only now that its git is held. The
+    // engine may still be running a tick of its own asking when `tick`
+    // returns (one it requested itself after the dispatches above); work
+    // created before the hold could be dispatched by that tick, and was.
+    items.held = await addWork(engine, held.id, 'verification');
+    const backup = await engine.post('/v1/harness/backup', {});
+    assert.equal(backup.status, 202, `the backup is started (body: ${backup.text})`);
     await passAll(engine, gated.id, cand.candidate.id, [checks.id.login]);
     await requestTick(engine, gated.id);
 
     const backupDone = () => eventsOfType(fx.home, 'engine.backup', seqAtStart).length > 0;
+    // The most the backup was seen to hold under backups/ while it was under way.
+    let copied = 0;
+    let backupEndedMs = null;
     const health = [];
     const stopSamples = [];
     const admitted = {};
@@ -232,9 +276,14 @@ describe('M71 latency under the declared maximum load', () => {
       { at: 2200, key: 'stubborn' },
       { at: 3200, key: 'hashing' },
     ];
-    while (now() - windowStart < 6500 || health.length < 30) {
-      if (now() - windowStart > 90_000) break;
-      const inBackup = !backupDone();
+    // The window is six and a half seconds and thirty samples at least, and
+    // it stays open until the backup has ended: the backup waits for the held
+    // repository's git, and health is judged for as long as it does.
+    while (now() - windowStart < 6500 || health.length < 30 || backupEndedMs === null) {
+      if (now() - windowStart > BACKUP_ENDS_WITHIN_MS) break;
+      if (backupEndedMs === null && backupDone()) backupEndedMs = Math.round(now() - windowStart);
+      const inBackup = backupEndedMs === null;
+      if (inBackup) copied = Math.max(copied, bytesUnder(join(fx.home, 'backups')));
       const taken = await sample(control, () => engine.get('/v1/health'));
       health.push(taken);
       if (inBackup && taken.valid && !backupDone()) duringBackup++;
@@ -284,12 +333,22 @@ describe('M71 latency under the declared maximum load', () => {
       assert.ok((await ending[key]).ms >= 1500, `the ${key} run ended only after the grace period (terminate_grace is 2 s): admission is not termination`);
     }
 
-    // The load was the load the row names.
-    await until(backupDone, { timeoutMs: 180_000, what: 'the backup to finish (an engine.backup event)' });
+    // The backup, with the second project's git held from its start to its
+    // end (E42 item 2): it ends within its bound, and it does not say complete
+    // of commits git never confirmed. Nothing it left says so either.
+    assert.ok(backupDone(), `the backup ends while the second project's git is held: no engine.backup event within ${BACKUP_ENDS_WITHIN_MS} ms of its start`);
     const [backedUp] = eventsOfType(fx.home, 'engine.backup', seqAtStart);
-    assert.equal(backedUp.payload?.label, 'complete', `the backup that ran is a complete one (payload: ${JSON.stringify(backedUp.payload)})`);
-    const manifest = JSON.parse(readFileSync(join(backedUp.payload.backup, 'manifest.json'), 'utf8'));
-    assert.ok(manifest.store.bytes >= LIMITS.store_bytes, `the backup copied a store of the declared size (${manifest.store.bytes} bytes)`);
+    assert.equal(backedUp.payload?.label, 'incomplete_for_recovery', `the backup could not confirm the commits of the repository whose git is held, and does not say complete (payload: ${JSON.stringify(backedUp.payload)})`);
+    assert.ok(backedUp.payload.backup === null || typeof backedUp.payload.backup === 'string', `engine.backup names the directory the backup left, or null (payload: ${JSON.stringify(backedUp.payload)})`);
+    const backups = join(fx.home, 'backups');
+    for (const name of existsSync(backups) ? readdirSync(backups) : []) {
+      const manifest = join(backups, name, 'manifest.json');
+      if (existsSync(manifest)) assert.equal(JSON.parse(readFileSync(manifest, 'utf8')).label, 'incomplete_for_recovery', `the label in ${manifest}`);
+    }
+    t.diagnostic(`M71 backup: ended ${backupEndedMs} ms after its start with git held, ${JSON.stringify(backedUp.payload)}`);
+
+    // The load was the load the row names.
+    assert.ok(copied >= LIMITS.store_bytes, `the backup copied a store of the declared size: ${copied} bytes were seen under backups/ while it was under way`);
     assert.ok(duringBackup >= 3, `health was sampled while the backup was running (${duringBackup} valid samples before it finished)`);
     assert.ok(gitHeld.length > 0, "a git child of the engine was held open on the second project's repository during the window");
     assert.ok(receipts() - receiptsBefore >= 5, `the role's output was hashed into chunks during the window (${receipts() - receiptsBefore} chunk receipts)`);
@@ -300,11 +359,18 @@ describe('M71 latency under the declared maximum load', () => {
     await tickUntil(engine, gated.id, () => workItem(fx.home, cand.items[0]).status === 'complete', { max: 6, what: "the stage's work to complete with its recomputed gate" });
     const evaluations = evaluationsOf(fx.home, cand.candidate.id, 'stage');
     assert.ok(evaluations.length > evaluationsBefore && evaluations.at(-1).outcome === 'satisfied', 'the stage gate was recomputed after the window began, and is satisfied');
-    t.diagnostic(`M71 load: backup of ${mib(manifest.store.bytes)}, ${mib(replayed)} replayed, ${receipts() - receiptsBefore} chunks hashed, ${LIMITS.clients} clients`);
+    t.diagnostic(`M71 load: backup of ${mib(copied)}, ${mib(replayed)} replayed, ${receipts() - receiptsBefore} chunks hashed, ${LIMITS.clients} clients`);
 
     // A prerequisite that timed out dispatches nothing, also when it completes late (D1 §8.1).
     await until(() => eventsOfType(fx.home, 'engine.tick', seqAtStart).length > 0, { timeoutMs: 60_000, what: 'the tick that could not check the held repository to end' });
     assert.equal(runsOf(fx.home, items.held).length, 0, "nothing of the project was dispatched by a tick whose integrity step overran its budget on the held repository");
+    // The backup was waited for with the repository still held, so the
+    // integrity read of the window's tick may have reached its own git
+    // deadline by now. One more tick, so that such a read is waiting at the
+    // hold when it is released: its completion is then late, not timed out.
+    await tickOnce(engine, held.id, { timeoutMs: 60_000 });
+    assert.equal(runsOf(fx.home, items.held).length, 0, 'nor by a tick requested while the repository is still held');
+    assert.ok(gitProcessesNaming(held.repo.path).length > 0, "the fixture: a git child of the engine is waiting on the held repository when the hold is released");
     releaseGit();
     await sleep(2000);
     assert.equal(runsOf(fx.home, items.held).length, 0, 'the late completion of that step dispatched nothing either');
