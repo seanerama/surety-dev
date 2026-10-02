@@ -24,7 +24,9 @@ export const SLICE2_CONFIG = Object.freeze({ tick_interval: 600, terminate_grace
 // engine on the same home: after a kill, without --harness, or with barriers.
 // With `homeSymlink`, $SURETY_HOME is a symbolic link to the directory that
 // holds the engine's files; `fx.home` is the link, as the engine is given it.
-export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false } = {}) {
+// `env` and `cwd` give every engine of the fixture further environment
+// variables and another working directory (row M23 only; SEAM.md §31).
+export async function scriptedEngine(t, { config = {}, barriers = [], until = 'full', start = true, homeSymlink = false, env, cwd } = {}) {
   const root = makeTempDir('s2');
   const home = join(root, 'home');
   if (homeSymlink) {
@@ -34,15 +36,19 @@ export async function scriptedEngine(t, { config = {}, barriers = [], until = 'f
   const scripted = new Scripted(join(root, 'scripted'));
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, ...SLICE2_CONFIG, ...config });
-  const fx = { root, home, port, scripted, engine: null, engines: [], repos: 0 };
+  // `beforeCleanup` holds what a test must undo while its fixture still
+  // exists: restoring access to a repository it made unreadable, letting go
+  // of git calls it held.
+  const fx = { root, home, port, scripted, engine: null, engines: [], repos: 0, beforeCleanup: [] };
   t.after(async () => {
+    for (const undo of fx.beforeCleanup.reverse()) await undo();
     for (const e of fx.engines) await e.kill();
     scripted.killStrays();
     removeDir(root);
   });
   fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [] } = {}) => {
     const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b]), ...more];
-    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs });
+    const engine = await startEngine({ home, port, harness, args, until: state, timeoutMs, env, cwd });
     fx.engines.push(engine);
     fx.engine = engine;
     return engine;

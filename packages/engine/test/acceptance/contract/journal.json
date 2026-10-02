@@ -1,0 +1,19 @@
+{
+  "$comment": "The git journal as the slice-3 tests of the first Verifier session use it: the four journal kinds with the operation kind each belongs to, the five boundaries at which a barrier can stop the engine, and the events of an operation that ran its ordinary course. Derived from D1 §§2.5, 3.5, 6.3, 7.3, 7.5, 7.10 and Plan §2 ('deterministic barriers at intent commit, effect application, receipt commit, probe confirmation and finalizer commit'). The journal's full transition table, with build spec §6 corrections 14 and 16 (the exits from `ambiguous`, the five probe outcomes, the attempt statuses), is added here by the second slice-3 session, which generates rows M29 to M34 from it; nothing in this file is to be renamed for that.",
+  "kinds": {
+    "ref_update": { "operation_kind": "git_ref_update", "effect": "git update-ref <ref> <new_oid> <old_oid>, a compare-and-swap", "payload": ["repo", "ref", "old_oid", "new_oid"] },
+    "commit_tree": { "operation_kind": "git_commit", "effect": "git commit-tree with the frozen parent and tree, and the publication of the commit under a keep ref", "payload": ["repo", "tree", "old_oid", "new_oid"] },
+    "worktree_add": { "operation_kind": "git_worktree", "effect": "git worktree add --detach <path> <base>", "payload": ["repo", "run"] },
+    "worktree_remove": { "operation_kind": "git_worktree", "effect": "git worktree remove of an owned workspace", "payload": ["repo", "run"] }
+  },
+  "boundaries": {
+    "intent_committed": "The transaction that records the operation and its journal event `intended` has committed. The effect has not been attempted.",
+    "effect_applied": "The git effect has been applied: the command has returned and what it changes is changed. No journal event records it yet.",
+    "receipt_committed": "The journal event `applied` is durable. The probe has not confirmed it.",
+    "probe_confirmed": "The journal event `confirmed` is durable. The finalizer has not run.",
+    "finalizer_committed": "The finalizer's transaction has committed: the journal event `finalized`, `finalized_at`, and the domain receipts the operation exists for."
+  },
+  "barrier_name": "journal.<kind>.<boundary>",
+  "ordinary_events": ["intended", "applied", "confirmed", "finalized"],
+  "ordinary_status": "succeeded"
+}

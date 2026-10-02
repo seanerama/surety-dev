@@ -26,6 +26,8 @@ export const step = {
   write: (path, content) => ({ write: { path, content } }),
   // A file of `bytes` bytes of filler.
   writeFill: (path, bytes) => ({ write: { path, fill: bytes } }),
+  // `count` files of `bytes` bytes each in the directory `dir`.
+  writeMany: (dir, count, bytes = 1) => ({ write_many: { dir, count, bytes } }),
   // Remove a file or a whole directory.
   delete: (path) => ({ delete: path }),
   rename: (from, to) => ({ rename: { from, to } }),

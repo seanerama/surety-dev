@@ -1,0 +1,61 @@
+{
+  "$comment": "What snapshot validation accepts and rejects in the first half of slice 3 (rows M19, M20; the integrating cases of M09). Derived from F §4.1 (role contracts) with E2 ('prohibitions are enforced twice'; 'rejected whole; there is no partial acceptance'), D1 §§5.1, 5.2, 7.3, 7.8, RN R2, and build spec §6 correction 15 (Review B05: for the run's own workspace, file content is judged by the captured diff; its HEAD, index, git metadata and identity file stay invariant). Where those sources leave a path rule or a reason class open, the choice is recorded in SEAM.md §36. Tests generate their cases from this file; they never ask the engine what a role may write.",
+  "reason_class": {
+    "$comment": "One rule decides the class (SEAM.md §28). A violation found in the captured diff, that is in what the snapshot tree holds against its base (a path, a symbolic link, an entry's kind, a size, a count), is `diff_violation`. A violation found outside the diff (a registered ref, the workspace's HEAD or index, git metadata, another managed checkout) is `ref_violation`. D1-10 gives `diff_violation` for an escaping link; D1 §7.3 step 4 gives `ref_violation` for a ref or checkout the role altered.",
+    "in_the_diff": "diff_violation",
+    "outside_the_diff": "ref_violation"
+  },
+  "protected_roots": [".surety/checks/"],
+  "identity_file": ".surety/project.json",
+  "roles": {
+    "builder": {
+      "kinds": ["stage_build", "fix"],
+      "rule": "May change any path that is not under `.surety/`. Everything under `.surety/` belongs to another role or to the engine: the protected set (`.surety/checks/`), the policy file, the project identity file, and the Spec Writer's and Architect's artifacts.",
+      "revision_kind": "engine_commit",
+      "permitted": ["src/app.js", "docs/notes.md", "test/unit/app.test.js", ".gitignore", "surety/not-the-dot-directory.txt", "README.md"],
+      "prohibited": [".surety/checks/acceptance.test.mjs", ".surety/checks/protected-policy.json", ".surety/policy.json", ".surety/project.json", ".surety/spec/spec.md", ".surety/adrs/0001-a-decision.md", ".surety/unlisted.txt"]
+    },
+    "architect": {
+      "kinds": ["replan", "assessment"],
+      "rule": "May change only paths under `.surety/adrs/`, `.surety/architecture/`, `.surety/roadmap/` and `.surety/phases/` (D1 §5.1). It writes no code, no checks and no specification.",
+      "revision_kind": "intent",
+      "permitted_prefixes": [".surety/adrs/", ".surety/architecture/", ".surety/roadmap/", ".surety/phases/"],
+      "permitted": [".surety/adrs/0001-a-decision.md", ".surety/architecture/modules.md", ".surety/roadmap/roadmap.md"],
+      "$permitted_comment": "No example under `.surety/phases/`: what a committed phase plan must contain, and what its finalizer registers, is row M26's (the second slice-3 session).",
+      "prohibited": ["src/app.js", "README.md", ".surety/checks/acceptance.test.mjs", ".surety/spec/spec.md", ".surety/policy.json", ".surety/project.json"]
+    }
+  },
+  "$not_yet": "What validation does with the diff of a `verification` or `review` run is pinned in slice 5 with proposal capture (row M36). Until then the slice-2 cases in which a verification role writes a file and completes stand (COVERAGE.md).",
+  "metadata": {
+    "$comment": "Row M19: alterations outside the diff, each made by a Builder that also makes a permitted edit. Every one rejects the whole result with `ref_violation`: nothing is committed, the permitted edit included.",
+    "cases": [
+      { "key": "head_moved", "what": "commits in its workspace, so that the detached HEAD is no longer at the base" },
+      { "key": "head_on_branch", "what": "checks out a new branch in its workspace, so that HEAD is no longer detached" },
+      { "key": "index_staged", "what": "stages a file in the workspace's real index" },
+      { "key": "repository_config", "what": "changes the repository's configuration" },
+      { "key": "hook_planted", "what": "writes a hook into the repository's hooks directory" },
+      { "key": "gitlink_rewritten", "what": "rewrites its workspace's .git file" },
+      { "key": "registered_ref_moved", "what": "moves the integration branch" },
+      { "key": "registered_ref_deleted", "what": "deletes the integration branch" },
+      { "key": "other_workspace", "what": "edits a tracked file in another run's retained workspace" }
+    ]
+  },
+  "diff": {
+    "$comment": "Row M20: what a snapshot may not hold. Every one rejects the whole result with `diff_violation`.",
+    "cases": [
+      { "key": "link_absolute", "what": "a symbolic link to an absolute path outside the workspace" },
+      { "key": "link_relative", "what": "a symbolic link that climbs out of the workspace with `..`" },
+      { "key": "link_chain", "what": "a symbolic link to a symbolic link that leads outside the workspace" },
+      { "key": "link_replaces_file", "what": "a tracked file replaced by a symbolic link that leads outside the workspace" },
+      { "key": "embedded_repository", "what": "a git repository of its own inside the workspace, which a snapshot would hold as a gitlink" },
+      { "key": "protected_and_source", "what": "a source change together with a change under the protected root" },
+      { "key": "file_too_large", "what": "one file larger than snapshot_max_file_bytes" },
+      { "key": "too_many_files", "what": "more files than snapshot_max_files" },
+      { "key": "too_many_bytes", "what": "more bytes than snapshot_max_bytes, in files each within snapshot_max_file_bytes" }
+    ]
+  },
+  "literal_names": {
+    "$comment": "Row M20, 'prompt remains data': file names a Builder may give its files. Each is committed under exactly that name; none is interpreted by a shell or taken for an option.",
+    "names": ["--help", "-rf", "--exec=touch INJECTED", "$(touch INJECTED)", "`touch INJECTED`", "; touch INJECTED ;", "a b  c", "quote\"d'", "new\nline", "star*?[x]", "back\\slash", "~tilde", "#hash", "dir with space/--option-file"]
+  }
+}

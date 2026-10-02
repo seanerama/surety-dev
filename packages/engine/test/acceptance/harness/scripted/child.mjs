@@ -26,6 +26,7 @@
 //           {"heartbeat": true}
 //           {"write": {"path": "<relative to the workspace, or absolute>", "content": "<text>"}}
 //           {"write": {"path": "...", "fill": <n>}}        n bytes of filler instead of content
+//           {"write_many": {"dir": "<path>", "count": <n>, "bytes": <m>}}   n files of m bytes each in a directory
 //           {"delete": "<path>"}                            a file or a whole directory
 //           {"rename": {"from": "<path>", "to": "<path>"}}
 //           {"symlink": {"path": "<path>", "target": "<target, written as given>"}}
@@ -286,6 +287,11 @@ async function runSteps(steps, ctx) {
       const target = at(step.write.path);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : (step.write.content ?? ''));
+    } else if (step.write_many !== undefined) {
+      const target = at(step.write_many.dir);
+      mkdirSync(target, { recursive: true });
+      const content = Buffer.alloc(step.write_many.bytes ?? 1, 'x');
+      for (let i = 0; i < step.write_many.count; i++) writeFileSync(join(target, `file-${String(i).padStart(6, '0')}.txt`), content);
     } else if (step.delete !== undefined) rmSync(at(step.delete), { recursive: true, force: true });
     else if (step.rename !== undefined) {
       mkdirSync(dirname(at(step.rename.to)), { recursive: true });

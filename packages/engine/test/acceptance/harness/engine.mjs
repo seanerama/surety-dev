@@ -2,7 +2,7 @@
 // binary against a fresh $SURETY_HOME, talk to it over real loopback HTTP, and
 // stop or kill it with real signals.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -40,7 +40,15 @@ export function makeTempDir(label) {
 
 export function removeDir(dir) {
   if (process.env.SURETY_KEEP_TMP === '1') return;
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    // A test that made part of its fixture unreadable and failed before it
+    // restored access: give the owner its access back and remove again.
+    if (err.code !== 'EACCES' && err.code !== 'EPERM') throw err;
+    spawnSync('chmod', ['-R', 'u+rwx', dir]);
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export async function freePort() {
@@ -247,9 +255,12 @@ export function isRefusalBody(body) {
 }
 
 // `cli` is overridable only so the harness self-check can drive a stand-in.
-export function spawnEngine({ home, harness = true, args = [], cli = CLI }) {
+// `env` adds variables to the constructed environment and `cwd` replaces the
+// working directory: only row M23 uses them, to start an engine in a hostile
+// ambient environment (SEAM.md §31).
+export function spawnEngine({ home, harness = true, args = [], cli = CLI, env = {}, cwd = home }) {
   const argv = [cli, 'serve', ...(harness ? ['--harness'] : []), ...args];
-  const child = spawn(process.execPath, argv, { env: engineEnv(home), cwd: home, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, argv, { env: { ...engineEnv(home), ...env }, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = { stdout: '', stderr: '' };
   child.stdout.on('data', (c) => (out.stdout += c));
   child.stderr.on('data', (c) => (out.stderr += c));
@@ -371,8 +382,8 @@ export class Engine {
 
 // Start an engine and wait for `until`: 'full' (default), 'listening',
 // 'failed', 'barrier:<name>', or 'none'.
-export async function startEngine({ home, port, harness = true, args = [], authority, until = 'full', timeoutMs, cli } = {}) {
-  const proc = spawnEngine({ home, harness, args, cli });
+export async function startEngine({ home, port, harness = true, args = [], authority, until = 'full', timeoutMs, cli, env, cwd } = {}) {
+  const proc = spawnEngine({ home, harness, args, cli, env, cwd });
   const engine = new Engine({ home, port, authority, proc });
   if (until !== 'none') await engine.waitUntil(until, { timeoutMs });
   return engine;
