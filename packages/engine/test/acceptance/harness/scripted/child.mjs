@@ -306,12 +306,15 @@ async function runSteps(steps, ctx) {
     else if (step.hold !== undefined) {
       log('holding', { hold: step.hold });
       const every = step.heartbeat_ms ?? 1000;
-      let last = Date.now();
+      // Timed on the monotonic clock: by the wall clock, a host whose clock
+      // steps back (SEAM.md §§23, 39) made a held role skip its heartbeats for
+      // as long as the step, and a second and more went by without one.
+      let last = performance.now();
       while (!released(step.hold, ctx.keys)) {
         await sleep(25);
-        if (every > 0 && Date.now() - last >= every) {
+        if (every > 0 && performance.now() - last >= every) {
           emit({ type: 'heartbeat' });
-          last = Date.now();
+          last = performance.now();
         }
       }
       log('released', { hold: step.hold });
