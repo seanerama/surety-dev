@@ -91,7 +91,8 @@
       "M02-record-identities.test.mjs",
       "M04-chunk-receipts-append-only.test.mjs",
       "M12-over-budget-project.test.mjs",
-      "M23-filter-driver-however-spelled.test.mjs"
+      "M23-filter-driver-however-spelled.test.mjs",
+      "M23-partial-clone-no-remote.test.mjs"
     ],
     "5": [
       "M35-separate-governed-policy-file.test.mjs",

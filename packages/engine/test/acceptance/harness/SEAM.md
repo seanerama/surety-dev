@@ -825,7 +825,17 @@ When the developer has switched or detached the worktree, the blocker's `retry` 
 - *filter drivers, however the configuration spells them* (the slice-3 review; `M23-filter-driver-however-spelled.test.mjs`, listed under slice 4). The rule is about what git honours, not about what the engine can parse. A driver is not run whatever form the repository's configuration gives it: an old-style dotted section whose name is not all lower case (`[filter.EVIL]`, which git reads as `filter.evil`, while a `-c filter.EVIL.clean=` override names another key); a second section header on the same line as another (`[core] [filter "evil"]`); an include written on one line (`[include] path = other.cfg`) with the driver defined only in the included file; an included file reached through a symbolic link. An engine that finds the filter names by reading the config file itself, and switches each off by name, runs every driver it did not find. How the engine makes git run none is its own choice; the four cases pin only that none runs and that the files are committed unfiltered;
 - *other configured programs*: an external diff program (`diff.external`), a diff driver's `command` and `textconv`, a signing program (`gpg.program`, with `commit.gpgsign` set), an editor and a pager do not run.
 
-Not reachable from any git call M1 makes, and so not pinned: `core.sshCommand`, credential helpers and `core.askPass` (M1 has no remote operation), merge drivers (no merge; a rebase is row M28's).
+**No remote** (the slice-4 review; E37 item 1; `M23-partial-clone-no-remote.test.mjs`, listed under slice 4). This section used to say that no git call M1 makes can reach a remote, because M1 has no remote operation. That was false. The engine asks for no remote operation, but git performs one by itself: in a partial clone, any git command that needs an object the repository does not hold fetches it from the remote, and to do so runs the program the repository's configuration names as that remote's upload-pack (`remote.<name>.uploadpack`). The slice-4 engine did so when it created a workspace. What the engine must guarantee instead:
+
+- **no git command the engine spawns contacts a remote**, whatever the repository's configuration says about remotes, promisors and partial clones;
+- **none runs a program that a remote's configuration, or configuration git consults in order to reach a remote, names**: an upload-pack or receive-pack program, `core.sshCommand`, a credential helper, `core.askPass`, a remote helper, a proxy command;
+- **for engine git an object that is not present in the repository is missing.** It is never fetched.
+
+How the engine makes git behave so is its own choice. (One fact about git that bears on the choice, observed with git 2.43: a `-c remote.<name>.uploadpack=…` override does not replace a value the repository's configuration gives; for that key git keeps the first value it reads.) **A partial clone is therefore not supported in M1**, like a repository that needs a filter driver: where every object a run needs is present, the run takes its ordinary course; where the base of a run lacks an object, the workspace cannot be made, and that is section 35's worktree add that does not succeed: no role is launched and the run ends `failed` / `infra_error`, as it does on any repository with that object missing.
+
+The one case is on a blob-less clone (`git clone --filter=blob:none`) whose `remote.origin.uploadpack` names a program that leaves evidence and then serves the fetch. It first shows that ordinary git, asked for an absent object, runs the program and fetches the object. Then, with a blob of the integration branch's commit absent: the program is not run, every object that was absent is still absent, no role is launched, the run ends `failed` / `infra_error` and the integration branch has not moved. The blob is then written into the object store by hand, and the item's next run is committed and integrated, with the program still not run and a blob that only the history needs still absent.
+
+Not reachable from any git call M1 makes, and so not pinned: merge drivers (no merge; a rebase is row M28's).
 
 ## 32. The ref registry and repository integrity
 
@@ -1247,6 +1257,10 @@ In M1 a correction comes from the scripted provider through a harness route (no 
 
 **A budget that cannot be read** (D1 §6.6, D1-13). A budget check reads the ledger. If that read fails, the check has failed: nothing of the project is dispatched on it, whatever an earlier check found (the fault `budget_read`, section 61).
 
+**A usage observation that cannot be recorded** (the slice-4 review; E37 item 3). An observation whose store write fails is never dropped: a dropped observation is usage the ledger does not hold and a budget stop that does not happen, while the ledger says the usage is complete. The engine retries the write for the bounded time it retries a result's (section 61). After a write that failed once, the durable facts are those of the same run with no failure (the rule of E28 item 1 and section 24): the observation is stored once, a run that passes a limit on it is stopped as "The enforceable boundary" says, and the ledger holds the usage. The one case is the first budget case's over-limit run with `before_event` armed once on `invocation.usage` (section 61): the role sends the one observation that takes the run over `budget_run_billable_tokens` and waits, and within a minute the run has ended `stopped` / `budget` with that observation stored once, the ledger row holding it with `usage_complete` 0, and the work parked for `budget_run_billable_tokens`.
+
+If the write still fails when that time is up, the run does not go on unmetered. The engine ends it through the run-end protocol as it ends a run under way whose budget cannot be read, `stopped` / `budget` with its work parked behind a blocker, and the invocation's ledger row has `usage_complete` 0: what the role used is not all known. No case pins this, and the blocker's reason for it is not named here.
+
 ## 56. Records: the durable path, streams and chunk receipts
 
 (D1 §§3.6, 14.1; build spec §6 correction 21.) A record is a row of `records` and a file under `$SURETY_HOME/records/`. `records.path` is that file's path relative to `$SURETY_HOME/records/`.
@@ -1297,6 +1311,8 @@ M1 resolves no real secret, so the tests give the redactor one, and later a dete
 | `POST /v1/harness/secrets` | `{"ref", "value"}` | **2xx**. From now on the engine holds `value` as the resolved secret `ref`, in memory only: it is written nowhere. |
 | `POST /v1/harness/detectors` | `{"name", "pattern"}` | **2xx**. Registers a detector: `pattern` is the source of an ECMAScript regular expression (the tests use ASCII). Registration starts a rescan of the stored records. |
 
+**A secret as the role's output encodes it** (the slice-4 review; E37 item 2). Roles write JSON lines, and a JSON string escapes some characters: a held secret with a quote or a backslash in it is on the role's standard output with `\"` or `\\` in their place, so the secret's own bytes are not there, and a match on bytes alone lets it through to the transcript and to the API. Redaction covers a secret in the form the output carries it. A line of the role's output that parses as JSON is redacted on its decoded values; any other line is redacted as bytes; a line in which nothing is redacted is retained byte for byte, as section 56 says. Neither a held secret nor its JSON-escaped form (what `JSON.stringify` gives for it, without the enclosing quotes) is in any file under the engine home or in anything the API serves. The one case holds two secrets, one with a quote and one with a backslash, and sends both in the `summary` of the role's result line; the summary's text around them is retained in the transcript. Other encodings of a secret (a `\u` escape of a character that needs none, base64) are not pinned.
+
 **A later hit.** A stored record that a detector matches gets `post_scan` `hit`, and one `record.secret_found` event (`subject.record`, `subject.project`). It is no longer served (`record_quarantined`). Records the detector does not match stay `clean` and served. The Critical finding D1 §14.2 raises, and the quarantine of evidence and gates that depend on the record, are slice 5's.
 
 ## 58. Retention, and bytes that are missing or corrupt
@@ -1311,7 +1327,7 @@ M1 resolves no real secret, so the tests give the redactor one, and later a dete
 
 (D1 §§6.5, 11.6.) `surety store …` commands run against `$SURETY_HOME` while no engine holds it. The tests run them as `node packages/engine/dist/cli.js store …` with section 1's environment.
 
-**`surety store backup [--database-only]`.** Exit status 0, and on stdout one last line that is a JSON object `{"backup": <the directory it wrote, absolute>, "label": "complete" | "incomplete_for_recovery"}`. The directory is under `$SURETY_HOME/backups/` and is self-contained apart from the git objects: it can be copied elsewhere and restored from there. It holds `manifest.json`:
+**`surety store backup [--database-only]`.** Exit status 0 (except as "A backup that cannot be complete" says, below), and on stdout one last line that is a JSON object `{"backup": <the directory it wrote, absolute>, "label": "complete" | "incomplete_for_recovery"}`. The directory is under `$SURETY_HOME/backups/` and is self-contained apart from the git objects: it can be copied elsewhere and restored from there. It holds `manifest.json`:
 
 ```json
 {"label": "complete",
@@ -1321,6 +1337,8 @@ M1 resolves no real secret, so the tests give the redactor one, and later a dete
 ```
 
 `file` paths are relative to the backup directory. `store` is a consistent snapshot of the database. `records` lists every published, unexpired record the snapshot refers to, each copied into the backup. `git` lists, per project, the commits the snapshot refers to (every `revisions.sha` at least); they are not copied: the engine keeps each reachable in the repository from a ref it has registered (section 28), so that a garbage collection does not remove them. With `--database-only` only the snapshot is written, and the label, in the manifest and on stdout, is `incomplete_for_recovery`.
+
+**A backup that cannot be complete** (the slice-4 review; E37 item 4; E32 item 6). A backup is labeled `complete` only if every commit its manifest lists is in its project's repository when the backup is taken. If one is not (someone deleted the ref that kept it and pruned), a backup asked for without `--database-only` is refused: exit status **7** and section 1's one-line refusal on stderr with `code` `backup_incomplete`. It could not be restored, so nothing it leaves says `complete`: whether the command leaves a backup directory behind is not pinned, and if it leaves one, or names one on stdout, the label in the manifest and on stdout is `incomplete_for_recovery`. The one case removes a checkpoint commit from the repository while the engine is stopped (its refs deleted, the reflog expired, `git prune`) and takes a backup.
 
 **`surety store restore --from <backup directory> --bind <project id>=<repository path>`**, one `--bind` per project, into a `$SURETY_HOME` that has no store (it may hold a `config.json`). The command verifies the whole closure before it writes anything: the label, every member's presence, length and hash, and that every listed git object exists in the repository bound to its project. Then it installs the store and the records and records each project's repository path as bound. Exit status 0. An engine started on that home goes through recovery and integrity as on any start and reaches full mode; the API token is that home's own.
 
@@ -1385,11 +1403,11 @@ Every harness route follows section 7's rules.
 | Corrections | `POST /v1/harness/ledger/corrections` | Section 54. |
 | Secrets and detectors | `POST /v1/harness/secrets`, `POST /v1/harness/detectors` | Section 57. |
 
-The `before_event` fault of section 7 is armed in slice 4 on `git.journal_intended` (while it keeps failing, a dispatch makes no worktree and launches nothing) and on `run.validating`.
+The `before_event` fault of section 7 is armed in slice 4 on `git.journal_intended` (while it keeps failing, a dispatch makes no worktree and launches nothing), on `run.validating`, and, once, on `invocation.usage` (section 55, "A usage observation that cannot be recorded").
 
 **A result whose recording keeps failing** (E27; E30 item 9 retries one failure). When the transaction that records a role's valid result fails every time, the engine stops retrying within a minute and ends the run `failed` / `infra_error` with a `reason_text` that says the result could not be recorded. The result is not lost silently: the run's transcript, published as for any run, holds the line the role sent. The work is repaired like any failed run's, one repair attempt charged.
 
-**Public routes added:** `GET /v1/projects/:p/ledger` (section 54), `GET /v1/projects/:p/records/:id` (section 56), `POST /v1/projects/:p/rebind` (section 59). **Commands added:** `surety store backup`, `surety store restore` (section 59), with exit status 7.
+**Public routes added:** `GET /v1/projects/:p/ledger` (section 54), `GET /v1/projects/:p/records/:id` (section 56), `POST /v1/projects/:p/rebind` (section 59). **Commands added:** `surety store backup`, `surety store restore` (section 59), with exit status 7 for a restore that is refused and for a backup that cannot be complete.
 
 ## 62. Store rows the slice-4 tests read and write
 
@@ -1438,12 +1456,18 @@ Each of these was open in the sources. The Builder may object. Those marked † 
 | A result whose recording keeps failing † | Section 61. | E27 left it to this slice: retry, or end with the failure visible. Both: bounded retries, then a failed run that says why. |
 | Repeating faults and their disarming | `times`; `DELETE /v1/harness/faults`. | A one-shot fault cannot tell an engine that retries from one that fails open. |
 | The power-loss model † | Section 60. | E31 item 5 leaves the mechanism to the Verifier. |
+| A base that lacks an object (the slice-4 review) † | Section 31, "No remote": never fetched; the run ends `failed` / `infra_error`, never launched. | E37 item 1: "an object that is not present is missing". Section 35 already says what a worktree add that does not succeed leaves. |
+| The forms of a secret (the slice-4 review) | Section 57: the secret itself and its JSON-escaped form. | E37 item 2. Roles write JSON lines; no other encoding is in a protocol line a scripted role sends. |
+| A usage observation whose write fails (the slice-4 review) | Section 55: retried like a result's; after one failure, the facts of the run with no failure. | E37 item 3; E28 item 1. |
+| A backup that cannot be complete (the slice-4 review) † | Section 59: exit status 7, `backup_incomplete`; anything it leaves is labeled `incomplete_for_recovery`. | E37 item 4; E32 item 6 gives status 7 to an incomplete backup; the code is the one a restore gives for a listed git object that is missing. |
 
 ## 64. What stands behind these tests before the engine exists
 
 Less than before, by decision (E31). The shim is the one piece with logic of its own, and it is tested: the five cases of section 60 pass on the host these tests were written on (git 2.43, the pinned driver, ext4). It was also loaded once into the slice-2 engine on `main`, outside any test: the shim was in the engine, in each git the engine started and in the role; after a cut the store held the dispatch that had been committed; the workspace made since the session began was empty; and the engine refused to start again, because its `engine.lock` is written and renamed without a sync and was therefore empty. That last observation is the first thing row M67 will ask of the build.
 
 Every other file was checked for syntax, and its imports and names were resolved against the harness; none was run, since each fails at its first slice-4 step on an engine that has none. The shared helpers that changed (`fx.start({env})` in `runs.mjs`; new steps and helpers in `scripted.mjs` and `scripted/child.mjs`; `clearFaults` in `engine.mjs`; `seedStream` and `seedChunkReceipt` in `seed.mjs`) are additions, and `M02-dispatch-identity.test.mjs` was run on the slice-2 engine afterwards and passes. The frozen self-check was not run and is not known to pass or fail with them.
+
+**After the slice-4 review** (E37 items 1 to 4). Four cases were added, one for each defect the review confirmed: sections 31 ("No remote"), 55 ("A usage observation that cannot be recorded"), 57 ("A secret as the role's output encodes it") and 59 ("A backup that cannot be complete"). Unlike the rest of this slice's tests they were written with the slice-4 engine built: each was run against it and fails on its own assertion, and the other cases of the three files that already existed still pass. No harness helper changed. The filter-driver race of E37 item 5 has no case, by decision.
 
 ---
 

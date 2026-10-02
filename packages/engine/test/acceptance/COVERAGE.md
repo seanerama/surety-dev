@@ -376,7 +376,8 @@ The slice-2 review found two defects in the one git effect slice 2 makes, the ru
 | A filter driver named in the repository's configuration is not run, and its files are committed unfiltered (2 cases: clean and smudge programs; a long-running process filter). E29 item 1: a repository that needs one is not supported in M1 | same | 3 | written |
 | An external diff program, a textconv program, a signing program, an editor and a pager named in the repository's configuration are not run | same | 3 | written |
 | A filter driver is not run however the repository's configuration spells it (the slice-3 review; 4 cases: an old-style dotted section whose name is not all lower case, `[filter.EVIL]`; a second section header on one line, `[core] [filter "evil"]`; an include written on one line with the driver defined only in the included file; an included file reached through a symbolic link). Each case first shows that ordinary git runs the program on that fixture | `M23-filter-driver-however-spelled.test.mjs` | 4 | written (by the slice-5 session; listed under slice 4, whose Builder fixes it; not run: this working copy has no slice-3 engine) |
-| `core.sshCommand`, credential helpers, `core.askPass` | — | — | not a case: no git call M1 makes reaches them (no remote operation). A merge driver is reached by the rebase and is pinned in `M28-integration-race-and-compare-and-swap.test.mjs` |
+| Engine git never contacts a remote and runs no program a remote's configuration names (the slice-4 review; E37 item 1). On a blob-less partial clone whose `remote.origin.uploadpack` names an evidence program, after showing that ordinary git runs it and fetches: with a blob of the base absent the program is not run, nothing is fetched, no role is launched and the run ends `failed` / `infra_error`; with the blob put there by hand the next run is committed and integrated, the program still not run and a blob only the history needs still absent | `M23-partial-clone-no-remote.test.mjs` | 4 | written (after the slice-4 review; run against the slice-4 engine: fails on its assertion that the program was not run) |
+| `core.sshCommand`, credential helpers, `core.askPass` | — | — | not a case of their own: the rule that covers them is the one above (`harness/SEAM.md` §31, "No remote"), pinned through the upload-pack program only. The earlier entry here, that no git call M1 makes reaches a remote, was false. A merge driver is reached by the rebase and is pinned in `M28-integration-race-and-compare-and-swap.test.mjs` |
 | Two repositories with identifiable content, hostile `GIT_*`, `GH_*`, editor and pager variables, hostile global and counted configuration, and the engine started inside a third repository: each project is committed and integrated in its own repository, nothing reaches the other or the third, no ambient program runs, no commit carries an ambient identity | `M23-two-repositories-hostile-environment.test.mjs` | 3 | written |
 
 ### M31. Worktree-add probe (the engine home behind a symbolic link, moved forward)
@@ -573,6 +574,8 @@ Row closes in slice 4.
 |---|---|---|---|
 | A run that passes its token limit is stopped at a usage observation, through cleanup, with what it observed kept; `retry` runs that work again and nothing that had completed | `M61-budget-boundaries-and-failed-reads.test.mjs` | 4 | written |
 | Unknown cost is bounded by tokens: the run is stopped at the day limit and its cost stays unknown, not zero | same | 4 | written |
+| A usage observation whose first write fails is not lost: the run that passes its token limit on it is stopped as with no failure, the observation is stored once and the ledger holds the usage (the slice-4 review; E37 item 3; rows M60 and M61) | same | 4 | written (after the slice-4 review; run against the slice-4 engine: fails on its assertion, the run still executing after a minute with no observation stored) |
+| A usage observation whose write keeps failing: the run is stopped as one whose budget cannot be read, its usage marked incomplete | — | — | not written, by decision (E37 item 3): the rule is in `harness/SEAM.md` §55 |
 | The time limit and the repair limit | `M15-deadlines.test.mjs`, `M11-repair-limits.test.mjs` | 2 | written (in slice 2, where they were built; not repeated) |
 | Store error in a budget read: nothing is dispatched, although an earlier check had succeeded | `M61-budget-boundaries-and-failed-reads.test.mjs` | 4 | written |
 | Store error in the lease read before a spawn: no role is launched; the work is repaired afterwards | same | 4 | written |
@@ -607,6 +610,7 @@ Row closes in slice 4.
 |---|---|---|---|
 | A secret split between two writes of the role, and across the boundary of a stored chunk, is in no file under the engine home and in nothing the API returns | `M64-streaming-redaction-and-later-detector.test.mjs` | 4 | written |
 | A secret with multibyte characters, the role's write ending inside one of them | same | 4 | written |
+| A secret with a quote and one with a backslash, sent inside a JSON protocol line (the result's summary), are in no file under the engine home and in nothing the API returns, in neither the raw nor the JSON-escaped form (the slice-4 review; E37 item 2). The file's check for a redacted secret now looks for both forms in every case | same | 4 | written (after the slice-4 review; run against the slice-4 engine: fails on its assertion, the transcript on disk holds the escaped form) |
 | A detector registered later marks the stored record it matches as a hit, which is then no longer served; other records are untouched | same | 4 | written |
 | The later hit creates a Critical project finding and quarantines dependent evidence; a gate that was satisfied cannot go on using it | `M40-durable-evidence-invalidation.test.mjs` (second case) | 5 | written |
 | Known secrets do not reach the event stream or the output tail | — | 6 | deferred → 6: neither stream is built before slice 6. The store, which those streams read from, is covered now. |
@@ -629,6 +633,7 @@ Row closes in slice 4.
 | A backup with a member omitted is refused | same | 4 | written |
 | A backup with a member altered is refused | same | 4 | written |
 | A database-only copy is labeled insufficient for recovery and refused as one | same | 4 | written |
+| A backup taken after a commit its manifest would list has left the repository (its refs deleted, the reflog expired, pruned) is refused with exit status 7 and `backup_incomplete`, and nothing it leaves is labeled `complete` (the slice-4 review; E37 item 4) | same | 4 | written (after the slice-4 review; run against the slice-4 engine: fails on its assertion, the backup exits 0 labeled `complete`) |
 
 Row closes in slice 4.
 
@@ -648,6 +653,19 @@ The V resource is an unprivileged shim (E31 item 5; `harness/SEAM.md` §60 says 
 | Power cut after an effect was applied and before its receipt: recovery finds what git holds and the integration is made exactly once | same | 4 | written |
 
 Row closes in slice 4. The process-kill results it is reported apart from are rows M18 and M33.
+
+## After the slice-4 review (E37)
+
+2026-10-02. The one review of slice 4 (E31) confirmed five serious defects; E37 has four of them fixed before the merge, each with one new failing case, and carries the fifth (the filter-driver race, E37 item 5) to D2 with no case. This session wrote the four cases, one each, in the tables of rows M23, M61 (for rows M60 and M61), M64 and M66 above, each marked "after the slice-4 review". Three are in their row's existing file; the fourth is a new file, `M23-partial-clone-no-remote.test.mjs`, listed under slice 4. `harness/SEAM.md` was amended in place: §31 ("No remote", which replaces the false statement that no git call M1 makes can reach a remote), §55, §57, §59, §61 and §63. No harness helper was changed.
+
+Unlike the rest of the slice-4 tests, these were run: against the slice-4 engine as it stood on `build/slice-4` at `3590d86`. Each of the four fails on its own assertion, and every other case of the three existing files passes. The M23 case was also run once with the engine's git denied every transport (a wrapper on `PATH`, outside any test), and passes then; the M61 case's assertions hold on the same run with no fault armed.
+
+| Recorded, not pinned | Why |
+|---|---|
+| A usage observation whose write keeps failing (E37 item 3) | No case, by decision. The rule is in `harness/SEAM.md` §55; the blocker's reason for it is not named. |
+| Whether a refused backup leaves a directory behind | Either way nothing may be labeled `complete`. |
+| What a failed `git worktree add` leaves in the repository | Seen while writing the M23 case, on the slice-4 engine and a plain repository whose base lacks a blob: the run ends `failed` / `infra_error` unlaunched, as section 35 of the seam says, and the half-made worktree stays registered in the repository with no `workspaces` row. No row asks for its removal in the ordinary course (the recovery probe's "owned residue: withdraw" is row M31's); for the next Verifier pass or the owner. |
+| Other encodings of a secret (`\u` escapes, base64) | E37 item 2 names the JSON-escaped form only. |
 
 ## Slice-5 rows (M35 to M58, and the cases earlier rows left for slice 5)
 
