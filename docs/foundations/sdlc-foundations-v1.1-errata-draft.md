@@ -931,3 +931,7 @@ The one review of slice 6 found three serious defects and reproduced each by run
 **Consequences elsewhere.** `docs/acceptance/reports/M1-not-claimed.md` and the M1 report are updated when the path passes. No change to D1.
 
 ---
+
+## E44. Sean's decisions at the end of the M1 build (decided by Sean, 2026-10-02)
+
+1. **The bootstrap-token exposure is accepted for M1 and becomes a requirement of the isolation design.** The browser bootstrap route (D1 section 11.1, resolution note R6) trusts request headers that a browser cannot forge and any other local program can, so any process that reaches the loopback port can obtain the operator token (E42). Nothing changes in M1. D2 must ensure that an isolated role cannot reach that route, and settles the question of other users of the same machine. The M1 report states the exposure.
