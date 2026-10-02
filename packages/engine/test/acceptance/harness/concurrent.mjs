@@ -6,8 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'concurrent-insert.mjs');
 
+// The children meet at an instant of the monotonic clock, which on Linux is
+// one clock for every process (process.hrtime.bigint(), in nanoseconds). A
+// wall-clock instant moves when the host's clock steps (SEAM.md §24, "The
+// harness's own waits"): after a step forward the children would not wait
+// for one another, and after a step back they would spin for as long as the
+// step.
 export async function concurrentInserts(file, table, rows, { leadMs = 750 } = {}) {
-  const startAt = Date.now() + leadMs;
+  const startAt = process.hrtime.bigint() + BigInt(leadMs) * 1_000_000n;
   const runs = rows.map(
     (row) =>
       new Promise((resolve, reject) => {

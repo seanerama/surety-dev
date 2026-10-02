@@ -147,7 +147,7 @@ describe('M15 deadlines', () => {
 
     const delay = 4000;
     await armFault(fx.engine, { point: 'tick_step', step: 'recover', project: a, delay_ms: delay });
-    const requested = Date.now();
+    const requested = performance.now();
     const tickSeq = await oneTick(fx, a);
     assert.equal((await fx.engine.get('/v1/health')).status, 200, 'the API answers while a step is overrunning');
 
@@ -157,7 +157,7 @@ describe('M15 deadlines', () => {
     assert.equal(runsOf(fx.home, itemA).length, 0, 'the project whose prerequisite overran was not dispatched in that tick');
 
     // The slow step completes late. Nothing is dispatched on the strength of it.
-    await sleep(Math.max(0, requested + delay + 1500 - Date.now()));
+    await sleep(Math.max(0, requested + delay + 1500 - performance.now()));
     assert.equal(runsOf(fx.home, itemA).length, 0, 'a late completion does not dispatch');
     assert.equal(workItem(fx.home, itemA).status, 'eligible');
     await waitForWork(fx.home, itemB, 'complete');

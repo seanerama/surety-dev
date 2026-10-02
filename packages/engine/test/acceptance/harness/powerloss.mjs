@@ -112,7 +112,8 @@ export class PowerLoss {
         return false;
       }
     };
-    const deadline = Date.now() + 15_000;
+    // Measured on the monotonic clock: the wall clock steps (SEAM.md §24, "The harness's own waits").
+    const started = performance.now();
     for (;;) {
       const victims = [...new Set([...pids, ...this.#processes()])].filter(alive);
       if (victims.length === 0) break;
@@ -123,7 +124,7 @@ export class PowerLoss {
           // already gone
         }
       }
-      if (Date.now() > deadline) throw new Error(`power cut: processes ${victims.join(', ')} did not die`);
+      if (performance.now() - started > 15_000) throw new Error(`power cut: processes ${victims.join(', ')} did not die`);
       await sleep(20);
     }
     const errors = this.errors();

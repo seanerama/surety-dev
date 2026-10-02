@@ -258,7 +258,7 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     const first = await waitForRun(fx.home, item, { state: 'executing' });
 
     fx.scripted.boundary({ default: BOUNDARY.unknown });
-    const stoppedAt = Date.now();
+    const stoppedAt = performance.now();
     await stopRun(fx.engine, project, first.id);
 
     // As before: quarantined at the report, inside terminate_grace. The role
@@ -274,13 +274,13 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     // D1 §4.5 step 2: TERM, terminate_grace, KILL. No tick is asked for: the
     // signalling is the run-end protocol's own, and a quarantine does not end it.
     const killWithinMs = (config.terminate_grace + config.kill_grace + 6) * 1000;
-    await waitFor(() => !fx.scripted.isLive(launch), { timeoutMs: Math.max(1000, stoppedAt + killWithinMs - Date.now()), what: 'the role to be killed' }).catch(() => {});
+    await waitFor(() => !fx.scripted.isLive(launch), { timeoutMs: Math.max(1000, stoppedAt + killWithinMs - performance.now()), what: 'the role to be killed' }).catch(() => {});
     const signals = fx.scripted.eventsOf(launch.pid, 'signal').map((e) => e.signal);
     assert.equal(
       fx.scripted.isLive(launch),
       false,
       `a role that ignores SIGTERM must be sent SIGKILL once terminate_grace (${config.terminate_grace} s) has passed, also when the boundary reports unknown: ` +
-        `${Math.round((Date.now() - stoppedAt) / 1000)} s after Stop it is still running (signals it logged: ${signals.join(', ') || 'none'}; ` +
+        `${Math.round((performance.now() - stoppedAt) / 1000)} s after Stop it is still running (signals it logged: ${signals.join(', ') || 'none'}; ` +
         `run ${runRow(fx.home, first.id).state}, quarantined ${runRow(fx.home, first.id).quarantined})`,
     );
     assert.ok(signals.includes('SIGTERM'), 'it was sent SIGTERM first');
