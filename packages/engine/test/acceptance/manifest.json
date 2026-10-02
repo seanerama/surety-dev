@@ -77,7 +77,21 @@
       "M15-run-end-fault-matrix-integration.test.mjs",
       "M24-nomination-ref-moved-or-deleted.test.mjs"
     ],
-    "4": [],
+    "4": [
+      "M59-metering-identity-and-normalization.test.mjs",
+      "M60-partial-usage-and-corrections.test.mjs",
+      "M61-budget-boundaries-and-failed-reads.test.mjs",
+      "M62-accounting-survives-source-history-changes.test.mjs",
+      "M63-durable-record-and-chunk-publication.test.mjs",
+      "M64-streaming-redaction-and-later-detector.test.mjs",
+      "M65-retention-and-corrupt-evidence.test.mjs",
+      "M66-backup-and-restore.test.mjs",
+      "M67-power-loss-shim-is-faithful.test.mjs",
+      "M67-power-loss-durability.test.mjs",
+      "M02-record-identities.test.mjs",
+      "M04-chunk-receipts-append-only.test.mjs",
+      "M12-over-budget-project.test.mjs"
+    ],
     "5": [],
     "6": [],
     "7": []

@@ -443,6 +443,14 @@ export async function armFault(engine, fault) {
   if (res.status < 200 || res.status > 299) throw new Error(`arm fault ${JSON.stringify(fault)} → ${res.status} ${res.text}`);
 }
 
+// Disarm every fault that is still armed (SEAM.md §61). A fault armed with
+// `times` fails that many transactions or reads; a test that armed more than
+// its case used up takes the rest away before it goes on.
+export async function clearFaults(engine) {
+  const res = await engine.request('DELETE', '/v1/harness/faults');
+  if (res.status < 200 || res.status > 299) throw new Error(`clear faults → ${res.status} ${res.text}`);
+}
+
 export async function releaseBarrier(engine, name) {
   const res = await engine.post(`/v1/harness/barriers/${encodeURIComponent(name)}/release`, {});
   if (res.status < 200 || res.status > 299) throw new Error(`release barrier ${name} → ${res.status} ${res.text}`);
