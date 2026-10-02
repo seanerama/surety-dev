@@ -610,3 +610,25 @@ Neither changes M1's scripted runs, so the build continues on the stricter rule.
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E28. Slice 2 merged; what its final review carries into slice 3 (provisional, 2026-10-02)
+
+**Status: provisional**, on the same footing as E23 to E27.
+
+Slice 2 was merged after three reviews and two fix rounds, the limit the driver set for one slice. The final review found nothing that should stop the merge and judged the run-ending code "more complicated, and more certain on the paths the tests pin". It named the remaining weakness precisely: a retried step re-reads the store, while some of that step's inputs live only in memory or cannot be repeated. Two serious defects follow from it, both older than the last fix round.
+
+1. **Every step of ending a run must be repeatable.** If any step is repeated after a partial failure, it writes the same facts it would have written the first time. From slice 3 this is tested as a matrix rather than case by case: for each way a run can end, each store transaction on that path is made to fail once, and the final durable facts must equal those of the same ending with no failure, without a restart. Three review rounds each found one more ending that went wrong after a single failure; the matrix is meant to find the rest at once.
+2. **An operator's Stop or Abandon, confirmed after a lease has expired but before the tick has acted on it, is recorded as given.** The explicit command wins over the recovery outcome.
+
+**Defects carried to the slice-3 Verifier as failing tests, to be fixed before slice 3 is built on this code:**
+
+- Serious: an Abandon whose worktree removal succeeds on disk but fails to record once is stuck until restart, because the retry cannot issue the same operation twice.
+- Serious: a run stopped before its role was spawned, whose final transaction fails once, is charged a ledger row for an invocation that never ran.
+- Minor: a Stop confirmed while a deadline end is being retried replaces the outcome already decided.
+- Minor: the engine's line reader takes time quadratic in the length of a line.
+- Minor: a role that exited cleanly after an accepted result can still end as recovered if the lease expires in the two seconds before the engine acts on the exit.
+- Minor: when the clock steps back between reading an expired lease and acting on it, a live run is wrongly marked as ending.
+
+**Consequences elsewhere.** No change to D1.
+
+---
