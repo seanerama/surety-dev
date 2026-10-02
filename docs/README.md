@@ -21,6 +21,8 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [foundations/sdlc-idea.md](foundations/sdlc-idea.md) | The original idea, reconstructed. |
 | [reviews/predecessors/](reviews/predecessors/) | Two reviews of spec-driven-devops, Verity and the Verity console, including the incident record the design is tested against. |
 | [reviews/D1/](reviews/D1/) | The three cross-reviews of D1, the dispositions, and the briefs that requested them. The draft-3 review explains most of the corrections in the build spec. |
+| [acceptance/reports/M1-report.md](acceptance/reports/M1-report.md) | The M1 acceptance report: the run, versions, qualified load limits, review findings, what is not claimed, and the hands-on walkthrough (`M1-hands-on.sh`). |
+| [acceptance/reports/M1-not-claimed.md](acceptance/reports/M1-not-claimed.md) | The 33 cases left unwritten under the lean procedure, classed, so a passing M1 is not read as covering them. |
 | [acceptance/objections/](acceptance/objections/) | Builder objections to acceptance tests, and the Verifier's answers. |
 | [mockup/](mockup/) | The accepted MVP UI design, eight screens. |
 | [history/](history/) | A slot for the original design-session documents, not yet recovered. |
