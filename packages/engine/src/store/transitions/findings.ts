@@ -99,6 +99,9 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   }
 
   if (role === 'reviewer' && candidate) {
+    // A sign-off binds the content the run was given to review, fixed when it
+    // was claimed; content that has changed since is not signed off (E41 item 4).
+    const reviewed = (tx.db.prepare('SELECT "content_hash" FROM "runs" WHERE "id" = ?').get(run.id) as { content_hash: string | null }).content_hash;
     for (const s of report.signoffs ?? []) {
       const id = tx.newId('so_');
       tx.db
@@ -106,7 +109,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
           `INSERT INTO "signoffs" ("id", "created_at", "project", "candidate", "revision", "role", "scope", "module", "run", "acceptance_content_hash", "recorded_at")
            VALUES (?, ?, ?, ?, ?, 'reviewer', ?, ?, ?, ?, ?)`,
         )
-        .run(id, tx.at, project, candidate.id, candidate.revision, s.scope, s.module ?? null, run.id, contentHash(tx.db, project, candidate), tx.at);
+        .run(id, tx.at, project, candidate.id, candidate.revision, s.scope, s.module ?? null, run.id, reviewed ?? contentHash(tx.db, project, candidate), tx.at);
       tx.emit('signoff.recorded', { project, candidate: candidate.id, signoff: id, run: run.id }, { scope: s.scope, module: s.module ?? null });
     }
     if ((report.signoffs ?? []).length > 0) markStale(tx, { candidate: candidate.id });

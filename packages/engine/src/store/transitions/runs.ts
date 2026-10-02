@@ -8,6 +8,7 @@ import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
+import { contentHash, getCandidate } from './evidence.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
@@ -244,6 +245,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
        VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
     .run(run, tx.at, item.project, seq, item.id, role, args.backend.id, args.backend.version, args.backend.id, baseRevision, deadlineAt, parent, chain);
+  // The acceptance content the run is given, fixed now (E41 item 4).
+  const candidateId = (JSON.parse(item.subject) as { candidate?: string }).candidate;
+  const candidateRow = candidateId ? getCandidate(tx.db, candidateId) : undefined;
+  if (candidateRow) tx.db.prepare('UPDATE "runs" SET "content_hash" = ? WHERE "id" = ?').run(contentHash(tx.db, item.project, candidateRow), run);
   const subject = { project: item.project, run, work_item: item.id };
   tx.emit('run.created', subject, { seq, role, backend: args.backend.id, base_revision: baseRevision, parent_run: parent });
   tx.emit('run.claimed', subject, {});
