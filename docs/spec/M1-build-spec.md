@@ -24,7 +24,7 @@ All paths are from the repository root. The short names are used throughout this
 | Short name | Document | What it is |
 |---|---|---|
 | **F** | `docs/foundations/sdlc-framework-foundations-v1.0.md` | The agreed principles, roles, state model and testing rules. |
-| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E30 that amend F. The merged v1.1 text has not been produced; read F with E. |
+| **E** | `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` | Sean's decisions E1 to E31 that amend F. The merged v1.1 text has not been produced; read F with E. |
 | **RN** | `docs/design/sdlc-design-D1-resolution-note.md` | Seven design corrections to D1 (R1 to R7) and the rule that ended prose review. |
 | **Plan** | `docs/acceptance/sdlc-M1-acceptance-plan-Astra.md` | The M1 acceptance matrix: 74 rows, each a scenario with a required observable result. Written by Astra, the second architect. |
 | **D1** | `docs/design/sdlc-design-D1-engine-core.md` | The engine architecture, draft 3: entities, store, git, scheduler, gate function, decisions, API, recovery. |
@@ -91,6 +91,8 @@ Astra wrote the Plan and does not take part in the build (E21). The Plan remains
 3. **Build.** A Builder session on branch `build/slice-N`, cut from the updated `main`, implements and commits until `node scripts/run-tests.mjs acceptance --slice N` exits zero. That command runs the files listed for slices 1 to N, so an earlier slice cannot regress unnoticed.
 4. **Review.** A Reviewer session reads the Builder's diff against the tests and D1 and reports findings, each classified as a design decision (for Sean) or a contract defect (a new failing test for the Verifier).
 5. **Sean merges** after `node scripts/check-role-boundary.mjs builder main build/slice-N` exits zero and the slice command passes. A session may run git commands for Sean on his instruction; the decision to merge is his.
+
+**From slice 4 the procedure is lighter (E31, Sean's decision).** One review per slice: a finding confirmed as serious becomes a failing test and gets one fix, judged by the tests; everything else is recorded for the next slice's Verifier. Verifiers write the fewest cases that pin each row's required result, and no stand-in engine or self-check. The next slice's Verifier works in a separate working copy while the current slice's Builder builds, so steps 1 and 3 of consecutive slices overlap.
 
 The boundary check sees commits only and refuses to run on a working tree with uncommitted changes. It compares the branch with the point where it left `main`, so later commits on `main` are not counted against the branch.
 
@@ -290,7 +292,7 @@ None of these blocks slice 1.
 | Power-loss harness for row M67 | It must distinguish synced from unsynced state on real SQLite and real git. That may need a privileged device or filesystem setup on this WSL2 host, which is Sean's call. Without it M67 stays unpassed and M1 is not accepted. | Slice 4 |
 | Browser driver for row M68 | A pinned development dependency, and two browser families whose versions are recorded. | Slice 6 |
 | Numeric load limits for row M71 | The Plan requires them stated in the fixture. Qualifying a small store proves nothing about a larger one. | Slice 6 |
-| Foundations v1.1 text | E1 to E30 are not yet merged into one document. | Whenever convenient |
+| Foundations v1.1 text | E1 to E31 are not yet merged into one document. | Whenever convenient |
 | Package name | "surety" has not been checked on npm. Both packages are private until it is. | Before any publication |
 | `.surety/project.json` for this repository | Not created. The engine's own bootstrap or adoption transition is its only writer (E2), and Surety adopts itself only after M3. | After M3 |
 

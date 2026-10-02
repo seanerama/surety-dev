@@ -677,3 +677,23 @@ Slice 2 was merged after three reviews and two fix rounds, the limit the driver 
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E31. Build pace (decided by Sean, 2026-10-02: O14)
+
+**Gap.** Two slices and the tests for a third took about a day and a half of agent time. Writing tests was the slowest step: to show its tests worked before any engine existed, each Verifier also built a stand-in engine and hundreds of deliberately broken variants of it. Slice 2 took three reviews and two fix rounds. Agents ran one at a time.
+
+**Decision (O14).** In Sean's words: "one review per slice. drop the stand in engine and self check. and shrink the amount of test. go in parallel and use the shim."
+
+**How it is applied, from slice 4 onward.**
+
+1. **One review per slice.** After the build, one Reviewer pass. A finding confirmed as serious becomes a failing test and gets one fix, judged by the tests and not reviewed again. Everything else is recorded for the next slice's Verifier.
+2. **No stand-in engine and no self-check.** Verifiers no longer write, extend or run them. The existing ones under `harness/selfcheck/` are frozen and may be deleted. A test's own defects surface during the build and are handled by the objection procedure.
+3. **Fewer tests.** A Verifier writes the fewest cases that pin each row's required observable result: one test per row, with a separately reported case only where the acceptance plan names a finite case set. No generated matrix beyond what the plan requires, and no cases from the Verifier's own reading of the design. The tests already merged for slices 1 to 3 stay as they are.
+4. **Agents run in parallel.** The next slice's Verifier writes its tests in a separate working copy while the current slice's Builder builds.
+5. **Power loss (acceptance row M67) is tested with an unprivileged shim** that intercepts file writes and discards what has not been synced when the test cuts power. It needs no administrator rights. The Verifier must show the shim is faithful: that it discards an unsynced write and keeps a synced one, for SQLite and for git.
+
+**What this trades away, recorded so it is a choice and not an accident.** The self-check caught mistakes in the tests in every slice, and slice 2's second and third reviews each found serious defects the first had missed. With these changes such defects are more likely to be found later, during a later slice's build or in use, and less likely to be found before merging.
+
+**Consequences elsewhere.** `docs/spec/M1-build-spec.md` section 4 gains a paragraph stating the procedure. E28 item 1's fault matrix stands for the endings already covered and is not extended.
+
+---
