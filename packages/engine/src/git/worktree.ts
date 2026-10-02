@@ -1,6 +1,9 @@
 // Run workspaces as detached worktrees (D1 §7.3) and the probe of the
 // worktree list that the journal uses to confirm an effect (D1 §7.10).
 
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+
 import { type GitContext, git } from './exec.js';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -38,11 +41,33 @@ export async function listWorktrees(ctx: GitContext): Promise<WorktreeEntry[] | 
 
 export type EffectProbe = 'present' | 'absent' | 'ambiguous';
 
-// Is a worktree registered at this path (at this base, when given)?
+// A path with its symbolic links resolved, as git prints a worktree. The part
+// that does not exist (a removed worktree) is kept as given, under its
+// nearest existing ancestor resolved. null if no ancestor can be resolved.
+export function canonicalPath(path: string): string | null {
+  let head = resolve(path);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const parent = dirname(head);
+      if (parent === head) return null;
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+}
+
+// Is a worktree registered at this path (at this base, when given)? Paths are
+// compared with their symbolic links resolved on both sides: the engine home,
+// and so a workspace path, may be reached through a link (SEAM.md §16).
 export async function probeWorktree(ctx: GitContext, path: string, base?: string): Promise<EffectProbe> {
   const list = await listWorktrees(ctx);
   if (list === null) return 'ambiguous';
-  const entry = list.find((w) => w.path === path);
+  const wanted = canonicalPath(path);
+  if (wanted === null) return 'ambiguous';
+  const entry = list.find((w) => w.path === path || canonicalPath(w.path) === wanted);
   if (!entry) return 'absent';
   if (base !== undefined && (entry.head !== base || !entry.detached)) return 'ambiguous';
   return 'present';

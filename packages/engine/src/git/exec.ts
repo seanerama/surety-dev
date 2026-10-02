@@ -37,6 +37,10 @@ export interface GitResult {
   timedOut: boolean;
 }
 
+// The hooks directory engine git is given: not a directory, so no hook can
+// exist in it.
+const NO_HOOKS = '/dev/null';
+
 function gitEnv(home: string): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
@@ -54,7 +58,13 @@ export function git(ctx: GitContext, args: string[], opts: { deadlineSeconds?: n
   const { outputCap, home } = settings;
   const deadlineMs = (opts.deadlineSeconds ?? settings.deadlineSeconds) * 1000;
   return new Promise((resolve) => {
-    const child = spawn('git', [`--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
+    // Engine git runs no code from the repository (D1 §7.1; E25 item 3): a
+    // role can write the repository's hooks directory and its configuration,
+    // and a hook would run in the engine's own process tree, outside every
+    // execution domain. A command-line setting outranks every configuration
+    // file, so hooks are off wherever the repository keeps or names them.
+    // Filter drivers are deliberately not touched yet (E26 item 4).
+    const child = spawn('git', ['-c', `core.hooksPath=${NO_HOOKS}`, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
       env: gitEnv(home),
       cwd: ctx.workTree,
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -213,7 +213,11 @@ export function resumeWork(tx: Tx, args: { project: string; workItem: string }) 
   if (item.status === 'held') {
     next = transitionWork(tx, item, 'eligible', { dispatch_hold: 0, repair_due: 0 }, { cause: 'resume' });
   } else if (item.status === 'eligible' && item.dispatch_hold === 1) {
+    // Lifting a hold changes no status and is still a domain event (D1 §4.3,
+    // §12.1, §15.3): one work.resumed naming the status the item keeps, in
+    // the transaction that clears the hold.
     tx.db.prepare('UPDATE "work_items" SET "dispatch_hold" = 0 WHERE "id" = ?').run(item.id);
+    tx.emit('work.resumed', { project: item.project, work_item: item.id }, { cause: 'resume', from: item.status, to: item.status });
     next = { ...item, dispatch_hold: 0 };
   } else {
     throw illegal(`Resume of a ${item.status} item`, { work_item: item.id, status: item.status, dispatch_hold: item.dispatch_hold });
