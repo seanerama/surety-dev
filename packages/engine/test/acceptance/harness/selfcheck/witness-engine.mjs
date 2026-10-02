@@ -23,6 +23,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -32,6 +33,7 @@ import Database from 'better-sqlite3';
 
 import { newId } from '../ids.mjs';
 import { WORK, isLegal, m1Kinds } from '../transitions.mjs';
+import { makeGit, pathViolation, sha256 } from './witness-git.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTRACT = JSON.parse(readFileSync(join(here, '..', '..', 'contract', 'config.json'), 'utf8'));
@@ -89,8 +91,8 @@ const file = existsSync(paths.config) ? JSON.parse(readFileSync(paths.config, 'u
 const cfg = {};
 for (const [key, spec] of Object.entries(CONTRACT.engine)) cfg[key] = key in file ? file[key] : spec.default;
 if (!('api_authority' in file)) cfg.api_authority = `127.0.0.1:${cfg.api_port}`;
-const policy = {};
-for (const [key, spec] of Object.entries(CONTRACT.project)) if (!key.startsWith('$')) policy[key] = spec.default;
+const DEFAULT_POLICY = {};
+for (const [key, spec] of Object.entries(CONTRACT.project)) if (!key.startsWith('$')) DEFAULT_POLICY[key] = spec.default;
 
 // ---- clock, identity ----------------------------------------------------------------
 
@@ -211,6 +213,7 @@ function openStore() {
     db.exec('ALTER TABLE projects ADD COLUMN tier TEXT; ALTER TABLE projects ADD COLUMN dev_repo_path TEXT; ALTER TABLE projects ADD COLUMN integration_branch TEXT;');
     db.exec('ALTER TABLE work_items ADD COLUMN continuation TEXT; ALTER TABLE work_items ADD COLUMN pending_repair INTEGER NOT NULL DEFAULT 0;');
     db.exec(EXTRA_SCHEMA);
+    db.exec(readFileSync(join(here, 'witness-slice3.sql'), 'utf8'));
   }
   const dir = opt.migrations ?? ENGINE_MIGRATIONS;
   const files = readdirSync(dir).filter((n) => /^\d{4}_[a-z0-9_]+\.sql$/.test(n)).sort();
@@ -319,7 +322,7 @@ function signal(domain, name) {
 // ---- work items ----------------------------------------------------------------------
 
 const WORK_EVENT = { claimed: 'work.claimed', complete: 'work.complete', held: 'work.held', parked: 'work.parked', cancelled: 'work.cancelled', integrated: 'work.integrated' };
-const refusal = (status, code, reason, subject = {}) => Object.assign(new Error(reason), { status, code, subject });
+const refusal = (status, code, reason, subject = {}, whatToDo) => Object.assign(new Error(reason), { status, code, subject, whatToDo });
 
 function transition(id, to, payload = {}) {
   const item = one('SELECT * FROM "work_items" WHERE "id" = ?', id);
@@ -362,10 +365,10 @@ function raiseDecision(project, kind, subjectType, subjectId, options, question,
   return id;
 }
 
-function park(id, reason) {
+function park(id, reason, question) {
   transition(id, 'parked');
   const item = one('SELECT * FROM "work_items" WHERE "id" = ?', id);
-  const decision = raiseDecision(item.project, 'blocker', 'work_item', id, ['retry', 'cancel'], `Work item parked: ${reason}.`, [id]);
+  const decision = raiseDecision(item.project, 'blocker', 'work_item', id, ['retry', 'cancel'], question ?? `Work item parked: ${reason}.`, [id]);
   exec('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?', JSON.stringify({ reason, raised_at: iso(), decision }), id);
 }
 
@@ -417,17 +420,16 @@ const activeRuns = (project) =>
 function gitDir(project) {
   return one('SELECT * FROM "projects" WHERE "id" = ?', project);
 }
-// Engine git runs no code from the repository (SEAM.md §16 "Engine git"):
-// hooks and the file-system monitor program are switched off on every call,
-// whatever the repository configures.
-const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
-const NO_FSMONITOR = ['-c', 'core.fsmonitor=false'];
-const git = (repo, args) =>
-  execFileSync('git', [...(mutant('hooks_run') ? [] : NO_HOOKS), ...(mutant('fsmonitor_runs') ? [] : NO_FSMONITOR), '--git-dir', join(repo, '.git'), ...args], {
-    env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  }).trim();
+// Engine git (witness-git.mjs): every call names its repository, gets a
+// constructed environment and a deadline, and runs nothing the repository
+// configures (SEAM.md §§16, 31).
+const G = makeGit({ home, cfg, mutant });
+const git = (repo, args, opts = {}) => G.run(G.repoDir(repo), args, { filters: true, ...opts });
+
+// The effective policy of a project: the schema defaults under what the
+// engine has recorded for it (SEAM.md §27). Never what a file in the
+// repository says.
+const policyOf = (projectId) => ({ ...DEFAULT_POLICY, ...json(one('SELECT "policy" FROM "projects" WHERE "id" = ?', projectId)?.policy ?? '{}') });
 
 // The journal of one worktree effect of a run, in two steps that can each be
 // repeated (E28 item 1). The intent is recorded once per run and kind: a
@@ -464,13 +466,16 @@ function journalSettle(project, runId, kind, op, eventKinds = ['applied', 'confi
     insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: i + 2, journal_kind: kind, event_kind: eventKind, payload: JSON.stringify({ repo: 'dev', run: runId }) });
     if (eventKind !== 'failed') emit(`git.journal_${eventKind}`, { operation: op, project, run: runId });
   });
-  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, iso(), op);
+  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, status === 'succeeded' ? iso() : null, op);
   emit(`operation.${status}`, { operation: op, project, run: runId });
-  emit('operation.finalized', { operation: op, project, run: runId });
+  if (status === 'succeeded') emit('operation.finalized', { operation: op, project, run: runId });
 }
 
 function selectWork(project) {
   if (project.paused && !mutant('paused_dispatches')) return null;
+  if (project.registration_state !== 'registered') return null;
+  // The defect `oob_not_blocking`: work goes on over an unreconciled out-of-band change.
+  if (projectBlocked(project) && !mutant('oob_not_blocking')) return null;
   const busy = mutant('quarantine_dispatches') ? activeRuns(project.id).filter((r) => !r.quarantined) : activeRuns(project.id);
   if (!mutant('no_one_run_per_project') && busy.length > 0) return null;
   if (activeRuns().length >= cfg.max_concurrent_runs && !mutant('engine_limit_ignored')) return null;
@@ -491,7 +496,19 @@ async function dispatch(item) {
   const role = ROLE[item.kind] ?? 'builder';
   const prior = one('SELECT * FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1', item.id);
   const id = newId('run_');
-  const base = git(project.dev_repo_path, ['rev-parse', `refs/heads/${project.integration_branch}`]);
+  let base;
+  try {
+    base = git(project.dev_repo_path, ['rev-parse', `refs/heads/${project.integration_branch}`]);
+  } catch {
+    return; // the repository cannot be read: nothing is dispatched
+  }
+  // Work that was checkpointed continues from its checkpoint, in a new run linked to the one that made it.
+  // The defect `continuation_from_base`: it starts over from the branch.
+  let continues = null;
+  if (item.checkpoint_run && !mutant('continuation_from_base')) {
+    continues = item.checkpoint_run;
+    base = one('SELECT "current_base" FROM "workspaces" WHERE "run" = ?', continues).current_base;
+  }
   tx(() => {
     insert('runs', {
       id,
@@ -506,8 +523,8 @@ async function dispatch(item) {
       backend_version: 'witness',
       model_requested: 'scripted',
       base_revision: base,
-      deadline_at: iso(now() + policy[`deadline_${role}`] * 1000),
-      parent_run: prior && ['stopped', 'timed_out', 'recovered'].includes(prior.outcome) && !mutant('no_parent_link') ? prior.id : null,
+      deadline_at: iso(now() + policyOf(item.project)[`deadline_${role}`] * 1000),
+      parent_run: continues ?? (prior && ['stopped', 'timed_out', 'recovered'].includes(prior.outcome) && !mutant('no_parent_link') ? prior.id : null),
       quarantined: 0,
     });
     emit('run.created', { run: id, project: item.project, work_item: item.id });
@@ -553,26 +570,83 @@ async function dispatch(item) {
 
   const workspace = join(home, 'workspaces', id);
   mkdirSync(join(home, 'workspaces'), { recursive: true });
-  git(project.dev_repo_path, ['worktree', 'add', '--detach', workspace, base]);
+  let op;
+  tx(() => {
+    op = journalIntend(item.project, id, 'worktree_add');
+  });
+  const failAdd = () => {
+    tx(() => journalSettle(item.project, id, 'worktree_add', op, ['failed'], 'failed'));
+    live.get(id).spawned = false;
+    return void endRun(id, 'failed', 'infra_error');
+  };
+  // Whatever is already at the path is not the engine's: a symbolic link in
+  // particular is refused (SEAM.md §35). The defect `symlink_workspace_adopted`
+  // goes on, and takes a failed `worktree add` for a worktree that is there
+  // because the path, resolved, is one the repository lists.
+  let occupied = false;
+  try {
+    lstatSync(workspace);
+    occupied = true;
+  } catch {
+    // free
+  }
+  if (occupied && !mutant('symlink_workspace_adopted')) return failAdd();
+  const added = await addWorktree(project.dev_repo_path, workspace, base);
+  if (added === 'ambiguous') {
+    // The command could have written and was killed at its deadline: the
+    // operation is ambiguous, and nothing goes on because a timer ran out.
+    tx(() => journalSettle(item.project, id, 'worktree_add', op, ['ambiguous'], 'ambiguous'));
+    live.get(id).spawned = false;
+    return;
+  }
+  if (added === 'failed') {
+    const present = mutant('symlink_workspace_adopted') && G.worktrees(project.dev_repo_path).some((w) => G.real(w.path) === G.real(workspace));
+    if (!present) return failAdd();
+  }
   if (mutant('worktree_probe_literal_path')) {
     // The defect: the probe looks for the path as given in a list that git
     // prints with symbolic links resolved, and takes a miss for "not added".
     const listed = git(project.dev_repo_path, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${workspace}`);
-    if (!listed) {
-      tx(() => journalSettle(item.project, id, 'worktree_add', journalIntend(item.project, id, 'worktree_add'), ['failed'], 'failed'));
-      live.get(id).spawned = false;
-      return void endRun(id, 'failed', 'infra_error');
-    }
+    if (!listed) return failAdd();
+  }
+  let baseline = null;
+  try {
+    baseline = JSON.stringify(G.checkoutBaseline(workspace));
+    live.get(id).meta = G.metadataOf(project.dev_repo_path, workspace);
+  } catch {
+    // only reached with a defect switched on
   }
   tx(() => {
-    journalSettle(item.project, id, 'worktree_add', journalIntend(item.project, id, 'worktree_add'));
+    journalSettle(item.project, id, 'worktree_add', op);
     const ws = newId('ws_');
     insert('workspaces', { id: ws, created_at: iso(), project: item.project, run: id, path: workspace, base_revision: base, current_base: base, disposition: 'active' });
     exec('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?', ws, id);
+    if (baseline) insert('managed_checkouts', { id: newId('mc_'), created_at: iso(), project: item.project, kind: 'run_workspace', path: workspace, baseline, owner_run: id });
     appendStatus(item.project, receipt, 'dispatch_started');
   });
   // The spawn is not waited for by the tick.
   launch(id, { receipt, domain, workspace, role }).catch((err) => process.stderr.write(`launch ${id}: ${err.stack}\n`));
+}
+
+// `git worktree add`, not waited for synchronously, with the git deadline
+// (D1 §7.1): 'added', 'failed', or 'ambiguous' when the command was killed
+// at its deadline and may have written.
+function addWorktree(repo, workspace, base) {
+  let args = [];
+  try {
+    args = G.argv(G.repoDir(repo), ['worktree', 'add', '--detach', workspace, base], { filters: true });
+  } catch {
+    return Promise.resolve('failed');
+  }
+  return new Promise((resolve) => {
+    const options = { env: G.env(), ...(mutant('git_no_deadline') ? {} : { timeout: cfg.git_deadline * 1000, killSignal: 'SIGKILL' }) };
+    execFile('git', args, options, (err) => {
+      if (!err) return resolve('added');
+      // The defect `timeout_is_absent`: a command killed at its deadline is taken to have done nothing.
+      if ((err.killed || err.signal === 'SIGKILL') && !mutant('timeout_is_absent')) return resolve('ambiguous');
+      resolve('failed');
+    });
+  });
 }
 
 const closing = (runId) => one(`SELECT COUNT(*) AS n FROM "leases" WHERE "resource_id" = ? AND "resource_kind" = 'run' AND "released_at" IS NULL AND "closing" = 0`, runId).n === 0;
@@ -730,7 +804,16 @@ async function launch(id, { receipt, domain, workspace, role }) {
   const roleEnded = () =>
     chain.then(() => {
       if (getRun(id).outcome !== null) return; // already ending for another reason
-      endRun(id, ...earned(id, known));
+      const end = earned(id, known);
+      if (end[0] === 'completed' && INTEGRATING[work.kind] && !known.intended && !known.accepting) {
+        known.accepting = true;
+        return accept(id, known).catch((err) => {
+          process.stderr.write(`accept ${id}: ${err.stack}\n`);
+          known.reasonText = `The run's result could not be accepted: ${err.message}`;
+          endRun(id, 'failed', 'infra_error');
+        });
+      }
+      endRun(id, ...end);
     });
   if (mutant('stdout_eof_is_exit')) closed.then(roleEnded); // the defect: the end of the output is taken for the end of the role
   child.on('exit', async () => {
@@ -781,7 +864,8 @@ function outcomeOf(known) {
   return known.child.exitCode === 0 ? ['completed', 'none'] : ['failed', 'infra_error'];
 }
 
-const validResult = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && v.status === 'completed' && typeof v.summary === 'string';
+const validResult = (v) =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) && v.status === 'completed' && typeof v.summary === 'string' && ['checkpoint', 'nominate'].every((key) => !(key in v) || typeof v[key] === 'boolean');
 
 // ---- the run-end protocol (D1 §4.5; SEAM.md §16) ---------------------------------------------
 
@@ -794,12 +878,14 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
   known.intended ??= [outcome, reason];
   known.recovery = known.recovery || recovery;
   const [decided, why] = known.intended;
+  // An attempt is under way from here: nothing else starts another beside it.
+  known.failed = false;
   known.ending = (async () => {
     const r = getRun(id);
     if (r.state === 'ended') return;
     tx(() => {
       if (r.outcome === null || (recovery && mutant('recovery_overwrites_outcome'))) {
-        exec('UPDATE "runs" SET "outcome" = ?, "reason_class" = ? WHERE "id" = ?', decided, why, id);
+        exec('UPDATE "runs" SET "outcome" = ?, "reason_class" = ?, "reason_text" = ? WHERE "id" = ?', decided, why, known.reasonText ?? null, id);
       }
       if (r.state !== 'finalizing') {
         exec(`UPDATE "runs" SET "state" = 'finalizing' WHERE "id" = ?`, id);
@@ -996,6 +1082,32 @@ async function finishRun(id, known, recovery) {
   const r = getRun(id);
   if (r.outcome === 'abandoned') discardWorkspace(r);
   known.finishes = (known.finishes ?? 0) + 1;
+  // A recovery, once termination is established, captures the snapshot of
+  // what the role left, and accepts nothing (SEAM.md §28).
+  const left = one('SELECT * FROM "workspaces" WHERE "run" = ?', id);
+  if (recovery && left && left.snapshot_tree === null && existsSync(left.path) && !mutant('recovery_no_snapshot')) {
+    try {
+      const tree = G.snapshot(left.path, G.gitDirOf(left.path), left.current_base);
+      exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', tree, left.id);
+      if (mutant('recovery_commits')) {
+        // The defect: a recovery takes what it found for accepted work.
+        const p = projectRow(r.project);
+        const sha = commitTree(p, { run: id, tree, parent: left.current_base, message: 'recovered\n' });
+        tx(() => recordRevision(p, { sha, parent: left.current_base, kind: 'engine_commit', run: id }));
+      }
+    } catch (err) {
+      process.stderr.write(`recovery snapshot ${id}: ${err.message}\n`);
+    }
+  }
+  // What a workspace that stays holds when its run ends is its baseline as a managed checkout.
+  let endBaseline = null;
+  if (left && r.outcome !== 'abandoned' && existsSync(left.path)) {
+    try {
+      endBaseline = JSON.stringify(G.checkoutBaseline(left.path));
+    } catch {
+      // a workspace whose git link the role destroyed has no baseline to take
+    }
+  }
   // What this incarnation knows of the spawn is kept for as long as it lives,
   // so a repeated attempt records what the first would have. The defect
   // `retry_forgets_never_launched`: a repeated attempt no longer knows.
@@ -1028,6 +1140,8 @@ async function finishRun(id, known, recovery) {
     }
   }
   tx(() => {
+    // Finishing a run that has ended writes nothing (D1 §4.5: endRun is idempotent).
+    if (getRun(id).state === 'ended') return;
     for (const receipt of all('SELECT * FROM "invocation_receipts" WHERE "run" = ?', id)) {
       const terminal = terminalOf(receipt);
       if (terminal === null && !(known.observedAlone && known.finishes === 1)) continue;
@@ -1053,6 +1167,8 @@ async function finishRun(id, known, recovery) {
       emit('ledger.row', { run: id, project: r.project, invocation: receipt.id });
     }
     exec(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`, id);
+    if (endBaseline) exec('UPDATE "managed_checkouts" SET "baseline" = ? WHERE "owner_run" = ?', endBaseline, id);
+    else exec('DELETE FROM "managed_checkouts" WHERE "owner_run" = ?', id);
     if (!mutant('grant_not_revoked')) exec('UPDATE "capability_grants" SET "revoked_at" = ? WHERE "run" = ? AND "revoked_at" IS NULL', iso(), id);
     if (mutant('clearance_revives_grant') && r.quarantined) exec('UPDATE "capability_grants" SET "revoked_at" = NULL WHERE "run" = ?', id);
     if (!mutant('lease_not_released')) exec('UPDATE "leases" SET "released_at" = ? WHERE "resource_id" = ? AND "released_at" IS NULL', iso(), id);
@@ -1073,16 +1189,31 @@ function settleWork(r) {
     case 'completed':
       if (WORK.kinds[item.kind].path.at(-2) === 'executing') transition(item.id, 'complete');
       break;
-    case 'failed':
-      if (item.repair_attempts >= policy.repair_attempts_max && !mutant('repair_unbounded')) park(item.id, 'repair_attempts_max');
+    case 'failed': {
+      // The progress key is taken over the snapshot tree of an attempt that
+      // failed validation (D1 §4.3): the same tree again is no progress.
+      const attempt = one('SELECT "snapshot_tree" FROM "workspaces" WHERE "run" = ?', r.id);
+      if (attempt?.snapshot_tree && !mutant('no_progress_ignored')) {
+        // Two defects: a key that also holds the run, so that it never repeats; a key that holds nothing, so that it always does.
+        const key = sha256(mutant('progress_key_includes_run') ? `${attempt.snapshot_tree}:${r.id}` : mutant('progress_key_constant') ? 'the same' : attempt.snapshot_tree);
+        if (key === item.progress_key) {
+          exec('UPDATE "work_items" SET "no_progress_count" = "no_progress_count" + 1 WHERE "id" = ?', item.id);
+          if (item.no_progress_count + 1 >= policyOf(item.project).no_progress_max) {
+            park(item.id, 'no_progress_max');
+            break;
+          }
+        } else exec('UPDATE "work_items" SET "progress_key" = ? WHERE "id" = ?', key, item.id);
+      }
+      if (item.repair_attempts >= policyOf(item.project).repair_attempts_max && !mutant('repair_unbounded')) park(item.id, 'repair_attempts_max');
       else {
         transition(item.id, 'eligible');
         exec('UPDATE "work_items" SET "pending_repair" = 1 WHERE "id" = ?', item.id);
       }
       break;
+    }
     case 'refused':
       exec('UPDATE "work_items" SET "preflight_refusals" = "preflight_refusals" + 1 WHERE "id" = ?', item.id);
-      if (item.preflight_refusals + 1 >= policy.preflight_refusals_max && !mutant('preflight_unbounded')) park(item.id, 'preflight_refusals_max');
+      if (item.preflight_refusals + 1 >= policyOf(item.project).preflight_refusals_max && !mutant('preflight_unbounded')) park(item.id, 'preflight_refusals_max');
       else transition(item.id, 'eligible');
       break;
     case 'timed_out':
@@ -1110,8 +1241,557 @@ async function reobserveQuarantined() {
     for (const d of domains) markTerminated(d);
     const known = live.get(r.id) ?? { spawned: null, child: null, result: undefined, ending: null };
     live.set(r.id, known);
+    if (mutant('quarantine_then_snapshot') && known.unsnapshotted) {
+      // The defect: a quarantine that clears is snapshotted after the fact.
+      const ws = one('SELECT * FROM "workspaces" WHERE "run" = ?', r.id);
+      exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', G.snapshot(ws.path, G.gitDirOf(ws.path), ws.current_base), ws.id);
+    }
     await finishRun(r.id, known, false);
   }
+}
+
+// ---- slice 3: registry, journal, snapshot, validation, commit, integration, integrity ----
+// (SEAM.md §§27–34). Synchronous git around rows; nothing here could recover
+// what it journals. It exists so the slice-3 tests can be shown satisfiable.
+
+const INTEGRATING = { stage_build: 'builder', fix: 'builder', replan: 'architect', assessment: 'architect' };
+const projectRow = (id) => one('SELECT * FROM "projects" WHERE "id" = ?', id);
+const integrationRef = (p) => `refs/heads/${p.integration_branch}`;
+const registered = (project, ref) => one('SELECT * FROM "ref_registry" WHERE "project" = ? AND "ref" = ?', project, ref);
+const nextRefNumber = (project, kind) => one('SELECT COUNT(*) + 1 AS n FROM "ref_registry" WHERE "project" = ? AND "kind" = ?', project, kind).n;
+function registerRef(project, ref, kind, oid, immutable = 0) {
+  const row = registered(project, ref);
+  if (row) exec('UPDATE "ref_registry" SET "expected_oid" = ? WHERE "id" = ?', oid, row.id);
+  else insert('ref_registry', { id: newId('ref_'), created_at: iso(), project, ref, kind, expected_oid: oid, immutable });
+}
+
+// A journaled operation of the kinds slice 3 adds: its row and `intended`
+// event in one transaction, later events one at a time.
+function journalOpen(project, kind, journalKind, payload) {
+  const op = newId('op_');
+  insert('operations', {
+    id: op,
+    created_at: iso(),
+    project,
+    seq: one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "operations" WHERE "project" = ?', project).n,
+    kind,
+    target: JSON.stringify({ repo: payload.repo, ref: payload.ref ?? null }),
+    subject: '{}',
+    idempotency_key: sha256(`${journalKind}:${JSON.stringify(payload)}:${op}`),
+    semantic_generation: 1,
+    status: 'intended',
+    deadline_at: iso(now() + cfg.git_deadline * 1000),
+  });
+  emit('operation.intended', { operation: op, project, run: payload.run ?? null });
+  insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: 1, journal_kind: journalKind, event_kind: 'intended', payload: JSON.stringify(payload) });
+  emit('git.journal_intended', { operation: op, project, run: payload.run ?? null });
+  return op;
+}
+function journalAppend(project, op, journalKind, eventKinds, payload, status) {
+  const from = one('SELECT COALESCE(MAX("seq"), 0) AS n FROM "git_journal_events" WHERE "operation" = ?', op).n;
+  eventKinds.forEach((eventKind, i) => {
+    insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: from + i + 1, journal_kind: journalKind, event_kind: eventKind, payload: JSON.stringify(payload) });
+    if (eventKind !== 'failed') emit(`git.journal_${eventKind}`, { operation: op, project, run: payload.run ?? null });
+  });
+  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, status === 'succeeded' ? iso() : null, op);
+  emit(`operation.${status}`, { operation: op, project, run: payload.run ?? null });
+  if (status === 'succeeded') emit('operation.finalized', { operation: op, project, run: payload.run ?? null });
+}
+
+// A tree made of another tree plus some files, without touching any checkout.
+function treeWith(repo, base, files) {
+  const index = join(G.repoDir(repo), `witness-index-${process.hrtime.bigint()}`);
+  const extraEnv = { GIT_INDEX_FILE: index };
+  try {
+    git(repo, ['read-tree', base], { extraEnv });
+    for (const [path, content] of Object.entries(files)) {
+      const blob = git(repo, ['hash-object', '-w', '--stdin'], { input: content });
+      git(repo, ['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], { extraEnv });
+    }
+    return git(repo, ['write-tree'], { extraEnv });
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
+// commit-tree with a frozen parent and tree, published under a keep ref (D1 §§6.5, 7.3, 7.10).
+function commitTree(p, { run = null, tree, parent, message }) {
+  const repo = p.dev_repo_path;
+  const payload = { repo, tree, old_oid: parent, run };
+  let op;
+  tx(() => {
+    op = journalOpen(p.id, 'git_commit', 'commit_tree', payload);
+  });
+  const sha = git(repo, ['commit-tree', tree, '-p', parent], { input: message });
+  const keep = `refs/surety/keep/${nextRefNumber(p.id, 'keep')}`;
+  git(repo, ['update-ref', keep, sha]);
+  tx(() => {
+    registerRef(p.id, keep, 'keep', sha, 1);
+    journalAppend(p.id, op, 'commit_tree', ['applied', 'confirmed', 'finalized'], { ...payload, new_oid: sha }, 'succeeded');
+  });
+  return sha;
+}
+
+class IntegrationRefused extends Error {
+  constructor(worktree) {
+    super(`the integration branch is checked out in ${worktree}`);
+    this.worktree = worktree;
+  }
+}
+const FREE_THE_BRANCH = 'Switch that worktree to another branch, or detach it (git checkout --detach), then retry.';
+
+// A ref moved by compare-and-swap through the journal (D1 §7.5). With
+// `recheck`, the branch must not be checked out in a worktree the engine does
+// not own, looked at again immediately before the ref would move.
+async function refUpdate(p, { run = null, ref, oldOid, newOid, recheck = false }) {
+  const repo = p.dev_repo_path;
+  const payload = { repo, ref, old_oid: oldOid, new_oid: newOid, run };
+  let op;
+  tx(() => {
+    op = journalOpen(p.id, 'git_ref_update', 'ref_update', payload);
+  });
+  if (mutant('shell_interpolates')) {
+    // The defect: a ref's name is put into a shell command.
+    try {
+      execFileSync('sh', ['-c', `echo ${ref} > /dev/null`], { cwd: home, stdio: 'ignore' });
+    } catch {
+      // whatever it did, it did
+    }
+  }
+  await barrier('journal.ref_update.intent_committed');
+  if (recheck && !mutant('no_recheck_before_cas') && !mutant('integrates_checked_out_branch')) {
+    const [held] = G.checkoutsOf(repo, ref);
+    if (held) {
+      tx(() => journalAppend(p.id, op, 'ref_update', ['failed'], payload, 'failed'));
+      throw new IntegrationRefused(held.path);
+    }
+  }
+  git(repo, ['update-ref', ref, newOid, oldOid ?? '0'.repeat(40)]);
+  tx(() => {
+    // The finalizer: the registry now expects what the engine put there.
+    // The defect `own_ref_ops_observed`: it is not told.
+    if (registered(p.id, ref) && !mutant('own_ref_ops_observed')) registerRef(p.id, ref, null, newOid);
+    journalAppend(p.id, op, 'ref_update', ['applied', 'confirmed', 'finalized'], { ...payload, confirmed_oid: newOid }, 'succeeded');
+  });
+}
+
+function commitMessage(r, item, base, result) {
+  const trailers = [`Surety-Run: ${r.id}`, `Surety-Role: ${r.role}`, `Surety-Base: ${base}`, `Surety-WorkItem: ${item.id}`, `Surety-Kind: ${item.kind}`].join('\n');
+  // The defect `summary_in_trailers`: the role's summary is put where the trailers are.
+  if (mutant('summary_in_trailers')) return `${item.kind} run\n\n${result.summary}\n${trailers}\n`;
+  return `${item.kind} run ${r.seq}\n\n${trailers}\n`;
+}
+
+// What a snapshot may not hold, and what must be as the engine left it
+// (SEAM.md §28; contract/snapshot-validation.json). Returns {reason, text} or null.
+function violation(p, r, ws, tree, known) {
+  const repo = p.dev_repo_path;
+  const base = ws.current_base;
+  const outside = (text) => ({ reason: 'ref_violation', text });
+  const inside = (text) => ({ reason: 'diff_violation', text });
+  const meta = known.meta;
+  if (meta) {
+    if (!mutant('no_check_gitlink') && readFileSync(join(ws.path, '.git'), 'utf8') !== meta.gitFile) return outside("the workspace's .git file was changed");
+    if (!mutant('no_check_head')) {
+      let head = null;
+      let branch = null;
+      try {
+        head = G.run(meta.gitDir, ['rev-parse', 'HEAD']);
+      } catch {
+        // no HEAD to read
+      }
+      try {
+        branch = G.run(meta.gitDir, ['symbolic-ref', '-q', 'HEAD']);
+      } catch {
+        // detached, as it should be
+      }
+      if (head !== base || branch) return outside(`the workspace's HEAD is ${branch ?? head}, not detached at its base ${base}`);
+    }
+    if (!mutant('no_check_index') && sha256(G.run(meta.gitDir, ['ls-files', '-s', '-z'], { workTree: ws.path })) !== meta.index) return outside("the workspace's index was changed");
+    const hooksDir = join(G.repoDir(repo), 'hooks');
+    const hooks = existsSync(hooksDir) ? sha256(readdirSync(hooksDir).sort().map((name) => `${name} ${sha256(readFileSync(join(hooksDir, name)))}`).join('\n')) : sha256('');
+    if (!mutant('no_check_config') && sha256(readFileSync(join(G.repoDir(repo), 'config'))) !== meta.config) return outside("the repository's configuration was changed");
+    if (!mutant('no_check_hooks') && hooks !== meta.hooks) return outside("the repository's hooks directory was changed");
+  }
+  if (!mutant('no_check_refs')) {
+    for (const row of all('SELECT * FROM "ref_registry" WHERE "project" = ?', p.id)) {
+      const found = G.refOid(repo, row.ref);
+      if (found !== row.expected_oid) return outside(`the registered ref ${row.ref} is at ${found ?? 'nothing'}, not at ${row.expected_oid}`);
+    }
+  }
+  if (!mutant('no_check_other_checkouts')) {
+    for (const c of all('SELECT * FROM "managed_checkouts" WHERE "project" = ? AND ("owner_run" IS NULL OR "owner_run" <> ?)', p.id, r.id)) {
+      if (!existsSync(c.path)) continue;
+      let current;
+      try {
+        current = JSON.stringify(G.checkoutBaseline(c.path));
+      } catch {
+        continue;
+      }
+      if (current !== c.baseline) return outside(`the managed checkout ${c.path} was altered`);
+    }
+  }
+
+  const changed = G.changes(repo, base, tree);
+  // The defect of D1 §7.3 step 4 as drafted: the run's own edits count as an altered checkout.
+  if (mutant('own_edit_is_ref_violation') && changed.length > 0) return outside("the run's own workspace was altered");
+  if (mutant('external_diff_runs')) {
+    try {
+      execFileSync('git', ['--git-dir', G.repoDir(repo), 'diff', base, tree], { env: { PATH: process.env.PATH, HOME: home }, stdio: 'ignore', timeout: 10_000 });
+    } catch {
+      // the defect is that it was run at all
+    }
+  }
+  const policy = policyOf(p.id);
+  const sized = [];
+  for (const c of changed) {
+    if (mutant('shell_interpolates')) {
+      // The defect: a name a role chose is put into a shell command.
+      try {
+        execFileSync('sh', ['-c', `echo ${c.path} > /dev/null`], { cwd: ws.path, stdio: 'ignore' });
+      } catch {
+        // whatever it did, it did
+      }
+    }
+    if (!mutant('no_role_paths')) {
+      const refused = pathViolation(r.role, c.path);
+      if (refused) return inside(refused);
+    }
+    if (c.status === 'D') continue;
+    if (c.mode === '120000') {
+      if (!mutant('no_link_check') && G.linkEscapes(ws.path, c.path, git(repo, ['cat-file', 'blob', c.oid]))) return inside(`the symbolic link ${c.path} leads outside the workspace`);
+      continue;
+    }
+    if (c.mode !== '100644' && c.mode !== '100755') {
+      if (!mutant('no_kind_check')) return inside(`${c.path} is neither a regular file nor a symbolic link (mode ${c.mode})`);
+      continue;
+    }
+    sized.push(c);
+  }
+  if (!mutant('no_caps')) {
+    if (sized.length > policy.snapshot_max_files) return inside(`${sized.length} files, more than snapshot_max_files (${policy.snapshot_max_files})`);
+    const sizes = sized.length === 0 ? [] : git(repo, ['cat-file', '--batch-check=%(objectsize)'], { input: `${sized.map((c) => c.oid).join('\n')}\n` }).split('\n').map(Number);
+    let total = 0;
+    for (const [i, c] of sized.entries()) {
+      if (sizes[i] > policy.snapshot_max_file_bytes) return inside(`${c.path} has ${sizes[i]} bytes, more than snapshot_max_file_bytes (${policy.snapshot_max_file_bytes})`);
+      total += sizes[i];
+    }
+    if (total > policy.snapshot_max_bytes) return inside(`${total} bytes, more than snapshot_max_bytes (${policy.snapshot_max_bytes})`);
+  }
+  return null;
+}
+
+function recordRevision(p, { sha, parent, kind, run }) {
+  const id = newId('rev_');
+  insert('revisions', { id, created_at: iso(), project: p.id, sha, parent_sha: parent, kind, created_by_run: run, recorded_at: iso() });
+  emit('revision.recorded', { project: p.id, revision: id }, { sha, kind });
+  return id;
+}
+
+// What follows a valid result of a Builder's or an Architect's run whose
+// role exited 0 (SEAM.md §28): termination, snapshot, validation, commit,
+// and then a checkpoint or the integration.
+async function accept(id, known) {
+  const r = getRun(id);
+  const p = projectRow(r.project);
+  const item = one('SELECT * FROM "work_items" WHERE "id" = ?', r.work_item);
+  const ws = one('SELECT * FROM "workspaces" WHERE "run" = ?', id);
+  const gitDirOfWs = known.meta?.gitDir ?? G.gitDirOf(ws.path);
+  // The defect `snapshot_before_termination`: captured while a writer may live.
+  if (mutant('snapshot_before_termination')) exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', G.snapshot(ws.path, gitDirOfWs, ws.current_base), ws.id);
+
+  // 1. No snapshot before the domain has been shown empty.
+  if (!(await establishTermination(id, known, false))) {
+    known.reasonText = "The run's domain could not be shown empty, so what the role left could not be established.";
+    known.unsnapshotted = true;
+    // The defect `quarantined_completed`: the outcome recorded with the quarantine claims a validation that never happened.
+    return void endRun(id, ...(mutant('quarantined_completed') ? ['completed', 'none'] : ['failed', 'infra_error']));
+  }
+  if (mutant('absorbs_outside_files')) {
+    // The defect: what the role left beside its workspace is taken into it.
+    for (const name of readdirSync(join(ws.path, '..'))) {
+      const stray = join(ws.path, '..', name);
+      if (statSync(stray).isFile()) writeFileSync(join(ws.path, name), readFileSync(stray));
+    }
+  }
+  // 2. The snapshot.
+  const tree = G.snapshot(ws.path, gitDirOfWs, ws.current_base);
+  exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', tree, ws.id);
+  // 3. Validation: a violation rejects the whole result.
+  const bad = violation(p, r, ws, tree, known);
+  if (bad) {
+    known.reasonText = bad.text;
+    return void endRun(id, 'failed', bad.reason);
+  }
+  // 4. The commit.
+  const checkpoint = known.result.checkpoint === true;
+  const kind = checkpoint ? 'checkpoint' : r.role === 'architect' && !mutant('architect_engine_commit') ? 'intent' : 'engine_commit';
+  const sha = commitTree(p, { run: id, tree, parent: ws.current_base, message: commitMessage(r, item, ws.current_base, known.result) });
+  let revision;
+  tx(() => {
+    revision = recordRevision(p, { sha, parent: ws.current_base, kind, run: id });
+  });
+  const ref = integrationRef(p);
+  // 5a. A checkpoint is a working revision: nothing is integrated.
+  if (checkpoint && !mutant('checkpoint_integrates')) {
+    tx(() => {
+      exec('UPDATE "workspaces" SET "current_base" = ?, "checkpoints" = ? WHERE "id" = ?', sha, JSON.stringify([...json(ws.checkpoints ?? '[]'), revision]), ws.id);
+      if (mutant('checkpoint_rewrites_base')) {
+        exec('UPDATE "workspaces" SET "base_revision" = ? WHERE "id" = ?', sha, ws.id);
+        exec('UPDATE "runs" SET "base_revision" = ? WHERE "id" = ?', sha, id);
+      }
+      transition(item.id, 'eligible');
+      exec('UPDATE "work_items" SET "checkpoint_run" = ? WHERE "id" = ?', id, item.id);
+    });
+    return void endRun(id, 'completed', 'none');
+  }
+  // 5b. The integration, refused while the branch is checked out in a worktree the engine does not own.
+  try {
+    tx(() => transition(item.id, 'integrating'));
+    if (!mutant('integrates_checked_out_branch')) {
+      const [held] = G.checkoutsOf(p.dev_repo_path, ref);
+      if (held) throw new IntegrationRefused(held.path);
+    }
+    await refUpdate(p, { run: id, ref, oldOid: registered(p.id, ref).expected_oid, newOid: sha, recheck: true });
+    if (mutant('integration_touches_checkouts')) {
+      // The defect: a checkout-updating protocol nobody asked for.
+      for (const w of G.worktrees(p.dev_repo_path)) {
+        if (G.engineOwned(w.path)) continue;
+        try {
+          G.run(G.gitDirOf(w.path), ['checkout', '-q', '--detach', sha], { workTree: w.path });
+        } catch {
+          // it tried
+        }
+      }
+    }
+    if (!mutant('no_integrated_transition')) tx(() => transition(item.id, 'integrated'));
+  } catch (err) {
+    if (!(err instanceof IntegrationRefused)) throw err;
+    known.reasonText = `The integration branch ${p.integration_branch} is checked out in ${err.worktree}, a worktree the engine does not own; the branch was not moved. ${FREE_THE_BRANCH}`;
+    tx(() => park(item.id, 'integration_branch_checked_out', `The integration branch ${p.integration_branch} is checked out in ${err.worktree}. ${FREE_THE_BRANCH}`));
+    return void endRun(id, 'failed', 'integration_conflict');
+  }
+  endRun(id, 'completed', 'none');
+}
+
+// ---- repository integrity (D1 §7.6; SEAM.md §32) ----
+
+function raiseOob(p, subjectKind, { ref = null, checkout = null, expected, found, options, question }) {
+  const id = newId('oob_');
+  const decision = raiseDecision(p.id, 'out_of_band_change', 'out_of_band_change', id, options, question);
+  insert('out_of_band_changes', { id, created_at: iso(), project: p.id, subject_kind: subjectKind, ref, checkout, expected, found, detected_at: iso(), decision });
+  emit('repo.out_of_band', { project: p.id, out_of_band_change: id }, { subject_kind: subjectKind });
+}
+const unreconciled = (projectId) =>
+  all(
+    `SELECT o.* FROM "out_of_band_changes" o JOIN "decisions" d ON d."id" = o."decision"
+     WHERE o."project" = ? AND o."disposition" IS NULL AND d."status" = 'open'`,
+    projectId,
+  );
+// Nothing of a project is dispatched or integrated while its integration
+// branch or its repository has an unreconciled observation.
+function projectBlocked(p) {
+  const branch = registered(p.id, integrationRef(p));
+  return unreconciled(p.id).some((o) => o.subject_kind === 'repository' || (o.subject_kind === 'ref' && o.ref === branch?.id));
+}
+
+function registerCheckouts(p) {
+  const known = all(`SELECT * FROM "managed_checkouts" WHERE "project" = ? AND "kind" = 'integration_worktree'`, p.id);
+  for (const w of G.checkoutsOf(p.dev_repo_path, integrationRef(p))) {
+    if (known.some((row) => G.real(row.path) === G.real(w.path))) continue;
+    insert('managed_checkouts', { id: newId('mc_'), created_at: iso(), project: p.id, kind: 'integration_worktree', path: w.path, baseline: JSON.stringify(G.checkoutBaseline(w.path)), owner_run: null });
+  }
+}
+
+function integrity(p) {
+  const repo = p.dev_repo_path;
+  const openRepository = unreconciled(p.id).find((o) => o.subject_kind === 'repository');
+  if (!G.readable(repo)) {
+    // The defect `unreadable_is_clean`: what cannot be read is taken for unchanged.
+    if (mutant('unreadable_is_clean')) return;
+    if (!openRepository) {
+      tx(() => raiseOob(p, 'repository', { expected: repo, found: null, options: mutant('unreadable_offers_reset') ? ['discard'] : [], question: `The repository ${repo} cannot be read.` }));
+    }
+    return;
+  }
+  if (openRepository) {
+    tx(() => {
+      exec(`UPDATE "decisions" SET "status" = 'invalidated', "invalidated_reason" = 'the repository can be read again' WHERE "id" = ?`, openRepository.decision);
+      emit('decision.invalidated', { decision: openRepository.decision, project: p.id });
+      emit('repo.reconciled', { project: p.id, out_of_band_change: openRepository.id });
+    });
+    // The defect `no_fresh_integrity`: the refs are not read again before the project goes on.
+    if (mutant('no_fresh_integrity')) return;
+  }
+  if (mutant('feature_branch_observed')) {
+    // The defect: every branch is taken into the registry.
+    for (const line of git(repo, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads/']).split('\n').filter(Boolean)) {
+      const [ref, oid] = line.split(' ');
+      if (!registered(p.id, ref)) registerRef(p.id, ref, 'lineage', oid);
+    }
+  }
+  for (const row of all('SELECT * FROM "ref_registry" WHERE "project" = ?', p.id)) {
+    const found = G.refOid(repo, row.ref);
+    if (found === row.expected_oid) continue;
+    if (mutant('deleted_ref_as_expected') && found === null) continue;
+    // The defect `oob_absorbed`: the expected value silently becomes what was found.
+    if (mutant('oob_absorbed') && found !== null) {
+      exec('UPDATE "ref_registry" SET "expected_oid" = ? WHERE "id" = ?', found, row.id);
+      continue;
+    }
+    const already = one(`SELECT 1 FROM "out_of_band_changes" WHERE "project" = ? AND "subject_kind" = 'ref' AND "ref" = ? AND "disposition" IS NULL`, p.id, row.id);
+    if (already && !mutant('oob_repeated')) continue;
+    tx(() => raiseOob(p, 'ref', { ref: row.id, expected: row.expected_oid, found, options: found === null ? ['discard'] : ['discard', 'adopt'], question: `The registered ref ${row.ref} is at ${found ?? 'nothing'}; the engine expects it at ${row.expected_oid}.` }));
+  }
+  const current = G.checkoutsOf(repo, integrationRef(p));
+  for (const row of all(`SELECT * FROM "managed_checkouts" WHERE "project" = ? AND "kind" = 'integration_worktree'`, p.id)) {
+    // A checkout that was switched away or detached is no longer a managed checkout, and no observation.
+    if (!current.some((w) => G.real(w.path) === G.real(row.path))) {
+      exec('DELETE FROM "managed_checkouts" WHERE "id" = ?', row.id);
+      continue;
+    }
+    const found = JSON.stringify(G.checkoutBaseline(row.path));
+    if (found === row.baseline) continue;
+    if (one(`SELECT 1 FROM "out_of_band_changes" WHERE "project" = ? AND "subject_kind" = 'checkout' AND "checkout" = ? AND "disposition" IS NULL`, p.id, row.id)) continue;
+    if (mutant('checkout_reset')) {
+      // The defect: the engine puts the checkout back by itself.
+      G.run(G.gitDirOf(row.path), ['checkout', '-q', 'HEAD', '--', '.'], { workTree: row.path });
+      continue;
+    }
+    tx(() => raiseOob(p, 'checkout', { checkout: row.id, expected: row.baseline, found, options: mutant('checkout_offers_discard') ? ['discard', 'adopt'] : ['stash', 'adopt'], question: `The checkout ${row.path} differs from its baseline.` }));
+  }
+  registerCheckouts(p);
+}
+
+// The two answers to a moved or deleted ref (D1 §7.6; D1-11).
+async function answerOob(projectId, d, body) {
+  const p = projectRow(projectId);
+  const o = one('SELECT * FROM "out_of_band_changes" WHERE "decision" = ?', d.id);
+  if (o.subject_kind !== 'ref') throw refusal(409, 'illegal_transition', 'the answers to this observation are not built before slice 5');
+  const row = one('SELECT * FROM "ref_registry" WHERE "id" = ?', o.ref);
+  tx(() => {
+    exec(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ?, "answer" = ? WHERE "id" = ?`, iso(), JSON.stringify({ option: body.option }), d.id);
+    emit('decision.answered', { decision: d.id, project: projectId });
+    emit('decision.consumed', { decision: d.id, project: projectId });
+  });
+  if (body.option === 'discard') {
+    if (o.found !== null && !mutant('discard_drops_stray')) {
+      const kept = `refs/surety/oob/${nextRefNumber(projectId, 'oob')}`;
+      git(p.dev_repo_path, ['update-ref', kept, o.found]);
+      tx(() => registerRef(projectId, kept, 'oob', o.found));
+    }
+    await refUpdate(p, { ref: row.ref, oldOid: o.found, newOid: row.expected_oid });
+  } else {
+    tx(() => {
+      exec('UPDATE "ref_registry" SET "expected_oid" = ? WHERE "id" = ?', o.found, row.id);
+      if (!mutant('adopt_not_recorded')) recordRevision(p, { sha: o.found, parent: null, kind: 'out_of_band', run: null });
+    });
+  }
+  tx(() => {
+    exec('UPDATE "out_of_band_changes" SET "disposition" = ? WHERE "id" = ?', body.option, o.id);
+    emit('repo.reconciled', { project: projectId, out_of_band_change: o.id });
+  });
+  return { status: 200, body: { decision: { id: d.id, status: 'consumed' } } };
+}
+
+// ---- projects through the API, and their policy (D1 §§3.1, 11.4; SEAM.md §27) ----
+
+async function createProject(given, actor) {
+  // The defect `bootstrap_accepts_anything`: keys the schema does not know and a tier it does not have are let through.
+  const lenient = mutant('bootstrap_accepts_anything');
+  const body = lenient ? { name: given.name, tier: given.tier, dev_repo_path: given.dev_repo_path, integration_branch: given.integration_branch } : given;
+  for (const key of Object.keys(body)) if (!['name', 'tier', 'dev_repo_path', 'integration_branch'].includes(key)) throw refusal(400, 'unknown_field', `unknown field ${key}`, { field: key });
+  if (!['T1', 'T2', 'T3'].includes(body.tier) && !lenient) throw refusal(400, 'invalid_value', 'tier is one of T1, T2, T3', { field: 'tier' });
+  const repo = body.dev_repo_path;
+  if (typeof repo !== 'string' || !existsSync(join(repo, '.git')) || !G.readable(repo)) throw refusal(409, 'repo_unreadable', 'dev_repo_path is not a git repository the engine can read', { path: repo });
+  const ref = `refs/heads/${body.integration_branch}`;
+  const head = typeof body.integration_branch === 'string' && !body.integration_branch.startsWith('-') ? G.refOid(repo, ref) : null;
+  if (head === null) throw refusal(400, 'invalid_value', 'integration_branch is not a branch of that repository', { field: 'integration_branch' });
+  if (!mutant('bootstrap_ignores_checkout')) {
+    const [held] = G.checkoutsOf(repo, ref);
+    if (held) throw refusal(409, 'integration_conflict', `The integration branch is checked out in ${held.path}; a project cannot be bootstrapped onto it.`, { worktree: held.path }, FREE_THE_BRANCH);
+  }
+  const id = newId('proj_');
+  tx(() => {
+    insert('projects', { id, created_at: iso(), name: body.name, paused: 0, tier: body.tier, dev_repo_path: repo, integration_branch: body.integration_branch, registration_state: 'pending_bootstrap', policy: '{}' });
+    emit('project.created', { project: id }, { name: body.name, tier: body.tier }, actor);
+    registerRef(id, ref, 'integration', head);
+  });
+  const p = projectRow(id);
+  const files = { '.surety/project.json': `${JSON.stringify({ id, name: body.name }, null, 2)}\n` };
+  if (mutant('bootstrap_extra_paths')) files['.surety/policy.json'] = '{}\n';
+  const sha = commitTree(p, { tree: treeWith(repo, head, files), parent: head, message: `Register project ${id}\n` });
+  await refUpdate(p, { ref, oldOid: head, newOid: sha });
+  tx(() => {
+    exec(`UPDATE "projects" SET "registration_state" = 'registered' WHERE "id" = ?`, id);
+    emit('project.registered', { project: id });
+  });
+  return { status: 201, body: { project: { id, registration_state: 'registered' } } };
+}
+
+function getPolicy(projectId) {
+  const p = projectRow(projectId);
+  const effective = policyOf(projectId);
+  if (mutant('unrecorded_policy_effective')) {
+    // The defect: whatever the repository's policy file says is taken as effective.
+    try {
+      Object.assign(effective, JSON.parse(git(p.dev_repo_path, ['cat-file', 'blob', `${integrationRef(p)}:.surety/policy.json`])));
+    } catch {
+      // no such file
+    }
+  }
+  return { status: 200, body: { effective, revision: p.policy_revision ? one('SELECT "revision" FROM "policy_revisions" WHERE "id" = ?', p.policy_revision).revision : null } };
+}
+
+async function changePolicy(projectId, body, actor) {
+  for (const [key, value] of Object.entries(body)) {
+    const spec = CONTRACT.project[key];
+    if (!spec || key.startsWith('$')) throw refusal(400, 'unknown_field', `unknown policy key ${key}`, { field: key });
+    const ok = typeof value === 'number' && (spec.integer === false || Number.isInteger(value)) && value >= spec.min && value <= spec.max;
+    if (!ok) throw refusal(400, 'invalid_value', `${key} is out of range`, { field: key });
+  }
+  const p = projectRow(projectId);
+  const repo = p.dev_repo_path;
+  if (!G.readable(repo)) throw refusal(409, 'repo_unreadable', `The repository ${repo} cannot be read.`, { project: projectId });
+  if (projectBlocked(p)) throw refusal(409, 'out_of_band_change', 'The project has an unreconciled out-of-band change.', { project: projectId });
+  const ref = integrationRef(p);
+  const [held] = G.checkoutsOf(repo, ref);
+  if (held) throw refusal(409, 'integration_conflict', `The integration branch is checked out in ${held.path}.`, { worktree: held.path }, FREE_THE_BRANCH);
+  const head = G.refOid(repo, ref);
+  let recorded = { ...json(p.policy ?? '{}'), ...body };
+  if (mutant('policy_file_merged')) {
+    // The defect: an unrecorded file's content is carried into the recorded policy.
+    try {
+      recorded = { ...JSON.parse(git(repo, ['cat-file', 'blob', `${head}:.surety/policy.json`])), ...recorded };
+    } catch {
+      // no such file
+    }
+  }
+  const sha = commitTree(p, { tree: treeWith(repo, head, { '.surety/policy.json': `${JSON.stringify(recorded, null, 2)}\n` }), parent: head, message: 'Policy change\n' });
+  // The defect `policy_not_committed`: the revision is recorded and the branch never gets the file.
+  if (!mutant('policy_not_committed')) await refUpdate(p, { ref, oldOid: head, newOid: sha });
+  let revision;
+  tx(() => {
+    revision = one('SELECT COUNT(*) + 1 AS n FROM "policy_revisions" WHERE "project" = ?', projectId).n;
+    const id = newId('pol_');
+    insert('policy_revisions', {
+      id,
+      created_at: iso(),
+      project: projectId,
+      revision,
+      git_path: '.surety/policy.json',
+      git_blob: git(repo, ['rev-parse', `${sha}:.surety/policy.json`]),
+      changed_by: actor.kind ?? 'human',
+      changed_at: iso(),
+      diff_summary: Object.keys(body).join(', '),
+      widens_authority: 0,
+      committed: 1,
+    });
+    // The defect `policy_not_used`: the revision is recorded and the settings stay what they were.
+    exec('UPDATE "projects" SET "policy" = ?, "policy_revision" = ? WHERE "id" = ?', mutant('policy_not_used') ? (p.policy ?? '{}') : JSON.stringify(recorded), id, projectId);
+    emit('policy.changed', { project: projectId }, { revision }, actor);
+  });
+  return { status: 200, body: { effective: policyOf(projectId), revision } };
 }
 
 // ---- recovery at startup (D1 §16.1; SEAM.md §16) -----------------------------------------------------
@@ -1153,14 +1833,24 @@ async function tick() {
     const projects = all('SELECT * FROM "projects" ORDER BY "id"');
     const suppressed = new Set();
     for (const p of projects) {
-      for (const step of ['recover', 'journal']) {
+      for (const step of ['recover', 'journal', 'integrity']) {
         const delay = takeFault(step, p.id);
-        if (delay === 0) continue;
-        const budget = cfg.tick_step_budget * 1000;
-        if (delay > budget && !mutant('late_step_dispatches')) {
+        if (delay > 0) {
+          const budget = cfg.tick_step_budget * 1000;
+          const dispatchesAnyway = mutant('late_step_dispatches') || (step === 'integrity' && mutant('integrity_overrun_dispatches'));
+          if (delay > budget && !dispatchesAnyway) {
+            suppressed.add(p.id);
+            await sleep(budget);
+          } else await sleep(Math.min(delay, budget));
+        }
+        if (step !== 'integrity') continue;
+        // Repository integrity, before anything of the project is dispatched (D1 §8.1 step 3).
+        try {
+          integrity(projectRow(p.id));
+        } catch (err) {
+          process.stderr.write(`integrity ${p.id}: ${err.stack}\n`);
           suppressed.add(p.id);
-          await sleep(budget);
-        } else await sleep(Math.min(delay, budget));
+        }
       }
     }
     for (const p of projects) {
@@ -1237,6 +1927,7 @@ function answer(project, decisionId, body) {
   if (d.status !== 'open') throw refusal(409, 'decision_consumed', 'The decision is not open.');
   if (d.preview_hash !== body.preview_hash) throw refusal(409, 'decision_stale', 'The preview hash differs.');
   if (!json(d.options).some((o) => o.key === body.option)) throw refusal(400, 'invalid_value', 'not an option', { field: 'option' });
+  if (d.kind === 'out_of_band_change') return answerOob(project, d, body);
   tx(() => {
     exec(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ?, "answer" = ? WHERE "id" = ?`, iso(), JSON.stringify({ option: body.option }), d.id);
     if (d.subject_type === 'work_item' && body.option === 'retry') {
@@ -1275,6 +1966,12 @@ async function route(method, path, body, requestId) {
   if (harnessRoute && s[2] === 'barriers') {
     const list = () => [...opt.barriers].map(([name, b]) => ({ name, action: b.action, state: b.state }));
     if (get) return { status: 200, body: { barriers: list() } };
+    if (post && s.length === 3) {
+      // Arm a barrier, or arm it again, while the engine runs (SEAM.md §33).
+      if (typeof body.name !== 'string' || !['pause', 'kill'].includes(body.action)) throw refusal(400, 'invalid_value', 'a barrier has a name and an action', { field: 'name' });
+      opt.barriers.set(body.name, { action: body.action, state: 'armed', release: null });
+      return { status: 200, body: { barriers: list() } };
+    }
     const b = opt.barriers.get(decodeURIComponent(s[3]));
     if (!b || b.state !== 'waiting') throw refusal(409, 'illegal_transition', 'not a waiting barrier');
     b.release();
@@ -1285,8 +1982,16 @@ async function route(method, path, body, requestId) {
   if (harnessRoute && post) {
     if (path === '/v1/harness/fixtures/project') {
       const id = newId('proj_');
-      insert('projects', { id, created_at: iso(), name: body.name, paused: 0, tier: body.tier, dev_repo_path: body.dev_repo_path, integration_branch: body.integration_branch });
-      emit('project.created', { project: id }, { ...FIXTURE, ...body });
+      // A registered project without a bootstrap commit; its integration branch
+      // is registered where it is, and a developer's checkout of it becomes a
+      // managed checkout with what it holds as its baseline (SEAM.md §25).
+      tx(() => {
+        insert('projects', { id, created_at: iso(), name: body.name, paused: 0, tier: body.tier, dev_repo_path: body.dev_repo_path, integration_branch: body.integration_branch, registration_state: 'registered', policy: '{}' });
+        emit('project.created', { project: id }, { ...FIXTURE, ...body });
+        const p = projectRow(id);
+        registerRef(id, integrationRef(p), 'integration', G.refOid(p.dev_repo_path, integrationRef(p)));
+        registerCheckouts(p);
+      });
       return { status: 201, body: { project: { id } } };
     }
     if (path === '/v1/harness/fixtures/trigger') return tx(() => observeTrigger(body));
@@ -1330,9 +2035,11 @@ async function route(method, path, body, requestId) {
     }
   }
 
+  if (post && path === '/v1/projects') return createProject(body, { kind: 'human', request_id: requestId });
   if (s[1] === 'projects' && s.length >= 4) {
     const project = s[2];
     if (!one('SELECT 1 FROM "projects" WHERE "id" = ?', project)) throw refusal(404, 'not_found', 'no such project', { project });
+    if (s.length === 4 && s[3] === 'policy') return get ? getPolicy(project) : changePolicy(project, body, { kind: 'human', request_id: requestId });
     if (post && s.length === 4 && (s[3] === 'pause' || s[3] === 'resume')) {
       const want = s[3] === 'pause' ? 1 : 0;
       if (one('SELECT "paused" FROM "projects" WHERE "id" = ?', project).paused !== want) {
@@ -1381,7 +2088,7 @@ function createServer() {
       res.writeHead(status, { 'content-type': 'application/json', 'x-surety-request-id': requestId, connection: 'close' });
       res.end(JSON.stringify(value));
     };
-    const fail = (err) => send(err.status ?? 500, { code: err.code ?? 'store_error', reason: err.message, what_to_do: 'See SEAM.md.', subject: err.subject ?? {} });
+    const fail = (err) => send(err.status ?? 500, { code: err.code ?? 'store_error', reason: err.message, what_to_do: err.whatToDo ?? 'See SEAM.md.', subject: err.subject ?? {} });
     const hosts = [];
     for (let i = 0; i < req.rawHeaders.length; i += 2) if (req.rawHeaders[i].toLowerCase() === 'host') hosts.push(req.rawHeaders[i + 1]);
     const target = /^http:\/\/([^/]*)/i.exec(req.url ?? '');
@@ -1455,6 +2162,17 @@ if (state.failed === null) {
     await recover();
     state.completed.push('recovery');
     state.step = 'integrity';
+    // Every registered repository is read before full mode (D1 §1.4 step 5).
+    // The defect `startup_integrity_skipped`: the step only says it ran.
+    if (!mutant('startup_integrity_skipped')) {
+      for (const p of all('SELECT * FROM "projects" ORDER BY "id"')) {
+        try {
+          integrity(p);
+        } catch (err) {
+          process.stderr.write(`integrity ${p.id}: ${err.stack}\n`);
+        }
+      }
+    }
     state.completed.push('integrity');
     lift();
   }

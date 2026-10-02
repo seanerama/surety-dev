@@ -6,11 +6,17 @@
 //      checked on them, against witness stores and one mutant per fact;
 //  11. the role program's slice-3 steps (../scripted/child.mjs), launched for
 //      real: file steps, git, a long line, a descendant that chatters, and an
-//      exit that drops nothing however slowly its output is read.
+//      exit that drops nothing however slowly its output is read;
+//  12. the repository fixtures and readers (../repos.mjs) against real git:
+//      topologies, plumbing commits, what a checkout and a repository hold,
+//      the independent snapshot tree, the planted programs (each shown to be
+//      run by ordinary git), an unreadable repository, held git calls;
+//  13. the journal and registry reads (../journal.mjs) against witness stores,
+//      and the contract tables they are generated from.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -19,12 +25,44 @@ import Database from 'better-sqlite3';
 
 import { ENDINGS, RUN_END_FAULTS, STAGES, VOLATILE_EVENTS, assertEndingExpectations, matrixCells, projectFacts } from '../endings.mjs';
 import { waitFor } from '../engine.mjs';
+import { git as plainGit } from '../git.mjs';
 import { isoNow, newId } from '../ids.mjs';
+import { JOURNAL, VALIDATION, assertOrdinaryCourse, journalBarrier, journalBarriers, operationsOf, outOfBand, registryOf, revisionsOf } from '../journal.mjs';
+import {
+  ALL_HOOKS,
+  HOSTILE_IDENTITIES,
+  addLinkedWorktree,
+  changedPaths,
+  checkoutState,
+  commitOnRef,
+  fileAt,
+  gitQuiet,
+  holdGit,
+  hostileEnvironment,
+  isAncestor,
+  listTree,
+  makeProjectRepo,
+  makeUnreadable,
+  parentsOf,
+  plantAllHooks,
+  plantConfiguredPrograms,
+  plantFilter,
+  readEvidence,
+  refOid,
+  refsContaining,
+  refsOf,
+  repoFingerprint,
+  snapshotTree,
+  trailersOf,
+  treeOf,
+} from '../repos.mjs';
+import { WORK, roleOf } from '../transitions.mjs';
 import { RESULT_LINE, Scripted, step } from '../scripted.mjs';
 import { emit, witnessRun } from './witness-state.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WITNESS = readFileSync(join(here, 'witness-schema.sql'), 'utf8') + readFileSync(join(here, 'witness-slice2.sql'), 'utf8');
+const WITNESS3 = `${WITNESS}ALTER TABLE projects ADD COLUMN tier TEXT; ALTER TABLE projects ADD COLUMN dev_repo_path TEXT; ALTER TABLE projects ADD COLUMN integration_branch TEXT;${readFileSync(join(here, 'witness-slice3.sql'), 'utf8')}`;
 
 export async function slice3Checks(check, work) {
   let n = 0;
@@ -338,4 +376,284 @@ export async function slice3Checks(check, work) {
     process.kill(descendant.pid, 'SIGTERM');
     await waitFor(() => !scripted.isLive(descendant), { timeoutMs: 5000, what: 'the descendant to end on SIGTERM' });
   });
+
+  // ---- 12. repository fixtures and readers -----------------------------------------------
+
+  let repos = 0;
+  const repoDir = (label) => join(mkdtempSync(join(work, `s3-repo-${++repos}-`)), label);
+
+  await check('repos: the three topologies leave the integration branch detached from, beside, or in the developer\'s work tree', () => {
+    const detached = makeProjectRepo(repoDir('detached'), { files: { 'src/a.txt': 'a\n' } });
+    assert.deepEqual([checkoutState(detached.path).branch, checkoutState(detached.path).head, refOid(detached.path, 'refs/heads/main')], [null, detached.head, detached.head]);
+    assert.equal(detached.ref, 'refs/heads/main');
+    assert.deepEqual(Object.keys(listTree(detached.path, detached.head)).sort(), ['README.md', 'src/a.txt']);
+    const other = makeProjectRepo(repoDir('other'), { primary: 'other' });
+    assert.equal(checkoutState(other.path).branch, 'refs/heads/dev/work');
+    const integration = makeProjectRepo(repoDir('integration'), { primary: 'integration', branch: 'trunk' });
+    assert.equal(checkoutState(integration.path).branch, 'refs/heads/trunk');
+    assert.throws(() => makeProjectRepo(repoDir('bad'), { primary: 'nonsense' }), /unknown primary checkout/);
+    // Linked worktrees: detached, on a new branch, on an existing branch.
+    const linkedDetached = addLinkedWorktree(detached.path, repoDir('ld'));
+    const onNew = addLinkedWorktree(detached.path, repoDir('ln'), { branch: 'feature/x' });
+    const onMain = addLinkedWorktree(detached.path, repoDir('lm'), { branch: 'main' });
+    assert.deepEqual([checkoutState(linkedDetached).branch, checkoutState(onNew).branch, checkoutState(onMain).branch], [null, 'refs/heads/feature/x', 'refs/heads/main']);
+  });
+
+  await check('repos: a plumbing commit moves a ref without touching any checkout, and the readers see exactly what it changed', () => {
+    const repo = makeProjectRepo(repoDir('plumbing'), { primary: 'integration', files: { 'keep.txt': 'keep\n' } });
+    const before = checkoutState(repo.path);
+    const sha = commitOnRef(repo.path, 'refs/heads/main', { 'new/file.txt': 'new\n', 'README.md': '# changed\n' }, { message: 'a commit\n\nSurety-Run: run_X\nSurety-Role: builder\n' });
+    assert.equal(refOid(repo.path, 'refs/heads/main'), sha);
+    assert.deepEqual(parentsOf(repo.path, sha), [repo.head]);
+    assert.deepEqual(changedPaths(repo.path, repo.head, sha), { 'new/file.txt': 'A', 'README.md': 'M' });
+    assert.equal(fileAt(repo.path, sha, 'new/file.txt'), 'new\n');
+    assert.equal(treeOf(repo.path, sha), gitQuiet(repo.path, ['rev-parse', `${sha}^{tree}`]));
+    assert.deepEqual(trailersOf(repo.path, sha), { 'Surety-Run': ['run_X'], 'Surety-Role': ['builder'] });
+    assert.ok(isAncestor(repo.path, repo.head, sha) && !isAncestor(repo.path, sha, repo.head));
+    assert.deepEqual(refsContaining(repo.path, sha), ['refs/heads/main']);
+    const after = checkoutState(repo.path);
+    assert.deepEqual([after.files, after.index, after.branch], [before.files, before.index, before.branch], 'the work tree, the index and the files are untouched');
+    // The branch moved under a checkout of it, so the checkout now differs from its HEAD:
+    // what build spec §6 correction 6 is about, and why checkoutState reports `staged`.
+    assert.equal(after.head, sha);
+    assert.notEqual(after.staged, before.staged, 'a checkout whose branch was moved under it looks dirty');
+    // A commit with no ref, and one on a new ref with an explicit parent.
+    const loose = commitOnRef(repo.path, null, { 'x.txt': 'x\n' }, { parent: repo.head });
+    assert.deepEqual(refsContaining(repo.path, loose), []);
+    assert.equal(refOid(repo.path, 'refs/heads/no-such'), null);
+    assert.deepEqual(refsOf(repo.path), { 'refs/heads/main': sha });
+    // A duplicated trailer is reported twice.
+    const forged = commitOnRef(repo.path, null, {}, { parent: sha, message: 's\n\nSurety-Run: a\nSurety-Run: b\n' });
+    assert.deepEqual(trailersOf(repo.path, forged)['Surety-Run'], ['a', 'b']);
+  });
+
+  await check('repos: checkoutState and repoFingerprint change with what they are meant to see, and with nothing else', () => {
+    const repo = makeProjectRepo(repoDir('state'), { primary: 'integration', files: { 'a.txt': 'a\n' } });
+    const clean = checkoutState(repo.path);
+    const print = repoFingerprint(repo.path);
+    assert.deepEqual(checkoutState(repo.path), clean, 'reading it twice changes nothing');
+    writeFileSync(join(repo.path, 'a.txt'), 'edited\n');
+    const edited = checkoutState(repo.path);
+    assert.notDeepEqual(edited.files, clean.files);
+    assert.deepEqual([edited.head, edited.index, edited.staged], [clean.head, clean.index, ''], 'an unstaged edit changes the files and nothing else');
+    gitQuiet(repo.path, ['add', 'a.txt']);
+    assert.equal(checkoutState(repo.path).staged, 'M\ta.txt');
+    assert.notEqual(checkoutState(repo.path).index, clean.index);
+    writeFileSync(join(repo.path, 'untracked.txt'), 'u\n');
+    symlinkSync('a.txt', join(repo.path, 'link'));
+    assert.deepEqual([checkoutState(repo.path).files.link, 'untracked.txt' in checkoutState(repo.path).files], ['link a.txt', true]);
+    assert.deepEqual(repoFingerprint(repo.path), print, 'none of that is a change to the repository: its refs, worktrees, configuration and hooks');
+    gitQuiet(repo.path, ['config', 'x.y', 'z']);
+    assert.notEqual(repoFingerprint(repo.path).config, print.config);
+    writeFileSync(join(repo.path, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\n');
+    assert.notDeepEqual(repoFingerprint(repo.path).hooks, print.hooks);
+    gitQuiet(repo.path, ['update-ref', 'refs/heads/other', clean.head]);
+    assert.notDeepEqual(repoFingerprint(repo.path).refs, print.refs);
+  });
+
+  await check('repos: the snapshot tree is what add -A takes from the work tree, started from the base, and leaves the real index alone', () => {
+    const repo = makeProjectRepo(repoDir('snapshot'), { files: { 'gone.txt': 'x\n', 'stay.txt': 's\n', '.gitignore': 'ignored/\n' } });
+    const ws = addLinkedWorktree(repo.path, repoDir('ws'));
+    assert.equal(snapshotTree(ws, repo.head), treeOf(repo.path, repo.head), 'an untouched workspace snapshots to its base tree');
+    writeFileSync(join(ws, 'new.txt'), 'n\n');
+    rmSync(join(ws, 'gone.txt'));
+    mkdirSync(join(ws, 'ignored'));
+    writeFileSync(join(ws, 'ignored', 'scratch.txt'), 'i\n');
+    symlinkSync('stay.txt', join(ws, 'link'));
+    const before = checkoutState(ws);
+    const tree = snapshotTree(ws, repo.head);
+    const entries = listTree(repo.path, tree);
+    assert.deepEqual(Object.keys(entries).sort(), ['.gitignore', 'README.md', 'link', 'new.txt', 'stay.txt'], 'new and deleted files and links are taken; ignored ones are not');
+    assert.match(entries.link, /^120000 blob /);
+    assert.deepEqual(changedPaths(repo.path, repo.head, tree), { 'gone.txt': 'D', link: 'A', 'new.txt': 'A' });
+    assert.deepEqual({ index: checkoutState(ws).index, staged: checkoutState(ws).staged, head: checkoutState(ws).head }, { index: before.index, staged: before.staged, head: before.head }, "the workspace's own index and HEAD are not touched");
+    assert.equal(snapshotTree(ws, repo.head), tree, 'the same content gives the same tree');
+    // A staged change in the real index does not leak into the snapshot's own index.
+    writeFileSync(join(ws, 'staged-only.txt'), 's\n');
+    gitQuiet(ws, ['add', 'staged-only.txt']);
+    rmSync(join(ws, 'staged-only.txt'));
+    assert.equal(snapshotTree(ws, repo.head), tree, 'what is staged and no longer in the work tree is not in the snapshot');
+  });
+
+  await check('repos: the planted hooks, filter and configured programs are run by ordinary git, and the quiet reader runs none of them', () => {
+    const repo = makeProjectRepo(repoDir('planted'));
+    const dir = join(repo.path, '..', 'planted');
+    const evidence = join(dir, 'evidence.txt');
+    mkdirSync(dir, { recursive: true });
+    plantAllHooks(repo.path, evidence);
+    assert.equal(ALL_HOOKS.length, new Set(ALL_HOOKS).size);
+    plainGit(repo.path, ['update-ref', 'refs/heads/probe', 'HEAD']);
+    assert.match(readEvidence(evidence), /hook reference-transaction ran/);
+    rmSync(evidence);
+    gitQuiet(repo.path, ['update-ref', 'refs/heads/probe2', 'HEAD']);
+    assert.equal(readEvidence(evidence), null, 'gitQuiet runs no hook');
+
+    const filter = plantFilter(repo.path, 'refs/heads/main', evidence, { dir });
+    assert.deepEqual(Object.keys(changedPaths(repo.path, repo.head, filter.commit)).sort(), ['.gitattributes', 'data/seed.dat']);
+    const probe = repoDir('probe');
+    plainGit(repo.path, ['-c', 'core.hooksPath=/dev/null', 'worktree', 'add', '--quiet', '--detach', probe, 'main']);
+    assert.match(readEvidence(evidence), /filter smudge ran/);
+    rmSync(evidence);
+    writeFileSync(join(probe, 'data', 'new.dat'), 'n\n');
+    const tree = snapshotTree(probe, filter.commit);
+    assert.equal(readEvidence(evidence), null, 'the independent snapshot runs no filter');
+    assert.ok('data/new.dat' in listTree(repo.path, tree));
+    plainGit(probe, ['-c', 'core.hooksPath=/dev/null', 'add', '-A']);
+    assert.match(readEvidence(evidence), /filter clean ran/, 'while an ordinary add does');
+    rmSync(evidence);
+
+    plantConfiguredPrograms(repo.path, evidence, { dir });
+    const second = commitOnRef(repo.path, null, { 'README.md': 'changed\n' }, { parent: repo.head });
+    assert.equal(readEvidence(evidence), null, 'a plumbing commit runs no signing program');
+    plainGit(repo.path, ['-c', 'core.hooksPath=/dev/null', 'diff', repo.head, second]);
+    assert.match(readEvidence(evidence), /diff\.external ran/);
+  });
+
+  await check('repos: the hostile environment names another repository, other identities and programs that leave evidence', () => {
+    const decoy = makeProjectRepo(repoDir('decoy'));
+    const dir = join(decoy.path, '..', 'hostile');
+    const evidence = join(dir, 'evidence.txt');
+    const env = hostileEnvironment({ decoy: decoy.path, dir, evidence });
+    assert.equal(env.GIT_DIR, join(decoy.path, '.git'));
+    for (const key of ['GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_EDITOR', 'EDITOR', 'VISUAL', 'GIT_EXTERNAL_DIFF', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GH_REPO', 'GH_TOKEN']) assert.ok(typeof env[key] === 'string' && env[key].length > 0, key);
+    assert.ok(HOSTILE_IDENTITIES.some((name) => env.GIT_AUTHOR_NAME.includes(name)) && HOSTILE_IDENTITIES.some((name) => env.GIT_COMMITTER_EMAIL.includes(name)));
+    // It is live: a git command that inherits it lands in the decoy and runs the ambient hook.
+    const other = makeProjectRepo(repoDir('target'));
+    execFileSync('git', ['update-ref', 'refs/heads/ambient-wrote-here', decoy.head], { cwd: other.path, env: { PATH: process.env.PATH, HOME: dir, ...env, GIT_EXEC_PATH: undefined } });
+    assert.ok(Object.keys(refsOf(decoy.path)).some((ref) => ref.includes('ambient-wrote-here')), 'a git that inherits the environment writes into the decoy, not into the directory it runs in');
+    assert.deepEqual(Object.keys(refsOf(other.path)), ['refs/heads/main']);
+    assert.match(readEvidence(evidence), /ambient hook reference-transaction ran/);
+    execFileSync(env.GIT_EDITOR, [], { input: '' });
+    assert.match(readEvidence(evidence), /GIT_EDITOR ran/);
+  });
+
+  await check('repos: an unreadable repository cannot be read by git until access is restored, and held git calls wait until they are let go', async () => {
+    const repo = makeProjectRepo(repoDir('unreadable'));
+    const restore = makeUnreadable(repo.path);
+    assert.throws(() => gitQuiet(repo.path, ['rev-parse', 'HEAD']));
+    restore();
+    assert.equal(gitQuiet(repo.path, ['rev-parse', 'HEAD']), repo.head);
+
+    const letGo = holdGit(repo.path);
+    const held = spawn('git', ['--git-dir', join(repo.path, '.git'), 'rev-parse', 'refs/heads/main'], { env: { PATH: process.env.PATH, HOME: repo.path }, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    held.stdout.on('data', (c) => (out += c));
+    const exited = new Promise((resolve) => held.once('exit', (code, signal) => resolve({ code, signal })));
+    assert.equal(await Promise.race([exited, sleep(1500).then(() => 'held')]), 'held', 'a git call on a held repository waits');
+    letGo();
+    assert.deepEqual(await exited, { code: 0, signal: null }, 'a call that is still waiting is given the configuration and goes on');
+    assert.equal(out.trim(), repo.head);
+    letGo(); // a second call does nothing
+    assert.equal(gitQuiet(repo.path, ['rev-parse', 'HEAD']), repo.head, 'and the configuration is back');
+    // A held call that was killed meanwhile leaves nothing to let go of.
+    const again = holdGit(repo.path);
+    const doomed = spawn('git', ['--git-dir', join(repo.path, '.git'), 'rev-parse', 'HEAD'], { env: { PATH: process.env.PATH, HOME: repo.path }, stdio: 'ignore' });
+    await sleep(300);
+    doomed.kill('SIGKILL');
+    await new Promise((resolve) => doomed.once('exit', resolve));
+    again();
+    assert.equal(gitQuiet(repo.path, ['rev-parse', 'HEAD']), repo.head);
+  });
+
+  // ---- 13. journal and registry reads ---------------------------------------------------
+
+  await check('contract: the journal table names four kinds and five boundaries, and the barrier names follow from them', () => {
+    assert.deepEqual(Object.keys(JOURNAL.kinds).sort(), ['commit_tree', 'ref_update', 'worktree_add', 'worktree_remove']);
+    assert.deepEqual(Object.keys(JOURNAL.boundaries), ['intent_committed', 'effect_applied', 'receipt_committed', 'probe_confirmed', 'finalizer_committed']);
+    assert.equal(journalBarriers().length, 20);
+    assert.equal(new Set(journalBarriers()).size, 20);
+    assert.equal(journalBarrier('ref_update', 'intent_committed'), 'journal.ref_update.intent_committed');
+    assert.ok(journalBarriers().every((name) => /^journal\.[a-z_]+\.[a-z_]+$/.test(name)));
+    assert.throws(() => journalBarrier('push', 'intent_committed'), /no journal kind/);
+    assert.throws(() => journalBarrier('ref_update', 'half_way'), /no journal boundary/);
+    assert.deepEqual(JOURNAL.ordinary_events, ['intended', 'applied', 'confirmed', 'finalized']);
+  });
+
+  await check('contract: the validation table agrees with the work-item table on who runs what, and its examples obey its own rules', () => {
+    for (const [role, spec] of Object.entries(VALIDATION.roles)) {
+      for (const kind of spec.kinds) {
+        assert.equal(roleOf(kind), role, `${kind} is a ${role}'s kind in both tables`);
+        assert.ok(WORK.kinds[kind].path.includes('integrating'), `${kind} integrates`);
+      }
+    }
+    const builder = VALIDATION.roles.builder;
+    assert.ok(builder.permitted.every((path) => !path.startsWith('.surety/')) && builder.prohibited.every((path) => path.startsWith('.surety/')));
+    const architect = VALIDATION.roles.architect;
+    const allowed = (path) => architect.permitted_prefixes.some((prefix) => path.startsWith(prefix));
+    assert.ok(architect.permitted.every(allowed) && !architect.prohibited.some(allowed));
+    assert.ok(!architect.permitted.some((path) => path.startsWith('.surety/phases/')), 'no plan example: its format is row M26');
+    assert.ok(builder.prohibited.includes(VALIDATION.identity_file) && builder.prohibited.some((path) => path.startsWith(VALIDATION.protected_roots[0])));
+    assert.deepEqual([VALIDATION.reason_class.in_the_diff, VALIDATION.reason_class.outside_the_diff], ['diff_violation', 'ref_violation']);
+    assert.equal(new Set(VALIDATION.metadata.cases.map((c) => c.key)).size, VALIDATION.metadata.cases.length);
+    assert.equal(new Set(VALIDATION.diff.cases.map((c) => c.key)).size, VALIDATION.diff.cases.length);
+    assert.equal(new Set(VALIDATION.literal_names.names).size, VALIDATION.literal_names.names.length);
+    assert.ok(VALIDATION.literal_names.names.every((name) => !name.includes('\0') && !name.startsWith('/') && !name.split('/').includes('..')));
+  });
+
+  await check('journal reads: operations come with their events in order, filtered by run and kind, and an ordinary course is told from any other', () => {
+    const home = mkdtempSync(join(work, 's3-home-'));
+    const db = new Database(join(home, 'store.db'));
+    db.exec(WITNESS3);
+    const project = newId('proj_');
+    db.prepare('INSERT INTO projects (id, created_at, name) VALUES (?, ?, ?)').run(project, isoNow(), 'selfcheck');
+    const operation = (seq, kind, journalKind, status, events, payload) => {
+      const id = newId('op_');
+      db.prepare(
+        `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, finalized_at) VALUES (?, ?, ?, ?, ?, '{}', '{}', ?, 1, ?, ?, ?)`,
+      ).run(id, isoNow(), project, seq, kind, `key-${seq}`, status, isoNow(), status === 'succeeded' ? isoNow() : null);
+      // Inserted out of order: the reads sort by seq.
+      [...events.entries()].reverse().forEach(([i, eventKind]) =>
+        db
+          .prepare('INSERT INTO git_journal_events (id, created_at, project, operation, seq, journal_kind, event_kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(newId('gje_'), isoNow(), project, id, i + 1, journalKind, eventKind, JSON.stringify(payload)),
+      );
+      return id;
+    };
+    const commit = operation(2, 'git_commit', 'commit_tree', 'succeeded', JOURNAL.ordinary_events, { repo: 'r', tree: 't', run: 'run_A' });
+    const move = operation(3, 'git_ref_update', 'ref_update', 'failed', ['intended', 'failed'], { repo: 'r', ref: 'refs/heads/main', run: 'run_A' });
+    const add = operation(1, 'git_worktree', 'worktree_add', 'ambiguous', ['intended', 'ambiguous'], { repo: 'r', run: 'run_B' });
+    db.close();
+    assert.deepEqual(operationsOf(home, { project }).map((op) => op.id), [add, commit, move], 'in the order of their seq');
+    assert.deepEqual(operationsOf(home, { run: 'run_A' }).map((op) => op.journal_kind), ['commit_tree', 'ref_update']);
+    const [found] = operationsOf(home, { run: 'run_A', journalKind: 'commit_tree' });
+    assert.deepEqual([found.id, found.status, found.finalized, found.state, found.events.map((e) => e.kind)], [commit, 'succeeded', true, 'finalized', JOURNAL.ordinary_events]);
+    assert.equal(found.events[0].payload.tree, 't');
+    assertOrdinaryCourse(found, 'the commit');
+    const [refused] = operationsOf(home, { journalKind: 'ref_update' });
+    assert.deepEqual([refused.state, refused.finalized], ['failed', false]);
+    assert.throws(() => assertOrdinaryCourse(refused, 'the refused update'), /the journal's events/);
+    assert.throws(() => assertOrdinaryCourse(operationsOf(home, { kind: 'git_worktree' })[0], 'the ambiguous add'), /the journal's events/);
+    assert.throws(() => assertOrdinaryCourse({ ...found, kind: 'git_ref_update' }, 'a commit journal on the wrong operation kind'), /belongs to a git_commit operation/);
+    assert.throws(() => assertOrdinaryCourse({ ...found, finalized: false }, 'not finalized'), /finalized/);
+    assert.throws(() => assertOrdinaryCourse(undefined, 'missing'), /exists/);
+    assert.deepEqual(operationsOf(home, { run: 'run_none' }), []);
+  });
+
+  await check('registry reads: the registry by ref, revisions by run, and an observation with its decision and the options it offers', () => {
+    const home = mkdtempSync(join(work, 's3-home-'));
+    const db = new Database(join(home, 'store.db'));
+    db.exec(WITNESS3);
+    const project = newId('proj_');
+    db.prepare('INSERT INTO projects (id, created_at, name) VALUES (?, ?, ?)').run(project, isoNow(), 'selfcheck');
+    const ref = newId('ref_');
+    db.prepare('INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES (?, ?, ?, ?, ?, ?, 0)').run(ref, isoNow(), project, 'refs/heads/main', 'integration', 'a'.repeat(40));
+    db.prepare('INSERT INTO revisions (id, created_at, project, sha, parent_sha, kind, created_by_run, recorded_at) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?)').run(newId('rev_'), isoNow(), project, 'b'.repeat(40), 'out_of_band', isoNow());
+    const decision = newId('dec_');
+    db.prepare(
+      `INSERT INTO decisions (id, created_at, project, seq, kind, subject_type, subject_id, semantic_generation, scope, question, options, dependency_manifest, transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status)
+       VALUES (?, ?, ?, 1, 'out_of_band_change', 'out_of_band_change', 'oob_1', 1, 's', 'q?', ?, '{}', 1, 'h', '[]', '{}', ?, 'open')`,
+    ).run(decision, isoNow(), project, JSON.stringify([{ key: 'discard' }, { key: 'adopt' }]), isoNow());
+    db.prepare(`INSERT INTO out_of_band_changes (id, created_at, project, subject_kind, ref, checkout, expected, found, detected_at, disposition, decision) VALUES ('oob_1', ?, ?, 'ref', ?, NULL, ?, NULL, ?, NULL, ?)`).run(isoNow(), project, ref, 'a'.repeat(40), isoNow(), decision);
+    db.close();
+    assert.deepEqual(registryOf(home, project), { 'refs/heads/main': { kind: 'integration', expected_oid: 'a'.repeat(40), immutable: 0 } });
+    assert.deepEqual(revisionsOf(home, { project }).map((r) => [r.kind, r.created_by_run]), [['out_of_band', null]]);
+    assert.deepEqual(revisionsOf(home, { run: 'run_none' }), []);
+    const [o] = outOfBand(home, project);
+    assert.deepEqual(
+      { subject_kind: o.subject_kind, ref_name: o.ref_name, checkout_path: o.checkout_path, expected: o.expected, found: o.found, disposition: o.disposition, options: o.decision.options, status: o.decision.status, subject_id: o.decision.subject_id },
+      { subject_kind: 'ref', ref_name: 'refs/heads/main', checkout_path: null, expected: 'a'.repeat(40), found: null, disposition: null, options: ['adopt', 'discard'], status: 'open', subject_id: 'oob_1' },
+    );
+    assert.deepEqual(outOfBand(home, newId('proj_')), []);
+  });
+
 }
