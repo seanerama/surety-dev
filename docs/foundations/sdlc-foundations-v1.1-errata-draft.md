@@ -752,3 +752,13 @@ Slice 3 was merged after its one review (E31). The review confirmed as sound: ev
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E35. A gap the journey test exposed (open, 2026-10-02)
+
+Writing the end-to-end test for M1 (acceptance row M01) showed that **nothing in the engine creates review work.** A T2 candidate needs a Reviewer's sign-off before its gates can be satisfied, and the engine registers a candidate's verification at nomination, but no source says what schedules the review. The tests create it with a fixture.
+
+**For Sean to decide, before M2:** the engine registers a review for each candidate at nomination, as it does verification, at the tiers that require one. This is the driver's recommendation; it is not applied, because it adds behavior no acceptance row asks for.
+
+Also noted: the journey reads the event history from the store, because the public event stream and the candidate and gate reads belong to slice 6.
+
+---
