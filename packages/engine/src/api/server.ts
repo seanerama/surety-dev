@@ -1,6 +1,9 @@
-// The local HTTP API for slice 1 (D1 §11, SEAM.md §6–7). Every request passes
-// the Host check and the token check before routing; every mutating request
-// past the Host check is audited, refusals included, once the store is open.
+// The local HTTP API (D1 §11; SEAM.md §§6, 7, 89 to 92). Every request passes,
+// in this order and before routing, any body read or `100 Continue`: the Host
+// check, the origin-evidence check, the token check (except on the shell
+// routes and the token bootstrap) and the declared-length check. Every
+// mutating request past the Host check is audited, refusals included, once
+// the store is open. Every response carries the defensive headers.
 
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
@@ -10,19 +13,26 @@ import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
 import { gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
-import { readRecordBytes } from '../records/files.js';
+import { homePaths } from '../paths.js';
+import { liveTranscript, readRecordBytes } from '../records/files.js';
 import type { RecordRow } from '../store/transitions/records.js';
+import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
 import { seamBackends, seamDescribe, seamRoute } from '../testing/seam.js';
-import { checkTarget, checkToken, readJsonBody } from './boundary.js';
+import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
+import { SHELL_CSP, loadShell } from './shell.js';
+import { type TailSource, serveEvents, serveTail } from './streams.js';
 
 interface Reply {
   status: number;
   body: unknown;
   // A record's bytes, answered as they are (SEAM.md §56).
   raw?: Buffer;
+  // The content type of `raw`, if not application/octet-stream.
+  type?: string;
+  headers?: Record<string, string>;
 }
 
 interface Request {
@@ -47,6 +57,8 @@ interface Request {
 // a refusal there is audited like any other.
 type Route =
   | { kind: 'direct'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
+  // A server-sent event stream: the handler answers the head and writes the body.
+  | { kind: 'stream'; open: (r: Request) => Promise<(res: ServerResponse) => Promise<void>> }
   | { kind: 'refuse'; refusal: Refusal }
   | { kind: 'command'; name: string; args: (body: unknown) => unknown }
   | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown> };
@@ -102,11 +114,30 @@ const noFields = (b: unknown) => {
   if (extra !== undefined) throw new Refusal(400, 'unknown_field', `"${extra}" is not a field of this command.`, 'Send {} or no body.', { field: extra });
 };
 
-export function createApiServer(state: EngineState): http.Server {
+// A query parameter that must be a non-negative integer, or a default.
+function integerParam(query: string, name: string, fallback: number | null, min: number): number | null {
+  const value = new URLSearchParams(query).get(name);
+  if (value === null) return fallback;
+  if (!/^\d{1,15}$/.test(value) || Number(value) < min) {
+    throw new Refusal(400, 'invalid_value', `"${name}" must be an integer of at least ${min}.`, `Send ?${name}=<an integer of at least ${min}>, or leave it out.`, { field: name });
+  }
+  return Number(value);
+}
+
+export interface ApiOptions {
+  home: string;
+  // The directory of the static shell, or null for none (SEAM.md §90).
+  shellDir: string | null;
+}
+
+export function createApiServer(state: EngineState, opts: ApiOptions): http.Server {
   const token = Buffer.from(state.token, 'utf8');
   const authority = state.config.values.api_authority;
   const bodyCap = state.config.values.body_cap;
   const bodyDeadlineMs = state.config.values.request_body_deadline * 1000;
+  const shell = loadShell(opts.shellDir);
+  const reader = new EventReader(homePaths(opts.home).store);
+  const maxConcurrentRuns = state.config.values.max_concurrent_runs;
 
   // Reading a body is what earns a `100 Continue`: only a request that has
   // passed the Host and token checks and reached a command that reads its
@@ -142,6 +173,24 @@ export function createApiServer(state: EngineState): http.Server {
     if (s.length === 2 && s[1] === 'projects' && post) {
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }
+    if (s.length === 2 && s[1] === 'projects' && get) {
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: { maxConcurrentRuns } }) }) };
+    }
+    if (s.length === 2 && s[1] === 'events' && get) {
+      return {
+        kind: 'stream',
+        open: async (r) => {
+          const since = integerParam(r.query, 'since', 0, 0)!;
+          const limit = integerParam(r.query, 'limit', null, 1);
+          return (res) => serveEvents(res, { reader, store: store(), since, limit });
+        },
+      };
+    }
+    if (s.length === 3 && s[1] === 'projects' && get) {
+      const project = decodeSegment(s[2]!);
+      if (project === null) return null;
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project, maxConcurrentRuns } }) }) };
+    }
 
     if (s[1] === 'projects' && s.length >= 4) {
       const project = decodeSegment(s[2]!);
@@ -152,6 +201,19 @@ export function createApiServer(state: EngineState): http.Server {
           return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
         }
         if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b) };
+      }
+      if (rest.length === 1 && rest[0] === 'decisions' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'decisions.open', args: { project } }) }) };
+      }
+      if (rest.length === 2 && rest[0] === 'candidates' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.read', args: { project, candidate } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'runs' && rest[2] === 'tail' && get) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return { kind: 'stream', open: (r) => openTail(project, run, r.query) };
       }
       if (rest.length === 1 && rest[0] === 'ledger' && get) {
         return { kind: 'direct', handler: async (r) => ({ status: 200, body: await store().call('read', { name: 'ledger.view', args: { project, day: ledgerDay(r.query) } }) }) };
@@ -295,6 +357,30 @@ export function createApiServer(state: EngineState): http.Server {
     return { status: 200, body: null, raw: bytes! };
   }
 
+  // GET /v1/projects/:p/runs/:r/tail (SEAM.md §92). The run must be of the
+  // project in the path; a run that has ended with no published transcript
+  // has no output to serve, which is not an empty output.
+  async function openTail(project: string, run: string, query: string): Promise<(res: ServerResponse) => Promise<void>> {
+    const offset = integerParam(query, 'offset', 0, 0)!;
+    type Source = { ended: boolean; record: { path: string; sha256: string | null; bytes: number | null } | null };
+    const source = () => store().call<Source>('read', { name: 'run.tail', args: { project, run } });
+    const first = await source();
+    if (first.ended && first.record === null && !liveTranscript(run)) {
+      throw new Refusal(409, 'record_unpublished', `The output of run ${run} was not kept whole, so there is none to serve.`, 'Read the run for how it ended.', { run });
+    }
+    const settled = async (): Promise<TailSource | 'ended' | 'pending'> => {
+      const now = await source();
+      if (now.record !== null) {
+        const record = now.record;
+        const bytes = await readRecordBytes(runtime().home, { path: record.path, sha256: record.sha256, bytes: record.bytes });
+        if (bytes === null) return 'ended';
+        return { kind: 'file', total: bytes.length, read: async (at, max) => bytes.subarray(at, at + max) };
+      }
+      return now.ended ? 'ended' : 'pending';
+    };
+    return (res) => serveTail(res, { run, offset, settled });
+  }
+
   // A request no production route matched is offered to the seam, which
   // answers only in harness mode (SEAM.md §7).
   function offerToSeam(r: Request, segments: string[]): Route | null {
@@ -313,7 +399,7 @@ export function createApiServer(state: EngineState): http.Server {
 
   // expect: 'none' (no expectation), 'continue' (exactly `100-continue`), or
   // 'refuse' (any other expectation, which the engine answers itself after
-  // the Host and token checks, SEAM.md §6).
+  // the boundary checks, SEAM.md §6).
   async function handle(req: IncomingMessage, res: ServerResponse, expect: 'none' | 'continue' | 'refuse'): Promise<void> {
     const expectsContinue = expect === 'continue';
     const requestId = newId('req_');
@@ -321,12 +407,16 @@ export function createApiServer(state: EngineState): http.Server {
     const send = (reply: Reply) => {
       if (res.headersSent) return;
       const text = method === 'HEAD' ? '' : reply.raw ?? JSON.stringify(reply.body);
-      res.writeHead(reply.status, {
-        'content-type': reply.raw ? 'application/octet-stream' : 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
+      const headers: Record<string, string> = {
+        ...DEFENSIVE_HEADERS,
+        'content-type': reply.raw ? (reply.type ?? 'application/octet-stream') : 'application/json; charset=utf-8',
         'x-surety-request-id': requestId,
-      });
+        ...(reply.headers ?? {}),
+      };
+      // A request whose body was not read is not read further: the
+      // connection ends with the answer.
+      if (!req.complete) headers.connection = 'close';
+      res.writeHead(reply.status, headers);
       res.end(text);
     };
     const refuse = (err: unknown) => {
@@ -335,6 +425,7 @@ export function createApiServer(state: EngineState): http.Server {
       return refusal;
     };
 
+    // 1. Host and target.
     let target;
     try {
       target = checkTarget(req, authority);
@@ -356,11 +447,40 @@ export function createApiServer(state: EngineState): http.Server {
       refuse(refusal);
     };
 
+    // 2. Origin evidence.
+    let evidence;
+    try {
+      evidence = checkOrigin(req, authority);
+    } catch (err) {
+      return refuseAudited(err);
+    }
+
+    // The routes that need no token: the enumerated shell files, and the
+    // token bootstrap, which needs positive same-origin evidence instead.
+    const get = method === 'GET' || method === 'HEAD';
+    const file = get ? shell.get(target.path) : undefined;
+    if (file) {
+      const headers: Record<string, string> = file.document ? { 'content-security-policy': SHELL_CSP } : {};
+      return void send({ status: 200, body: null, raw: file.bytes, type: file.type, headers });
+    }
+    if (get && target.path === '/v1/token/bootstrap') {
+      try {
+        checkBootstrapEvidence(evidence);
+      } catch (err) {
+        return void refuse(err);
+      }
+      return void send({ status: 200, body: { token: state.token } });
+    }
+
+    // 3. Token.
     try {
       checkToken(req, token);
     } catch (err) {
       return refuseAudited(err);
     }
+    // 4. Declared length: refused before any of the body is read.
+    const declared = req.headers['content-length'];
+    if (declared !== undefined && Number(declared) > bodyCap) return refuseAudited(payloadTooLarge(bodyCap));
     if (expect === 'refuse') {
       const value = String(req.headers.expect ?? '');
       return refuseAudited(
@@ -372,7 +492,12 @@ export function createApiServer(state: EngineState): http.Server {
 
     const segments = target.path.split('/').slice(1);
     const r: Request = { method, path: target.path, query: target.query, req, res, actor, awaitingContinue: expectsContinue };
-    const route = match(method, segments) ?? offerToSeam(r, segments);
+    let route: Route | null;
+    try {
+      route = match(method, segments) ?? offerToSeam(r, segments);
+    } catch (err) {
+      return refuseAudited(err);
+    }
     const restricted = route !== null && route.kind === 'direct' && route.restricted === true;
     if (state.mode !== 'full' && !restricted) {
       refuse(
@@ -404,6 +529,21 @@ export function createApiServer(state: EngineState): http.Server {
         }
         return;
       }
+      case 'stream': {
+        let write: (res: ServerResponse) => Promise<void>;
+        try {
+          write = await route.open(r);
+        } catch (err) {
+          refuse(err);
+          return;
+        }
+        if (res.headersSent) return;
+        res.writeHead(200, { ...DEFENSIVE_HEADERS, 'content-type': 'text/event-stream; charset=utf-8', 'x-surety-request-id': requestId });
+        res.flushHeaders();
+        res.on('error', () => {});
+        await write(res);
+        return;
+      }
       default:
         try {
           send(await route.handler(r));
@@ -422,7 +562,7 @@ export function createApiServer(state: EngineState): http.Server {
       try {
         const refusal = err instanceof Refusal ? err : storeError(err);
         if (!res.headersSent) {
-          res.writeHead(refusal.status, { 'content-type': 'application/json; charset=utf-8' });
+          res.writeHead(refusal.status, { ...DEFENSIVE_HEADERS, 'content-type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify(refusal.body()));
         }
       } catch {
@@ -430,15 +570,40 @@ export function createApiServer(state: EngineState): http.Server {
       }
     });
   };
-  const server = http.createServer(serve('none'));
+  // The engine answers a request without a Host header itself (E23 item 10).
+  const server = http.createServer({ requireHostHeader: false }, serve('none'));
   // Without these listeners Node answers an `Expect` header itself (`100
-  // Continue`, or 417 for anything else), before the Host check has run.
+  // Continue`, or 417 for anything else), before the boundary checks have run.
   server.on('checkContinue', serve('continue'));
   server.on('checkExpectation', serve('expect'));
-  server.on('clientError', (_err, socket) => {
-    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
-    else socket.destroy();
+  // A request the HTTP parser rejects is answered by the engine, in its own
+  // form and with its headers (D1 §17(13), §17(14)); a client that failed in
+  // the middle of a request or a stream only ends its own connection.
+  server.on('clientError', (err: NodeJS.ErrnoException, socket) => {
+    const busy = (socket as unknown as { _httpMessage?: unknown })._httpMessage !== undefined && (socket as unknown as { _httpMessage?: unknown })._httpMessage !== null;
+    if (err.code === 'ECONNRESET' || err.code === 'EPIPE' || !socket.writable || busy) {
+      socket.destroy();
+      return;
+    }
+    const tooLarge = err.code === 'HPE_HEADER_OVERFLOW';
+    const refusal = tooLarge
+      ? new Refusal(431, 'invalid_value', 'The request header section is larger than this engine reads.', 'Send a request with a smaller header section.', { field: null })
+      : new Refusal(400, 'invalid_value', 'The request is not a well-formed HTTP/1.1 request.', 'Send a well-formed HTTP/1.1 request.', { field: null });
+    const text = JSON.stringify(refusal.body());
+    const head = [
+      `HTTP/1.1 ${refusal.status} ${tooLarge ? 'Request Header Fields Too Large' : 'Bad Request'}`,
+      'Content-Type: application/json; charset=utf-8',
+      `Content-Length: ${Buffer.byteLength(text)}`,
+      ...Object.entries(DEFENSIVE_HEADERS).map(([k, v]) => `${k}: ${v}`),
+      'Connection: close',
+    ];
+    try {
+      socket.end(`${head.join('\r\n')}\r\n\r\n${text}`);
+    } catch {
+      socket.destroy();
+    }
   });
+  server.on('close', () => void reader.close());
   return server;
 }
 

@@ -14,6 +14,10 @@ export class StoreClient {
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private nextId = 1;
   private dead: Error | null = null;
+  // The highest committed event sequence the store has reported, and who
+  // wants to hear when it grows (the event streams).
+  lastSeq = 0;
+  private readonly seqListeners = new Set<(seq: number) => void>();
 
   constructor(file: string, migrationsDir: string) {
     const data: WorkerData = { file, migrationsDir, seam: seamWorkerData() };
@@ -22,6 +26,10 @@ export class StoreClient {
       if (typeof msg.id !== 'number') {
         seamMessage(msg);
         return;
+      }
+      if (typeof msg.seq === 'number' && msg.seq > this.lastSeq) {
+        this.lastSeq = msg.seq;
+        for (const listener of this.seqListeners) listener(msg.seq);
       }
       const waiter = this.pending.get(msg.id);
       if (!waiter) return;
@@ -36,6 +44,11 @@ export class StoreClient {
     };
     this.worker.on('error', fail);
     this.worker.on('exit', (code) => fail(new Error(`store worker exited with code ${code}`)));
+  }
+
+  onSeq(listener: (seq: number) => void): () => void {
+    this.seqListeners.add(listener);
+    return () => this.seqListeners.delete(listener);
   }
 
   call<T = unknown>(op: string, args: unknown = {}): Promise<T> {

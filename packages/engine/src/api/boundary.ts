@@ -98,3 +98,87 @@ export function readJsonBody(req: IncomingMessage, cap: number, deadlineMs: numb
     );
   });
 }
+
+// The headers every response carries, errors and streams included (D1
+// §11.1, §17(13); SEAM.md §89).
+export const DEFENSIVE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'cache-control': 'no-store',
+  'x-frame-options': 'DENY',
+});
+
+const originRefused = (reason: string) =>
+  new Refusal(
+    403,
+    'origin_refused',
+    reason,
+    "Send the request from a page of this engine's own origin, or from a client that sends no Origin, Referer or Sec-Fetch-Site header.",
+    {},
+  );
+
+// Every value of a header the client sent, as sent.
+function headerValues(req: IncomingMessage, name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (req.rawHeaders[i]!.toLowerCase() === name) out.push(req.rawHeaders[i + 1]!);
+  }
+  return out;
+}
+
+// Whether a URL or origin, parsed, is exactly this engine's own origin:
+// `http`, and the configured authority with its port.
+function isSelfOrigin(value: string, authority: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:') return false;
+  return `${url.hostname}:${url.port === '' ? '80' : url.port}` === authority;
+}
+
+export interface OriginEvidence {
+  // Sec-Fetch-Site, if sent (one value).
+  site: string | null;
+  // An Origin or a Referer of the engine's own origin was sent.
+  self: boolean;
+}
+
+// The origin evidence of a request (D1 §11.1; SEAM.md §89, item 2). A present
+// Origin or Referer that is not exactly the engine's own origin refuses the
+// request, and so does present fetch metadata other than `same-origin` (`none`,
+// a navigation the person made, goes on: the token still decides). A request
+// with none of the three is an origin-less client and goes on.
+export function checkOrigin(req: IncomingMessage, authority: string): OriginEvidence {
+  const origins = headerValues(req, 'origin');
+  const referers = headerValues(req, 'referer');
+  for (const value of origins) {
+    if (!isSelfOrigin(value.trim(), authority)) throw originRefused(`The Origin "${value}" is not this engine's own origin.`);
+  }
+  for (const value of referers) {
+    if (!isSelfOrigin(value.trim(), authority)) throw originRefused("The Referer is not a page of this engine's own origin.");
+  }
+  const sites = headerValues(req, 'sec-fetch-site').map((v) => v.trim().toLowerCase());
+  if (sites.length > 1) throw originRefused('The request carries more than one Sec-Fetch-Site header.');
+  const site = sites[0] ?? null;
+  if (site !== null && site !== 'same-origin' && site !== 'none') throw originRefused(`The browser says this request is ${site}, not same-origin.`);
+  return { site, self: origins.length + referers.length > 0 };
+}
+
+// GET /v1/token/bootstrap (D1 §11.1; RN R6; SEAM.md §90): positive same-origin
+// evidence from a browser, or a refusal that says what to do. The Origin and
+// Referer that are present have already been found to be the engine's own.
+export function checkBootstrapEvidence(evidence: OriginEvidence): void {
+  if (evidence.site === 'same-origin' && evidence.self) return;
+  throw new Refusal(
+    403,
+    'origin_refused',
+    'The token is given only to a page of this engine\'s own origin, and this request does not show that it comes from one (it needs Sec-Fetch-Site: same-origin and an Origin or Referer of the engine).',
+    'Load the engine\'s page and request the token from it with a same-origin referrer policy; a client that is not a browser page reads the token from $SURETY_HOME/api.token.',
+    {},
+  );
+}
+
+export const payloadTooLarge = (cap: number) => tooLarge(cap);

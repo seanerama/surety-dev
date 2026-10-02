@@ -101,7 +101,9 @@ export type EventType =
   | 'notification.sending'
   | 'notification.delivered'
   | 'notification.failed'
-  | 'notification.unknown';
+  | 'notification.unknown'
+  | 'environment.observed'
+  | 'engine.backup';
 
 export type ActorKind = 'engine' | 'human' | 'run';
 

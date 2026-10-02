@@ -15,6 +15,7 @@ import { configureGit } from './git/exec.js';
 import { observeIntegrity } from './git/integrity.js';
 import { Launcher } from './invoke/choke.js';
 import { Effects } from './decisions/effects.js';
+import { checkHomeFilesystem } from './home-fs.js';
 import { Journal } from './journal/driver.js';
 import { nominate } from './journal/nominate.js';
 import { type LockRecord, acquireLock, releaseLock } from './lock.js';
@@ -54,6 +55,11 @@ export interface EngineState {
 export interface ServeOptions {
   home: string;
   migrationsDir: string | null;
+  // The static shell's directory, or null (SEAM.md §90).
+  shellDir: string | null;
+  // The kind of filesystem the home is on, if it is given rather than
+  // detected (SEAM.md §88).
+  homeFsType: string | null;
 }
 
 // One JSON refusal line on stderr, then exit (SEAM.md §1).
@@ -84,6 +90,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
     config = loadEngineConfig(paths.config);
   } catch (err) {
     if (err instanceof Refusal) exitRefused(EXIT.config, err);
+    throw err;
+  }
+
+  // A home on a kind of filesystem that does not keep what is written is
+  // refused before anything is written or locked (D1 §6.1; SEAM.md §88).
+  try {
+    checkHomeFilesystem(opts.home, opts.homeFsType);
+  } catch (err) {
+    if (err instanceof Refusal) exitRefused(EXIT.notStarted, err);
     throw err;
   }
 
@@ -137,7 +152,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
 
   // 2. listen, restricted
   state.step = 'listen';
-  server = createApiServer(state);
+  server = createApiServer(state, { home: opts.home, shellDir: opts.shellDir });
   try {
     await new Promise<void>((resolve, reject) => {
       server!.once('error', reject);

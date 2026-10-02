@@ -165,7 +165,9 @@ export interface Claim {
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number): string | null {
+// `check`: false for a projection, which reads the budget without being a
+// budget check (D1 §6.6 governs the check, not the read).
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean } = {}): string | null {
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
   if (project.paused === 1) return 'project paused';
@@ -183,7 +185,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
-  if (exhaustedLimits(db, item.project, { check: true }).length > 0) return 'budget exhausted';
+  if (exhaustedLimits(db, item.project, { check: opts.check ?? true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
