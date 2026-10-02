@@ -697,3 +697,21 @@ Slice 2 was merged after three reviews and two fix rounds, the limit the driver 
 **Consequences elsewhere.** `docs/spec/M1-build-spec.md` section 4 gains a paragraph stating the procedure. E28 item 1's fault matrix stands for the endings already covered and is not extended.
 
 ---
+
+## E32. Slice-4 seam decisions (provisional, 2026-10-02)
+
+**Status: provisional**, like E23 to E30. The slice-4 Verifier fixed these in its tests and flagged them; the driver accepted its recommendations. Sean confirms or overturns them.
+
+1. **What the power-loss test models.** File content is durable as of its last sync; a file never synced is empty after a cut; file names are durable at once. It does not model the loss of a rename or a directory entry, torn writes, or whether this machine's storage honours a sync. An M67 pass therefore says the engine syncs what it must before relying on it, and nothing about the host. The M1 report must say so.
+2. **The engine cannot check that storage honours a sync** (D1 §6.1 asks it to). No process can observe that without a real power cut. What it can do is refuse an engine home on a kind of filesystem known not to persist or not to give sync guarantees (memory-backed, network, or user-space filesystems). Recommended, not yet tested: it needs one new acceptance case, which is Sean's to add.
+3. **A stream of role output has an identity before it is published,** carried by its record row. A stream cut by a crash, or longer than the 8 MiB a transcript retains, is never published: that run has no transcript the API serves, though its chunks stay on disk. Accepted for M1; revisit before a real backend.
+4. **Budgets.** With the scripted adapter the enforcement point is a usage observation. A run stopped for its budget is `stopped` with reason `budget`; its work is parked with the limit named, offering retry or cancel. A project over budget is not dispatched and its work stays eligible. Whether an estimated cost counts against the verified daily limit is left open until M2.
+5. **A result whose recording keeps failing** is retried for a bounded time, then the run ends failed with the reason stated, the result still in the transcript, and one repair.
+6. **New public surface the design does not list:** a route to rebind a project to a moved repository, the `surety store backup` and `restore` commands with a manifest, and exit status 7 for an incomplete backup or restore.
+7. **Usage is marked incomplete** whenever the engine, not the role, ended the invocation.
+
+**Two observations for the Builder, made by the Verifier under the shim:** the current engine cannot restart after a cut, because the lock file is written and renamed without a sync; and a workspace does not survive a cut, because git does not sync the files of a new worktree.
+
+**Consequences elsewhere.** No change to D1.
+
+---
