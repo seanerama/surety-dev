@@ -93,7 +93,18 @@
       "M12-over-budget-project.test.mjs",
       "M23-filter-driver-however-spelled.test.mjs"
     ],
-    "5": [],
+    "5": [
+      "M35-separate-governed-policy-file.test.mjs",
+      "M36-capture-protected-only-proposal.test.mjs",
+      "M37-apply-approved-protected-proposal.test.mjs",
+      "M38-delivery-and-stage-scope.test.mjs",
+      "M39-five-check-states-and-precedence.test.mjs",
+      "M40-durable-evidence-invalidation.test.mjs",
+      "M41-typed-evidence-reuse.test.mjs",
+      "M42-findings-dispositions-and-inherited-applicability.test.mjs",
+      "M43-severity-tier-and-independence-floors.test.mjs",
+      "M44-stage-gate-versus-alpha-authorization.test.mjs"
+    ],
     "6": [],
     "7": []
   }

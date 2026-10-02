@@ -1,0 +1,78 @@
+{
+  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent, that is, whether a journaled operation follows the consumption. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76).",
+  "codes": {
+    "stale": "decision_stale",
+    "consumed": "decision_consumed",
+    "invalidated": "decision_invalidated",
+    "batch_conflict": "batch_conflict",
+    "intent_invalidated": "EFFECT_PRECONDITION_CHANGED"
+  },
+  "kinds": {
+    "blocker": {
+      "subject_types": ["work_item", "operation", "run"],
+      "options": ["retry", "cancel", "continue", "acknowledge"],
+      "manifest": ["subject_status", "quarantined", "cause", "evidence", "continuation"],
+      "effect": false
+    },
+    "out_of_band_change": {
+      "subject_types": ["out_of_band_change"],
+      "options": ["discard", "adopt", "stash"],
+      "manifest": ["subject_kind", "expected", "found"],
+      "effect": true
+    },
+    "stop_confirm": {
+      "subject_types": ["run"],
+      "options": ["confirm"],
+      "manifest": ["run", "stoppable", "domains", "lease_generation", "workspace", "workspace_snapshot", "workspace_fate", "work_fate"],
+      "effect": false
+    },
+    "abandon_confirm": {
+      "subject_types": ["run"],
+      "options": ["confirm"],
+      "manifest": ["run", "stoppable", "domains", "lease_generation", "workspace", "workspace_snapshot", "workspace_fate", "work_fate"],
+      "effect": true
+    },
+    "policy_widening": {
+      "subject_types": ["project"],
+      "options": ["approve", "reject"],
+      "manifest": ["base_revision", "base_blob", "proposed_policy", "widens"],
+      "effect": true
+    },
+    "finding_disposition": {
+      "subject_types": ["finding"],
+      "options": ["approve", "reject"],
+      "manifest": ["finding_status", "disposition", "proposed_disposition", "effective_severity", "sensitive_area", "evidence", "defer_target", "linked_issue", "applicable", "candidate_revision", "acceptance_content_hash", "policy_revision"],
+      "effect": false
+    },
+    "severity_lower": {
+      "subject_types": ["finding"],
+      "options": ["approve", "reject"],
+      "manifest": ["finding_status", "effective_severity", "to", "sensitive_area", "applicable", "candidate_revision", "acceptance_content_hash", "policy_revision"],
+      "effect": false
+    },
+    "finding_applicability_exclusion": {
+      "subject_types": ["applicability_assessment"],
+      "options": ["approve", "reject"],
+      "manifest": ["assessment_status", "evidence", "reason", "proposed_by_run", "assessed_by_run", "finding", "candidate", "ancestry", "acceptance_content_hash", "effective_severity", "disposition", "sensitive_area", "blocks_gate", "protected_version", "policy_revision"],
+      "effect": false
+    },
+    "check_correction_tightening": {
+      "subject_types": ["protected_proposal"],
+      "options": ["approve", "reject"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "effect": true
+    },
+    "check_correction_loosening": {
+      "subject_types": ["protected_proposal"],
+      "options": ["approve", "reject"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "effect": true
+    },
+    "check_correction_unclassifiable": {
+      "subject_types": ["protected_proposal"],
+      "options": ["approve", "reject"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "effect": true
+    }
+  }
+}
