@@ -159,11 +159,12 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // No request or callback may crash the engine (D1 §11.1): from here on a
   // failure the engine did not catch is reported, with its stack, and the
   // engine goes on. It cannot strand a run: a run is held only by a lease the
-  // engine renews while it supervises a live role process that has not exited
-  // and is not ending. Whatever such a failure interrupted, that lease is
-  // then no longer renewed, expires, and the tick's first step takes its run
-  // through the run-end protocol (D1 §8.1 step 1); a run-end protocol that
-  // failed part way is resumed the same way.
+  // engine renews while it prepares the run or supervises its live role
+  // process, and never once it has decided to end the run. Whatever such a
+  // failure interrupted, that lease is then no longer renewed, expires, and
+  // the tick's first step takes its run through the run-end protocol (D1 §8.1
+  // step 1). A run-end protocol that failed part way is retried by the engine
+  // before that (RunEnder.retryDue); the expiry is the backstop.
   process.on('uncaughtException', (err, origin) => log('uncaught exception', err, { origin }));
   process.on('unhandledRejection', (reason) => log('unhandled rejection', reason));
 
@@ -188,8 +189,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   scheduler = new Scheduler(runtime, launcher, ender);
   const tick = scheduler;
   runtime.services = {
-    endRun: (run, outcome, reason) => ender.endRun(run, outcome, reason),
+    endRun: (run, end) => ender.endRun(run, end),
     completeEnd: (run) => ender.complete(run),
+    retryEnds: () => ender.retryDue(),
     requestTick: () => tick.request(),
   };
 

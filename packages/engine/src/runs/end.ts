@@ -2,8 +2,7 @@
 // `endRun` is the only way a run ends and is idempotent; it is used for every
 // outcome, by the choke point, Stop and Abandon, deadlines, the tick's
 // reconciliation of expired leases, quarantine clearance and startup
-// recovery. If a step fails, the run's lease (closing, or no longer renewed)
-// expires and the tick resumes the protocol (`reconcileExpired`).
+// recovery.
 //
 //   1. The run lease becomes closing and the run enters finalizing with its
 //      outcome (one transaction, `run.begin_end`).
@@ -15,11 +14,21 @@
 //   3. If termination is not established within terminate_grace + kill_grace,
 //      or the boundary reports `unknown`, the run is quarantined and stays so
 //      until the boundary reports its domains terminated (`clearQuarantine`,
-//      at every tick and at startup).
+//      at every tick and at startup). An `unknown` report ends the wait for a
+//      report, not the signalling: KILL still follows TERM after
+//      terminate_grace.
 //   4. An abandoned run's workspace is discarded through the journal.
 //   5–7. One transaction (`run.finish`) records the terminal observations and
 //      ledger rows, disposes of the workspace, revokes the grant, releases
 //      every lease naming the run, ends the run and moves its work item.
+//
+// If a step fails, the engine retries the protocol itself (E27 item 5;
+// `retryDue`): from the step that failed, with the end it had decided, at
+// most one attempt at a time per run, the first half a second later and then
+// at doubling intervals up to RETRY_MAX_MS, and at once at every tick. Once
+// the engine has decided to end a run nothing renews its lease, so the lease
+// expires as well, and the tick's reconciliation (`reconcileExpired`) is the
+// backstop that holds even for a run whose decision this engine has lost.
 
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -27,7 +36,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { repoContext } from '../git/exec.js';
 import { removeWorktree } from '../git/worktree.js';
 import { markedProcesses, signalFound, signalRecordedGroup } from '../invoke/processes.js';
-import { type RunHandle, type Runtime, earnedEnd, log } from '../runtime.js';
+import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../runtime.js';
 import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 
@@ -38,13 +47,34 @@ export interface EndOptions {
   recovery?: string;
 }
 
+// A run-end protocol that failed part way, waiting for its next attempt.
+// `end` is the decided end when step 1 itself has not been recorded; null
+// when the run is already finalizing and only steps 2 to 7 remain.
+interface Retry {
+  end: RunEnd | null;
+  opts: EndOptions;
+  project: string | null;
+  failures: number;
+  dueAt: number; // monotonic ms
+  running: boolean;
+}
+
+const RETRY_FIRST_MS = 500;
+const RETRY_MAX_MS = 10_000;
+
 export class RunEnder {
   private readonly ending = new Map<string, Promise<void>>();
+  private readonly retries = new Map<string, Retry>();
 
   constructor(private readonly rt: Runtime) {}
 
-  async endRun(run: string, outcome: string, reason: string, opts: EndOptions = {}): Promise<void> {
-    await this.rt.engine('run.begin_end', { run, outcome, reason });
+  async endRun(run: string, end: RunEnd, opts: EndOptions = {}): Promise<void> {
+    try {
+      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, decidedAt: end.decidedAt });
+    } catch (err) {
+      this.failed(run, end, opts);
+      throw err;
+    }
     return this.complete(run, opts);
   }
 
@@ -52,9 +82,49 @@ export class RunEnder {
   complete(run: string, opts: EndOptions = {}): Promise<void> {
     const existing = this.ending.get(run);
     if (existing) return existing;
-    const p = this.doComplete(run, opts).finally(() => this.ending.delete(run));
+    const p = this.doComplete(run, opts)
+      .then(
+        () => {
+          this.retries.delete(run);
+        },
+        (err: unknown) => {
+          this.failed(run, null, opts);
+          throw err;
+        },
+      )
+      .finally(() => this.ending.delete(run));
     this.ending.set(run, p);
     return p;
+  }
+
+  // Record a failed attempt and when the next one is due. An end decided
+  // before is kept: a failure in a later step does not forget it.
+  private failed(run: string, end: RunEnd | null, opts: EndOptions): void {
+    const prior = this.retries.get(run);
+    const failures = (prior?.failures ?? 0) + 1;
+    this.retries.set(run, {
+      end: end ?? prior?.end ?? null,
+      opts,
+      project: this.rt.handles.get(run)?.claim.project ?? prior?.project ?? null,
+      failures,
+      dueAt: performance.now() + Math.min(RETRY_FIRST_MS * 2 ** (failures - 1), RETRY_MAX_MS),
+      running: false,
+    });
+  }
+
+  // Retry every failed run end that is due, or, from a tick (`project` given),
+  // every one of that project at once. An attempt that succeeds leaves the
+  // run ended or quarantined and is forgotten; one that fails is recorded
+  // again with a longer wait. Neither the watch nor the tick waits for it.
+  retryDue(project?: string): void {
+    const now = performance.now();
+    for (const [run, r] of this.retries) {
+      if (r.running || this.ending.has(run)) continue;
+      if (project === undefined ? now < r.dueAt : r.project !== null && r.project !== project) continue;
+      r.running = true;
+      const attempt = r.end ? this.endRun(run, r.end, r.opts) : this.complete(run, r.opts);
+      attempt.catch((err) => log('run end retry', err, { run, failures: r.failures }));
+    }
   }
 
   private async doComplete(run: string, opts: EndOptions): Promise<void> {
@@ -174,8 +244,9 @@ export class RunEnder {
       // clears the quarantine; it does not undo it. The report ends the wait
       // for a report, not the signalling: what was sent TERM is still sent
       // KILL once terminate_grace has passed (D1 §4.5 step 2), by a timer of
-      // this protocol, not by a tick. `signal` finds the processes again then
-      // and signals only those that are still the processes it found.
+      // this protocol, not by a tick. `signal` then reaches the recorded
+      // process only if it is still that process, and finds the domain's
+      // marked processes again.
       if (observed === 'unknown') {
         if (!killSent) {
           const timer = setTimeout(() => {
@@ -217,25 +288,30 @@ export class RunEnder {
   // D1 §8.1 step 1: every unreleased run lease of the project past its expiry
   // is reconciled through the run-end protocol, whether or not the engine
   // that owns it is alive and whatever that engine is doing with the run. An
-  // outcome already recorded is kept; otherwise the run gets the end this
-  // engine already decided for it, or the one its role earned (earnedEnd).
+  // outcome already recorded is kept; an end this engine decided before the
+  // expiry stands; otherwise the run is recovered (expiryEnd; E27 item 3).
   // The tick waits for the transaction that begins the end, not for the rest
   // of the protocol: a launch stalled before its spawn is not waited for, and
   // finds its run ending when it comes back (SEAM.md §16, "The run lease").
-  // This is also what resumes a run-end protocol that a failed store
-  // transaction interrupted: such a run's lease is no longer renewed.
+  // This is also the backstop under the engine's own retry of a run end that
+  // failed part way: such a run's lease is no longer renewed.
   async reconcileExpired(project: string): Promise<void> {
     const expired = await this.rt.read<{ run: string; project: string }[]>('runs.expired_leases');
     for (const e of expired) {
       if (e.project !== project) continue;
       const handle = this.rt.handles.get(e.run);
-      const end = earnedEnd(handle);
+      const end = expiryEnd(handle);
       if (handle) {
         handle.leaseLost = true;
         handle.ending = true;
         handle.intended ??= end;
       }
-      const begun = await this.rt.engine<{ run: string; state: string } | null>('run.expire', { run: e.run, outcome: end.outcome, reason: end.reason });
+      const begun = await this.rt.engine<{ run: string; state: string } | null>('run.expire', {
+        run: e.run,
+        outcome: end.outcome,
+        reason: end.reason,
+        decidedAt: end.decidedAt,
+      });
       if (begun === null) continue;
       void this.complete(e.run).catch((err) => log('run end', err, { run: e.run, cause: 'lease_expired' }));
     }

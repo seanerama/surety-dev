@@ -501,29 +501,48 @@ export function recordResult(tx: Tx, args: { run: string; generation: number; va
 // Step 1, and the outcome: the run lease becomes closing and the run enters
 // finalizing with its outcome, which is set exactly once. Idempotent: a run
 // already finalizing or ended keeps what it has.
-export function beginEnd(tx: Tx, args: { run: string; outcome: Outcome; reason: ReasonClass; reasonText?: string }): { run: string; state: RunState; outcome: Outcome } {
+//
+// `decidedAt` is when the engine decided this end, which may be earlier than
+// this transaction: the engine retries an end whose first attempt failed
+// (E27 item 5). If the run lease, not yet closing, had expired by then, the
+// expiry came first and nothing had decided the run's outcome before it: the
+// run is recovered, whatever the engine saw afterwards (E27 item 3). Without
+// `decidedAt` (a Stop or Abandon command, startup recovery) the given
+// outcome is recorded as it is.
+export function beginEnd(
+  tx: Tx,
+  args: { run: string; outcome: Outcome; reason: ReasonClass; reasonText?: string; decidedAt?: string },
+): { run: string; state: RunState; outcome: Outcome } {
   const run = mustRun(tx, args.run);
   if (run.state === 'finalizing' || run.state === 'ended') return { run: run.id, state: run.state, outcome: run.outcome! };
   const lease = runLease(tx, run.id);
+  let { outcome, reason, reasonText } = args;
+  if (args.decidedAt !== undefined && lease && lease.closing === 0 && expired(lease, args.decidedAt)) {
+    outcome = 'recovered';
+    reason = 'recovered';
+    reasonText = 'lease_expired';
+  }
   if (lease) tx.db.prepare('UPDATE "leases" SET "closing" = 1, "cleanup_authority" = 1 WHERE "id" = ?').run(lease.id);
-  setRunState(tx, run, 'finalizing', { outcome: args.outcome, reason_class: args.reason, reason_text: args.reasonText ?? null });
-  const payload: Record<string, unknown> = { outcome: args.outcome, reason_class: args.reason, from: run.state };
-  if (args.reasonText !== undefined) payload.reason_text = args.reasonText;
+  setRunState(tx, run, 'finalizing', { outcome, reason_class: reason, reason_text: reasonText ?? null });
+  const payload: Record<string, unknown> = { outcome, reason_class: reason, from: run.state };
+  if (reasonText !== undefined) payload.reason_text = reasonText;
   tx.emit('run.finalizing', runSubject(run), payload);
-  return { run: run.id, state: 'finalizing', outcome: args.outcome };
+  return { run: run.id, state: 'finalizing', outcome };
 }
 
 // D1 §8.1 step 1: a run lease past its expiry is reconciled through the
 // run-end protocol, whether or not the engine that owns it is alive. This is
-// step 1 for such a run. An outcome already recorded is kept; a run without
-// one gets the outcome the main thread computed from what it knows of the
-// role (E26 item 2: failed / infra_error unless a valid result was accepted
-// while the lease was live). Returns null if the lease is not expired (or no
-// longer exists), in which case nothing is written.
-export function expireRun(tx: Tx, args: { run: string; outcome: Outcome; reason: ReasonClass }): { run: string; state: RunState } | null {
+// step 1 for such a run. An outcome already recorded is kept; an end the
+// engine decided before the expiry stands (beginEnd checks `decidedAt`); a
+// run with neither is recovered (E27 item 3). Returns null if the lease is
+// not expired (or no longer exists), in which case nothing is written.
+export function expireRun(tx: Tx, args: { run: string; outcome: Outcome; reason: ReasonClass; decidedAt?: string }): { run: string; state: RunState } | null {
   const lease = runLease(tx, args.run);
   if (!lease || !expired(lease, tx.at)) return null;
-  const ended = beginEnd(tx, { run: args.run, outcome: args.outcome, reason: args.reason, reasonText: 'lease_expired' });
+  const decidedAt = args.outcome === 'recovered' ? undefined : args.decidedAt;
+  const ended = decidedAt !== undefined
+    ? beginEnd(tx, { run: args.run, outcome: args.outcome, reason: args.reason, decidedAt })
+    : beginEnd(tx, { run: args.run, outcome: 'recovered', reason: 'recovered', reasonText: 'lease_expired' });
   return { run: ended.run, state: ended.state };
 }
 

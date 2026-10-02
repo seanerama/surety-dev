@@ -39,7 +39,7 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder): Promise<{ 
     runs.map(async (run) => {
       try {
         if (run.state === 'finalizing' && run.quarantined === 1) await ender.clearQuarantine(run.id, { ...recovery, signal: true });
-        else await ender.endRun(run.id, run.outcome ?? 'recovered', run.reason_class ?? 'recovered', recovery);
+        else await ender.endRun(run.id, { outcome: run.outcome ?? 'recovered', reason: run.reason_class ?? 'recovered' }, recovery);
       } catch (err) {
         log('recovery', err);
         throw err;

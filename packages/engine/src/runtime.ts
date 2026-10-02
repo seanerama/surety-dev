@@ -6,7 +6,7 @@
 
 import type { ChildProcess } from 'node:child_process';
 
-import { nowMs } from './clock.js';
+import { isoAt, nowMs } from './clock.js';
 import type { EngineConfig } from './config/engine-config.js';
 import { processState } from './invoke/processes.js';
 import type { Claim, Outcome, ReasonClass } from './store/transitions/runs.js';
@@ -15,6 +15,10 @@ import type { StoreClient } from './store/client.js';
 export interface RunEnd {
   outcome: Outcome;
   reason: ReasonClass;
+  // When the engine decided this end, on the engine clock. The transaction
+  // that records it compares it with the lease: an end decided after the
+  // lease had expired was not decided before the expiry (E27 item 3).
+  decidedAt?: string;
 }
 
 export interface RunHandle {
@@ -33,7 +37,9 @@ export interface RunHandle {
   settle: () => void;
   // The engine has decided to end the run; `intended` is the end it decided,
   // kept so that a run-end protocol interrupted by a failure is resumed with
-  // the same outcome when the run's lease is reconciled (D1 §8.1 step 1).
+  // the same outcome, by the engine's retry or when the run's lease is
+  // reconciled (D1 §8.1 step 1). From the decision on, nothing renews the
+  // run's lease, the role's heartbeats included (E27 item 5).
   ending: boolean;
   intended: RunEnd | null;
   deadlineMs: number;
@@ -77,32 +83,47 @@ export function newHandle(claim: Claim): RunHandle {
   };
 }
 
-// The end a run's role earned, from what this engine saw of it (SEAM.md §13;
-// E26 item 2). An end the engine already decided stands. Otherwise: a valid
-// result accepted on a live lease and an exit with status 0 is `completed`;
-// an invalid result is `invalid_result`; anything else, a role that has not
-// been seen to exit included, is `failed` / `infra_error`. A run this engine
-// holds no handle for gets the last of these: nothing it knows is a success.
-export function earnedEnd(handle: RunHandle | undefined): RunEnd {
-  if (handle?.intended) return handle.intended;
-  if (handle?.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result' };
-  if (handle?.result?.valid === true && handle.exit?.code === 0) return { outcome: 'completed', reason: 'none' };
+// The end a run's role earned when its process exited, from what this engine
+// saw of it (SEAM.md §13). An end the engine already decided stands.
+// Otherwise: a valid result accepted on a live lease and an exit with status
+// 0 is `completed`; an invalid result is `invalid_result`; anything else is
+// `failed` / `infra_error`.
+export function earnedEnd(handle: RunHandle): RunEnd {
+  if (handle.intended) return handle.intended;
+  if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result' };
+  if (handle.result?.valid === true && handle.exit?.code === 0) return { outcome: 'completed', reason: 'none' };
   return { outcome: 'failed', reason: 'infra_error' };
 }
 
-// Is the engine supervising a live role process for this run? From the spawn
-// until the process exits, the run starts ending, or the store refuses the
-// lease. A process that /proc shows gone is not supervised, even if its exit
-// was never delivered; one whose /proc entry is unreadable is not taken for
-// gone.
-function supervising(handle: RunHandle): boolean {
-  if (handle.phase !== 'spawned' || handle.exit !== null || handle.ending || handle.leaseLost || handle.pid === null) return false;
+// The end of a run whose lease was found expired (E27 items 3 and 7; SEAM.md
+// §16). An end the engine decided before the expiry stands; the transaction
+// that records it checks the "before" against the lease. With nothing
+// decided, the run is treated as recovered, like a run found after a crash:
+// a result accepted from a role that has not exited decides nothing, and
+// neither does what the role does after the expiry.
+export function expiryEnd(handle: RunHandle | undefined): RunEnd {
+  return handle?.intended ?? { outcome: 'recovered', reason: 'recovered' };
+}
+
+// Is the engine holding this run, so that it renews the run's lease itself
+// (D1 §8.3; E25 item 1; E27 items 2 and 5)? While it prepares the run, from
+// the claim until the spawn, and while it supervises the role's live process,
+// from the spawn until the process exits; never once it has decided to end
+// the run or the store has refused the lease. A process that /proc shows gone
+// is not supervised, even if its exit was never delivered; one whose /proc
+// entry is unreadable is not taken for gone.
+function holding(handle: RunHandle): boolean {
+  if (handle.ending || handle.leaseLost || handle.abort) return false;
+  if (handle.phase === 'preparing') return true;
+  if (handle.phase !== 'spawned' || handle.exit !== null || handle.pid === null) return false;
   return handle.startTime === null || processState(handle.pid, handle.startTime) !== 'gone';
 }
 
 export interface Services {
-  endRun(run: string, outcome: string, reason: string): Promise<void>;
+  endRun(run: string, end: RunEnd): Promise<void>;
   completeEnd(run: string): Promise<void>;
+  // Retry every run-end protocol that failed part way and is due again.
+  retryEnds(): void;
   requestTick(): void;
 }
 
@@ -136,14 +157,15 @@ export class Runtime {
     return this.store.call<T>('read', { name, args });
   }
 
-  // The engine decides to end a run it holds a handle for. Once only; the
-  // run-end protocol is idempotent and, if it fails, the lease that is no
-  // longer renewed expires and the tick resumes it with the same end.
+  // The engine decides to end a run it holds a handle for. Once only: from
+  // here nothing renews the run's lease. The run-end protocol is idempotent;
+  // if a step of it fails, the engine retries it (RunEnder), and the lease
+  // that nothing renews expires as the backstop.
   requestEnd(handle: RunHandle, end: RunEnd): void {
     if (handle.ending) return;
     handle.ending = true;
-    handle.intended = end;
-    void this.services?.endRun(handle.claim.run, end.outcome, end.reason).catch((err) => log('run end', err, { run: handle.claim.run }));
+    handle.intended = { ...end, decidedAt: end.decidedAt ?? isoAt(nowMs()) };
+    void this.services?.endRun(handle.claim.run, handle.intended).catch((err) => log('run end', err, { run: handle.claim.run }));
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
@@ -158,11 +180,14 @@ export class Runtime {
   // acted on within a second:
   // - deadlines on owned work (D1 §8.5): a run past its deadline is cancelled
   //   through the run-end protocol;
-  // - the run lease of every role process the engine supervises is renewed
-  //   once a quarter of lease_ttl has passed since its last renewal, so at
-  //   least every lease_ttl/3, whether or not the role sends heartbeats
-  //   (D1 §8.3; E25 item 1). Nothing else renews it: a run nobody supervises
-  //   lets its lease expire, and the tick reconciles it (D1 §8.1 step 1).
+  // - the run lease of every run the engine holds (`holding`) is renewed once
+  //   a quarter of lease_ttl has passed since its last renewal, so at least
+  //   every lease_ttl/3, whether or not the role sends heartbeats (D1 §8.3;
+  //   E25 item 1; E27 item 2). Nothing else renews it: a run nobody holds lets
+  //   its lease expire, and the tick reconciles it (D1 §8.1 step 1);
+  // - a run-end protocol that failed part way is retried once it is due.
+  // A clock that steps back only delays what is due by the step: every
+  // comparison here is "has enough time passed", and nothing loops on it.
   startWatch(): void {
     const renewEveryMs = (this.setting('lease_ttl') * 1000) / 4;
     this.watcher = setInterval(() => {
@@ -174,8 +199,9 @@ export class Runtime {
             this.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline' });
             continue;
           }
-          if (!handle.renewing && now - handle.renewedAtMs >= renewEveryMs && supervising(handle)) this.renew(run, handle);
+          if (!handle.renewing && now - handle.renewedAtMs >= renewEveryMs && holding(handle)) this.renew(run, handle);
         }
+        this.services?.retryEnds();
       } catch (err) {
         log('watch', err);
       }
@@ -196,8 +222,16 @@ export class Runtime {
       });
   }
 
-  // A renewal the role's heartbeat made.
-  renewedByRole(handle: RunHandle, at: string | null): void {
+  // A heartbeat of the role renews the run lease while it is live (D1 §8.3),
+  // and only until the engine has decided to end the run (E27 item 5). The
+  // decision and this check are made on the main thread, and the store runs
+  // its commands in the order they are sent: a renewal sent before the
+  // decision commits before the decision's own transaction, and none is sent
+  // after it.
+  async heartbeat(handle: RunHandle): Promise<void> {
+    if (handle.ending || handle.leaseLost) return;
+    const { run, generation } = handle.claim;
+    const at = await this.role<string | null>('run.heartbeat', run, { run, generation });
     if (at !== null) handle.renewedAtMs = Math.max(handle.renewedAtMs, Date.parse(at));
   }
 

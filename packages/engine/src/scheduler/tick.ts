@@ -3,9 +3,11 @@
 // One tick runs at a time.
 //
 // A tick, for every registered project:
-//   1. Recover: quarantined runs are observed again; a domain the boundary
-//      now reports terminated is cleared and its run ended. Every run lease
-//      past its expiry is reconciled through the run-end protocol.
+//   1. Recover: a run end of the project that failed part way is retried at
+//      once (not waited for); quarantined runs are observed again, and a
+//      domain the boundary now reports terminated is cleared and its run
+//      ended. Every run lease past its expiry is reconciled through the
+//      run-end protocol.
 //   2. Journal and effects: no git operation outlives the call that made it
 //      in this revision, so there is nothing to probe between ticks yet; the
 //      journal's recovery runs at startup.
@@ -90,6 +92,7 @@ export class Scheduler {
   private async step(name: (typeof PREREQUISITES)[number], project: string): Promise<void> {
     await seamStepDelay(name, project);
     if (name === 'recover') {
+      this.ender.retryDue(project);
       await this.ender.observeQuarantines(project);
       await this.ender.reconcileExpired(project);
     }

@@ -278,13 +278,17 @@ export class Launcher {
     const m = message as Record<string, unknown>;
     const { run, generation, invocation } = handle.claim;
     if (m.type === 'heartbeat') {
-      this.rt.renewedByRole(handle, await this.rt.role<string | null>('run.heartbeat', run, { run, generation }));
+      await this.rt.heartbeat(handle);
     } else if (m.type === 'usage') {
       if ((m.semantics !== 'cumulative' && m.semantics !== 'delta') || typeof m.raw !== 'object' || m.raw === null) return;
       await this.rt.role('run.usage', run, { run, generation, invocation, semantics: m.semantics, raw: m.raw });
     } else if (m.type === 'result') {
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
       if (handle.result !== null) return;
+      // A run the engine has decided to end takes no late result, as a
+      // closing lease takes none (D1 §8.3), also while the transaction that
+      // would make the lease closing has not yet succeeded (E27 item 5).
+      if (handle.ending) return;
       const valid = isValidResult(m.result);
       if (valid) await pausePoint('run.result_received');
       const accepted = await this.rt.role<boolean>('run.result', run, { run, generation, valid });
