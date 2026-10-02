@@ -22,7 +22,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { GIT_INCARNATION_MARKER, GIT_OPERATION_MARKER } from '../git/exec.js';
+import { GIT_HOME_MARKER, GIT_INCARNATION_MARKER, GIT_OPERATION_MARKER, gitSettings } from '../git/exec.js';
 import { removeResidue } from '../git/worktree.js';
 import { environOf, processesWithMarker, signalFound } from '../invoke/processes.js';
 import { type Runtime, log } from '../runtime.js';
@@ -271,15 +271,18 @@ export class Journal {
     return { op: await this.detail(op.id), end: 'blocked', receipts: {} };
   }
 
-  // The git children of another incarnation that perform this operation (or
-  // any operation, when they carry none): stopped, and waited for. Returns
-  // whether none is left alive.
+  // The git children of another incarnation of this engine home that perform
+  // this operation (or any operation, when they carry none): stopped, and
+  // waited for. A process another engine home started is never signalled
+  // (E41 item 1). Returns whether none is left alive.
   private async othersChildrenGone(op: string): Promise<boolean> {
     const mine = this.rt.incarnation;
+    const home = gitSettings().home;
     const children = () =>
       (processesWithMarker(GIT_INCARNATION_MARKER) ?? []).filter((p) => {
         const env = environOf(p.pid);
         if (env === null) return false;
+        if (env.get(GIT_HOME_MARKER) !== home) return false;
         const inc = env.get(GIT_INCARNATION_MARKER);
         const forOp = env.get(GIT_OPERATION_MARKER);
         return inc !== mine && (forOp === undefined || forOp === op);

@@ -873,3 +873,25 @@ Astra reviewed the build at the slice-4 point and made three observations. The v
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E41. Slice-5 review: what is fixed before the merge and what is carried (provisional, 2026-10-02)
+
+**Status: provisional.** The driver's defaults under Sean's delegation. Sean confirms or overturns them.
+
+The one review of slice 5 found five defects and reproduced each by running the engine. All five are fixed before slice 5 merges, each with one new test and one fix. The fifth is not serious by E31's definition; it is fixed anyway because it would leave ordinary work stuck during the journey (E40).
+
+1. **An engine never signals a process that another engine home started.** When it reconciled a journal operation, an engine killed every git process on the machine that carried another engine's marker, whatever its home or repository. The code is from slice 3; slice 5 made it frequent. In the other engine a killed read was reported as unknown, so a snapshot failed or a repository was called unreadable, and a killed write could leave an operation ambiguous. **This is the cause of the failures seen when several test files ran at once** (in the slice-5 build and in the driver's rerun), and it is the likeliest cause of the unexplained intermittent failures of E29 item 2 and E36, which no longer need another explanation though none of those runs was kept to prove it. An engine may end only processes of its own home.
+2. **A gate input that could not be read makes the gate not satisfied.** With the repository's git not answering, the check for an unauthorized protected set was skipped and the stage gate was satisfied, completing the stage. An unknown is not a pass (the standing rule). The same holds for every other input the evaluation reads from git or from a record.
+3. **A quarantined Verifier's or Reviewer's report is recorded like any other.** A Verifier whose process could not at first be shown gone lost the findings it had reported, and its verification still completed; a Critical finding vanished and the gate was satisfied. Such a run keeps its earned outcome (slice-5 seam), so its report is recorded with it, and the work it verifies does not complete before that. Decided by the driver; the alternative was to hold the verification until the quarantine clears.
+4. **A sign-off binds the acceptance content its run was started on.** A Reviewer's sign-off was bound to the content in force when the report was recorded, so a check added while the review was under way was covered by a sign-off that never saw it. The content is fixed when the run is launched (the rule that inputs are frozen at intent, build spec section 6). If the content has changed by the time the report arrives, the sign-off does not count toward the new content.
+5. **A stage gate blocked by an outside change or a pending git operation is evaluated again when that clears.** Nothing marked the evaluation stale, so the tick never looked again and the stage stayed in verification although a gate requested by route was satisfied. D1 section 9.5 lists both as causes of staleness.
+
+**Carried, not confirmed by running:** an authorization proposed under one protected version is issued after an evaluation under the next and still records the first (nothing consumes an authorization in M1); a failed read of both governed files makes a required-set change look like no change; an ancestry pair not yet recorded makes a requirement count as not started where D1 section 9.1 asks for an incomplete scope; a finding from a run whose work names no candidate applies to no candidate.
+
+**Design questions for Sean, not applied:** a Reviewer can lower a finding from Critical to High alone, where the foundations (section 6.3) say lowering for the relevant stage needs the human; a tightening approved by a Reviewer is applied onto the current head without its classification being checked again.
+
+**Checked and found sound by the review:** answering decisions (preview hash required and recomputed, stale answers refused, batches all or nothing); effects revalidated before they run and never run twice; approval authority; check states; severity and disposition authority apart from the case above.
+
+**Consequences elsewhere.** No change to D1.
+
+---

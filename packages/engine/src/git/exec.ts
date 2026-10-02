@@ -43,6 +43,9 @@ export function gitSettings(): GitSettings {
 // later incarnation can find the children of one that died (SEAM.md §46).
 export const GIT_INCARNATION_MARKER = 'SURETY_GIT_INCARNATION';
 export const GIT_OPERATION_MARKER = 'SURETY_GIT_OPERATION';
+// The engine home whose engine started the child: an engine ends only
+// processes of its own home, never another home's (E41 item 1).
+export const GIT_HOME_MARKER = 'SURETY_GIT_HOME';
 
 export interface GitContext {
   // The repository's common directory (`<repo>/.git`).
@@ -252,6 +255,7 @@ function gitEnv(home: string, operation: string | undefined, extra: Record<strin
     [GIT_INCARNATION_MARKER]: gitSettings().incarnation,
     ...extra,
   };
+  env[GIT_HOME_MARKER] = gitSettings().home;
   // Neither may be loosened by a caller's extra variables.
   env.GIT_NO_LAZY_FETCH = '1';
   env.GIT_ALLOW_PROTOCOL = '';
