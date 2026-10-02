@@ -88,7 +88,11 @@ export async function slice3Checks(check, work) {
     assert.deepEqual(Object.keys(ENDINGS).sort(), [
       'abandon_claimed',
       'abandon_executing',
+      'abandon_integrating',
+      'checkpoint',
       'deadline',
+      'integrates',
+      'integration_conflict',
       'invalid_result',
       'lease_expiry',
       'preflight_refused',
@@ -96,6 +100,7 @@ export async function slice3Checks(check, work) {
       'role_completes',
       'stop_claimed',
       'stop_executing',
+      'stop_integrating',
     ]);
     for (const cell of cells) {
       assert.ok(STAGES.includes(cell.fault.stage), `${cell.ending}: stage ${cell.fault.stage}`);

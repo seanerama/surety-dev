@@ -17,7 +17,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { ENDINGS, matrixCells, throughIntegration } from '../endings.mjs';
 import { WITNESS_MARKER } from '../engine.mjs';
+import { BOUNDARIES, KINDS, crashTitle, crashWay, probeCells } from '../probes.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ACCEPTANCE = join(here, '..', '..');
@@ -210,7 +212,109 @@ export const MUTANTS = [
   ["recovery_no_snapshot", "M18-snapshot-recovery", "recovery ends the run as recovered, records the snapshot tree of what the role left, and accepts nothing"],
   ["recovery_commits", "M18-snapshot-recovery", "recovery ends the run as recovered, records the snapshot tree of what the role left, and accepts nothing"],
   ["symlink_workspace_adopted", "M31-workspace-path-symlink", "a link at a new run's workspace path, pointing at another run's retained worktree, is refused: the worktree add does not succeed, no role runs there, and the other worktree is untouched"],
+  // Slice 3, second session: rows M26 to M34 and the cases of earlier rows that concern the journal's
+  // recovery, nomination, the chain of roles and what follows `integrated` (SEAM.md §§39–50). The
+  // generated matrices (the probes, the crashes, the fault cells through integration) follow below.
+  ['plan_registered_twice', 'M26-plan-and-stage-finalizers', 'the integration of a commit that holds a phase plan registers the plan, one stage row per stage and one stage_build item per stage, and the replan work is complete'],
+  ['plan_from_newest', 'M26-plan-and-stage-finalizers', 'the finalizer is delayed while a newer plan is introduced: it registers the committed plan, exactly, and nothing of the newer one'],
+  ['finalizer_reads_workspace', 'M26-plan-and-stage-finalizers', 'killed after the integration of a plan was confirmed and before its finalizer: the restart registers the plan once, from the commit, and a second restart registers nothing again'],
+  ['recovery_skips_confirmed', 'M26-plan-and-stage-finalizers', 'killed after the integration of a plan was confirmed and before its finalizer: the restart registers the plan once, from the commit, and a second restart registers nothing again'],
+  ['plan_not_validated', 'M26-plan-and-stage-finalizers', 'a plan file that is not JSON rejects the whole result: no plan is committed that could not be registered'],
+  ['plan_not_validated', 'M26-plan-and-stage-finalizers', 'a plan file that has a stage with no goal rejects the whole result: no plan is committed that could not be registered'],
+  ['stage_not_finalized', 'M26-plan-and-stage-finalizers', "the integration of a stage's work marks that stage integrated at the run's commit"],
+  ['stage_by_number', 'M26-plan-and-stage-finalizers', 'the finalizer is delayed while a newer plan with a stage of the same number is introduced: the stage the run built is the one finalized, and the newer stage is untouched'],
+  ['nomination_ref_mutable', 'M27-nomination-identity-and-cadence', 'T2: the completion of a stage nominates the integrated revision: candidate, immutable ref and lineage succession agree, and the work is being verified'],
+  ['nomination_names_run', 'M27-nomination-identity-and-cadence', 'T2: the completion of a stage nominates the integrated revision: candidate, immutable ref and lineage succession agree, and the work is being verified'],
+  ['t1_cadence', 'M27-nomination-identity-and-cadence', 'T1: the completion of a stage nominates nothing; the work stays integrated'],
+  ['integrated_never_verifying', 'M27-nomination-identity-and-cadence', "T1: a Builder's request, `nominate: true`, is performed by the engine: the integrated revision is nominated by builder_request"],
+  ['t2_request_nominates', 'M27-nomination-identity-and-cadence', "T2: a Builder's request before the cadence point is not a nomination: the run is integrated as usual and no candidate exists"],
+  ['checkpoint_nominates', 'M27-nomination-identity-and-cadence', 'T1: a checkpoint is never a candidate, although the Builder asked for a nomination with it'],
+  ['nominate_any_value', 'M27-nomination-identity-and-cadence', 'a `nominate` that is not a boolean makes the result invalid'],
+  ['lineage_not_succeeded', 'M27-nomination-identity-and-cadence', 'a second stage integrated after a nomination is recorded on the successor lineage and nominated as the next candidate; the first candidate, its ref and its lineage are as they were'],
+  ['recovery_skips_confirmed', 'M27-nomination-identity-and-cadence', 'killed after the nomination ref was written and confirmed, before the finalizer: the restart writes the candidate, registers the ref and succeeds the lineage, and a second restart writes nothing again (D1-18)'],
+  ['nomination_no_verification', 'M27-nomination-identity-and-cadence', 'killed after the nomination ref was written and confirmed, before the finalizer: the restart writes the candidate, registers the ref and succeeds the lineage, and a second restart writes nothing again (D1-18)'],
+  ['nomination_not_caught_up', 'M27-nomination-identity-and-cadence', 'killed after a T2 stage was integrated and before it was nominated: the stage is still nominated after the restart, once'],
+  ['no_rebase', 'M28-integration-race-and-compare-and-swap', "moved by the engine's own commit: the result is rebased onto the head, the rebased tree is the head's tree plus the run's changes, it is committed on the head through the journal, and the swap is made from the head"],
+  ['rebase_overwrites', 'M28-integration-race-and-compare-and-swap', "moved by the engine's own commit: the result is rebased onto the head, the rebased tree is the head's tree plus the run's changes, it is committed on the head through the journal, and the swap is made from the head"],
+  ['conflict_takes_ours', 'M28-integration-race-and-compare-and-swap', 'moved to an adopted commit that changes the same file another way: the rebase conflicts, nothing is integrated, the work parks, and no role is launched to resolve it; a person lets the work run again from the new head'],
+  ['cas_overwrites', 'M28-integration-race-and-compare-and-swap', 'moved between the journaled intent and the swap: the compare-and-swap fails, the unexpected head is not overwritten, the operation is failed, the registry is not told, and the move is observed out of band'],
+  ['merge_driver_runs', 'M28-integration-race-and-compare-and-swap', "a merge driver the repository's configuration names is not run by the rebase"],
+  ['extra_attempt', 'M34-operation-attempt-semantics', 'an operation is committed before its first attempt is issued; the attempt is number 1, admitted once, and succeeds when the probe confirms its effect'],
+  ['attempt_number_not_unique', 'M34-operation-attempt-semantics', 'the store refuses a second attempt with a number already used, and a second journal event with a sequence number already used'],
+  ['successor_not_linked', 'M34-operation-attempt-semantics', 'a failure before any effect leaves the attempt and the operation failed; nothing retries it, not a tick and not a restart; a new operation that does its work names it as its prior and supersedes it'],
+  ['blind_retry', 'M34-operation-attempt-semantics', 'an attempt whose command was killed at its deadline is ambiguous, and so is its operation: it is not retried before a probe has reconciled it, and it completes nothing'],
+  ['probe_applied_repeats', 'M34-operation-attempt-semantics', 'reconciled succeeded: an attempt whose effect was applied and never recorded is reconciled, not repeated, and its operation has succeeded'],
+  ['interval_status_stale', 'M34-operation-attempt-semantics', 'reconciled absent: between the reconciliation and the retry the operation is intended again, with no attempt in flight; the retry is attempt 2 of the same operation'],
+  ['interval_status_stale', 'M34-operation-attempt-semantics', 'reconciled partial: with the remainder declared the operation is partial, and completes nothing, until a new attempt has completed it'],
+  ['probe_partial_is_applied', 'M34-operation-attempt-semantics', 'reconciled partial: with the remainder declared the operation is partial, and completes nothing, until a new attempt has completed it'],
+  ['architect_never_complete', 'M09-after-integrated', 'a replan item runs its whole path: eligible → claimed → executing → integrating → integrated → complete'],
+  ['architect_never_complete', 'M09-after-integrated', 'a assessment item runs its whole path: eligible → claimed → executing → integrating → integrated → complete'],
+  ['verifying_never_completes', 'M09-after-integrated', 'a stage_build item runs its whole path: eligible → claimed → executing → integrating → integrated → verifying → complete'],
+  ['failed_verification_completes', 'M09-after-integrated', "a verification that fails completes nothing: the Builder's work stays verifying until a repaired verification completes"],
+  ['integrated_never_verifying', 'M09-after-integrated', 'a fix item runs its whole path, eligible → claimed → executing → integrating → integrated → verifying → complete: it stays integrated until a candidate that holds it is nominated, and is verified with that candidate'],
+  ['verification_sweeps_integrated', 'M09-after-integrated', 'work integrated after a nomination is not held by that candidate: it stays integrated when the candidate is verified'],
+  ['chain_unbounded', 'M12-chain-of-roles', "work that a run's outcome created is not launched without a human step: the next step is a decision, asked once, while another project's work progresses; once a person continues, it is launched once"],
+  ['chain_decision_repeated', 'M12-chain-of-roles', "work that a run's outcome created is not launched without a human step: the next step is a decision, asked once, while another project's work progresses; once a person continues, it is launched once"],
+  ['nomination_work_not_chained', 'M12-chain-of-roles', 'cancel at the boundary cancels the work without a launch'],
+  ['plan_work_not_chained', 'M12-chain-of-roles', "the work a committed plan registers is work an Architect's run created: its stages are not built without a human step"],
+  ['chain_counts_every_run', 'M12-chain-of-roles', 'work a fixture created, the repair of a failed run and a Resume are dispatched without a human step, also right after another run, and also while chained work waits at its boundary'],
+  ['fence_ignored', 'M13-stop-during-integration', 'before the swap: the integration is not made, its operation is failed, the branch stays where it was, the work is held, and Resume integrates a new run'],
+  ['end_before_reconcile', 'M13-stop-during-integration', 'before the swap: the integration is not made, its operation is failed, the branch stays where it was, the work is held, and Resume integrates a new run'],
+  ['issued_effect_abandoned', 'M13-stop-during-integration', 'with the swap made and not yet recorded: the operation in flight is reconciled and finalized, the work is integrated and then held, and nothing is undone'],
+  ['integrated_survives_stop', 'M13-stop-during-integration', 'the run ends stopped, the integrated work is held, the integration stands, and Resume starts a new run from the new head'],
+  ['verifying_never_completes', 'M13-stop-during-integration', "stopping a candidate's verification run holds the verification work; the Builder's work stays verifying, its ended run cannot be stopped, and it is complete once a resumed verification completes"],
+  ['fence_ignored', 'M14-abandon-during-integration', 'before the swap: the integration is not made, its operation is failed, the workspace is discarded, and the work returns to eligible under a dispatch hold'],
+  ['issued_effect_abandoned', 'M14-abandon-during-integration', 'with the swap made and not yet recorded: the operation in flight is reconciled and finalized before anything is discarded; the work is integrated, then given back under a dispatch hold'],
+  ['integrated_survives_stop', 'M14-abandon-during-integration', 'the run ends abandoned, its workspace is discarded, the integration stands, and the work returns to eligible under a dispatch hold'],
+  ['withdrawn_is_retried', 'M15-ambiguous-git-call-reconciled', 'stays ambiguous and blocks its project while the repository does not answer; once it does, the next tick reconciles it absent and withdraws it, and the work is repaired by a new run in a workspace of its own'],
+  ['blocker_repeated', 'M15-ambiguous-git-call-reconciled', 'stays ambiguous and blocks its project while the repository does not answer; once it does, the next tick reconciles it absent and withdraws it, and the work is repaired by a new run in a workspace of its own'],
+  ['ambiguous_add_keeps_run', 'M15-ambiguous-git-call-reconciled', "a late completion launches nothing: a worktree that turns out complete is adopted as the ended run's retained workspace, and the work is still repaired by a new run"],
+  ['projection_lags', 'M04-journal-state-projection', 'after operations of every journal kind, ended well and ended failed, each operation has one projection row at its last journal event'],
+  ['journal_row_outside_tx', 'M04-journal-state-projection', 'the transaction that appends `applied` fails once: neither a second event nor a projection that ran ahead is left, and the journal goes on from where it was'],
+  ['journal_row_outside_tx', 'M04-journal-state-projection', 'the transaction that appends `confirmed` fails once: neither a second event nor a projection that ran ahead is left, and the journal goes on from where it was'],
+  ['journal_row_outside_tx', 'M04-journal-state-projection', 'the transaction that appends `finalized` fails once: neither a second event nor a projection that ran ahead is left, and the journal goes on from where it was'],
+  ['immutable_offers_adopt', 'M24-nomination-ref-moved-or-deleted', 'moved: observed once and not absorbed; discard puts it back on the nominated revision through the journal and keeps the stray commit; the candidate is untouched'],
+  ['deleted_ref_as_expected', 'M24-nomination-ref-moved-or-deleted', 'deleted: observed with nothing found; discard restores it on the nominated revision'],
+  ['second_removal_intent', 'M32-ambiguous-removal-then-crash', 'followed by a crash before the run had ended: recovery completes, the engine reaches full mode, the same operation is retried and the workspace discarded once, and the run ends abandoned'],
+  ['blind_retry', 'M32-ambiguous-removal-then-crash', 'with the engine still running: while the repository does not answer the removal stays blocked and the run is not ended; once it answers, the next tick retries the same operation and the run ends abandoned'],
+  ['stray_git_ignored', 'M31-git-child-outlives-engine', 'an engine killed during `git worktree add` leaves the child alive: recovery does not act on a probe while that child lives, and no worktree appears afterwards that no row names'],
+  ['blocked_operation_dispatches', 'M30-commit-tree-probe', 'commit_tree, journal intended, effect found conflicting (the keep ref put at another commit): it blocks, and nothing is retried, finalized or overwritten'],
 ];
+
+// The probe matrix (rows M29 to M32): every cell fails against the defect
+// that mishandles its outcome.
+const PROBE_FILE = { ref_update: 'M29-ref-update-probe', commit_tree: 'M30-commit-tree-probe', worktree_add: 'M31-worktree-add-probe', worktree_remove: 'M32-worktree-remove-probe' };
+const PROBE_DEFECT = { absent: 'probe_absent_fails', applied: 'probe_applied_repeats', partial: 'probe_partial_is_applied', conflicting: 'probe_conflict_overwrites', unknown: 'probe_unknown_is_absent' };
+for (const kind of KINDS) {
+  for (const cell of probeCells(kind)) MUTANTS.push([cell.way === 'withdraw' && cell.outcome === 'absent' ? 'withdrawn_is_retried' : PROBE_DEFECT[cell.outcome], PROBE_FILE[kind], cell.title]);
+}
+// The crash matrix (row M33): every cell fails against the defect of recovery at its boundary.
+const CRASH_DEFECT = { intent_committed: 'probe_absent_fails', effect_applied: 'receipt_not_reconstructed', receipt_committed: 'recovery_skips_applied', probe_confirmed: 'recovery_skips_confirmed', finalizer_committed: 'recovery_refinalizes' };
+for (const kind of KINDS) {
+  for (const boundary of BOUNDARIES) {
+    MUTANTS.push([boundary === 'intent_committed' && crashWay(kind, boundary) === 'withdraw' ? 'withdrawn_is_retried' : CRASH_DEFECT[boundary], 'M33-crash-across-journal-and-finalizer-boundaries', crashTitle(kind, boundary)]);
+  }
+}
+// The fault matrix through integration: every reference fails against a
+// defect in what its ending must leave, and every cell against a defect in
+// the repetition of the step its fault lands in.
+const REFERENCE_DEFECT = { integrates: 'no_integrated_transition', integration_conflict: 'integrates_checked_out_branch', stop_integrating: 'fence_ignored', abandon_integrating: 'fence_ignored', checkpoint: 'checkpoint_integrates' };
+const END_STEPS = ['run.finalizing', 'invocation.status', 'ledger.row', 'run.ended', 'work.held'];
+function cellDefect(c) {
+  if (c.fault.event_type === 'run.validating') return 'result_record_not_retried';
+  if (c.fault.event_type === 'decision.consumed') return 'confirm_burnt_by_failure';
+  if (END_STEPS.includes(c.fault.event_type)) return 'end_not_retried';
+  // The removal of an abandoned workspace, and the work's return, are steps of the run's end.
+  if (c.ending === 'abandon_integrating' && c.fault.event_type !== 'operation.failed') return 'end_not_retried';
+  return 'accept_step_not_repeatable';
+}
+for (const [name, spec] of Object.entries(ENDINGS).filter(([, ending]) => throughIntegration(ending))) {
+  MUTANTS.push([REFERENCE_DEFECT[name], 'M15-run-end-fault-matrix-integration', `${spec.title}, with no fault: the reference ends as the contract table says`]);
+  for (const c of matrixCells().filter((candidate) => candidate.ending === name)) {
+    const when = c.fault.stage === 'committed' ? ', after the commit' : '';
+    MUTANTS.push([cellDefect(c), 'M15-run-end-fault-matrix-integration', cell(spec.title, c.fault.what, `${c.fault.event_type}${when}`)]);
+  }
+}
 
 // The harness starts the engine with a constructed environment, so a defect
 // cannot be switched on through a variable. Each mutant gets a small entry

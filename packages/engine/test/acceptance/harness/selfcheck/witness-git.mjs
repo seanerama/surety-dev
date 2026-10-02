@@ -7,12 +7,12 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
-export function makeGit({ home, cfg, mutant }) {
+export function makeGit({ home, cfg, mutant, incarnation = null }) {
   // Engine git runs no code from the repository (SEAM.md §§16, 31): hooks,
   // the file-system monitor and every filter driver the repository names are
   // switched off on every call, and the environment is constructed.
@@ -30,6 +30,8 @@ export function makeGit({ home, cfg, mutant }) {
     PATH: process.env.PATH,
     HOME: home,
     GIT_CONFIG_NOSYSTEM: '1',
+    // Every git child says which incarnation spawned it, so that a later one can find a child that outlived its engine.
+    ...(incarnation ? { SURETY_WITNESS_GIT: incarnation } : {}),
     ...(mutant('ambient_env_inherited')
       ? {}
       : {
@@ -197,7 +199,104 @@ export function makeGit({ home, cfg, mutant }) {
     return relative(worktree, resolve(worktree, resolved)).startsWith('..');
   }
 
-  return { argv: argvOf, env, run, timedOut, repoDir, refOid, readable, worktrees, engineOwned, checkoutsOf, gitDirOf, checkoutBaseline, metadataOf, snapshot, changes, linkEscapes, real };
+  // ---- what the probes of the two worktree kinds look at (SEAM.md §45) ----
+
+  // Can the repository's worktree metadata be read? `git worktree list`
+  // leaves out, without a word, what it cannot read, so this is looked at
+  // here and not asked of git.
+  function worktreesReadable(repo) {
+    const dir = join(repoDir(repo), 'worktrees');
+    try {
+      lstatSync(dir);
+    } catch {
+      return true; // no worktree was ever added: nothing to read
+    }
+    try {
+      accessSync(dir, constants.R_OK | constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // A path with its symbolic links resolved as far as it exists: what is gone keeps its name.
+  const resolved = (path) => {
+    let head = path;
+    const tail = [];
+    while (!existsSync(head) && dirname(head) !== head) {
+      tail.unshift(basename(head));
+      head = dirname(head);
+    }
+    return join(real(head), ...tail);
+  };
+
+  // The repository's own metadata directory for a worktree at `path`: the
+  // entry under .git/worktrees whose `gitdir` file names `<path>/.git`.
+  function worktreeMeta(repo, path) {
+    const dir = join(repoDir(repo), 'worktrees');
+    let names = [];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return null;
+    }
+    for (const name of names) {
+      try {
+        const target = readFileSync(join(dir, name, 'gitdir'), 'utf8').trim();
+        if (resolved(dirname(target)) === resolved(path)) return join(dir, name);
+      } catch {
+        // not a worktree entry
+      }
+    }
+    return null;
+  }
+
+  // What is at an owned workspace path, and whose it is:
+  //   none           nothing at the path, no metadata for it
+  //   worktree       a worktree of this repository (`complete`: detached at `base` with an index)
+  //   metadata_only  the repository's metadata for the path, and no directory
+  //   dir_only       a directory whose .git file names this repository's worktree metadata, which is gone
+  //   foreign        anything else: a file, a link, a directory that is not this repository's worktree
+  function ownedState(repo, path, base) {
+    const meta = worktreeMeta(repo, path);
+    let st = null;
+    try {
+      st = lstatSync(path);
+    } catch {
+      // nothing there
+    }
+    if (!st) return meta ? { kind: 'metadata_only', meta } : { kind: 'none' };
+    if (st.isSymbolicLink() || !st.isDirectory()) return { kind: 'foreign' };
+    let link = null;
+    try {
+      const text = readFileSync(join(path, '.git'), 'utf8').trim();
+      if (text.startsWith('gitdir: ')) link = text.slice('gitdir: '.length);
+    } catch {
+      // no .git file: not a worktree of anything
+    }
+    const ours = link !== null && resolved(dirname(link)) === resolved(join(repoDir(repo), 'worktrees'));
+    if (!ours) return { kind: 'foreign' };
+    if (!meta || !existsSync(link)) return { kind: 'dir_only' };
+    let complete = false;
+    try {
+      complete = run(meta, ['rev-parse', 'HEAD']) === base && existsSync(join(meta, 'index'));
+    } catch {
+      // no HEAD to read
+    }
+    return { kind: 'worktree', meta, complete };
+  }
+
+  // A ref's object id, whatever it points at; null if the ref does not exist.
+  const refAt = (repo, ref) => {
+    try {
+      return run(repoDir(repo), ['rev-parse', '--verify', '--quiet', ref]);
+    } catch (err) {
+      if (timedOut(err)) throw err;
+      return null;
+    }
+  };
+
+  return { argv: argvOf, env, run, timedOut, repoDir, refOid, refAt, readable, worktrees, engineOwned, checkoutsOf, gitDirOf, checkoutBaseline, metadataOf, snapshot, changes, linkEscapes, real, worktreesReadable, worktreeMeta, ownedState, resolved };
 }
 
 // The rules of contract/snapshot-validation.json, as the witness applies them.

@@ -34,6 +34,7 @@ import Database from 'better-sqlite3';
 import { newId } from '../ids.mjs';
 import { WORK, isLegal, m1Kinds } from '../transitions.mjs';
 import { makeGit, pathViolation, sha256 } from './witness-git.mjs';
+import { makeJournal } from './witness-journal.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTRACT = JSON.parse(readFileSync(join(here, '..', '..', 'contract', 'config.json'), 'utf8'));
@@ -44,7 +45,8 @@ const mutant = (name) => MUTANT === name;
 // Three defects written for the slice-2 cases are defects of an engine whose
 // only way to end a run after a failed attempt is the expiry of its lease:
 // with them, the engine does not retry a failed end itself either.
-const NO_RETRY = ['expired_lease_not_reconciled', 'heartbeat_renews_after_end_decided', 'expiry_forgets_decided_end'].includes(MUTANT);
+// A fourth, `end_not_retried`, is the plain form: a run end that failed is never taken up again.
+const NO_RETRY = ['expired_lease_not_reconciled', 'heartbeat_renews_after_end_decided', 'expiry_forgets_decided_end', 'end_not_retried'].includes(MUTANT);
 // The same defect in an engine that does retry: `heartbeat_renews_while_retrying`.
 const heartbeatRenewsAfterDecided = () => mutant('heartbeat_renews_after_end_decided') || mutant('heartbeat_renews_while_retrying');
 
@@ -61,16 +63,23 @@ const refuseStart = (status, code, reason, subject) => {
 
 const [command, ...flags] = process.argv.slice(2);
 if (command !== 'serve') usage('only serve is implemented');
-const opt = { harness: false, migrations: null, scripted: null, barriers: new Map() };
+const opt = { harness: false, migrations: null, scripted: null, barriers: new Map(), probes: new Map() };
+const JOURNAL_KINDS = ['ref_update', 'commit_tree', 'worktree_add', 'worktree_remove'];
+const PROBE_OUTCOMES = ['absent', 'applied', 'partial', 'conflicting', 'unknown'];
 for (let i = 0; i < flags.length; i++) {
   const flag = flags[i];
   if (flag === '--harness') opt.harness = true;
-  else if (['--harness-migrations', '--harness-scripted', '--harness-barrier'].includes(flag)) {
+  else if (['--harness-migrations', '--harness-scripted', '--harness-barrier', '--harness-probe'].includes(flag)) {
     const value = flags[++i];
     if (value === undefined) usage(`${flag} needs a value`);
     if (flag === '--harness-migrations') opt.migrations = value;
     else if (flag === '--harness-scripted') opt.scripted = value;
-    else {
+    else if (flag === '--harness-probe') {
+      // Every probe of a journal of that kind reports this outcome, whatever git holds (SEAM.md §45).
+      const [kind, outcome] = value.split('=');
+      if (!JOURNAL_KINDS.includes(kind) || !PROBE_OUTCOMES.includes(outcome)) usage(`bad probe ${value}`);
+      opt.probes.set(kind, outcome);
+    } else {
       const at = value.lastIndexOf('=');
       const action = value.slice(at + 1);
       if (at <= 0 || !['pause', 'kill'].includes(action)) usage(`bad barrier ${value}`);
@@ -78,7 +87,7 @@ for (let i = 0; i < flags.length; i++) {
     }
   } else usage(`unknown flag ${flag}`);
 }
-if (!opt.harness && (opt.migrations || opt.scripted || opt.barriers.size > 0)) usage('harness flags need --harness');
+if (!opt.harness && (opt.migrations || opt.scripted || opt.barriers.size > 0 || opt.probes.size > 0)) usage('harness flags need --harness');
 
 const home = process.env.SURETY_HOME;
 const paths = {
@@ -176,7 +185,7 @@ function emit(type, subject, payload = {}, actor = {}) {
   const armed = eventFaults.findIndex((f) => f.event_type === type);
   if (armed >= 0) {
     eventFaults.splice(armed, 1);
-    throw new Error(`injected fault before event ${type}`);
+    throw Object.assign(new Error(`injected fault before event ${type}`), { fault: true });
   }
   const seq = one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "events"').n;
   insert('events', {
@@ -214,6 +223,11 @@ function openStore() {
     db.exec('ALTER TABLE work_items ADD COLUMN continuation TEXT; ALTER TABLE work_items ADD COLUMN pending_repair INTEGER NOT NULL DEFAULT 0;');
     db.exec(EXTRA_SCHEMA);
     db.exec(readFileSync(join(here, 'witness-slice3.sql'), 'utf8'));
+    db.exec(readFileSync(join(here, 'witness-slice3b.sql'), 'utf8'));
+    // The defect `attempt_number_not_unique`: the store lets a second attempt take a number already used.
+    if (mutant('attempt_number_not_unique')) {
+      db.exec(`DROP TABLE operation_attempts; CREATE TABLE operation_attempts (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, project TEXT NOT NULL, operation TEXT NOT NULL, attempt_number INTEGER NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, timeline TEXT NOT NULL, reconciliation_reads TEXT);`);
+    }
   }
   const dir = opt.migrations ?? ENGINE_MIGRATIONS;
   const files = readdirSync(dir).filter((n) => /^\d{4}_[a-z0-9_]+\.sql$/.test(n)).sort();
@@ -339,7 +353,7 @@ function transition(id, to, payload = {}) {
   emit(type, { work_item: id, project: item.project }, { from: item.status, to, ...payload });
 }
 
-function raiseDecision(project, kind, subjectType, subjectId, options, question, blocked = []) {
+function raiseDecision(project, kind, subjectType, subjectId, options, question, blocked = [], also = {}) {
   const id = newId('dec_');
   insert('decisions', {
     id,
@@ -357,7 +371,7 @@ function raiseDecision(project, kind, subjectType, subjectId, options, question,
     transition_schema_version: 1,
     preview_hash: createHash('sha256').update(`${id}:${options.join(',')}`).digest('hex'),
     evidence: '[]',
-    blocked_while_open: JSON.stringify({ work_items: blocked }),
+    blocked_while_open: JSON.stringify({ work_items: blocked, ...also }),
     raised_at: iso(),
     status: 'open',
   });
@@ -423,7 +437,7 @@ function gitDir(project) {
 // Engine git (witness-git.mjs): every call names its repository, gets a
 // constructed environment and a deadline, and runs nothing the repository
 // configures (SEAM.md §§16, 31).
-const G = makeGit({ home, cfg, mutant });
+const G = makeGit({ home, cfg, mutant, incarnation });
 const git = (repo, args, opts = {}) => G.run(G.repoDir(repo), args, { filters: true, ...opts });
 
 // The effective policy of a project: the schema defaults under what the
@@ -431,44 +445,21 @@ const git = (repo, args, opts = {}) => G.run(G.repoDir(repo), args, { filters: t
 // repository says.
 const policyOf = (projectId) => ({ ...DEFAULT_POLICY, ...json(one('SELECT "policy" FROM "projects" WHERE "id" = ?', projectId)?.policy ?? '{}') });
 
-// The journal of one worktree effect of a run, in two steps that can each be
-// repeated (E28 item 1). The intent is recorded once per run and kind: a
-// repeated intent finds the operation it recorded before. The settle writes
-// the journal's remaining events and the operation's status once.
+// The journal (witness-journal.mjs; SEAM.md §§33, 44 to 46). An intent is
+// recorded once per key: a repeated intent finds the operation it recorded
+// before, and a repeated step takes the operation up where it was, without
+// repeating its effect (E28 item 1).
 const journalKey = (kind, runId) => createHash('sha256').update(`${kind}:${runId}`).digest('hex');
-function journalIntend(project, runId, kind) {
-  const key = journalKey(kind, runId);
-  const existing = one('SELECT * FROM "operations" WHERE "idempotency_key" = ?', key);
-  // The defect `remove_settle_not_repeatable`: a repeated intent records the operation again.
-  if (existing && !(mutant('remove_settle_not_repeatable') && kind === 'worktree_remove')) return existing.id;
-  const op = newId('op_');
-  insert('operations', {
-    id: op,
-    created_at: iso(),
-    project,
-    seq: one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "operations" WHERE "project" = ?', project).n,
-    kind: 'git_worktree',
-    target: '{}',
-    subject: '{}',
-    idempotency_key: key,
-    semantic_generation: 1,
-    status: 'intended',
-    deadline_at: iso(now() + 60_000),
-  });
-  emit('operation.intended', { operation: op, project, run: runId });
-  insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: 1, journal_kind: kind, event_kind: 'intended', payload: JSON.stringify({ repo: 'dev', run: runId }) });
-  emit('git.journal_intended', { operation: op, project, run: runId });
-  return op;
-}
-function journalSettle(project, runId, kind, op, eventKinds = ['applied', 'confirmed', 'finalized'], status = 'succeeded') {
-  if (one('SELECT "status" FROM "operations" WHERE "id" = ?', op).status !== 'intended') return;
-  eventKinds.forEach((eventKind, i) => {
-    insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: i + 2, journal_kind: kind, event_kind: eventKind, payload: JSON.stringify({ repo: 'dev', run: runId }) });
-    if (eventKind !== 'failed') emit(`git.journal_${eventKind}`, { operation: op, project, run: runId });
-  });
-  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, status === 'succeeded' ? iso() : null, op);
-  emit(`operation.${status}`, { operation: op, project, run: runId });
-  if (status === 'succeeded') emit('operation.finalized', { operation: op, project, run: runId });
+const J = makeJournal({ one, all, exec, tx, insert, emit, iso, now, newId, barrier, mutant, raiseDecision, injected: opt.probes, deadlineMs: cfg.git_deadline * 1000 });
+
+// How many roles would have run one after another, with no human step in
+// between, if this item were dispatched now (E24 item 1): one, unless the
+// item is work that a run's outcome created and nobody has stepped in since.
+function chainOf(item) {
+  // The defect `chain_counts_every_run`: every run after a project's first counts as chained.
+  if (mutant('chain_counts_every_run')) return one('SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ?', item.project).n >= 1 ? 2 : 1;
+  if (!item.created_by_run || item.human_step) return 1;
+  return (one('SELECT "chain" FROM "runs" WHERE "id" = ?', item.created_by_run)?.chain ?? 1) + 1;
 }
 
 function selectWork(project) {
@@ -486,6 +477,16 @@ function selectWork(project) {
     if (!m1Kinds().includes(item.kind) && !mutant('excluded_kind_dispatches')) continue;
     const waiting = json(item.depends_on ?? '[]').some((dep) => one('SELECT "status" FROM "work_items" WHERE "id" = ?', dep)?.status !== 'complete');
     if (waiting && !mutant('depends_on_ignored')) continue;
+    // The chaining boundary (D1 §8.1 step 8; D1-34): the next step is a decision, asked once.
+    if (chainOf(item) > policyOf(project.id).max_chained_roles && !mutant('chain_unbounded')) {
+      if (item.blocker === null || mutant('chain_decision_repeated')) {
+        tx(() => {
+          const decision = raiseDecision(project.id, 'blocker', 'work_item', item.id, ['continue', 'cancel'], `This ${item.kind} work was created by a run's outcome; max_chained_roles (${policyOf(project.id).max_chained_roles}) is reached. Continue?`, [item.id]);
+          exec('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?', JSON.stringify({ reason: 'max_chained_roles', raised_at: iso(), decision }), item.id);
+        });
+      }
+      continue;
+    }
     return item;
   }
   return null;
@@ -526,6 +527,7 @@ async function dispatch(item) {
       deadline_at: iso(now() + policyOf(item.project)[`deadline_${role}`] * 1000),
       parent_run: continues ?? (prior && ['stopped', 'timed_out', 'recovered'].includes(prior.outcome) && !mutant('no_parent_link') ? prior.id : null),
       quarantined: 0,
+      chain: chainOf(item),
     });
     emit('run.created', { run: id, project: item.project, work_item: item.id });
     if (item.status === 'held') exec(`UPDATE "work_items" SET "status" = 'eligible' WHERE "id" = ?`, item.id); // dispatch_held mutant only
@@ -570,61 +572,40 @@ async function dispatch(item) {
 
   const workspace = join(home, 'workspaces', id);
   mkdirSync(join(home, 'workspaces'), { recursive: true });
+  live.get(id).launch = { receipt, domain, workspace, role };
   let op;
   tx(() => {
-    op = journalIntend(item.project, id, 'worktree_add');
+    op = J.intend({ project: item.project, kind: 'git_worktree', journalKind: 'worktree_add', key: journalKey('worktree_add', id), payload: { repo: 'dev', run: id }, plan: { repo: project.dev_repo_path, path: workspace, base, run: id } });
   });
-  const failAdd = () => {
-    tx(() => journalSettle(item.project, id, 'worktree_add', op, ['failed'], 'failed'));
-    live.get(id).spawned = false;
-    return void endRun(id, 'failed', 'infra_error');
-  };
-  // Whatever is already at the path is not the engine's: a symbolic link in
-  // particular is refused (SEAM.md §35). The defect `symlink_workspace_adopted`
-  // goes on, and takes a failed `worktree add` for a worktree that is there
-  // because the path, resolved, is one the repository lists.
-  let occupied = false;
-  try {
-    lstatSync(workspace);
-    occupied = true;
-  } catch {
-    // free
-  }
-  if (occupied && !mutant('symlink_workspace_adopted')) return failAdd();
-  const added = await addWorktree(project.dev_repo_path, workspace, base);
-  if (added === 'ambiguous') {
-    // The command could have written and was killed at its deadline: the
-    // operation is ambiguous, and nothing goes on because a timer ran out.
-    tx(() => journalSettle(item.project, id, 'worktree_add', op, ['ambiguous'], 'ambiguous'));
+  const added = await J.execute(op);
+  // A command that could have written and was killed at its deadline leaves
+  // its operation ambiguous. Nothing goes on because a timer ran out: the run
+  // is ended like one whose workspace could not be made, and a later tick's
+  // journal step reconciles the operation (D1 §8.5; SEAM.md §45).
+  // The defect `ambiguous_add_keeps_run`: the run is left as it is, for ever.
+  if (added === 'ambiguous' && mutant('ambiguous_add_keeps_run')) {
     live.get(id).spawned = false;
     return;
   }
-  if (added === 'failed') {
-    const present = mutant('symlink_workspace_adopted') && G.worktrees(project.dev_repo_path).some((w) => G.real(w.path) === G.real(workspace));
-    if (!present) return failAdd();
+  if (added !== 'finalized') {
+    live.get(id).spawned = false;
+    return void endRun(id, 'failed', 'infra_error');
   }
-  if (mutant('worktree_probe_literal_path')) {
-    // The defect: the probe looks for the path as given in a list that git
-    // prints with symbolic links resolved, and takes a miss for "not added".
-    const listed = git(project.dev_repo_path, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${workspace}`);
-    if (!listed) return failAdd();
-  }
-  let baseline = null;
+  prepared(id);
+}
+
+// The run's workspace is there, by the ordinary course or by a reconciliation:
+// the dispatch goes on to the launch. The spawn is not waited for by the tick.
+function prepared(id) {
+  const known = live.get(id);
+  const { receipt, domain, workspace, role } = known.launch;
+  const r = getRun(id);
   try {
-    baseline = JSON.stringify(G.checkoutBaseline(workspace));
-    live.get(id).meta = G.metadataOf(project.dev_repo_path, workspace);
+    known.meta = G.metadataOf(gitDir(r.project).dev_repo_path, workspace);
   } catch {
     // only reached with a defect switched on
   }
-  tx(() => {
-    journalSettle(item.project, id, 'worktree_add', op);
-    const ws = newId('ws_');
-    insert('workspaces', { id: ws, created_at: iso(), project: item.project, run: id, path: workspace, base_revision: base, current_base: base, disposition: 'active' });
-    exec('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?', ws, id);
-    if (baseline) insert('managed_checkouts', { id: newId('mc_'), created_at: iso(), project: item.project, kind: 'run_workspace', path: workspace, baseline, owner_run: id });
-    appendStatus(item.project, receipt, 'dispatch_started');
-  });
-  // The spawn is not waited for by the tick.
+  tx(() => appendStatus(r.project, receipt, 'dispatch_started'));
   launch(id, { receipt, domain, workspace, role }).catch((err) => process.stderr.write(`launch ${id}: ${err.stack}\n`));
 }
 
@@ -749,7 +730,8 @@ async function launch(id, { receipt, domain, workspace, role }) {
       if (!fenced) {
         // The result is recorded in a transaction of its own. A store failure
         // there is retried, briefly: the result is the work the role was run for.
-        for (const wait of [0, 100, 300]) {
+        // The defect `result_record_not_retried`: one failed store transaction drops the result.
+        for (const wait of mutant('result_record_not_retried') ? [0] : [0, 100, 300]) {
           if (wait > 0) await sleep(wait);
           if (known.intended || getRun(id).state !== 'executing') break;
           try {
@@ -807,10 +789,18 @@ async function launch(id, { receipt, domain, workspace, role }) {
       const end = earned(id, known);
       if (end[0] === 'completed' && INTEGRATING[work.kind] && !known.intended && !known.accepting) {
         known.accepting = true;
-        return accept(id, known).catch((err) => {
-          process.stderr.write(`accept ${id}: ${err.stack}\n`);
-          known.reasonText = `The run's result could not be accepted: ${err.message}`;
-          endRun(id, 'failed', 'infra_error');
+        known.acceptance = acceptRepeatably(id, known).then(
+          (decided) => decided,
+          (err) => {
+            process.stderr.write(`accept ${id}: ${err.stack}\n`);
+            known.reasonText = `The run's result could not be accepted: ${err.message}`;
+            return ['failed', 'infra_error'];
+          },
+        );
+        // An end decided meanwhile, by a Stop, an Abandon or a deadline,
+        // stands: it is under way, and was waiting for the acceptance to wind down.
+        return known.acceptance.then((decided) => {
+          if (decided && !known.intended) endRun(id, ...decided);
         });
       }
       endRun(id, ...end);
@@ -865,7 +855,8 @@ function outcomeOf(known) {
 }
 
 const validResult = (v) =>
-  v !== null && typeof v === 'object' && !Array.isArray(v) && v.status === 'completed' && typeof v.summary === 'string' && ['checkpoint', 'nominate'].every((key) => !(key in v) || typeof v[key] === 'boolean');
+  // The defect `nominate_any_value`: whatever is given as `nominate` is let through.
+  v !== null && typeof v === 'object' && !Array.isArray(v) && v.status === 'completed' && typeof v.summary === 'string' && ['checkpoint', 'nominate'].every((key) => !(key in v) || typeof v[key] === 'boolean' || (key === 'nominate' && mutant('nominate_any_value')));
 
 // ---- the run-end protocol (D1 §4.5; SEAM.md §16) ---------------------------------------------
 
@@ -893,9 +884,14 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
       }
       exec(`UPDATE "leases" SET "closing" = 1 WHERE "resource_id" = ? AND "released_at" IS NULL`, id);
     });
-    if (getRun(id).outcome === 'abandoned' && mutant('discard_before_termination')) discardWorkspace(getRun(id));
+    if (getRun(id).outcome === 'abandoned' && mutant('discard_before_termination')) await discardWorkspace(getRun(id));
     const terminated = await establishTermination(id, known, known.recovery);
     if (!terminated) return void quarantine(id);
+    // D1 §4.5 step 4: what the run issued is reconciled before it ends. An
+    // acceptance that is under way winds down first: an effect not yet made
+    // is refused, one already made is recorded and finalized.
+    // The defect `end_before_reconcile`: the run is ended over an operation that is still in flight.
+    if (known.acceptance && !mutant('end_before_reconcile')) await known.acceptance;
     await finishRun(id, known, known.recovery);
   })().then(
     () => {
@@ -932,7 +928,7 @@ function retryEnd(id) {
 // An outcome recorded, or decided by this engine before the expiry, stands;
 // otherwise the run is treated as recovered (E27 item 3).
 async function reconcileExpiredLeases() {
-  if (mutant('expired_lease_not_reconciled')) return;
+  if (mutant('expired_lease_not_reconciled') || mutant('end_not_retried')) return;
   for (const lease of all(`SELECT * FROM "leases" WHERE "resource_kind" = 'run' AND "released_at" IS NULL`)) {
     if (Date.parse(lease.expires_at) > now()) continue;
     const r = getRun(lease.resource_id);
@@ -1056,31 +1052,47 @@ function quarantine(id) {
   if (known) known.ending = null; // a later observation may finish it
 }
 
-function discardWorkspace(r) {
+// The removal of an abandoned run's workspace, through the journal. Resolves
+// with 'done' once the workspace is discarded, and with 'blocked' while its
+// removal cannot go on: the run then stays as it is, and is ended when the
+// journal's recovery has got the removal through (SEAM.md §45).
+async function discardWorkspace(r) {
   const ws = one('SELECT * FROM "workspaces" WHERE "run" = ?', r.id);
-  if (!ws || ws.disposition === 'discarded') return;
+  if (!ws || ws.disposition === 'discarded') return 'done';
   const project = gitDir(r.project);
+  const key = journalKey('worktree_remove', r.id);
+  const before = one('SELECT "id" FROM "operations" WHERE "idempotency_key" = ?', key);
+  // An operation that is there and that this incarnation is not carrying out is recovery's.
+  // The defect `remove_settle_not_repeatable`: a repeated intent records the operation again.
+  if (before && !J.inflight.has(before.id) && !mutant('remove_settle_not_repeatable')) {
+    if (J.load(before.id).state === 'finalized') return 'done';
+    if (!mutant('second_removal_intent')) return 'blocked';
+  }
   let op;
   tx(() => {
-    op = journalIntend(r.project, r.id, 'worktree_remove');
+    op = J.intend({
+      project: r.project,
+      kind: 'git_worktree',
+      journalKind: 'worktree_remove',
+      // The defect `second_removal_intent`: a removal left unsettled is intended again, under the same key.
+      again: mutant('remove_settle_not_repeatable') || (mutant('second_removal_intent') && Boolean(before)),
+      key,
+      payload: { repo: 'dev', run: r.id },
+      plan: { repo: project.dev_repo_path, path: ws.path, run: r.id, workspace: ws.id },
+    });
   });
-  // Removing what is already gone is no failure: the effect can be repeated.
-  try {
-    git(project.dev_repo_path, ['worktree', 'remove', '--force', ws.path]);
-  } catch {
-    rmSync(ws.path, { recursive: true, force: true });
-    git(project.dev_repo_path, ['worktree', 'prune']);
-  }
-  tx(() => {
-    journalSettle(r.project, r.id, 'worktree_remove', op);
-    exec(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ?`, iso(), ws.id);
-  });
+  return (await J.execute(op)) === 'finalized' ? 'done' : 'blocked';
 }
 
 async function finishRun(id, known, recovery) {
   await barrier('run_end.before_ended');
   const r = getRun(id);
-  if (r.outcome === 'abandoned') discardWorkspace(r);
+  if (r.outcome === 'abandoned' && (await discardWorkspace(r)) === 'blocked') {
+    // The removal cannot go on yet: nothing is discarded, and the run is not ended.
+    known.waitingOnRemoval = true;
+    known.ending = null;
+    return;
+  }
   known.finishes = (known.finishes ?? 0) + 1;
   // A recovery, once termination is established, captures the snapshot of
   // what the role left, and accepts nothing (SEAM.md §28).
@@ -1092,8 +1104,7 @@ async function finishRun(id, known, recovery) {
       if (mutant('recovery_commits')) {
         // The defect: a recovery takes what it found for accepted work.
         const p = projectRow(r.project);
-        const sha = commitTree(p, { run: id, tree, parent: left.current_base, message: 'recovered\n' });
-        tx(() => recordRevision(p, { sha, parent: left.current_base, kind: 'engine_commit', run: id }));
+        await commitTree(p, { run: id, tree, parent: left.current_base, message: 'recovered\n', revision: 'engine_commit' });
       }
     } catch (err) {
       process.stderr.write(`recovery snapshot ${id}: ${err.message}\n`);
@@ -1181,15 +1192,34 @@ async function finishRun(id, known, recovery) {
   });
 }
 
-// What the run's outcome does to its work item (SEAM.md §15, §16).
+// What the run's outcome does to its work item (SEAM.md §§15, 16, 40, 47).
 function settleWork(r) {
   const item = one('SELECT * FROM "work_items" WHERE "id" = ?', r.work_item);
-  if (!['claimed', 'executing'].includes(item.status)) return;
+  if (!['claimed', 'executing', 'integrating', 'integrated'].includes(item.status)) return;
+  // An integration that was finalized stands, whatever the run then ends as,
+  // except by an operator's Stop or Abandon (correction 11).
+  // The defect `integrated_survives_stop`: nor by those.
+  if (item.status === 'integrated' && (!['stopped', 'abandoned'].includes(r.outcome) || mutant('integrated_survives_stop'))) return;
   switch (r.outcome) {
     case 'completed':
-      if (WORK.kinds[item.kind].path.at(-2) === 'executing') transition(item.id, 'complete');
+      if (WORK.kinds[item.kind].path.at(-2) === 'executing') {
+        transition(item.id, 'complete');
+        // The candidate's verification is done: the work that waited for it is complete (SEAM.md §40).
+        const candidate = json(item.subject)?.candidate;
+        if (candidate && !mutant('verifying_never_completes')) {
+          for (const waiting of all(`SELECT "id" FROM "work_items" WHERE "verifying_candidate" = ? AND "status" = 'verifying'`, candidate)) transition(waiting.id, 'complete');
+        }
+        // The defect `verification_sweeps_integrated`: work the candidate does not hold is taken along.
+        if (candidate && mutant('verification_sweeps_integrated')) {
+          for (const later of all(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" IN ('stage_build', 'fix') AND "status" = 'integrated'`, item.project)) transition(later.id, 'verifying');
+        }
+      }
       break;
     case 'failed': {
+      // The defect `failed_verification_completes`: a verification that failed completes the work it was to verify.
+      if (mutant('failed_verification_completes') && json(item.subject)?.candidate) {
+        for (const waiting of all(`SELECT "id" FROM "work_items" WHERE "verifying_candidate" = ? AND "status" = 'verifying'`, json(item.subject).candidate)) transition(waiting.id, 'complete');
+      }
       // The progress key is taken over the snapshot tree of an attempt that
       // failed validation (D1 §4.3): the same tree again is no progress.
       const attempt = one('SELECT "snapshot_tree" FROM "workspaces" WHERE "run" = ?', r.id);
@@ -1223,6 +1253,9 @@ function settleWork(r) {
       transition(item.id, 'held');
       break;
     case 'recovered':
+      // Work whose integration is journaled and not yet through waits for the
+      // journal: it is integrated when that operation is finalized.
+      if (item.status === 'integrating' && pendingIntegration(item.id) && !mutant('recovered_holds_integrating')) break;
       transition(item.id, mutant('replacement_after_recovery') ? 'eligible' : 'held');
       break;
     case 'abandoned':
@@ -1251,8 +1284,8 @@ async function reobserveQuarantined() {
 }
 
 // ---- slice 3: registry, journal, snapshot, validation, commit, integration, integrity ----
-// (SEAM.md §§27–34). Synchronous git around rows; nothing here could recover
-// what it journals. It exists so the slice-3 tests can be shown satisfiable.
+// (SEAM.md §§27–34, 39–48). Git calls around rows, as plainly as they can be
+// made. It exists so the slice-3 tests can be shown satisfiable.
 
 const INTEGRATING = { stage_build: 'builder', fix: 'builder', replan: 'architect', assessment: 'architect' };
 const projectRow = (id) => one('SELECT * FROM "projects" WHERE "id" = ?', id);
@@ -1265,37 +1298,11 @@ function registerRef(project, ref, kind, oid, immutable = 0) {
   else insert('ref_registry', { id: newId('ref_'), created_at: iso(), project, ref, kind, expected_oid: oid, immutable });
 }
 
-// A journaled operation of the kinds slice 3 adds: its row and `intended`
-// event in one transaction, later events one at a time.
-function journalOpen(project, kind, journalKind, payload) {
-  const op = newId('op_');
-  insert('operations', {
-    id: op,
-    created_at: iso(),
-    project,
-    seq: one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "operations" WHERE "project" = ?', project).n,
-    kind,
-    target: JSON.stringify({ repo: payload.repo, ref: payload.ref ?? null }),
-    subject: '{}',
-    idempotency_key: sha256(`${journalKind}:${JSON.stringify(payload)}:${op}`),
-    semantic_generation: 1,
-    status: 'intended',
-    deadline_at: iso(now() + cfg.git_deadline * 1000),
-  });
-  emit('operation.intended', { operation: op, project, run: payload.run ?? null });
-  insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: 1, journal_kind: journalKind, event_kind: 'intended', payload: JSON.stringify(payload) });
-  emit('git.journal_intended', { operation: op, project, run: payload.run ?? null });
-  return op;
-}
-function journalAppend(project, op, journalKind, eventKinds, payload, status) {
-  const from = one('SELECT COALESCE(MAX("seq"), 0) AS n FROM "git_journal_events" WHERE "operation" = ?', op).n;
-  eventKinds.forEach((eventKind, i) => {
-    insert('git_journal_events', { id: newId('gje_'), created_at: iso(), project, operation: op, seq: from + i + 1, journal_kind: journalKind, event_kind: eventKind, payload: JSON.stringify(payload) });
-    if (eventKind !== 'failed') emit(`git.journal_${eventKind}`, { operation: op, project, run: payload.run ?? null });
-  });
-  exec('UPDATE "operations" SET "status" = ?, "finalized_at" = ? WHERE "id" = ?', status, status === 'succeeded' ? iso() : null, op);
-  emit(`operation.${status}`, { operation: op, project, run: payload.run ?? null });
-  if (status === 'succeeded') emit('operation.finalized', { operation: op, project, run: payload.run ?? null });
+// The lineage that is open on a project's integration branch (D1 §3.3): a
+// revision is recorded on it, and a nomination closes it and opens its successor.
+const openLineage = (p) => one('SELECT * FROM "lineages" WHERE "project" = ? AND "open" = 1', p.id);
+function ensureLineage(p) {
+  if (!openLineage(p)) insert('lineages', { id: newId('lin_'), created_at: iso(), project: p.id, branch: integrationRef(p), started_from_candidate: null, open: 1 });
 }
 
 // A tree made of another tree plus some files, without touching any checkout.
@@ -1314,66 +1321,471 @@ function treeWith(repo, base, files) {
   }
 }
 
-// commit-tree with a frozen parent and tree, published under a keep ref (D1 §§6.5, 7.3, 7.10).
-function commitTree(p, { run = null, tree, parent, message }) {
+const isAncestor = (repo, ancestor, descendant) => {
+  try {
+    git(repo, ['merge-base', '--is-ancestor', ancestor, descendant]);
+    return true;
+  } catch (err) {
+    if (G.timedOut(err)) throw err;
+    return false;
+  }
+};
+
+// ---- what each journal kind does, how its effect is probed, what its finalizer writes ----
+// (D1 §7.10 with correction 14; SEAM.md §§41 to 46.)
+
+// commit_tree: the commit is frozen with its intent, parent, tree, message,
+// identity and date, so that its id is known before it exists and a retry
+// makes the same object (Plan M30: "effect identity is stable across retry").
+// The effect writes the object and publishes it under a keep ref.
+function commitIntend(p, { run = null, n = 1, tree, parent, message, revision = null }) {
   const repo = p.dev_repo_path;
-  const payload = { repo, tree, old_oid: parent, run };
+  const stamp = `${Math.floor(now() / 1000)} +0000`;
+  const who = 'Surety Witness <witness@surety.invalid>';
+  const raw = `tree ${tree}\nparent ${parent}\nauthor ${who} ${stamp}\ncommitter ${who} ${stamp}\n\n${message}`;
+  const sha = git(repo, ['hash-object', '-t', 'commit', '--stdin'], { input: raw });
+  const keep = `refs/surety/keep/${one(`SELECT COUNT(*) + 1 AS n FROM "operations" WHERE "project" = ? AND "kind" = 'git_commit'`, p.id).n}`;
+  return J.intend({
+    project: p.id,
+    kind: 'git_commit',
+    journalKind: 'commit_tree',
+    key: run ? `commit:${run}:${n}` : `commit:${p.id}:${sha}:${newId('n_')}`,
+    payload: { repo, tree, old_oid: parent, new_oid: sha, run },
+    plan: { repo, project: p.id, raw, sha, keep, parent, tree, run, revision },
+  });
+}
+// A commit that is not a run's (a bootstrap, a policy change): made and finalized, or an error.
+async function commitTree(p, { run = null, tree, parent, message, revision = null }) {
   let op;
   tx(() => {
-    op = journalOpen(p.id, 'git_commit', 'commit_tree', payload);
+    op = commitIntend(p, { run, tree, parent, message, revision });
   });
-  const sha = git(repo, ['commit-tree', tree, '-p', parent], { input: message });
-  const keep = `refs/surety/keep/${nextRefNumber(p.id, 'keep')}`;
-  git(repo, ['update-ref', keep, sha]);
-  tx(() => {
-    registerRef(p.id, keep, 'keep', sha, 1);
-    journalAppend(p.id, op, 'commit_tree', ['applied', 'confirmed', 'finalized'], { ...payload, new_oid: sha }, 'succeeded');
-  });
-  return sha;
+  const state = await J.execute(op);
+  if (state !== 'finalized') throw new Error(`the commit is ${state}`);
+  return J.load(op).plan.sha;
 }
+J.handlers.commit_tree = {
+  ways: { absent: 'retry', applied: 'finalize', partial: 'complete', conflicting: 'block', unknown: 'block' },
+  refuse: (plan, op, { fenced }) => (fenced && !mutant('fence_ignored') ? 'fenced' : null),
+  effect(plan, op) {
+    let { raw, sha } = plan;
+    if (mutant('commit_identity_unstable') && op.attempts.length > 1) {
+      // The defect: a retry makes a commit of its own, with the time of the retry in it.
+      raw = raw.replaceAll(/ (\d+) \+0000\n/g, (all, seconds) => ` ${Number(seconds) + 60} +0000\n`);
+      sha = git(plan.repo, ['hash-object', '-t', 'commit', '--stdin'], { input: raw });
+      exec('UPDATE "operations" SET "witness_plan" = ? WHERE "id" = ?', JSON.stringify({ ...plan, raw, sha }), op.id);
+    }
+    git(plan.repo, ['hash-object', '-t', 'commit', '-w', '--stdin'], { input: raw });
+    git(plan.repo, ['update-ref', plan.keep, sha]);
+    return { receipt: { new_oid: sha } };
+  },
+  complete(plan) {
+    git(plan.repo, ['update-ref', plan.keep, plan.sha, '0'.repeat(40)]);
+    return { receipt: { new_oid: plan.sha } };
+  },
+  overwrite(plan) {
+    git(plan.repo, ['hash-object', '-t', 'commit', '-w', '--stdin'], { input: plan.raw });
+    git(plan.repo, ['update-ref', plan.keep, plan.sha]);
+    return { receipt: { new_oid: plan.sha } };
+  },
+  probe(plan) {
+    if (!G.readable(plan.repo)) return { outcome: 'unknown', detail: 'the object store cannot be read' };
+    let object;
+    try {
+      git(plan.repo, ['cat-file', '-e', plan.sha]);
+      object = true;
+    } catch (err) {
+      if (err.status !== 1) return { outcome: 'unknown', detail: 'the object store cannot be read' };
+      object = false;
+    }
+    const keepAt = G.refAt(plan.repo, plan.keep);
+    if (keepAt === null) return object ? { outcome: 'partial', detail: 'the commit exists and its keep ref does not', remaining: { publish: plan.keep, at: plan.sha } } : { outcome: 'absent' };
+    if (keepAt === plan.sha && object) return { outcome: 'applied' };
+    return { outcome: 'conflicting', detail: `the keep ref ${plan.keep} is at ${keepAt}` };
+  },
+  finalize(plan) {
+    registerRef(plan.project, plan.keep, 'keep', plan.sha, 1);
+    if (plan.revision && !one('SELECT 1 FROM "revisions" WHERE "project" = ? AND "sha" = ? AND "kind" = ?', plan.project, plan.sha, plan.revision)) {
+      recordRevision(projectRow(plan.project), { sha: plan.sha, parent: plan.parent, kind: plan.revision, run: plan.run });
+    }
+  },
+};
 
-class IntegrationRefused extends Error {
-  constructor(worktree) {
-    super(`the integration branch is checked out in ${worktree}`);
-    this.worktree = worktree;
-  }
-}
 const FREE_THE_BRANCH = 'Switch that worktree to another branch, or detach it (git checkout --detach), then retry.';
 
-// A ref moved by compare-and-swap through the journal (D1 §7.5). With
-// `recheck`, the branch must not be checked out in a worktree the engine does
-// not own, looked at again immediately before the ref would move.
-async function refUpdate(p, { run = null, ref, oldOid, newOid, recheck = false }) {
-  const repo = p.dev_repo_path;
-  const payload = { repo, ref, old_oid: oldOid, new_oid: newOid, run };
+// ref_update: a compare-and-swap (D1 §7.5). A single ref has no partial
+// state. What the finalizer writes depends on what the ref update is for.
+J.handlers.ref_update = {
+  ways: { absent: 'retry', applied: 'finalize', partial: 'block', conflicting: 'block', unknown: 'block' },
+  refuse(plan, op, { fenced }) {
+    // An effect on behalf of a run whose end has been decided is not made (D1 §8.3).
+    // The defect `fence_ignored`: it is made all the same.
+    if (fenced && !mutant('fence_ignored')) return 'fenced';
+    // The branch must not be checked out in a worktree the engine does not
+    // own, looked at again immediately before the ref would move (correction 6).
+    if (plan.recheck && !mutant('no_recheck_before_cas') && !mutant('integrates_checked_out_branch')) {
+      const [held] = G.checkoutsOf(plan.repo, plan.ref);
+      if (held) return { checkout: held.path };
+    }
+    return null;
+  },
+  effect(plan) {
+    if (mutant('shell_interpolates')) {
+      // The defect: a ref's name is put into a shell command.
+      try {
+        execFileSync('sh', ['-c', `echo ${plan.ref} > /dev/null`], { cwd: home, stdio: 'ignore' });
+      } catch {
+        // whatever it did, it did
+      }
+    }
+    try {
+      // The defect `cas_overwrites`: the ref is moved whatever it points at.
+      git(plan.repo, mutant('cas_overwrites') ? ['update-ref', plan.ref, plan.new] : ['update-ref', plan.ref, plan.new, plan.old ?? '0'.repeat(40)]);
+    } catch (err) {
+      if (G.timedOut(err)) return 'ambiguous';
+      let found = null;
+      try {
+        found = G.refOid(plan.repo, plan.ref);
+      } catch {
+        return 'ambiguous';
+      }
+      return { failed: { cas: found } };
+    }
+    return { receipt: { confirmed_oid: plan.new } };
+  },
+  overwrite(plan) {
+    git(plan.repo, ['update-ref', plan.ref, plan.new]);
+    return { receipt: { confirmed_oid: plan.new } };
+  },
+  probe(plan) {
+    if (!G.readable(plan.repo)) return { outcome: 'unknown', detail: 'the repository cannot be read' };
+    const found = G.refOid(plan.repo, plan.ref);
+    if (found === plan.new) return { outcome: 'applied' };
+    if (found === (plan.old ?? null)) return { outcome: 'absent' };
+    return { outcome: 'conflicting', detail: `${plan.ref} is at ${found ?? 'nothing'}` };
+  },
+  finalize(plan, op) {
+    // The registry now expects what the engine put there.
+    // The defect `own_ref_ops_observed`: it is not told.
+    if (registered(plan.project, plan.ref) && !mutant('own_ref_ops_observed')) registerRef(plan.project, plan.ref, null, plan.new);
+    const f = plan.finalizer ?? { type: 'plain' };
+    if (f.type === 'bootstrap') {
+      exec(`UPDATE "projects" SET "registration_state" = 'registered' WHERE "id" = ?`, plan.project);
+      emit('project.registered', { project: plan.project });
+    } else if (f.type === 'integration') finalizeIntegration(plan, f);
+    else if (f.type === 'nomination') finalizeNomination(plan, f, op);
+  },
+};
+
+// A ref moved by compare-and-swap for the engine's own purposes (a
+// bootstrap, a policy change, the reset of an out-of-band move).
+async function refUpdate(p, { ref, oldOid, newOid, finalizer = { type: 'plain' } }) {
   let op;
   tx(() => {
-    op = journalOpen(p.id, 'git_ref_update', 'ref_update', payload);
+    op = J.intend({
+      project: p.id,
+      kind: 'git_ref_update',
+      journalKind: 'ref_update',
+      key: sha256(`ref:${ref}:${oldOid}:${newOid}:${newId('n_')}`),
+      payload: { repo: p.dev_repo_path, ref, old_oid: oldOid, new_oid: newOid, run: null },
+      plan: { repo: p.dev_repo_path, project: p.id, ref, old: oldOid, new: newOid, run: null, recheck: false, finalizer },
+    });
   });
-  if (mutant('shell_interpolates')) {
-    // The defect: a ref's name is put into a shell command.
-    try {
-      execFileSync('sh', ['-c', `echo ${ref} > /dev/null`], { cwd: home, stdio: 'ignore' });
-    } catch {
-      // whatever it did, it did
-    }
-  }
-  await barrier('journal.ref_update.intent_committed');
-  if (recheck && !mutant('no_recheck_before_cas') && !mutant('integrates_checked_out_branch')) {
-    const [held] = G.checkoutsOf(repo, ref);
-    if (held) {
-      tx(() => journalAppend(p.id, op, 'ref_update', ['failed'], payload, 'failed'));
-      throw new IntegrationRefused(held.path);
-    }
-  }
-  git(repo, ['update-ref', ref, newOid, oldOid ?? '0'.repeat(40)]);
+  const state = await J.execute(op);
+  if (state !== 'finalized') throw new Error(`the update of ${ref} is ${state}`);
+}
+
+// The work item's integration is journaled and has neither been finalized nor failed.
+const pendingIntegration = (workItem) =>
+  all(`SELECT * FROM "operations" WHERE "kind" = 'git_ref_update' AND "finalized_at" IS NULL AND "status" NOT IN ('failed', 'superseded')`).some((row) => json(row.witness_plan)?.finalizer?.work_item === workItem);
+
+// The integration of a run's commit (D1 §7.5): the ref update whose finalizer
+// moves the work item to `integrated`, finalizes its stage and registers the
+// plans the commit holds. The finalizer's inputs are frozen here, with the
+// intent, before the effect (correction 14).
+const PLAN_FILE = /^\.surety\/phases\/phase-(\d+)\.json$/;
+async function integrate(p, { run, item, ref, oldOid, newOid, fenced }) {
+  const repo = p.dev_repo_path;
+  let op;
   tx(() => {
-    // The finalizer: the registry now expects what the engine put there.
-    // The defect `own_ref_ops_observed`: it is not told.
-    if (registered(p.id, ref) && !mutant('own_ref_ops_observed')) registerRef(p.id, ref, null, newOid);
-    journalAppend(p.id, op, 'ref_update', ['applied', 'confirmed', 'finalized'], { ...payload, confirmed_oid: newOid }, 'succeeded');
+    const key = `integrate:${run}`;
+    let prior = null;
+    if (!one('SELECT 1 FROM "operations" WHERE "idempotency_key" = ?', key) && !mutant('successor_not_linked')) {
+      // An earlier integration of the same work into the same ref that failed is superseded by this one (D1 §4.4).
+      prior =
+        all(`SELECT * FROM "operations" WHERE "project" = ? AND "kind" = 'git_ref_update' AND "status" = 'failed' ORDER BY "seq"`, p.id)
+          .filter((row) => json(row.witness_plan)?.finalizer?.work_item === item.id && json(row.witness_plan)?.ref === ref)
+          .at(-1)?.id ?? null;
+    }
+    const plans = G.changes(repo, oldOid, newOid)
+      .filter((c) => c.status !== 'D' && PLAN_FILE.test(c.path))
+      .map((c) => c.path);
+    op = J.intend({
+      project: p.id,
+      kind: 'git_ref_update',
+      journalKind: 'ref_update',
+      key,
+      linkedPrior: prior,
+      payload: { repo, ref, old_oid: oldOid, new_oid: newOid, run },
+      plan: { repo, project: p.id, ref, old: oldOid, new: newOid, run, recheck: true, finalizer: { type: 'integration', run, work_item: item.id, kind: item.kind, stage: json(item.subject)?.stage ?? null, plans } },
+    });
+  });
+  const state = await J.execute(op, { fenced });
+  return { op, state, reason: J.failures.get(op) };
+}
+
+// A phase plan as it is committed (SEAM.md §41): .surety/phases/phase-<n>.json,
+// {"phase": n, "stages": [{"number", "goal"}]}. Returns the plan, or throws saying what is wrong.
+function parsePlan(text, phase) {
+  let plan;
+  try {
+    plan = JSON.parse(text);
+  } catch {
+    throw new Error('it is not JSON');
+  }
+  if (plan === null || typeof plan !== 'object' || Array.isArray(plan)) throw new Error('it is not an object');
+  if (plan.phase !== phase) throw new Error(`its phase is not ${phase}`);
+  if (!Array.isArray(plan.stages) || plan.stages.length === 0) throw new Error('it has no stages');
+  const numbers = new Set();
+  for (const stage of plan.stages) {
+    if (stage === null || typeof stage !== 'object' || !Number.isInteger(stage.number) || stage.number < 1 || typeof stage.goal !== 'string' || stage.goal === '') throw new Error('a stage needs a number and a goal');
+    if (numbers.has(stage.number)) throw new Error(`stage ${stage.number} is there twice`);
+    numbers.add(stage.number);
+  }
+  return plan;
+}
+
+function finalizeIntegration(plan, f) {
+  const p = projectRow(plan.project);
+  const item = one('SELECT * FROM "work_items" WHERE "id" = ?', f.work_item);
+  if (item.status === 'integrating' && !mutant('no_integrated_transition')) transition(item.id, 'integrated');
+  if (f.stage && !mutant('stage_not_finalized')) {
+    // The stage the intent froze, not whichever stage has that number now.
+    // The defect `stage_by_number`: the newest stage of that number is the one finalized.
+    const target = mutant('stage_by_number')
+      ? one('SELECT "id" FROM "stages" WHERE "project" = ? AND "number" = (SELECT "number" FROM "stages" WHERE "id" = ?) ORDER BY "id" DESC LIMIT 1', p.id, f.stage).id
+      : f.stage;
+    exec(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`, plan.new, target);
+  }
+  // A committed plan registers exactly its own stages and work, read from the
+  // commit the intent names (D1 §7.8). The defect `finalizer_reads_workspace`:
+  // it is read from where the role wrote it, as that file is now.
+  for (const path of f.plans) {
+    let text;
+    if (mutant('finalizer_reads_workspace')) text = readFileSync(join(one('SELECT "path" FROM "workspaces" WHERE "run" = ?', f.run).path, path), 'utf8');
+    else text = git(plan.repo, ['cat-file', 'blob', `${plan.new}:${path}`]);
+    const committed = parsePlan(text, Number(PLAN_FILE.exec(path)[1]));
+    // The defect `plan_from_newest`: the stages registered are those of the newest plan the store holds.
+    const newest = mutant('plan_from_newest') ? one('SELECT "id" FROM "phase_plans" WHERE "project" = ? ORDER BY "id" DESC LIMIT 1', p.id) : null;
+    if (newest) committed.stages = all('SELECT "number", "goal" FROM "stages" WHERE "phase_plan" = ?', newest.id);
+    registerPlan(p, f, path, committed, plan.old);
+    if (mutant('plan_registered_twice')) registerPlan(p, f, path, parsePlan(text, Number(PLAN_FILE.exec(path)[1])), plan.old);
+  }
+  // The Architect's kinds are complete once their artifacts are integrated and registered.
+  if (INTEGRATING[f.kind] === 'architect' && one('SELECT "status" FROM "work_items" WHERE "id" = ?', item.id).status === 'integrated' && !mutant('architect_never_complete')) transition(item.id, 'complete');
+}
+
+function registerPlan(p, f, path, plan, preparedAgainst) {
+  const id = newId('plan_');
+  insert('phase_plans', { id, created_at: iso(), project: p.id, phase_number: plan.phase, prepared_against_revision: preparedAgainst, git_path: path, approved_by: 'engine', approved_at: iso() });
+  emit('baseline.plan_approved', { project: p.id, phase_plan: id });
+  for (const stage of plan.stages) {
+    const stageId = newId('stage_');
+    const made = observeTrigger({ project: p.id, kind: 'stage_build', trigger_source: 'plan', trigger_id: stageId, trigger_generation: 1, subject: { stage: stageId } }, {});
+    // Work that a run's outcome created (E24 item 1).
+    if (!mutant('plan_work_not_chained')) exec('UPDATE "work_items" SET "created_by_run" = ? WHERE "id" = ?', f.run, made.body.work_item.id);
+    insert('stages', { id: stageId, created_at: iso(), project: p.id, phase_plan: id, number: stage.number, goal: stage.goal, modules: '[]', requirement_ids: '[]', implements: '[]', status: 'planned', work_item: made.body.work_item.id });
+  }
+}
+
+// Nomination (D1 §7.7; E11): the immutable ref is written through the
+// journal, and its finalizer writes the candidate, registers the ref, closes
+// the lineage and opens its successor, creates the candidate's verification
+// work and moves the Builder's integrated work to `verifying`. Everything the
+// finalizer writes is named with the intent.
+function nominationDue(p, item, known) {
+  // The defects: a T1 project nominated at every stage; a Builder's request honoured at any tier.
+  if (item.kind === 'stage_build' && (['T2', 'T3'].includes(p.tier) || mutant('t1_cadence'))) return 'engine_cadence';
+  if (known?.result?.nominate === true && (p.tier === 'T1' || mutant('t2_request_nominates'))) return 'builder_request';
+  return null;
+}
+async function nominate(p, { sha, by, run }) {
+  if (one('SELECT 1 FROM "candidates" WHERE "project" = ? AND "revision" = ?', p.id, sha)) return;
+  let op;
+  tx(() => {
+    const seq = all(`SELECT "witness_plan" FROM "operations" WHERE "project" = ? AND "kind" = 'git_ref_update'`, p.id).filter((row) => json(row.witness_plan)?.finalizer?.type === 'nomination').length + 1;
+    const ref = `refs/surety/cand/${seq}`;
+    op = J.intend({
+      project: p.id,
+      kind: 'git_ref_update',
+      journalKind: 'ref_update',
+      key: `nominate:${p.id}:${sha}`,
+      // The nomination is the engine's act: its journal names no run. The defect `nomination_names_run`: it does.
+      payload: { repo: p.dev_repo_path, ref, old_oid: null, new_oid: sha, ...(mutant('nomination_names_run') ? { run } : {}) },
+      plan: { repo: p.dev_repo_path, project: p.id, ref, old: null, new: sha, run: null, recheck: false, finalizer: { type: 'nomination', candidate: newId('cand_'), seq, lineage: openLineage(p).id, next: newId('lin_'), by, verification: newId('wi_'), run } },
+    });
+  });
+  const state = await J.execute(op);
+  if (state !== 'finalized') throw new Error(`the nomination of ${sha} is ${state}`);
+}
+function finalizeNomination(plan, f) {
+  const p = projectRow(plan.project);
+  // The defect `nomination_ref_mutable`: the ref is registered like any other.
+  registerRef(p.id, plan.ref, 'nomination', plan.new, mutant('nomination_ref_mutable') ? 0 : 1);
+  insert('candidates', { id: f.candidate, created_at: iso(), project: p.id, seq: f.seq, revision: plan.new, lineage: f.lineage, nominated_at: iso(), nominated_by: f.by, progress: 'developing' });
+  // The defect `lineage_not_succeeded`: the lineage stays open, and later revisions land on it.
+  if (!mutant('lineage_not_succeeded')) {
+    exec('UPDATE "lineages" SET "open" = 0 WHERE "id" = ?', f.lineage);
+    insert('lineages', { id: f.next, created_at: iso(), project: p.id, branch: integrationRef(p), started_from_candidate: f.candidate, open: 1 });
+  }
+  emit('candidate.nominated', { project: p.id, candidate: f.candidate }, { seq: f.seq, revision: plan.new, nominated_by: f.by });
+  if (!mutant('nomination_no_verification')) {
+    insert('work_items', {
+      id: f.verification,
+      created_at: iso(),
+      project: p.id,
+      seq: one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "work_items" WHERE "project" = ?', p.id).n,
+      kind: 'verification',
+      subject: JSON.stringify({ candidate: f.candidate }),
+      status: 'eligible',
+      depends_on: '[]',
+      trigger_source: 'nomination',
+      trigger_id: f.candidate,
+      trigger_generation: 1,
+      repair_attempts: 0,
+      no_progress_count: 0,
+      preflight_refusals: 0,
+      dispatch_hold: 0,
+      // Work that a run's outcome created (E24 item 1). The defect `nomination_work_not_chained`: it is not marked so.
+      created_by_run: mutant('nomination_work_not_chained') ? null : f.run,
+    });
+    emit('work.created', { work_item: f.verification, project: p.id }, { to: 'eligible' });
+  }
+  // The Builder's work integrated on this lineage is now being verified.
+  if (!mutant('integrated_never_verifying')) {
+    for (const built of all(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" IN ('stage_build', 'fix') AND "status" = 'integrated'`, p.id)) {
+      transition(built.id, 'verifying');
+      exec('UPDATE "work_items" SET "verifying_candidate" = ? WHERE "id" = ?', f.candidate, built.id);
+    }
+  }
+}
+
+// worktree_add and worktree_remove: the effect is at an owned path,
+// $SURETY_HOME/workspaces/<run id>, and in the repository's own metadata for it.
+function addWorktreeEffect(plan) {
+  return addWorktree(plan.repo, plan.path, plan.base).then((added) => {
+    if (added === 'ambiguous') return 'ambiguous';
+    if (added === 'failed') {
+      // The defect `symlink_workspace_adopted`: a failed `worktree add` is taken for a worktree
+      // that is there because the path, resolved, is one the repository lists.
+      const present = mutant('symlink_workspace_adopted') && G.worktrees(plan.repo).some((w) => G.real(w.path) === G.real(plan.path));
+      if (!present) return { failed: 'git worktree add failed' };
+    }
+    if (mutant('worktree_probe_literal_path')) {
+      // The defect: the probe looks for the path as given in a list that git
+      // prints with symbolic links resolved, and takes a miss for "not added".
+      const listed = git(plan.repo, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${plan.path}`);
+      if (!listed) return { failed: 'the worktree is not listed' };
+    }
+    return { receipt: {} };
   });
 }
+// Residue that is verifiably the operation's own is removed; nothing else is touched.
+function removeOwnedResidue(plan) {
+  const state = G.ownedState(plan.repo, plan.path, plan.base);
+  if (state.kind === 'dir_only' || state.kind === 'worktree') rmSync(plan.path, { recursive: true, force: true });
+  if (state.kind !== 'foreign') git(plan.repo, ['worktree', 'prune']);
+}
+const worktreeProbe = (kind) => (plan) => {
+  if (!G.readable(plan.repo)) return { outcome: 'unknown', detail: 'the repository cannot be read' };
+  if (!G.worktreesReadable(plan.repo)) return { outcome: 'unknown', detail: "the repository's worktree metadata cannot be read" };
+  const state = G.ownedState(plan.repo, plan.path, plan.base);
+  if (state.kind === 'foreign') return { outcome: 'conflicting', detail: `${plan.path} holds something that is not this operation's` };
+  if (kind === 'worktree_add') {
+    if (state.kind === 'none') return { outcome: 'absent' };
+    if (state.kind === 'worktree' && state.complete) return { outcome: 'applied' };
+    return { outcome: 'partial', detail: state.kind, remaining: { remove_owned_residue: plan.path, then: 'git worktree add' } };
+  }
+  if (state.kind === 'none') return { outcome: 'applied' };
+  if (state.kind === 'worktree') return { outcome: 'absent' };
+  return { outcome: 'partial', detail: state.kind, remaining: { remove_owned_residue: plan.path } };
+};
+J.handlers.worktree_add = {
+  // A workspace is for one run, and its operation is only ever probed when that
+  // run is over: a complete worktree is adopted, anything less is withdrawn.
+  ways: { absent: 'withdraw', applied: 'finalize', partial: 'withdraw', conflicting: 'block', unknown: 'block' },
+  withdraw: (plan) => removeOwnedResidue(plan),
+  refuse(plan, op, { recovery }) {
+    if (recovery) return null; // the probe has looked
+    // Whatever is already at the path is not the engine's: a symbolic link in
+    // particular is refused (SEAM.md §35).
+    try {
+      lstatSync(plan.path);
+    } catch {
+      return null;
+    }
+    return mutant('symlink_workspace_adopted') ? null : 'the workspace path is occupied';
+  },
+  effect: (plan) => addWorktreeEffect(plan),
+  complete(plan) {
+    removeOwnedResidue(plan);
+    return addWorktreeEffect(plan);
+  },
+  overwrite(plan) {
+    // The defect `probe_conflict_overwrites`: what is at the path is removed, whoever's it is.
+    rmSync(plan.path, { recursive: true, force: true });
+    git(plan.repo, ['worktree', 'prune']);
+    return addWorktreeEffect(plan);
+  },
+  probe: worktreeProbe('worktree_add'),
+  finalize(plan) {
+    if (one('SELECT 1 FROM "workspaces" WHERE "run" = ?', plan.run)) return;
+    const r = getRun(plan.run);
+    const ws = newId('ws_');
+    // A workspace completed for a run that has ended is retained, never active.
+    insert('workspaces', { id: ws, created_at: iso(), project: r.project, run: r.id, path: plan.path, base_revision: plan.base, current_base: plan.base, disposition: r.state === 'ended' ? 'retained' : 'active' });
+    exec('UPDATE "runs" SET "workspace" = ? WHERE "id" = ?', ws, r.id);
+    let baseline = null;
+    try {
+      baseline = JSON.stringify(G.checkoutBaseline(plan.path));
+    } catch {
+      // only reached with a defect switched on
+    }
+    if (baseline) insert('managed_checkouts', { id: newId('mc_'), created_at: iso(), project: r.project, kind: 'run_workspace', path: plan.path, baseline, owner_run: r.id });
+  },
+};
+J.handlers.worktree_remove = {
+  ways: { absent: 'retry', applied: 'finalize', partial: 'complete', conflicting: 'block', unknown: 'block' },
+  effect(plan) {
+    try {
+      git(plan.repo, ['worktree', 'remove', '--force', plan.path]);
+    } catch (err) {
+      if (G.timedOut(err) && !mutant('timeout_is_absent')) return 'ambiguous';
+      // Removing what is already gone is no failure: the effect can be repeated.
+      rmSync(plan.path, { recursive: true, force: true });
+      try {
+        git(plan.repo, ['worktree', 'prune']);
+      } catch (again) {
+        if (G.timedOut(again)) return 'ambiguous';
+      }
+    }
+    return { receipt: {} };
+  },
+  complete(plan) {
+    removeOwnedResidue(plan);
+    return { receipt: {} };
+  },
+  overwrite(plan) {
+    rmSync(plan.path, { recursive: true, force: true });
+    git(plan.repo, ['worktree', 'prune']);
+    return { receipt: {} };
+  },
+  probe: worktreeProbe('worktree_remove'),
+  finalize(plan) {
+    exec(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ? AND "disposition" <> 'discarded'`, iso(), plan.workspace);
+    exec('DELETE FROM "managed_checkouts" WHERE "owner_run" = ?', plan.run);
+  },
+};
 
 function commitMessage(r, item, base, result) {
   const trailers = [`Surety-Run: ${r.id}`, `Surety-Role: ${r.role}`, `Surety-Base: ${base}`, `Surety-WorkItem: ${item.id}`, `Surety-Kind: ${item.kind}`].join('\n');
@@ -1458,6 +1870,16 @@ function violation(p, r, ws, tree, known) {
       if (refused) return inside(refused);
     }
     if (c.status === 'D') continue;
+    // A phase plan that is committed is registered by the integration's
+    // finalizer, so one that cannot be registered is not committed (D1 §7.8).
+    // The defect `plan_not_validated`: it is committed as it is.
+    if (PLAN_FILE.test(c.path) && !mutant('plan_not_validated')) {
+      try {
+        parsePlan(git(repo, ['cat-file', 'blob', c.oid]), Number(PLAN_FILE.exec(c.path)[1]));
+      } catch (err) {
+        return inside(`${c.path} is not a phase plan the engine can register: ${err.message}`);
+      }
+    }
     if (c.mode === '120000') {
       if (!mutant('no_link_check') && G.linkEscapes(ws.path, c.path, git(repo, ['cat-file', 'blob', c.oid]))) return inside(`the symbolic link ${c.path} leads outside the workspace`);
       continue;
@@ -1483,20 +1905,77 @@ function violation(p, r, ws, tree, known) {
 
 function recordRevision(p, { sha, parent, kind, run }) {
   const id = newId('rev_');
-  insert('revisions', { id, created_at: iso(), project: p.id, sha, parent_sha: parent, kind, created_by_run: run, recorded_at: iso() });
+  insert('revisions', { id, created_at: iso(), project: p.id, sha, lineage: openLineage(p)?.id ?? null, parent_sha: parent, kind, created_by_run: run, recorded_at: iso() });
   emit('revision.recorded', { project: p.id, revision: id }, { sha, kind });
   return id;
 }
 
+// A step of the acceptance that fails in a store transaction is repeated, and
+// writes what it would have written the first time (E28 item 1). The defect
+// `accept_step_not_repeatable`: one failed transaction fails the run.
+async function acceptRepeatably(id, known) {
+  for (let failures = 0; ; ) {
+    try {
+      return await accept(id, known);
+    } catch (err) {
+      if (!err.fault || mutant('accept_step_not_repeatable') || ++failures > 20) throw err;
+      await sleep(100);
+    }
+  }
+}
+
+// The run's commit, through the journal: made once per run and number.
+async function commitRun(p, { run, n, tree, parent, message, revision, fenced }) {
+  let op;
+  tx(() => {
+    op = commitIntend(p, { run, n, tree, parent, message, revision });
+  });
+  const state = await J.execute(op, { fenced });
+  return { op, state, sha: J.load(op).plan.sha };
+}
+
+// The three-way merge of a run's commit onto a head that moved under it,
+// with no merge driver of the repository's taking part: attributes are read
+// from an empty tree. Returns {tree}, or {conflict: true}.
+function rebasedTree(repo, head, sha) {
+  const base = git(repo, ['merge-base', head, sha]);
+  const empty = git(repo, ['hash-object', '-t', 'tree', '/dev/null']);
+  try {
+    // The defect `merge_driver_runs`: the merge is made in the repository's own work tree, where
+    // its attributes, and with them its merge drivers, take part.
+    if (mutant('merge_driver_runs')) return { tree: execFileSync('git', ['-C', repo, 'merge-tree', '--write-tree', `--merge-base=${base}`, head, sha], { env: G.env(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n')[0] };
+    const out = git(repo, [`--attr-source=${empty}`, 'merge-tree', '--write-tree', `--merge-base=${base}`, head, sha]);
+    return { tree: out.split('\n')[0] };
+  } catch (err) {
+    if (err.status === 1) return { conflict: true };
+    throw err;
+  }
+}
+
 // What follows a valid result of a Builder's or an Architect's run whose
-// role exited 0 (SEAM.md §28): termination, snapshot, validation, commit,
-// and then a checkpoint or the integration.
+// role exited 0 (SEAM.md §§28, 40 to 43): termination, snapshot, validation,
+// commit, and then a checkpoint or the integration, and a nomination where
+// one is due. Resolves with the end the run earned, [outcome, reason], or
+// with null when the run's end was decided meanwhile by something else (a
+// Stop, an Abandon, a deadline): that end is under way and waits for this to
+// return. Every step can be repeated.
 async function accept(id, known) {
   const r = getRun(id);
   const p = projectRow(r.project);
-  const item = one('SELECT * FROM "work_items" WHERE "id" = ?', r.work_item);
+  const repo = p.dev_repo_path;
+  const item = () => one('SELECT * FROM "work_items" WHERE "id" = ?', r.work_item);
   const ws = one('SELECT * FROM "workspaces" WHERE "run" = ?', id);
   const gitDirOfWs = known.meta?.gitDir ?? G.gitDirOf(ws.path);
+  const decided = () => Boolean(known.intended);
+  // An end decided meanwhile cuts the acceptance short. What it has in flight
+  // is wound down first, with the run fenced: an effect not yet made is
+  // refused and recorded failed, one already made is recorded and finalized.
+  const cutShort = async () => {
+    for (const row of all(`SELECT "id" FROM "operations" WHERE "project" = ? AND "finalized_at" IS NULL AND "status" NOT IN ('failed', 'superseded')`, r.project)) {
+      if (J.inflight.has(row.id) && J.load(row.id).payload.run === id) await J.execute(row.id, { fenced: () => true });
+    }
+    return null;
+  };
   // The defect `snapshot_before_termination`: captured while a writer may live.
   if (mutant('snapshot_before_termination')) exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', G.snapshot(ws.path, gitDirOfWs, ws.current_base), ws.id);
 
@@ -1505,73 +1984,131 @@ async function accept(id, known) {
     known.reasonText = "The run's domain could not be shown empty, so what the role left could not be established.";
     known.unsnapshotted = true;
     // The defect `quarantined_completed`: the outcome recorded with the quarantine claims a validation that never happened.
-    return void endRun(id, ...(mutant('quarantined_completed') ? ['completed', 'none'] : ['failed', 'infra_error']));
+    return mutant('quarantined_completed') ? ['completed', 'none'] : ['failed', 'infra_error'];
   }
-  if (mutant('absorbs_outside_files')) {
+  if (decided()) return cutShort();
+  if (mutant('absorbs_outside_files') && !known.absorbed) {
     // The defect: what the role left beside its workspace is taken into it.
+    known.absorbed = true;
     for (const name of readdirSync(join(ws.path, '..'))) {
       const stray = join(ws.path, '..', name);
       if (statSync(stray).isFile()) writeFileSync(join(ws.path, name), readFileSync(stray));
     }
   }
   // 2. The snapshot.
-  const tree = G.snapshot(ws.path, gitDirOfWs, ws.current_base);
-  exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', tree, ws.id);
+  if (!known.tree) {
+    known.tree = G.snapshot(ws.path, gitDirOfWs, ws.current_base);
+    exec('UPDATE "workspaces" SET "snapshot_tree" = ? WHERE "id" = ?', known.tree, ws.id);
+  }
+  const tree = known.tree;
   // 3. Validation: a violation rejects the whole result.
-  const bad = violation(p, r, ws, tree, known);
-  if (bad) {
-    known.reasonText = bad.text;
-    return void endRun(id, 'failed', bad.reason);
+  if (!known.validated) {
+    const bad = violation(p, r, ws, tree, known);
+    if (bad) {
+      known.reasonText = bad.text;
+      return ['failed', bad.reason];
+    }
+    known.validated = true;
   }
   // 4. The commit.
   const checkpoint = known.result.checkpoint === true;
   const kind = checkpoint ? 'checkpoint' : r.role === 'architect' && !mutant('architect_engine_commit') ? 'intent' : 'engine_commit';
-  const sha = commitTree(p, { run: id, tree, parent: ws.current_base, message: commitMessage(r, item, ws.current_base, known.result) });
-  let revision;
-  tx(() => {
-    revision = recordRevision(p, { sha, parent: ws.current_base, kind, run: id });
-  });
+  const first = await commitRun(p, { run: id, n: 1, tree, parent: ws.current_base, message: commitMessage(r, item(), ws.current_base, known.result), revision: kind, fenced: decided });
+  if (decided()) return cutShort();
+  if (first.state !== 'finalized') throw new Error(`the commit of run ${id} is ${first.state}`);
+  let sha = first.sha;
   const ref = integrationRef(p);
-  // 5a. A checkpoint is a working revision: nothing is integrated.
+  // 5a. A checkpoint is a working revision: nothing is integrated, nothing nominated.
   if (checkpoint && !mutant('checkpoint_integrates')) {
     tx(() => {
+      if (item().status !== 'executing') return; // done before
+      const revision = one('SELECT "id" FROM "revisions" WHERE "sha" = ? AND "created_by_run" = ?', sha, id).id;
       exec('UPDATE "workspaces" SET "current_base" = ?, "checkpoints" = ? WHERE "id" = ?', sha, JSON.stringify([...json(ws.checkpoints ?? '[]'), revision]), ws.id);
       if (mutant('checkpoint_rewrites_base')) {
         exec('UPDATE "workspaces" SET "base_revision" = ? WHERE "id" = ?', sha, ws.id);
         exec('UPDATE "runs" SET "base_revision" = ? WHERE "id" = ?', sha, id);
       }
-      transition(item.id, 'eligible');
-      exec('UPDATE "work_items" SET "checkpoint_run" = ? WHERE "id" = ?', id, item.id);
+      transition(r.work_item, 'eligible');
+      exec('UPDATE "work_items" SET "checkpoint_run" = ? WHERE "id" = ?', id, r.work_item);
     });
-    return void endRun(id, 'completed', 'none');
+    // The defect `checkpoint_nominates`: a checkpoint is taken for a candidate.
+    if (mutant('checkpoint_nominates')) await nominate(p, { sha, by: 'builder_request', run: id });
+    return ['completed', 'none'];
   }
-  // 5b. The integration, refused while the branch is checked out in a worktree the engine does not own.
-  try {
-    tx(() => transition(item.id, 'integrating'));
-    if (!mutant('integrates_checked_out_branch')) {
-      const [held] = G.checkoutsOf(p.dev_repo_path, ref);
-      if (held) throw new IntegrationRefused(held.path);
-    }
-    await refUpdate(p, { run: id, ref, oldOid: registered(p.id, ref).expected_oid, newOid: sha, recheck: true });
-    if (mutant('integration_touches_checkouts')) {
-      // The defect: a checkout-updating protocol nobody asked for.
-      for (const w of G.worktrees(p.dev_repo_path)) {
-        if (G.engineOwned(w.path)) continue;
-        try {
-          G.run(G.gitDirOf(w.path), ['checkout', '-q', '--detach', sha], { workTree: w.path });
-        } catch {
-          // it tried
-        }
+  // 5b. The integration.
+  tx(() => {
+    if (item().status === 'executing') transition(r.work_item, 'integrating');
+  });
+  const refusedFor = (worktree) => {
+    known.reasonText = `The integration branch ${p.integration_branch} is checked out in ${worktree}, a worktree the engine does not own; the branch was not moved. ${FREE_THE_BRANCH}`;
+    tx(() => {
+      if (item().status === 'integrating') park(r.work_item, 'integration_branch_checked_out', `The integration branch ${p.integration_branch} is checked out in ${worktree}. ${FREE_THE_BRANCH}`);
+    });
+    return ['failed', 'integration_conflict'];
+  };
+  const conflict = (text) => {
+    known.reasonText = `${text} Nothing was integrated, and no role is asked to resolve it.`;
+    tx(() => {
+      if (item().status === 'integrating') park(r.work_item, 'integration_conflict', known.reasonText);
+    });
+    return ['failed', 'integration_conflict'];
+  };
+  // Refused while the branch is checked out in a worktree the engine does not own (correction 6).
+  if (!mutant('integrates_checked_out_branch')) {
+    const [held] = G.checkoutsOf(repo, ref);
+    if (held) return refusedFor(held.path);
+  }
+  // The branch may have moved since the run's base was taken (D1 §7.5): the
+  // result is then rebased onto the head, the rebased tree validated again,
+  // and that commit journaled instead. The defect `no_rebase`: any move is a
+  // conflict. The defect `rebase_overwrites`: the branch is put on the run's
+  // own commit, and what moved it is lost.
+  const head = registered(p.id, ref).expected_oid;
+  if (!isAncestor(repo, head, sha) && !mutant('rebase_overwrites')) {
+    if (mutant('no_rebase')) return conflict(`The integration branch moved to ${head} while the run was under way.`);
+    let merged = rebasedTree(repo, head, sha);
+    // The defect `conflict_takes_ours`: a conflict is resolved, silently, by taking the run's own tree.
+    if (merged.conflict && mutant('conflict_takes_ours')) merged = { tree: git(repo, ['rev-parse', `${sha}^{tree}`]) };
+    if (merged.conflict) return conflict(`The integration branch moved to ${head} while the run was under way, and the run's changes do not apply to it without a conflict.`);
+    for (const c of G.changes(repo, head, merged.tree)) {
+      const refused = pathViolation(r.role, c.path);
+      if (refused) {
+        known.reasonText = `After the rebase onto ${head}: ${refused}`;
+        return ['failed', 'diff_violation'];
       }
     }
-    if (!mutant('no_integrated_transition')) tx(() => transition(item.id, 'integrated'));
-  } catch (err) {
-    if (!(err instanceof IntegrationRefused)) throw err;
-    known.reasonText = `The integration branch ${p.integration_branch} is checked out in ${err.worktree}, a worktree the engine does not own; the branch was not moved. ${FREE_THE_BRANCH}`;
-    tx(() => park(item.id, 'integration_branch_checked_out', `The integration branch ${p.integration_branch} is checked out in ${err.worktree}. ${FREE_THE_BRANCH}`));
-    return void endRun(id, 'failed', 'integration_conflict');
+    const second = await commitRun(p, { run: id, n: 2, tree: merged.tree, parent: head, message: commitMessage(r, item(), head, known.result), revision: kind, fenced: decided });
+    if (decided()) return cutShort();
+    if (second.state !== 'finalized') throw new Error(`the rebased commit of run ${id} is ${second.state}`);
+    sha = second.sha;
   }
-  endRun(id, 'completed', 'none');
+  const moved = await integrate(p, { run: id, item: item(), ref, oldOid: head, newOid: sha, fenced: decided });
+  if (moved.state === 'failed') {
+    if (moved.reason === 'fenced' || decided()) return cutShort();
+    if (moved.reason?.checkout) return refusedFor(moved.reason.checkout);
+    return conflict(`The compare-and-swap of ${ref} failed: the branch is at ${moved.reason?.cas ?? 'nothing'}, not at ${head}.`);
+  }
+  if (moved.state !== 'finalized') {
+    if (decided()) return cutShort();
+    throw new Error(`the integration of run ${id} is ${moved.state}`);
+  }
+  if (mutant('integration_touches_checkouts')) {
+    // The defect: a checkout-updating protocol nobody asked for.
+    for (const w of G.worktrees(repo)) {
+      if (G.engineOwned(w.path)) continue;
+      try {
+        G.run(G.gitDirOf(w.path), ['checkout', '-q', '--detach', sha], { workTree: w.path });
+      } catch {
+        // it tried
+      }
+    }
+  }
+  if (decided()) return cutShort();
+  // 6. A nomination, where one is due (D1 §7.7; E11).
+  const by = nominationDue(p, item(), known);
+  if (by) await nominate(p, { sha, by, run: id });
+  if (decided()) return cutShort();
+  return ['completed', 'none'];
 }
 
 // ---- repository integrity (D1 §7.6; SEAM.md §32) ----
@@ -1633,6 +2170,11 @@ function integrity(p) {
   for (const row of all('SELECT * FROM "ref_registry" WHERE "project" = ?', p.id)) {
     const found = G.refOid(repo, row.ref);
     if (found === row.expected_oid) continue;
+    // A commit the engine's own journal is moving the ref to is not out of band (D1 §7.6).
+    const moving = all(`SELECT "witness_plan" FROM "operations" WHERE "project" = ? AND "kind" = 'git_ref_update' AND "finalized_at" IS NULL AND "status" NOT IN ('failed', 'superseded')`, p.id)
+      .map((op) => json(op.witness_plan))
+      .some((plan) => plan?.ref === row.ref && plan.new === found);
+    if (moving) continue;
     if (mutant('deleted_ref_as_expected') && found === null) continue;
     // The defect `oob_absorbed`: the expected value silently becomes what was found.
     if (mutant('oob_absorbed') && found !== null) {
@@ -1641,7 +2183,10 @@ function integrity(p) {
     }
     const already = one(`SELECT 1 FROM "out_of_band_changes" WHERE "project" = ? AND "subject_kind" = 'ref' AND "ref" = ? AND "disposition" IS NULL`, p.id, row.id);
     if (already && !mutant('oob_repeated')) continue;
-    tx(() => raiseOob(p, 'ref', { ref: row.id, expected: row.expected_oid, found, options: found === null ? ['discard'] : ['discard', 'adopt'], question: `The registered ref ${row.ref} is at ${found ?? 'nothing'}; the engine expects it at ${row.expected_oid}.` }));
+    // An immutable ref's expected commit never changes, so adopting what was found is not offered for one.
+    // The defect `immutable_offers_adopt`: it is.
+    const adoptable = found !== null && (row.kind !== 'nomination' || mutant('immutable_offers_adopt'));
+    tx(() => raiseOob(p, 'ref', { ref: row.id, expected: row.expected_oid, found, options: adoptable ? ['discard', 'adopt'] : ['discard'], question: `The registered ref ${row.ref} is at ${found ?? 'nothing'}; the engine expects it at ${row.expected_oid}.` }));
   }
   const current = G.checkoutsOf(repo, integrationRef(p));
   for (const row of all(`SELECT * FROM "managed_checkouts" WHERE "project" = ? AND "kind" = 'integration_worktree'`, p.id)) {
@@ -1716,16 +2261,14 @@ async function createProject(given, actor) {
     insert('projects', { id, created_at: iso(), name: body.name, paused: 0, tier: body.tier, dev_repo_path: repo, integration_branch: body.integration_branch, registration_state: 'pending_bootstrap', policy: '{}' });
     emit('project.created', { project: id }, { name: body.name, tier: body.tier }, actor);
     registerRef(id, ref, 'integration', head);
+    ensureLineage(projectRow(id));
   });
   const p = projectRow(id);
   const files = { '.surety/project.json': `${JSON.stringify({ id, name: body.name }, null, 2)}\n` };
   if (mutant('bootstrap_extra_paths')) files['.surety/policy.json'] = '{}\n';
-  const sha = commitTree(p, { tree: treeWith(repo, head, files), parent: head, message: `Register project ${id}\n` });
-  await refUpdate(p, { ref, oldOid: head, newOid: sha });
-  tx(() => {
-    exec(`UPDATE "projects" SET "registration_state" = 'registered' WHERE "id" = ?`, id);
-    emit('project.registered', { project: id });
-  });
+  const sha = await commitTree(p, { tree: treeWith(repo, head, files), parent: head, message: `Register project ${id}\n` });
+  // The integration finalizer sets the project registered (D1 §3.1).
+  await refUpdate(p, { ref, oldOid: head, newOid: sha, finalizer: { type: 'bootstrap' } });
   return { status: 201, body: { project: { id, registration_state: 'registered' } } };
 }
 
@@ -1767,7 +2310,7 @@ async function changePolicy(projectId, body, actor) {
       // no such file
     }
   }
-  const sha = commitTree(p, { tree: treeWith(repo, head, { '.surety/policy.json': `${JSON.stringify(recorded, null, 2)}\n` }), parent: head, message: 'Policy change\n' });
+  const sha = await commitTree(p, { tree: treeWith(repo, head, { '.surety/policy.json': `${JSON.stringify(recorded, null, 2)}\n` }), parent: head, message: 'Policy change\n' });
   // The defect `policy_not_committed`: the revision is recorded and the branch never gets the file.
   if (!mutant('policy_not_committed')) await refUpdate(p, { ref, oldOid: head, newOid: sha });
   let revision;
@@ -1805,9 +2348,89 @@ async function recover() {
     }
   }
   await reobserveQuarantined();
+  // A git child of an earlier incarnation may still be writing: no probe is
+  // trusted while one lives (SEAM.md §46). The defect `stray_git_ignored`: nobody looks.
+  if (!mutant('stray_git_ignored')) await endStrayGit();
+  // The journal first (D1 §16.1; correction 14): every operation that is not
+  // finalized is visited, so that a run is ended over what its operations
+  // really did.
+  for (const p of all('SELECT * FROM "projects" ORDER BY "id"')) {
+    try {
+      await recoverJournal(p.id, { startup: true });
+    } catch (err) {
+      process.stderr.write(`journal recovery ${p.id}: ${err.stack}\n`);
+    }
+  }
   for (const r of all(`SELECT * FROM "runs" WHERE "state" <> 'ended' AND "quarantined" = 0 ORDER BY "seq"`)) {
     if (mutant('signal_recorded_pid')) for (const d of all('SELECT * FROM "execution_domains" WHERE "run" = ?', r.id)) signal(d.id, 'SIGKILL');
     await endRun(r.id, 'recovered', 'recovered', { recovery: true });
+  }
+}
+
+// Git processes that an earlier incarnation spawned and that are still
+// alive are ended before anything is probed: found by the marker every git
+// child of the witness carries, never by a recorded pid.
+async function endStrayGit() {
+  const strays = () => {
+    const found = [];
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue;
+      try {
+        const marker = readFileSync(`/proc/${name}/environ`, 'utf8').split('\0').find((entry) => entry.startsWith('SURETY_WITNESS_GIT='));
+        if (marker && marker !== `SURETY_WITNESS_GIT=${incarnation}` && readFileSync(`/proc/${name}/environ`, 'utf8').split('\0').includes(`HOME=${home}`)) found.push(Number(name));
+      } catch {
+        // gone, going, or not ours to read
+      }
+    }
+    return found;
+  };
+  for (const pid of strays()) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // gone
+    }
+  }
+  for (let waited = 0; waited < 3000 && strays().length > 0; waited += 50) await sleep(50);
+}
+
+// Journal recovery for one project (D1 §7.10; SEAM.md §45). Returns whether
+// the project has an operation that is blocked afterwards.
+async function recoverJournal(projectId, { startup = false } = {}) {
+  const results = await J.recoverProject(projectId, {
+    all: startup && mutant('recovery_refinalizes'),
+    // The defect `second_removal_intent` is an engine that leaves an unsettled removal to its run's end.
+    skip: (op) => mutant('second_removal_intent') && op.journalKind === 'worktree_remove',
+  });
+  for (const res of results) {
+    if (res.result !== 'finalized') continue;
+    if (res.journalKind === 'worktree_add' && mutant('ambiguous_add_keeps_run')) {
+      // The same defect, further on: a workspace that turns out to be there after its command was
+      // killed gets its role launched in it.
+      const known = live.get(res.plan.run);
+      if (known?.launch && !known.child && !known.intended && getRun(res.plan.run).state === 'claimed') prepared(res.plan.run);
+    }
+  }
+  // A run that waited for the removal of its workspace is ended now.
+  for (const [id, known] of live) {
+    if (!known.waitingOnRemoval || known.ending) continue;
+    const r = getRun(id);
+    if (!r || r.state === 'ended') continue;
+    known.waitingOnRemoval = false;
+    await endRun(id, r.outcome, r.reason_class);
+  }
+  return J.blockedOf(projectId).length > 0;
+}
+
+// A stage that was integrated at a tier whose cadence nominates at stage
+// completion, and whose revision has no candidate yet: its run was cut off
+// between the integration and the nomination (E11).
+async function nominateDue() {
+  for (const stage of all(`SELECT s.* FROM "stages" s JOIN "projects" p ON p."id" = s."project" WHERE s."status" = 'integrated' AND p."tier" IN ('T2', 'T3')`)) {
+    if (activeRuns(stage.project).length > 0) continue; // its own run nominates
+    if (one('SELECT 1 FROM "candidates" WHERE "project" = ? AND "revision" = ?', stage.project, stage.integrated_revision)) continue;
+    const by = one('SELECT "created_by_run" FROM "revisions" WHERE "project" = ? AND "sha" = ?', stage.project, stage.integrated_revision)?.created_by_run ?? null;
+    await nominate(projectRow(stage.project), { sha: stage.integrated_revision, by: 'engine_cadence', run: by });
   }
 }
 
@@ -1843,6 +2466,17 @@ async function tick() {
             await sleep(budget);
           } else await sleep(Math.min(delay, budget));
         }
+        if (step === 'journal') {
+          // Journal recovery, before integrity and dispatch (D1 §8.1 step 2): a project
+          // with an operation that stays blocked is not dispatched in this tick.
+          // The defect `blocked_operation_dispatches`: it is.
+          try {
+            if ((await recoverJournal(p.id)) && !mutant('blocked_operation_dispatches')) suppressed.add(p.id);
+          } catch (err) {
+            process.stderr.write(`journal ${p.id}: ${err.stack}\n`);
+            suppressed.add(p.id);
+          }
+        }
         if (step !== 'integrity') continue;
         // Repository integrity, before anything of the project is dispatched (D1 §8.1 step 3).
         try {
@@ -1851,6 +2485,14 @@ async function tick() {
           process.stderr.write(`integrity ${p.id}: ${err.stack}\n`);
           suppressed.add(p.id);
         }
+      }
+    }
+    // The defect `nomination_not_caught_up`: a stage left without its candidate stays so.
+    if (!mutant('nomination_not_caught_up')) {
+      try {
+        await nominateDue();
+      } catch (err) {
+        process.stderr.write(`nomination: ${err.stack}\n`);
       }
     }
     for (const p of projects) {
@@ -1901,6 +2543,14 @@ function confirmCommand(project, runId, kind, outcome, reason, body) {
   // nothing, and the command is recorded as given (E28 item 2).
   const known = live.get(runId);
   if (known?.intended && !mutant('stop_replaces_decided_end')) throw refusal(409, 'illegal_transition', `the engine is already ending this run (${known.intended[0]})`, { run: runId });
+  // The defect `confirm_burnt_by_failure`: the confirmation is spent before the transaction that acts on it, so a failure of that transaction burns it.
+  if (mutant('confirm_burnt_by_failure') && decision && decision.preview_hash === body.preview_hash) {
+    tx(() => {
+      exec(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ? WHERE "id" = ?`, iso(), decision.id);
+      emit('decision.consumed', { decision: decision.id, project });
+    });
+    decision = { ...decision, preview_hash: 'spent' };
+  }
   tx(() => {
     if (!mutant('stop_without_confirm')) {
       if (!decision || decision.preview_hash !== body.preview_hash) throw refusal(409, 'decision_stale', 'The preview hash is not the open decision\'s.');
@@ -1933,6 +2583,9 @@ function answer(project, decisionId, body) {
     if (d.subject_type === 'work_item' && body.option === 'retry') {
       transition(d.subject_id, 'eligible');
       exec('UPDATE "work_items" SET "blocker" = NULL, "repair_attempts" = 0, "preflight_refusals" = 0, "pending_repair" = 0 WHERE "id" = ?', d.subject_id);
+    } else if (d.subject_type === 'work_item' && body.option === 'continue') {
+      // The human step at a chaining boundary: the item is dispatched like any other from here.
+      exec('UPDATE "work_items" SET "blocker" = NULL, "human_step" = 1 WHERE "id" = ?', d.subject_id);
     } else if (d.subject_type === 'work_item' && body.option === 'cancel') {
       transition(d.subject_id, 'cancelled');
       exec('UPDATE "work_items" SET "blocker" = NULL WHERE "id" = ?', d.subject_id);
@@ -1990,6 +2643,7 @@ async function route(method, path, body, requestId) {
         emit('project.created', { project: id }, { ...FIXTURE, ...body });
         const p = projectRow(id);
         registerRef(id, integrationRef(p), 'integration', G.refOid(p.dev_repo_path, integrationRef(p)));
+        ensureLineage(p);
         registerCheckouts(p);
       });
       return { status: 201, body: { project: { id } } };
@@ -1998,6 +2652,7 @@ async function route(method, path, body, requestId) {
     if (path === '/v1/harness/fixtures/plan') {
       return tx(() => {
         const plan = newId('plan_');
+        insert('phase_plans', { id: plan, created_at: iso(), project: body.project, phase_number: 1, git_path: 'fixture', approved_by: 'fixture', approved_at: iso() });
         const stages = body.stages.map((st) => ({ ...st, id: newId('stage_') }));
         const out = [];
         for (const st of stages) {

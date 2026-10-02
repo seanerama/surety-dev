@@ -17,7 +17,10 @@
 //      on the rule the mutant breaks, and has the limit SEAM.md states.
 //
 //   5-8. the slice-2 helpers: see slice2.mjs.
-//   10-11. the slice-3 helpers: see slice3.mjs.
+//   10-13. the slice-3 helpers: see slice3.mjs.
+//   14-17. the helpers of slice 3's second session (the journal's contract
+//      tables, git states built by hand, the reads of operations and attempts,
+//      the fault matrix through integration): see slice3b.mjs.
 //   9. the slice-2 and slice-3 acceptance files themselves, run against a witness engine:
 //      every test passes, and each defect switched on in the witness makes
 //      the test meant to catch it fail. See witness.mjs. This part takes a
@@ -55,6 +58,7 @@ import { inspectSources, tokenize } from '../source-lint.mjs';
 import * as cases from '../store-cases.mjs';
 import { slice2Checks } from './slice2.mjs';
 import { slice3Checks } from './slice3.mjs';
+import { slice3bChecks } from './slice3b.mjs';
 import { witnessChecks } from './witness.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -569,9 +573,13 @@ await check('source lint limit: a mode query under another name that is only cal
 
 await slice2Checks(check, work);
 
-// ---- 10 and 11. slice 3 ------------------------------------------------------------
+// ---- 10 to 13. slice 3 -------------------------------------------------------------
 
 await slice3Checks(check, work);
+
+// ---- 14 to 17. slice 3, second session ---------------------------------------------
+
+await slice3bChecks(check, work);
 
 // ---- 9. the slice-2 and slice-3 tests against the witness engine -------------------
 
