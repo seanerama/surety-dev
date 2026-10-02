@@ -220,6 +220,19 @@ export function redactValue<T>(value: T): T {
   return value;
 }
 
+// The earliest position from which the rest of `buf` is a proper beginning
+// of some form, or `buf.length` if no end of `buf` can begin one. Used only
+// where the end of `buf` holds no escape sequence, so its decoded view is the
+// bytes themselves.
+function possibleStart(buf: Buffer, forms: Form[]): number {
+  const longest = Math.max(...forms.map((f) => f.bytes.length));
+  for (let p = Math.max(0, buf.length - (longest - 1)); p < buf.length; p++) {
+    const rest = buf.subarray(p);
+    if (forms.some((f) => rest.length < f.bytes.length && f.bytes.subarray(0, rest.length).equals(rest))) return p;
+  }
+  return buf.length;
+}
+
 // A stream through the redactor. What `push` returns is safe to store: it
 // holds back the bytes that could be the start of a secret, in any form,
 // until it is known whether they are, and `end` gives what is held back.
@@ -250,8 +263,13 @@ export class StreamRedactor {
       // sequence begins, never inside one, so the next view reads it whole.
       const longest = Math.max(...forms.map((f) => f.bytes.length)) * MAX_EXPANSION;
       const limit = Math.max(0, buf.length - (longest - 1));
-      spans = spans.filter((s) => s.start < limit);
-      keep = limit;
+      // Where no escape sequence can be under way, only what could still
+      // become a secret is held back: the longest end of `buf` that is the
+      // beginning of a form. Everything before it is released now, so output
+      // reaches its readers as it is written (SEAM.md §92), not a window
+      // later.
+      keep = buf.subarray(limit).includes(BACKSLASH) ? limit : possibleStart(buf, forms);
+      spans = spans.filter((s) => s.start < keep);
       if (view) while (keep > 0 && !view.boundary[keep]) keep--;
       const last = spans[spans.length - 1];
       if (last) keep = Math.max(keep, last.end);

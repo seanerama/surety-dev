@@ -135,6 +135,22 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
     ),
   }));
   const workspace = db.prepare('SELECT "id", "path", "disposition" FROM "workspaces" WHERE "run" = ?').get(args.run) ?? null;
+  // A checkpoint the role asked for is pending until its snapshot is
+  // committed as a checkpoint revision; a request is not a checkpoint (Review
+  // N06; SEAM.md §95). A run that ended without one never had it.
+  let asked = false;
+  try {
+    asked = (JSON.parse((run.result_value as string | null) ?? 'null') as { checkpoint?: unknown } | null)?.checkpoint === true;
+  } catch {
+    asked = false;
+  }
+  const revision = db.prepare(`SELECT "id" FROM "revisions" WHERE "created_by_run" = ? AND "kind" = 'checkpoint' ORDER BY "recorded_at", "id" LIMIT 1`).get(args.run) as { id: string } | undefined;
+  const checkpoint = revision
+    ? { status: 'accepted', revision: revision.id }
+    : asked
+      ? { status: run.state === 'ended' ? 'not_taken' : 'pending', revision: null }
+      : null;
+  const successor = db.prepare('SELECT "id" FROM "runs" WHERE "parent_run" = ? ORDER BY "seq" LIMIT 1').get(args.run) as { id: string } | undefined;
   return {
     run: {
       id: run.id,
@@ -149,7 +165,9 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       backend: run.backend,
       base_revision: run.base_revision,
       deadline_at: run.deadline_at,
-      parent_run: run.parent_run,
+      parent_run: run.parent_run ?? null,
+      successor_run: successor?.id ?? null,
+      checkpoint,
       grant: run.grant,
       domains,
       receipts,
