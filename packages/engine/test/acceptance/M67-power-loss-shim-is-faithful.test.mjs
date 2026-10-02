@@ -15,6 +15,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +31,7 @@ const SYNCED = ['-c', 'core.fsync=all', '-c', 'core.fsyncMethod=fsync'];
 const UNSYNCED = ['-c', 'core.fsync=none'];
 
 // A directory to cut power in, and the shim built for it.
-function session(t, make = () => {}) {
+function session(t, make) {
   const root = makeTempDir('powerloss');
   t.after(() => removeDir(root));
   const target = join(root, 'target');
@@ -42,7 +43,7 @@ function session(t, make = () => {}) {
 
 // Run the SQLite writer under the shim until it has done its steps, then cut power under it.
 async function writeThenCut(t, steps) {
-  const { target, power } = session(t, (dir) => makeRepo(dir));
+  const { target, power } = session(t, (dir) => mkdirSync(dir));
   const file = join(target, 'store.db');
   const child = spawn(process.execPath, [SQLITE_CHILD, file, ...steps], { env: { PATH: process.env.PATH, ...power.env() }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => child.kill('SIGKILL'));

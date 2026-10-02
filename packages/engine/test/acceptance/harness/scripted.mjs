@@ -19,6 +19,12 @@ export const VALID_RESULT = Object.freeze({ status: 'completed', summary: 'scrip
 // The protocol line that carries a valid result, without its line ending.
 export const RESULT_LINE = JSON.stringify({ type: 'result', result: VALID_RESULT });
 
+// The protocol lines a `usage` and a `result` step write, without their line
+// ending, exactly as scripted/child.mjs writes them: a test that knows a
+// role's script knows the role's standard output byte for byte.
+export const usageLine = (raw, semantics = 'cumulative') => JSON.stringify({ type: 'usage', semantics, raw });
+export const resultLine = (value = VALID_RESULT) => JSON.stringify({ type: 'result', result: value });
+
 // Script steps, as scripted/child.mjs documents them.
 export const step = {
   usage: (raw, semantics = 'cumulative') => ({ usage: { semantics, raw } }),
@@ -42,6 +48,9 @@ export const step = {
   exit: (code) => ({ exit: code }),
   // Raw text on the role's stdout, exactly as given: no line ending is added.
   stdout: (text) => ({ stdout: text }),
+  // Raw bytes on the role's stdout, exactly as given: a write may end inside
+  // a multibyte character.
+  stdoutBytes: (bytes) => ({ stdout_b64: Buffer.from(bytes).toString('base64') }),
   // `bytes` bytes of filler on the role's stdout, with no line ending.
   stdoutFill: (bytes) => ({ stdout_fill: { bytes } }),
   // Close the role's stdout for good; the role goes on with its next steps.

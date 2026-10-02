@@ -237,3 +237,33 @@ export function seedAttempt(db, project, operation, attemptNumber = 1, status = 
     timeline: '[]',
   });
 }
+
+// A stream before its publication (build spec §6 correction 21; SEAM.md
+// §56): a `records` row that is not published, whose hash and length are not
+// yet known, and one chunk receipt that names it as its parent. Written
+// directly for the append-only case of row M04.
+export function seedStream(db, project) {
+  const id = newId('rec_');
+  return insert(db, 'records', {
+    id,
+    created_at: isoNow(),
+    project,
+    kind: 'transcript',
+    path: `${id}.partial`,
+    redaction_version: 'test-1',
+    published: 0,
+    post_scan: 'pending',
+  });
+}
+
+export function seedChunkReceipt(db, project, record, offset = 0) {
+  return insert(db, 'stream_chunk_receipts', {
+    id: newId('chunk_'),
+    created_at: isoNow(),
+    project,
+    record,
+    offset,
+    length: 4,
+    sha256: fakeSha() + fakeSha().slice(0, 24),
+  });
+}

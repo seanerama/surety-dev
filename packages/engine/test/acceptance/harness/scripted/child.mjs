@@ -36,6 +36,7 @@
 //           {"result": <any JSON value>}
 //           {"stdout": "<raw text written as is>"}
 //           {"stdout_fill": {"bytes": <n>}}                 n bytes of filler, no line ending
+//           {"stdout_b64": "<base64>"}                      those bytes written as is: a write can end inside a multibyte character
 //           {"close_stdout": true}
 //           {"exit": <code>}
 //           {"descendant": {"holds_stdout": <bool, default true>, "on_term": "exit" | "ignore", "chatter_ms": <n, default 0>}}
@@ -320,6 +321,7 @@ async function runSteps(steps, ctx) {
       log('released', { hold: step.hold });
     } else if (step.result !== undefined) emit({ type: 'result', result: step.result });
     else if (step.stdout !== undefined) writeOut(step.stdout);
+    else if (step.stdout_b64 !== undefined) writeOut(Buffer.from(step.stdout_b64, 'base64'));
     else if (step.stdout_fill !== undefined) {
       const chunk = 'x'.repeat(1 << 20);
       for (let left = step.stdout_fill.bytes; left > 0; left -= chunk.length) writeOut(left >= chunk.length ? chunk : chunk.slice(0, left));

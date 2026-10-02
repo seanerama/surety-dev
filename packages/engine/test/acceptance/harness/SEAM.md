@@ -1,6 +1,6 @@
 # The test seam
 
-**Owner:** the Verifier (build spec §4). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
+**Owner:** the Verifier (build spec §4). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). **Extended:** slice 4, 2026-10-02 (sections 52 to 64: rows M59 to M67 and the slice-4 cases of rows M02, M04, M12 and M61; one exit status added to section 1). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
 
 This file states exactly what the engine must provide for the acceptance tests to observe it (build spec §8). The tests are the contract; this file says in prose what they rely on. Where the sources (build spec §2) left a name, code, format or range open, the Verifier fixed it here; section 10 lists those choices. Everything else follows D1 Appendix A as corrected by build spec §6.
 
@@ -30,6 +30,7 @@ The tests run the built binary as `node packages/engine/dist/cli.js serve [flags
 | 4 | The configuration was refused (section 2). |
 | 5 | `token_file_refused`: an existing `api.token` cannot be trusted: it grants a permission to group or others, is not a regular file, or does not hold a well-formed token (section 6). |
 | 6 | The engine could not start listening: `home_unusable` (the engine home cannot be used) or `listen_failed` (the API port cannot be bound). See "A start that fails before listening", below. |
+| 7 | A `surety store` command was refused (section 59). Since slice 4. |
 
 Statuses 4 and 5 are decided from what the engine can read before it takes the lock: such a start writes nothing under `$SURETY_HOME`, takes no lock and opens no store.
 
@@ -1151,3 +1152,294 @@ As in sections 21 and 38. The witness engine was extended to do what sections 39
 Two things found on the way, both in the harness and neither about the engine. `holdGit`'s release could leave the held git call waiting for ever: git reads its configuration more than once, and the second read could arrive while the pipe was still under the name (10 of 40 releases hung before the change; `repos.mjs` now renames the file into place first). And the fact that says whether a registered ref is where the registry expects it was worded so that the expectation accepted both answers; the self-check for it found that.
 
 The witness is still not the engine and not a design for it: it runs its git synchronously inside one process, finds a dead incarnation's children by a marker in their environment, freezes a finalizer's inputs in a column of its own, and knows nothing of gates. Against the slice-2 engine on `main` every case of this session fails at its first slice-3 step, which shows nothing about the cases.
+
+---
+
+# Slice 4: ledger, records, backup and power loss
+
+Sections 52 to 64 were written with the slice-4 acceptance tests (2026-10-02): rows M59 to M67, and the cases of rows M02, M04, M12 and M61 that earlier slices left for this one. They follow D1 §§3.6, 6.5, 6.6, 13, 14 and 16.2, E16b and E16c, with build spec §6 correction 21. Where those left something open, the choice is listed in section 63.
+
+**The procedure changed with this slice** (E31). Nothing stands behind these tests but the sources and a reading of the test: there is no stand-in engine and no self-check for them, and the frozen one under `selfcheck/` was neither extended nor run. The cases are few, by the owner's decision: one test per row, and a separately reported case only where the Plan names a finite case set. Only the five shim cases of row M67 were run, because only they need no engine (section 60). A defect in any other test will show during the build and goes through the objection procedure (build spec §4).
+
+## 52. What the slice-4 tests assume throughout
+
+- **Runs.** Most cases dispatch `verification` work, which completes on a valid result and integrates nothing. The cases that need a commit use `fix`.
+- **The role's output is known byte for byte.** A scripted role writes exactly what its script says (`usageLine` and `resultLine` in `scripted.mjs` give the protocol lines as `scripted/child.mjs` writes them). Where a case compares a transcript with what the role wrote, the role waits silently (`heartbeat_ms: 0`), so no heartbeat line is in its output.
+- **Policy.** The budget cases lower a budget through `POST /v1/projects/:p/policy` (section 27). Lowering a limit widens nothing.
+- **The day.** A day budget is counted per UTC day of the engine's clock. The budget cases wait out midnight if it is less than two minutes away (`awayFromMidnight` in `ledger.mjs`).
+- **The clock.** One case moves it: the retention case jumps 91 days in one step, with no run under way, and does not restart the engine afterwards.
+- **Faults that keep failing.** A fault can now be armed for many transactions and taken away again (section 61), so that a case can show what the engine does when a store transaction or read fails every time, whatever the engine's own number of retries.
+
+## 53. The scripted provider: its usage and its normalization
+
+A real adapter declares what its provider reports and how that is normalized (D1 §13.2). For the scripted provider the Verifier fixes both here.
+
+**What a `usage` line's `raw` may hold.** All keys are optional.
+
+| Key | Meaning |
+|---|---|
+| `input_tokens` | billable input tokens, cache reads not included |
+| `cache_read_tokens` | input tokens read from cache |
+| `output_tokens` | output tokens |
+| `cost_usd` | the cost the provider reports, a number |
+| `model` | the model the provider says it used |
+
+**Folding observations** (D1 §3.6). An invocation's observations are folded key by key: for `cumulative` observations the value is that of the latest observation that carries the key; for `delta` observations it is the sum over the observations that carry it. A key no observation carries is unknown. The tests never mix the two semantics in one invocation.
+
+**Normalization `scripted-1`.** `billable_in` is `input_tokens`, `cached_in` is `cache_read_tokens`, `out` is `output_tokens`; an unknown key gives `null`, never zero, and cache reads are never added to `billable_in`. `model_observed` is `model`, or null. Cost:
+
+| What is known | `cost_status` | `cost_usd` |
+|---|---|---|
+| `cost_usd` greater than zero | `reported` | that number |
+| `cost_usd` equal to zero | `measured_zero` | `0` |
+| no `cost_usd`; `model` is in the price table and all three token amounts are known | `estimated` | by the table |
+| anything else, an invocation with no observation included | `unknown` | `null` |
+
+**The price table `scripted-prices-1`** has one model, `scripted-priced`: 2 USD per million `billable_in`, 0.5 USD per million `cached_in`, 8 USD per million `out`. It is the one labeled rule by which a cost that was not reported becomes a number.
+
+**The original ledger row** (D1 §13.1; section 16 fixed when it is written and that there is one). Its `provider` is `scripted`. `normalization_version` starts with `scripted-1`, and on an estimated row also contains `scripted-prices-1`. `raw_usage` is JSON text; for an invocation with one observation it equals that observation's `raw` (for several it is not pinned). `usage_complete` is 1 when the role ended by itself and at least one usage observation was recorded: the figures are then the provider's last word. It is 0 when the engine ended the invocation (a Stop, a deadline, a budget, a recovery after a crash) or when nothing was observed: what was observed is kept in the row, and the remainder is unknown.
+
+## 54. The ledger: corrections, the fold, and the read
+
+**A correction** (D1 §§3.6, 13.1; Review N04) is a ledger row with `corrects` naming the invocation's original row and `correction_seq` counting from 1. Its identity is `(invocation, correction_seq)`. It carries deltas: `billable_in`, `cached_in` and `out` are the normalized amounts of its own `raw_usage`, null where the raw has no such key. If its raw has `cost_usd`, the row's `cost_usd` is that number, a delta, and its `cost_status` is `reported`; otherwise `cost_usd` is null and `cost_status` repeats the status in force before it. `usage_complete` is what the correction says, or, if it says nothing, what was in force before it. `invocation` and `run` are the original's, and so is `day_utc`: a correction belongs to the day of the invocation it corrects. Appending one emits `ledger.correction`. The original row is never changed (section 8).
+
+In M1 a correction comes from the scripted provider through a harness route (no public route appends one):
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /v1/harness/ledger/corrections` | `{"invocation", "correction_seq", "raw", "usage_complete"?}` | **201** `{"ledger_row": {"id"}, "created": true}` when that identity had no row: one correction row is appended through the engine's own transition. **200** `{"ledger_row": {"id": <the existing row>}, "created": false}` when it has one: nothing is written, however often and after however many restarts it is sent. |
+
+**The fold** of one invocation is its original row and its corrections in `correction_seq` order: each token amount is the sum of the rows that know it, and null if none does; `cost_usd` likewise; `cost_status` and `usage_complete` are those of the last row. Each row counts once.
+
+**`GET /v1/projects/:p/ledger`** (D1 §11.3), optionally with `?day=YYYY-MM-DD`. **200**:
+
+```json
+{"day": null, "rows": [...], "totals": {...}, "by_role": {"verifier": {...}}, "budget": {"exhausted": []}}
+```
+
+- `rows`: the project's ledger rows, originals and corrections, in the order they were written. Each has at least `id`, `billable_in`, `cached_in`, `out`, `cost_status`, `cost_usd`, `corrects` and `correction_seq` with the stored values; the tests compare those. With `day`, the rows of the invocations whose original row has that `day_utc`; without it, every row, and `day` is null.
+- `totals`, over the invocations in scope, each folded:
+
+| Key | Value |
+|---|---|
+| `invocations` | the number of original rows. A dispatch refused before launch has none and is not counted. |
+| `billable_in`, `cached_in`, `out` | the sum over the invocations that know the amount; `null` when none does |
+| `usage_incomplete` | the number of invocations whose `usage_complete` is false |
+| `reported_usd` | the sum of `cost_usd` over the invocations whose status is `reported` or `measured_zero`; `null` when there is none |
+| `estimated_usd` | the same for `estimated` |
+| `unknown_cost_invocations` | the number of invocations whose status is `unknown` |
+| `unknown_cost_tokens` | the billable tokens (`billable_in` plus `out`, as far as known) of those invocations; `null` when there is none |
+
+  A sum is null, not zero, when nothing contributed to it: a project that dispatched nothing reports `invocations: 0` and null amounts.
+- `by_role`: the same object for each role that has an invocation in scope; `{}` when there is none.
+- `budget`: section 55.
+
+## 55. Budgets
+
+(D1 §13.3; E16b; D1-13.) The limits are the project settings `budget_run_billable_tokens`, `budget_day_verified_usd` and `budget_day_unknown_tokens`. An invocation's billable tokens are `billable_in` plus `out`; cache reads do not count.
+
+**What is spent.** A run's spend is its invocation's billable tokens as observed so far. A project's day is the UTC day of the engine's clock; its unknown-cost tokens are the billable tokens of that day's invocations whose cost is unknown, and its verified cost is the reported cost of that day's invocations, the invocation under way included, from its observations as they arrive. Whether an estimated cost counts against `budget_day_verified_usd` is not pinned.
+
+**The enforceable boundary.** The scripted adapter can be stopped at a usage observation. When an observation takes the run over `budget_run_billable_tokens`, or the project's day over one of the two day limits, the engine ends the run through the run-end protocol (section 16): `stopped` / `budget`, the run's `code` is `budget_exhausted`, termination is observed before the run ends, the workspace is retained, the usage observed is kept and charged with `usage_complete` 0, and the role's output up to its termination is its transcript (section 56). The work item is `parked` with `blocker.reason` the limit's key and one open `blocker` decision that offers `retry` and `cancel` (section 17). `retry` makes the work eligible again; its next run is a new invocation with its own charge. Work that had completed is not run again.
+
+**At dispatch.** A project whose day has reached one of its day limits is not dispatched: no run is created, its eligible work stays eligible, and other projects go on. `GET /v1/projects/:p/ledger` reports it in every response as `budget.exhausted`: the keys of the day limits the project's current day has reached, sorted; `[]` when none. The tests only ever put a project clearly over a limit; what holds at exactly the limit is not pinned.
+
+**A budget that cannot be read** (D1 §6.6, D1-13). A budget check reads the ledger. If that read fails, the check has failed: nothing of the project is dispatched on it, whatever an earlier check found (the fault `budget_read`, section 61).
+
+## 56. Records: the durable path, streams and chunk receipts
+
+(D1 §§3.6, 14.1; build spec §6 correction 21.) A record is a row of `records` and a file under `$SURETY_HOME/records/`. `records.path` is that file's path relative to `$SURETY_HOME/records/`.
+
+**A stream's identity is its `records` row, before publication.** A streamed record is registered when the stream begins: a row with `published` 0, whose `sha256` and `bytes` are null (they are not known yet; D1 A.3 marks both required, which correction 21 cannot keep) and whose `path` names the file its chunks are written to. Its `stream_chunk_receipts` rows reference it. An unpublished stream is not a record anyone may depend on: no run names it, the API does not serve it, and from slice 5 it is never gate evidence.
+
+**Chunks.** A chunk is at most 1 MiB (1,048,576 bytes). A full chunk is made durable without waiting for the stream to end; the last, shorter chunk when it ends. A chunk receipt (`record`, `offset`, `length`, `sha256`) is written only when its bytes are durable in the stream's file. A record's receipts are contiguous from offset 0. Receipts are append-only (section 8's rule; row M04).
+
+**Publication.** When the stream has ended the file is synced, renamed to its immutable name, its directory synced, and then, in a transaction, the row gets its `sha256`, its `bytes`, its final `path` and `published` 1, with `record.written` (`subject.record`, `subject.project`). A published stream's receipts cover exactly its bytes. A record written whole (a result) has no receipts and is published the same way. A transaction refers to a record only once it is published.
+
+**A run's records.** Every launched invocation has a `transcript` stream: the role's standard output, byte for byte, after redaction (section 57). The stream ends when the role's process is gone, however the run ends; so a run that was stopped, or failed, has its transcript too. When the engine accepts a valid result it writes a `result` record: JSON text that parses to the result the role sent. `runs.transcript` and `runs.result` name them, and only published records; they are set no later than the transaction that ends the run. A run that launched nothing has neither.
+
+**The cap.** A transcript retains at most 8 MiB (8,388,608 bytes) of a role's output. What the role writes beyond that is still read and acted on as protocol, and is not retained. A transcript that does not hold all the role wrote is not published: the stream stays unpublished with the chunks it retained, and the run's `transcript` stays null. The run ends as the role earned.
+
+**After a crash.** A stream that was not published when the engine died stays unpublished: recovery cannot know it to be whole. Its receipts and its retained bytes stay as they were, which is how known output is told from an unknown remainder. One exception is allowed and not required: a stream whose every byte had been written and synced may be published by recovery, whole. A record whose publication had been committed is whole on restart.
+
+**Barriers** (`pause` and `kill` as in section 18), for a streamed record:
+
+| Name | Fires |
+|---|---|
+| `stream.before_registration` | when the engine first has output of an invocation to retain, before the stream's row is committed |
+| `stream.chunk_durable` | after the first chunk receipt of a stream is durable |
+| `stream.before_rename` | when the stream has ended and its file is synced, before the rename |
+| `stream.published` | after the transaction that publishes the record, before any transaction refers to it |
+
+**Post-write scan.** `post_scan` is `pending` until the scan of the stored bytes has run, then `clean` or `hit` (section 57). A published record is served while it is `pending` or `clean`. Where a case is about the scan, it waits for it.
+
+**`GET /v1/projects/:p/records/:id`** (D1 §11.3). **200** with the record's bytes as the body (`Content-Type: application/octet-stream`). Refusals, in the usual shape:
+
+| Status, code | When |
+|---|---|
+| 404 `not_found` | no such record, or it is not of project `:p` |
+| 409 `record_unpublished` | the record is a stream that is not published |
+| 410 `record_expired` | the record has expired (section 58) |
+| 409 `record_missing` | its bytes are missing or do not have its hash (section 58) |
+| 409 `record_quarantined` | a detector matched it (section 57) |
+
+Unknown is not empty: none of these is ever answered with 200 and an empty body.
+
+## 57. Redaction, and a detector registered later
+
+(D1 §§14.2, 17(5); E16c.) Every secret value the engine holds is redacted from a record's bytes before they reach the disk, and from anything else derived from a role's output: store rows, events, logs under the engine home, API responses. The match is made on the stream, not on the pieces it arrives in: a secret is found when it is split between two writes of the role, when it lies across the boundary of a stored chunk, and when a write ends inside one of its multibyte characters. The text around it is retained. What is put in its place is not pinned. `records.redaction_version` is a non-empty string.
+
+M1 resolves no real secret, so the tests give the redactor one, and later a detector, through harness routes:
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /v1/harness/secrets` | `{"ref", "value"}` | **2xx**. From now on the engine holds `value` as the resolved secret `ref`, in memory only: it is written nowhere. |
+| `POST /v1/harness/detectors` | `{"name", "pattern"}` | **2xx**. Registers a detector: `pattern` is the source of an ECMAScript regular expression (the tests use ASCII). Registration starts a rescan of the stored records. |
+
+**A later hit.** A stored record that a detector matches gets `post_scan` `hit`, and one `record.secret_found` event (`subject.record`, `subject.project`). It is no longer served (`record_quarantined`). Records the detector does not match stay `clean` and served. The Critical finding D1 §14.2 raises, and the quarantine of evidence and gates that depend on the record, are slice 5's.
+
+## 58. Retention, and bytes that are missing or corrupt
+
+(D1 §14.3, §16.1 step 5.) A record is retained while something live refers to it. In slice 4 the one such thing is a run whose work item is not terminal (`complete` or `cancelled`): the records of a `held` item's run are retained however old they are. Decisions, findings, gate evaluations, effect intents and journal entries refer to no record before slice 5.
+
+**Expiry.** A published record nothing refers to expires once `record_retention_days` have passed (default 90). The test lets the whole period pass in one jump of the clock after the record's work is over, so it does not pin whether the days count from the record's publication or from the moment nothing referred to it. The tick performs it: the file is removed, the row is kept with `path` null and its `id`, `kind`, `sha256`, `bytes` and `published` as they were, and `record.expired` is emitted (`subject.record`). Reading it is **410** `record_expired`.
+
+**The audit at startup.** The `recovery` step checks every published, unexpired record that something refers to: a file that is missing, or whose bytes do not have the recorded hash, gets one `record.missing` event (`subject.record`), before the engine reaches full mode. The engine reaches full mode all the same. Reading such a record is **409** `record_missing`. That its dependent gates report `EVIDENCE_MISSING` is slice 5's.
+
+## 59. Backup and restore; a repository that moved
+
+(D1 §§6.5, 11.6.) `surety store …` commands run against `$SURETY_HOME` while no engine holds it. The tests run them as `node packages/engine/dist/cli.js store …` with section 1's environment.
+
+**`surety store backup [--database-only]`.** Exit status 0, and on stdout one last line that is a JSON object `{"backup": <the directory it wrote, absolute>, "label": "complete" | "incomplete_for_recovery"}`. The directory is under `$SURETY_HOME/backups/` and is self-contained apart from the git objects: it can be copied elsewhere and restored from there. It holds `manifest.json`:
+
+```json
+{"label": "complete",
+ "store": {"file": "store.db", "sha256": "…", "bytes": 0},
+ "records": [{"id": "rec_…", "file": "records/…", "sha256": "…", "bytes": 0}],
+ "git": [{"project": "proj_…", "objects": ["<commit id>"]}]}
+```
+
+`file` paths are relative to the backup directory. `store` is a consistent snapshot of the database. `records` lists every published, unexpired record the snapshot refers to, each copied into the backup. `git` lists, per project, the commits the snapshot refers to (every `revisions.sha` at least); they are not copied: the engine keeps each reachable in the repository from a ref it has registered (section 28), so that a garbage collection does not remove them. With `--database-only` only the snapshot is written, and the label, in the manifest and on stdout, is `incomplete_for_recovery`.
+
+**`surety store restore --from <backup directory> --bind <project id>=<repository path>`**, one `--bind` per project, into a `$SURETY_HOME` that has no store (it may hold a `config.json`). The command verifies the whole closure before it writes anything: the label, every member's presence, length and hash, and that every listed git object exists in the repository bound to its project. Then it installs the store and the records and records each project's repository path as bound. Exit status 0. An engine started on that home goes through recovery and integrity as on any start and reaches full mode; the API token is that home's own.
+
+A restore that cannot be verified is refused with exit status **7** and section 1's one-line refusal on stderr, and leaves no `store.db` in the home:
+
+| `code` | When |
+|---|---|
+| `backup_incomplete` | a member is missing, a member's length or hash differs, a listed git object is missing from the bound repository, or a project has no binding |
+| `incomplete_for_recovery` | the backup's label says it is a database-only copy |
+
+Not pinned: the name of a backup directory; the scheduler's daily backup, `engine.backup` and `backup_keep`; `surety store export` and `import`; what a restored engine does about workspaces, which are not part of a backup; that a store command is refused with status 3 while an engine holds the lock.
+
+**A repository that moved.** A project whose repository is no longer at `dev_repo_path` is a project whose repository cannot be read (section 32): the engine reaches full mode and dispatches nothing of it. `POST /v1/projects/:p/rebind` with `{"dev_repo_path": <the new absolute path>}` binds it again: **200**, `projects.dev_repo_path` is the new path, and the next integrity observation is made there. Reads that do not need the repository (the ledger, the records) answer before and after as they did. What the route answers for a path that is not that project's repository is not pinned.
+
+## 60. Power loss: the shim, and what it stands for
+
+(Plan M67 and §2 resource V; D1 §18; E31 item 5.) Row M67 cuts power with an unprivileged shim, `powerloss/shim.c`: a library compiled with `cc` at test time into the test's temporary directory and loaded with `LD_PRELOAD` into the process under test. If it cannot be compiled or does not load, the case fails. `powerloss.mjs` is its test side.
+
+**The model.** A regular file's durable content is what it held at its last `fsync` or `fdatasync`, or at the start of the session if it has not been synced since. A file created during the session and never synced holds nothing. Names are durable at once: a creation, a rename, a link or a removal is kept as the process left it, and a synced file keeps its synced content under whatever name it has at the cut.
+
+**The mechanism.** The shim changes nothing a call does. After a successful `fsync` or `fdatasync` it copies the file, as it is then, into its control directory under a key that identifies the file and not its name (device, inode number and birth time), so a file synced under a temporary name and then renamed is found under its final one. `sync` and `syncfs` copy every regular file under the session's directories. When the process starts another (`execve`, `execv`, `execvp`, `execvpe`, `posix_spawn`, `posix_spawnp`), the shim adds itself to the child's environment if it is not there: the engine constructs its children's environments (D1 §7.1), and its git must be under the shim all the same. A session begins with `baseline()`, taken while nothing is writing: everything on disk then is durable. `cut()` kills, with SIGKILL, every process the shim is in; then every regular file under the session's directories is given the content of its copy, and a file with no copy is emptied. Directories, links and names are left as they are.
+
+**What "synced" means for the two things under test.**
+
+- *SQLite, WAL mode, `synchronous=FULL`.* The driver's SQLite calls the C library's `fsync` or `fdatasync` on the write-ahead log at every commit and on the database file at every checkpoint, and the shim sees those calls. After a cut the log is as it was at the last commit's sync and the database file as it was at the last checkpoint's; SQLite recovers the committed transactions from that pair as it does after any crash. The shared-memory file is never synced, is emptied by the cut, and is rebuilt by the first connection. A transaction committed under a weaker setting was never synced and is gone.
+- *git.* git writes an object or a ref into a temporary file or a lock file and renames it into place; it syncs that file first only if `core.fsync` covers the component (by default it covers neither loose objects nor refs). Synced, the content survives under the final name. Not synced, the final name is there after the cut and the file is empty: an object that cannot be read, a ref that does not resolve. That is what the shim's two git cases show, and it is why an engine whose store records a git effect must have made git sync it. git syncs no directory, which the model does not ask for. A worktree's metadata and checked-out files are synced by no git setting: a workspace made since the last `sync` does not survive a cut.
+
+**The shim is shown faithful** by `M67-power-loss-shim-is-faithful.test.mjs`, five cases that need no engine and pass today: a transaction committed through the pinned driver under `synchronous=FULL` survives a cut; one committed under `synchronous=OFF` after it does not, and the first still does; a commit and a branch written by git with `core.fsync=all` survive; a commit and a branch written with `core.fsync=none` do not, while what was synced in the same session does; and a git started by a process under the shim, with an environment that process constructed, is under the shim.
+
+**The engine under the shim** (`M67-power-loss-durability.test.mjs`). A project is set up by an engine that is then stopped, and the session begins there. The engine is started under the shim with one barrier armed to pause, ticked, and waited for at the barrier; power is cut; the engine is started again without the shim. The three boundaries are the Plan's:
+
+| Boundary | Barrier | Required |
+|---|---|---|
+| after an intent commit | `journal.worktree_add.intent_committed` | The dispatch and the operation with its `intended` event are in the store; no worktree exists. Recovery ends the run `recovered` with its work `held`; a Resume completes it with one launch in all. |
+| after a record publication | `stream.published` | The transcript's row is published and its file holds exactly what the role wrote. The restarted engine serves it and reports no record missing. |
+| after an effect was applied, before its receipt | `journal.ref_update.effect_applied` | The integration's intent is in the store. After recovery the branch is at the run's commit, the registry expects it there, the commit and its content are readable, one commit names the run, and the one ref update is finalized: recovered, not made a second time. |
+
+For the engine this means, at least: the store commits with `synchronous=FULL`; a record's file is synced before it is published; every git write whose effect the store records is synced by git (`core.fsync` covering objects and refs) or by the engine; and nothing the engine needs in order to start, `engine.lock` included, is left unsynced. The engine may run `sync`; the shim honours it.
+
+**What a pass shows.** That the engine and git recover from the state in which every file holds exactly what was last synced, or nothing if it never was, with every name as it was at the cut.
+
+**What it does not show.**
+
+- Anything about names. A rename, creation or removal that a real filesystem could lose because its directory was not synced is kept by the shim. A missing directory sync (D1 §14.1 asks for one after a record's rename) is not detected.
+- Partial loss. Unsynced data is lost whole, never in part, never torn, never reordered; a state in which some later write survived is not produced.
+- Data made durable by a way the shim does not see: `msync`, files opened `O_SYNC` or `O_DSYNC`, `sync_file_range`, io_uring, a direct system call, a statically linked program, a child started through `system`, `popen` or `execl`. The shim takes such data for unsynced, which can fail an engine that is in fact safe, and cannot pass one that is not.
+- File metadata: modes, times, sizes apart from content.
+- The medium. That the host's filesystem and device honour a sync is not tested by anything here (D1 §6.1's refusal to start on storage that does not is an open item; `../COVERAGE.md`).
+- It is not a process kill. Rows M18 and M33 are those, and their results are reported separately (Plan §5).
+
+## 61. Faults, barriers and routes added in slice 4
+
+Every harness route follows section 7's rules.
+
+| What | Form | Meaning |
+|---|---|---|
+| A fault that repeats | `"times": <n ≥ 1>` in the body of any `POST /v1/harness/faults` (default 1) | The fault fires that many times: the next n matching transactions, or reads, fail. |
+| Disarming | `DELETE /v1/harness/faults` | **2xx**. Every fault still armed is taken away. |
+| Budget read | `{"point": "budget_read", "project": "proj_…"}` | The next read of that project's spend that a budget check makes fails as a store error. |
+| Lease read | `{"point": "lease_read"}` | The next read of a run's lease that a launch makes before its spawn (section 18: the check after `launch.before_spawn`) fails as a store error. No role is spawned on it; the run ends `failed` / `infra_error`, its invocation never launched and not charged, and its work is repaired like any failed run's. |
+| Stream barriers | `stream.before_registration`, `stream.chunk_durable`, `stream.before_rename`, `stream.published` | Section 56. |
+| Corrections | `POST /v1/harness/ledger/corrections` | Section 54. |
+| Secrets and detectors | `POST /v1/harness/secrets`, `POST /v1/harness/detectors` | Section 57. |
+
+The `before_event` fault of section 7 is armed in slice 4 on `git.journal_intended` (while it keeps failing, a dispatch makes no worktree and launches nothing) and on `run.validating`.
+
+**A result whose recording keeps failing** (E27; E30 item 9 retries one failure). When the transaction that records a role's valid result fails every time, the engine stops retrying within a minute and ends the run `failed` / `infra_error` with a `reason_text` that says the result could not be recorded. The result is not lost silently: the run's transcript, published as for any run, holds the line the role sent. The work is repaired like any failed run's, one repair attempt charged.
+
+**Public routes added:** `GET /v1/projects/:p/ledger` (section 54), `GET /v1/projects/:p/records/:id` (section 56), `POST /v1/projects/:p/rebind` (section 59). **Commands added:** `surety store backup`, `surety store restore` (section 59), with exit status 7.
+
+## 62. Store rows the slice-4 tests read and write
+
+Names are D1 A.3's (sections 8, 19, 35 and 49 apply), each table with a `project` column.
+
+- `records`: `kind`, `path`, `sha256`, `bytes`, `redaction_version`, `published`, `post_scan`, `post_scan_finding`, `retain_until`. `sha256` and `bytes` are nullable (section 56); `path` is nullable (section 58).
+- `stream_chunk_receipts`: `record` (references `records`), `offset`, `length`, `sha256`. UPDATE and DELETE are refused as section 8 says for the other history tables.
+- `runs.transcript`, `runs.result` (reference `records`, nullable); `runs.reason_text`.
+- `ledger_rows`: every A.3 column; `usage_observations`; `projects.dev_repo_path`; `work_items.blocker`, `repair_attempts`.
+
+The tests write to the store directly in one case, with the engine stopped: row M04 inserts an unpublished stream (`id`, `created_at`, `project`, `kind`, `path`, `redaction_version`, `published` 0, `post_scan` `pending`) and one chunk receipt of it (`id`, `created_at`, `project`, `record`, `offset`, `length`, `sha256`), and then tries to change and to delete the receipt (`seedStream`, `seedChunkReceipt` in `seed.mjs`). The schema must accept those two inserts.
+
+## 63. Names the Verifier fixed in slice 4
+
+Each of these was open in the sources. The Builder may object. Those marked † carry a question for the owner in the Verifier's report.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The scripted provider's usage keys and normalization | Section 53: `input_tokens`, `cache_read_tokens`, `output_tokens`, `cost_usd`, `model`; `scripted-1`. | D1 §13.2 leaves a provider's vocabulary to its adapter. Input and cache reads reported apart is the plainest form in which "billable excludes cache reads" can still be got wrong. |
+| When a cost is estimated † | Only by the price table `scripted-prices-1`, for its one model, when all three token amounts are known. | D1 §3.6: "estimated (from a price table whose version is recorded)". One model and round prices keep the fixture's arithmetic readable. |
+| `measured_zero` | A reported cost of exactly zero. | D1 §13.1: "a dispatched invocation that reported zero". |
+| `usage_complete` † | 1 only for an invocation whose role ended by itself with usage observed; 0 whenever the engine ended it. | D1 §4.5 step 5 gives only the no-usage case. An invocation cut short has an unknown remainder (Plan M60). |
+| A correction's shape and identity; its day | Section 54; `day_utc` is the original's. | D1 §3.6; a correction corrects that day's account. |
+| The fold | Sums of what is known; status and completeness from the last row. | Review N04 asks for a defined fold and gives none. |
+| The correction route | `POST /v1/harness/ledger/corrections`, 201 then 200. | No public route appends a correction; in M1 only the scripted provider sends one. |
+| The ledger read † | Section 54: `rows`, `totals` with nine keys, `by_role`, `budget`; null for a sum nothing contributed to. | D1 §11.3 names the route and "per-role totals, verified and unknown separately". Reported and estimated are kept apart so that no total mixes them (E16b). |
+| Billable tokens | `billable_in` plus `out`. | E16b: "billable tokens ... with cache reads recorded separately". |
+| The scripted adapter's enforceable boundary | A usage observation. | D1 §13.3: adapters declare what they can enforce. |
+| What a budget stop leaves † | Run `stopped` / `budget`, code `budget_exhausted`; work `parked`, blocker reason the limit's key, `retry` and `cancel`. | D1 §4.1 and §13.3 ("parks the item, raises a blocker"); the reason names the limit, as in section 15. |
+| A project over a day limit at dispatch † | Not dispatched; its work stays `eligible`; reported as `budget.exhausted`. | D1 A.5 has no edge from `eligible` to `parked`; §13.3 "pauses dispatch for the project". |
+| Whether an estimate counts as verified cost | Not pinned. | "Verified" can be read either way; the tests use reported costs only. |
+| The stream's identity † | The `records` row itself, `published` 0, with null `sha256` and `bytes`. | Correction 21 asks for a durable pre-publication identity; A.3 already has `published`, and chunk receipts keep their A.3 parent. |
+| Chunk size; when a chunk is durable | At most 1 MiB; a full chunk at once. | D1 §14.1 gives no size. A bound is what makes "long output is retained as it comes" testable. |
+| The transcript | The role's standard output, byte for byte, after redaction. | D1 names the kind and not its content. |
+| The cap on a role's output † | 8 MiB retained; beyond it the transcript is not published. | E25 asks for a cap. A truncated transcript published as a record would be a "prematurely complete transcript" (Plan M63); A.3 has no column to mark one. |
+| A stream cut by a crash | Stays unpublished. | D1-23: "record either fully published or absent". |
+| Stream barrier names | `stream.<point>`, four. | Plan M63's four crash points. |
+| Record read statuses and codes | Section 56: `record_unpublished`, `record_expired`, `record_missing`, `record_quarantined`. | A.7 has none; the names follow the events `record.expired`, `record.missing`. |
+| Secret and detector routes | `POST /v1/harness/secrets`, `POST /v1/harness/detectors`. | M1 has no resolver and no public registry. |
+| What a later hit does in slice 4 | `post_scan` `hit`, `record.secret_found`, the record no longer served. | D1 §14.2; the finding is slice 5's. |
+| What refers to a record in slice 4 | A run whose work item is not terminal. | D1 §14.3's list, as far as slice 4 has built it. |
+| When expiry and the audit happen | Expiry at a tick; the audit in the `recovery` step. | D1 §14.3, §16.1 step 5. |
+| Store commands † | Section 59: `surety store backup [--database-only]`, `surety store restore --from … --bind …`; exit status 7; `backup_incomplete`, `incomplete_for_recovery`; the manifest. | D1 §6.5 names the commands and the label. |
+| Rebinding a moved repository † | `POST /v1/projects/:p/rebind`. | Plan M62: "relocate and explicitly rebind the repo"; D1 has no route for it. |
+| A lease read that fails before the spawn | The run ends `failed` / `infra_error`, never launched. | Section 13's row for a role that cannot be spawned. |
+| A result whose recording keeps failing † | Section 61. | E27 left it to this slice: retry, or end with the failure visible. Both: bounded retries, then a failed run that says why. |
+| Repeating faults and their disarming | `times`; `DELETE /v1/harness/faults`. | A one-shot fault cannot tell an engine that retries from one that fails open. |
+| The power-loss model † | Section 60. | E31 item 5 leaves the mechanism to the Verifier. |
+
+## 64. What stands behind these tests before the engine exists
+
+Less than before, by decision (E31). The shim is the one piece with logic of its own, and it is tested: the five cases of section 60 pass on the host these tests were written on (git 2.43, the pinned driver, ext4). It was also loaded once into the slice-2 engine on `main`, outside any test: the shim was in the engine, in each git the engine started and in the role; after a cut the store held the dispatch that had been committed; the workspace made since the session began was empty; and the engine refused to start again, because its `engine.lock` is written and renamed without a sync and was therefore empty. That last observation is the first thing row M67 will ask of the build.
+
+Every other file was checked for syntax, and its imports and names were resolved against the harness; none was run, since each fails at its first slice-4 step on an engine that has none. The shared helpers that changed (`fx.start({env})` in `runs.mjs`; new steps and helpers in `scripted.mjs` and `scripted/child.mjs`; `clearFaults` in `engine.mjs`; `seedStream` and `seedChunkReceipt` in `seed.mjs`) are additions, and `M02-dispatch-identity.test.mjs` was run on the slice-2 engine afterwards and passes. The frozen self-check was not run and is not known to pass or fail with them.
