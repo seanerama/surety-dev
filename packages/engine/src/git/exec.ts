@@ -11,15 +11,15 @@
 // engine's own process tree. So every command line carries settings that
 // outrank every configuration file: no hooks, no file-system monitor, no
 // automatic garbage collection, no attributes file from the engine's home,
-// and every filter driver the repository's configuration names switched off
-// by name (`filterOverrides`). Merge drivers are never reached: the engine
+// and every filter driver that git itself reports for the working copy
+// switched off by name (`filterDrivers`, `filterOverrides`). Merge drivers are never reached: the engine
 // makes no merge (its rebase is done on an index, git/rebase.ts). Diff
 // drivers, signing programs, editors and pagers are not reached by the
 // plumbing commands the engine uses.
 
 import { spawn } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { join } from 'node:path';
 
 export interface GitSettings {
   deadlineSeconds: number;
@@ -88,83 +88,98 @@ const BASE_SETTINGS = [
   '-c', 'maintenance.auto=false',
   '-c', 'commit.gpgSign=false',
   '-c', 'diff.external=',
+  // Every object and ref git writes is synced before it is renamed into
+  // place: the store records git effects, and what it records must survive
+  // a power loss (D1 §18; SEAM.md §60). By the file's own fsync, which is
+  // what a sync is.
+  '-c', 'core.fsync=committed,index',
+  '-c', 'core.fsyncMethod=fsync',
 ];
 
 // ---- filter drivers ------------------------------------------------------------
+//
+// Which filter drivers a command would run is decided by git, from every
+// configuration file git reads for that working copy: the repository's, a
+// worktree's own, every file they include (however the include is spelled
+// and wherever it leads), with section names normalized as git normalizes
+// them. The engine does not parse any of that itself (E33 item 1). Before
+// each command it asks git, with the same git directory, work tree and
+// environment, which `filter.<driver>.<key>` entries it sees, and gives the
+// command an override for exactly those drivers: no clean, smudge or process
+// command, and not required. The overrides travel in GIT_CONFIG_COUNT and
+// its pairs, which git reads after every configuration file and which carry
+// a key as it is, whatever characters its driver name holds. The query
+// itself only reads configuration; it runs no program the configuration
+// names. If git cannot answer it, the command is not run.
 
-const FILTER_SECTION = /^\s*\[\s*filter\s+"((?:[^"\\\n]|\\.)*)"\s*\]/i;
-const FILTER_SECTION_OLD = /^\s*\[\s*filter\.([^\]\s]+)\s*\]/i;
-const INCLUDE_SECTION = /^\s*\[\s*include(?:if\s+"[^"]*")?\s*\]/i;
-const ANY_SECTION = /^\s*\[/;
-const PATH_KEY = /^\s*path\s*=\s*(.*)$/i;
-
-interface ConfigCache {
-  stamp: string;
-  names: string[];
+// The driver names (subsections of `filter`) git sees, or null if git could
+// not say.
+function filterDrivers(ctx: GitContext, env: NodeJS.ProcessEnv, deadlineMs: number): Promise<string[] | null> {
+  return new Promise((resolvePromise) => {
+    const child = spawn('git', [...BASE_SETTINGS, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, 'config', '--null', '--name-only', '--get-regexp', '^filter\\.'], {
+      env,
+      cwd: ctx.workTree,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      detached: true,
+    });
+    const out: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const finish = (value: string[] | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(value);
+    };
+    const kill = () => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+    const timer = setTimeout(() => {
+      kill();
+      finish(null);
+    }, deadlineMs);
+    child.stdout!.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > gitSettings().outputCap) {
+        kill();
+        finish(null);
+        return;
+      }
+      out.push(c);
+    });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => {
+      // 1: no key matched, which is an answer: no driver.
+      if (code === 1) return finish([]);
+      if (code !== 0) return finish(null);
+      const names = new Set<string>();
+      for (const key of Buffer.concat(out).toString('utf8').split('\0')) {
+        if (!key.startsWith('filter.')) continue;
+        const last = key.lastIndexOf('.');
+        if (last <= 'filter.'.length) continue;
+        names.add(key.slice('filter.'.length, last));
+      }
+      finish([...names]);
+    });
+  });
 }
-const configCache = new Map<string, ConfigCache>();
 
-function stampOf(file: string): string | null {
-  try {
-    const st = lstatSync(file);
-    if (!st.isFile()) return null;
-    return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : null;
+// The environment pairs that switch off each of `drivers`.
+function filterOverrides(drivers: string[]): Record<string, string> {
+  const pairs: [string, string][] = [];
+  for (const name of drivers) {
+    for (const [key, value] of [['clean', ''], ['smudge', ''], ['process', ''], ['required', 'false']] as const) pairs.push([`filter.${name}.${key}`, value]);
   }
-}
-
-const unquote = (value: string): string => {
-  let v = value.trim();
-  const hash = v.search(/(^|\s)[#;]/);
-  if (hash >= 0 && !v.startsWith('"')) v = v.slice(0, hash).trim();
-  if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) v = v.slice(1, -1);
-  return v.replace(/\\(.)/g, '$1');
-};
-
-// The filter driver names one configuration file defines, following its
-// include paths. A file that is not a regular file is never opened (it could
-// be a pipe nobody writes to); the last names read from it stand in.
-function filterNames(file: string, depth = 0, seen = new Set<string>()): string[] {
-  if (depth > 8 || seen.has(file)) return [];
-  seen.add(file);
-  const stamp = stampOf(file);
-  const cached = configCache.get(file);
-  if (stamp === 'absent') return [];
-  if (stamp === null) return cached?.names ?? [];
-  let text: string;
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {
-    return cached?.names ?? [];
-  }
-  const names = new Set<string>();
-  let inInclude = false;
-  for (const line of text.split('\n')) {
-    const section = FILTER_SECTION.exec(line) ?? FILTER_SECTION_OLD.exec(line);
-    if (section) names.add(section[1]!.replace(/\\(.)/g, '$1'));
-    if (INCLUDE_SECTION.test(line)) inInclude = true;
-    else if (ANY_SECTION.test(line)) inInclude = false;
-    const path = inInclude ? PATH_KEY.exec(line) : null;
-    if (path) {
-      let target = unquote(path[1]!);
-      if (target.startsWith('~/')) target = join(gitSettings().home, target.slice(2));
-      if (!isAbsolute(target)) target = resolve(dirname(file), target);
-      for (const n of filterNames(target, depth + 1, seen)) names.add(n);
-    }
-  }
-  const out = [...names];
-  configCache.set(file, { stamp, names: out });
-  return out;
-}
-
-// `-c` settings that switch off, by name, every filter driver the
-// repository's configuration (and the worktree's own) defines.
-function filterOverrides(ctx: GitContext): string[] {
-  const names = new Set<string>();
-  for (const n of filterNames(join(ctx.commonDir, 'config'))) names.add(n);
-  if (ctx.gitDir !== ctx.commonDir) for (const n of filterNames(join(ctx.gitDir, 'config.worktree'))) names.add(n);
-  return [...names].flatMap((name) => ['-c', `filter.${name}.clean=`, '-c', `filter.${name}.smudge=`, '-c', `filter.${name}.process=`, '-c', `filter.${name}.required=false`]);
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(pairs.length) };
+  pairs.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = key;
+    env[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  return env;
 }
 
 function gitEnv(home: string, operation: string | undefined, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -185,20 +200,27 @@ function gitEnv(home: string, operation: string | undefined, extra: Record<strin
   return env;
 }
 
-export function git(ctx: GitContext, args: string[], opts: GitOptions = {}): Promise<GitResult> {
-  const { outputCap, home } = gitSettings();
+export async function git(ctx: GitContext, args: string[], opts: GitOptions = {}): Promise<GitResult> {
+  const { home } = gitSettings();
   const deadlineMs = (opts.deadlineSeconds ?? gitSettings().deadlineSeconds) * 1000;
+  const env = gitEnv(home, opts.operation, opts.env);
+  // Measured on the monotonic clock: the query and the command share the
+  // deadline.
+  const started = performance.now();
+  const drivers = await filterDrivers(ctx, env, deadlineMs);
+  if (drivers === null) {
+    return { code: -1, stdout: '', stderr: 'the filter drivers of this working copy could not be read from git, so the command was not run', timedOut: false };
+  }
+  return run(ctx, args, { ...env, ...filterOverrides(drivers) }, opts.input, Math.max(1, deadlineMs - (performance.now() - started)));
+}
+
+function run(ctx: GitContext, args: string[], env: NodeJS.ProcessEnv, input: string | Buffer | undefined, deadlineMs: number): Promise<GitResult> {
+  const { outputCap } = gitSettings();
   return new Promise((resolvePromise) => {
-    let overrides: string[];
-    try {
-      overrides = filterOverrides(ctx);
-    } catch {
-      overrides = [];
-    }
-    const child = spawn('git', [...BASE_SETTINGS, ...overrides, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
-      env: gitEnv(home, opts.operation, opts.env),
+    const child = spawn('git', [...BASE_SETTINGS, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
+      env,
       cwd: ctx.workTree,
-      stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       // Its own process group, so that a kill at the deadline reaches every
       // process the command started.
       detached: true,
@@ -227,9 +249,9 @@ export function git(ctx: GitContext, args: string[], opts: GitOptions = {}): Pro
     };
     child.stdout!.on('data', (c: Buffer) => take(c, out));
     child.stderr!.on('data', (c: Buffer) => take(c, err));
-    if (opts.input !== undefined) {
+    if (input !== undefined) {
       child.stdin!.on('error', () => {});
-      child.stdin!.end(opts.input);
+      child.stdin!.end(input);
     }
     // Node's timers run on the monotonic clock: a wall clock that steps
     // back cannot stretch the deadline.
