@@ -5,7 +5,8 @@
 // It exists for the reason witness-schema.sql does. The slice-2 acceptance
 // tests were written before the engine they test, so running them could not
 // show they are right. This single-file stand-in does what SEAM.md §§12–18
-// ask, as plainly as it can, so that the self-check can show two things:
+// ask (with the amendments of §22, made after the slice-2 review), as plainly
+// as it can, so that the self-check can show two things:
 //   - the tests are satisfiable: every one of them passes against something;
 //   - the tests bite: with one defect switched on (WITNESS_MUTANT), the test
 //     meant to catch that defect fails.
@@ -159,7 +160,15 @@ function insert(table, row) {
 const json = (text) => (text === null || text === undefined ? text : JSON.parse(text));
 
 const FIXTURE = { test_fixture: true };
+// One-shot `before_event` faults (SEAM.md §7): the transaction about to write
+// an event of that type fails after its domain writes and before the event.
+const eventFaults = [];
 function emit(type, subject, payload = {}, actor = {}) {
+  const armed = eventFaults.findIndex((f) => f.event_type === type);
+  if (armed >= 0) {
+    eventFaults.splice(armed, 1);
+    throw new Error(`injected fault before event ${type}`);
+  }
   const seq = one('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "events"').n;
   insert('events', {
     id: newId('ev_'),
@@ -244,6 +253,10 @@ function takeFault(step, project) {
 
 const qualified = () => opt.harness && opt.scripted !== null;
 
+// The live processes that carry the domain's marker. A process whose
+// environment cannot be read is not counted (SEAM.md §14, "What `auto` does
+// not see"): every exiting process is unreadable for a moment, the role
+// itself included, and so are some lasting processes of the same user.
 function members(domain) {
   const marker = `SURETY_DOMAIN=${domain}`;
   const pids = [];
@@ -252,7 +265,7 @@ function members(domain) {
     try {
       if (readFileSync(`/proc/${name}/environ`, 'utf8').split('\0').includes(marker)) pids.push(Number(name));
     } catch {
-      // not ours to read, or gone
+      // gone, going, or not ours to read
     }
   }
   return pids;
@@ -397,10 +410,17 @@ const activeRuns = (project) =>
 function gitDir(project) {
   return one('SELECT * FROM "projects" WHERE "id" = ?', project);
 }
+// Engine git runs no code from the repository (SEAM.md §16 "Engine git"):
+// hooks are switched off on every call, whatever the repository configures.
+const NO_REPOSITORY_CODE = ['-c', 'core.hooksPath=/dev/null'];
 const git = (repo, args) =>
-  execFileSync('git', ['--git-dir', join(repo, '.git'), ...args], { env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' }).trim();
+  execFileSync('git', [...(mutant('hooks_run') ? [] : NO_REPOSITORY_CODE), '--git-dir', join(repo, '.git'), ...args], {
+    env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
 
-function journal(project, runId, kind, eventKinds) {
+function journal(project, runId, kind, eventKinds, status = 'succeeded') {
   const op = newId('op_');
   insert('operations', {
     id: op,
@@ -412,7 +432,7 @@ function journal(project, runId, kind, eventKinds) {
     subject: '{}',
     idempotency_key: createHash('sha256').update(`${kind}:${runId}`).digest('hex'),
     semantic_generation: 1,
-    status: 'succeeded',
+    status,
     deadline_at: iso(now() + 60_000),
     finalized_at: iso(),
   });
@@ -500,6 +520,16 @@ async function dispatch(item) {
   const workspace = join(home, 'workspaces', id);
   mkdirSync(join(home, 'workspaces'), { recursive: true });
   git(project.dev_repo_path, ['worktree', 'add', '--detach', workspace, base]);
+  if (mutant('worktree_probe_literal_path')) {
+    // The defect: the probe looks for the path as given in a list that git
+    // prints with symbolic links resolved, and takes a miss for "not added".
+    const listed = git(project.dev_repo_path, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${workspace}`);
+    if (!listed) {
+      tx(() => journal(item.project, id, 'worktree_add', ['intended', 'failed'], 'failed'));
+      live.get(id).spawned = false;
+      return void endRun(id, 'failed', 'infra_error');
+    }
+  }
   tx(() => {
     journal(item.project, id, 'worktree_add', ['intended', 'applied', 'confirmed', 'finalized']);
     const ws = newId('ws_');
@@ -512,6 +542,22 @@ async function dispatch(item) {
 }
 
 const closing = (runId) => one(`SELECT COUNT(*) AS n FROM "leases" WHERE "resource_id" = ? AND "resource_kind" = 'run' AND "released_at" IS NULL AND "closing" = 0`, runId).n === 0;
+// D1 §8.3: a callback or a renewal is accepted only on an unexpired lease. Expiry is final.
+const activeLease = (runId) => one(`SELECT * FROM "leases" WHERE "resource_id" = ? AND "resource_kind" = 'run' AND "released_at" IS NULL AND "closing" = 0`, runId);
+const expired = (lease) => !mutant('expired_lease_accepted') && Date.parse(lease.expires_at) <= now();
+const renew = (lease) => exec('UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "id" = ?', iso(), iso(now() + cfg.lease_ttl * 1000), lease.id);
+
+// E25 item 1: the engine renews the lease of every run whose live process it
+// supervises, at least every third of the lease's lifetime.
+function renewSupervised() {
+  if (mutant('no_self_renewal')) return;
+  for (const [id, known] of live) {
+    if (!known.child || known.child.exitCode !== null || known.child.signalCode !== null) continue;
+    const lease = activeLease(id);
+    if (!lease || expired(lease)) continue;
+    if (now() - Date.parse(lease.renewed_at) >= (cfg.lease_ttl * 1000) / 3) renew(lease);
+  }
+}
 const appendStatus = (project, receipt, status) =>
   insert('invocation_status_observations', {
     id: newId('iso_'),
@@ -568,7 +614,8 @@ async function launch(id, { receipt, domain, workspace, role }) {
       return;
     }
     if (message.type === 'heartbeat') {
-      exec(`UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "resource_id" = ? AND "released_at" IS NULL`, iso(), iso(now() + cfg.lease_ttl * 1000), id);
+      const lease = activeLease(id);
+      if (lease && !expired(lease)) renew(lease);
     } else if (message.type === 'usage') {
       insert('usage_observations', {
         id: newId('uo_'),
@@ -581,7 +628,8 @@ async function launch(id, { receipt, domain, workspace, role }) {
         at: iso(),
       });
     } else if (message.type === 'result') {
-      const fenced = closing(id) || getRun(id).state !== 'executing';
+      const lease = activeLease(id);
+      const fenced = closing(id) || getRun(id).state !== 'executing' || !lease || (expired(lease) && !mutant('expired_result_accepted'));
       if (known.result !== undefined || (fenced && !mutant('late_success_completes'))) return;
       known.result = message.result;
       if (validResult(message.result)) await barrier('run.result_received');
@@ -598,14 +646,26 @@ async function launch(id, { receipt, domain, workspace, role }) {
     buffer = lines.pop();
     for (const line of lines) chain = chain.then(() => onLine(line));
   });
-  child.on('exit', () => {
+  // The run-end protocol begins when the role exits. What the role wrote
+  // before it went is read first; the end of the stream is not waited for,
+  // because a descendant that inherited it can hold it open for ever.
+  const closed = new Promise((resolve) => child.stdout.once('close', resolve));
+  child.on('exit', async () => {
+    await (mutant('waits_for_stdout_eof') ? closed : Promise.race([closed, sleep(150)]));
     chain.then(() => {
       if (getRun(id).outcome !== null) return; // already ending for another reason
-      if (known.result === undefined) endRun(id, 'failed', 'infra_error');
-      else if (validResult(known.result)) endRun(id, 'completed', 'none');
-      else endRun(id, 'failed', 'invalid_result');
+      endRun(id, ...outcomeOf(known));
     });
   });
+}
+
+// What a role that has exited earned (SEAM.md §13); a role that has not
+// exited earned nothing yet.
+function outcomeOf(known) {
+  const exited = known?.child && (known.child.exitCode !== null || known.child.signalCode !== null);
+  if (!exited || known.result === undefined) return ['failed', 'infra_error'];
+  if (!validResult(known.result)) return ['failed', 'invalid_result'];
+  return known.child.exitCode === 0 ? ['completed', 'none'] : ['failed', 'infra_error'];
 }
 
 const validResult = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && v.status === 'completed' && typeof v.summary === 'string';
@@ -633,8 +693,29 @@ function endRun(id, outcome, reason, { recovery = false } = {}) {
     const terminated = await establishTermination(id, known, recovery);
     if (!terminated) return void quarantine(id);
     await finishRun(id, known, recovery);
-  })().catch((err) => process.stderr.write(`endRun ${id}: ${err.stack}\n`));
+  })().catch((err) => {
+    known.failed = true; // nothing retries here; the tick reconciles the lease once it has expired
+    process.stderr.write(`endRun ${id}: ${err.stack}\n`);
+  });
   return known.ending;
+}
+
+// D1 §8.1 step 1: a run lease past its expiry is reconciled through the
+// run-end protocol, whether or not this engine is still alive and supervising.
+async function reconcileExpiredLeases() {
+  if (mutant('expired_lease_not_reconciled')) return;
+  for (const lease of all(`SELECT * FROM "leases" WHERE "resource_kind" = 'run' AND "released_at" IS NULL`)) {
+    if (Date.parse(lease.expires_at) > now()) continue;
+    const r = getRun(lease.resource_id);
+    if (!r || r.state === 'ended' || r.quarantined) continue;
+    const known = live.get(r.id);
+    if (known?.ending && !known.failed) continue; // its end is under way
+    if (known) {
+      known.ending = null;
+      known.failed = false;
+    }
+    await endRun(r.id, ...(r.outcome !== null ? [r.outcome, r.reason_class] : outcomeOf(known)));
+  }
 }
 
 // True when every domain of the run is terminated. Also records, for a
@@ -674,7 +755,8 @@ async function establishTermination(id, known, recovery) {
         done = true;
         break;
       }
-      if (report === 'unknown') break;
+      // An unknown report is acted on when it is made (SEAM.md §14).
+      if (report === 'unknown' && !mutant('unknown_waits_for_grace')) break;
       const waited = Date.now() - started;
       if (waited > (cfg.terminate_grace + cfg.kill_grace) * 1000) break;
       if (!killed && waited > cfg.terminate_grace * 1000) {
@@ -870,6 +952,7 @@ async function tick() {
   const started = Date.now();
   try {
     await reobserveQuarantined();
+    await reconcileExpiredLeases();
     if (mutant('cleanup_repeats')) {
       // The defect: every tick finalizes ended runs again.
       for (const receipt of all(`SELECT i.* FROM "invocation_receipts" i JOIN "runs" r ON r."id" = i."run" WHERE r."state" = 'ended' AND r."outcome" = 'stopped'`)) {
@@ -964,7 +1047,7 @@ function answer(project, decisionId, body) {
 
 const PUBLIC_CODE = { preflight_refused: 'backend_refused', budget: 'budget_exhausted', diff_violation: 'diff_violation', ref_violation: 'ref_violation', invalid_result: 'invalid_result', integration_conflict: 'integration_conflict' };
 
-async function route(method, path, body) {
+async function route(method, path, body, requestId) {
   const s = path.split('/').slice(1);
   const get = method === 'GET';
   const post = method === 'POST';
@@ -1034,6 +1117,7 @@ async function route(method, path, body) {
     }
     if (path === '/v1/harness/faults') {
       if (body.point === 'tick_step') faults.push(body);
+      else if (body.point === 'before_event') eventFaults.push(body);
       return { status: 200, body: { armed: body } };
     }
   }
@@ -1068,6 +1152,10 @@ async function route(method, path, body) {
         else if (item.status === 'held') transition(item.id, 'eligible');
         else if (!(item.status === 'eligible' && item.dispatch_hold)) throw refusal(409, 'illegal_transition', 'the item is neither held nor on dispatch hold');
         if (s[5] === 'resume') exec('UPDATE "work_items" SET "dispatch_hold" = 0 WHERE "id" = ?', item.id);
+        // Lifting a dispatch hold changes no status and is still an event, written with the change (SEAM.md §15).
+        if (s[5] === 'resume' && item.status === 'eligible' && !mutant('resume_hold_no_event')) {
+          emit('work.resumed', { work_item: item.id, project }, { from: 'eligible', to: 'eligible' }, { kind: 'human', request_id: requestId });
+        }
       });
       return { status: 200, body: { work_item: { id: item.id } } };
     }
@@ -1110,7 +1198,7 @@ function createServer() {
     req.on('end', async () => {
       try {
         const text = Buffer.concat(chunks).toString('utf8');
-        const reply = await route(req.method, path, text.trim() === '' ? {} : JSON.parse(text));
+        const reply = await route(req.method, path, text.trim() === '' ? {} : JSON.parse(text), requestId);
         finish(reply.status, reply.body);
       } catch (err) {
         if (err.status === undefined) process.stderr.write(`route ${req.method} ${path}: ${err.stack}\n`);
@@ -1167,4 +1255,5 @@ if (state.failed === null) {
   state.completed.push('scheduler');
   setInterval(tick, cfg.tick_interval * 1000);
   setInterval(checkDeadlines, 500);
+  setInterval(renewSupervised, 250);
 }

@@ -28,10 +28,13 @@
       "M13-stop.test.mjs",
       "M14-abandon.test.mjs",
       "M15-deadlines.test.mjs",
+      "M15-lease-supervision.test.mjs",
       "M16-quarantine.test.mjs",
       "M17-quarantine-clearance.test.mjs",
       "M18-crash-boundaries.test.mjs",
-      "M69-token-file-and-expect.test.mjs"
+      "M69-token-file-and-expect.test.mjs",
+      "M23-engine-git-runs-no-repository-code.test.mjs",
+      "M31-worktree-add-symlinked-home.test.mjs"
     ],
     "3": [],
     "4": [],

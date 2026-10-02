@@ -53,7 +53,9 @@ export function runPath(db, runId) {
 }
 
 // The statuses a work item went through, read from its work.* events. Each
-// event's `from` must be the status the previous one left it in.
+// event's `from` must be the status the previous one left it in. One event
+// is not a step: the work.resumed of a Resume that only lifts a dispatch
+// hold, whose `from` and `to` are both the status the item keeps (SEAM.md §15).
 export function workPath(db, workItem) {
   const events = eventsAbout(db, 'work_item', workItem, 'work.%');
   assert.ok(events.length > 0, `work item ${workItem} has work.* events`);
@@ -61,6 +63,7 @@ export function workPath(db, workItem) {
   const path = [events[0].payload.to];
   for (const e of events.slice(1)) {
     assert.equal(e.payload.from, path.at(-1), `${e.type} (seq ${e.seq}) of ${workItem} starts where the previous event ended; path so far ${path.join(' → ')}`);
+    if (e.type === 'work.resumed' && e.payload.to === e.payload.from) continue;
     path.push(e.payload.to);
   }
   return path;

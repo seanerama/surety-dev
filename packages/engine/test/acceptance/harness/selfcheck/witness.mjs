@@ -75,6 +75,19 @@ export const MUTANTS = [
   ['recovery_not_recorded', 'M18-crash-boundaries', 'killed at launch.before_ownership'],
   ['recovery_overwrites_outcome', 'M18-crash-boundaries', 'killed at run_end.before_ended'],
   ['signal_recorded_pid', 'M18-crash-boundaries', 'a recorded pid that now belongs to an unrelated process is not signalled'],
+  // The cases written after the slice-2 review (SEAM.md §22).
+  ['waits_for_stdout_eof', 'M16-quarantine', 'a role that completes and exits, leaving a descendant with its output open, ends completed once the descendant is terminated'],
+  ['unknown_waits_for_grace', 'M16-quarantine', 'with the boundary reporting unknown, a stopped run is quarantined at once, not after the grace periods'],
+  ['resume_hold_no_event', 'M14-abandon', 'Resume of an eligible item on dispatch hold writes exactly one work.resumed event, in the transaction that clears the hold'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that enters finalizing fails once: the run still ends, and the project dispatches its next item'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'the transaction that ends the run fails once: the run still ends, and the project dispatches its next item'],
+  ['expired_lease_not_reconciled', 'M15-lease-supervision', 'a lease nobody renews expires, and the next tick puts its run through the run-end protocol, although the engine that owns it is alive'],
+  ['no_self_renewal', 'M15-lease-supervision', 'a role that sends no heartbeat for longer than lease_ttl keeps its lease, because the engine renews it, and has its result accepted'],
+  ['expired_lease_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
+  ['expired_result_accepted', 'M15-lease-supervision', 'a lease past its expiry is not renewed, the result presented on it is refused, and the tick reconciles the run'],
+  ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in the repository's hooks directory is not run when the engine creates a workspace"],
+  ['hooks_run', 'M23-engine-git-runs-no-repository-code', "a post-checkout hook in a directory the repository's configuration names as core.hooksPath is not run when the engine creates a workspace"],
+  ['worktree_probe_literal_path', 'M31-worktree-add-symlinked-home', 'with the engine home behind a symbolic link, a dispatch launches, its worktree_add is recorded as succeeded, and no worktree is left without a workspaces row'],
 ];
 
 // The harness starts the engine with a constructed environment, so a defect
@@ -132,8 +145,29 @@ async function pool(jobs, width, work) {
   return results;
 }
 
+// The self-check runs several files at once; the acceptance runner never
+// does. Two files can then meet on one port: a test that kills its engine and
+// starts another on the same port may find the port taken, in between, by an
+// engine of another file, and the engine it starts refuses with status 6.
+// That is an artifact of running in parallel, not a finding about a test, so
+// a run that shows it is repeated by itself once every other run is over. A
+// failure that is real shows again.
+const PORT_COLLISION = /engine exited code=6\b/;
+async function repeatCollided(jobs, results, work) {
+  for (const [i, job] of jobs.entries()) {
+    if (!results[i].value?.some((t) => !t.ok && PORT_COLLISION.test(t.error ?? ''))) continue;
+    try {
+      results[i] = { value: await work(job) };
+    } catch (error) {
+      results[i] = { error };
+    }
+  }
+}
+
 export async function witnessChecks(check, work, { width = 4 } = {}) {
-  const baseline = await pool(SLICE2_FILES, width, (file) => runFile(file));
+  const runBaseline = (file) => runFile(file);
+  const baseline = await pool(SLICE2_FILES, width, runBaseline);
+  await repeatCollided(SLICE2_FILES, baseline, runBaseline);
   for (const [i, file] of SLICE2_FILES.entries()) {
     await check(`witness engine: every test of ${file} passes (only the marker test fails)`, () => {
       if (baseline[i].error) throw baseline[i].error;
@@ -149,7 +183,9 @@ export async function witnessChecks(check, work, { width = 4 } = {}) {
     });
   }
 
-  const mutants = await pool(MUTANTS, width, ([mutant, file, pattern]) => runFile(file, { engine: mutantEntry(work, mutant), pattern }));
+  const runMutant = ([mutant, file, pattern]) => runFile(file, { engine: mutantEntry(work, mutant), pattern });
+  const mutants = await pool(MUTANTS, width, runMutant);
+  await repeatCollided(MUTANTS, mutants, runMutant);
   for (const [i, [mutant, file, name]] of MUTANTS.entries()) {
     await check(`witness mutant ${mutant}: "${name}" (${file}) fails`, () => {
       if (mutants[i].error) throw mutants[i].error;

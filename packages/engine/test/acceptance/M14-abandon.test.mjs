@@ -6,6 +6,9 @@
 // the work returns to its recorded prior status under a durable dispatch
 // hold, and nothing buys the work again until an explicit Resume or a new
 // trigger generation. Nothing the old run still holds is reused.
+// After the slice-2 review: the Resume that lifts a dispatch hold changes no
+// status, and is still a domain event. It writes one work.resumed event in
+// the transaction that clears the hold (D1 §§4.3, 12.1, 15.3).
 // Deferred (COVERAGE.md): Abandon from integrating, integrated and
 // verifying, and with a journal operation in flight (slice 3); from
 // awaiting_decision while a run still owns the work (slice 5).
@@ -15,11 +18,13 @@ import { existsSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { releaseBarrier } from './harness/engine.mjs';
-import { assertWorkHistory } from './harness/invariants.mjs';
+import { armFault, releaseBarrier } from './harness/engine.mjs';
+import { assertRefused } from './harness/fixtures.mjs';
+import { assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
   abandonRun,
   addProject,
+  addWork,
   addWorkOfKind,
   assertRunDispatched,
   assertRunEnded,
@@ -171,5 +176,52 @@ describe('M14 nothing is discarded or reused before termination is confirmed', (
       assertWorkHistory(db, item);
       assertWorkHistory(db, next);
     });
+  });
+});
+
+describe('M14 Resume of work on dispatch hold is a recorded event (review)', () => {
+  test('Resume of an eligible item on dispatch hold writes exactly one work.resumed event, in the transaction that clears the hold', async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = (await addProject(fx)).id;
+    const first = await addWork(fx.engine, project, 'verification');
+    const second = await addWork(fx.engine, project, 'review');
+    fx.scripted.defaultScript(script.hold('gate'));
+    // A run of each item is abandoned, one after the other: both items are
+    // then back at eligible, on dispatch hold.
+    for (const item of [first, second]) {
+      await tick(fx.engine, project);
+      await fx.scripted.waitForHolding({ work_item: item });
+      const run = await waitForRun(fx.home, item, { state: 'executing' });
+      await abandonRun(fx.engine, project, run.id);
+      await waitForRunState(fx.home, run.id, 'ended');
+      assert.equal((await waitForWork(fx.home, item, 'eligible')).dispatch_hold, 1, 'the abandoned work is on dispatch hold');
+    }
+    const workEvents = (item, type = 'work.%') => withStore(fx.home, (db) => eventsAbout(db, 'work_item', item, type));
+    const before = workEvents(first).length;
+    assert.equal(workEvents(first, 'work.resumed').length, 0, 'nothing has resumed the work yet');
+
+    // Resume: the hold is lifted, and that is on the record.
+    const resumed = await resumeWork(fx.engine, project, first);
+    assert.equal(workItem(fx.home, first).dispatch_hold, 0, 'Resume clears the hold');
+    const events = workEvents(first, 'work.resumed');
+    assert.equal(events.length, 1, 'Resume of an item on dispatch hold writes exactly one work.resumed event');
+    assert.equal(workEvents(first).length, before + 1, 'and no other work event');
+    assert.deepEqual(
+      { project: events[0].subject.project, from: events[0].payload.from, to: events[0].payload.to },
+      { project, from: 'eligible', to: 'eligible' },
+      'the event names the item\'s project and the status the item keeps',
+    );
+    assert.equal(events[0].request_id, resumed.headers['x-surety-request-id'], 'the event names the request that resumed the work');
+    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, first)), ['eligible', 'claimed', 'executing', 'eligible'], 'lifting a hold is not a change of status');
+
+    // The same transaction: if the event cannot be written, the hold stays.
+    await armFault(fx.engine, { point: 'before_event', event_type: 'work.resumed' });
+    const refused = await fx.engine.post(`/v1/projects/${project}/work/${second}/resume`, {});
+    assertRefused(refused, 500, 'store_error', 'a Resume whose event cannot be written');
+    assert.equal(workItem(fx.home, second).dispatch_hold, 1, 'the hold is not cleared without its event');
+    assert.equal(workEvents(second, 'work.resumed').length, 0, 'and no event without the change');
+    await resumeWork(fx.engine, project, second);
+    assert.equal(workItem(fx.home, second).dispatch_hold, 0);
+    assert.equal(workEvents(second, 'work.resumed').length, 1, 'the Resume that succeeds writes its one event');
   });
 });
