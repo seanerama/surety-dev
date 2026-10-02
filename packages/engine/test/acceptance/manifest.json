@@ -90,10 +90,38 @@
       "M67-power-loss-durability.test.mjs",
       "M02-record-identities.test.mjs",
       "M04-chunk-receipts-append-only.test.mjs",
-      "M12-over-budget-project.test.mjs"
+      "M12-over-budget-project.test.mjs",
+      "M23-filter-driver-however-spelled.test.mjs"
     ],
-    "5": [],
+    "5": [
+      "M35-separate-governed-policy-file.test.mjs",
+      "M36-capture-protected-only-proposal.test.mjs",
+      "M37-apply-approved-protected-proposal.test.mjs",
+      "M38-delivery-and-stage-scope.test.mjs",
+      "M39-five-check-states-and-precedence.test.mjs",
+      "M40-durable-evidence-invalidation.test.mjs",
+      "M41-typed-evidence-reuse.test.mjs",
+      "M42-findings-dispositions-and-inherited-applicability.test.mjs",
+      "M43-severity-tier-and-independence-floors.test.mjs",
+      "M44-stage-gate-versus-alpha-authorization.test.mjs",
+      "M45-blocker-manifest.test.mjs",
+      "M46-out-of-band-change-manifest.test.mjs",
+      "M47-stop-confirm-manifest.test.mjs",
+      "M48-abandon-confirm-manifest.test.mjs",
+      "M49-policy-widening-manifest.test.mjs",
+      "M50-finding-disposition-manifest.test.mjs",
+      "M51-severity-lower-manifest.test.mjs",
+      "M52-finding-applicability-exclusion-manifest.test.mjs",
+      "M53-check-correction-tightening-manifest.test.mjs",
+      "M54-check-correction-loosening-manifest.test.mjs",
+      "M55-check-correction-unclassifiable-manifest.test.mjs",
+      "M56-dedupe-consumption-and-combined-plans.test.mjs",
+      "M57-own-consumption-versus-external-preconditions.test.mjs",
+      "M58-aging-and-notification-ambiguity.test.mjs"
+    ],
     "6": [],
-    "7": []
+    "7": [
+      "M01-kernel-journey.test.mjs"
+    ]
   }
 }
