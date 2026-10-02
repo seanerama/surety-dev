@@ -145,8 +145,29 @@ async function pool(jobs, width, work) {
   return results;
 }
 
+// The self-check runs several files at once; the acceptance runner never
+// does. Two files can then meet on one port: a test that kills its engine and
+// starts another on the same port may find the port taken, in between, by an
+// engine of another file, and the engine it starts refuses with status 6.
+// That is an artifact of running in parallel, not a finding about a test, so
+// a run that shows it is repeated by itself once every other run is over. A
+// failure that is real shows again.
+const PORT_COLLISION = /engine exited code=6\b/;
+async function repeatCollided(jobs, results, work) {
+  for (const [i, job] of jobs.entries()) {
+    if (!results[i].value?.some((t) => !t.ok && PORT_COLLISION.test(t.error ?? ''))) continue;
+    try {
+      results[i] = { value: await work(job) };
+    } catch (error) {
+      results[i] = { error };
+    }
+  }
+}
+
 export async function witnessChecks(check, work, { width = 4 } = {}) {
-  const baseline = await pool(SLICE2_FILES, width, (file) => runFile(file));
+  const runBaseline = (file) => runFile(file);
+  const baseline = await pool(SLICE2_FILES, width, runBaseline);
+  await repeatCollided(SLICE2_FILES, baseline, runBaseline);
   for (const [i, file] of SLICE2_FILES.entries()) {
     await check(`witness engine: every test of ${file} passes (only the marker test fails)`, () => {
       if (baseline[i].error) throw baseline[i].error;
@@ -162,7 +183,9 @@ export async function witnessChecks(check, work, { width = 4 } = {}) {
     });
   }
 
-  const mutants = await pool(MUTANTS, width, ([mutant, file, pattern]) => runFile(file, { engine: mutantEntry(work, mutant), pattern }));
+  const runMutant = ([mutant, file, pattern]) => runFile(file, { engine: mutantEntry(work, mutant), pattern });
+  const mutants = await pool(MUTANTS, width, runMutant);
+  await repeatCollided(MUTANTS, mutants, runMutant);
   for (const [i, [mutant, file, name]] of MUTANTS.entries()) {
     await check(`witness mutant ${mutant}: "${name}" (${file}) fails`, () => {
       if (mutants[i].error) throw mutants[i].error;
