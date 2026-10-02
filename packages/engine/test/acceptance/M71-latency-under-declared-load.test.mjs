@@ -253,11 +253,12 @@ describe('M71 latency under the declared maximum load', () => {
         const lease = leasesOf(fx.home, runs[key].id).find((row) => row.resource_kind === 'run');
         const state = runRow(fx.home, runs[key].id).state;
         admitted[key] = { at, closing: lease?.closing, state, live: fx.scripted.isLive(launches[key]) };
+        // Awaited after the window; a failure is kept, not left unhandled.
         ending[key] = until(() => (runRow(fx.home, runs[key].id).state === 'ended' ? { ms: now() - at, live: fx.scripted.isLive(launches[key]) } : undefined), {
           timeoutMs: 60_000,
           intervalMs: 20,
           what: `the stopped ${key} run to end`,
-        });
+        }).catch((error) => ({ error }));
       }
       await sleep(70);
     }
@@ -273,6 +274,7 @@ describe('M71 latency under the declared maximum load', () => {
     // Termination is recorded apart, and a run does not end before its role is gone.
     for (const key of ['quick', 'stubborn', 'hashing']) {
       const ended = await ending[key];
+      if (ended.error) throw ended.error;
       t.diagnostic(`M71 termination latency, ${key} run: ${Math.round(ended.ms)} ms from admission to ended (recorded separately; not judged against api_latency_bound)`);
       assert.equal(ended.live, false, `the ${key} run is ended only once its role's process is gone`);
       assert.equal(admitted[key].closing, 1, `when the Stop of the ${key} run is admitted its lease is closing`);

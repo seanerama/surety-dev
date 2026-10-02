@@ -315,6 +315,7 @@ describe('M70 record reads that must refuse', () => {
     {
       what: 'content of another size (a gibibyte where a few bytes were recorded)',
       put: ({ file }) => {
+        rmSync(file);
         const fd = openSync(file, 'w');
         ftruncateSync(fd, 1 << 30);
         closeSync(fd);
