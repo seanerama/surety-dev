@@ -1,5 +1,5 @@
 {
-  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent, that is, whether a journaled operation follows the consumption. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76).",
+  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent whose preconditions are checked again immediately before a journaled operation is made (D1 §10.5). Stop and Abandon act through the run-end protocol and record none. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76).",
   "codes": {
     "stale": "decision_stale",
     "consumed": "decision_consumed",
@@ -30,7 +30,7 @@
       "subject_types": ["run"],
       "options": ["confirm"],
       "manifest": ["run", "stoppable", "domains", "lease_generation", "workspace", "workspace_snapshot", "workspace_fate", "work_fate"],
-      "effect": true
+      "effect": false
     },
     "policy_widening": {
       "subject_types": ["project"],
@@ -59,19 +59,19 @@
     "check_correction_tightening": {
       "subject_types": ["protected_proposal"],
       "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
       "effect": true
     },
     "check_correction_loosening": {
       "subject_types": ["protected_proposal"],
       "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
       "effect": true
     },
     "check_correction_unclassifiable": {
       "subject_types": ["protected_proposal"],
       "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
+      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
       "effect": true
     }
   }

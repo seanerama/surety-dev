@@ -14,9 +14,10 @@ import { createHash } from 'node:crypto';
 
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './gitruns.mjs';
 import { hasIdForm } from './ids.mjs';
-import { candidatesOf } from './journal.mjs';
+import { openDecision } from './decisions.mjs';
+import { candidatesOf, changePolicy } from './journal.mjs';
 import { listTree, parentsOf, refOid } from './repos.mjs';
-import { addWork, runsOf, tickUntil } from './runs.mjs';
+import { addWork, runsOf, scriptedEngine, tickUntil } from './runs.mjs';
 import { step } from './scripted.mjs';
 import { withStore } from './store.mjs';
 
@@ -127,6 +128,12 @@ export async function addEnvironment(engine, project, { name = 'alpha', targets 
 export async function classify(engine, proposal, changeKind) {
   const res = await engine.post('/v1/harness/fixtures/classification', { proposal, change_kind: changeKind });
   assert.equal(res.status, 200, `classification fixture (body: ${res.text})`);
+}
+
+// The validation-scope approval of a proposal that changes the required
+// set (E13; F §3.3): a baseline approval, which M1 takes as a fixture.
+export async function scopeApproval(engine, project, proposal) {
+  return created(await engine.post('/v1/harness/fixtures/approval', { project, kind: 'validation_scope', proposal }), 'approval fixture').approval;
 }
 
 // A reuse entry: the typed, assessed statement that an identified result of
@@ -262,6 +269,9 @@ export const PROTECTED_FILES = Object.freeze({
   [CHECK_FILE]: '{"expect": 200}\n',
 });
 
+// How every rationale of a proposal captured here begins.
+export const PROPOSAL_RATIONALE = 'The Verifier proposes this correction';
+
 // A proposal captured from a Verifier's check_correction run that rewrote
 // the check file, then classified by the fixture as `changeKind` (null: left
 // unclassified). Returns the proposal's row.
@@ -269,7 +279,7 @@ export async function capturedProposal(fx, project, { changeKind = 'tightening',
   const requested = changeKind ?? 'tightening';
   const { run } = await acceptedRun(fx, project.id, 'check_correction', {
     steps: steps ?? [step.write(CHECK_FILE, content)],
-    result: { proposal: { rationale: `a ${requested} correction, proposed by the Verifier`, requested_change_kind: requested } },
+    result: { proposal: { rationale: `${PROPOSAL_RATIONALE} (${requested}).`, requested_change_kind: requested } },
   });
   const proposal = proposalsOf(fx.home, project.id).find((row) => row.run === run.id);
   assert.ok(proposal, 'the Verifier\'s protected-only diff was captured as a proposal');
@@ -334,4 +344,31 @@ export function sharedFixture() {
       for (const fn of undo.reverse()) await fn();
     },
   };
+}
+
+// ---- a correction awaiting its approval (rows M53 to M55, M57) ---------------------------------
+
+// A project with a protected set, a proposal a Verifier's run captured, the
+// fixture's classification of it as `changeKind`, and the open decision of
+// that class. A rejected run parks its work at once (no repair), so a case
+// can go on using the project. Returns {fx, project, previous, proposal,
+// decision, headBefore}: `previous` is the effective version, `headBefore`
+// the commit the integration branch is at.
+export async function correction(t, changeKind, { steps, content } = {}) {
+  const fx = await scriptedEngine(t);
+  const project = await addGitProject(fx, { tier: 'T1', files: PROTECTED_FILES });
+  await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
+  const previous = effectiveVersion(fx.home, project.id);
+  const proposal = await capturedProposal(fx, project, { changeKind, steps, content });
+  const decision = await openDecision(fx, project.id, `check_correction_${changeKind}`, proposal.id);
+  return { fx, project, previous, proposal, decision, headBefore: refOid(project.repo.path, project.repo.ref) };
+}
+
+// Nothing of the proposal was applied: the branch, the effective version and the proposal say so.
+export function assertNotApplied(fx, { project, previous, proposal }, head) {
+  assert.equal(refOid(project.repo.path, project.repo.ref), head, 'the integration branch is where it was');
+  assert.equal(effectiveVersion(fx.home, project.id).id, previous.id, 'the effective protected version is the one that was authorized');
+  const row = proposalsOf(fx.home, project.id).find((found) => found.id === proposal.id);
+  assert.ok(row.status !== 'applied' && row.resulting_version === null, `the proposal is not applied (it is ${row.status})`);
+  return row;
 }

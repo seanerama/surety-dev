@@ -76,6 +76,19 @@ export function assertPreview(row) {
   return row;
 }
 
+// A command that goes through the queue (Stop, Abandon, a widening policy
+// change) answers 409 `confirm_required` and names the decision it raised
+// and that decision's preview hash (SEAM.md §17). Returns the decision, its
+// preview checked, with the response as `response`.
+export async function confirmRequired(fx, path, body = {}) {
+  const res = await fx.engine.post(path, body);
+  assertRefused(res, 409, 'confirm_required', `POST ${path} before its confirmation`);
+  const row = decision(fx.home, res.body.subject?.decision);
+  assert.ok(row, `the refusal names the decision it raised (body: ${res.text})`);
+  assert.deepEqual([row.status, row.preview_hash], ['open', res.body.subject.preview_hash], 'the decision is open, and the response carries its preview hash');
+  return { ...assertPreview(row), response: res };
+}
+
 // ---- answers ---------------------------------------------------------------------
 
 // Answer with the preview hash of `row` as the test read it. The raw response.
