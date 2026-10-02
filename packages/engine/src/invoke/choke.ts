@@ -391,12 +391,13 @@ export class Launcher {
   }
 
   // The result is the work the role was run for, so a store failure while
-  // recording it is retried, a few times and briefly: RESULT_RETRY_MS gives
-  // the waits, so one result holds the role's later callbacks for well under
-  // a second. Only a store failure is retried, which rolled its transaction
-  // back; every attempt is fenced again in the store (D1 §8.3), and none is
-  // made once the engine has decided to end the run. If every attempt fails
-  // the result is lost, as before, and the run ends by what was recorded.
+  // recording it is retried, at the waits RESULT_RETRY_MS gives: a few
+  // seconds in all, during which the role's later callbacks wait. Only a
+  // store failure is retried, which rolled its transaction back; every
+  // attempt is fenced again in the store (D1 §8.3), and none is made once the
+  // engine has decided to end the run. If every attempt fails, the run ends
+  // failed with the cause stated (`resultLost`), never as if no result had
+  // been sent (SEAM.md §61).
   private async recordResult(handle: RunHandle, valid: boolean, result: RunResult | null, record: string | null): Promise<boolean> {
     const { run, generation } = handle.claim;
     for (let attempt = 0; ; attempt++) {
