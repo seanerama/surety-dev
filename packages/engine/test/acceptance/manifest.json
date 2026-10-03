@@ -171,7 +171,8 @@
       "M110-qualification-per-start.test.mjs",
       "M119-validated-mount-plan.test.mjs",
       "M120-control-plane-invisible.test.mjs",
-      "M121-git-view.test.mjs"
+      "M121-git-view.test.mjs",
+      "M122-host-sockets-and-wsl.test.mjs"
     ]
   },
   "sandbox": [
@@ -187,6 +188,7 @@
     "M110-qualification-per-start.test.mjs",
     "M119-validated-mount-plan.test.mjs",
     "M120-control-plane-invisible.test.mjs",
-    "M121-git-view.test.mjs"
+    "M121-git-view.test.mjs",
+    "M122-host-sockets-and-wsl.test.mjs"
   ]
 }
