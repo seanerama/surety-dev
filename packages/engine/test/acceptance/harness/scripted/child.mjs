@@ -45,7 +45,11 @@
 //                                                           setsid()s, clears its environment, double-forks and
 //                                                           appends a line to pings/<name>.jsonl every ping_ms
 //           {"probe": {"action": "<action>", ...}}          M2 slice 11 (SEAM.md §127): one probe action, its
-//                                                           outcome logged as a `probe` entry (see runProbe)
+//                                                           outcome logged as a `probe` entry (see runProbe).
+//                                                           M2 slice 12 (SEAM.md §141) adds the actions of rows
+//                                                           M119 to M128; every one that writes outside the
+//                                                           role's own files, connects or executes is GUARDED
+//                                                           (see containmentRefusal) and refuses outside a sandbox
 // After the last step the program exits 0.
 //
 // The program exits, after its last step or at an {"exit": ...} step, only
@@ -85,7 +89,29 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fstatSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import net from 'node:net';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -424,12 +450,266 @@ function signalAllRefusal(spec) {
   return { reasons, own, init, visible };
 }
 
-// One probe action (M2 slice 11, SEAM.md §127; rows M116 (c), M117). Each
-// logs one `probe` entry: {action, ...what it found}. Nothing here decides
-// anything: the host side corroborates every claim (M2 plan §2.4).
+// THE GUARD OF EVERY ACTING PROBE OF SLICE 12 (SEAM.md §141; E64 item 2).
+// The actions named in GUARDED write outside the role's own files, connect
+// to a socket or an address, or execute a host tool. Inside a sandbox they
+// reach nothing but the sandbox; run by a role an engine launched on the
+// host they would reach the host's files, its network and its user manager.
+// So each fails closed, as `signal_all` does: it runs only if every one of
+// these holds, and any read that fails is a refusal.
+//   - the step carries `host_ns`, the host's pid, network and mount
+//     namespaces as the test read its own (`readlink /proc/self/ns/<kind>`),
+//     and this process's own three are each a different one;
+//   - pid 1, as this process sees it, is not a system's init;
+//   - this process sees at most SIGNAL_ALL_MAX_VISIBLE processes.
+// Returns the reasons to refuse; an empty list means it may run. It writes
+// nothing, connects to nothing and starts no process.
+const GUARDED = new Set(['write_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+function containmentRefusal(spec) {
+  const reasons = [];
+  const own = {};
+  for (const kind of ['pid', 'net', 'mnt']) {
+    const form = new RegExp(`^${kind}:\\[\\d+\\]$`);
+    let mine = null;
+    try {
+      mine = readlinkSync(`/proc/self/ns/${kind}`);
+    } catch {
+      mine = null;
+    }
+    own[kind] = mine;
+    const theirs = spec.host_ns?.[kind];
+    if (typeof theirs !== 'string' || !form.test(theirs)) reasons.push(`the step names no host ${kind} namespace`);
+    if (mine === null || !form.test(mine)) reasons.push(`this process cannot read its own ${kind} namespace`);
+    else if (mine === theirs) reasons.push(`this process is in the host's ${kind} namespace (${mine})`);
+  }
+  let init = null;
+  try {
+    init = readFileSync('/proc/1/comm', 'utf8').trim();
+  } catch {
+    init = null;
+  }
+  if (init === null) reasons.push('pid 1 cannot be read');
+  else if (SYSTEM_INITS.includes(init)) reasons.push(`pid 1 is a system's init (${init})`);
+  let visible = null;
+  try {
+    visible = readdirSync('/proc').filter((n) => /^\d+$/.test(n)).length;
+  } catch {
+    visible = null;
+  }
+  if (visible === null) reasons.push('/proc cannot be listed');
+  else if (visible > SIGNAL_ALL_MAX_VISIBLE) reasons.push(`${visible} processes are visible, more than a sandbox holds`);
+  return { reasons, own, init, visible };
+}
+
+const sha256Of = (data) => createHash('sha256').update(data).digest('hex');
+const codeOf = (err) => err?.code ?? String(err);
+const typeOf = (st) =>
+  st.isFile() ? 'file' : st.isDirectory() ? 'dir' : st.isSymbolicLink() ? 'symlink' : st.isSocket() ? 'socket' : st.isFIFO() ? 'fifo' : st.isCharacterDevice() ? 'char' : st.isBlockDevice() ? 'block' : 'other';
+const unescapeMount = (s) => s.replace(/\\(\d{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)));
+
+// Entries of a directory tree, without following links, bounded: each
+// {name (relative to the root), type, target (a link's)}.
+function listTree(root, { recursive = false, max = 4000, skip = [] } = {}) {
+  const out = [];
+  const queue = [''];
+  let truncated = false;
+  while (queue.length > 0) {
+    const rel = queue.shift();
+    let names;
+    try {
+      names = readdirSync(join(root, rel), { withFileTypes: true });
+    } catch (err) {
+      if (rel === '') throw err;
+      out.push({ name: rel, type: 'dir', error: codeOf(err) });
+      continue;
+    }
+    for (const d of names.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (out.length >= max) {
+        truncated = true;
+        break;
+      }
+      const name = rel === '' ? d.name : `${rel}/${d.name}`;
+      const type = d.isFile() ? 'file' : d.isDirectory() ? 'dir' : d.isSymbolicLink() ? 'symlink' : d.isSocket() ? 'socket' : d.isFIFO() ? 'fifo' : d.isCharacterDevice() ? 'char' : d.isBlockDevice() ? 'block' : 'other';
+      const item = { name, type };
+      if (type === 'symlink') {
+        try {
+          item.target = readlinkSync(join(root, name));
+        } catch (err) {
+          item.error = codeOf(err);
+        }
+      }
+      out.push(item);
+      if (recursive && type === 'dir' && !skip.includes(name)) queue.push(name);
+    }
+  }
+  return { entries: out, truncated };
+}
+
+// The proxy the role was given (D2 §1.2: HTTPS_PROXY names the in-sandbox
+// forwarder), as {host, port}, or null.
+function proxyOf() {
+  const value = process.env.HTTPS_PROXY ?? process.env.https_proxy;
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port || 80), value };
+  } catch {
+    return null;
+  }
+}
+
+// One TCP connection attempt: {outcome: 'connected' | 'failed' | 'timeout', error, elapsed_ms, socket}.
+function tcpOpen(host, port, timeoutMs) {
+  return new Promise((done) => {
+    const began = performance.now();
+    const socket = net.connect({ host, port });
+    let settled = false;
+    const finish = (outcome, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (outcome !== 'connected') socket.destroy();
+      done({ outcome, error: error ?? null, elapsed_ms: Math.round(performance.now() - began), socket: outcome === 'connected' ? socket : null });
+    };
+    const timer = setTimeout(() => finish('timeout', 'ETIMEDOUT'), timeoutMs);
+    socket.once('connect', () => finish('connected'));
+    socket.once('error', (err) => finish('failed', codeOf(err)));
+  });
+}
+
+// One CONNECT through the role's proxy (D2 §2.4). Options: payload_b64 (bytes
+// sent once the tunnel answers 200), expect_back (read as many bytes back),
+// flood_bytes (write that many bytes and read nothing: a slow reader),
+// linger_ms (stay and watch for the tunnel's end), keepalive_ms (a byte that
+// often while lingering, each echo read), request ({method, path, headers}:
+// an HTTP request sent through an open tunnel), timeout_ms (for the answer).
+async function proxyConnect(spec) {
+  const out = { authority: spec.authority };
+  const proxy = proxyOf();
+  out.proxy = proxy?.value ?? null;
+  if (proxy === null) return { ...out, outcome: 'no_proxy' };
+  const began = performance.now();
+  const opened = await tcpOpen(proxy.host, proxy.port, spec.timeout_ms ?? 5000);
+  if (opened.outcome !== 'connected') return { ...out, outcome: 'proxy_unreachable', error: opened.error };
+  const socket = opened.socket;
+  socket.on('error', (err) => {
+    out.socket_error = codeOf(err);
+  });
+  let closedAt = null;
+  let ended = null;
+  socket.on('end', () => {
+    ended ??= 'eof';
+    closedAt ??= performance.now();
+  });
+  socket.on('close', (hadError) => {
+    ended ??= hadError ? 'reset' : 'eof';
+    closedAt ??= performance.now();
+  });
+  let buffer = Buffer.alloc(0);
+  let wake = null;
+  socket.on('data', (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    wake?.();
+  });
+  const until = async (test, ms) => {
+    const deadline = performance.now() + ms;
+    while (!test()) {
+      if (ended !== null && !test()) return false;
+      const left = deadline - performance.now();
+      if (left <= 0) return false;
+      await new Promise((r) => {
+        wake = r;
+        setTimeout(r, Math.min(left, 100));
+      });
+      wake = null;
+    }
+    return true;
+  };
+  socket.write(`CONNECT ${spec.authority} HTTP/1.1\r\nHost: ${spec.authority}\r\n\r\n`);
+  const answered = await until(() => buffer.includes('\r\n\r\n'), spec.timeout_ms ?? 5000);
+  out.elapsed_ms = Math.round(performance.now() - began);
+  if (!answered) {
+    out.outcome = 'no_answer';
+    out.closed = ended;
+    socket.destroy();
+    return out;
+  }
+  const head = buffer.subarray(0, buffer.indexOf('\r\n\r\n')).toString('latin1');
+  buffer = buffer.subarray(buffer.indexOf('\r\n\r\n') + 4);
+  out.outcome = 'answered';
+  out.status_line = head.split('\r\n')[0];
+  out.status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(out.status_line)?.[1] ?? NaN);
+  const tunnelBegan = performance.now();
+  out.sent = 0;
+  if (out.status === 200) {
+    if (spec.payload_b64 !== undefined) {
+      const payload = Buffer.from(spec.payload_b64, 'base64');
+      socket.write(payload);
+      out.sent += payload.length;
+      if (spec.expect_back) await until(() => buffer.length >= payload.length, spec.timeout_ms ?? 5000);
+    }
+    if (spec.request !== undefined) {
+      const lines = [`${spec.request.method ?? 'GET'} ${spec.request.path} HTTP/1.1`, ...Object.entries(spec.request.headers ?? {}).map(([k, v]) => `${k}: ${v}`), '', ''];
+      socket.write(lines.join('\r\n'));
+      await until(() => buffer.includes('\r\n'), spec.timeout_ms ?? 5000);
+      out.tunnelled_status_line = buffer.toString('latin1').split('\r\n')[0].slice(0, 200);
+    }
+    if (spec.flood_bytes !== undefined) {
+      // A slow reader: write, and take nothing.
+      socket.pause();
+      const chunk = Buffer.alloc(65536, 0x5a);
+      for (let left = spec.flood_bytes; left > 0 && ended === null && !socket.destroyed; left -= chunk.length) {
+        const more = socket.write(chunk);
+        out.sent += chunk.length;
+        if (!more) await Promise.race([new Promise((r) => socket.once('drain', r)), sleep(250)]);
+      }
+      out.flooded = true;
+      await sleep(spec.flood_wait_ms ?? 1500);
+      socket.resume();
+    }
+    if (spec.linger_ms !== undefined) {
+      const deadline = performance.now() + spec.linger_ms;
+      let lastBeat = performance.now();
+      while (ended === null && performance.now() < deadline) {
+        if (spec.keepalive_ms !== undefined && performance.now() - lastBeat >= spec.keepalive_ms) {
+          try {
+            socket.write(Buffer.from([0x2e]));
+            out.sent += 1;
+          } catch {
+            // the tunnel is gone
+          }
+          lastBeat = performance.now();
+        }
+        await sleep(50);
+      }
+    }
+  } else if (spec.linger_ms !== undefined) await until(() => ended !== null, Math.min(spec.linger_ms, 2000));
+  out.received = buffer.length;
+  out.received_sha256 = sha256Of(buffer);
+  out.closed = ended ?? 'open';
+  out.closed_after_ms = closedAt === null ? null : Math.round(closedAt - tunnelBegan);
+  socket.destroy();
+  return out;
+}
+
+// One probe action (M2 slice 11, SEAM.md §127; rows M116 (c), M117; M2 slice
+// 12, SEAM.md §141; rows M119 to M128). Each logs one `probe` entry:
+// {action, ...what it found}. Nothing here decides anything: the host side
+// corroborates every claim (M2 plan §2.4).
 async function runProbe(spec) {
   const entry = { action: spec.action };
+  if (spec.label !== undefined) entry.label = spec.label;
   const errorOf = (err) => err?.code ?? String(err);
+  if (GUARDED.has(spec.action)) {
+    // Fails closed outside a sandbox (see containmentRefusal).
+    const guard = containmentRefusal(spec);
+    entry.guard = guard;
+    if (guard.reasons.length > 0) {
+      entry.outcome = 'refused_unsandboxed';
+      log('probe', entry);
+      return;
+    }
+  }
   try {
     switch (spec.action) {
       case 'mountinfo':
@@ -555,6 +835,344 @@ async function runProbe(spec) {
           entry.outcome = 'failed';
           entry.error = errorOf(err);
         }
+        break;
+      }
+      // ---- M2 slice 12: reads (unguarded: they change nothing) ----------------
+      case 'open_paths': {
+        // Open each path for reading, never blocking; of a regular file,
+        // read at most 64 KiB and log its size and the hash of what was read.
+        entry.results = (spec.paths ?? []).slice(0, 400).map((path) => {
+          const r = { path };
+          let fd = null;
+          try {
+            fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+            const st = fstatSync(fd);
+            r.type = typeOf(st);
+            if (st.isFile()) {
+              const buf = Buffer.alloc(65536);
+              const n = readSync(fd, buf, 0, buf.length, 0);
+              r.size = st.size;
+              r.read = n;
+              r.sha256 = sha256Of(buf.subarray(0, n));
+            }
+            r.outcome = 'opened';
+          } catch (err) {
+            r.outcome = 'failed';
+            r.error = errorOf(err);
+          } finally {
+            if (fd !== null) {
+              try {
+                closeSync(fd);
+              } catch {
+                // nothing to close
+              }
+            }
+          }
+          return r;
+        });
+        break;
+      }
+      case 'list_dirs': {
+        entry.results = (spec.paths ?? []).slice(0, 100).map((path) => {
+          try {
+            return { path, outcome: 'listed', ...listTree(path, { recursive: spec.recursive === true, max: spec.max ?? 4000, skip: spec.skip ?? [] }) };
+          } catch (err) {
+            return { path, outcome: 'failed', error: errorOf(err) };
+          }
+        });
+        break;
+      }
+      case 'stat_paths': {
+        entry.results = (spec.paths ?? []).slice(0, 400).map((path) => {
+          try {
+            const st = spec.follow === false ? lstatSync(path) : statSync(path);
+            return { path, outcome: 'found', type: typeOf(st), dev: String(st.dev), ino: String(st.ino), mode: st.mode & 0o7777, size: st.size, nlink: st.nlink };
+          } catch (err) {
+            return { path, outcome: 'failed', error: errorOf(err) };
+          }
+        });
+        break;
+      }
+      case 'mount_table': {
+        // The role's own mount table, and for each mount point what is
+        // mounted there (device and inode), so that the host can tell that a
+        // bind is the very directory the plan names.
+        entry.mountinfo = readFileSync('/proc/self/mountinfo', 'utf8').split('\n').filter(Boolean);
+        entry.points = {};
+        for (const line of entry.mountinfo) {
+          const point = unescapeMount(line.split(' ')[4]);
+          try {
+            const st = statSync(point);
+            entry.points[point] = { type: typeOf(st), dev: String(st.dev), ino: String(st.ino) };
+          } catch (err) {
+            entry.points[point] = { error: errorOf(err) };
+          }
+        }
+        break;
+      }
+      case 'context_dump': {
+        // Every file under the context package (or `root`), without following
+        // links, bounded: its size and hash, and its text where it is small.
+        const root = spec.root ?? '/surety/context';
+        entry.root = root;
+        let total = 0;
+        try {
+          const { entries, truncated } = listTree(root, { recursive: true, max: spec.max ?? 2000 });
+          entry.truncated = truncated;
+          entry.files = entries.map((e) => {
+            if (e.type !== 'file') return e;
+            try {
+              const st = lstatSync(join(root, e.name));
+              const item = { ...e, size: st.size, mode: st.mode & 0o7777 };
+              if (st.size <= 262144 && total + st.size <= 1024 * 1024) {
+                const bytes = readFileSync(join(root, e.name));
+                total += bytes.length;
+                item.sha256 = sha256Of(bytes);
+                item.text = bytes.toString('utf8');
+              }
+              return item;
+            } catch (err) {
+              return { ...e, error: errorOf(err) };
+            }
+          });
+          entry.outcome = 'dumped';
+        } catch (err) {
+          entry.outcome = 'failed';
+          entry.error = errorOf(err);
+        }
+        break;
+      }
+      case 'handover': {
+        // What this process was handed (D2 §1.2): its argument array as the
+        // kernel shows it, its parent, its environment by name and by the
+        // hash of each value (never the values), its working directory.
+        entry.cmdline = readFileSync('/proc/self/cmdline', 'latin1').split('\0').filter((a, i, all) => !(i === all.length - 1 && a === ''));
+        entry.ppid = Number(statField(4));
+        try {
+          entry.parent_comm = readFileSync(`/proc/${entry.ppid}/comm`, 'utf8').trim();
+          entry.parent_cmdline = readFileSync(`/proc/${entry.ppid}/cmdline`, 'latin1').split('\0').filter(Boolean);
+        } catch (err) {
+          entry.parent_error = errorOf(err);
+        }
+        entry.env_hashes = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, sha256Of(v)]));
+        entry.cwd = process.cwd();
+        try {
+          entry.exe = readlinkSync('/proc/self/exe');
+        } catch (err) {
+          entry.exe_error = errorOf(err);
+        }
+        break;
+      }
+      // ---- M2 slice 12: acting probes (GUARDED: see containmentRefusal) -----
+      case 'write_probe': {
+        // Create or overwrite one file, at an absolute path or one relative
+        // to the workspace. What it wrote is left where it is.
+        entry.path = spec.path;
+        try {
+          writeFileSync(at(spec.path), spec.content ?? 'written by the role\n');
+          entry.outcome = 'written';
+        } catch (err) {
+          entry.outcome = 'refused';
+          entry.error = errorOf(err);
+        }
+        break;
+      }
+      case 'protected_ops': {
+        // P19 (D2 A.6): every way of changing a protected file and a
+        // protected directory, each attempted and its result logged. Paths
+        // are relative to the workspace and may not leave it.
+        const inside = (p) => typeof p === 'string' && !isAbsolute(p) && !p.split('/').includes('..');
+        if (!inside(spec.file) || !inside(spec.dir)) {
+          entry.outcome = 'refused_path';
+          break;
+        }
+        const scratch = `.probe-scratch-${process.pid}`;
+        const ops = [];
+        const attempt = (op, fn) => {
+          try {
+            fn();
+            ops.push({ op, outcome: 'done' });
+            return true;
+          } catch (err) {
+            ops.push({ op, outcome: 'refused', error: errorOf(err) });
+            return false;
+          }
+        };
+        mkdirSync(scratch, { recursive: true });
+        entry.before = (() => {
+          try {
+            return sha256Of(readFileSync(spec.file));
+          } catch (err) {
+            return `unreadable:${errorOf(err)}`;
+          }
+        })();
+        attempt('write', () => writeFileSync(spec.file, 'overwritten by the role\n'));
+        attempt('truncate', () => truncateSync(spec.file, 0));
+        attempt('rename_away', () => renameSync(spec.file, join(scratch, 'moved-away')));
+        writeFileSync(join(scratch, 'replacement'), 'a replacement by the role\n');
+        attempt('rename_over', () => renameSync(join(scratch, 'replacement'), spec.file));
+        if (attempt('hard_link', () => linkSync(spec.file, join(scratch, 'hard')))) attempt('write_through_hard_link', () => writeFileSync(join(scratch, 'hard'), 'through the hard link\n'));
+        symlinkSync(resolve(spec.file), join(scratch, 'alias'));
+        attempt('write_through_symlink', () => writeFileSync(join(scratch, 'alias'), 'through the alias\n'));
+        attempt('chmod', () => chmodSync(spec.file, 0o777));
+        attempt('unlink', () => unlinkSync(spec.file));
+        attempt('dir_create', () => writeFileSync(join(spec.dir, 'new-by-role.txt'), 'created by the role\n'));
+        attempt('dir_mkdir', () => mkdirSync(join(spec.dir, 'new-by-role')));
+        attempt('dir_chmod', () => chmodSync(spec.dir, 0o777));
+        attempt('dir_rename_away', () => renameSync(spec.dir, join(scratch, 'dir-moved-away')));
+        entry.ops = ops;
+        entry.after = (() => {
+          try {
+            return sha256Of(readFileSync(spec.file));
+          } catch (err) {
+            return `unreadable:${errorOf(err)}`;
+          }
+        })();
+        try {
+          rmSync(scratch, { recursive: true, force: true });
+        } catch (err) {
+          entry.scratch_error = errorOf(err);
+        }
+        entry.outcome = 'ran';
+        break;
+      }
+      case 'shm_roundtrip': {
+        // The role's own /dev/shm: what it holds, a file written and read back.
+        const file = join('/dev/shm', spec.name);
+        try {
+          entry.before = readdirSync('/dev/shm').sort();
+          writeFileSync(file, spec.content ?? 'the role\'s own shm file\n');
+          entry.read = readFileSync(file, 'utf8');
+          entry.after = readdirSync('/dev/shm').sort();
+          entry.outcome = 'round_trip';
+        } catch (err) {
+          entry.outcome = 'failed';
+          entry.error = errorOf(err);
+        }
+        break;
+      }
+      case 'unix_connect': {
+        // A unix socket: an abstract name, a path, or (own) one this process
+        // listens on itself, which is the control.
+        let server = null;
+        let target = spec.path ?? null;
+        if (spec.own === true) {
+          target = `\0surety-role-own-${process.pid}`;
+          server = net.createServer((c) => c.end());
+          await new Promise((done, fail) => server.listen(target, done).once('error', fail));
+        } else if (spec.abstract !== undefined) target = `\0${spec.abstract}`;
+        entry.target = target === null ? null : target.replace(/^\0/, '@');
+        const result = await new Promise((done) => {
+          const socket = net.connect({ path: target });
+          const timer = setTimeout(() => {
+            socket.destroy();
+            done({ outcome: 'timeout', error: 'ETIMEDOUT' });
+          }, spec.timeout_ms ?? 1500);
+          socket.once('connect', () => {
+            clearTimeout(timer);
+            socket.destroy();
+            done({ outcome: 'connected' });
+          });
+          socket.once('error', (err) => {
+            clearTimeout(timer);
+            done({ outcome: 'failed', error: errorOf(err) });
+          });
+        });
+        Object.assign(entry, result);
+        if (server !== null) await new Promise((done) => server.close(done));
+        break;
+      }
+      case 'tcp_connect': {
+        // A TCP connection to each target; a connection that opens is closed
+        // at once and nothing is sent on it.
+        entry.results = [];
+        for (const t of (spec.targets ?? []).slice(0, 64)) {
+          const r = await tcpOpen(t.host, t.port, spec.timeout_ms ?? 1500);
+          r.socket?.destroy();
+          entry.results.push({ host: t.host, port: t.port, outcome: r.outcome, error: r.error, elapsed_ms: r.elapsed_ms });
+        }
+        break;
+      }
+      case 'http_request': {
+        // One HTTP request to host:port, if a connection opens at all.
+        const opened = await tcpOpen(spec.host, spec.port, spec.timeout_ms ?? 1500);
+        entry.host = spec.host;
+        entry.port = spec.port;
+        if (opened.outcome !== 'connected') {
+          entry.outcome = 'no_connection';
+          entry.error = opened.error;
+          break;
+        }
+        const socket = opened.socket;
+        const lines = [`${spec.method ?? 'GET'} ${spec.path} HTTP/1.1`, ...Object.entries(spec.headers ?? {}).map(([k, v]) => `${k}: ${v}`), 'Connection: close', '', ''];
+        const answer = await new Promise((done) => {
+          let text = '';
+          const timer = setTimeout(() => done(text), spec.timeout_ms ?? 1500);
+          socket.on('data', (c) => {
+            text += c.toString('latin1');
+            if (text.includes('\r\n')) {
+              clearTimeout(timer);
+              done(text);
+            }
+          });
+          socket.on('error', () => {
+            clearTimeout(timer);
+            done(text);
+          });
+          socket.write(lines.join('\r\n'));
+        });
+        socket.destroy();
+        entry.outcome = answer === '' ? 'no_response' : 'response';
+        entry.status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(answer)?.[1] ?? NaN);
+        break;
+      }
+      case 'proxy_connect':
+        Object.assign(entry, await proxyConnect(spec));
+        break;
+      case 'proxy_flood': {
+        // Many CONNECTs one after another, tallied by answer: the egress
+        // log's bound (row M128 (f)).
+        const began = performance.now();
+        entry.statuses = {};
+        entry.attempts = 0;
+        for (let i = 0; i < (spec.count ?? 0); i++) {
+          if (performance.now() - began > (spec.max_ms ?? 60_000)) break;
+          const r = await proxyConnect({ authority: spec.authority.replace('%n', String(i)), timeout_ms: spec.timeout_ms ?? 3000 });
+          entry.attempts++;
+          const key = r.outcome === 'answered' ? String(r.status) : r.outcome;
+          entry.statuses[key] = (entry.statuses[key] ?? 0) + 1;
+          if (r.outcome === 'no_proxy' || r.outcome === 'proxy_unreachable') break;
+        }
+        entry.elapsed_ms = Math.round(performance.now() - began);
+        break;
+      }
+      case 'proxy_concurrent': {
+        // `count` tunnels opened at once and held: the concurrent limit.
+        entry.results = await Promise.all(
+          Array.from({ length: spec.count ?? 0 }, async (_, i) => {
+            await sleep(i * (spec.stagger_ms ?? 150));
+            const r = await proxyConnect({ authority: spec.authority, timeout_ms: spec.timeout_ms ?? 5000, linger_ms: spec.hold_ms ?? 3000, keepalive_ms: 500 });
+            return { n: i, outcome: r.outcome, status: r.status ?? null, closed: r.closed ?? null, closed_after_ms: r.closed_after_ms ?? null, error: r.error ?? null };
+          }),
+        );
+        break;
+      }
+      case 'exec_probe': {
+        // One program, as an argument array (no shell), with a small
+        // environment of the step's own.
+        const done = spawnSync(spec.argv[0], spec.argv.slice(1), {
+          encoding: 'utf8',
+          timeout: spec.timeout_ms ?? 5000,
+          env: spec.env ?? { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
+        });
+        entry.argv = spec.argv;
+        entry.status = done.status;
+        entry.signal = done.signal;
+        entry.error = done.error ? errorOf(done.error) : null;
+        entry.stdout = (done.stdout ?? '').slice(0, 2000);
+        entry.stderr = (done.stderr ?? '').slice(0, 2000);
+        entry.outcome = 'ran';
         break;
       }
       default:
