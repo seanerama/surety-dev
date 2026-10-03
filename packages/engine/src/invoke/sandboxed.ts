@@ -59,6 +59,8 @@ export interface LaunchHooks {
   started(pid: number): Promise<void>;
   // The sandbox could not be built.
   setupFailed(detail: string): void;
+  // The launcher reached one of the wait points it was handed.
+  reached?(name: string, action: string): void;
 }
 
 export interface LaunchSpec {
@@ -69,6 +71,10 @@ export interface LaunchSpec {
   cgroup: string | null;
   unshare: string;
   node: string;
+  // Wait points the launcher keeps itself, and where it marks them (only the
+  // test seam hands any out).
+  waits?: Record<string, string>;
+  releaseDir?: string | null;
 }
 
 type Stage = 'spawned' | 'placed' | 'authorized' | 'refused' | 'setup' | 'init' | 'running' | 'gone';
@@ -163,19 +169,16 @@ export class SandboxLaunch {
 
   private async onMessage(m: Record<string, unknown>): Promise<void> {
     switch (m.t) {
-      case 'stage':
-        await this.hooks.barrier('launcher.before_placement');
-        this.send({ t: 'go' });
+      case 'wait':
+        this.hooks.reached?.(String(m.name ?? ''), String(m.action ?? 'pause'));
         return;
       case 'placed':
         this.placedPid = typeof m.pid === 'number' ? m.pid : this.pid;
         this.stage = 'placed';
         await this.hooks.placed(this.placedPid);
-        await this.hooks.barrier('launcher.placed');
         this.send({ t: 'go' });
         return;
       case 'authorize': {
-        await this.hooks.barrier('launcher.before_authorization');
         let granted = false;
         try {
           granted = await this.hooks.authorize();
@@ -188,7 +191,6 @@ export class SandboxLaunch {
           return;
         }
         this.stage = 'authorized';
-        await this.hooks.barrier('launcher.authorized');
         this.send({ t: 'granted' });
         return;
       }

@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { nowIso } from '../clock.js';
 import type { SandboxLaunch } from '../invoke/sandboxed.js';
 import type { RunHandle, Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
@@ -54,31 +55,36 @@ function counters(path: string): { oom_kill: number | null; pids_max: number | n
 }
 
 // The exit class by D2 §1.6's precedence, with every fact kept.
+// `signal` is the last signal the engine sent the domain (15 or 9) when it
+// began cancelling before the backend's exit, else the signal that ended the
+// backend (SEAM.md §126).
 export function classifyExit(args: {
   report: { code: number | null; signal: number | null } | null;
   cancelledBeforeExit: boolean;
   termSent: boolean;
   killWritten: boolean;
-  resources: { oom_kill: number | null; pids_max: number | null };
+  resources: { oom_kill: number | null; pids_max: number | null } | Record<string, never>;
   cleanResult: boolean;
 }): ExitFacts {
   const { report } = args;
-  const signal = report?.signal ?? (report === null && args.killWritten ? 9 : null);
-  const byEngine = signal !== null && ((signal === 15 && args.termSent) || (signal === 9 && args.killWritten));
+  const engineSignal = args.killWritten ? 9 : args.termSent ? 15 : null;
+  const byEngine = args.cancelledBeforeExit && engineSignal !== null;
+  const signal = byEngine ? engineSignal : (report?.signal ?? (report === null ? engineSignal : null));
   const evidence: Record<string, unknown> = {
     status: report?.code ?? null,
     signal,
     signal_by_engine: byEngine,
-    terminal_event: null,
+    terminal_event: args.cleanResult ? 'result' : null,
+    resource_events: args.resources,
     report: report === null ? 'none' : 'received',
     term_sent: args.termSent,
     kill_written: args.killWritten,
-    resource_events: args.resources,
   };
+  const oom = 'oom_kill' in args.resources ? (args.resources.oom_kill ?? 0) : 0;
   let cls: string;
   if (args.cancelledBeforeExit) cls = 'engine_signaled';
   else if (report === null) cls = 'unknown';
-  else if (report.signal !== null && !byEngine && (args.resources.oom_kill ?? 0) > 0) cls = 'resource_limit';
+  else if (report.signal !== null && !byEngine && oom > 0) cls = 'resource_limit';
   else if (report.signal !== null && !byEngine) cls = 'foreign_signal';
   else if (report.code === 0 && args.cleanResult) cls = 'clean';
   else cls = 'error_exit';
@@ -182,6 +188,7 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
 
   // 5. Observe.
   const final = readPopulated(path);
+  const observedAt = nowIso();
   if (final.state === 'unreadable') return unknown(`cgroup.events cannot be read: ${final.detail}`);
   if (final.state === 'populated' && final.value === 1) {
     if (args.observeOnly) {
@@ -201,7 +208,8 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   }
   if (!args.observeOnly && launch && launch.alive && launch.placedPid === null) return unknown("the launcher is outstanding and is not a member");
   await pausePoint('boundary.before_terminated');
-  const resources = final.state === 'populated' ? counters(path) : { oom_kill: null, pids_max: null };
+  const read = final.state === 'populated' ? counters(path) : null;
+  const resources = read && (read.oom_kill !== null || read.pids_max !== null) ? read : {};
   const report = launch?.exitReport ?? null;
   const exit = classifyExit({
     report,
@@ -218,11 +226,18 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   await rt.engine('domain.terminated', {
     domain: d.id,
     observed: true,
+    observedAt,
     evidence: { populated: 0, absent: final.state === 'absent', term_sent: termSent, kill_written: killWritten, cgroup_path: path },
   });
   // The directory goes after the record; nothing recreates it, since its
   // launch is closed (D2 §3.2).
   if (final.state === 'populated') removeCgroup(path);
+  // The probe profile's sibling goes with its domain (SEAM.md §127).
+  const sibling = join(dirname(path), `sibling_${d.id}`);
+  if (readPopulated(sibling).state !== 'absent') {
+    writeKill(sibling);
+    removeCgroup(sibling);
+  }
   // The domain's area under the engine home (its context package and the
   // setup stage's two mountpoints, empty on the host) goes with it.
   try {

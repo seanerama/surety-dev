@@ -45,8 +45,19 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // The recorded path must be this domain's directory in this engine's own
   // scope; anything else is never created, entered or killed.
   if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
-  const inode = createDomainCgroup(may.cgroup_path, { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') });
+  const limits = { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') };
+  const inode = createDomainCgroup(may.cgroup_path, limits);
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
+  // The probe profile (D2 §2.8, A.6 P15; SEAM.md §127): the domain's own
+  // cgroup directory and a sibling beside it, delegated like a domain and
+  // empty, bound read-write, so that a migration out of the namespace's root
+  // can be attempted and seen refused. The role profile has no cgroupfs.
+  const binds: { source: string; target: string; writable: boolean }[] = [];
+  if (claim.profile === 'probe') {
+    const sibling = join(rt.scope.path, `sibling_${claim.domain}`);
+    createDomainCgroup(sibling, limits);
+    binds.push({ source: may.cgroup_path, target: '/surety/cgroup/domain', writable: true }, { source: sibling, target: '/surety/cgroup/sibling', writable: true });
+  }
 
   const writable = rt.setting('domain_writable_bytes');
   const plan = buildPlan({
@@ -55,6 +66,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     workspace: handle.workspacePath!,
     readPaths: [...handle.readPaths, ...(backend.binds ?? []).filter((b) => !b.writable).map((b) => b.path)],
     writablePaths: (backend.binds ?? []).filter((b) => b.writable).map((b) => b.path),
+    binds,
     volBytes: writable,
     volInodes: rt.setting('domain_writable_inodes'),
     shmBytes: Math.min(writable, 64 * 1024 * 1024),

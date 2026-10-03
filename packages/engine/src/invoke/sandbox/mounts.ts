@@ -79,6 +79,9 @@ export interface PlanInput {
   // scripted backend's directory.
   readPaths: string[];
   writablePaths: string[];
+  // Binds at a target other than their source (the probe profile's cgroup
+  // directories, D2 §2.8, A.6 P15).
+  binds?: { source: string; target: string; writable: boolean }[];
   volBytes: number;
   volInodes: number;
   shmBytes: number;
@@ -247,6 +250,10 @@ export function buildPlan(input: PlanInput): Plan {
   for (const p of input.writablePaths) {
     for (const d of parents(p)) b.dir(d);
     b.bind(p, { writable: true });
+  }
+  for (const x of input.binds ?? []) {
+    for (const d of parents(x.target)) b.dir(d);
+    b.bind(x.source, { target: x.target, writable: x.writable });
   }
   return {
     stage,

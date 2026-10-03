@@ -37,6 +37,7 @@ export interface WorkRow {
   no_progress_count: number;
   progress_key: string | null;
   chain: number;
+  profile?: string | null;
   continue_from: string | null;
 }
 
@@ -138,6 +139,9 @@ export interface TriggerInput {
   // The number of roles of the chain whose outcome created the work (D1-34;
   // E24 item 1): 0 for work a person or a fixture created.
   chain?: number;
+  // The sandbox profile its runs are dispatched under (D2 §§2.8, 3.8); null
+  // for `role`.
+  profile?: 'role' | 'probe' | null;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation'];
@@ -179,10 +183,10 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   tx.db
     .prepare(
       `INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "depends_on",
-         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain")
-       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
+         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile")
+       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
     )
-    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation, input.chain ?? 0);
+    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation, input.chain ?? 0, input.profile ?? null);
   tx.emit('work.created', { project: input.project, work_item: id }, { ...label, to: 'eligible', kind: input.kind, seq });
   return { work_item: { id }, created: true };
 }

@@ -40,3 +40,8 @@ BEGIN SELECT RAISE(ABORT, 'execution_domains: a terminated domain is never repop
 ALTER TABLE execution_domains ADD COLUMN exit_class TEXT
   CHECK (exit_class IN ('engine_signaled', 'unknown', 'resource_limit', 'foreign_signal', 'clean', 'error_exit'));
 ALTER TABLE execution_domains ADD COLUMN exit_evidence TEXT;
+
+-- The sandbox profile a work item's runs are dispatched under (D2 §§2.8,
+-- 3.8): `role` unless set; `probe` only by the probe suite, or by a test
+-- fixture standing for it (SEAM.md §127). Not part of D1 A.3; engine-owned.
+ALTER TABLE work_items ADD COLUMN profile TEXT CHECK (profile IS NULL OR profile IN ('role', 'probe', 'check'));

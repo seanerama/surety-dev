@@ -5,6 +5,8 @@
 // and a host's checks are run elsewhere, and answering either decision
 // launches nothing (CH incident 10).
 
+import { readFileSync } from 'node:fs';
+
 import { BUDGET_BOUNDARIES } from '../../config/schema.js';
 import { Refusal } from '../../refusal.js';
 import { seamHostChecks } from '../../testing/seam.js';
@@ -204,52 +206,70 @@ export interface CheckResult {
   required?: boolean;
 }
 
-// This start's row (any status), if its checks have been recorded.
-function thisStartsRow(db: Db): HostQualificationRow | undefined {
-  const incarnation = engineSettings().incarnation;
-  if (!incarnation) return undefined;
-  return db.prepare('SELECT * FROM "host_qualifications" WHERE "incarnation" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(incarnation) as HostQualificationRow | undefined;
+// What this start's checks observed (D2 §6; SEAM.md §123), held by the store
+// worker for the engine read and the dispatch rule: a start whose checks do
+// not all pass writes no row (D2 §7.1, "a pass writes a row"), and what it
+// observed is still readable.
+export interface HostObserved {
+  checks: CheckResult[];
+  probes: unknown[];
+  duration_ms: number | null;
+  scope_cgroup: string | null;
+  wsl2: boolean;
 }
 
-// The first reason the host is not eligible, in the message's shape (D2 §6):
-// `isolation unqualified: H3 failed: <observed>; <remedy>; real backends are
-// refused until then.`
-export function unqualifiedMessage(checks: CheckResult[]): string | null {
-  const first = checks.find((c) => c.result === 'failed') ?? checks.find((c) => c.result === 'not_exercised' && c.required === true);
+let observed: HostObserved | null = null;
+
+export function setHostObserved(value: HostObserved): void {
+  observed = value;
+}
+
+// The checks that decide eligibility: H1 to H12, H10 only on WSL2 (D2 §6).
+export const isRequired = (id: string, wsl2: boolean): boolean => id !== 'H13' && (id !== 'H10' || wsl2);
+
+export function isWsl2(): boolean {
+  try {
+    return /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+// The first blocking check in H order, in D2 §6's shape: `isolation
+// unqualified: <id> <failed|not_exercised>: <observed>; <remedy>; real
+// backends are refused until then.`
+export function unqualifiedMessage(checks: CheckResult[], wsl2: boolean): string | null {
+  const first = checks.find((c) => isRequired(c.id, wsl2) && c.result !== 'passed');
   if (!first) return null;
-  const what = first.result === 'failed' ? 'failed' : 'not exercised';
-  return `isolation unqualified: ${first.id} ${what}: ${first.observed ?? 'nothing was observed'}${first.remedy ? `; ${first.remedy}` : ''}; real backends are refused until then.`;
+  return `isolation unqualified: ${first.id} ${first.result}: ${first.observed ?? 'nothing was observed'}; ${first.remedy ?? 'see GET /v1/engine'}; real backends are refused until then.`;
 }
 
-// The host checks as this engine reports them (D2 §6; SEAM.md §§114, 118).
-// The checks themselves are not built in this engine revision: each is
-// `not_exercised`, never passed, unless the harness forces a result. Under
-// the harness's `unrun` switch the host's eligibility is the harness's
-// say-so (source `harness`); otherwise it rests on a current active host
-// qualification (source `qualification`), which without the checks cannot
-// exist outside harness mode.
+// The host checks as this engine reports them (D2 §6; SEAM.md §§114, 118,
+// 123). Under the harness's `unrun` switch the checks are not run and the
+// host's eligibility is the harness's say-so (source `harness`); otherwise it
+// rests on a current active host qualification (source `qualification`),
+// which only a start whose every required check passed writes.
 export function hostReport(db: Db) {
   const switches = seamHostChecks();
   const mode = switches?.mode ?? 'run';
   const forced = switches?.forced ?? {};
-  // Who vouches for the host when the checks are left unrun (the seam names
-  // itself); null when the eligibility rests on a qualification.
   const vouched = switches?.vouched ?? null;
-  const row = mode === 'run' ? thisStartsRow(db) : undefined;
+  const wsl2 = observed?.wsl2 ?? isWsl2();
+  const current = currentHostQualification(db) ?? null;
   let checks: CheckResult[];
-  let probes: unknown[] = [];
-  if (row) {
-    // What this start's checks observed, forced results included.
-    checks = JSON.parse(row.checks) as CheckResult[];
-    probes = JSON.parse(row.probes) as unknown[];
-  } else if (mode === 'run') {
-    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : 'not yet run at this start', required: id !== 'H13' }));
+  if (mode === 'run' && observed) checks = observed.checks;
+  // Without this start's observation in hand, an active row's own checks are
+  // the ones that qualified it.
+  else if (mode === 'run' && current) checks = JSON.parse(current.checks) as CheckResult[];
+  else if (mode === 'run') {
+    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: null, remedy: 'wait for the host_qualification startup step to finish' }));
   } else {
-    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : null }));
+    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : null, remedy: null }));
   }
   const failed = checks.filter((c) => c.result === 'failed').map((c) => c.id);
-  const current = currentHostQualification(db) ?? null;
-  const eligible = failed.length === 0 && (vouched !== null || current !== null);
+  const notExercised =
+    mode === 'run' ? checks.filter((c) => c.result === 'not_exercised' && isRequired(c.id, wsl2)).map((c) => c.id) : Object.keys(forced).filter((id) => forced[id] === 'not_exercised');
+  const eligible = failed.length === 0 && (vouched !== null || (notExercised.length === 0 && current !== null));
   return {
     mode,
     eligible,
@@ -257,18 +277,20 @@ export function hostReport(db: Db) {
     host_qualification: current?.id ?? null,
     mechanism_fingerprint: current?.mechanism_fingerprint ?? null,
     failed_checks: failed,
+    not_exercised_checks: notExercised,
+    wsl2,
     checks,
-    probes,
-    // This start's row, active or not, and why it is not (D2 §7.1).
-    this_start: row ? { id: row.id, status: row.status, lapsed_reason: row.lapsed_reason, evidence: row.evidence, bootstrap_exception: row.bootstrap_exception === 1 } : null,
-    message: eligible ? null : (unqualifiedMessage(checks) ?? 'isolation unqualified: no current host qualification; real backends are refused until then.'),
+    probes: mode === 'run' ? (observed?.probes ?? []) : [],
+    message: eligible ? null : mode === 'run' ? (unqualifiedMessage(checks, wsl2) ?? 'isolation unqualified: no current host qualification; real backends are refused until then.') : null,
+    scope_cgroup: mode === 'run' ? (observed?.scope_cgroup ?? null) : null,
+    duration_ms: mode === 'run' ? (observed?.duration_ms ?? null) : null,
   };
 }
 
-// What "current host eligibility" binds (D2 §4.1; SEAM.md §114).
+// What "current host eligibility" binds (D2 §4.1; SEAM.md §§114, 123).
 export function hostEligibility(db: Db) {
-  const { eligible, source, host_qualification, mechanism_fingerprint, failed_checks } = hostReport(db);
-  return { eligible, source, host_qualification, mechanism_fingerprint, failed_checks };
+  const { eligible, source, host_qualification, mechanism_fingerprint, failed_checks, not_exercised_checks } = hostReport(db);
+  return { eligible, source, host_qualification, mechanism_fingerprint, failed_checks, not_exercised_checks };
 }
 
 // ---- qualification attempts (D2 §7.2, K10) --------------------------------------------------
@@ -643,9 +665,9 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
   if (!host.eligible) {
     return refuse(
       'isolation_unqualified',
-      `${report.message ?? 'isolation unqualified'} No current host qualification makes this host eligible to run ${backend}${host.failed_checks.length > 0 ? ` (failed: ${host.failed_checks.join(', ')})` : ''}.`,
+      `${report.message ?? 'isolation unqualified'} No current host qualification makes this host eligible to run ${backend}.`,
       'Start the engine where the host checks pass; real backends are refused until then.',
-      { trust_entry: entry.id, host_eligibility: host, checks: report.checks.filter((c) => c.result !== 'passed').map((c) => c.id) },
+      { trust_entry: entry.id, failed_checks: host.failed_checks, not_exercised_checks: host.not_exercised_checks, host_qualification: host.host_qualification, host_eligibility: host },
       entry.version,
       entry.model,
     );

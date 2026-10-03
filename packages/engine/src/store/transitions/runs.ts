@@ -181,6 +181,8 @@ export interface Claim {
   // The domain's cgroup under the incarnation's scope; null on the scripted
   // boundary.
   cgroup_path: string | null;
+  // The sandbox profile (D2 §§2.8, 3.8).
+  profile: string;
   // The backend the run is dispatched to (D2 §4.1): the trust entry that
   // authorizes it, if any; or why it is refused before any domain or
   // process (`backend_refused`, `isolation_unqualified`,
@@ -334,12 +336,13 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
   // with its cgroup path when the real boundary will hold it.
   const cgroupPath = args.scope ? `${args.scope}/${domain}` : null;
+  const profile = item.profile ?? 'role';
   tx.db
     .prepare(
       `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state")
-       VALUES (?, ?, ?, ?, ?, 'allocated', 'role', ?, 'authorizable')`,
+       VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, 'authorizable')`,
     )
-    .run(domain, tx.at, item.project, run, invocation, cgroupPath);
+    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
@@ -357,6 +360,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     base_revision: baseRevision,
     lease_renewed_at: tx.at,
     cgroup_path: cgroupPath,
+    profile,
     backend: backend.backend,
     trust_entry: trustEntry,
     entry:
@@ -492,8 +496,18 @@ export function recordUsage(tx: Tx, args: { run: string; generation: number; inv
 // result is a role effect: refused once the lease is closing or has expired
 // (D1 §8.3), so a success that arrives after Stop, a deadline or the expiry
 // of the lease has no effect.
-export function recordResult(tx: Tx, args: { run: string; generation: number; valid: boolean; result?: Record<string, unknown> | null; record?: string | null }): boolean {
-  if (!liveLease(tx, args.run, args.generation)) return false;
+export function recordResult(
+  tx: Tx,
+  args: { run: string; generation: number; valid: boolean; result?: Record<string, unknown> | null; record?: string | null; pending?: boolean },
+): boolean {
+  // `pending`: a lease that expired while the engine was paused, whose fresh
+  // challenge found the backend exited (D2 §3.5; SEAM.md §130): the result it
+  // sent before its exit takes effect with that exit. The lease must still be
+  // unreleased, not closing and of the generation.
+  if (args.pending) {
+    const lease = runLease(tx, args.run);
+    if (!lease || lease.closing === 1 || lease.generation !== args.generation) return false;
+  } else if (!liveLease(tx, args.run, args.generation)) return false;
   const run = mustRun(tx, args.run);
   if (run.state !== 'executing') return false;
   // The result record is referenced only once it is published (SEAM.md §56).
@@ -582,7 +596,7 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
 // launched. A later step of the run-end protocol, repeated after a failure,
 // then reads it from the store and cannot charge an invocation that never ran
 // (SEAM.md §24).
-export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean; evidence?: Record<string, unknown> | null }): void {
+export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean; evidence?: Record<string, unknown> | null; observedAt?: string }): void {
   const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
     | { id: string; run: string; project: string; status: DomainStatus; invocation: string; launch_state: string; exit_class: string | null; exit_evidence: string | null }
     | undefined;
@@ -594,7 +608,11 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
   // scripted boundary of the kernel lane, where no launcher exists, it is
   // recorded here.
   closeLaunch(tx, { domain: d.id, cause: 'termination' });
-  tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`).run(tx.at, tx.at, d.id);
+  // `observed_at` is when emptiness was read, which a barrier may hold apart
+  // from this record (SEAM.md §126).
+  tx.db
+    .prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`)
+    .run(tx.at, args.observedAt ?? tx.at, d.id);
   tx.db.prepare('UPDATE "process_ownership" SET "termination_confirmed_at" = ? WHERE "domain" = ?').run(tx.at, d.id);
   const payload: Record<string, unknown> = { from: d.status, observed: args.observed };
   if (args.evidence) payload.evidence = args.evidence;

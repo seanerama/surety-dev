@@ -96,6 +96,9 @@ export interface RunHandle {
   // what the role sent meanwhile, and its exit, held until the tick's fresh
   // challenge decides (D2 §3.5).
   gate: { lines: string[]; exit: (() => void) | null; released: Promise<void>; release: () => void } | null;
+  // The backend exited during a pause the lease did not outlive by any
+  // decision: the run ends by its exit, as decided, whatever the expiry.
+  expiryExempt: boolean;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -131,6 +134,7 @@ export function newHandle(claim: Claim): RunHandle {
     backendStarted: false,
     readPaths: [],
     gate: null,
+    expiryExempt: false,
   };
 }
 
@@ -241,9 +245,9 @@ export class Runtime {
   // without a scope no real backend is eligible to be dispatched to it.
   boundary(): 'scripted' | 'real' {
     const chosen = seamBoundary();
-    if (chosen === 'scripted') return 'scripted';
-    if (chosen === 'real' && this.scope === null) return 'scripted';
-    return 'real';
+    // A sandbox-lane engine without a scope has no boundary to hold a role:
+    // its dispatches are refused, never run on the scripted boundary.
+    return chosen === 'scripted' ? 'scripted' : 'real';
   }
 
   // The host checks, run at start and again when a sandbox fails to build
@@ -283,7 +287,9 @@ export class Runtime {
   requestEnd(handle: RunHandle, end: RunEnd): void {
     if (handle.ending) return;
     handle.ending = true;
-    handle.intended = end.asIs ? { ...end } : { ...end, decidedAt: end.decidedAt ?? isoAt(nowMs()) };
+    const asIs = end.asIs === true || handle.expiryExempt;
+    const { decidedAt, ...rest } = end;
+    handle.intended = asIs ? rest : { ...end, decidedAt: decidedAt ?? isoAt(nowMs()) };
     void this.services?.endRun(handle.claim.run, handle.intended).catch((err) => log('run end', err, { run: handle.claim.run }));
   }
 

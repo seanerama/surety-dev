@@ -30,14 +30,15 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { pausePoint, seamHostChecks } from './testing/seam.js';
+import { seamHostChecks, seamScopeBarrier } from './testing/seam.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
-// `host_checks` runs between integrity and full mode (D2 §7.1, K2) on every
-// start but the harness's kernel lane (SEAM.md §114).
-export type Step = 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'host_checks' | 'full' | 'scheduler';
+// `scope` (K2's step 0, before the lock) and `host_qualification` (between
+// integrity and full mode, D2 §7.1) run on every start but the harness's
+// kernel lane (SEAM.md §§114, 123).
+export type Step = 'scope' | 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'host_qualification' | 'full' | 'scheduler';
 
 export interface StartupFailure {
   step: Step;
@@ -130,8 +131,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const incarnation = newId('inc_');
   let scope: ScopeOutcome = { scope: null, observed: 'the host checks were not run at this start' };
   const checksRun = seamHostChecks()?.mode !== 'unrun';
+  await seamScopeBarrier(opts.home, checksRun);
   if (checksRun) {
-    await pausePoint('scope.before_create');
     const made = createIncarnationScope(opts.home, incarnation);
     scope = made.ok ? { scope: made.scope, observed: made.scope.unit } : { scope: null, observed: made.observed };
   }
@@ -160,7 +161,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
     token,
     mode: 'restricted',
     step: 'lock',
-    completed: ['lock'],
+    completed: checksRun ? ['scope', 'lock'] : ['lock'],
     failed: null,
     store: null,
     runtime: null,
@@ -287,13 +288,13 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // API answers. Their outcome never keeps the engine restricted: a host that
   // does not qualify leaves real backends refused (`isolation_unqualified`).
   if (checksRun) {
-    state.step = 'host_checks';
+    state.step = 'host_qualification';
     try {
       await runtime.runHostChecks(() => runHostChecks(runtime, { scope, budgetMs: config.values.tick_step_budget * 1000 }));
     } catch (err) {
       log('host checks', err);
     }
-    state.completed.push('host_checks');
+    state.completed.push('host_qualification');
   }
 
   // 6. lift to full

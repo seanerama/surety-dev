@@ -1,24 +1,27 @@
 // The launcher (D2 §§1.1, 3.2): engine code the choke point spawns once per
 // invocation, in the supervisor leaf of the engine's scope. It
 //
-//   1. waits for the engine at `before_placement`;
-//   2. places itself: writes its own pid into the domain's `cgroup.procs`,
+//   1. places itself: writes its own pid into the domain's `cgroup.procs`,
 //      confirms /proc/self/cgroup names the domain, and reports `placed`;
-//   3. asks for the launch authorization, presenting domain, invocation,
+//   2. asks for the launch authorization, presenting domain, invocation,
 //      incarnation and lease generation. Without the grant it exits, having
 //      run nothing of the role's;
-//   4. with it, execs `unshare` into the sandbox's namespaces, whose process 1
+//   3. with it, execs `unshare` into the sandbox's namespaces, whose process 1
 //      is the domain init (invoke/domain-init.ts) in its setup stage.
 //
 // It talks to the engine on its standard input and output, one JSON object per
-// line, and only answers what the engine asked or waits for the engine's word:
-// so nothing the engine sends can be lost across the exec. If the engine goes
-// away (its end of the channel closes) the launcher exits: an unauthorized
-// launcher never outlives the engine that could authorize it.
+// line, and only asks and waits for the answer, so nothing the engine sends
+// can be lost across the exec. A `term` from the engine at any point means the
+// launch is over: the launcher goes no further. If the engine goes away (its
+// end of the channel closes) the launcher exits: an unauthorized launcher
+// never outlives the engine that could authorize it, except while it waits at
+// a named wait point the engine handed it (`waits`), where it stays, ignoring
+// TERM, until the wait is released by a file the engine of any incarnation
+// writes; then it goes on only as far as the engine still answers.
 //
 // This file imports nothing of the engine's: it runs as its own program.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -32,17 +35,33 @@ interface Spec {
   unshare: string;
   node: string;
   init: string;
+  // Named wait points, each `pause` or `kill`, and where a wait is marked
+  // and released; none outside the engine's test mode.
+  waits?: Record<string, string>;
+  releaseDir?: string | null;
 }
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-const queue: unknown[] = [];
-let waiter: ((v: unknown) => void) | null = null;
+const queue: Record<string, unknown>[] = [];
+let waiter: ((v: Record<string, unknown> | null) => void) | null = null;
 let closed = false;
+let waiting = false;
+let ended = false;
 lines.on('line', (line) => {
-  let msg: unknown;
+  let msg: Record<string, unknown>;
   try {
-    msg = JSON.parse(line);
+    msg = JSON.parse(line) as Record<string, unknown>;
   } catch {
+    return;
+  }
+  if (msg.t === 'term') {
+    // The launch is over: whatever is asked next is refused.
+    ended = true;
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w(msg);
+    }
     return;
   }
   if (waiter) {
@@ -53,38 +72,76 @@ lines.on('line', (line) => {
 });
 lines.on('close', () => {
   closed = true;
+  if (waiter) {
+    const w = waiter;
+    waiter = null;
+    w(null);
+  }
   // The engine is gone: nothing can authorize this launch any more.
-  process.exit(0);
+  if (!waiting) process.exit(0);
 });
 
-function next(): Promise<Record<string, unknown>> {
-  if (queue.length > 0) return Promise.resolve(queue.shift() as Record<string, unknown>);
-  if (closed) process.exit(0);
+function next(): Promise<Record<string, unknown> | null> {
+  if (queue.length > 0) return Promise.resolve(queue.shift()!);
+  if (closed) return Promise.resolve(null);
   return new Promise((resolve) => {
-    waiter = (v) => resolve(v as Record<string, unknown>);
+    waiter = resolve;
   });
 }
 
 function send(msg: Record<string, unknown>): void {
-  process.stdout.write(`${JSON.stringify(msg)}\n`);
+  if (closed) return;
+  try {
+    process.stdout.write(`${JSON.stringify(msg)}\n`);
+  } catch {
+    // the engine is gone
+  }
 }
 
-async function ask(msg: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function ask(msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  if (ended) return null;
   send(msg);
   return next();
 }
 
-function stop(why: string): never {
-  send({ t: 'stopped', why });
-  process.exitCode = 0;
-  // Let the line drain, then go.
-  setTimeout(() => process.exit(0), 50);
-  throw new Error(why);
+function stop(): never {
+  process.exit(0);
+}
+
+const ignoreTerm = (): void => {};
+
+// A named wait point: mark the wait, tell the engine, and wait for its
+// release file, whatever happens to the engine meanwhile.
+async function waitPoint(spec: Spec, name: string): Promise<void> {
+  const action = spec.waits?.[name];
+  if (!action || !spec.releaseDir) return;
+  const mark = join(spec.releaseDir, `${name}.${process.pid}.waiting`);
+  const release = join(spec.releaseDir, `${name}.${process.pid}.release`);
+  waiting = true;
+  process.on('SIGTERM', ignoreTerm);
+  try {
+    writeFileSync(mark, '');
+    send({ t: 'wait', name, action });
+    while (!existsSync(release)) await new Promise((r) => setTimeout(r, 50));
+  } finally {
+    process.off('SIGTERM', ignoreTerm);
+    waiting = false;
+    for (const f of [mark, release]) {
+      try {
+        unlinkSync(f);
+      } catch {
+        // already gone
+      }
+    }
+  }
+  if (closed) stop();
 }
 
 async function main(): Promise<void> {
-  const spec = (await next()) as unknown as Spec;
-  if ((await ask({ t: 'stage', at: 'before_placement' })).t !== 'go') stop('placement not allowed');
+  const spec = (await next()) as unknown as Spec | null;
+  if (!spec) stop();
+  await waitPoint(spec, 'launcher.before_placement');
+  if (ended) stop();
 
   if (spec.cgroup !== null) {
     // Placement: the launcher enters the domain itself; no process of the
@@ -93,7 +150,7 @@ async function main(): Promise<void> {
       writeFileSync(join(spec.cgroup, 'cgroup.procs'), String(process.pid));
     } catch (err) {
       send({ t: 'place_failed', detail: (err as Error).message });
-      stop('placement failed');
+      stop();
     }
     const line = readFileSync('/proc/self/cgroup', 'utf8')
       .split('\n')
@@ -101,13 +158,17 @@ async function main(): Promise<void> {
     const now = line ? join('/sys/fs/cgroup', line.slice(3)) : null;
     if (now !== spec.cgroup) {
       send({ t: 'place_failed', detail: `/proc/self/cgroup names ${now ?? 'nothing'}, not ${spec.cgroup}` });
-      stop('placement not confirmed');
+      stop();
     }
-    if ((await ask({ t: 'placed', pid: process.pid, cgroup: now })).t !== 'go') stop('not allowed past placement');
+    if ((await ask({ t: 'placed', pid: process.pid, cgroup: now }))?.t !== 'go') stop();
+    await waitPoint(spec, 'launcher.placed');
   }
 
+  await waitPoint(spec, 'launcher.before_authorization');
   const answer = await ask({ t: 'authorize', domain: spec.domain, invocation: spec.invocation, incarnation: spec.incarnation, generation: spec.generation });
-  if (answer.t !== 'granted') stop('launch not authorized');
+  if (answer?.t !== 'granted') stop();
+  await waitPoint(spec, 'launcher.authorized');
+  if (ended) stop();
 
   // The sandbox (D2 §2.2): a user namespace mapping the engine's uid to root,
   // in which the setup stage builds the mounts; private mount, pid, network,

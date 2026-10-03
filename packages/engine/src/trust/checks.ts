@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statfsSync } from 'node:fs';
 import { release } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type Scope, managerReachable } from '../boundary/scope.js';
@@ -31,7 +32,7 @@ import { type ResolvedTools, engineNode, initNodeCopy, resolveSandboxTools } fro
 import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import { canonical } from '../store/transitions/common.js';
-import type { CheckResult } from '../store/transitions/trust.js';
+import { type CheckResult, isRequired, isWsl2 } from '../store/transitions/trust.js';
 import { seamHostChecks } from '../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 
@@ -43,7 +44,13 @@ export interface ScopeOutcome {
   observed: string;
 }
 
-const isWsl = (): boolean => /microsoft/i.test(release()) || existsSync('/proc/sys/fs/binfmt_misc/WSLInterop') || existsSync('/proc/sys/fs/binfmt_misc/WSLInterop-late');
+const isWsl = (): boolean => isWsl2();
+
+// Every path under the system directories by which a tool is reached, as a
+// PATH search would find it, before its real path.
+function toolCandidates(name: string): string[] {
+  return ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'].map((d) => join(d, name)).filter((p) => existsSync(p));
+}
 
 function kernelAtLeast(major: number, minor: number): boolean {
   const m = /^(\d+)\.(\d+)/.exec(release());
@@ -189,9 +196,12 @@ export interface HostCheckRun {
 // check that cannot be made is reported, and the start goes on.
 export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; budgetMs: number }): Promise<HostCheckRun> {
   const deadline = Date.now() + args.budgetMs;
+  const began = performance.now();
+  const wsl2 = isWsl();
   const v = rt.config.values;
   const checks = new Map<string, CheckResult>();
-  const set = (id: string, result: CheckResult['result'], observed: string | null, remedy: string | null = null) => checks.set(id, { id, result, observed, remedy, required: id !== 'H13' && (id !== 'H10' || isWsl()) });
+  const set = (id: string, result: CheckResult['result'], observed: string | null, remedy: string | null = null) =>
+    checks.set(id, { id, result, observed, remedy: result === 'passed' ? null : (remedy ?? 'see the observed value'), required: isRequired(id, wsl2) });
   const scope = args.scope.scope;
 
   // H1: the kernel, and cgroup.kill in the engine's own scope.
@@ -244,7 +254,14 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   // H6: the tools, by absolute path, with versions.
   const tools = await resolveSandboxTools();
   if (tools.missing.length > 0) set('H6', 'failed', `missing: ${tools.missing.join(', ')}`, 'install util-linux (unshare, setpriv, mount, umount, pivot_root) and iproute2 (ip)');
-  else set('H6', 'passed', Object.entries(tools.paths).map(([n, p]) => `${n} ${p} (${tools.versions[n as keyof typeof tools.versions] ?? 'version unknown'})`).join('; '));
+  else
+    set(
+      'H6',
+      'passed',
+      Object.entries(tools.paths)
+        .map(([n, p]) => `${n} ${[...new Set([...toolCandidates(n), p])].join(' = ')} (${tools.versions[n as keyof typeof tools.versions] ?? 'version unknown'})`)
+        .join('; '),
+    );
 
   // H5, H7, H11: one start-up trial through the real launcher and init.
   let initCopy: string | null = null;
@@ -294,7 +311,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
 
   // H10: WSL2 only.
   if (isWsl()) set('H10', 'not_exercised', 'WSL2 host; P11 and P12 are run by the isolation probe suite, which is not part of this engine revision', 'qualify the host with an engine that runs the probe suite');
-  else set('H10', 'not_exercised', 'not a WSL2 host; H10 applies only on WSL2', null);
+  else set('H10', 'not_exercised', 'not a WSL2 host; H10 applies only on WSL2', 'nothing to do: H10 is required only on WSL2');
 
   // H12: memory and disk beyond the reserves for at least one domain.
   try {
@@ -318,13 +335,18 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   } catch {
     // reported as unknown
   }
-  set('H13', 'not_exercised', `no execution observer loader is configured (kernel.unprivileged_bpf_disabled = ${bpf})`, null);
+  set(
+    'H13',
+    'not_exercised',
+    `no execution observer loader is configured (kernel.unprivileged_bpf_disabled = ${bpf}); the observer is optional and never required`,
+    'install the observer\'s loader with the privilege the operator grants (D2 §3.9, E57) to have it reported',
+  );
 
   // The harness's overrides replace a check's result (SEAM.md §114).
   const forced = seamHostChecks()?.forced ?? {};
   for (const [id, result] of Object.entries(forced)) {
     const c = checks.get(id);
-    if (c) checks.set(id, { ...c, result, observed: `${result} (forced; observed: ${c.observed ?? 'nothing'})` });
+    if (c) checks.set(id, { ...c, result, observed: `${result} (forced; observed: ${c.observed ?? 'nothing'})`, remedy: c.remedy ?? 'the harness forced this result' });
   }
 
   const ordered = HOST_CHECKS.map((id) => checks.get(id)!);
@@ -369,24 +391,36 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     scope: scope ? { unit: scope.unit, path: scope.path } : null,
     trial,
   };
+  // What was observed is readable whatever the outcome; only a start whose
+  // every required check passed writes a row, with its evidence record
+  // (D2 §7.1; SEAM.md §123).
+  await rt.store.call('host.observed', {
+    checks: ordered,
+    probes,
+    duration_ms: Math.round(performance.now() - began),
+    scope_cgroup: scope?.path ?? null,
+    wsl2,
+  });
   let row: string | null = null;
-  try {
-    const record = await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(JSON.stringify(evidence, null, 2)) });
-    const written = await rt.engine<{ id: string }>('host.qualification', {
-      incarnation: rt.incarnation,
-      host_id: host,
-      kernel: release(),
-      tool_versions: versions,
-      mechanism_fingerprint: fingerprint,
-      checks: ordered,
-      probes,
-      evidence: record,
-      qualifies,
-      unqualified: blocking.map((c) => `${c.id} ${c.result === 'failed' ? 'failed' : 'not exercised'}`).join(', ') || null,
-    });
-    row = written.id;
-  } catch (err) {
-    log('host checks', err, { what: 'record' });
+  if (qualifies) {
+    try {
+      const record = await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(JSON.stringify(evidence, null, 2)) });
+      const written = await rt.engine<{ id: string }>('host.qualification', {
+        incarnation: rt.incarnation,
+        host_id: host,
+        kernel: release(),
+        tool_versions: versions,
+        mechanism_fingerprint: fingerprint,
+        checks: ordered,
+        probes,
+        evidence: record,
+        qualifies,
+        unqualified: null,
+      });
+      row = written.id;
+    } catch (err) {
+      log('host checks', err, { what: 'record' });
+    }
   }
   return { checks: ordered, qualifies, row };
 }

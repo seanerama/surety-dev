@@ -91,7 +91,7 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { mountContext } from './reads.js';
-import { recordHostQualification, trustView } from './transitions/trust.js';
+import { type HostObserved, recordHostQualification, setHostObserved, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
   boundaryDomains,
@@ -352,6 +352,8 @@ const OPS: Record<string, (args: any) => unknown> = {
   },
   'engine.full': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => liftToFull(tx, a.incarnation)),
   'engine.started': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => schedulerStarted(tx, a.incarnation)),
+  // What this start's host checks observed (no store write; SEAM.md §123).
+  'host.observed': (a: HostObserved) => setHostObserved(a),
   close: () => {
     db?.close();
     db = null;

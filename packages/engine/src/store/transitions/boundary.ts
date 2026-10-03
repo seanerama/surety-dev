@@ -7,6 +7,7 @@
 // transitions; none of them waits on a process.
 
 import { illegal, notFound } from './common.js';
+import { recordLaunch } from './runs.js';
 import { assertEdge } from './lifecycle.js';
 import { engineSettings } from './settings.js';
 import type { Tx } from './tx.js';
@@ -67,7 +68,7 @@ export function recordPlacement(tx: Tx, args: { domain: string; pid: number }): 
   const d = mustDomain(tx, args.domain);
   if (d.placed_at !== null) return;
   tx.db.prepare('UPDATE "execution_domains" SET "placed_at" = ? WHERE "id" = ?').run(tx.at, d.id);
-  tx.emit('domain.placed', domainSubject(d), { pid: args.pid, cgroup_path: d.cgroup_path, launch_state: d.launch_state });
+  tx.emit('domain.placed', domainSubject(d), { cgroup_path: d.cgroup_path, launcher_pid: args.pid, launch_state: d.launch_state });
 }
 
 export interface LaunchBinding {
@@ -110,10 +111,13 @@ export function authorizeLaunch(
   tx.db
     .prepare(`UPDATE "execution_domains" SET "launch_state" = 'authorized', "launch_binding" = ?, "launch_authorized_at" = ?, "status" = 'launched' WHERE "id" = ?`)
     .run(JSON.stringify(binding), tx.at, d.id);
-  tx.db
-    .prepare('UPDATE "process_ownership" SET "pid" = ?, "pgid" = ?, "pid_start_time" = ?, "containment_id" = ? WHERE "domain" = ?')
-    .run(args.pid, args.pid, args.startTime, d.cgroup_path, d.id);
-  tx.emit('domain.launch_authorized', domainSubject(d), { launch_binding: binding, cgroup_path: d.cgroup_path, pid: args.pid });
+  tx.db.prepare('UPDATE "process_ownership" SET "containment_id" = ? WHERE "domain" = ?').run(d.cgroup_path, d.id);
+  tx.emit('domain.launch_authorized', domainSubject(d), { launch_binding: binding, cgroup_path: d.cgroup_path, launcher_pid: args.pid });
+  // The same transaction completes ownership with the launcher's process
+  // (which the domain init inherits by exec), appends `launched` and moves
+  // the run and its work to `executing`: from here role code may run
+  // (SEAM.md §125).
+  recordLaunch(tx, { run: d.run, invocation: d.invocation, domain: d.id, pid: args.pid, pgid: args.pid, startTime: args.startTime });
   return { granted: true, reason: null };
 }
 
@@ -124,7 +128,7 @@ export function closeLaunch(tx: Tx, args: { domain: string; cause?: string }): b
   if (d.launch_state === 'closed') return false;
   assertEdge('LaunchState', d.launch_state, 'closed', { domain: d.id });
   tx.db.prepare(`UPDATE "execution_domains" SET "launch_state" = 'closed', "launch_closed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);
-  tx.emit('domain.launch_closed', domainSubject(d), { from: d.launch_state, cause: args.cause ?? null });
+  tx.emit('domain.launch_closed', domainSubject(d), { from: d.launch_state, reason: args.cause ?? 'closed' });
   return true;
 }
 
@@ -193,7 +197,10 @@ export function regrantFacts(
 // The re-grant itself: the same generation, so fencing is unchanged; a new
 // expiry; the deadline, the budget and every ending decision untouched. The
 // event carries the evidence of the fresh challenge (D2 §3.5).
-export function regrantLease(tx: Tx, args: { run: string; generation: number; incarnation: string; challenge: Record<string, unknown> }): string | null {
+export function regrantLease(
+  tx: Tx,
+  args: { run: string; generation: number; incarnation: string; challenge: { nonce: string; sent_at: string; answered_at: string; backend_state: string } },
+): string | null {
   const facts = regrantFacts(tx.db, { run: args.run, incarnation: args.incarnation });
   if (!facts.eligible || facts.generation !== args.generation) return null;
   const lease = tx.db.prepare(`SELECT * FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(args.run) as {
@@ -206,7 +213,7 @@ export function regrantLease(tx: Tx, args: { run: string; generation: number; in
   tx.emit(
     'run.lease_regranted',
     { project: run.project, run: args.run, work_item: run.work_item },
-    { generation: args.generation, expired_at: lease.expires_at, expires_at: expires, deadline_at: facts.deadline_at, challenge: args.challenge },
+    { generation: args.generation, expired_at: lease.expires_at, expires_at: expires, deadline_at: facts.deadline_at, challenge: { ...args.challenge, channel: 'domain_init' } },
   );
   return tx.at;
 }

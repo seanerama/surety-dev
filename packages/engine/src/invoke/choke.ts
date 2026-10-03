@@ -31,7 +31,7 @@ import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runt
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamMainFault } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated } from '../boundary/cgroup.js';
@@ -84,6 +84,8 @@ function childEnv(claim: Claim, extra: Record<string, string> = {}): NodeJS.Proc
 }
 
 const refusalForm = (code: string, reason: string, whatToDo: string, subject: Record<string, unknown>) => ({ code, reason, what_to_do: whatToDo, subject });
+
+const isUsageLine = (line: string): boolean => /"type"\s*:\s*"usage"/.test(line);
 
 // The one line the backend reads on its standard input (SEAM.md §13).
 function requestLine(handle: RunHandle, workspace: string): string {
@@ -494,9 +496,22 @@ export class Launcher {
     let started: () => void = () => {};
     const backendStarted = new Promise<void>((resolve) => (started = resolve));
     const launch = new SandboxLaunch(
-      { domain: claim.domain, invocation: claim.invocation, incarnation: this.rt.incarnation, generation: claim.generation, cgroup: claim.cgroup_path, unshare: prepared.unshare, node: engineNode() },
+      {
+        domain: claim.domain,
+        invocation: claim.invocation,
+        incarnation: this.rt.incarnation,
+        generation: claim.generation,
+        cgroup: claim.cgroup_path,
+        unshare: prepared.unshare,
+        node: engineNode(),
+        ...(() => {
+          const w = seamLauncherBarriers(this.rt.home);
+          return w ? { waits: w.barriers, releaseDir: w.releaseDir } : {};
+        })(),
+      },
       {
         barrier: (name) => pausePoint(name),
+        reached: (name, action) => seamLauncherReached(name, action),
         placed: async (pid) => {
           await this.rt.engine('domain.placed', { domain: claim.domain, pid });
         },
@@ -516,14 +531,10 @@ export class Launcher {
         },
         plan: () => prepared!.plan,
         backend: () => prepared!.backend,
+        // The launch was recorded with the grant (SEAM.md §125).
         started: async () => {
           handle.backendStarted = true;
-          try {
-            await pausePoint('launch.before_ownership');
-            await this.rt.engine('invoke.launched', { run: claim.run, invocation: claim.invocation, domain: claim.domain, pid: launch.pid, pgid: launch.pid, startTime: launch.startTime });
-          } finally {
-            started();
-          }
+          started();
         },
         // D2 §7.1: a sandbox the launcher fails to build refuses the run
         // with `isolation_unqualified` and runs the host checks again.
@@ -576,7 +587,10 @@ export class Launcher {
     });
     try {
       for (let line = await output.next(); line !== null; line = await output.next()) {
-        if (handle.gate || this.pausedPastLease(handle)) {
+        // While an expired lease is pending its challenge (SEAM.md §130), a
+        // usage line is recorded and checked against the budget at once; a
+        // result and a heartbeat wait for the challenge's outcome.
+        if ((handle.gate || this.pausedPastLease(handle)) && !isUsageLine(line)) {
           this.gate(handle).lines.push(line);
           continue;
         }
@@ -639,13 +653,8 @@ export class Launcher {
     );
     if (!facts.eligible || facts.generation === null) return false;
     const gate = this.gate(handle);
-    // What the role reported of its usage meanwhile is kept (the lease is
-    // unreleased), and counts before the budget is judged.
-    const usage = gate.lines.filter((l) => /"type"\s*:\s*"usage"/.test(l));
-    gate.lines = gate.lines.filter((l) => !usage.includes(l));
-    for (const line of usage) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
-    // Without a re-grant, what the role sent during the pause is not acted
-    // on (its lease had expired), and its exit is left to the run's end.
+    // Without a re-grant or an exit, what the role sent during the pause is
+    // not acted on (its lease had expired), and its exit is the run's end's.
     const dropGate = () => {
       gate.lines = [];
       if (handle.gate === gate) handle.gate = null;
@@ -678,19 +687,28 @@ export class Launcher {
       dropGate();
       return false;
     }
+    if (response.backend.state === 'exited') {
+      // The backend exited during the pause: the run ends by its exit, with
+      // what it sent before it (SEAM.md §130); nothing is re-granted.
+      handle.expiryExempt = true;
+      handle.gate = null;
+      for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+      if (gate.exit) gate.exit();
+      else {
+        // The init's report is lost or not yet read: the response says how
+        // the backend ended.
+        handle.sandbox.ackExit();
+        handle.exit = { code: response.backend.code, signal: response.backend.signal === null ? null : String(response.backend.signal) };
+        handle.exitAt = isoAt(nowMs());
+      }
+      gate.release();
+      return true;
+    }
     const at = await this.rt.engine<string | null>('run.regrant', {
       run,
       generation: facts.generation,
       incarnation: this.rt.incarnation,
-      challenge: {
-        nonce: response.nonce,
-        invocation: response.invocation,
-        generation: response.generation,
-        sent_at: sentAt,
-        responded_at: isoAt(nowMs()),
-        backend: response.backend,
-        channel: 'domain_init',
-      },
+      challenge: { nonce: response.nonce, sent_at: sentAt, answered_at: isoAt(nowMs()), backend_state: response.backend.state },
     });
     if (at === null) {
       dropGate();
@@ -764,7 +782,10 @@ export class Launcher {
       log('budget check', err, { run });
       limit = 'budget_unreadable';
     }
-    if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit });
+    // A budget stop decided on a usage line read while the lease was pending
+    // its challenge is the run's end as decided (SEAM.md §130).
+    const pending = handle.sandbox !== null && (handle.gate !== null || this.pausedPastLease(handle));
+    if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, ...(pending ? { asIs: true } : {}) });
   }
 
   // A usage observation is never lost silently (E37 item 3). A store failure
@@ -811,7 +832,7 @@ export class Launcher {
     for (let attempt = 0; ; attempt++) {
       if (handle.ending) return false;
       try {
-        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result, record });
+        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result, record, ...(handle.expiryExempt ? { pending: true } : {}) });
       } catch (err) {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error') throw err;
