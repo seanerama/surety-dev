@@ -28,10 +28,17 @@ import { Runtime, log } from './runtime.js';
 import { Scheduler, reconcileProject } from './scheduler/tick.js';
 import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
+import { createIncarnationScope } from './boundary/scope.js';
+import { newId } from './ids.js';
+import { seamHostChecks, seamScopeBarrier } from './testing/seam.js';
+import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
-export type Step = 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'full' | 'scheduler';
+// `scope` (K2's step 0, before the lock) and `host_qualification` (between
+// integrity and full mode, D2 §7.1) run on every start but the harness's
+// kernel lane (SEAM.md §§114, 123).
+export type Step = 'scope' | 'lock' | 'listen' | 'store' | 'recovery' | 'integrity' | 'host_qualification' | 'full' | 'scheduler';
 
 export interface StartupFailure {
   step: Step;
@@ -50,6 +57,9 @@ export interface EngineState {
   failed: StartupFailure | null;
   store: StoreClient | null;
   runtime: Runtime | null;
+  // The incarnation scope (D2 §3.1), or why there is none.
+  scope: { unit: string; path: string } | null;
+  scopeObserved: string | null;
 }
 
 export interface ServeOptions {
@@ -112,14 +122,33 @@ export async function serve(opts: ServeOptions): Promise<void> {
     throw err;
   }
 
+  // 0. The incarnation scope (D2 §3.1, K2), before the lock: the engine runs
+  // in `surety-<home>-<incarnation>.scope` under the user's systemd manager,
+  // in its `supervisor` leaf. A start that cannot have its scope goes on,
+  // with H3 failed and real backends refused; a start the lock then refuses
+  // exits, and the manager removes its empty scope with it. The harness's
+  // kernel lane runs without one (SEAM.md §114).
+  const incarnation = newId('inc_');
+  let scope: ScopeOutcome = { scope: null, observed: 'the host checks were not run at this start' };
+  const checksRun = seamHostChecks()?.mode !== 'unrun';
+  await seamScopeBarrier(opts.home, checksRun);
+  if (checksRun) {
+    const made = createIncarnationScope(opts.home, incarnation);
+    scope = made.ok ? { scope: made.scope, observed: made.scope.unit } : { scope: null, observed: made.observed };
+  }
+
   // 1. lock. A first start creates api.token once the lock is judged free and
   // before the lock record names it, so a refusal there leaves the lock as
   // found. The listener, which needs the token, starts after.
   let lock: LockRecord;
   try {
-    lock = acquireLock(opts.home, () => {
-      token ??= createToken(paths.token);
-    });
+    lock = acquireLock(
+      opts.home,
+      () => {
+        token ??= createToken(paths.token);
+      },
+      incarnation,
+    );
   } catch (err) {
     const { status, refusal } = startFailure(opts.home, err);
     exitRefused(status, refusal);
@@ -132,10 +161,12 @@ export async function serve(opts: ServeOptions): Promise<void> {
     token,
     mode: 'restricted',
     step: 'lock',
-    completed: ['lock'],
+    completed: checksRun ? ['scope', 'lock'] : ['lock'],
     failed: null,
     store: null,
     runtime: null,
+    scope: scope.scope ? { unit: scope.scope.unit, path: scope.scope.path } : null,
+    scopeObserved: checksRun ? scope.observed : null,
   };
 
   let server: Server | null = null;
@@ -195,6 +226,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   try {
     await store.call('open', {
       lock,
+      scope: scope.scope?.path ?? null,
       settings: {
         lease_ttl: config.values.lease_ttl,
         git_deadline: config.values.git_deadline,
@@ -209,6 +241,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
 
   configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home, incarnation: lock.incarnation_id });
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
+  runtime.scope = scope.scope;
   const journal = new Journal(runtime);
   runtime.journal = journal;
   const ender = new RunEnder(runtime);
@@ -226,6 +259,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
     nominate: (project) => nominate(runtime, journal, project),
     journal: (project) => reconcileProject(runtime, journal, project),
     effect: (intent) => effects.run(intent),
+    regrant: (run) => launcher.regrant(run),
   };
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation
@@ -249,6 +283,19 @@ export async function serve(opts: ServeOptions): Promise<void> {
     return fail('integrity', err);
   }
   state.completed.push('integrity');
+
+  // 5a. The host checks (D2 §6, §7.1), bounded by tick_step_budget, while the
+  // API answers. Their outcome never keeps the engine restricted: a host that
+  // does not qualify leaves real backends refused (`isolation_unqualified`).
+  if (checksRun) {
+    state.step = 'host_qualification';
+    try {
+      await runtime.runHostChecks(() => runHostChecks(runtime, { scope, budgetMs: config.values.tick_step_budget * 1000 }));
+    } catch (err) {
+      log('host checks', err);
+    }
+    state.completed.push('host_qualification');
+  }
 
   // 6. lift to full
   state.step = 'full';

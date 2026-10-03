@@ -30,6 +30,7 @@
 // expires as well, and the tick's reconciliation (`reconcileExpired`) is the
 // backstop that holds even for a run whose decision this engine has lost.
 
+import { existsSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -41,6 +42,8 @@ import { markedProcesses, signalFound, signalRecordedGroup } from '../invoke/pro
 import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../runtime.js';
 import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
+import { terminateDomain } from '../boundary/terminate.js';
+import type { DomainRow } from '../store/transitions/boundary.js';
 
 type Domain = EndFacts['domains'][number];
 
@@ -71,6 +74,9 @@ const OUTPUT_GRACE_MS = 5000;
 export class RunEnder {
   private readonly ending = new Map<string, Promise<void>>();
   private readonly retries = new Map<string, Retry>();
+  // Prior incarnations whose supervisor leaf startup recovery could not
+  // close, with why: their domains are `unknown` (D2 §§3.3, 3.4).
+  priorUnknown = new Map<string, string>();
 
   constructor(private readonly rt: Runtime) {}
 
@@ -157,6 +163,11 @@ export class RunEnder {
     const results = await Promise.all(
       domains.map(async (d) => {
         if (d.status === 'quarantined') return { d, terminated: false };
+        if (d.cgroup_path !== null) {
+          const r = await this.terminateReal(d, handle, {});
+          if (r.terminated && r.refused) invocations[d.invocation] = 'refused';
+          return { d, terminated: r.terminated };
+        }
         if (handle && handle.claim.domain === d.id && (handle.phase === 'aborted' || handle.phase === 'never')) {
           // The running engine knows it never spawned into this domain.
           await this.rt.engine('domain.terminated', { domain: d.id, observed: false });
@@ -241,6 +252,33 @@ export class RunEnder {
     }
   }
 
+  // A domain of the real boundary (D2 §3.2): closure, the launcher, TERM,
+  // cgroup.kill, observation (boundary/terminate.ts). A domain whose cgroup
+  // was never made and into which this engine never spawned is terminated
+  // on the engine's own knowledge, as on the scripted boundary. `refused`:
+  // no role code ever ran in it (its launch was never authorized, or its
+  // sandbox was never built), so its invocation was never launched.
+  private async terminateReal(d: Domain, handle: RunHandle | undefined, opts: { observeOnly?: boolean }): Promise<{ terminated: boolean; refused: boolean }> {
+    const own = handle && handle.claim.domain === d.id ? handle : undefined;
+    if (d.cgroup_inode === null && own && (own.phase === 'aborted' || own.phase === 'never') && own.sandbox === null && !existsSync(d.cgroup_path!)) {
+      await this.rt.engine('domain.terminated', { domain: d.id, observed: false });
+      return { terminated: true, refused: true };
+    }
+    const row = await this.rt.read<DomainRow | null>('domain.row', { domain: d.id });
+    if (row === null) return { terminated: false, refused: false };
+    const verdict = await terminateDomain({
+      rt: this.rt,
+      d: row,
+      incarnation: d.incarnation,
+      handle: own,
+      knownUnknown: this.priorUnknown.get(d.incarnation) ?? null,
+      ...(opts.observeOnly ? { observeOnly: true } : {}),
+    });
+    if (!verdict.terminated) return { terminated: false, refused: false };
+    const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);
+    return { terminated: true, refused: neverRan };
+  }
+
   // Termination of every domain of a run that is not terminated yet, before a
   // snapshot (correction 1). Returns whether it was established for all. The
   // run is not quarantined here: the run-end protocol does that.
@@ -254,7 +292,7 @@ export class RunEnder {
         all = false;
         continue;
       }
-      const r = await this.terminate(facts, d, handle);
+      const r = d.cgroup_path !== null ? await this.terminateReal(d, handle, {}) : await this.terminate(facts, d, handle);
       if (!r.terminated) all = false;
     }
     return all;
@@ -340,6 +378,13 @@ export class RunEnder {
     if (facts.run.state !== 'finalizing' || facts.run.quarantined !== 1) return;
     for (const d of facts.domains) {
       if (d.status !== 'quarantined') continue;
+      if (d.cgroup_path !== null) {
+        // The real boundary: each tick observes, under the same closure
+        // prerequisites, and signals nothing; startup recovery terminates
+        // (D2 §§3.3, 3.4).
+        await this.terminateReal(d, this.rt.handles.get(run), { observeOnly: !opts.signal });
+        continue;
+      }
       if (opts.signal) {
         if (d.pid !== null && d.pid_start_time !== null) signalRecordedGroup(d.pid, d.pgid ?? d.pid, d.pid_start_time, 'SIGKILL');
         for (const p of markedProcesses(d.id) ?? []) signalFound(p, 'SIGKILL');
@@ -369,6 +414,9 @@ export class RunEnder {
       // acceptance pipeline, which ends it with the outcome its steps decide
       // (runs/accept.ts); it does not wait for a renewal it would never get.
       if (handle?.accepting && !handle.ending) continue;
+      // A run on the real boundary that this engine holds, after a pause: a
+      // fresh challenge may re-grant it (D2 §3.5).
+      if (handle && handle.sandbox !== null && !handle.ending && this.rt.services && (await this.rt.services.regrant(e.run).catch(() => false))) continue;
       const end = expiryEnd(handle);
       if (handle) {
         handle.leaseLost = true;

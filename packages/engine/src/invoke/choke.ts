@@ -10,7 +10,7 @@
 // supervision of the role's callbacks until it exits. No transaction is held
 // across the spawn, a git call or a read of the role's output.
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -31,7 +31,11 @@ import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runt
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
+import { SandboxLaunch } from './sandboxed.js';
+import { engineNode } from './sandbox/tools.js';
+import { readPopulated } from '../boundary/cgroup.js';
+import { prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
@@ -81,6 +85,23 @@ function childEnv(claim: Claim, extra: Record<string, string> = {}): NodeJS.Proc
 
 const refusalForm = (code: string, reason: string, whatToDo: string, subject: Record<string, unknown>) => ({ code, reason, what_to_do: whatToDo, subject });
 
+const isUsageLine = (line: string): boolean => /"type"\s*:\s*"usage"/.test(line);
+
+// The one line the backend reads on its standard input (SEAM.md §13).
+function requestLine(handle: RunHandle, workspace: string): string {
+  const { claim } = handle;
+  return `${JSON.stringify({
+    invocation: claim.invocation,
+    domain: claim.domain,
+    run: claim.run,
+    project: claim.project,
+    work_item: claim.work_item,
+    work_kind: claim.work_kind,
+    role: claim.role,
+    workspace,
+  })}\n`;
+}
+
 // What the choke point spawns for a backend a trust entry authorizes: its
 // binary, its adapter's template arguments, and the provider key in the
 // variable the template names (D2 §§1.2, 2.5, 4.5, 4.6). null when the
@@ -120,6 +141,9 @@ export class Launcher {
       scripted: backend?.version ?? null,
       maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
       providerCaps: heldProviderCaps(),
+      // The domain is a cgroup of the incarnation's scope on the real
+      // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
+      scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
     });
     if (!claim) return false;
     const handle = newHandle(claim);
@@ -202,6 +226,7 @@ export class Launcher {
     // before every launch, approved or not (D2 §2.3): a refusal names the
     // path and why, and no launcher starts.
     const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
+    handle.readPaths = plan.paths;
     const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
     if (refused !== null) {
       this.never(
@@ -283,7 +308,21 @@ export class Launcher {
   // infra_error) rather than leaving it to a lease nobody will renew.
   private async launch(handle: RunHandle, backend: BackendSpec): Promise<void> {
     try {
-      await this.supervise(handle, backend);
+      // The real boundary: the launcher, the sandbox, the domain's cgroup
+      // (D2 §§1.1, 2, 3). The kernel lane's scripted boundary keeps the
+      // direct spawn of SEAM.md §13.
+      if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend);
+      else if (this.rt.boundary() === 'scripted') await this.supervise(handle, backend);
+      else {
+        // No production path runs a backend outside the sandbox (D2 §5 C3):
+        // a domain without a cgroup on the real boundary is not launched.
+        this.never(handle, 'refused', 'preflight_refused', 'never', 'isolation_unqualified', refusalForm(
+          'isolation_unqualified',
+          'The engine has no incarnation scope, so no domain can be placed in the execution boundary.',
+          'Start surety from a login session of uid 1000 with a running user manager; real backends are refused until then.',
+          { domain: handle.claim.domain },
+        ));
+      }
     } catch (err) {
       log('launch', err, { run: handle.claim.run, phase: handle.phase });
       if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
@@ -357,7 +396,7 @@ export class Launcher {
       handle.startTime = null;
     }
 
-    const output = new RoleOutput(child, (bytes) => transcript.write(bytes));
+    const output = new RoleOutput(child.stdout!, (bytes) => transcript.write(bytes));
     let outputDone: () => void = () => {};
     handle.output = { done: new Promise<void>((resolve) => (outputDone = resolve)), stop: () => output.close() };
     const exited = new Promise<void>((resolve) => {
@@ -369,18 +408,7 @@ export class Launcher {
       });
     });
     child.stdin!.on('error', () => {});
-    child.stdin!.end(
-      `${JSON.stringify({
-        invocation: claim.invocation,
-        domain: claim.domain,
-        run: claim.run,
-        project: claim.project,
-        work_item: claim.work_item,
-        work_kind: claim.work_kind,
-        role: claim.role,
-        workspace: handle.workspacePath,
-      })}\n`,
-    );
+    child.stdin!.end(requestLine(handle, handle.workspacePath!));
 
     try {
       await pausePoint('launch.before_ownership');
@@ -421,6 +449,301 @@ export class Launcher {
     // and the tick reconciles the run.
     await exited;
     this.childDone(handle);
+  }
+
+  // The launch into the real sandbox (D2 §§1.1, 3.2): the domain's cgroup,
+  // created by the engine while its launch is not closed; the launcher,
+  // spawned in the supervisor leaf, placed by itself, authorized in one
+  // transaction bound to this invocation, incarnation and lease generation;
+  // the domain init, which starts the backend on the engine's word and
+  // relays its output. Every way out of it leaves the domain to the run-end
+  // protocol, which closes the launch and establishes termination.
+  private async superviseSandboxed(handle: RunHandle, backend: BackendSpec): Promise<void> {
+    const { claim } = handle;
+    await pausePoint('launch.before_spawn');
+    const active = await this.rt.engine<boolean>('run.lease_active', { run: claim.run, generation: claim.generation });
+    if (handle.abort || !active) {
+      handle.phase = 'aborted';
+      handle.settle();
+      return;
+    }
+    let transcript: RecordStream;
+    try {
+      transcript = await RecordStream.open(this.rt, { project: claim.project, run: claim.run, kind: 'transcript' });
+    } catch (err) {
+      log('transcript', err, { run: claim.run });
+      this.never(handle, 'failed', 'infra_error');
+      return;
+    }
+    let prepared: Awaited<ReturnType<typeof prepareSandbox>>;
+    try {
+      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'));
+    } catch (err) {
+      log('sandbox', err, { run: claim.run });
+      await transcript.abandon();
+      this.never(handle, 'failed', 'infra_error');
+      return;
+    }
+    if (prepared === null || handle.abort) {
+      // The launch was closed before its cgroup could be made.
+      await transcript.abandon();
+      handle.phase = 'aborted';
+      handle.settle();
+      return;
+    }
+
+    handle.phase = 'spawned';
+    let started: () => void = () => {};
+    const backendStarted = new Promise<void>((resolve) => (started = resolve));
+    const launch = new SandboxLaunch(
+      {
+        domain: claim.domain,
+        invocation: claim.invocation,
+        incarnation: this.rt.incarnation,
+        generation: claim.generation,
+        cgroup: claim.cgroup_path,
+        unshare: prepared.unshare,
+        node: engineNode(),
+        ...(() => {
+          const w = seamLauncherBarriers(this.rt.home);
+          return w ? { waits: w.barriers, releaseDir: w.releaseDir } : {};
+        })(),
+      },
+      {
+        barrier: (name) => pausePoint(name),
+        reached: (name, action) => seamLauncherReached(name, action),
+        placed: async (pid) => {
+          await this.rt.engine('domain.placed', { domain: claim.domain, pid });
+        },
+        // Refused at once if the engine has decided to end the run, before
+        // the store says so; the store's transaction checks the rest.
+        authorize: async () => {
+          if (handle.ending || handle.abort) return false;
+          const r = await this.rt.engine<{ granted: boolean }>('domain.authorize', {
+            domain: claim.domain,
+            invocation: claim.invocation,
+            incarnation: this.rt.incarnation,
+            generation: claim.generation,
+            pid: launch.pid,
+            startTime: launch.startTime,
+          });
+          return r.granted && !handle.ending;
+        },
+        plan: () => prepared!.plan,
+        backend: () => prepared!.backend,
+        // The launch was recorded with the grant (SEAM.md §125).
+        started: async () => {
+          handle.backendStarted = true;
+          started();
+        },
+        // D2 §7.1: a sandbox the launcher fails to build refuses the run
+        // with `isolation_unqualified` and runs the host checks again.
+        setupFailed: (detail) => {
+          this.rt.requestEnd(handle, {
+            outcome: 'refused',
+            reason: 'preflight_refused',
+            reasonText: 'isolation_unqualified',
+            detail: refusalForm('isolation_unqualified', `The sandbox could not be built: ${detail}.`, 'Read the host checks on GET /v1/engine; real backends are refused until the host qualifies.', {
+              domain: claim.domain,
+              detail,
+            }),
+          });
+          this.rt.rerunHostChecks();
+        },
+      },
+    );
+    launch.dropExitReport = seamMainFault('init_report_lost');
+    handle.sandbox = launch;
+    handle.child = launch.child;
+    handle.pid = launch.pid;
+    handle.startTime = launch.startTime;
+    handle.settle();
+
+    const output = new RoleOutput(launch.output, (bytes) => transcript.write(bytes));
+    let outputDone: () => void = () => {};
+    handle.output = { done: new Promise<void>((resolve) => (outputDone = resolve)), stop: () => output.close() };
+    // The backend's exit, as the init reports it. Taken now, unless the
+    // engine has just resumed from a pause that outlived the run lease: then
+    // it waits, with the role's lines, for the tick's fresh challenge (D2
+    // §3.5; `regrant`).
+    const takeExit = () => {
+      launch.ackExit();
+      const report = launch.exitReport;
+      handle.exit = report === null ? { code: null, signal: null } : { code: report.code, signal: report.signal === null ? null : String(report.signal) };
+      handle.exitAt = isoAt(nowMs());
+      output.exited();
+    };
+    // The role's lines are acted on once its launch is recorded (as
+    // `launch.before_ownership` and `launched` precede them on the scripted
+    // boundary), or not at all if it never starts.
+    await Promise.race([backendStarted, launch.launcherExited]);
+    void launch.backendDone.then(() => {
+      if (!handle.backendStarted) return;
+      if (handle.gate || this.pausedPastLease(handle)) {
+        this.gate(handle).exit = takeExit;
+        return;
+      }
+      takeExit();
+    });
+    try {
+      for (let line = await output.next(); line !== null; line = await output.next()) {
+        // While an expired lease is pending its challenge (SEAM.md §130), a
+        // usage line is recorded and checked against the budget at once; a
+        // result and a heartbeat wait for the challenge's outcome.
+        if ((handle.gate || this.pausedPastLease(handle)) && !isUsageLine(line)) {
+          this.gate(handle).lines.push(line);
+          continue;
+        }
+        await this.callback(handle, line).catch((err) => log('callback', err, { run: claim.run }));
+      }
+    } finally {
+      output.close();
+      await transcript.end().catch((err) => log('transcript', err, { run: claim.run }));
+      outputDone();
+    }
+    await launch.backendDone;
+    if (!handle.backendStarted) {
+      // Nothing of the role ran: the launch was refused, the sandbox could not
+      // be built, or the launcher ended before it. The run's end is decided
+      // elsewhere (a Stop, a deadline, the lease's expiry, the refusal).
+      // A refused grant decides nothing: its cause (an expired lease, a Stop,
+      // a deadline) ends the run. A launcher that ended by itself, or was
+      // killed, before the backend started is a failed launch (SEAM.md §125).
+      await launch.launcherExited;
+      if (!handle.ending && launch.setupFailure === null && launch.stage !== 'refused') {
+        this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: 'the launcher ended before the backend started' });
+      }
+      return;
+    }
+    await backendStarted;
+    if (handle.gate) await handle.gate.released;
+    this.childDone(handle);
+  }
+
+  // Has the engine just resumed from a pause that outlived the run lease?
+  // Its last renewal is a whole lease_ttl ago: nothing the role sent meanwhile
+  // is acted on until the tick has made a fresh challenge (D2 §3.5).
+  private pausedPastLease(handle: RunHandle): boolean {
+    if (handle.ending || handle.sandbox === null) return false;
+    return nowMs() - handle.renewedAtMs >= this.rt.setting('lease_ttl') * 1000;
+  }
+
+  private gate(handle: RunHandle): NonNullable<RunHandle['gate']> {
+    if (!handle.gate) {
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      handle.gate = { lines: [], exit: null, released, release };
+      this.rt.services?.requestTick();
+    }
+    return handle.gate;
+  }
+
+  // D2 §3.5, K5: a run lease past its expiry, of a run this incarnation holds
+  // on the real boundary, is re-granted on the same generation if and only if
+  // its domain observes running, its ownership and launch authorization name
+  // this incarnation and the current generation, the run is not ending, and a
+  // fresh challenge on the init's channel succeeds within
+  // pause_challenge_timeout. The re-grant never moves the deadline or restores
+  // budget: a deadline or a day limit passed during the pause ends the run as
+  // it would have, and no re-grant is made. Returns true when it decided the
+  // run (re-granted, or ended for its deadline or budget); false leaves the
+  // run to the lease's ordinary reconciliation (E27 item 3).
+  async regrant(run: string): Promise<boolean> {
+    const handle = this.rt.handles.get(run);
+    if (!handle || handle.ending || handle.sandbox === null || handle.claim.cgroup_path === null) return false;
+    const launch = handle.sandbox;
+    const facts = await this.rt.read<{ eligible: boolean; reason: string | null; generation: number | null; domain: string | null; invocation: string | null; deadline_at: string | null }>(
+      'run.regrant_facts',
+      { run, incarnation: this.rt.incarnation },
+    );
+    if (!facts.eligible || facts.generation === null) return false;
+    const gate = this.gate(handle);
+    // Without a re-grant or an exit, what the role sent during the pause is
+    // not acted on (its lease had expired), and its exit is the run's end's.
+    const dropGate = () => {
+      gate.lines = [];
+      if (handle.gate === gate) handle.gate = null;
+      gate.release();
+    };
+    if (facts.deadline_at !== null && nowMs() >= Date.parse(facts.deadline_at)) {
+      dropGate();
+      this.rt.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline', asIs: true });
+      return true;
+    }
+    let limit: string | null = null;
+    try {
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation: handle.claim.invocation });
+    } catch {
+      limit = 'budget_unreadable';
+    }
+    if (limit !== null) {
+      dropGate();
+      this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, asIs: true });
+      return true;
+    }
+    // The backend's exit report, read after the pause: the backend exited
+    // while the engine was stopped, and the run ends by its exit with what
+    // it sent before it (SEAM.md §130); nothing is re-granted.
+    if (gate.exit) {
+      handle.expiryExempt = true;
+      // The gate stays until its lines and the exit are taken: the launch's
+      // supervision waits for its release before it acts on the exit.
+      for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+      gate.exit();
+      handle.gate = null;
+      gate.release();
+      return true;
+    }
+    const populated = readPopulated(handle.claim.cgroup_path);
+    if (populated.state !== 'populated' || populated.value !== 1 || !launch.alive) {
+      dropGate();
+      return false;
+    }
+    const sentAt = isoAt(nowMs());
+    const response = await launch.challenge(handle.claim.invocation, facts.generation, this.rt.setting('pause_challenge_timeout') * 1000, seamMainFault('challenge_response_dropped'));
+    if (response === null || handle.ending) {
+      dropGate();
+      return false;
+    }
+    if (response.backend.state === 'exited') {
+      // The backend exited during the pause: the run ends by its exit, with
+      // what it sent before it (SEAM.md §130); nothing is re-granted.
+      handle.expiryExempt = true;
+      // The gate stays until its lines and the exit are taken: the launch's
+      // supervision waits for its release before it acts on the exit.
+      for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+      const reported = gate.exit as (() => void) | null;
+      if (reported) reported();
+      else {
+        // The init's report is lost or not yet read: the response says how
+        // the backend ended.
+        handle.sandbox.ackExit();
+        handle.exit = { code: response.backend.code, signal: response.backend.signal === null ? null : String(response.backend.signal) };
+        handle.exitAt = isoAt(nowMs());
+      }
+      handle.gate = null;
+      gate.release();
+      return true;
+    }
+    const at = await this.rt.engine<string | null>('run.regrant', {
+      run,
+      generation: facts.generation,
+      incarnation: this.rt.incarnation,
+      challenge: { nonce: response.nonce, sent_at: sentAt, answered_at: isoAt(nowMs()), backend_state: response.backend.state },
+    });
+    if (at === null) {
+      dropGate();
+      return false;
+    }
+    handle.renewedAtMs = Math.max(handle.renewedAtMs, Date.parse(at));
+    handle.leaseLost = false;
+    // What the role sent during the pause is acted on now, in order, on the
+    // lease re-granted; then its exit, if it exited meanwhile.
+    for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+    (gate.exit as (() => void) | null)?.();
+    handle.gate = null;
+    gate.release();
+    return true;
   }
 
   private async callback(handle: RunHandle, line: string): Promise<void> {
@@ -480,7 +803,10 @@ export class Launcher {
       log('budget check', err, { run });
       limit = 'budget_unreadable';
     }
-    if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit });
+    // A budget stop decided on a usage line read while the lease was pending
+    // its challenge is the run's end as decided (SEAM.md §130).
+    const pending = handle.sandbox !== null && (handle.gate !== null || this.pausedPastLease(handle));
+    if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, ...(pending ? { asIs: true } : {}) });
   }
 
   // A usage observation is never lost silently (E37 item 3). A store failure
@@ -527,7 +853,7 @@ export class Launcher {
     for (let attempt = 0; ; attempt++) {
       if (handle.ending) return false;
       try {
-        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result, record });
+        return await this.rt.role<boolean>('run.result', run, { run, generation, valid, result, record, ...(handle.expiryExempt ? { pending: true } : {}) });
       } catch (err) {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error') throw err;
@@ -593,10 +919,10 @@ class RoleOutput {
   private readonly stream: Readable;
 
   constructor(
-    child: ChildProcess,
+    stream: Readable,
     private readonly onBytes: (bytes: Buffer) => void,
   ) {
-    this.stream = child.stdout!;
+    this.stream = stream;
     this.stream.on('data', (chunk: Buffer) => {
       if (this.closed) return;
       this.onBytes(chunk);

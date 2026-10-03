@@ -91,7 +91,21 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { mountContext } from './reads.js';
-import { trustView } from './transitions/trust.js';
+import { type HostObserved, recordHostQualification, setHostObserved, trustView } from './transitions/trust.js';
+import {
+  authorizeLaunch,
+  boundaryDomains,
+  cgroupCreated,
+  closeLaunch,
+  domainMayCreate,
+  getDomain,
+  priorScopes,
+  recordExit,
+  recordObservation,
+  recordPlacement,
+  regrantFacts,
+  regrantLease,
+} from './transitions/boundary.js';
 
 export interface WorkerData {
   file: string;
@@ -178,6 +192,12 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
+  'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
+  'boundary.domains': (d) => boundaryDomains(d),
+  'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY "created_at", "id"`).all(),
+  'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
+  'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
+  'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
   'decisions.engine': (d) => engineDecisions(d),
 };
 
@@ -249,6 +269,14 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'alpha.apply': (tx, a) => applyAlphaException(tx, a),
   'notify.sending': (tx, a) => notificationSending(tx, a),
   'notify.outcome': (tx, a) => notificationOutcome(tx, a),
+  'domain.cgroup_created': (tx, a) => cgroupCreated(tx, a),
+  'domain.placed': (tx, a) => recordPlacement(tx, a),
+  'domain.authorize': (tx, a) => authorizeLaunch(tx, a),
+  'domain.close': (tx, a) => closeLaunch(tx, a),
+  'domain.observed': (tx, a) => recordObservation(tx, a),
+  'domain.exit': (tx, a) => recordExit(tx, a),
+  'run.regrant': (tx, a) => regrantLease(tx, a),
+  'host.qualification': (tx, a) => recordHostQualification(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
@@ -289,8 +317,8 @@ function mutate(args: { name: string; args: unknown; actor: Actor; method: strin
   }
 }
 
-function open(args: { lock: LockRecord; settings: EngineSettings }) {
-  setEngineSettings(args.settings);
+function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null }) {
+  setEngineSettings({ ...args.settings, incarnation: args.lock.incarnation_id });
   const d = new Database(data.file);
   db = d;
   const mode = d.pragma('journal_mode = WAL', { simple: true });
@@ -299,7 +327,7 @@ function open(args: { lock: LockRecord; settings: EngineSettings }) {
   d.pragma('foreign_keys = ON');
   d.pragma('busy_timeout = 5000');
   const result = migrate(d, data.migrationsDir);
-  transact(d, ENGINE_ACTOR, (tx) => recordIncarnation(tx, args.lock));
+  transact(d, ENGINE_ACTOR, (tx) => recordIncarnation(tx, args.lock, args.scope ?? null));
   return result;
 }
 
@@ -324,6 +352,8 @@ const OPS: Record<string, (args: any) => unknown> = {
   },
   'engine.full': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => liftToFull(tx, a.incarnation)),
   'engine.started': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => schedulerStarted(tx, a.incarnation)),
+  // What this start's host checks observed (no store write; SEAM.md §123).
+  'host.observed': (a: HostObserved) => setHostObserved(a),
   close: () => {
     db?.close();
     db = null;

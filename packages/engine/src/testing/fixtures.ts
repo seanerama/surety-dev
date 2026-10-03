@@ -95,7 +95,7 @@ export function installFixtureProject(
   return { project: { id } };
 }
 
-const TRIGGER_FIELDS = ['project', 'kind', 'trigger_source', 'trigger_id', 'trigger_generation', 'subject', 'depends_on'] as const;
+const TRIGGER_FIELDS = ['project', 'kind', 'trigger_source', 'trigger_id', 'trigger_generation', 'subject', 'depends_on', 'profile'] as const;
 
 // POST /v1/harness/fixtures/trigger: the engine observes a trigger (D1 §8.2)
 // through its own transition.
@@ -105,6 +105,8 @@ export function installFixtureTrigger(db: Database, actor: Actor, body: unknown)
   if (typeof subject !== 'object' || subject === null || Array.isArray(subject)) throw invalid('subject', 'must be an object');
   const dependsOn = b.depends_on ?? [];
   if (!Array.isArray(dependsOn) || dependsOn.some((d) => typeof d !== 'string')) throw invalid('depends_on', 'must be an array of work item ids');
+  // SEAM.md §127: the sandbox profile the item's runs are dispatched under.
+  if (b.profile !== undefined && b.profile !== 'role' && b.profile !== 'probe') throw invalid('profile', 'must be "role" or "probe"');
   const input = {
     project: str(b, 'project'),
     kind: b.kind,
@@ -113,6 +115,7 @@ export function installFixtureTrigger(db: Database, actor: Actor, body: unknown)
     trigger_generation: positiveInt(b, 'trigger_generation'),
     subject: subject as Record<string, unknown>,
     depends_on: dependsOn as string[],
+    profile: (b.profile as 'role' | 'probe' | undefined) ?? null,
   };
   return transact(db, actor, (tx) => observeTrigger(tx, input, FIXTURE_LABEL));
 }

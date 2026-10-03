@@ -20,7 +20,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -96,8 +96,23 @@ const MAIN_BARRIERS: readonly string[] = [
   'notify.delivered',
   // SEAM.md §§33, 45: one per journal kind and boundary.
   ...JOURNAL_KINDS.flatMap((kind) => JOURNAL_BOUNDARIES.map((boundary) => `journal.${kind}.${boundary}`)),
+  // M2 plan §2.3: the launch boundaries of D2 §3.2, the init's start of the
+  // backend, the record of termination, and the incarnation scope's creation
+  // (before the lock and the listener, so only `kill` can be released there).
+  'init.before_backend',
+  'boundary.before_terminated',
 ];
-const BARRIER_NAMES: readonly string[] = [...WORKER_BARRIERS, ...MAIN_BARRIERS];
+// SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
+// survives the engine: it marks it with a file under the home's release
+// directory, and any incarnation lists and releases it there.
+const LAUNCHER_BARRIERS: readonly string[] = ['launcher.before_placement', 'launcher.placed', 'launcher.before_authorization', 'launcher.authorized'];
+// SEAM.md §124: the scope's barrier, before the listener, released by a file.
+const SCOPE_BARRIER = 'scope.before_create';
+const BARRIER_NAMES: readonly string[] = [...WORKER_BARRIERS, ...MAIN_BARRIERS, ...LAUNCHER_BARRIERS, SCOPE_BARRIER];
+const RELEASE_DIR = 'harness-release';
+let barrierHome: string | null = null;
+// Launcher barriers already handed to a launcher: each fires once.
+const handedOut = new Set<string>();
 const PROBE_OUTCOMES = ['absent', 'applied', 'partial', 'conflicting', 'unknown'];
 type BarrierAction = 'pause' | 'kill';
 type BarrierState = 'armed' | 'waiting' | 'released' | 'fired';
@@ -134,8 +149,11 @@ type FaultSpec =
 type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
 // Faults the main thread fires (M2 plan §2.3): the bootstrap route's read of
-// the token.
-type MainFault = { point: 'token_read'; times: number; remaining: number; hit: number };
+// the token; the execution boundary's (the user manager unreachable, the
+// backend's exit report lost, a challenge's response dropped, a launcher's
+// exit that cannot be established).
+const MAIN_FAULTS = ['token_read', 'manager_unreachable', 'init_report_lost', 'challenge_response_dropped', 'launcher_wait'] as const;
+type MainFault = { point: (typeof MAIN_FAULTS)[number]; times: number; remaining: number; hit: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
 // interrupts rolls back and is reported like any other store failure.
@@ -242,8 +260,37 @@ export function seamMessage(message: unknown): void {
   if (entry && entry.state !== 'released' && (m.state === 'waiting' || m.state === 'fired')) entry.state = m.state;
 }
 
+// The launchers' waits marked under the release directory: `<name>.<pid>.waiting`,
+// released by `<name>.<pid>.release`.
+function launcherWaits(): { name: string; pid: number; released: boolean; alive: boolean }[] {
+  if (barrierHome === null) return [];
+  const dir = join(barrierHome, RELEASE_DIR);
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: { name: string; pid: number; released: boolean; alive: boolean }[] = [];
+  for (const file of names) {
+    const m = /^(launcher\.[a-z_]+)\.(\d+)\.waiting$/.exec(file);
+    if (!m || !LAUNCHER_BARRIERS.includes(m[1]!)) continue;
+    out.push({ name: m[1]!, pid: Number(m[2]), released: existsSync(join(dir, `${m[1]}.${m[2]}.release`)), alive: existsSync(`/proc/${m[2]}`) });
+  }
+  return out;
+}
+
 function listBarriers(): { name: string; action: BarrierAction; state: BarrierState }[] {
-  return [...registry.values()].map(({ spec, state }) => ({ name: spec.name, action: spec.action, state }));
+  const listed = [...registry.values()].filter(({ spec }) => spec.name !== SCOPE_BARRIER).map(({ spec, state }) => ({ name: spec.name, action: spec.action, state }));
+  for (const w of launcherWaits()) {
+    const state: BarrierState = w.released ? 'released' : w.alive ? 'waiting' : 'fired';
+    const at = listed.findIndex((b) => b.name === w.name);
+    const action = registry.get(w.name)?.spec.action ?? 'pause';
+    if (at >= 0) {
+      if (state === 'waiting' || listed[at]!.state === 'armed') listed[at] = { name: w.name, action, state };
+    } else listed.push({ name: w.name, action, state });
+  }
+  return listed;
 }
 
 // POST /v1/harness/barriers (SEAM.md §33): arm a main-thread barrier while
@@ -252,7 +299,7 @@ function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> 
   const b = isObject(body) ? body : {};
   const name = b.name;
   const action = b.action;
-  if (typeof name !== 'string' || !MAIN_BARRIERS.includes(name) || (action !== 'pause' && action !== 'kill')) {
+  if (typeof name !== 'string' || !(MAIN_BARRIERS.includes(name) || LAUNCHER_BARRIERS.includes(name)) || (action !== 'pause' && action !== 'kill')) {
     throw new Refusal(400, 'invalid_value', 'Unknown barrier or action.', 'Send {"name": <a barrier the engine reaches on its main thread>, "action": "pause"|"kill"}.', { field: 'name' });
   }
   const existing = registry.get(name);
@@ -260,10 +307,19 @@ function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> 
     throw new Refusal(409, 'illegal_transition', `Barrier "${name}" is waiting.`, 'Release it first.', { barrier: name });
   }
   registry.set(name, { spec: { name, action, slot: -1 }, state: 'armed' });
+  handedOut.delete(name);
   return { barriers: listBarriers() };
 }
 
 function releaseBarrier(name: string): void {
+  // A launcher's wait, this incarnation's launcher's or an earlier one's.
+  const waits = launcherWaits().filter((w) => w.name === name && !w.released);
+  if (waits.length > 0) {
+    for (const w of waits) writeFileSync(join(barrierHome!, RELEASE_DIR, `${w.name}.${w.pid}.release`), '');
+    const own = registry.get(name);
+    if (own) own.state = 'released';
+    return;
+  }
   const entry = registry.get(name);
   if (!entry) throw new Refusal(404, 'not_found', `No barrier named "${name}" is armed.`, 'Arm it at startup with --harness-barrier.', { barrier: name });
   if (entry.spec.action !== 'pause' || entry.state !== 'waiting') {
@@ -300,6 +356,55 @@ export async function pausePoint(name: string): Promise<void> {
   });
 }
 
+// The scope's barrier (SEAM.md §124): before the lock and the listener, so a
+// pause waits for the file `<home>/harness-release/scope.before_create`,
+// marking its wait with `scope.before_create.waiting`.
+export async function seamScopeBarrier(home: string, reached: boolean): Promise<void> {
+  if (!init.harness) return;
+  barrierHome = home;
+  if (!reached) return;
+  const entry = registry.get(SCOPE_BARRIER);
+  if (!entry || entry.state !== 'armed') return;
+  if (entry.spec.action === 'kill') {
+    entry.state = 'fired';
+    process.kill(process.pid, 'SIGKILL');
+    await new Promise(() => {});
+  }
+  entry.state = 'waiting';
+  const dir = join(home, RELEASE_DIR);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${SCOPE_BARRIER}.waiting`), '');
+  while (!existsSync(join(dir, SCOPE_BARRIER))) await sleep(50);
+  entry.state = 'released';
+}
+
+// The launcher barriers armed and not yet handed to a launcher, with where
+// the launcher marks and awaits its wait (SEAM.md §125). Each is handed out
+// once. null outside harness mode: a launcher then waits nowhere.
+export function seamLauncherBarriers(home: string): { releaseDir: string; barriers: Record<string, BarrierAction> } | null {
+  if (!init.harness) return null;
+  barrierHome = home;
+  const barriers: Record<string, BarrierAction> = {};
+  for (const name of LAUNCHER_BARRIERS) {
+    const entry = registry.get(name);
+    if (entry && entry.state === 'armed' && !handedOut.has(name)) {
+      barriers[name] = entry.spec.action;
+      handedOut.add(name);
+    }
+  }
+  const releaseDir = join(home, RELEASE_DIR);
+  if (Object.keys(barriers).length > 0) mkdirSync(releaseDir, { recursive: true });
+  return { releaseDir, barriers };
+}
+
+// A launcher reached a barrier: one armed `kill` makes the engine kill itself.
+export function seamLauncherReached(name: string, action: string): void {
+  if (!init.harness) return;
+  const entry = registry.get(name);
+  if (entry) entry.state = action === 'kill' ? 'fired' : 'waiting';
+  if (action === 'kill') process.kill(process.pid, 'SIGKILL');
+}
+
 // ---- clock (both threads) ---------------------------------------------------
 
 // The controlled clock's offset from the system clock (SEAM.md §18): zero
@@ -311,10 +416,12 @@ export function clockOffsetMs(): number {
 // ---- backends and the execution boundary (main thread) ----------------------
 
 // The backends a dispatch may use. In M1 the only one is the scripted backend,
-// and only with --harness --harness-scripted (SEAM.md §§12, 13).
+// and only with --harness --harness-scripted (SEAM.md §§12, 13). In the
+// sandbox lane it runs inside the real sandbox, with its directory (the test's
+// instrument: its program, its scripts and its launch log) bound read-write.
 export function seamBackends(): BackendSpec[] {
   if (!init.harness || init.scripted === null) return [];
-  return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')] }];
+  return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')], binds: [{ path: init.scripted, writable: true }] }];
 }
 
 // The host checks switch and its overrides (SEAM.md §114): null outside
@@ -323,6 +430,15 @@ export function seamBackends(): BackendSpec[] {
 export function seamHostChecks(): { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'>; vouched: 'harness' | null } | null {
   if (!init.harness) return null;
   return { mode: init.hostChecks.mode, forced: { ...init.hostChecks.forced }, vouched: init.hostChecks.mode === 'unrun' ? 'harness' : null };
+}
+
+// Which execution boundary holds this engine's runs in harness mode
+// (SEAM.md §§14, 114): the scripted one in the kernel lane (`unrun`), the
+// real one in the sandbox lane (`run`). null outside harness mode, where
+// there is only the real one.
+export function seamBoundary(): 'scripted' | 'real' | null {
+  if (!init.harness) return null;
+  return init.hostChecks.mode === 'unrun' ? 'scripted' : 'real';
 }
 
 const INSTRUCTIONS = ['auto', 'running', 'terminated', 'unknown'];
@@ -693,7 +809,11 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
       armed:
-        isObject(body) && body.point === 'tick_step' ? armTickFault(body) : isObject(body) && body.point === 'token_read' ? armMainFault(body) : await storeOp(OP.armFault, body),
+        isObject(body) && body.point === 'tick_step'
+          ? armTickFault(body)
+          : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
+            ? armMainFault(body)
+            : await storeOp(OP.armFault, body),
     }));
   }
   // The "help" of a stand-in binary is its own file (SEAM.md §116).
@@ -848,13 +968,26 @@ function fire(matches: (f: Fault) => boolean, what: string): void {
   throw new InjectedFault(what);
 }
 
-function armMainFault(body: Record<string, unknown>): { point: 'token_read'; times: number } {
+function armMainFault(body: Record<string, unknown>): { point: MainFault['point']; times: number } {
   const times = body.times === undefined ? 1 : body.times;
+  const point = body.point as MainFault['point'];
   if (Object.keys(body).some((k) => k !== 'point' && k !== 'times') || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
-    throw new Refusal(400, 'invalid_value', 'Unknown token_read fault.', 'Send {"point":"token_read","times"?: <n>}.', { field: 'point' });
+    throw new Refusal(400, 'invalid_value', `Unknown ${point} fault.`, `Send {"point":"${point}","times"?: <n>}.`, { field: 'point' });
   }
-  mainFaults.push({ point: 'token_read', times, remaining: times, hit: 0 });
-  return { point: 'token_read', times };
+  mainFaults.push({ point, times, remaining: times, hit: 0 });
+  return { point, times };
+}
+
+// A main-thread fault of the execution boundary (M2 plan §2.3): true, once
+// per arming (or `times` times), where the engine is to behave as if the
+// fault had happened. Always false outside harness mode.
+export function seamMainFault(point: Exclude<MainFault['point'], 'token_read'>): boolean {
+  if (!init.harness) return false;
+  const f = mainFaults.find((m) => m.point === point && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 // The bootstrap route reads the token (M107; D2 §2.6): an armed `token_read`

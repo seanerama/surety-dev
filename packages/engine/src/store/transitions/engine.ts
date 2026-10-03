@@ -7,10 +7,12 @@ import type { Tx } from './tx.js';
 // A start records its incarnation, and a host qualification of an earlier
 // one stops being current (D2 §§4.1, 7.1): only this start's checks can
 // qualify the host again.
-export function recordIncarnation(tx: Tx, lock: LockRecord): void {
+// `scope` is the incarnation scope's cgroup directory (D2 §3.1, A.3), null
+// when the engine runs without one (H3 failed, or the kernel lane).
+export function recordIncarnation(tx: Tx, lock: LockRecord, scope: string | null = null): void {
   tx.db
-    .prepare('INSERT INTO "engine_incarnations" ("id", "created_at", "pid", "started_at", "host_boot_id") VALUES (?, ?, ?, ?, ?)')
-    .run(lock.incarnation_id, tx.at, lock.pid, lock.started_at, lock.host_boot_id);
+    .prepare('INSERT INTO "engine_incarnations" ("id", "created_at", "pid", "started_at", "host_boot_id", "scope_cgroup") VALUES (?, ?, ?, ?, ?, ?)')
+    .run(lock.incarnation_id, tx.at, lock.pid, lock.started_at, lock.host_boot_id, scope);
   lapseEarlierQualifications(tx, lock.incarnation_id);
 }
 

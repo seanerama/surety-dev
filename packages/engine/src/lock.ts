@@ -93,7 +93,10 @@ function lockedRefusal(incarnation: string | null, why: string): Refusal {
 // the lock record, and nothing at all when the lock is held by a live owner.
 // `beforeTake` runs inside the critical section once the lock is judged free
 // and before the record is written; if it throws, the lock is left as found.
-export function acquireLock(home: string, beforeTake: () => void = () => {}): LockRecord {
+// `incarnation` is the id the record names: chosen before the lock, so that
+// the incarnation scope, which is created before the lock (D2 §3.1, K2), can
+// carry it.
+export function acquireLock(home: string, beforeTake: () => void = () => {}, incarnation: string = newId('inc_')): LockRecord {
   const paths = homePaths(home);
   const bootId = readBootId();
   const ownStart = processStartTime(process.pid);
@@ -125,7 +128,7 @@ export function acquireLock(home: string, beforeTake: () => void = () => {}): Lo
       }
       beforeTake();
       const record: LockRecord = {
-        incarnation_id: newId('inc_'),
+        incarnation_id: incarnation,
         pid: process.pid,
         pid_start_time: ownStart,
         started_at: nowIso(),
