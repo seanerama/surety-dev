@@ -269,7 +269,14 @@ export function intendOperation(tx: Tx, spec: IntentSpec): IntentResult {
       addSeconds(tx.at, spec.deadlineSeconds),
       JSON.stringify(spec.finalizer),
     );
-  tx.emit('operation.intended', { project: spec.project, operation: id, run: spec.payload.run ?? null }, { kind: opKind, journal_kind: spec.kind });
+  // The event names the operation's subject: its run and, where the intent
+  // gives one, its action (`worktree_add`, `worktree_remove`, ...).
+  const action = (spec.subject as { action?: unknown } | undefined)?.action;
+  tx.emit(
+    'operation.intended',
+    { project: spec.project, operation: id, run: spec.payload.run ?? null, ...(typeof action === 'string' ? { action } : {}) },
+    { kind: opKind, journal_kind: spec.kind },
+  );
   tx.db
     .prepare('INSERT INTO "git_journal_events" ("id", "created_at", "project", "operation", "seq", "journal_kind", "event_kind", "payload") VALUES (?, ?, ?, ?, 1, ?, \'intended\', ?)')
     .run(tx.newId('gje_'), tx.at, spec.project, id, spec.kind, JSON.stringify(spec.payload));

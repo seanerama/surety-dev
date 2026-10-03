@@ -111,6 +111,8 @@ const SCOPE_BARRIER = 'scope.before_create';
 const BARRIER_NAMES: readonly string[] = [...WORKER_BARRIERS, ...MAIN_BARRIERS, ...LAUNCHER_BARRIERS, SCOPE_BARRIER];
 const RELEASE_DIR = 'harness-release';
 let barrierHome: string | null = null;
+// Launcher barriers already handed to a launcher: each fires once.
+const handedOut = new Set<string>();
 const PROBE_OUTCOMES = ['absent', 'applied', 'partial', 'conflicting', 'unknown'];
 type BarrierAction = 'pause' | 'kill';
 type BarrierState = 'armed' | 'waiting' | 'released' | 'fired';
@@ -297,7 +299,7 @@ function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> 
   const b = isObject(body) ? body : {};
   const name = b.name;
   const action = b.action;
-  if (typeof name !== 'string' || !MAIN_BARRIERS.includes(name) || (action !== 'pause' && action !== 'kill')) {
+  if (typeof name !== 'string' || !(MAIN_BARRIERS.includes(name) || LAUNCHER_BARRIERS.includes(name)) || (action !== 'pause' && action !== 'kill')) {
     throw new Refusal(400, 'invalid_value', 'Unknown barrier or action.', 'Send {"name": <a barrier the engine reaches on its main thread>, "action": "pause"|"kill"}.', { field: 'name' });
   }
   const existing = registry.get(name);
@@ -305,6 +307,7 @@ function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> 
     throw new Refusal(409, 'illegal_transition', `Barrier "${name}" is waiting.`, 'Release it first.', { barrier: name });
   }
   registry.set(name, { spec: { name, action, slot: -1 }, state: 'armed' });
+  handedOut.delete(name);
   return { barriers: listBarriers() };
 }
 
@@ -378,7 +381,6 @@ export async function seamScopeBarrier(home: string, reached: boolean): Promise<
 // The launcher barriers armed and not yet handed to a launcher, with where
 // the launcher marks and awaits its wait (SEAM.md §125). Each is handed out
 // once. null outside harness mode: a launcher then waits nowhere.
-const handedOut = new Set<string>();
 export function seamLauncherBarriers(home: string): { releaseDir: string; barriers: Record<string, BarrierAction> } | null {
   if (!init.harness) return null;
   barrierHome = home;
