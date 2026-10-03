@@ -1209,3 +1209,27 @@ The Verifier wrote nine files for rows M101 to M109 (manifest slice 10; SEAM §�
 **Consequences elsewhere.** No change to D1 or D2; the M2 plan's row M106 reads as item 1 says.
 
 ---
+
+## E62. M2 slice 10 review: two serious defects confirmed, five design questions (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's defaults under Sean's delegation. Sean confirms or overturns them.
+
+The one review of the slice (E31) found the trust table, the dispatch rule (no active entry or eligibility, no spawn; `scripted` only in harness mode; attempts never dispatch project work, K10; the binary's hash checked before the spawn), activation (reached only through `trust_activation`'s consumption; the evidence fingerprint complete; rejection clean), the budget boundaries (`model_turn` refused without admission-control evidence; the hard maximum refused at the only entry; the provider cap only `configured`), the ledger's once-charged, once-released allowance, the result-field rebuild that stops a smuggled proposal, K7, K8, the bootstrap default and migration 0007 (M1's migrations unchanged; nullable `project` handled everywhere it is read) sound. Both objections of the slice (002, 003) had been upheld and the Builder's branch passes every slice-10 file and the changed accepted ones alone.
+
+**Confirmed serious, by running (fixed before the slice merges, one case and one fix each):**
+
+1. **S1 (M105, C1): the Alpha exception bound content the Reviewer never reviewed.** With the Reviewer held before its spawn, a check added to the candidate's acceptance content, and the proposal answered, the exception was written against the current content hash rather than the hash the run was claimed on (`runs.content_hash`), and the Alpha gate stopped blocking on the finding under content the Reviewer had not seen; the defect E41 item 4 closed for sign-offs, reopened for exceptions. **Reading fixed (the Reviewer's recommendation):** a proposal whose reviewed hash differs from the current content is refused, and an open decision whose reviewed hash no longer matches goes stale before answer and `EFFECT_PRECONDITION_CHANGED` before effect; an exception never lifts a block on unreviewed content. **Alternative for Sean:** bind the reviewed hash and let the gate ignore the exception under other content.
+2. **S2 (M104, C4): a real backend's invocation that fails on its own with incomplete usage was charged no unknown allowance** (the charge covered only engine-ended outcomes), so the day's unknown-token exposure was understated. **Reading fixed:** every incomplete invocation of a trust entry's backend is charged the allowance whatever its outcome (D2 §1.5, C4; SEAM §120 as amended, its parenthetical corrected); a scripted invocation ended before any observation still carries none (E61 item 8).
+
+**Suspected, not confirmed as serious, recorded for later slices:** the effects step still selects proposals approved under `reviewer` authority, which only a store upgraded from M1 with such a pending proposal could present; host eligibility does not yet compare the qualification's host, mechanism and profile with the entry's (unreachable until a real row exists; M134); a failed real run with observations is marked complete under M1's rule (M130/M131); a record reference in an Alpha proposal does not check the record's post-scan; a hard link to a forbidden file inside an approved read path passes validation (question 3); a missing provider key launches the binary without one rather than refusing; the activation trigger checks that the decision is consumed, not that it was approved (direct store access only); the linked-worktree shared `.git` of a registered repository is not in the forbidden set; two proposals for one finding in one result overwrite each other.
+
+**Design questions for Sean:**
+
+1. **Estimated cost while a run is under way** (E61 item 8, measured): a run reporting only estimates runs to its token limit before the day's dollar limit stops it, an overshoot of up to one invocation's estimate at the run token limit, also bounded by the deadline. (a) Accept as invocation-boundary overshoot (D2 §8 class C) and state the measured bound in the M2 report (recommended; Claude Code reports cost on its final line anyway); (b) count the running estimate in the per-observation check as reported cost is counted.
+2. **S2's reading:** confirmed as a defect by the driver per D2's text; Sean may read SEAM §120's old parenthetical the other way.
+3. **Hard links in `sandbox_read_paths`:** (a) refuse a file whose link count exceeds one when it matches a forbidden inode; (b) accept as class C, an act of the operator's own account, listed in the not-claimed list (recommended).
+4. **The human cannot read trust-entry evidence through the API:** no route serves engine-scoped records, so a `trust_activation` preview names records the person cannot open. To decide with M135 and the real lane (recommended), since it is not a slice-10 row; the driver's default is a read route for engine-scoped records in slice 13.
+
+**Consequences elsewhere.** No change to D1 or D2.
+
+---
