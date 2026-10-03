@@ -1090,3 +1090,22 @@ The one review of the slice (E31) found the six entries built and sound except w
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E55. M2 slice 2 merged (provisional, 2026-10-03)
+
+**Status: provisional** for the driver's readings; the merge is under Sean's standing delegation.
+
+`build/m2-s2` merged to `main` at `b6ae830` after the driver's rerun on its tip `fd25931`: 837 of 837 acceptance cases in 127 files (the whole suite, `--slice 9`), the unit suite 27 files passing (121 tests before the last fix round's four), the builder boundary check clean (21 paths). The pre-fix tip had passed 834 of 834 before the review's cases.
+
+**What the slice built.** The remaining preview facts bound (a blocker's `continuation {status, from}` and evidence; a finding's scope and evidence on the disposition and severity kinds; an exclusion's ancestry chain, finding status, evidence and scope); `adopt` of a checkout as one engine-made out-of-band revision with the branch moved by compare-and-swap and the developer's index reset to it; the status line's `refused` causes (`repository_unreadable`, `out_of_band_change`, a failing budget read, and the flagged addition `journal_blocked`) and `unknown` with cause `store_error`; the reads for one decision by id, a project's operations and its environments; a run whose git write is killed at its deadline, or blocked, waits for the journal instead of failing. The review's three fixes: a checkout's tracked content is what `git commit -a` would commit, read from a stat-free copy of the checkout's own index found through `rev-parse --git-path` (so `adopt` and M1's `stash` no longer lose a staged file, and a linked worktree is read from its own index); once a run's end is decided, the acceptance pipeline waits without renewing the lease until its operation is finalized or failed, a landed integration being recorded before the run is stopped or abandoned (this also covers the review's unconfirmed U1 and U2). The contract was regenerated (`NowState` gains `unknown`; the manifests' new keys). The Builder's objection 001 was upheld and the M45 case changed.
+
+**Readings fixed in the round, not pinned by a case, for Sean:**
+
+1. **Integrity now hashes every tracked file of each managed checkout at every tick** (the same cost the old reading from `HEAD` had in principle, now a full hash per tick). To revisit if it shows in load (row M71's limits were qualified before this change and are not re-measured).
+2. **A Stop confirmed while the run's operation is blocked** (its probe finds `unknown`) waits until the repository answers, as SEAM §112 pins and E54 question 2 (a) reads; a Stop cannot finish while the repository cannot be read.
+
+**Done against the brief (`docs/spec/M2-slice-2-legibility.md` section 4):** the cases exist, are in `COVERAGE.md`, and pass with the whole suite on the merged engine; every design question is in E53, E54 and here; nothing outside the six entries was built except the review's confirmed findings, as E31 provides. Outstanding: the Verifier updates `M1-not-claimed.md` against a run of `npm test` on `main`, after which class B holds only bucket C's entries; the design questions of E50 to E54 wait for Sean.
+
+**Consequences elsewhere.** No change to D1. Triage buckets A and B are settled; bucket C stays recorded.
+
+---
