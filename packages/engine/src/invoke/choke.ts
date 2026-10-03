@@ -310,7 +310,17 @@ export class Launcher {
       // (D2 §§1.1, 2, 3). The kernel lane's scripted boundary keeps the
       // direct spawn of SEAM.md §13.
       if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend);
-      else await this.supervise(handle, backend);
+      else if (this.rt.boundary() === 'scripted') await this.supervise(handle, backend);
+      else {
+        // No production path runs a backend outside the sandbox (D2 §5 C3):
+        // a domain without a cgroup on the real boundary is not launched.
+        this.never(handle, 'refused', 'preflight_refused', 'never', 'isolation_unqualified', refusalForm(
+          'isolation_unqualified',
+          'The engine has no incarnation scope, so no domain can be placed in the execution boundary.',
+          'Start surety from a login session of uid 1000 with a running user manager; real backends are refused until then.',
+          { domain: handle.claim.domain },
+        ));
+      }
     } catch (err) {
       log('launch', err, { run: handle.claim.run, phase: handle.phase });
       if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
@@ -552,6 +562,10 @@ export class Launcher {
       handle.exitAt = isoAt(nowMs());
       output.exited();
     };
+    // The role's lines are acted on once its launch is recorded (as
+    // `launch.before_ownership` and `launched` precede them on the scripted
+    // boundary), or not at all if it never starts.
+    await Promise.race([backendStarted, launch.launcherExited]);
     void launch.backendDone.then(() => {
       if (!handle.backendStarted) return;
       if (handle.gate || this.pausedPastLease(handle)) {

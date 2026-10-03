@@ -30,6 +30,7 @@
 // expires as well, and the tick's reconciliation (`reconcileExpired`) is the
 // backstop that holds even for a run whose decision this engine has lost.
 
+import { existsSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -259,7 +260,7 @@ export class RunEnder {
   // sandbox was never built), so its invocation was never launched.
   private async terminateReal(d: Domain, handle: RunHandle | undefined, opts: { observeOnly?: boolean }): Promise<{ terminated: boolean; refused: boolean }> {
     const own = handle && handle.claim.domain === d.id ? handle : undefined;
-    if (d.cgroup_inode === null && own && (own.phase === 'aborted' || own.phase === 'never') && own.sandbox === null) {
+    if (d.cgroup_inode === null && own && (own.phase === 'aborted' || own.phase === 'never') && own.sandbox === null && !existsSync(d.cgroup_path!)) {
       await this.rt.engine('domain.terminated', { domain: d.id, observed: false });
       return { terminated: true, refused: true };
     }

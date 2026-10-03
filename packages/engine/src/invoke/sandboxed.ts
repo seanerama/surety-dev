@@ -93,6 +93,10 @@ export class SandboxLaunch {
   private readonly challenges = new Map<string, (r: ChallengeResponse) => void>();
   // Messages to drop before acting on them (the seam's `init_report_lost`).
   dropExitReport = false;
+  // The launch is closed (D2 §3.2): the engine takes the sandbox no further.
+  // An authorized launcher that has not yet started the backend gets no
+  // plan, no backend and no start, and waits for termination.
+  closed = false;
   // What the setup stage reported of the start-up trial's overlay.
   overlay: { ok: boolean; detail: string } | null = null;
   setupFailure: string | null = null;
@@ -189,6 +193,7 @@ export class SandboxLaunch {
         return;
       }
       case 'hello':
+        if (this.closed) return;
         if (m.stage === 'setup') {
           this.stage = 'setup';
           this.send({ t: 'plan', plan: this.hooks.plan() });
@@ -205,7 +210,9 @@ export class SandboxLaunch {
         this.overlay = { ok: m.ok === true, detail: String(m.detail ?? '') };
         return;
       case 'ready':
+        if (this.closed) return;
         await this.hooks.barrier('init.before_backend');
+        if (this.closed) return;
         this.send({ t: 'start' });
         return;
       case 'started':

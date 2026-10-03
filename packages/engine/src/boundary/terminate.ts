@@ -21,7 +21,7 @@
 // established; `populated 1` after `kill_grace`. Kill's return is never
 // termination, and a manager restart is never evidence that a domain died.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -118,7 +118,9 @@ export interface TerminateArgs {
 export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   const { rt, d, handle } = args;
   const launch: SandboxLaunch | null = handle && handle.claim.domain === d.id ? (handle.sandbox ?? null) : null;
-  // 1. Closure, before anything else (B13).
+  // 1. Closure, before anything else (B13). This engine's own launch is
+  // taken no further from here.
+  if (launch) launch.closed = true;
   await rt.engine('domain.close', { domain: d.id, cause: args.observeOnly ? 'observation' : 'termination' });
   const unknown = async (why: string): Promise<Verdict> => {
     await rt.engine('domain.observed', { domain: d.id, observation: 'unknown', detail: why }).catch((err) => log('domain observation', err, { domain: d.id }));
@@ -221,6 +223,13 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   // The directory goes after the record; nothing recreates it, since its
   // launch is closed (D2 §3.2).
   if (final.state === 'populated') removeCgroup(path);
+  // The domain's area under the engine home (its context package and the
+  // setup stage's two mountpoints, empty on the host) goes with it.
+  try {
+    rmSync(join(rt.home, 'domains', d.id), { recursive: true, force: true });
+  } catch (err) {
+    log('domain area', err, { domain: d.id });
+  }
   return { terminated: true };
 }
 
