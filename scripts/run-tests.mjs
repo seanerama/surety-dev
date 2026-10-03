@@ -3,7 +3,7 @@
 // part of the acceptance execution path (F §5.2).
 //
 // Usage: node scripts/run-tests.mjs unit
-//        node scripts/run-tests.mjs acceptance [--slice <n>]
+//        node scripts/run-tests.mjs acceptance [--slice <n> | --lane real]
 //
 // It always builds first, so a stale dist/ is never what gets tested, and it
 // runs one test file at a time. For the acceptance suite it refuses to report
@@ -15,6 +15,10 @@
 //   - a file that ran contains no passing test;
 //   - full run (no --slice): any row in ROWS has no file.
 // --slice n runs exactly the files listed for slices 1..n.
+// The real lane (M2 plan §2.1): files listed under manifest "real" run a real
+// backend against a model and cost money. They are never part of the full run
+// or of a slice; only --lane real runs them, and only then does a run count
+// them. The full run still requires each real-lane row to have its file.
 // The full report of every run is also written under test-results/ (not tracked).
 // Exit 0 pass, 1 fail, 2 usage error.
 
@@ -25,14 +29,18 @@ import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
 import { fileURLToPath } from 'node:url';
 
-// The acceptance rows of docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3.
+// The acceptance rows: docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3 (M01 to M74)
+// and docs/acceptance/sdlc-M2-acceptance-plan.md §3 (M101 to M142).
 // Adding or removing a row is the owner's decision (build spec §9).
-const ROWS = Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`);
+const ROWS = [
+  ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
+  ...Array.from({ length: 42 }, (_, i) => `M${101 + i}`),
+];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const usage = () => {
-  console.error('usage: run-tests.mjs unit | acceptance [--slice <n>]');
+  console.error('usage: run-tests.mjs unit | acceptance [--slice <n> | --lane real]');
   process.exit(2);
 };
 const fail = (message) => {
@@ -44,9 +52,11 @@ const [suite, ...rest] = process.argv.slice(2);
 if (suite !== 'unit' && suite !== 'acceptance') usage();
 if (suite === 'unit' && rest.length > 0) usage();
 let slice = null;
+let lane = null;
 if (suite === 'acceptance' && rest.length > 0) {
-  if (rest.length !== 2 || rest[0] !== '--slice' || !/^[1-9]\d*$/.test(rest[1])) usage();
-  slice = Number(rest[1]);
+  if (rest.length === 2 && rest[0] === '--slice' && /^[1-9]\d*$/.test(rest[1])) slice = Number(rest[1]);
+  else if (rest.length === 2 && rest[0] === '--lane' && rest[1] === 'real') lane = 'real';
+  else usage();
 }
 
 const dir = `packages/engine/test/${suite}`;
@@ -54,25 +64,35 @@ let files = globSync(`${dir}/**/*.test.mjs`, { cwd: root }).sort();
 
 if (suite === 'acceptance') {
   const manifest = JSON.parse(readFileSync(join(root, dir, 'manifest.json'), 'utf8'));
-  const rowOf = (file) => /^(M\d{2})-[a-z0-9-]+\.test\.mjs$/.exec(basename(file))?.[1];
+  const rowOf = (file) => /^(M\d{2,3})-[a-z0-9-]+\.test\.mjs$/.exec(basename(file))?.[1];
   const list = (paths) => `\n  ${paths.join('\n  ')}`;
 
   const misnamed = files.filter((f) => !ROWS.includes(rowOf(f)));
   if (misnamed.length > 0) fail(`acceptance: not named <row>-<slug>.test.mjs for a known row:${list(misnamed)}`);
 
   const byName = new Map(files.map((f) => [basename(f), f]));
-  const allListed = Object.values(manifest.slices).flat();
+  const realLane = manifest.real ?? [];
+  const inSlices = Object.values(manifest.slices).flat();
+  const both = realLane.filter((name) => inSlices.includes(name));
+  if (both.length > 0) fail(`acceptance: listed both under a slice and under "real" in manifest.json:${list(both)}`);
+  const allListed = [...inSlices, ...realLane];
   const absent = allListed.filter((name) => !byName.has(name));
   if (absent.length > 0) fail(`acceptance: listed in manifest.json but not present:${list(absent)}`);
   const unlisted = files.filter((f) => !allListed.includes(basename(f)));
   if (unlisted.length > 0) fail(`acceptance: present but not listed under any slice in manifest.json:${list(unlisted)}`);
 
-  if (slice === null) {
+  if (lane === 'real') {
+    if (realLane.length === 0) fail('acceptance: manifest.json lists no files under "real".');
+    files = realLane.map((name) => byName.get(name));
+  } else if (slice === null) {
     const covered = new Set(files.map(rowOf));
     const missing = ROWS.filter((r) => !covered.has(r));
     if (missing.length > 0) {
       fail(`acceptance: ${missing.length} of ${ROWS.length} rows have no test file (first ${missing[0]}, last ${missing.at(-1)}). A missing row is not a pass.`);
     }
+    // The full run is the kernel and sandbox lanes; the real lane's files are present but not run.
+    files = files.filter((f) => !realLane.includes(basename(f)));
+    if (realLane.length > 0) console.log(`acceptance: ${realLane.length} real-lane file(s) not run (only --lane real runs them).`);
   } else {
     const selected = [];
     for (let n = 1; n <= slice; n++) {
@@ -113,7 +133,7 @@ stream.on('test:fail', (t) => {
   if (t.todo === undefined && t.details?.type !== 'suite') failures.push(`${relative(root, t.file ?? '')}: ${t.name}`);
 });
 mkdirSync(join(root, 'test-results'), { recursive: true });
-const logPath = join('test-results', `${suite}${slice === null ? '' : `-slice${slice}`}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+const logPath = join('test-results', `${suite}${slice === null ? '' : `-slice${slice}`}${lane === null ? '' : `-lane-${lane}`}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
 const log = createWriteStream(join(root, logPath));
 const report = stream.compose(spec);
 report.pipe(process.stdout);

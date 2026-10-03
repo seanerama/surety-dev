@@ -24,12 +24,13 @@ If your prompt names no role, you are assisting Sean, the owner. Do not edit `pa
 npm install                                        # once
 npm run build                                      # tsc only
 npm run test:unit                                  # Builder's developer tests
-node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N
-npm test                                           # unit, then the full acceptance suite
+node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N (9 = everything merged so far)
+node scripts/run-tests.mjs acceptance --lane real  # the paid real-backend lane, only by Sean's command (M2 plan §2.1)
+npm test                                           # unit, then the full kernel and sandbox suite
 node scripts/check-role-boundary.mjs <builder|verifier> main <branch>
 ```
 
-The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until all 74 rows exist and pass.
+The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until every row of both plans (M01 to M74, M101 to M142) has a file and passes; use `--slice N` meanwhile. Real-lane files (manifest `real`) never run in `npm test`.
 
 The boundary check sees commits only. Commit your work before running it.
 
