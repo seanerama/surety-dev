@@ -1238,6 +1238,22 @@ The changed accepted tests, run the same way: M07 13 of 17 (the four that read t
 | S1 | same file, case (e), first step changed: after the content change the earlier answer is stale **and the question is withdrawn** (no open `finding_disposition`, none raised in its place); the Reviewer proposes again on the new content | **Fails** at `openDecision` like the rest of the file (no decision kind). | **Fails** at the withdrawal: the engine raised the next generation after the content change (`+ ['dec_…']` where `[]` is expected). |
 | S2 | `M104-estimated-cost-and-unknown-allowance.test.mjs`: "S2: a real backend's invocation that fails on its own with no usage observed is charged the whole run limit as its allowance, counted in the totals and at the next dispatch, and released by a correction that completes it" | **Fails** at the fixture's first M2 step: the policy key `backend_verifier` is unknown (400). | **Fails** at the original row: `unknown_allowance_tokens` null where 10,000 is expected; live up to there: the active entry, the stand-in launched once, the run ended on its own without completing, no usage observation. The other three cases of the file pass there. |
 
+**The final run (the slice closed; E63).** `node scripts/run-tests.mjs acceptance --slice 10` on the merged engine, `main` at `47b2ef7` (the slice merged at `b09f8da`, E63 at `d18502a`; the branch `verify/m2-s10-close` holds nothing but this record and `docs/acceptance/reports/M2-not-claimed.md`), run once by the closing Verifier pass on 2026-10-03 from 15:34:46Z to 15:55:07Z in a worktree of its own (`npm ci` done; no other test run on the host when it started, load 0.28), after `npm run build` and `npm run test:unit`. As the runner reported them: unit, `tests 137`, `pass 137`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0`, duration 19,662 ms, "unit: 29 file(s) passed"; acceptance, slices 1 to 10, `tests 874`, `suites 227`, `pass 874`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0`, duration 1,341,837 ms, "acceptance: 136 file(s) passed"; exit 0. No file was rerun: no case failed, and no case reported `repo_unreadable`, "could not be snapshotted" or a timing message (the runner's report, `test-results/acceptance-slice10-2026-10-03T15-34-47-439Z.log`, untracked). Every case of every slice-10 file is named `✔` in it, the review's S1 and S2 and the restaged refusal cases of objection 002 included, and so is every accepted case this slice changed (M07, M73, M37, M53, M74-fixture-semantics, M68 under the opt-in, M59, M60, M62). The state of each row, as observed:
+
+| Row | File | Cases, as `node --test` names them | State on `main` at `47b2ef7` |
+|---|---|---|---|
+| M101 | `M101-no-entry-no-dispatch.test.mjs` | (a)(b)(c); (d); (e) | written and passing (3 of 3) |
+| M102 | `M102-activation-only-by-the-human.test.mjs` | (a); (b); (c); (d); (e) | written and passing (5 of 5) |
+| M103 | `M103-budget-boundary-and-hard-maximum.test.mjs` | (a); (b); (c); (d); (e) | written and passing (5 of 5) |
+| M104 | `M104-estimated-cost-and-unknown-allowance.test.mjs` | (a)(b); (c)(f)(e); (d); S2 | written and passing (4 of 4); the C05 concurrent variant class A, no case |
+| M105 | `M105-alpha-exception-proposal.test.mjs` | (a); (b); (c); (d); (e); (f); S1 | written and passing (7 of 7) |
+| M106 | `M106-reviewer-powers.test.mjs` | (a); (b); (c); (d) | written and passing (4 of 4) |
+| M107 | `M107-bootstrap-off-by-default.test.mjs`, and `M68-browser-bootstrap.test.mjs` under the opt-in | (a); (b); (c); M68's eight | written and passing (3 of 3; M68 8 of 8) |
+| M108 | `M108-widening-settings.test.mjs` | (a)(b); (c); (d) | written and passing (3 of 3) |
+| M109 | `M109-no-unsandboxed-entry.test.mjs` | (a); (b); (c) | written and passing (3 of 3) |
+
+What slice 10 does not claim is in `docs/acceptance/reports/M2-not-claimed.md` (started by this pass, a running list toward the M2 report), with E61 item 3, E62's suspected items and questions, the C05 variant and the observer cases, each with its row and the slice that claims it.
+
 **Recorded, not pinned** (each in the seam section named):
 
 | Not pinned | Why |
