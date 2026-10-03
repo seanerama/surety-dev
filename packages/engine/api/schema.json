@@ -3302,6 +3302,7 @@
         "effective_severity",
         "sensitive_area",
         "evidence",
+        "scope",
         "defer_target",
         "linked_issue",
         "applicable",
@@ -3318,6 +3319,8 @@
         "effective_severity",
         "to",
         "sensitive_area",
+        "evidence",
+        "scope",
         "applicable",
         "candidate_revision",
         "acceptance_content_hash",
@@ -3332,7 +3335,9 @@
         "quarantined",
         "cause",
         "evidence",
-        "continuation"
+        "continuation",
+        "continue_from",
+        "stored_continuation"
       ],
       "target_seconds": 14400
     },
@@ -3429,6 +3434,9 @@
         "ancestry",
         "acceptance_content_hash",
         "effective_severity",
+        "finding_status",
+        "finding_evidence",
+        "scope",
         "disposition",
         "sensitive_area",
         "blocks_gate",

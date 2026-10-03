@@ -27,7 +27,7 @@ import {
   raiseDecision,
   stale,
 } from './decisions.js';
-import { contentHash, getCandidate, markStale } from './evidence.js';
+import { contentHash, getCandidate, markStale, predecessors } from './evidence.js';
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
@@ -108,6 +108,26 @@ function recordIntent(tx: Tx, d: DecisionRow, args: { approval: string | null; k
 
 const BLOCKER_EVIDENCE: unknown[] = [];
 
+// What a record a preview rests on is now: whether a detector has matched it
+// since (quarantined) and whether its bytes are gone (missing). A scan still
+// pending is not a change (SEAM.md §77).
+export function recordState(db: Db, id: string | null): { record: string | null; quarantined: boolean | null; missing: boolean | null } {
+  if (id === null) return { record: null, quarantined: null, missing: null };
+  const row = db.prepare('SELECT "post_scan", "missing_at" FROM "records" WHERE "id" = ?').get(id) as { post_scan: string; missing_at: string | null } | undefined;
+  return { record: id, quarantined: row ? row.post_scan === 'hit' : null, missing: row ? row.missing_at !== null : true };
+}
+
+// The evidence a blocked work item's question rests on (Review B12, "the
+// blocker cause, dependent evidence"): the run whose end blocked it and the
+// records that run left, its result and its transcript, as they are now.
+function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
+  const run = tx.db.prepare('SELECT "id", "result", "transcript" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(itemId) as
+    | { id: string; result: string | null; transcript: string | null }
+    | undefined;
+  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null) };
+  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
+}
+
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
@@ -119,7 +139,19 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           ? `its integration was refused: the integration branch is checked out in the worktree ${blocker.worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
           : (PARK_TEXT[blocker.reason] ?? blocker.reason);
       return {
-        manifest: { work_item: item.id, subject_status: 'parked', cause: blocker.reason, quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: 'eligible' },
+        // The continuation an answer allows is the item eligible again, from
+        // the checkpoint it stores, if any (D1 §7.4): a changed checkpoint is
+        // another consequence of the same answer (build spec §6 correction 22).
+        manifest: {
+          work_item: item.id,
+          subject_status: 'parked',
+          cause: blocker.reason,
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: 'eligible',
+          continue_from: item.continue_from,
+          stored_continuation: item.continuation,
+        },
         options: [
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
           { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
@@ -130,7 +162,16 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     }
     if (item.status === 'eligible' && blocker.reason === 'max_chained_roles') {
       return {
-        manifest: { work_item: item.id, subject_status: 'eligible', cause: 'max_chained_roles', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: 'dispatch' },
+        manifest: {
+          work_item: item.id,
+          subject_status: 'eligible',
+          cause: 'max_chained_roles',
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: 'dispatch',
+          continue_from: item.continue_from,
+          stored_continuation: item.continuation,
+        },
         options: [
           { key: 'continue', label: 'Continue', consequence: 'The work starts a new chain and the scheduler dispatches it.', effect: { work_item: item.id, chain: 0 } },
           { key: 'cancel', label: 'Cancel', consequence: 'The work is cancelled without a launch.', effect: { work_item: item.id, to: 'cancelled' } },
@@ -147,7 +188,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     const run = getRun(tx, d.subject_id);
     if (!run || run.state !== 'finalizing' || run.quarantined !== 1) return null;
     return {
-      manifest: { run: run.id, subject_status: run.state, cause: 'termination_unobserved', quarantined: true, evidence: BLOCKER_EVIDENCE, continuation: null },
+      manifest: { run: run.id, subject_status: run.state, cause: 'termination_unobserved', quarantined: true, evidence: BLOCKER_EVIDENCE, continuation: null, continue_from: null, stored_continuation: null },
       options: [
         {
           key: 'acknowledge',
@@ -171,7 +212,17 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     // What the probe could not establish is the cause; which reading it made
     // last is in the attempt's record, not in what the answer binds.
     return {
-      manifest: { operation: op.id, journal_kind: op.kind, subject_status: op.state, cause: 'effect_unconfirmed', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: null },
+      manifest: {
+        operation: op.id,
+        journal_kind: op.kind,
+        subject_status: op.state,
+        cause: 'effect_unconfirmed',
+        quarantined: false,
+        evidence: BLOCKER_EVIDENCE,
+        continuation: null,
+        continue_from: null,
+        stored_continuation: null,
+      },
       options: [
         {
           key: 'acknowledge',
@@ -201,7 +252,8 @@ export const PARK_TEXT: Record<string, string> = {
 
 const BLOCKER: KindSpec = {
   preview: blockerPreview,
-  manifest: (tx, d) => blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null },
+  manifest: (tx, d) =>
+    blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null, continue_from: null, stored_continuation: null },
   reraise: true,
   answer(tx, d, option, note) {
     if (d.subject_type === 'work_item') {
@@ -464,6 +516,28 @@ function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate
   };
 }
 
+// What a finding's question rests on beyond its severity (Review B12,
+// "finding status, current disposition/resolution/applicability, sensitivity
+// and relevant gate scope, acceptance-content binding, evidence"): its scope
+// as recorded, and its evidence, the report it was raised in and every record
+// a post-write scan raised it from, as they are now.
+function findingScope(f: FindingRow & { subject_id?: string }): Record<string, unknown> {
+  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate };
+}
+
+function findingEvidence(tx: Tx, f: FindingRow & { message?: string }): Record<string, unknown> {
+  const run = f.source_run ? (tx.db.prepare('SELECT "result" FROM "runs" WHERE "id" = ?').get(f.source_run) as { result: string | null } | undefined) : undefined;
+  const scanned = (tx.db.prepare('SELECT "id" FROM "records" WHERE "post_scan_finding" = ? ORDER BY "id"').all(f.id) as { id: string }[]).map((r) => recordState(tx.db, r.id));
+  return {
+    source_run: f.source_run,
+    report: recordState(tx.db, run?.result ?? null),
+    records: scanned,
+    category: f.category,
+    check: f.check,
+    message: f.message === undefined ? null : sha256(f.message),
+  };
+}
+
 interface ProposedDisposition {
   disposition: 'defer' | 'accept' | 'fix';
   linked_issue?: string | null;
@@ -479,7 +553,8 @@ function dispositionManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     proposed_disposition: proposed?.disposition ?? null,
     effective_severity: f.effective_severity,
     sensitive_area: f.sensitive_area,
-    evidence: [],
+    evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     defer_target: proposed?.defer_target ?? null,
     linked_issue: proposed?.linked_issue ?? null,
     ...findingBinding(tx, f),
@@ -582,6 +657,8 @@ function severityManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     effective_severity: f.effective_severity,
     to: proposed?.to ?? null,
     sensitive_area: f.sensitive_area,
+    evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     applicable,
     candidate_revision,
     acceptance_content_hash,
@@ -644,9 +721,16 @@ function exclusionManifest(tx: Tx, a: AssessmentRow): Record<string, unknown> {
     assessed_by_run: a.assessed_by_run,
     finding: a.finding,
     candidate: a.candidate,
-    ancestry: f.candidate,
+    // The candidate's ancestry (D1 §9.3(5); Review B18): the candidate the
+    // finding was raised against and the chain of candidates the assessed
+    // one descends from through started_from_candidate, which is what makes
+    // the finding apply to it.
+    ancestry: { finding_candidate: f.candidate, predecessors: candidate ? predecessors(tx.db, candidate) : null },
     acceptance_content_hash: candidate ? contentHash(tx.db, a.project, candidate) : null,
     effective_severity: f.effective_severity,
+    finding_status: f.status,
+    finding_evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     disposition: f.disposition,
     sensitive_area: f.sensitive_area,
     blocks_gate: blocksAnyGate(f),
@@ -787,7 +871,7 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
 const CORRECTION_KEYS = ['proposal_status', 'tree', 'diff_hash', 'base_revision', 'integration_revision', 'classification', 'evidence', 'effective_protected_version', 'spec_revision', 'scope_approval', 'policy_revision'];
 const CONTROL_KEYS = ['run', 'stoppable', 'domains', 'lease_generation', 'workspace', 'workspace_snapshot', 'workspace_fate', 'work_fate'];
 export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = {
-  blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
+  blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation', 'continue_from', 'stored_continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,
   out_of_band_change: ['subject_kind', 'expected', 'found'],
@@ -799,6 +883,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'effective_severity',
     'sensitive_area',
     'evidence',
+    'scope',
     'defer_target',
     'linked_issue',
     'applicable',
@@ -806,7 +891,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'acceptance_content_hash',
     'policy_revision',
   ],
-  severity_lower: ['finding_status', 'effective_severity', 'to', 'sensitive_area', 'applicable', 'candidate_revision', 'acceptance_content_hash', 'policy_revision'],
+  severity_lower: ['finding_status', 'effective_severity', 'to', 'sensitive_area', 'evidence', 'scope', 'applicable', 'candidate_revision', 'acceptance_content_hash', 'policy_revision'],
   finding_applicability_exclusion: [
     'assessment_status',
     'evidence',
@@ -818,6 +903,9 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'ancestry',
     'acceptance_content_hash',
     'effective_severity',
+    'finding_status',
+    'finding_evidence',
+    'scope',
     'disposition',
     'sensitive_area',
     'blocks_gate',

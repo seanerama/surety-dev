@@ -295,9 +295,9 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `plan_approval`: not enabled in M1
 - `check_correction_loosening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
 - `check_correction_unclassifiable`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
-- `finding_disposition`: enabled; manifest finding_status, disposition, proposed_disposition, effective_severity, sensitive_area, evidence, defer_target, linked_issue, applicable, candidate_revision, acceptance_content_hash, policy_revision
-- `severity_lower`: enabled; manifest finding_status, effective_severity, to, sensitive_area, applicable, candidate_revision, acceptance_content_hash, policy_revision
-- `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation
+- `finding_disposition`: enabled; manifest finding_status, disposition, proposed_disposition, effective_severity, sensitive_area, evidence, scope, defer_target, linked_issue, applicable, candidate_revision, acceptance_content_hash, policy_revision
+- `severity_lower`: enabled; manifest finding_status, effective_severity, to, sensitive_area, evidence, scope, applicable, candidate_revision, acceptance_content_hash, policy_revision
+- `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation, continue_from, stored_continuation
 - `out_of_band_change`: enabled; manifest subject_kind, expected, found
 - `rollout_partial`: not enabled in M1
 - `publication_first_visibility`: not enabled in M1
@@ -313,7 +313,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `retire`: not enabled in M1
 - `reactivate`: not enabled in M1
 - `policy_widening`: enabled; manifest base_revision, base_blob, proposed_policy, widens
-- `finding_applicability_exclusion`: enabled; manifest assessment_status, evidence, reason, proposed_by_run, assessed_by_run, finding, candidate, ancestry, acceptance_content_hash, effective_severity, disposition, sensitive_area, blocks_gate, protected_version, policy_revision
+- `finding_applicability_exclusion`: enabled; manifest assessment_status, evidence, reason, proposed_by_run, assessed_by_run, finding, candidate, ancestry, acceptance_content_hash, effective_severity, finding_status, finding_evidence, scope, disposition, sensitive_area, blocks_gate, protected_version, policy_revision
 - `check_correction_tightening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
 
 ## A.9 Configuration
