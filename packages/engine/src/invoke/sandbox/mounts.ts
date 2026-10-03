@@ -19,11 +19,11 @@
 // never enters the root.
 //
 // Slice 11 builds what the scripted backend needs to run inside the real
-// sandbox: the workspace is the run's checkout, bound read-write, and
-// `/surety/git` is empty. The engine-constructed git view, the overlay of the
-// workspace on the volatile filesystem with its screened materialization, the
-// egress forwarder and the plan's validation against the role's mount table
-// are slice 12's (rows M119 to M128).
+// sandbox: the workspace is an overlay on the volatile filesystem whose
+// writes are not yet materialized, and `/surety/git` is empty. The
+// engine-constructed git view, the egress forwarder and the plan's validation
+// against the role's mount table are slice 12's (rows M119 to M128); the
+// screened materialization of the workspace is slice 13's (M132).
 
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
@@ -234,7 +234,13 @@ export function buildPlan(input: PlanInput): Plan {
   // /surety: exactly context, workspace, git, home, out.
   b.dir('/surety');
   b.bind(input.context, { target: '/surety/context' });
-  b.bind(input.workspace, { target: '/surety/workspace', writable: true });
+  // The workspace (D2 §2.3): an overlay whose lower layer is the run's
+  // checkout, read-only, and whose upper layer is on the volatile
+  // filesystem. Its screened materialization into the checkout is slice
+  // 13's (M132); until then a role's writes stay in the sandbox and go with
+  // the domain.
+  b.dir('/surety/workspace');
+  b.line('surety-workspace', '/surety/workspace', 'overlay', `lowerdir=${esc(input.workspace)},upperdir=${esc(join(vol, 'upper'))},workdir=${esc(join(vol, 'work'))},nosuid,nodev`);
   b.dir('/surety/git');
   b.dir('/surety/home');
   b.line(join(vol, 'home'), '/surety/home', 'none', 'bind,nosuid,nodev');
@@ -263,7 +269,7 @@ export function buildPlan(input: PlanInput): Plan {
     rootBytes: 16 * 1024 * 1024,
     volBytes: input.volBytes,
     volInodes: input.volInodes,
-    volDirs: ['home', 'out', 'tmp'],
+    volDirs: ['home', 'out', 'tmp', 'upper', 'work'],
     skeleton: first.skeleton,
     fstab: first.fstab,
     late: b.late,
