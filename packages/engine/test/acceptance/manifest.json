@@ -169,7 +169,8 @@
     ],
     "12": [
       "M110-qualification-per-start.test.mjs",
-      "M119-validated-mount-plan.test.mjs"
+      "M119-validated-mount-plan.test.mjs",
+      "M120-control-plane-invisible.test.mjs"
     ]
   },
   "sandbox": [
@@ -183,6 +184,7 @@
     "M117-processes-and-descriptors.test.mjs",
     "M118-pause-regrant.test.mjs",
     "M110-qualification-per-start.test.mjs",
-    "M119-validated-mount-plan.test.mjs"
+    "M119-validated-mount-plan.test.mjs",
+    "M120-control-plane-invisible.test.mjs"
   ]
 }
