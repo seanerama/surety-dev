@@ -67,6 +67,7 @@ export const step = {
   // `signal_all` is refused here: it is scripted only through signalAll().
   probe: (action, args = {}) => {
     if (action === 'signal_all') throw new Error('script signal_all through step.signalAll(hostPidNamespace()): it kills every process the role can see (SEAM.md §127, "The guard")');
+    if (GUARDED_ACTIONS.includes(action)) throw new Error(`script ${action} through acting(hostNamespaces()): it writes, connects or executes, and runs only inside a sandbox (SEAM.md §141)`);
     return { probe: { action, ...args } };
   },
   // P13's action (row M117 (a)): SIGKILL to every pid the role sees, then
@@ -81,6 +82,65 @@ export const step = {
   // The guard of signalAll alone: what the role would decide, with no signal sent.
   signalAllCheck: (hostPidNs) => ({ probe: { action: 'signal_all_check', host_pid_ns: hostPidNs } }),
 };
+
+// M2 slice 12 (SEAM.md §141): the probe actions that write outside the
+// role's own files, connect or execute. The role program runs one only when
+// its step carries the host's pid, network and mount namespaces and its own
+// are three others (scripted/child.mjs, containmentRefusal); `step.probe`
+// refuses to script one, and `acting(hostNamespaces())` scripts them. A test
+// releases a role into one only after it has read, from the host, that the
+// role is contained (harness/sandbox/view.mjs, assertContained).
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+const NS_KINDS = ['pid', 'net', 'mnt'];
+const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
+
+// The host's pid, network and mount namespaces, as the test process sees its own.
+export const hostNamespaces = () => Object.fromEntries(NS_KINDS.map((kind) => [kind, readlinkSync(`/proc/self/ns/${kind}`)]));
+// Those of a host process; a kind that cannot be read is null (which a test
+// must treat as "not shown to be contained").
+export function namespacesOf(pid) {
+  return Object.fromEntries(
+    NS_KINDS.map((kind) => {
+      try {
+        return [kind, readlinkSync(`/proc/${pid}/ns/${kind}`)];
+      } catch {
+        return [kind, null];
+      }
+    }),
+  );
+}
+
+// The acting probes, each carrying the host's namespaces (the role
+// program's half of the guard). `label` tells two probes of one action apart.
+export function acting(hostNs) {
+  for (const kind of NS_KINDS) if (!nsForm(kind, hostNs?.[kind])) throw new Error(`acting() needs the host's ${kind} namespace, as hostNamespaces() reads it (got ${JSON.stringify(hostNs?.[kind])})`);
+  const one = (action, args = {}) => ({ probe: { action, host_ns: { ...hostNs }, ...args } });
+  return {
+    // Create or overwrite a file at `path` (absolute, or relative to the workspace).
+    write: (path, args = {}) => one('write_probe', { path, ...args }),
+    // P4, P5: where git resolves `name` (config, hooks), what is there, and
+    // a write at it (`create`: a new file of that name inside it).
+    gitPath: (name, args = {}) => one('git_path_probe', { name, ...args }),
+    // P19: every way of changing the protected file and directory given (workspace-relative).
+    protectedOps: (file, dir, args = {}) => one('protected_ops', { file, dir, ...args }),
+    // The role's own /dev/shm: a file written and read back.
+    shm: (name, args = {}) => one('shm_roundtrip', { name, ...args }),
+    // A unix socket: {abstract} | {path} | {own: true}.
+    unixConnect: (target, args = {}) => one('unix_connect', { ...target, ...args }),
+    // TCP connections to [{host, port}] (or 'proxy': the forwarder HTTPS_PROXY names), nothing sent.
+    tcpConnect: (targets, args = {}) => one('tcp_connect', { targets, ...args }),
+    // One HTTP request to host:port, if a connection opens.
+    httpRequest: (host, port, request, args = {}) => one('http_request', { host, port, ...request, ...args }),
+    // One CONNECT through the role's proxy (scripted/child.mjs, proxyConnect).
+    proxyConnect: (authority, args = {}) => one('proxy_connect', { authority, ...args }),
+    // `count` CONNECTs one after another, tallied by answer.
+    proxyFlood: (authority, count, args = {}) => one('proxy_flood', { authority, count, ...args }),
+    // `count` tunnels opened at once and held for hold_ms.
+    proxyConcurrent: (authority, count, args = {}) => one('proxy_concurrent', { authority, count, ...args }),
+    // One program as an argument array, no shell.
+    exec: (argv, args = {}) => one('exec_probe', { argv, ...args }),
+  };
+}
 
 // The host's pid namespace, as the test process sees its own.
 export const hostPidNamespace = () => readlinkSync('/proc/self/ns/pid');

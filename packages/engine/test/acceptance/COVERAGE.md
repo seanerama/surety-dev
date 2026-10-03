@@ -1388,6 +1388,85 @@ Accepted files that use the harness modules this pass changed (`scripted.mjs`, `
 | A Stop at `launcher.authorized` and at `init.before_backend` | `M113-…` (d) | The plan names three paths for (d); the two barriers are in the seam for the rows that need them (M129 names "an unplaced launcher"; E31: the fewest cases). |
 | Two engines whose homes hash alike | `M111-…` | Sixteen hex characters of SHA-256; not constructible. |
 
+## M2 slice 12: what the role sees and reaches (M2 build spec §9; E59)
+
+2026-10-03, by the Verifier of slice 12 on `verify/m2-s12`, cut from `main` at `2b4a566`. Rows M119 to M128 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §§3.4, 3.5, each with every named case; the seam's §§132 to 142 fix what the plan's §2.6 leaves to the tests for them. Ten new files listed under manifest slice 12 and the manifest's `sandbox` list, beside `M110-qualification-per-start.test.mjs` (already there). New harness: `harness/sandbox/view.mjs` (the containment read and the armed role, the published plan and its comparison with a mount table, seeded targets, a disposable operator home, an approved widening, a refusal before launch, the descriptor rule), `harness/sandbox/egress.mjs` (the resolver, the echo endpoint's log, the egress log and refusal events, host listeners); `harness/scripted/child.mjs` gains six reading probe actions and eleven acting ones behind a guard (SEAM §141); `harness/scripted.mjs` gains `acting(hostNamespaces())`, `namespacesOf`, `GUARDED_ACTIONS`; the stand-in (`harness/standin/backend.mjs`, `StandIn`) gains a log directory, a hold and what it records of its parent, command line and context (SEAM §139).
+
+**Rows and cases.** The plan's letters are the cases; where one `test()` holds two letters each is asserted with its letter in the message. A `[not_exercised]` case is never counted as passed (M2 plan §2.5).
+
+| Row | File | Cases (plan letters) |
+|---|---|---|
+| M119 | `M119-validated-mount-plan.test.mjs` | (a); (b); (c); (d) (`[not_exercised]` branch only on a host with no submount under a permitted tree; this host has `/usr/lib/wsl/drivers` (9p) and others, so it is exercised); (e); (f); (g) |
+| M120 | `M120-control-plane-invisible.test.mjs` | (a); (b); (c); (d) |
+| M121 | `M121-git-view.test.mjs` | (a); (b); (c); (d); (e) |
+| M122 | `M122-host-sockets-and-wsl.test.mjs` | (a); (b) (its Docker part `[not_exercised]` only without a Docker socket; this host has two); (c); (d) (`[not_exercised]` off WSL2); (e) |
+| M123 | `M123-protected-set-read-only.test.mjs` | (a) three tests, Builder, Reviewer, Architect; (b); (c) |
+| M124 | `M124-probe-needs-target-and-control.test.mjs` | (a); (b); (c); (d); (e) `[not_exercised]` (OBS) |
+| M125 | `M125-handover.test.mjs` | (a) with (b) in one test; (c); (d) |
+| M126 | `M126-api-unreachable.test.mjs` | (a); (b) |
+| M127 | `M127-egress-address-bound.test.mjs` | (a) to (e) with (i) in one test; (f) with (i); (g) with (h) |
+| M128 | `M128-proxy-limits.test.mjs` | (a) with (b); (c); (d); (e); (f); (g) `[not_exercised]` (OBS) |
+
+**The M110 split closed** (section "M2 slice 11", "The M110 split", which permitted this in advance; SEAM §§123, 138, 142). `M110-host-checks-and-scope.test.mjs` (manifest slice 11), case (a) only: `EXPECTED_IN_SLICE_11` now has H9 `passed` and H10 `passed` on WSL2, and the case requires the host eligible, one active row, no message and one `host.qualified` where it required the opposite; its title says so. (b), (c), (f) are unchanged. **Consequence for the driver:** `--slice 11` on `main` fails at M110 (a) and (f) (both read the table) until slice 12 is built. `M110-qualification-per-start.test.mjs` (slice 12), as its head provides: a pass now also requires every probe P1 to P19 passed against a seeded target with its negative denied and its control run, P11 `not_exercised` off WSL2 only, P20 passed or (slice 12) `not_exercised`, and the evidence record's `probes` in order. Neither change weakens anything.
+
+**The guard, and what ran on the host.** Every acting probe of this slice fails closed in two halves (SEAM §141; E64 item 2). Before any engine ran them, the role program was run by hand: on the host every acting action refused (`refused_unsandboxed`) and wrote nothing; inside a throwaway `unshare -Urpfmn --mount-proc` it refused when told no namespaces, and ran contained when told the real host's (its write landed in its own directory, its own socket connected, 127.0.0.1 was `ENETUNREACH`, no proxy). On today's engine the role is in its own pid, network and mount namespaces (slice 11), so `assertContained` passed and the guarded actions ran inside the sandbox; nothing they did reached the host: M123's protected-file writes went to the role's overlay (the checkout untouched, host-read), M119 (b)'s write into the widening was refused read-only, the connections reached nothing (`ENETUNREACH`, no proxy). The host controls that touch the user's session or Windows ran exactly as SEAM §136 says: `systemd-run --user --wait --collect true` once per M122 run in a `surety-test-p17-<hex>` unit (collected), and `cmd.exe /c echo <marker>` once per M122 run. M117 was not run (as the brief says).
+
+**What was run.** `npm run build`, then each file alone with `node --test`, never two at once, on `main`'s engine at `2b4a566` (the slice-11 engine: scope, launcher, namespaces, no published plan, no git view, no overlay of the protected set, no probe suite, no proxy), with `systemctl --user is-system-running` = `running` before every file and, after every file, no process of this worktree, no scope holding one, no `/dev/shm` sentinel and no `surety-test-*` unit left (a script that reads the process table, every `surety-*` scope's cgroups and `/dev/shm`). Per file:
+
+| File | Cases | Result on today's engine (first failing assertion) |
+|---|---|---|
+| M119 | 4 of 7 | (a), (b) **fail** at "the run read has mount_plan" (no key); live up to there: the role ran in the sandbox, its probes logged, its `/dev/shm` round trip guarded and contained. (g) **fails**: the project with alternates is dispatched, `completed`. (c), (e), (f) **pass** on what slices 10 and 11 built (the plan's refusals; the credential locations absent and refused; no inherited descriptor); (d) **passes**, exercised (host submounts under `/usr/lib` are absent from the role's table and listing). |
+| M120 | 4 of 4 | All **pass**: slice 11's root already holds none of the targets (as E65 item 3 observed). |
+| M121 | 0 of 5 | (a), (b) **fail** at "git resolves its config/hooks path": `fatal: not a git repository: …/repo-1/.git/worktrees/run_…` (the workspace's `.git` names a host path the sandbox lacks); (c) at "status reports the role's own edit"; (d) at "the view holds config (it holds )"; (e) at the commit's changes (`{}`): nothing is materialized. |
+| M122 | 4 of 5 | (a) to (d) **pass**, with their host controls; (e) **fails** at the absent `mount_plan`. |
+| M123 | 0 of 5 | The three (a) **fail** at "write is refused by a read-only tree" (`done`: the overlay takes it; host-read the checkout is untouched); (b), (c) at "the Verifier's protected-only diff was captured as a proposal" (nothing is materialized, so there is no diff). |
+| M124 | 1 of 5 | (a) to (d) **fail** at start: exit 2 for the unknown flag `--harness-isolation-probe`. (e) `[not_exercised]` **passes** (H13 `not_exercised` with its reason); never counted as passed. |
+| M125 | 0 of 3 | (a)+(b) **fail** at "the stand-in was launched": the real dispatch is refused `isolation_unqualified` (H9 `not_exercised`), at once rather than after a wait. (c) at "the package has its manifest.json" (today's package holds `invocation.json` only). (d) at the code: `isolation_unqualified` where `backend_refused` is expected (eligibility is checked first, SEAM §139). |
+| M126 | 0 of 2 | (a) **fails** at its control "the role reaches its forwarder" (no `HTTPS_PROXY`); its negatives hold (every target unreachable, the test's listener saw nothing). (b) at "the proxy answers 403" (`no_proxy`); the direct request had no connection. |
+| M127 | 0 of 3 | (a)–(e), (g)+(h) **fail** at `POST /v1/harness/resolver` (404); (f) at "the tunnel opens" (`no_proxy`). |
+| M128 | 1 of 6 | (a)+(b) at the resolver route (404); (c), (e) at "the tunnel opened" (`no_proxy`); (d) at the concurrent results (all `no_proxy`); (f) at "the role had a proxy to flood" (`no_proxy`), at once. (g) `[not_exercised]` **passes**; never counted as passed. |
+| M110 (slice 11 file) | 2 of 4 | (a), (f) **fail** at "H9 is passed in this slice" (observed: "the isolation probe suite … is not part of this engine revision"); (b), (c) **pass**. |
+| M110 (slice 12 file) | 0 of 3 | (a), (d) at "one active host_qualifications row (rows: none)"; (e) at "H9 ran and passed under the exception". |
+
+Accepted files that use the harness modules this pass changed, each alone on the same engine: `M116-membership-cannot-be-escaped` 4 of 4, `M74-invocation-boundary` 3 of 3, `M109-no-unsandboxed-entry` 3 of 3, `M101-no-entry-no-dispatch` 3 of 3, `M103-budget-boundary-and-hard-maximum` 5 of 5 (its (e) runs the changed stand-in in the kernel lane), `M13-stop` 14 of 14, `M108-widening-settings` 3 of 3. No slice-12 case has been run against an engine that builds the slice.
+
+**Readings where the plan's words met the mechanism** (each fixed in the seam section named; † a question for Sean in the Verifier's report):
+
+| Plan | Reading | Where |
+|---|---|---|
+| M119 (a): "the plan is published in the `qualification_evidence` record and its fingerprint on the run read" | One record per run, before the launcher starts; `mount_plan` on the run read | SEAM §133 |
+| M119 (a): "the mount table equals the validated plan entry by entry" | One mount per entry and no other, kind, `ro` exactly, flags at least, and a bind's device and inode equal to the host's source | SEAM §133 |
+| M119 (g): "refused `mount_plan_refused`" | The eighth reason, `alternates` | SEAM §134 |
+| M121 (a): "the list shows only `/surety/git/config` with the engine's known content" | Every line's origin that file; `core.*` keys only; eleven keys forbidden | SEAM §135 |
+| M121 (c): "`commit` … fail" | With an identity given, so that it fails for the view and not for want of one | SEAM §135 |
+| M123: "two protected roots (a file and a directory)" | Two roots in the governed file, `.surety/checks/` and `acceptance/`; a protected file of each and the other as the protected directory | SEAM §137 |
+| M124 (d): "which the Verifier lists in the seam" | P11 off WSL2; P10's Docker part without Docker; P20 in slice 12 only † | SEAM §138 |
+| M125 (b): "exactly the template's variables" | Six required, seven allowed, by name † | SEAM §139 |
+| M125 (c): "exactly what the work item binds" | A manifest that lists every file with its kind and source † | SEAM §139 |
+| M126 (b): "the engine's audit holds no bootstrap request in the window" | `GET` requests are not audited (SEAM §6), so the witnesses are the egress log (each CONNECT refused, no address connected, no byte carried) and the direct connection's failure † | SEAM §140 |
+| M127 (h): "allowed under `role` after approval" | `decision` `accepted` and the validated documentation address connected to (it then times out, routed nowhere) | SEAM §140 |
+| M128: "which per-tunnel limits only refuse the tunnel and which bounds cancel the run" | Every per-tunnel limit ends the tunnel only; `egress_log_max_bytes` cancels the run `failed` / `infra_error`, `engine_signaled` † | SEAM §140 |
+| M128 (c): `egress_tunnel_max_seconds` | Its range's floor is 60 s, so the case takes a minute | SEAM §140 |
+
+**Recorded, not pinned:**
+
+| Not pinned | Why |
+|---|---|
+| The order of entries in the plan record; keys beyond the four | SEAM §133. |
+| What status a limit's refusal answers (beyond "not 200") | D2 names only 403 for the policy. |
+| The echo endpoint's address in the egress log | SEAM §140: the authority is the exception, not an address. |
+| The secret screen before materialization | Row M132 (slice 13); M121 (e) pins the order and the commit only. |
+| Whether a role can create a user namespace inside | AR P14, as slice 11. |
+| The tool versions recorded (H6 "version unknown", E65 item 7) | The slice-11 Reviewer recommended comparing `tool_versions` with the tools' own output; not added: the row's `tool_versions` keys are pinned, their values against `--version` are not. A question for Sean whether to add it. |
+
+**Not written** (recorded by this pass):
+
+| Case | Where it would go | Why not written |
+|---|---|---|
+| The engine's own half of P13's guard in the probe suite | M124 | Not observable from outside the engine; SEAM §138 states it and the slice's Reviewer checks it by reading and running (E64 item 2). |
+| A hard link to a forbidden file inside an approved read path | M119 | E62 question 3 is open with Sean; the recommended reading is class C. |
+| An observer's evidence (M124 (e), M128 (g)) | — | `[not_exercised]` until H13 passes (E57). |
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

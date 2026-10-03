@@ -53,12 +53,20 @@ export function hostId() {
 // cannot keep it from starting. `path` and `sha256` are what a fixture
 // entry records; `launches()` is what it recorded of each launch.
 export class StandIn {
-  constructor(dir) {
+  // `logDir` (M2 slice 12; SEAM.md §139): where the stand-in logs and looks
+  // for its hold, when that is not its own directory. Inside a sandbox the
+  // binary's directory is the backend's installation, read-only; a
+  // sandbox-lane test names the scripted directory, which the engine binds
+  // read-write. The directory is written into the file's first line, so the
+  // SHA-256 the entry records covers it.
+  constructor(dir, { logDir } = {}) {
     mkdirSync(dir, { recursive: true });
     this.dir = dir;
+    this.logDir = logDir ?? dir;
     this.path = join(dir, 'backend');
     const body = readFileSync(PROGRAM, 'utf8');
-    writeFileSync(this.path, `#!${process.execPath}\n${body}`);
+    const override = logDir === undefined ? '' : `const LOG_DIR_OVERRIDE = ${JSON.stringify(logDir)};\n`;
+    writeFileSync(this.path, `#!${process.execPath}\n${override}${body}`);
     chmodSync(this.path, 0o755);
     this.sha256 = sha256Hex(readFileSync(this.path));
   }
@@ -68,7 +76,17 @@ export class StandIn {
   }
 
   get logFile() {
-    return join(this.dir, 'standin.jsonl');
+    return join(this.logDir, 'standin.jsonl');
+  }
+
+  // Make the next launches wait, after recording, until release() (the
+  // stand-in bounds its own wait at two minutes).
+  hold() {
+    writeFileSync(join(this.logDir, 'standin-hold'), '');
+  }
+
+  release() {
+    writeFileSync(join(this.logDir, 'standin-release'), '');
   }
 
   launches(filter = {}) {
