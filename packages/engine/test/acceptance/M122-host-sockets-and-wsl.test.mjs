@@ -41,12 +41,11 @@ import net from 'node:net';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { makeTempDir, removeDir } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { addProject, addWork, getRow } from './harness/runs.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
-import { addProfiledWork, approveWidening, armedRole, assertMountTableIsPlan, byPath, hostMounts, mountPlanOf, probedRun, refusedBeforeLaunch } from './harness/sandbox/view.mjs';
+import { addProfiledWork, approveWidening, armedRole, assertMountTableIsPlan, shortSocketDir, byPath, hostMounts, mountPlanOf, probedRun, refusedBeforeLaunch } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
 import { PARK_ON_REFUSAL } from './harness/trust.mjs';
 
@@ -67,6 +66,10 @@ async function listening(t, address) {
     server.listen(address, resolve);
   });
   t.after(() => new Promise((resolve) => server.close(resolve)));
+  if (!address.startsWith('\0')) {
+    assert.ok(Buffer.byteLength(address) <= 107, `the socket's path fits sun_path (${address})`);
+    assert.equal(server.address(), address, 'the socket is bound at exactly the intended path');
+  }
   return { connections: () => connections };
 }
 
@@ -89,8 +92,9 @@ describe('M122 host sockets, the user bus, Docker, WSL interop and host mounts',
     const name = `surety-test-abstract-${hex()}`;
     const abstract = await listening(t, `\0${name}`);
     assert.equal(await hostConnects(`\0${name}`), true, 'the target is seeded: the abstract socket is listening (the host connects to it)');
-    const scratch = makeTempDir('m122-socket');
-    t.after(() => removeDir(scratch));
+    // A short directory of the test's own (the slice-12 review: a socket
+    // path past 107 bytes is bound truncated, at another path).
+    const scratch = shortSocketDir(t, 'm122');
     mkdirSync(join(scratch, 'proposed'));
     const pathname = await listening(t, join(scratch, 'proposed', 'listener.sock'));
     assert.equal(await hostConnects(join(scratch, 'proposed', 'listener.sock')), true, 'the target is seeded: the pathname socket is listening');

@@ -17,7 +17,8 @@
 // one way the cases dispatch such a role.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -339,4 +340,30 @@ export function inheritedDescriptors(fds) {
     if (target.startsWith('pipe:')) return !(pipeEnds.filter((v) => v === target).length >= 2 || stdPipes.has(target));
     return true;
   });
+}
+
+// ---- unix sockets at a path that is really theirs (the slice-12 review) ------------------
+
+// A pathname socket's address is at most 107 bytes (sun_path); a longer
+// path is bound truncated, silently, so a socket under a long TMPDIR can be
+// "verified listening" at another path than the one a case names. Sockets a
+// case seeds live in a short directory of the test's own under /tmp,
+// removed after the test, and each is checked bound at exactly its path.
+export function shortSocketDir(t, label) {
+  const dir = mkdtempSync(`/tmp/surety-sock-${label}-`);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+export async function listenUnix(t, path, onConnection = (socket) => socket.destroy()) {
+  assert.ok(Buffer.byteLength(path) <= 107, `the socket's path fits sun_path (${Buffer.byteLength(path)} bytes: ${path})`);
+  const server = net.createServer(onConnection);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(path, resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  assert.equal(server.address(), path, 'the socket is bound at exactly the intended path');
+  assert.ok(statSync(path).isSocket(), `host-read: ${path} is a socket`);
+  return server;
 }
