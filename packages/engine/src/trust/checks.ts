@@ -346,7 +346,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   const forced = seamHostChecks()?.forced ?? {};
   for (const [id, result] of Object.entries(forced)) {
     const c = checks.get(id);
-    if (c) checks.set(id, { ...c, result, observed: `${result} (forced; observed: ${c.observed ?? 'nothing'})`, remedy: c.remedy ?? 'the harness forced this result' });
+    if (c) checks.set(id, { ...c, result, observed: `${result} (forced; observed: ${c.observed ?? 'nothing'})`, remedy: c.remedy ?? 'this result was forced at start' });
   }
 
   const ordered = HOST_CHECKS.map((id) => checks.get(id)!);

@@ -133,7 +133,8 @@ export class SandboxLaunch {
       this.child.once('exit', (code, signal) => {
         this.launcherExit = { code, signal };
         this.channelOpen = false;
-        this.stage = 'gone';
+        // A launch refused keeps saying so after its launcher has gone.
+        if (this.stage !== 'refused') this.stage = 'gone';
         this.output.end();
         this.resolveBackend();
         resolve();

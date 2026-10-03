@@ -606,8 +606,13 @@ export class Launcher {
       // Nothing of the role ran: the launch was refused, the sandbox could not
       // be built, or the launcher ended before it. The run's end is decided
       // elsewhere (a Stop, a deadline, the lease's expiry, the refusal).
+      // A refused grant decides nothing: its cause (an expired lease, a Stop,
+      // a deadline) ends the run. A launcher that ended by itself, or was
+      // killed, before the backend started is a failed launch (SEAM.md §125).
       await launch.launcherExited;
-      if (!handle.ending && launch.setupFailure === null) this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: 'the launcher ended before the backend started' });
+      if (!handle.ending && launch.setupFailure === null && launch.stage !== 'refused') {
+        this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: 'the launcher ended before the backend started' });
+      }
       return;
     }
     await backendStarted;
