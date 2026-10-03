@@ -39,7 +39,7 @@ import { dirname, join, relative } from 'node:path';
 
 export interface Entry {
   path: string;
-  kind: 'dir' | 'file' | 'symlink' | 'copy';
+  kind: 'dir' | 'file' | 'symlink' | 'copy' | 'chardev';
   target?: string;
   content?: string;
   source?: string;
@@ -53,6 +53,7 @@ export interface Tools {
   ip: string;
   unshare: string;
   setpriv: string;
+  mknod?: string;
 }
 
 export interface Plan {
@@ -202,6 +203,10 @@ class Builder {
     const st = lstatSync(source);
     if (!opts.noTarget) {
       if (st.isDirectory()) this.dir(target);
+      // A device's mount point is itself a character device (0:0, the one
+      // an unprivileged namespace may make), so that the directory lists it
+      // as what is mounted there is.
+      else if (opts.device) this.entry({ path: rel(target), kind: 'chardev' });
       else this.file(target);
     }
     // A device node is usable only on a mount without `nodev`, and /dev/null

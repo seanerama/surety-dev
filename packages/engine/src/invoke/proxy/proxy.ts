@@ -30,7 +30,7 @@
 // echo endpoint, in-process); never to loopback, a private range, this host,
 // or the engine's API.
 
-import { closeSync, openSync, rmSync } from 'node:fs';
+import { closeSync, openSync, renameSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -131,34 +131,46 @@ export class DomainProxy {
   }
 
   // Listen on the domain's socket. A path longer than a unix socket address
-  // holds is reached through a descriptor of the area (/proc/self/fd/N/…).
+  // holds is reached through a descriptor of the area (/proc/self/fd/N/…),
+  // kept open for as long as the server is: libuv unlinks the path it bound
+  // when the server closes, and that path must still name this area then.
+  // The socket is bound under a name of its own and renamed into place, so
+  // that the unlink at close finds nothing and the socket file stays where
+  // the published plan names it (SEAM.md §133).
+  private dirFd: number | null = null;
+
   async listen(): Promise<void> {
     rmSync(this.socketPath, { force: true });
+    const bindName = `${EGRESS_SOCKET_NAME}.bind`;
+    rmSync(join(this.opts.area, bindName), { force: true });
     const dirFd = openSync(this.opts.area, 'r');
-    try {
-      const server = net.createServer((sock) => this.accept(sock));
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(`/proc/self/fd/${dirFd}/${EGRESS_SOCKET_NAME}`, () => {
-          server.off('error', reject);
-          resolve();
-        });
+    this.dirFd = dirFd;
+    const server = net.createServer((sock) => this.accept(sock));
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(`/proc/self/fd/${dirFd}/${bindName}`, () => {
+        server.off('error', reject);
+        resolve();
       });
-      this.server = server;
-    } finally {
-      closeSync(dirFd);
-    }
+    });
+    renameSync(join(this.opts.area, bindName), this.socketPath);
+    this.server = server;
   }
 
-  // No more connections; every tunnel closed; the socket removed.
+  // No more connections; every tunnel closed.
   async close(): Promise<void> {
     this.closing = true;
     for (const stop of [...this.tunnels]) stop();
     for (const s of this.open) s.destroy();
     const server = this.server;
     this.server = null;
+    // The socket file stays where the published plan names it, with the
+    // domain's area.
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    rmSync(this.socketPath, { force: true });
+    if (this.dirFd !== null) {
+      closeSync(this.dirFd);
+      this.dirFd = null;
+    }
   }
 
   // The `egress_log` record's bytes (D2 §2.4; SEAM.md §140): JSON lines in

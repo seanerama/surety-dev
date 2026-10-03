@@ -424,6 +424,14 @@ export function seamBackends(): BackendSpec[] {
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')], binds: [{ path: init.scripted, writable: true }] }];
 }
 
+// SEAM.md §127: the scripted directory is bound read-write at its own path
+// inside every sandbox of a sandbox-lane engine, a real backend's (the
+// stand-in's log, SEAM.md §139) included. Nothing outside harness mode.
+export function seamSandboxBinds(): { path: string; writable: boolean }[] {
+  if (!init.harness || init.scripted === null) return [];
+  return [{ path: init.scripted, writable: true }];
+}
+
 // The host checks switch and its overrides (SEAM.md §114): null outside
 // harness mode, where every start runs the checks.
 // Under `unrun` the harness vouches for the host (source "harness").
@@ -773,8 +781,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       handler: async () => {
         let body = await hooks.body();
         // SEAM.md §139: a raw user report on the trigger, published as a
-        // record of the project and bound to the work item through its
-        // subject; the answer names the record.
+        // record of the project; the answer names the record. Nothing of it
+        // reaches a context package.
         let report: string | null = null;
         if (isObject(body) && body.raw_user_report !== undefined) {
           const { raw_user_report: text, ...rest } = body;
@@ -784,8 +792,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           const rt = hooks.runtime();
           const { writeWholeRecord } = await import('../records/files.js');
           report = await writeWholeRecord(rt, { project: rest.project, run: null, kind: 'raw_user_report', content: Buffer.from(text) });
-          const subject = isObject(rest.subject) ? rest.subject : {};
-          body = { ...rest, subject: { ...subject, raw_user_report: report } };
+          body = rest;
         }
         const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean };
         return { status: result.created ? 201 : 200, body: report === null ? result : { ...result, raw_user_report: report } };

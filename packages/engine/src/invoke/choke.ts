@@ -12,7 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -264,6 +264,15 @@ export class Launcher {
           { path: refused.path, reason: refused.reason },
         ),
       );
+      return false;
+    }
+    // A widening is bound at what it resolves to, never at the link's own
+    // path (D2 §2.3; SEAM.md §133).
+    try {
+      handle.readPaths = plan.paths.map((p) => realpathSync(p));
+    } catch (err) {
+      log('dispatch', err, { run: claim.run, what: 'sandbox_read_paths' });
+      this.never(handle, 'failed', 'infra_error');
       return false;
     }
     if (handle.abort) {

@@ -88,7 +88,7 @@ process.stdout.write(JSON.stringify({ ns, written, files }) + '\\n');
 async function runTrial(rt: Runtime, scope: Scope | null, tools: ResolvedTools, initCopy: string, deadline: number): Promise<Trial> {
   const fail = (detail: string): Trial => ({ ok: false, detail, namespaces: null, node: false, tmpfs: null, overlay: null });
   const t = tools.paths;
-  if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root) return fail(`missing tools: ${tools.missing.join(', ')}`);
+  if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root || !t.mknod) return fail(`missing tools: ${tools.missing.join(', ')}`);
   const id = newId('probe_');
   const area = join(rt.home, 'domains', id);
   for (const d of ['root', 'vol', 'context', 'workspace']) mkdirSync(join(area, d), { recursive: true, mode: 0o700 });
@@ -111,7 +111,7 @@ async function runTrial(rt: Runtime, scope: Scope | null, tools: ResolvedTools, 
     volBytes: 1024 * 1024,
     volInodes: 64,
     shmBytes: 1024 * 1024,
-    tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv },
+    tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv, mknod: t.mknod },
     node: engineNode(),
     initNodeCopy: initCopy,
     initScript: INIT_SCRIPT,
@@ -329,8 +329,8 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   const probeSummary = `passed: ${count('passed').join(' ') || 'none'}; failed: ${count('failed').join(' ') || 'none'}; not exercised: ${suite.probes.filter((p) => p.result === 'not_exercised').map((p) => `${p.id}${p.excused ? ` (excused: ${p.excused})` : ''}`).join(' ') || 'none'}`;
   if (blockingProbes.length === 0) set('H9', 'passed', `the isolation probe suite: ${probeSummary}`);
   else if (blockingProbes.every((p) => p.result === 'not_exercised'))
-    set('H9', 'not_exercised', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.detail}`).join('; ')}`, 'run the engine where every probe of the suite can run (see each probe on GET /v1/engine)');
-  else set('H9', 'failed', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.detail}`).join('; ')}`, 'the sandbox let a probe through or a probe could not establish its target or control; see each probe on GET /v1/engine');
+    set('H9', 'not_exercised', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.reason ?? p.detail} (${p.observed ?? p.detail})`).join("; ")}`, 'run the engine where every probe of the suite can run (see each probe on GET /v1/engine)');
+  else set('H9', 'failed', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.reason ?? p.detail} (${p.observed ?? p.detail})`).join("; ")}`, 'the sandbox let a probe through or a probe could not establish its target or control; see each probe on GET /v1/engine');
 
   // H10: WSL2 only: interop unreachable from a sandbox and no DrvFs or 9p
   // mount in the role's mount table (P11, P12).
@@ -467,7 +467,7 @@ function planShape(rt: Runtime, tools: ResolvedTools, initCopy: string): string 
       volBytes: rt.config.values.domain_writable_bytes,
       volInodes: rt.config.values.domain_writable_inodes,
       shmBytes: 64 * 1024 ** 2,
-      tools: { mount: t.mount!, umount: t.umount!, pivot_root: t.pivot_root!, ip: t.ip!, unshare: t.unshare!, setpriv: t.setpriv! },
+      tools: { mount: t.mount!, umount: t.umount!, pivot_root: t.pivot_root!, ip: t.ip!, unshare: t.unshare!, setpriv: t.setpriv!, mknod: t.mknod! },
       node: engineNode(),
       initNodeCopy: initCopy,
       initScript: initCopy,

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 const SYSTEM_DIRS = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'];
 
-export const SANDBOX_TOOLS = ['unshare', 'setpriv', 'ip', 'mount', 'umount', 'pivot_root'] as const;
+export const SANDBOX_TOOLS = ['unshare', 'setpriv', 'ip', 'mount', 'umount', 'pivot_root', 'mknod'] as const;
 export type ToolName = (typeof SANDBOX_TOOLS)[number];
 
 export function resolveTool(name: string): string | null {

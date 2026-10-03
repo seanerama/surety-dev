@@ -99,7 +99,7 @@ function next(): Promise<Msg | null> {
 
 interface Entry {
   path: string; // relative to the new root, or to the volatile filesystem for `vol` entries
-  kind: 'dir' | 'file' | 'symlink' | 'copy';
+  kind: 'dir' | 'file' | 'symlink' | 'copy' | 'chardev';
   target?: string;
   content?: string;
   // `copy`: a host file the engine wrote into the domain's area, copied in
@@ -122,7 +122,7 @@ interface Plan {
   // second table's mounts on them.
   late: Entry[];
   lateFstab: string[];
-  tools: { mount: string; umount: string; pivot_root: string; ip: string; unshare: string; setpriv: string };
+  tools: { mount: string; umount: string; pivot_root: string; ip: string; unshare: string; setpriv: string; mknod?: string };
   uid: number;
   gid: number;
   initNode: string; // in the new root
@@ -176,9 +176,18 @@ function run(cmd: string, args: string[]): void {
   }
 }
 
+let mknod: string | null = null;
+
 function make(root: string, e: Entry): void {
   const at = join(root, e.path);
   mkdirSync(dirname(at), { recursive: true });
+  if (e.kind === 'chardev') {
+    // A 0:0 character device, the only one an unprivileged namespace may
+    // make: a mount point that lists as a device.
+    if (mknod === null) throw new Error('mknod is not among the tools');
+    run(mknod, [at, 'c', '0', '0']);
+    return;
+  }
   if (e.kind === 'dir') {
     mkdirSync(at, { recursive: true, mode: e.mode ?? 0o755 });
     if (e.mode !== undefined) chmodSync(at, e.mode);
@@ -199,6 +208,7 @@ async function setup(): Promise<void> {
   const plan = msg.plan as Plan;
   try {
     const { tools } = plan;
+    mknod = tools.mknod ?? null;
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.rootBytes},mode=0755,nosuid`, 'surety-root', plan.stage]);
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.volBytes},nr_inodes=${plan.volInodes},mode=0755,nosuid,nodev`, 'surety-volatile', plan.vol]);
     for (const d of plan.volDirs) mkdirSync(join(plan.vol, d), { recursive: true, mode: 0o755 });
@@ -425,7 +435,12 @@ async function init(): Promise<void> {
 
   let child;
   try {
-    child = spawn(spec.argv[0]!, spec.argv.slice(1), { cwd: spec.cwd, env: spec.env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+    child = spawn(spec.argv[0]!, spec.argv.slice(1), {
+      cwd: spec.cwd,
+      env: spec.env,
+      stdio: ['pipe', 'pipe', 'ignore'],
+      detached: true,
+    });
   } catch (err) {
     send({ t: 'start_failed', detail: (err as Error).message });
     exit = { code: null, signal: null };

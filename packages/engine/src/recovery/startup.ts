@@ -29,7 +29,7 @@ import { auditRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { reconcileProject } from '../scheduler/tick.js';
-import { closePriorSupervisors } from '../boundary/terminate.js';
+import { closePriorSupervisors, removeEndedAreas } from '../boundary/terminate.js';
 import type { RunRow } from '../store/transitions/runs.js';
 
 export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Journal): Promise<{ runs: number }> {
@@ -59,5 +59,8 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
     }),
   );
   await auditRecords(rt);
+  // The areas of domains terminated before this start (their context
+  // packages and plan sources) are no longer anyone's.
+  await removeEndedAreas(rt).catch((err) => log('recovery', err, { what: 'domain areas' }));
   return { runs: runs.length };
 }

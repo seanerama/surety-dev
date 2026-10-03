@@ -188,7 +188,7 @@ async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy
     volBytes: o.volBytes,
     volInodes: o.volInodes,
     shmBytes: 1024 * 1024,
-    tools: { mount: t.mount!, umount: t.umount!, pivot_root: t.pivot_root!, ip: t.ip!, unshare: t.unshare!, setpriv: t.setpriv! },
+    tools: { mount: t.mount!, umount: t.umount!, pivot_root: t.pivot_root!, ip: t.ip!, unshare: t.unshare!, setpriv: t.setpriv!, mknod: t.mknod! },
     node: engineNode(),
     initNodeCopy: initCopy,
     initScript: INIT_SCRIPT,

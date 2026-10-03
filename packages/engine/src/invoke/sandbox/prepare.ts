@@ -11,6 +11,7 @@ import { lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { recordsDir, writeWholeRecord } from '../../records/files.js';
+import { seamSandboxBinds } from '../../testing/seam.js';
 
 import { createDomainCgroup } from '../../boundary/cgroup.js';
 import { workspaceLink } from '../../git/worktree.js';
@@ -92,7 +93,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const { claim } = handle;
   tools ??= await resolveSandboxTools();
   const t = tools.paths;
-  if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root) throw new Error(`the sandbox's tools are missing: ${tools.missing.join(', ')}`);
+  if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root || !t.mknod) throw new Error(`the sandbox's tools are missing: ${tools.missing.join(', ')}`);
   const copy = await initNodeCopy(rt.home);
 
   // The domain's area: the setup stage's two mountpoints, the context
@@ -168,12 +169,12 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       context: join(area, 'context'),
       workspace,
       readPaths: [...handle.readPaths, ...(backend.binds ?? []).filter((b) => !b.writable).map((b) => b.path)],
-      writablePaths: (backend.binds ?? []).filter((b) => b.writable).map((b) => b.path),
+      writablePaths: [...new Set([...(backend.binds ?? []), ...seamSandboxBinds()].filter((b) => b.writable).map((b) => b.path))],
       binds,
       volBytes: writable,
       volInodes: rt.setting('domain_writable_inodes'),
       shmBytes: Math.min(writable, 64 * 1024 * 1024),
-      tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv },
+      tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv, mknod: t.mknod },
       node: engineNode(),
       initNodeCopy: await initNodeIn(area, copy),
       initScript: INIT_SCRIPT,

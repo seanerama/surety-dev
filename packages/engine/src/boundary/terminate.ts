@@ -21,7 +21,7 @@
 // established; `populated 1` after `kill_grace`. Kill's return is never
 // termination, and a manager restart is never evidence that a domain died.
 
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -263,12 +263,18 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     writeKill(sibling);
     removeCgroup(sibling);
   }
-  // The domain's area under the engine home (its context package and the
-  // setup stage's two mountpoints, empty on the host) goes with it.
-  try {
-    if (DOMAIN_ID.test(d.id)) rmSync(join(rt.home, 'domains', d.id), { recursive: true, force: true });
-  } catch (err) {
-    log('domain area', err, { domain: d.id });
+  // The setup stage's two mountpoints (empty on the host) go with it; the
+  // rest of the domain's area (the context package, the git view's seed,
+  // the files the plan bound) stays as the published plan names it, and is
+  // removed at the engine's next start (removeEndedAreas).
+  if (DOMAIN_ID.test(d.id)) {
+    for (const sub of ['root', 'vol']) {
+      try {
+        rmdirSync(join(rt.home, 'domains', d.id, sub));
+      } catch {
+        // already gone, or not empty: left for the next start
+      }
+    }
   }
   return { terminated: true };
 }
@@ -340,4 +346,31 @@ export async function closePriorSupervisors(rt: Runtime, recorded: { incarnation
     else if (after.state === 'populated' && after.value === 1) unknown.set(inc, 'the prior supervisor leaf is still populated after kill_grace');
   }
   return unknown;
+}
+
+// At start, after recovery: the areas of terminated domains, each
+// `<home>/domains/dom_<ULID>` of a domain the store records `terminated`, are
+// removed. Nothing else under `domains/` is touched (a probe area of the
+// suite is its own to remove; an area of a domain not terminated stays).
+export async function removeEndedAreas(rt: Runtime): Promise<number> {
+  const dir = join(rt.home, 'domains');
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => DOMAIN_ID.test(n));
+  } catch {
+    return 0;
+  }
+  if (names.length === 0) return 0;
+  const terminated = new Set(await rt.read<string[]>('boundary.terminated_ids', { ids: names }));
+  let removed = 0;
+  for (const id of names) {
+    if (!terminated.has(id) || !DOMAIN_ID.test(id)) continue;
+    try {
+      rmSync(join(dir, id), { recursive: true, force: true });
+      removed++;
+    } catch (err) {
+      log('domain area', err, { domain: id });
+    }
+  }
+  return removed;
 }

@@ -197,6 +197,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
   'boundary.domains': (d) => boundaryDomains(d),
+  'boundary.terminated_ids': (d, a: { ids: string[] }) =>
+    a.ids.filter((id) => (d.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status === 'terminated'),
   'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY "created_at", "id"`).all(),
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
