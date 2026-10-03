@@ -28,7 +28,7 @@ import { environOf, processesWithMarker, signalFound } from '../invoke/processes
 import { type Runtime, log } from '../runtime.js';
 import type { IntentResult, OpDetail, ProbeOutcome } from '../store/transitions/journal.js';
 import { pausePoint, seamProbeOutcome } from '../testing/seam.js';
-import { completeRemainder, effect, precondition, probe, readDescription, remainingScope } from './effects.js';
+import { completeRemainder, effect, precondition, probe, readDescription, refNow, remainingScope } from './effects.js';
 
 type Way = 'finalize' | 'retry' | 'complete' | 'withdraw' | 'block';
 
@@ -251,6 +251,16 @@ export class Journal {
         return { op: await this.detail(op.id), end: 'failed', receipts: {} };
       }
       case 'block':
+        if (outcome === 'conflicting' && op.kind === 'ref_update' && op.state === 'intended' && op.attempts.length === 0) {
+          // Never attempted, and the ref is where the engine itself put it
+          // since: the swap cannot hold and nothing of it was tried. It fails
+          // without effect instead of blocking (SEAM.md §104).
+          const found = await refNow(op).catch(() => 'unknown' as const);
+          if (found !== 'unknown' && (await this.rt.engine<boolean>('journal.refuse_moved_base', { operation: op.id, found, incarnation: this.rt.incarnation }))) {
+            await pausePoint(`journal.${op.kind}.reconciled`);
+            return { op: await this.detail(op.id), end: 'failed', receipts: {} };
+          }
+        }
         return this.block(op, outcome);
     }
   }

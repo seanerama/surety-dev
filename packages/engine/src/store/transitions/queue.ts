@@ -936,10 +936,57 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
   const spec = KINDS[d.kind as DecisionKind];
   const now = spec.manifest(tx, d, facts);
   if (canonical(now) === canonical(JSON.parse(intent.preconditions))) return true;
+  invalidateIntent(tx, intent.id);
+  return false;
+}
+
+// An intent whose precondition no longer holds (D1 §10.5): invalidated with
+// EFFECT_PRECONDITION_CHANGED, the consumption's local transition withdrawn,
+// and the next generation raised with no approval. An intent already done or
+// invalidated is left as it is.
+function invalidateIntent(tx: Tx, intentId: string): void {
+  const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(intentId) as { id: string; project: string; decision: string; status: string; kind: string } | undefined;
+  if (!intent || intent.status === 'done' || intent.status === 'invalidated') return;
+  const d = getDecision(tx, intent.decision)!;
+  const spec = KINDS[d.kind as DecisionKind];
   tx.db.prepare(`UPDATE "effect_intents" SET "status" = 'invalidated', "invalidated_reason" = 'EFFECT_PRECONDITION_CHANGED' WHERE "id" = ?`).run(intent.id);
   tx.emit('intent.invalidated', { project: intent.project, decision: d.id, intent: intent.id }, { reason: 'EFFECT_PRECONDITION_CHANGED', kind: intent.kind });
   if (spec.withdraw?.(tx, d)) raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
-  return false;
+}
+
+// A journaled operation that carried an effect failed without its effect
+// (D1 §§7.5, 10.5; SEAM.md §104): its compare-and-swap found the branch moved
+// off the commit it was intended from, or it was refused before any effect.
+// What the effect was for does not happen, and nothing is left half-done: the
+// intended version of a protected application is withdrawn (it was never
+// authorized or effective), the intent is invalidated as above, and the
+// person decides again against what is there now. An application a
+// Reviewer approved has no intent: its approval is withdrawn and the
+// proposal's question is asked again.
+export function effectFailed(tx: Tx, op: { id: string; inputs: Record<string, unknown> }): void {
+  const inputs = op.inputs as { purpose?: string; intent?: string | null; proposal?: string; version?: string };
+  const intentId =
+    inputs.intent ??
+    (tx.db.prepare(`SELECT "id" FROM "effect_intents" WHERE "operation" = ? AND "status" IN ('pending', 'executing')`).get(op.id) as { id: string } | undefined)?.id ??
+    null;
+  if (inputs.purpose === 'protected' && inputs.proposal && inputs.version) {
+    const v = tx.db.prepare('SELECT "authorized", "effective_from" FROM "protected_versions" WHERE "id" = ? AND "proposal" = ?').get(inputs.version, inputs.proposal) as
+      | { authorized: number; effective_from: string | null }
+      | undefined;
+    // Never authorized and never in effect: the intended row is removed, so
+    // that the proposal can be approved and applied again (one version per
+    // proposal).
+    if (v && v.authorized === 0 && v.effective_from === null) tx.db.prepare('DELETE FROM "protected_versions" WHERE "id" = ?').run(inputs.version);
+    if (intentId === null) {
+      const p = getProposal(tx, inputs.proposal);
+      if (p && p.status === 'approved') {
+        withdrawApproval(tx, p.id);
+        const kind = CORRECTION_KIND[p.classified_change_kind ?? ''] as DecisionKind | undefined;
+        if (kind) raiseQuestion(tx, { project: p.project, kind, subjectType: 'protected_proposal', subjectId: p.id });
+      }
+    }
+  }
+  if (intentId !== null) invalidateIntent(tx, intentId);
 }
 
 // The tick's decision step (D1 §§4.6, 8.1 step 6, 10.4): every open decision

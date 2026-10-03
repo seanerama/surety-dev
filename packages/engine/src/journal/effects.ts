@@ -150,6 +150,14 @@ export async function probe(op: OpDetail): Promise<ProbeOutcome> {
   }
 }
 
+// Where a ref is now: its commit, null if it is gone, 'unknown' if it cannot
+// be read.
+export async function refNow(op: OpDetail): Promise<string | null | 'unknown'> {
+  const read = await readRef(repoContext(op.payload.repo), op.payload.ref!);
+  if (read.state === 'unknown') return 'unknown';
+  return read.state === 'missing' ? null : read.oid;
+}
+
 // What the probe read, for the attempt's record.
 export function readDescription(op: OpDetail): string {
   switch (op.kind) {
