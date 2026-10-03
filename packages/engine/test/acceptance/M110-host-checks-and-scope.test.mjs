@@ -97,7 +97,7 @@ function assertChecksOfThisSlice(host, what) {
 }
 
 describe('M110 the host checks recorded; the engine in its scope', () => {
-  test('(a) a start from a login session with the user manager: H1 to H13 each reported with the observed value, the engine in its scope\'s supervisor leaf with memory and pids delegated, scope_cgroup recorded; H9, H10 and H13 not exercised in this slice, so no row and no eligibility yet', async (t) => {
+  test('(a) a start from a login session with the user manager: H1 to H13 each reported with the observed value, the engine in its scope\'s supervisor leaf with memory and pids delegated, scope_cgroup recorded; H9 and H10 passed from slice 12 (H13 not exercised), so one active row and the host eligible', async (t) => {
     const fx = await sandboxEngine(t);
     const info = await fx.engine.engineInfo();
     assert.deepEqual(info.startup.completed, STEPS_UNDER_RUN, 'the scope step runs before the lock and the host_qualification step between integrity and full');
