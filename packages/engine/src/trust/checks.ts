@@ -23,7 +23,8 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type Scope, managerReachable } from '../boundary/scope.js';
-import { createDomainCgroup, readControllers, readPopulated, removeCgroup, writeKill } from '../boundary/cgroup.js';
+import { CGROUP_ROOT, createDomainCgroup, ownCgroup, readControllers, readPopulated, removeCgroup, writeKill } from '../boundary/cgroup.js';
+import { PROBES, type SuiteOutcome, runProbeSuite } from '../invoke/probes/suite.js';
 import { filesystemOf } from '../home-fs.js';
 import { newId } from '../ids.js';
 import { INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
@@ -36,7 +37,7 @@ import { type CheckResult, isRequired, isWsl2 } from '../store/transitions/trust
 import { seamHostChecks } from '../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 
-export const PROBES = Array.from({ length: 20 }, (_, i) => `P${i + 1}`);
+export { PROBES };
 
 export interface ScopeOutcome {
   scope: Scope | null;
@@ -204,11 +205,18 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     checks.set(id, { id, result, observed, remedy: result === 'passed' ? null : (remedy ?? 'see the observed value'), required: isRequired(id, wsl2) });
   const scope = args.scope.scope;
 
-  // H1: the kernel, and cgroup.kill in the engine's own scope.
-  const killFile = scope ? existsSync(join(scope.path, 'cgroup.kill')) : null;
+  // H1: the kernel, and cgroup.kill observed: in the engine's own scope, or,
+  // without one, in the cgroup the engine runs in (read for its presence,
+  // never written). A kernel new enough by its release whose cgroup.kill
+  // could not be observed is not passed on `uname` alone.
+  const own = ownCgroup();
+  const killAt = scope ? scope.path : own !== null && own !== CGROUP_ROOT ? own : null;
+  const killFile = killAt !== null ? existsSync(join(killAt, 'cgroup.kill')) : null;
+  const where = scope ? `in ${scope.unit}` : killAt !== null ? `in the engine's own cgroup ${killAt} (no scope)` : '';
   if (!kernelAtLeast(5, 14)) set('H1', 'failed', `kernel ${release()}`, 'run the engine on Linux 5.14 or later');
-  else if (killFile === false) set('H1', 'failed', `kernel ${release()}; ${scope!.path}/cgroup.kill is missing`, 'run the engine on a kernel with cgroup.kill');
-  else set('H1', 'passed', `kernel ${release()}${scope ? `; cgroup.kill present in ${scope.unit}` : ''}`);
+  else if (killFile === null) set('H1', 'not_exercised', `kernel ${release()}; cgroup.kill could not be observed: the engine has no scope and runs in no cgroup below the root`, 'start surety where the user manager delegates a scope (H3)');
+  else if (killFile === false) set('H1', 'failed', `kernel ${release()}; cgroup.kill is missing ${where}`, 'run the engine on a kernel with cgroup.kill');
+  else set('H1', 'passed', `kernel ${release()}; cgroup.kill present ${where}`);
 
   // H2: cgroup v2 at /sys/fs/cgroup, mounted nsdelegate.
   try {
@@ -253,15 +261,15 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
 
   // H6: the tools, by absolute path, with versions.
   const tools = await resolveSandboxTools();
+  const toolsObserved = Object.entries(tools.paths)
+    .map(([n, p]) => `${n} ${[...new Set([...toolCandidates(n), p])].join(' = ')} (${tools.versions[n as keyof typeof tools.versions] ?? 'version unknown'})`)
+    .join('; ');
+  // A tool whose version cannot be read is not passed: D2 §6 H6 records the
+  // versions, and an unknown one is never taken for a known one.
+  const unversioned = Object.keys(tools.paths).filter((n) => !tools.versions[n as keyof typeof tools.versions]);
   if (tools.missing.length > 0) set('H6', 'failed', `missing: ${tools.missing.join(', ')}`, 'install util-linux (unshare, setpriv, mount, umount, pivot_root) and iproute2 (ip)');
-  else
-    set(
-      'H6',
-      'passed',
-      Object.entries(tools.paths)
-        .map(([n, p]) => `${n} ${[...new Set([...toolCandidates(n), p])].join(' = ')} (${tools.versions[n as keyof typeof tools.versions] ?? 'version unknown'})`)
-        .join('; '),
-    );
+  else if (unversioned.length > 0) set('H6', 'failed', `${toolsObserved}; the version of ${unversioned.join(', ')} could not be read`, 'install tools whose --version (ip -V) answers');
+  else set('H6', 'passed', toolsObserved);
 
   // H5, H7, H11: one start-up trial through the real launcher and init.
   let initCopy: string | null = null;
@@ -271,6 +279,11 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     log('host checks', err, { what: 'init node copy' });
   }
   let trial: Trial | null = null;
+  // The isolation probe suite (D2 §2.8, A.6) runs beside the trial.
+  const suiteRun = runProbeSuite(rt, { scope, tools, initCopy, deadline, wsl2 }).catch((err): SuiteOutcome => {
+    log('host checks', err, { what: 'probe suite' });
+    return { probes: PROBES.map((id) => ({ id, target_seeded: false, negative: null, control: null, result: 'not_exercised' as const, detail: `the suite failed: ${(err as Error).message}` })), plan: null, evidence: {} };
+  });
   if (initCopy !== null && tools.missing.length === 0) {
     try {
       trial = await runTrial(rt, scope, tools, initCopy, deadline);
@@ -278,6 +291,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
       trial = { ok: false, detail: (err as Error).message, namespaces: null, node: false, tmpfs: null, overlay: null };
     }
   }
+  const suite = await suiteRun;
   if (!trial) {
     const why = initCopy === null ? 'the domain init\'s copy of node could not be made' : 'the tools the launcher needs are missing (H6)';
     for (const id of ['H5', 'H7', 'H11']) set(id, 'not_exercised', `the start-up trial could not run: ${why}`, 'see H6');
@@ -306,12 +320,27 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   if (inside) set('H8', 'failed', `the engine home ${realHome} is inside ${inside}, which every mount plan binds`, 'move the engine home out of the system trees');
   else set('H8', 'passed', `${realHome} on ${fsType ?? 'an identified local filesystem'}, outside every mount plan`);
 
-  // H9: the isolation probe suite (slice 12).
-  set('H9', 'not_exercised', 'the isolation probe suite (D2 A.6) is not part of this engine revision; no probe was run', 'qualify the host with an engine that runs the probe suite');
+  // H9: the isolation probe suite, every probe against a seeded target with
+  // its control (D2 §§2.8, 6). A probe not exercised fails it unless the
+  // host class excuses it (P11 off WSL2).
+  const count = (r: string) => suite.probes.filter((p) => p.result === r).map((p) => p.id);
+  const blockingProbes = suite.probes.filter((p) => p.result === 'failed' || (p.result === 'not_exercised' && !p.excused));
+  const probeSummary = `passed: ${count('passed').join(' ') || 'none'}; failed: ${count('failed').join(' ') || 'none'}; not exercised: ${suite.probes.filter((p) => p.result === 'not_exercised').map((p) => `${p.id}${p.excused ? ` (excused: ${p.excused})` : ''}`).join(' ') || 'none'}`;
+  if (blockingProbes.length === 0) set('H9', 'passed', `the isolation probe suite: ${probeSummary}`);
+  else if (blockingProbes.every((p) => p.result === 'not_exercised'))
+    set('H9', 'not_exercised', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.detail}`).join('; ')}`, 'run the engine where every probe of the suite can run (see each probe on GET /v1/engine)');
+  else set('H9', 'failed', `the isolation probe suite: ${probeSummary}; ${blockingProbes.map((p) => `${p.id}: ${p.detail}`).join('; ')}`, 'the sandbox let a probe through or a probe could not establish its target or control; see each probe on GET /v1/engine');
 
-  // H10: WSL2 only.
-  if (isWsl()) set('H10', 'not_exercised', 'WSL2 host; P11 and P12 are run by the isolation probe suite, which is not part of this engine revision', 'qualify the host with an engine that runs the probe suite');
-  else set('H10', 'not_exercised', 'not a WSL2 host; H10 applies only on WSL2', 'nothing to do: H10 is required only on WSL2');
+  // H10: WSL2 only: interop unreachable from a sandbox and no DrvFs or 9p
+  // mount in the role's mount table (P11, P12).
+  if (isWsl()) {
+    const p11 = suite.probes.find((p) => p.id === 'P11')!;
+    const p12 = suite.probes.find((p) => p.id === 'P12')!;
+    const observed = `P11 ${p11.result}: ${p11.detail}; P12 ${p12.result}: ${p12.detail}`;
+    if (p11.result === 'passed' && p12.result === 'passed') set('H10', 'passed', observed);
+    else if (p11.result === 'failed' || p12.result === 'failed') set('H10', 'failed', observed, 'WSL interop or a Windows mount reached the sandbox; see P11 and P12');
+    else set('H10', 'not_exercised', observed, 'run the engine where P11 and P12 can run');
+  } else set('H10', 'not_exercised', 'not a WSL2 host; H10 applies only on WSL2', 'nothing to do: H10 is required only on WSL2');
 
   // H12: memory and disk beyond the reserves for at least one domain.
   try {
@@ -350,14 +379,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   }
 
   const ordered = HOST_CHECKS.map((id) => checks.get(id)!);
-  const probes = PROBES.map((id) => ({
-    id,
-    target_seeded: false,
-    negative: null,
-    control: null,
-    result: 'not_exercised',
-    reason: 'the isolation probe suite is not part of this engine revision',
-  }));
+  const probes = suite.probes;
   const blocking = ordered.filter((c) => c.required && c.result !== 'passed');
   const qualifies = blocking.length === 0;
   const versions: Record<string, unknown> = {
@@ -390,6 +412,10 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     mechanism_fingerprint: fingerprint,
     scope: scope ? { unit: scope.unit, path: scope.path } : null,
     trial,
+    // The validated plan the probe sandbox was built from, entry by entry,
+    // with its fingerprint (D2 §2.3, A.6 P12), and the role profile's shape.
+    plan: { probe: suite.plan, role: { fingerprint: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null } },
+    suite: suite.evidence,
   };
   // What was observed is readable whatever the outcome; only a start whose
   // every required check passed writes a row, with its evidence record
