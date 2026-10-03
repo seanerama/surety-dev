@@ -266,58 +266,54 @@ interface DecisionRef {
   raised_at: string;
 }
 
-// What holds a work item, if anything: the blocker stored on the item (a
-// park, a chaining boundary), or else an open decision of the project whose
-// `blocked_while_open` names the item (a quarantined run's blocker). The
-// options are the keys the decision offers, in its stored order; a decision
-// that cannot be found has none to show, which is null, not [].
+// What holds a work item, if anything (SEAM.md §98): the blocker stored on
+// the item (a park, a chaining boundary), as stored, or else an open decision
+// of the project whose `blocked_while_open` names the item. `options` are the
+// options the holding decision offers, in its stored order and in the
+// decisions read's form; a decision that cannot be found has none to show,
+// which is null, not [].
 function blockerOf(db: Db, item: WorkRow) {
   const stored = parseJson<{ reason?: string; raised_at?: string; decision?: string | null }>(item.blocker);
   const holding = db
     .prepare(
-      `SELECT d."id", d."kind", d."status", d."options", d."dependency_manifest", d."raised_at" FROM "decisions" d, json_each(json_extract(d."blocked_while_open", '$.work_items')) w
+      `SELECT d."id" FROM "decisions" d, json_each(json_extract(d."blocked_while_open", '$.work_items')) w
        WHERE d."project" = ? AND d."status" = 'open' AND w."value" = ? ORDER BY d."seq" LIMIT 1`,
     )
-    .get(item.project, item.id) as DecisionRef | undefined;
+    .get(item.project, item.id) as { id: string } | undefined;
   if (stored === null && holding === undefined) return null;
   const decisionId = stored?.decision ?? holding?.id ?? null;
   const decision =
     decisionId === null
       ? undefined
-      : (db.prepare('SELECT "id", "kind", "status", "options", "dependency_manifest", "raised_at" FROM "decisions" WHERE "id" = ? AND "project" = ?').get(decisionId, item.project) as
+      : (db.prepare('SELECT "kind", "options", "dependency_manifest", "raised_at" FROM "decisions" WHERE "id" = ? AND "project" = ?').get(decisionId, item.project) as
           | DecisionRef
           | undefined);
+  const options = decision ? (JSON.parse(decision.options) as unknown[]) : null;
+  if (stored !== null) return { ...stored, decision: decisionId, options };
+  // Held by a decision with no blocker stored on the item: its cause.
   const cause = decision ? parseJson<{ cause?: unknown }>(decision.dependency_manifest)?.cause : undefined;
-  return {
-    reason: stored?.reason ?? (typeof cause === 'string' ? cause : (decision?.kind ?? null)),
-    raised_at: stored?.raised_at ?? decision?.raised_at ?? null,
-    decision: decisionId,
-    options: decision ? (JSON.parse(decision.options) as { key: string }[]).map((o) => o.key) : null,
-  };
+  return { reason: typeof cause === 'string' ? cause : (decision?.kind ?? null), raised_at: decision?.raised_at ?? null, decision: decisionId, options };
 }
 
-// GET /v1/projects/:p/work: every work item of the project, oldest first,
-// with what holds it when something does.
+// GET /v1/projects/:p/work (SEAM.md §98): every work item of the project,
+// whatever its status, in `seq` order, with the stored columns and what
+// holds it when something does.
 export function readWork(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
-  const items = db.prepare('SELECT * FROM "work_items" WHERE "project" = ? ORDER BY "seq"').all(args.project) as (WorkRow & {
-    created_at: string;
-    trigger_consumed_at: string | null;
-  })[];
+  const items = db.prepare('SELECT * FROM "work_items" WHERE "project" = ? ORDER BY "seq"').all(args.project) as WorkRow[];
   return {
     ...head,
-    work: items.map((w) => ({
+    work_items: items.map((w) => ({
       id: w.id,
       seq: w.seq,
       kind: w.kind,
       status: w.status,
       subject: parseJson<Record<string, unknown>>(w.subject),
-      trigger: { source: w.trigger_source, id: w.trigger_id, generation: w.trigger_generation },
+      trigger_source: w.trigger_source,
+      trigger_id: w.trigger_id,
+      trigger_generation: w.trigger_generation,
       chain: w.chain,
-      depends_on: parseJson<string[]>(w.depends_on) ?? [],
-      dispatch_hold: w.dispatch_hold === 1,
-      created_at: w.created_at,
       blocker: blockerOf(db, w),
     })),
   };
@@ -325,11 +321,12 @@ export function readWork(db: Db, args: { project: string }) {
 
 // ---- a gate evaluation (D1 §11.3; E47) -------------------------------------------------
 
-// GET /v1/projects/:p/candidates/:c/gates/:kind: the latest recorded
-// evaluation of that gate kind for the candidate (the one the candidate read
-// names), as it was recorded. It evaluates nothing: every check state is the
-// stored one, and `stale` is the stored flag. Before any evaluation of the
-// kind there is nothing to read: 404.
+// GET /v1/projects/:p/candidates/:c/gates/:kind (SEAM.md §98): the latest
+// recorded evaluation of that gate kind for the candidate, the one the
+// candidate read names, in the evaluation route's form and with the stored
+// values. It evaluates nothing: the check states are the stored ones and
+// `stale` is the stored flag. Before any evaluation of the kind there is
+// nothing to read: 404 naming the candidate and the gate kind.
 export function readGate(db: Db, args: { project: string; candidate: string; kind: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
@@ -344,42 +341,16 @@ export function readGate(db: Db, args: { project: string; candidate: string; kin
       gate_kind: args.kind,
     });
   }
-  const scope = db.prepare('SELECT * FROM "acceptance_scopes" WHERE "id" = ?').get(e.scope) as Record<string, unknown>;
-  const states = JSON.parse(e.check_states as string) as Record<string, string>;
-  const results = (parseJson<{ results?: Record<string, string | null> }>(e.inputs_snapshot as string)?.results ?? {}) as Record<string, string | null>;
-  const checks = (JSON.parse(scope.required_check_ids as string) as string[]).map((id) => {
-    const check = db.prepare('SELECT "key", "kind" FROM "checks" WHERE "id" = ?').get(id) as { key: string; kind: string } | undefined;
-    const result = results[id] ?? null;
-    const output = result === null ? null : ((db.prepare('SELECT "output" FROM "check_results" WHERE "id" = ?').get(result) as { output: string | null } | undefined)?.output ?? null);
-    return { id, key: check?.key ?? null, kind: check?.kind ?? null, state: states[id] ?? null, check_result: result, output };
-  });
   return {
     ...head,
     evaluation: {
       id: e.id,
       gate_kind: e.gate_kind,
-      candidate: e.candidate,
-      stage: e.stage ?? null,
-      authorization: e.authorization ?? null,
-      computed_at: e.computed_at,
       outcome: e.outcome,
-      stale: e.stale === 1,
       reasons: JSON.parse(e.reasons as string) as { code: string; subjects: string[] }[],
-      satisfiers: JSON.parse(e.satisfiers as string) as unknown[],
-      checks,
-      scope: {
-        id: scope.id,
-        source_revision: scope.source_revision,
-        delivered_requirements: JSON.parse(scope.delivered_requirement_ids as string) as string[],
-        partial_requirements: JSON.parse(scope.partial_requirement_ids as string) as string[],
-        required_checks: checks.map((k) => k.id),
-        required_signoffs: JSON.parse(scope.required_signoffs as string) as unknown[],
-        environment: scope.environment ?? null,
-        artifact_digest: scope.artifact_digest ?? null,
-        validated: scope.validated === 1,
-      },
-      // The version the evaluation was made under beside the one in force now.
-      protected_version: { evaluated: scope.effective_protected_version, effective: effectiveVersion(db, args.project)?.id ?? null },
+      check_states: JSON.parse(e.check_states as string) as Record<string, string>,
+      scope: e.scope,
+      stale: e.stale === 1,
     },
   };
 }

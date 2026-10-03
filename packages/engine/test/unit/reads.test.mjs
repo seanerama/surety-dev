@@ -65,12 +65,17 @@ test('the work read lists the project’s items with their trigger and chain, an
 
   assert.equal(typeof read.served_at, 'string');
   assert.equal(read.snapshot_seq, db.prepare('SELECT MAX(seq) AS n FROM events').get().n);
-  assert.deepEqual(read.work.map((w) => w.id), [a, b], 'only this project’s items, oldest first');
-  const [first, second] = read.work;
-  assert.deepEqual([first.kind, first.status, first.subject, first.trigger, first.chain, first.blocker], ['stage_build', 'eligible', {}, { source: 'test', id: 'a', generation: 1 }, 0, null]);
+  assert.deepEqual(read.work_items.map((w) => w.id), [a, b], 'only this project’s items, oldest first');
+  const [first, second] = read.work_items;
+  assert.deepEqual(
+    [first.kind, first.status, first.subject, first.trigger_source, first.trigger_id, first.trigger_generation, first.chain, first.blocker],
+    ['stage_build', 'eligible', {}, 'test', 'a', 1, 0, null],
+  );
   assert.deepEqual(second.subject, { stage: 'stage_x' });
   assert.equal(second.chain, 3);
-  assert.deepEqual(second.blocker, { reason: 'max_chained_roles', raised_at: second.blocker.raised_at, decision, options: ['continue', 'cancel'] });
+  assert.deepEqual([second.blocker.reason, second.blocker.decision], ['max_chained_roles', decision]);
+  assert.deepEqual(second.blocker.options.map((o) => o.key), ['continue', 'cancel'], 'the decision’s options, as stored');
+  assert.deepEqual(second.blocker.options, JSON.parse(db.prepare('SELECT options FROM decisions WHERE id = ?').get(decision).options));
 });
 
 test('an item no stored blocker names, held by an open decision, shows that decision and its cause', (t) => {
@@ -81,8 +86,8 @@ test('an item no stored blocker names, held by an open decision, shows that deci
        transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status)
      VALUES ('dec_q', ?, 'prj_1', 1, 'blocker', 'run', 'run_x', 1, '', 'q', ?, ?, 1, 'h', '[]', ?, ?, 'open')`,
   ).run(AT, JSON.stringify([{ key: 'acknowledge' }]), JSON.stringify({ cause: 'termination_unobserved' }), JSON.stringify({ work_items: [a], gate: null, operation: null }), AT);
-  const [item] = readWork(db, { project: 'prj_1' }).work;
-  assert.deepEqual(item.blocker, { reason: 'termination_unobserved', raised_at: AT, decision: 'dec_q', options: ['acknowledge'] });
+  const [item] = readWork(db, { project: 'prj_1' }).work_items;
+  assert.deepEqual(item.blocker, { reason: 'termination_unobserved', raised_at: AT, decision: 'dec_q', options: [{ key: 'acknowledge' }] });
 });
 
 test('the work read of a project that does not exist is 404', (t) => {
@@ -108,14 +113,6 @@ function evaluation(db, { id, stale = 0, outcome = 'not_satisfied', states, reas
 function candidate(db) {
   db.pragma('foreign_keys = OFF');
   db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress) VALUES ('cand_1', ?, 'prj_1', 1, 'rev1', 'lin_1', ?, 'engine_cadence', 'developing')`).run(AT, AT);
-  db.prepare(
-    `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class)
-     VALUES ('chk_a', ?, 'prj_1', 'login', 'pv_1', 'acceptance', 1, '["stage"]', 'p', 'h', 'direct'), ('chk_b', ?, 'prj_1', 'smoke', 'pv_1', 'smoke', 1, '["stage"]', 'p', 'h', 'direct')`,
-  ).run(AT, AT);
-  db.prepare(
-    `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq, execution_established, signaled, deadline_hit, exit_status, output)
-     VALUES ('res_a', ?, 'prj_1', 'chk_a', 'cand_1', 'rev1', 'pv_1', 'direct', 'r', 1, 1, 0, 0, 0, 'rec_a')`,
-  ).run(AT);
   db.pragma('foreign_keys = ON');
 }
 
@@ -131,17 +128,15 @@ test('the gate read is 404 before any evaluation, then shows the latest recorded
   const read = readGate(db, { project: 'prj_1', candidate: 'cand_1', kind: 'stage' });
   assert.deepEqual(footprint(db), before, 'the read wrote nothing');
 
-  const e = read.evaluation;
-  assert.equal(e.id, 'gate_2', 'the latest');
-  assert.deepEqual([e.outcome, e.stale, e.stage], ['not_satisfied', true, 'stage_1']);
-  assert.deepEqual(e.reasons, [{ code: 'CHECK_NOT_PASSED', subjects: ['chk_b'] }]);
-  assert.deepEqual(e.checks, [
-    { id: 'chk_a', key: 'login', kind: 'acceptance', state: 'passed', check_result: 'res_a', output: 'rec_a' },
-    { id: 'chk_b', key: 'smoke', kind: 'smoke', state: 'missing', check_result: null, output: null },
-  ]);
-  assert.deepEqual(e.scope.required_checks, ['chk_a', 'chk_b']);
-  assert.deepEqual(e.scope.delivered_requirements, ['REQ-1']);
-  assert.equal(e.protected_version.evaluated, 'pv_1');
+  assert.deepEqual(read.evaluation, {
+    id: 'gate_2',
+    gate_kind: 'stage',
+    outcome: 'not_satisfied',
+    reasons: [{ code: 'CHECK_NOT_PASSED', subjects: ['chk_b'] }],
+    check_states: { chk_a: 'passed', chk_b: 'missing' },
+    scope: 'scope_1',
+    stale: true,
+  }, 'the latest, as recorded');
 
   assert.throws(() => readGate(db, { project: 'prj_1', candidate: 'cand_1', kind: 'alpha_authorize' }), (err) => err.status === 404);
   assert.throws(() => readGate(db, { project: 'prj_2', candidate: 'cand_1', kind: 'stage' }), (err) => err.status === 404 && err.code === 'not_found', 'another project’s candidate is not found');
