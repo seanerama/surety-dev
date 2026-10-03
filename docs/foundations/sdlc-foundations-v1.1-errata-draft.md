@@ -1230,6 +1230,8 @@ The one review of the slice (E31) found the trust table, the dispatch rule (no a
 3. **Hard links in `sandbox_read_paths`:** (a) refuse a file whose link count exceeds one when it matches a forbidden inode; (b) accept as class C, an act of the operator's own account, listed in the not-claimed list (recommended).
 4. **The human cannot read trust-entry evidence through the API:** no route serves engine-scoped records, so a `trust_activation` preview names records the person cannot open. To decide with M135 and the real lane (recommended), since it is not a slice-10 row; the driver's default is a read route for engine-scoped records in slice 13.
 
+**Added after the Verifier's pass (also provisional):** the two cases are merged at `d0c5409` (SEAM §119 and §120 amended). Two readings the Verifier fixed: while an exception question is open, a change to the candidate's acceptance content **withdraws** the question (invalidated, nothing raised in its place; the Reviewer proposes again on the new content) rather than raising a next generation, because re-asking would offer the human an exception on content nobody reviewed; and a written exception stops lifting the block once the content changes because the gate compares the exception's hash with the scope's, the record staying intact (alternative: clearing `findings.alpha_exception` on a content change). Both recommended as written.
+
 **Consequences elsewhere.** No change to D1 or D2.
 
 ---
