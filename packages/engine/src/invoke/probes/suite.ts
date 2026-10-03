@@ -336,7 +336,7 @@ function verdict(ctx: Ctx, id: string, r: { seeded: boolean; negative: string | 
   const negative = observed === null ? 'not_attempted' : r.held ? 'denied' : 'allowed';
   const passed = seeded && negative === 'denied' && control === true;
   const why = !seeded ? 'its target was not seeded or not verified from the host' : negative === 'not_attempted' ? 'its negative was not attempted' : negative === 'allowed' ? 'its negative was not denied as expected' : control !== true ? 'its control did not succeed' : null;
-  const note = o ? ` (harness override: ${o})` : '';
+  const note = o ? ` (override: ${o})` : '';
   return { id, target_seeded: seeded, negative, control, result: passed ? 'passed' : 'failed', reason: why === null ? null : `${why}${note}`, detail: `${r.detail}${note}`, observed };
 }
 
@@ -764,7 +764,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   const guardReasons = (guard?.guard as { reasons?: string[] } | undefined)?.reasons ?? null;
   const mainProblem = boxFailure ?? (guard === null ? 'the probe program did not report' : guardReasons && guardReasons.length > 0 ? `the probe program refused: ${guardReasons.join('; ')}` : null);
   const judge = (id: string, f: () => ProbeResult): void => {
-    if (!run(id)) results.push(notRun(id, 'the harness made this probe unable to run'));
+    if (!run(id)) results.push(notRun(id, 'this probe was made unable to run at start'));
     else if (mainProblem !== null && id !== 'P16') results.push({ ...verdict(ctx, id, { seeded: false, negative: null, held: false, control: null, detail: mainProblem }), result: 'failed' });
     else {
       try {
@@ -968,7 +968,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
         detail: 'a detached daemon with a cleared environment',
       });
     });
-  } else results.push(notRun('P16', 'the harness made this probe unable to run'));
+  } else results.push(notRun('P16', 'this probe was made unable to run at start'));
   judge('P17', () => {
     const o = L('p17');
     const host = p17Host as { status: number | null } | null;
