@@ -40,6 +40,15 @@
 // evaluation it is not found. Both are scoped to the project and write
 // nothing. The reads D1 §11.3 lists that remain unpinned: one decision by
 // id, operations, environments as a route of their own.
+//
+// M2 slice 2 (`docs/spec/M2-slice-2-legibility.md`, entries B3 and B4;
+// SEAM.md §§107, 108) adds two blocks. NOW's other causes: `refused` when
+// the repository cannot be read, when an out-of-band change of the
+// integration branch is unresolved, and when the store fails (the budget
+// read of row M61), each naming its cause; `unknown` when the status cannot
+// be computed. And the three reads that were left: one decision by its
+// identifier, a project's git operations (pending and blocked ones included),
+// and its environments as a route of their own.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -47,17 +56,19 @@ import { closeSync, constants, ftruncateSync, openSync, readFileSync, rmSync, sy
 import { join } from 'node:path';
 import { after, describe, test } from 'node:test';
 
-import { isRefusalBody } from './harness/engine.mjs';
+import { armFault, clearFaults, isRefusalBody, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { assertRefused, eventsSince, maxEventSeq } from './harness/fixtures.mjs';
-import { decision, openDecision } from './harness/decisions.mjs';
+import { assertPreview, consume, decision, openDecision, reachBarrier } from './harness/decisions.mjs';
 import { addEnvironment, check, evaluationsOf, installChecks, nominated, postResult, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
-import { addItem, runToEnd } from './harness/gitruns.mjs';
-import { changePolicy, workItemsOf } from './harness/journal.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
+import { armBarrier, changePolicy, journalBarrier, operationDetails, outOfBand, registryOf, workItemsOf } from './harness/journal.mjs';
 import { awayFromMidnight, getLedger } from './harness/ledger.mjs';
 import { sleep, timed } from './harness/mono.mjs';
-import { boundedGet, listDecisions, listProjects, listWork, readGate, readProject, readRun } from './harness/reads.mjs';
+import { arrange, killedAt } from './harness/probes.mjs';
+import { boundedGet, listDecisions, listEnvironments, listOperations, listProjects, listWork, readDecision, readGate, readProject, readRun } from './harness/reads.mjs';
 import { readRecord, recordFile, recordRow } from './harness/records.mjs';
-import { addProject, addWork, advanceClock, scriptedEngine, tick, waitForQuarantine, waitForRun, waitForWork } from './harness/runs.mjs';
+import { commitOnRef, makeUnreadable, refOid } from './harness/repos.mjs';
+import { addProject, addWork, advanceClock, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForQuarantine, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
 import { BOUNDARY, script } from './harness/scripted.mjs';
 import { dumpStore, withStore } from './harness/store.mjs';
 
@@ -590,4 +601,269 @@ describe('M70 record reads that must refuse', () => {
       assert.ok(engine.isRunning(), 'the engine is still running');
     });
   }
+});
+
+// ---- M2 slice 2 ---------------------------------------------------------------------
+
+// A fault that outlasts any retry (row M61).
+const KEEPS_FAILING = 1000;
+
+// NOW as the list and the project read give it, which must agree.
+async function nowOf(engine, project) {
+  const detail = (await readProject(engine, project)).project.now;
+  const listed = (await listProjects(engine)).projects.find((row) => row.id === project)?.now;
+  assert.deepEqual(listed, detail, "the list and the project's own projection give the same NOW");
+  assert.ok(NOW_STATES.includes(detail?.state) || detail?.state === 'unknown', `NOW is a NowState (${JSON.stringify(detail)})`);
+  assert.ok(typeof detail.reason === 'string' && detail.reason.length > 0, 'NOW says why, in a sentence');
+  assert.ok('primary_action' in detail, 'NOW names its primary action, or null');
+  return detail;
+}
+
+function assertRefusedNow(now, cause, what) {
+  assert.equal(now.state, 'refused', `${what}: NOW is refused (it is ${now.state}: ${now.reason})`);
+  assert.match(now.reason, cause, `${what}: the reason names the cause`);
+}
+
+describe('M70 NOW: the other causes of refused, and unknown', () => {
+  test('a repository that cannot be read: NOW is refused and names the repository; once it can be read again, the project goes on and NOW says so', async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    const restore = makeUnreadable(project.repo.path);
+    let restored = false;
+    const readable = () => {
+      if (!restored) restore();
+      restored = true;
+    };
+    fx.beforeCleanup.push(readable);
+    await tick(fx.engine, project.id);
+    assert.deepEqual([outOfBand(fx.home, project.id)[0]?.subject_kind, runsOf(fx.home, item).length], ['repository', 0], 'the fixture is live: the repository is observed unreadable and nothing is dispatched (row M25)');
+
+    assertRefusedNow(await nowOf(fx.engine, project.id), /repositor/i, 'with the repository unreadable');
+
+    readable();
+    await runToEnd(fx, project.id, item);
+    const after = await nowOf(fx.engine, project.id);
+    assert.notEqual(after.state, 'refused', `once the repository can be read the engine acts on the project again (NOW: ${after.state}, ${after.reason})`);
+  });
+
+  test('an unresolved out-of-band change of the integration branch: NOW is refused, although the observation is a decision waiting for a person, and names the change; once it is reconciled, NOW is not refused', async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    const stray = commitOnRef(project.repo.path, project.repo.ref, { 'stray.txt': 'moved by hand\n' });
+    await tick(fx.engine, project.id);
+    const [observed] = outOfBand(fx.home, project.id);
+    assert.deepEqual([observed?.subject_kind, observed?.found, observed?.decision.status, runsOf(fx.home, item).length], ['ref', stray, 'open', 0], 'the fixture is live: the moved branch is observed, its decision is open, and nothing is dispatched (row M24)');
+
+    assertRefusedNow(await nowOf(fx.engine, project.id), /out[ -]of[ -]band|integration branch|refs\/heads\/main/i, 'with the integration branch moved and the observation unresolved');
+
+    await consume(fx, project.id, assertPreview(decision(fx.home, observed.decision.id)), 'discard');
+    await waitFor(() => refOid(project.repo.path, project.repo.ref) === project.base && registryOf(fx.home, project.id)[project.repo.ref].expected_oid === project.base, { what: 'the discard to put the branch back' });
+    await tick(fx.engine, project.id);
+    const after = await nowOf(fx.engine, project.id);
+    assert.notEqual(after.state, 'refused', `once the change is reconciled the engine acts on the project again (NOW: ${after.state}, ${after.reason})`);
+  });
+
+  test("the store fails for the project (its budget cannot be read, row M61): NOW is refused and names the store or the budget, while another project's NOW is unaffected; once the store answers, NOW is ready", async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = (await addProject(fx)).id;
+    const other = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    fx.scripted.defaultScript(script.complete());
+    assert.equal((await nowOf(fx.engine, project)).state, 'ready', 'the fixture is live: eligible work the next tick could dispatch');
+
+    await armFault(fx.engine, { point: 'budget_read', project, times: KEEPS_FAILING });
+    for (let i = 0; i < 2; i++) await tickOnce(fx.engine, project);
+    assert.equal(runsOf(fx.home, item).length, 0, 'the fixture is live: nothing is dispatched while the budget cannot be read (row M61)');
+
+    assertRefusedNow(await nowOf(fx.engine, project), /store|budget/i, 'with the budget read failing');
+    const theirs = await nowOf(fx.engine, other);
+    assert.notEqual(theirs.state, 'refused', `the other project's NOW is its own (${theirs.state})`);
+
+    await clearFaults(fx.engine);
+    assert.equal((await nowOf(fx.engine, project)).state, 'ready', 'once the store answers, the eligible work can be dispatched again');
+    await tickUntil(fx.engine, project, () => workItem(fx.home, item).status === 'complete', { what: 'the item to complete once the budget can be read' });
+  });
+
+  test("the status cannot be computed (the store fails in the read itself): the project is listed with NOW unknown, which names that, and the other project's NOW is computed as before", async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = (await addProject(fx)).id;
+    const other = (await addProject(fx)).id;
+    // The harness fault `status_read` (SEAM.md §107): the next computation of
+    // that project's NOW fails as a store error.
+    await armFault(fx.engine, { point: 'status_read', project, times: KEEPS_FAILING });
+    const list = await listProjects(fx.engine);
+    const mine = list.projects.find((row) => row.id === project)?.now;
+    const theirs = list.projects.find((row) => row.id === other)?.now;
+    assert.equal(mine?.state, 'unknown', `a status that cannot be computed is unknown, not any of the five (${JSON.stringify(mine)})`);
+    assert.ok(typeof mine.reason === 'string' && /unknown|comput/i.test(mine.reason), `and the reason says the status could not be computed (${mine.reason})`);
+    assert.ok('primary_action' in mine);
+    assert.equal(theirs?.state, 'idle', "the other project's status is computed as before");
+
+    await clearFaults(fx.engine);
+    assert.equal((await nowOf(fx.engine, project)).state, 'idle', 'once the store answers, the status is computed again');
+  });
+});
+
+describe('M70 the three reads that were left', () => {
+  test("one decision by its identifier: the list's item with its options and preview, and its status; a consumed decision is still readable with its answer; another project's path and an unknown id are not found; reading writes nothing", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+    const mine = (await addProject(fx)).id;
+    const other = (await addProject(fx)).id;
+    const item = await addWork(engine, mine, 'verification');
+    fx.scripted.script(item, [script.hold('gate', { heartbeat_ms: 0 })]);
+    await tick(engine, mine);
+    const run = await waitForRun(fx.home, item, { state: 'executing' });
+    await fx.scripted.waitForHolding({ run: run.id });
+    const asked = await engine.post(`/v1/projects/${mine}/runs/${run.id}/stop`, {});
+    assertRefused(asked, 409, 'confirm_required', 'the unconfirmed Stop');
+    const row = decision(fx.home, asked.body.subject?.decision);
+    assert.equal(row?.status, 'open', 'the fixture is live: the project has an open decision');
+
+    // The read by id gives what the list gives for the same decision, and its status.
+    const [listed] = (await listDecisions(engine, mine)).decisions;
+    assert.equal(listed?.id, row.id, 'the fixture is live: the list shows the decision');
+    const shown = (await readDecision(engine, mine, row.id)).decision;
+    for (const key of ['id', 'kind', 'subject_type', 'subject_id', 'question', 'preview_hash']) assert.deepEqual(shown[key], listed[key], `the read by id gives the list's ${key}`);
+    assert.deepEqual(
+      shown.options.map((option) => [option.key, option.plan_hash, option.effect_plan]),
+      listed.options.map((option) => [option.key, option.plan_hash, option.effect_plan]),
+      "and the list's options, each with its key, effect plan and plan hash",
+    );
+    assert.deepEqual([shown.kind, shown.subject_id, shown.preview_hash, shown.status], ['stop_confirm', run.id, row.preview_hash, 'open'], 'as the row has them, with its status');
+
+    // Scoped to the project; an id nobody has is not found either.
+    assertRefused(await engine.get(`/v1/projects/${other}/decisions/${row.id}`), 404, 'not_found', "the decision through another project's path");
+    assertRefused(await engine.get(`/v1/projects/${mine}/decisions/dec_00000000000000000000000000`), 404, 'not_found', 'an unknown decision id');
+
+    // Reading writes nothing.
+    const unchanged = quiet(fx);
+    for (let round = 0; round < 3; round++) await readDecision(engine, mine, row.id);
+    unchanged('after three reads of the decision');
+
+    // Answered, the decision leaves the list and is still readable by id, with its answer.
+    const confirmed = await engine.post(`/v1/projects/${mine}/runs/${run.id}/stop`, { preview_hash: shown.preview_hash });
+    assert.equal(confirmed.status, 200, `the Stop confirmed with the preview hash the read showed (body: ${confirmed.text})`);
+    assert.deepEqual((await listDecisions(engine, mine)).decisions, [], 'the fixture is live: the consumed decision is no longer listed');
+    const consumed = (await readDecision(engine, mine, row.id)).decision;
+    assert.deepEqual([consumed.id, consumed.status, consumed.answer?.option, consumed.preview_hash], [row.id, 'consumed', 'confirm', row.preview_hash], 'a consumed decision is read by its id with its status and the answer given');
+  });
+
+  test("a project's git operations are listed, each with its kind, journal state, status, intent and attempts: finalized ones, a pending one held before its effect, and a blocked one with the decision that holds it; another project's are not shown; reading writes nothing", async (t) => {
+    // Project A: a run whose integration was intended and the engine killed
+    // there; the branch moved by hand meanwhile, so the restarted engine's
+    // probe finds the ref conflicting and blocks the operation (SEAM.md §45).
+    const ctx = await killedAt(t, 'ref_update', 'intent_committed');
+    const { fx } = ctx;
+    const engine = fx.engine;
+    arrange(ctx, 'conflicting');
+    await fx.start();
+    const blocked = operationDetails(fx.home, { project: ctx.project.id }).find((op) => op.id === ctx.op.id);
+    assert.deepEqual([blocked.state, blocked.status, blocked.blockers.filter((d) => d.status === 'open').length], ['ambiguous', 'ambiguous', 1], 'the fixture is live: the integration is blocked, with one open blocker');
+
+    // Project B: a run whose integration is intended and held before its effect.
+    const held = journalBarrier('ref_update', 'intent_committed');
+    await armBarrier(fx.engine, held, 'pause');
+    const other = await addGitProject(fx);
+    const item = await addItem(fx, other.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    await reachBarrier(fx, other.id, held);
+    t.after(() => releaseBarrier(fx.engine, held).catch(() => {}));
+    const pending = operationDetails(fx.home, { project: other.id, journalKind: 'ref_update' });
+    assert.deepEqual([pending.length, pending[0]?.state, pending[0]?.finalized], [1, 'intended', false], 'the fixture is live: the integration of project B is intended and not yet made');
+
+    const attemptsOf = (op) => op.attempts.map((a) => ({ attempt_number: a.attempt_number, status: a.status, started_at: a.started_at, finished_at: a.finished_at, reconciliation_reads: a.reads }));
+    const expected = (op) => ({
+      id: op.id,
+      kind: op.kind,
+      journal_kind: op.journal_kind,
+      state: op.state,
+      status: op.status,
+      intent: op.payload,
+      attempts: attemptsOf(op),
+      finalized_at: op.finalized_at,
+      blocker: op.blockers.find((d) => d.status === 'open')?.id ?? null,
+    });
+    const shownOf = (op) => ({
+      id: op.id,
+      kind: op.kind,
+      journal_kind: op.journal_kind,
+      state: op.state,
+      status: op.status,
+      intent: op.intent,
+      attempts: op.attempts?.map((a) => ({ attempt_number: a.attempt_number, status: a.status, started_at: a.started_at, finished_at: a.finished_at, reconciliation_reads: a.reconciliation_reads })),
+      finalized_at: op.finalized_at,
+      blocker: op.blocker,
+    });
+
+    for (const [label, project] of [['A', ctx.project.id], ['B', other.id]]) {
+      const rows = operationDetails(fx.home, { project });
+      const listed = (await listOperations(engine, project)).operations;
+      assert.deepEqual(listed.map((op) => op.id), rows.map((op) => op.id), `project ${label}: every operation of the project, each once, oldest first, and no other project's`);
+      assert.deepEqual(listed.map(shownOf), rows.map(expected), `project ${label}: each with its kind, journal kind and state, status, intent, attempts, when it was finalized, and the open blocker that holds it`);
+    }
+    const a = (await listOperations(engine, ctx.project.id)).operations;
+    assert.deepEqual(
+      a.map((op) => [op.journal_kind, op.state, op.status, op.blocker !== null]),
+      [['worktree_add', 'finalized', 'succeeded', false], ['commit_tree', 'finalized', 'succeeded', false], ['ref_update', 'ambiguous', 'ambiguous', true]],
+      "project A: the run's workspace and commit finalized, its integration ambiguous and blocked",
+    );
+    assert.equal(a[2].blocker, blocked.blockers.find((d) => d.status === 'open').id, 'the blocked operation names the open decision a person has to look at');
+    const b = (await listOperations(engine, other.id)).operations;
+    assert.deepEqual(
+      b.map((op) => [op.journal_kind, op.state, op.blocker]),
+      [['worktree_add', 'finalized', null], ['commit_tree', 'finalized', null], ['ref_update', 'intended', null]],
+      "project B: the run's workspace and commit finalized, its integration pending",
+    );
+    assert.deepEqual([b[2].intent.ref, b[2].intent.old_oid, b[2].intent.new_oid], [other.repo.ref, other.base, pending[0].payload.new_oid], 'the pending integration shows what it is to do: the ref, and the commits it moves from and to');
+
+    const unchanged = quiet(fx);
+    for (let round = 0; round < 3; round++) {
+      await listOperations(engine, ctx.project.id);
+      await listOperations(engine, other.id);
+    }
+    unchanged('after six reads of the operations of two projects');
+  });
+
+  test("a project's environments as a route of their own: each with its observation as the project read shows it, a never-observed one as unknown; another project's are not shown; reading writes nothing and moves no observation", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+    const mine = (await addProject(fx)).id;
+    const other = (await addProject(fx)).id;
+    const alpha = await addEnvironment(engine, mine, { name: 'alpha', targets: ['alpha-1'] });
+    const beta = await addEnvironment(engine, mine, { name: 'beta', targets: ['beta-1'] });
+    const theirs = await addEnvironment(engine, other, { name: 'alpha', targets: ['alpha-9'] });
+    const observedAt = new Date(Date.parse((await readProject(engine, mine)).served_at) - 10_000).toISOString();
+    const seeded = await engine.post('/v1/harness/fixtures/observation', { project: mine, environment: alpha, condition: 'healthy', observed_at: observedAt, source: 'fixture-probe' });
+    assert.equal(seeded.status, 201, `the observation fixture (body: ${seeded.text})`);
+
+    const listed = (await listEnvironments(engine, mine)).environments;
+    assert.deepEqual(listed.map((row) => row.id).sort(), [alpha, beta].sort(), "the project's environments, each once, and not the other project's");
+    const fromProject = (await readProject(engine, mine)).project.environments;
+    assert.deepEqual(listed, fromProject, "each as the project's own projection shows it: id, name and observation");
+    const shown = Object.fromEntries(listed.map((row) => [row.id, row]));
+    assert.deepEqual(
+      [shown[alpha].name, shown[alpha].observed?.condition, shown[alpha].observed?.observed_at, shown[alpha].observed?.source, shown[alpha].observed?.freshness],
+      ['alpha', 'healthy', observedAt, 'fixture-probe', 'fresh'],
+      "the observed environment with its observation's own time and source, fresh",
+    );
+    assert.deepEqual([shown[beta].name, shown[beta].observed?.condition, shown[beta].observed?.observed_at], ['beta', 'unknown', null], 'an environment never observed is unknown, with no time of observation');
+    assert.deepEqual((await listEnvironments(engine, other)).environments.map((row) => row.id), [theirs], "the other project's one environment, and none of the first project's");
+
+    const stored = () => withStore(fx.home, (db) => db.prepare('SELECT "observed" FROM "environment_records" WHERE "environment" = ?').get(alpha)?.observed);
+    const before = stored();
+    const unchanged = quiet(fx);
+    for (let round = 0; round < 3; round++) await listEnvironments(engine, mine);
+    unchanged('after three reads of the environments');
+    assert.equal(stored(), before, 'reading did not touch the stored observation');
+
+    await advanceClock(engine, 200);
+    const expired = (await listEnvironments(engine, mine)).environments.find((row) => row.id === alpha).observed;
+    assert.deepEqual([expired.condition, expired.freshness, expired.observed_at], ['unknown', 'expired', observedAt], 'past its bound the observation is projected as unknown, with the time it was really made (SEAM.md §91)');
+    assert.equal(stored(), before);
+  });
 });

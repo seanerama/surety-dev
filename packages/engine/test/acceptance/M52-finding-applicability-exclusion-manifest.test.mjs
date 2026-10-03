@@ -14,10 +14,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { approvalsOf, assertQuestionClosed, assertStaleAnswer, consume, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
+import { approvalsOf, assertQuestionClosed, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
 import { acceptedRun, alphaTarget, assessmentsOf, check, finding, findingState, installChecks, nominated, passAll, raiseFindings, reasonCodes, reasonSubjects, review, successor } from './harness/gates.mjs';
-import { eventsOfType } from './harness/journal.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { candidatesOf, eventsOfType, lineagesOf } from './harness/journal.mjs';
+import { recordRow, registerDetector, waitForPostScan } from './harness/records.mjs';
+import { scriptedEngine, tick } from './harness/runs.mjs';
+import { withStore } from './harness/store.mjs';
 
 // A High finding raised on candidate 1; candidate 2, its successor, with its
 // check passed; the Verifier's proposal that the finding does not apply to
@@ -107,5 +109,61 @@ describe('M52 the finding_applicability_exclusion manifest', () => {
     blockedBy(await alpha.evaluate(), found);
     await assertQuestionClosed(fx, project, previewed);
     assert.deepEqual([assessmentsOf(fx.home, project).map((row) => row.status), findingState(finding(fx.home, found.id))], [['rejected'], before], 'and the ticks changed nothing of either');
+  });
+
+  // M2 slice 2, B1 (SEAM.md §105): the exclusion's evidence.
+  test("the exclusion's evidence is quarantined between preview and answer (a detector registered later matches it): the old preview is stale, nothing is excluded, and the next generation binds the evidence as it now is", async (t) => {
+    const { fx, project, found, alpha, assessment, previewed } = await assessedExclusion(t);
+    const record = recordRow(fx.home, assessment.evidence);
+    assert.deepEqual([record?.kind, record?.post_scan], ['assessment_evidence', 'clean'], "the fixture is live: the Verifier's evidence is a published record, scanned clean");
+    assert.deepEqual([previewed.manifest.evidence?.record, previewed.manifest.evidence?.quarantined], [assessment.evidence, false], 'the preview binds the evidence record and that it is not quarantined');
+
+    // A detector registered later matches the evidence (SEAM.md §57): the
+    // record the exclusion rests on is quarantined.
+    await registerDetector(fx.engine, 'refund-call', 'refund\\(\\)');
+    await waitForPostScan(fx.home, assessment.evidence, 'hit');
+
+    await assertStaleAnswer(fx, project, previewed, 'approve');
+    assert.equal(assessmentsOf(fx.home, project)[0].status, 'assessed', 'the assessment is not approved');
+    // The finding still blocks the candidate (the hit also raises the Critical
+    // findings of D1 §14.2 about the records it matched, which are not pinned here).
+    assert.ok(reasonSubjects(await alpha.evaluate(), 'FINDING_BLOCKING').includes(found.id), 'the finding still blocks the candidate: nothing was excluded');
+    const next = await nextGeneration(fx, project, previewed, { changed: 'evidence' });
+    assert.deepEqual([next.manifest.evidence?.record, next.manifest.evidence?.quarantined], [assessment.evidence, true], 'the next preview shows the evidence as quarantined');
+  });
+
+  // M2 slice 2, B1 (SEAM.md §105): the candidate's ancestry.
+  test("the assessed candidate's ancestry changes between preview and answer: the old preview is stale, nothing is excluded, and any question still open about the assessment binds the ancestry as it now is", async (t) => {
+    const { fx, project, c1, c2, found, assessment, previewed } = await assessedExclusion(t);
+    const lineageOf = (candidate) => lineagesOf(fx.home, project).find((row) => row.id === candidatesOf(fx.home, project).find((c) => c.id === candidate.id).lineage);
+    assert.equal(lineageOf(c2).started_from_candidate, c1.id, 'the fixture is live: candidate 2 descends from candidate 1, the candidate the finding was raised on');
+    assert.ok('ancestry' in previewed.manifest, 'the preview binds the ancestry');
+
+    // No engine path rewrites a lineage in M1; the store does, with the
+    // engine stopped (SEAM.md §65): candidate 2 no longer descends from the
+    // finding's candidate, so the exclusion that was previewed is about
+    // another situation.
+    await fx.engine.stop();
+    withStore(fx.home, (db) => db.prepare('UPDATE "lineages" SET "started_from_candidate" = NULL WHERE "id" = ?').run(lineageOf(c2).id), { readonly: false });
+    await fx.start();
+    assert.equal(lineageOf(c2).started_from_candidate, null, 'the fixture is live: the lineage no longer names candidate 1');
+
+    await assertStaleAnswer(fx, project, previewed, 'approve');
+    assert.deepEqual([assessmentsOf(fx.home, project)[0].status, assessmentsOf(fx.home, project)[0].authorized_by], ['assessed', null], 'the assessment is not approved, by nobody');
+    assert.deepEqual([finding(fx.home, found.id).status, finding(fx.home, found.id).effective_severity], ['open', 'high'], 'the finding is as it was');
+
+    // Whether the question still stands is not pinned: an exclusion of a
+    // finding that no longer applies may be withdrawn, or asked again about
+    // what is there now. Either way the earlier preview is closed and no
+    // open question carries it.
+    for (let i = 0; i < 3; i++) await tick(fx.engine, project);
+    assert.notEqual(decision(fx.home, previewed.id).status, 'open', 'the earlier question is closed');
+    const open = decisionsOn(fx.home, 'finding_applicability_exclusion', assessment.id).filter((row) => row.status === 'open');
+    assert.ok(open.length <= 1, `at most one exclusion question about the assessment is open (found ${open.length})`);
+    if (open.length === 1) {
+      assert.notEqual(open[0].preview_hash, previewed.preview_hash, 'an open question is another preview');
+      assert.notDeepEqual(open[0].manifest.ancestry, previewed.manifest.ancestry, 'whose ancestry is the one there now');
+      assert.equal(approvalsOf(fx.home, open[0].id).length, 0, 'with no approval carried over');
+    }
   });
 });
