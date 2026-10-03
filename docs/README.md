@@ -40,6 +40,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [reviews/D3/](reviews/D3/) | The cross-review brief for D3 draft 1 (for Astra), and her review and its dispositions when they exist. |
 | [acceptance/reports/M1-report.md](acceptance/reports/M1-report.md) | The M1 acceptance report: the run, versions, qualified load limits, review findings, what is not claimed, and the hands-on walkthrough (`M1-hands-on.sh`). |
 | [acceptance/reports/M1-not-claimed.md](acceptance/reports/M1-not-claimed.md) | The 33 cases left unwritten under the lean procedure, classed, so a passing M1 is not read as covering them. |
+| [acceptance/reports/M2-not-claimed.md](acceptance/reports/M2-not-claimed.md) | M2's running not-claimed list, grown slice by slice, each item with its row, class and the slice where it is claimed. |
 | [acceptance/objections/](acceptance/objections/) | Builder objections to acceptance tests, and the Verifier's answers. |
 | [mockup/](mockup/) | The accepted MVP UI design, eight screens. |
 | [history/](history/) | A slot for the original design-session documents, not yet recovered. |
