@@ -151,25 +151,35 @@ export async function installAttempt(engine, standIn, fields = {}) {
 
 // Point a project's roles at a backend (SEAM.md §116): every role unless
 // `roles` names some. Not a widening: answered 200 as an ordinary change.
-export async function useBackend(engine, project, backend, { roles = ['builder', 'verifier', 'reviewer', 'architect'], mode } = {}) {
-  const change = Object.fromEntries(roles.map((role) => [`backend_${role}`, backend]));
+// `extra` adds other ordinary keys to the same change (one commit).
+export async function useBackend(engine, project, backend, { roles = ['builder', 'verifier', 'reviewer', 'architect'], mode, extra = {} } = {}) {
+  const change = { ...extra, ...Object.fromEntries(roles.map((role) => [`backend_${role}`, backend])) };
   if (mode !== undefined) change.backend_mode = mode;
   return changePolicy(engine, project, change);
 }
+
+// The policy of a project whose dispatches are refused on purpose (objection
+// 002): a refused item parks at its first refusal instead of returning to
+// `eligible` (SEAM.md §15), so that the next item of the project, not the
+// refused one again, is what the next tick offers, and a tick the engine
+// requests itself cannot refuse the same item twice.
+export const PARK_ON_REFUSAL = Object.freeze({ preflight_refusals_max: 1 });
 
 // A kernel-lane engine whose project dispatches its `verification` work to
 // a real backend name bound to the stand-in binary (SEAM.md §113): the
 // scripted engine of M1, a stand-in directory beside its scripted one, one
 // fixture project whose verifier backend is `backend`, and the backend's
 // provider key held by the resolver. Returns {fx, standIn, project, key}.
-export async function realBackendProject(t, { backend = BACKENDS.claude, roles = ['verifier'], config, key = 'sk-test-key-for-the-stand-in-0001' } = {}) {
+// `policy` adds ordinary keys to the project's one policy commit (the
+// refusal rows pass PARK_ON_REFUSAL).
+export async function realBackendProject(t, { backend = BACKENDS.claude, roles = ['verifier'], config, key = 'sk-test-key-for-the-stand-in-0001', policy = {} } = {}) {
   const fx = await scriptedEngine(t, { config });
   const standIn = new StandIn(join(fx.root, 'standin'));
   // A repository whose integration branch is checked out nowhere, so that a
   // policy change can be committed (SEAM.md §§25, 30).
   const project = (await addGitProject(fx)).id;
   await holdSecret(fx.engine, apiKeyRef(backend), key);
-  await useBackend(fx.engine, project, backend, { roles });
+  await useBackend(fx.engine, project, backend, { roles, extra: policy });
   return { fx, standIn, project, key };
 }
 

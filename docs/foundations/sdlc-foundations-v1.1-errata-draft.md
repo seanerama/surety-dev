@@ -1188,3 +1188,24 @@ An Opus architect session drafted `docs/design/sdlc-design-D3-checks.md` from th
 **What waits for Sean, after Astra's review:** L1 to L5 (§7.1), Q1 to Q7 (§7.2; Q2 and Q4 change what the kernel does today), and whether D3's rows join the M2 plan or open M3's.
 
 ---
+
+## E61. M2 slice 10: the Verifier's cases merged, provisional readings (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's defaults under Sean's delegation. Sean confirms or overturns them.
+
+The Verifier wrote nine files for rows M101 to M109 (manifest slice 10; SEAM §§113 to 121), merged to `main` at `0abeca8` after the boundary check (24 paths, all inside the role's). On the engine as it stood every case fails at the trust table's absence except M106 (c) (every classifier dependency already invalidates a held effect) and M109 (c) (the lint). A Builder's groundwork, done before the cases existed, had built the trust table, qualification attempts, both decision kinds, the budget rules, C4's allowance, C1's proposal, K7 and K8, the bootstrap default and the widening refusals on `build/m2-s10`; it adapts to the seam's names.
+
+**Readings fixed by the cases, confirmed by the driver:**
+
+1. **K8 overturns three accepted M1 cases** (M37 case 1, M53 case 2, M74-fixture-semantics' candidate read), which had pinned that a Reviewer's approval applies a tightening. As Sean accepted K8 (E56 item 3: a Reviewer's tightening approval is a recommendation until D3's classifier is qualified), the Verifier changed them and labelled the change, as E44 item 2 provides for an overturned provisional decision; the plan's "M51, M53 unchanged" in row M106 is corrected by this entry. M68 opts in to `ui_bootstrap` as the labelled compatibility test (K3).
+2. **All 21 D2 A.7 engine keys enter the contract now** with D2's defaults and ranges (M07 and M73 pin the closed sets exactly), rather than slice by slice.
+3. **In the kernel lane, host eligibility is the harness's say-so** (`host_eligibility.source: "harness"`, no `host_qualifications` row), labelled, to be listed among the M2 report's instrument limits; the sandbox lane qualifies for real.
+4. **Backend selection** is per role: policy keys `backend_builder`, `backend_verifier`, `backend_reviewer`, `backend_architect` (`scripted|claude|codex`, default `scripted`) and `backend_mode`; D2 A.7 had no key.
+5. **`host_qualification` is nullable** on trust entries and attempts (kernel-lane fixtures), as are `decisions.project` and `records.project` for engine-scoped decisions and evidence; the trust decisions are answered on engine-scoped routes `GET /v1/decisions` and `POST /v1/decisions/:d/answer`.
+6. **The provider-side cap is recorded with the secret reference** (`provider_cap {status: "configured", usd, reference}` on the grant), never as engine enforcement.
+7. M106 (c)'s effective-version change between approval and effect is staged by a fixture row superseding the effective version, because no engine path can apply a second proposal while an effect is paused at its intent.
+8. The Builder's unknown allowance is charged only after at least one usage observation or for a trust entry's backend, so M1's default day limits keep passing; `records.project` nullable rather than a fixture project for engine-wide evidence; a coarser `budget_run_boundary` treated as a widening (not pinned).
+
+**Consequences elsewhere.** No change to D1 or D2; the M2 plan's row M106 reads as item 1 says.
+
+---

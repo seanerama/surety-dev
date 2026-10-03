@@ -30,9 +30,11 @@ import { script, step } from './harness/scripted.mjs';
 // Two invocations. One completed and reported its cost; a correction later
 // added 50 output tokens to it. One was stopped by the budget after reporting
 // 2,500 tokens of unknown cost against a day limit of 1,000, so its remainder
-// is unknown. These are the totals before anything is done to the repository,
-// and after.
-const TOTALS = { invocations: 2, billable_in: 2300, cached_in: null, out: 650, usage_incomplete: 1, reported_usd: 0.25, estimated_usd: null, unknown_cost_invocations: 1, unknown_cost_tokens: 2500 };
+// is unknown: it carries the unknown allowance of the run's token limit (the
+// default, 1,500,000) less the 2,500 observed (M2 slice 10, SEAM.md §120;
+// objection 003). These are the totals before anything is done to the
+// repository, and after.
+const TOTALS = { invocations: 2, billable_in: 2300, cached_in: null, out: 650, usage_incomplete: 1, reported_usd: 0.25, estimated_usd: null, unknown_cost_invocations: 1, unknown_cost_tokens: 2500, unknown_allowance_tokens: 1_497_500 };
 const BUDGET = { exhausted: ['budget_day_unknown_tokens'] };
 
 describe('M62 accounting survives source-history changes', () => {

@@ -25,14 +25,20 @@ import { ledgerRows } from './harness/ledger.mjs';
 import { readRun } from './harness/reads.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
-import { addWork, assertRunEnded, requestTick, waitForRun, waitForWork } from './harness/runs.mjs';
+import { addWork, assertRunEnded, requestTick, runsOf, waitForRun, waitForWork } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
-import { BACKENDS, directUpdateRefused, eventsNamed, installAttempt, installTrustEntry, realBackendProject, refusedTrustEntry, standInProcesses, trustEntry, useBackend } from './harness/trust.mjs';
+import { BACKENDS, PARK_ON_REFUSAL, directUpdateRefused, eventsNamed, installAttempt, installTrustEntry, realBackendProject, refusedTrustEntry, standInProcesses, trustEntry, useBackend } from './harness/trust.mjs';
 
 // One dispatch of a verification item of `project`, refused before launch
 // with `backend_refused`: the run ends refused / preflight_refused, its one
 // receipt has the observation `refused` and nothing else, no ledger row, no
 // `domain.placed`, and the stand-in was neither launched nor is running.
+// The project's policy parks a refused item at its first refusal
+// (PARK_ON_REFUSAL; objection 002): a refused item that returned to
+// `eligible` would be offered again before the next item (SEAM.md §15, one
+// run per project, oldest first), and a tick the engine requests itself
+// could refuse it twice. So the item is read `parked`, with its one refusal
+// counted and the blocker that names the limit (SEAM.md §15).
 async function assertDispatchRefused(fx, standIn, project, what) {
   const item = await addWork(fx.engine, project, 'verification');
   const launchesBefore = standIn.launches().length;
@@ -46,13 +52,16 @@ async function assertDispatchRefused(fx, standIn, project, what) {
   assert.equal(standIn.launches().length, launchesBefore, `${what}: the stand-in binary was not launched`);
   assert.deepEqual(standInProcesses(standIn), [], `${what}: no process of the backend is in the process table`);
   assert.equal(fx.scripted.launches({ work_item: item }).length, 0, `${what}: and no scripted role stood in for it`);
-  assert.equal((await waitForWork(fx.home, item, 'eligible')).preflight_refusals, 1, `${what}: the refusal is counted on the work item`);
+  const parked = await waitForWork(fx.home, item, 'parked');
+  assert.equal(parked.preflight_refusals, 1, `${what}: the refusal is counted on the work item, once`);
+  assert.equal(JSON.parse(parked.blocker).reason, 'preflight_refusals_max', `${what}: the item is parked at the limit the policy set`);
+  assert.equal(runsOf(fx.home, item).length, 1, `${what}: one run of the item`);
   return run;
 }
 
 describe('M101 no entry, no dispatch', () => {
   test('(a) no entry, (b) a proposed entry, (c) a revoked entry: each dispatch to the real backend is refused backend_refused before launch, uncharged, with no domain placed and no process of the backend ever started', async (t) => {
-    const { fx, standIn, project } = await realBackendProject(t);
+    const { fx, standIn, project } = await realBackendProject(t, { policy: PARK_ON_REFUSAL });
     assert.deepEqual([...(await fx.engine.engineInfo()).backends].sort(), ['scripted'], 'the fixture is live: no real backend is dispatchable before any entry exists');
 
     await assertDispatchRefused(fx, standIn, project, '(a) no entry');
@@ -68,7 +77,7 @@ describe('M101 no entry, no dispatch', () => {
   });
 
   test('(d) session mode is refused backend_refused beside an active one-shot entry, with no fallback to one-shot; the session routes stay 501; a session-mode entry can never be active', async (t) => {
-    const { fx, standIn, project } = await realBackendProject(t);
+    const { fx, standIn, project } = await realBackendProject(t, { policy: PARK_ON_REFUSAL });
     const active = await installTrustEntry(fx.engine, standIn, { status: 'active' });
     assert.equal(trustEntry(fx.home, active.id)?.status, 'active', 'the fixture is live: an active one-shot entry exists');
     await changePolicy(fx.engine, project, { backend_mode: 'session_headless' });
@@ -93,9 +102,9 @@ describe('M101 no entry, no dispatch', () => {
   });
 
   test('(e) an authorized qualification attempt dispatches nothing but its canaries: an ordinary item of its fixture project and one of another project are both refused backend_refused', async (t) => {
-    const { fx, standIn, project } = await realBackendProject(t);
+    const { fx, standIn, project } = await realBackendProject(t, { policy: PARK_ON_REFUSAL });
     const other = (await addGitProject(fx)).id;
-    await useBackend(fx.engine, other, BACKENDS.claude, { roles: ['verifier'] });
+    await useBackend(fx.engine, other, BACKENDS.claude, { roles: ['verifier'], extra: PARK_ON_REFUSAL });
     fx.scripted.defaultScript(script.complete());
     const attempt = await installAttempt(fx.engine, standIn, { status: 'authorized', fixture_project: project });
     assert.ok(attempt, 'the fixture is live: an authorized attempt for the backend exists, with the first project as its fixture project');
