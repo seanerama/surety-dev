@@ -81,7 +81,7 @@ export interface PlanInput {
   writablePaths: string[];
   // Binds at a target other than their source (the probe profile's cgroup
   // directories, D2 §2.8, A.6 P15).
-  binds?: { source: string; target: string; writable: boolean }[];
+  binds?: { source: string; target: string; writable: boolean; noexec?: boolean }[];
   volBytes: number;
   volInodes: number;
   shmBytes: number;
@@ -147,14 +147,16 @@ class Builder {
   }
 
   // A non-recursive bind of `source` at `target` (default: the same path).
-  bind(source: string, opts: { writable?: boolean; target?: string; device?: boolean } = {}): void {
+  bind(source: string, opts: { writable?: boolean; target?: string; device?: boolean; noexec?: boolean } = {}): void {
     const target = opts.target ?? source;
     const st = lstatSync(source);
     if (st.isDirectory()) this.dir(target);
     else this.file(target);
     // A device node is usable only on a mount without `nodev`, and /dev/null
     // only where it can be written.
-    const options = opts.device ? 'bind,nosuid,noexec' : opts.writable ? 'bind,nosuid,nodev' : 'bind,ro,nosuid,nodev';
+    // A cgroupfs directory keeps its mount's locked `noexec` (it cannot be
+    // cleared in an unprivileged namespace).
+    const options = opts.device ? 'bind,nosuid,noexec' : `${opts.writable ? 'bind,nosuid,nodev' : 'bind,ro,nosuid,nodev'}${opts.noexec ? ',noexec' : ''}`;
     this.line(source, target, 'none', options);
   }
 
@@ -253,7 +255,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
   for (const x of input.binds ?? []) {
     for (const d of parents(x.target)) b.dir(d);
-    b.bind(x.source, { target: x.target, writable: x.writable });
+    b.bind(x.source, { target: x.target, writable: x.writable, noexec: x.noexec === true });
   }
   return {
     stage,

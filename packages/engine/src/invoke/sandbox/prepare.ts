@@ -52,11 +52,11 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // cgroup directory and a sibling beside it, delegated like a domain and
   // empty, bound read-write, so that a migration out of the namespace's root
   // can be attempted and seen refused. The role profile has no cgroupfs.
-  const binds: { source: string; target: string; writable: boolean }[] = [];
+  const binds: { source: string; target: string; writable: boolean; noexec: boolean }[] = [];
   if (claim.profile === 'probe') {
     const sibling = join(rt.scope.path, `sibling_${claim.domain}`);
     createDomainCgroup(sibling, limits);
-    binds.push({ source: may.cgroup_path, target: '/surety/cgroup/domain', writable: true }, { source: sibling, target: '/surety/cgroup/sibling', writable: true });
+    binds.push({ source: may.cgroup_path, target: '/surety/cgroup/domain', writable: true, noexec: true }, { source: sibling, target: '/surety/cgroup/sibling', writable: true, noexec: true });
   }
 
   const writable = rt.setting('domain_writable_bytes');
