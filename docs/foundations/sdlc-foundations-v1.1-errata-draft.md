@@ -1130,3 +1130,25 @@ A companion note to D2, `docs/design/sdlc-design-D2-ebpf-note.md`, proposes an o
 **Sean approved an optional, qualification-only prototype as the initial scope**, recorded as an addition under E40. The engine's runtime-dependency rule is unchanged: any loader or tracing tool is a host or test requirement the engine checks for. On this host unprivileged BPF is disabled and there is no sudo, so the loader needs a privilege Sean grants (a root-run `bpftrace` for the feasibility check; later a capability-granted helper), which is a host-setup step of his, like the plan page's "set up the host". **Order:** a feasibility run by Sean with `bpftrace` against the scripted engine before any Verifier or Builder work; then the five assertions of the note join the sandbox-lane rows of D2 Appendix B as "with observer" variants, pinned by the Verifier before the Builder implements them (E31, E48). D2 draft 2 gains a short §3.9 stating the observer is optional and never authoritative and pointing to the note; D2 is otherwise unchanged by it. Production monitoring and BPF-based enforcement remain separate decisions.
 
 ---
+
+## E58. D2 approved to build (decided by Sean, 2026-10-03)
+
+D2 draft 2 (`docs/design/sdlc-design-D2-backends-and-isolation.md`, merged at `474de37`, 441 lines) applies every disposition of E56 and the observer of E57; the dispositions file names the section for each finding. The driver's check against the brief (section 6 step 2) passed: nothing reopened, K1 to K10 numbered with their tests, no open question, Appendix B with 73 statements in three lanes (13 kernel, 55 sandbox of which 5 are the optional observer rows, 5 real). **Sean approved D2 to build as drafted.** No draft 3 (E20, E48 item 2): from here a finding is a decision for Sean or a failing acceptance test.
+
+**Variants the architect took in applying the dispositions, recorded as part of the approval:**
+
+1. **One volatile filesystem per domain, the workspace included.** To bound a role's writes without root (B09) and keep unscreened output off disk (B08), every location a role can write, the upper layer of its workspace among them, is one bounded, swap-excluded tmpfs charged to the domain's memory; after termination the engine screens the upper layer for registered secrets and only then materializes it into the checkout for the snapshot. **Consequence, accepted by Sean:** an engine crash mid-run loses a real backend's unsnapshotted edits, provider files and unvalidated result; the run is recovered and a Resume starts from the last snapshot; E30 item 10's retained workspace does not apply to real backends. A role's writes count against `domain_memory_max`. The alternative (workspace writes on disk, retained on a crash, with B09's storage bound and the before-disk rule partly unmet on this host) was put to Sean and declined.
+2. Launch closure is a store-kept launch state (`authorizable`, `authorized`, `closed`); an unplaced launcher, the engine's own child, is killed through its handle and its exit awaited (B01).
+3. The mount plan enumerates the operator's credential locations; a repository with git alternates is refused (`mount_plan_refused`) (B02).
+4. The operator's approval of a paid canary is a decision kind `qualification_approval` binding the exact attempt (B04, Q7).
+5. Claude Code's denial uses `--disallowed-tools` with the names CH recorded; the effective tool surface is established by inventory or by an executable test, else refused (B05).
+6. A policy declaring a hard spending maximum (`budget_hard_maximum`) is refused with `hard_cap_unenforceable`; a provider-side cap is the place for one (B06, Q2).
+7. A resource-counter rise that did not end the backend is recorded and does not by itself fail the run (N02).
+8. No host qualification row is active while `ui_bootstrap` is true (N05).
+9. The unknown allowance is the run's token limit less the billable tokens observed, charged once; running invocations count their remaining allowance at dispatch (C4).
+10. Q3's "H1 to H10" is read as H1 to H12 (H11 volatile storage, H12 host reserve added by B08 and B09); the daily limit's key `budget_day_verified_usd` keeps its name while the ledger read shows reported and estimated apart.
+11. K3's change to the accepted M1 bootstrap case (row M68 opts in explicitly; a default-off case added) is the Verifier's, when D2 is built.
+
+**What follows (brief section 6 step 5):** the M2 acceptance plan and the M2 build spec, then the D3 brief. Sean's eBPF feasibility run (E57) precedes any observer work.
+
+---
