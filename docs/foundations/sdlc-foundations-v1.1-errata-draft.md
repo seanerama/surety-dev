@@ -985,3 +985,24 @@ An Opus architect session drafted `docs/design/sdlc-design-D2-backends-and-isola
 **What waits for Sean, after Astra's review:** Q1 to Q7 (§9.2), K1 to K9 (§9.1), C1 to C4 (§5). The driver's recommendation on each is the draft's own, with one note: K3's default should be weighed against the hands-on run, which used the browser bootstrap; with the route off, a future UI needs Q6 answered first.
 
 ---
+
+## E50. M2 slice 1: the Verifier's cases merged, provisional readings (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's defaults under Sean's delegation, like E23 to E30. Sean confirms or overturns them.
+
+The Verifier wrote fourteen cases for the five entries of `docs/spec/M2-slice-1-hardening.md` (A1 one, A2 one, A3 three, A4 seven, A5 one) in about half an hour of agent time; merged to `main` at `63ffa2f` after the boundary check (18 paths, all inside the role's). On the accepted M1 engine, each file run alone: ten cases pass, four fail. The four are the two gaps the Builder's groundwork had already found and built on its branch before the cases existed: a tampered nomination marker did not block that candidate's gates (A1), and a protected-check correction's preview bound the approved specification as a constant, so a changed specification did not make the answer stale (A3, the three correction kinds). The other three entries held in the accepted engine and are now claimed by passing cases: the replay validation against the protected set at integration (A2), every "reject" answer (A4), and no reuse of a check result across protected versions (A5).
+
+**Readings fixed by the cases, confirmed by the driver:**
+
+1. **The policy widening needs no further stale-preview case.** Its manifest already binds every governed fact (policy revision and hash, the proposed policy, the authority analysis), and M49's base-change cases exercise them; an adopted hand edit of `policy.json` is not a base change. The brief's phrase "its governed fields" meant those facts. Verifier and Builder reached this independently.
+2. **A tampered nomination marker blocks only that candidate's gates** (the narrow reading of D1 §9.3 item 3, "on the lineage"), pinned in SEAM §99. The evaluation does not read the marker afresh; it relies on the integrity observation, as the integration branch already does. A blocked evaluation still resolves a `fix` finding whose check passed. **Alternative for Sean:** the lineage reading, under which successors of a tampered candidate are blocked too; a changed test if he prefers it.
+3. **`spec_revision` in a correction's manifest is a hash over the project's requirements** (key, text, phase, status), because M1 has no approved-spec entity; its form is not pinned, only that it changes when a requirement is added and not otherwise. **Alternative:** declare the spec unchangeable in M1 and drop the spec half of the three A3 cases.
+4. **A Reviewer's approval of a human-rejected tightening approves nothing** (A.5: `rejected` has no exit); pinned in M53's reject case. **A rejected question is not raised again at once** (three ticks), pinned for all seven kinds.
+
+**Open for Sean, not pinned:** what re-asking after a rejection does. D1 §10.2 returns the existing row for an identity already used and advances a generation only on a material change, so after a rejection the same widening resubmitted, the same deferral or lowering re-proposed, or a new assessment of the same finding may be a dead end (`decision_consumed`). Options: (a) a rejection is a recorded material change, so the next raise is a new generation with no approval (recommended by the Verifier and the driver; one case per route when decided); (b) D1 as written, a rejected question cannot be re-asked until something else changes its subject; (c) reopen a rejected decision. The engine's dedupe behaviour is unchanged until he decides.
+
+**For the slice's Reviewer:** a suspected defect the Builder found outside the five entries and did not build (scope frozen, E40), unconfirmed by running: a protected application journals its commit and then, as a separate operation, its branch update; a run's integration could take the project's journal lock between them and move the branch first, so the application's branch update fails its compare-and-swap, and no path was found that retries or withdraws it, leaving the intended version unauthorized and the intent `executing`. The Reviewer probes it; if confirmed by running it is a serious finding of this slice under E31.
+
+**Consequences elsewhere.** No change to D1.
+
+---
