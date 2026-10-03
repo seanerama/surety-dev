@@ -19,8 +19,9 @@ import { describe, test } from 'node:test';
 import { CODES, answer, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
-import { changePolicy, revisionsOf } from './harness/journal.mjs';
+import { changePolicy, registryOf, revisionsOf } from './harness/journal.mjs';
 import { addProject, addWork, assertRunEnded, runsOf, scriptedEngine, tick, tickUntil, waitForQuarantine, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
+import { refOid } from './harness/repos.mjs';
 import { BOUNDARY, script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -126,9 +127,18 @@ describe('M45 the blocker manifest', () => {
     const next = await nextGeneration(fx, project.id, blocker, { changed: 'continuation' });
     assert.deepEqual([next.manifest.continuation, next.manifest.cause, next.manifest.subject_status], [{ status: 'eligible', from: null }, 'repair_attempts_max', 'parked'], 'the next preview says the work would resume from the integration branch, and binds the rest as before');
 
-    // The current preview can be answered, and what follows is what it showed.
+    // The current preview can be answered, and what follows is what it
+    // showed: a run from the integration branch's head, which the case's own
+    // policy change moved past `project.base` (SEAM.md §27; objection 001),
+    // and not from the checkpoint.
+    const head = refOid(project.repo.path, project.repo.ref);
+    assert.deepEqual(
+      [registryOf(fx.home, project.id)[project.repo.ref].expected_oid, runsOf(fx.home, item)[0].base_revision, head === checkpoint.sha],
+      [head, head, false],
+      "the fixture is live: the registry expects the head, the first run started from it, and it is not the checkpoint",
+    );
     await consume(fx, project.id, next, 'retry');
     const resumed = await runToEnd(fx, project.id, item, { index: 2 });
-    assert.equal(resumed.base_revision, project.base, "the retried run starts from the integration branch's head, as the answered preview said, not from the checkpoint");
+    assert.equal(resumed.base_revision, head, "the retried run starts from the integration branch's head, as the answered preview said, not from the checkpoint");
   });
 });
