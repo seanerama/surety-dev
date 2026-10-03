@@ -962,4 +962,6 @@ Astra assessed the accepted M1 from the final report, the repository changes and
 
 Settles E44 item 3 after the hands-on run and Astra's third priority (E46). Two reads D1 section 11.3 lists and no acceptance row named are built now, with one case each: a project's work items (each with its kind, status, subject, and when blocked the blocker's reason and the decision it waits on) and a candidate's gate evaluation with its reasons, as a read that evaluates nothing. The other reads D1 lists (operations, one decision by id) stay on the not-claimed list.
 
+**Detail the Verifier fixed (provisional):** the work read is a flat list in creation order with a `status` field (D1's "by status" grouping is a client's projection; the phase plan with stages is not included); "no evaluation yet" on the gate read is 404 `not_found`, told from a missing route by its `subject` naming the candidate and the gate kind, since A.7 has no closer code; the engine-owned `chain` column is exposed in the work read. The M1 report keeps its accepted text and gains an after-acceptance note when the reads pass.
+
 ---
