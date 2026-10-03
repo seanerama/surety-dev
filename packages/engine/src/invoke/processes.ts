@@ -85,6 +85,10 @@ export function markedProcesses(domain: string): ProcessIdentity[] | null {
 // that pid still names the recorded process: a pid whose start time differs
 // belongs to someone else and is never signalled (D1 §16.1).
 export function signalRecordedGroup(pid: number, pgid: number, startTime: string, signal: NodeJS.Signals): boolean {
+  // Only the group the recorded process leads (the engine spawned it into a
+  // new group whose id is its pid): a recorded pgid that is anything else, 0
+  // or 1 above all, would signal processes the engine never started.
+  if (!Number.isInteger(pid) || pid <= 1 || pgid !== pid || pid === process.pid) return false;
   if (!isSameLiveProcess(pid, startTime)) return false;
   try {
     process.kill(-pgid, signal);
@@ -97,6 +101,7 @@ export function signalRecordedGroup(pid: number, pgid: number, startTime: string
 // Signal one process found by its marker, after checking it is still the
 // process that was found.
 export function signalFound(p: ProcessIdentity, signal: NodeJS.Signals): boolean {
+  if (!Number.isInteger(p.pid) || p.pid <= 1 || p.pid === process.pid) return false;
   if (!isSameLiveProcess(p.pid, p.startTime)) return false;
   try {
     process.kill(p.pid, signal);

@@ -8,7 +8,7 @@
 // verified hierarchy (D2 §3.3).
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 export const CGROUP_ROOT = '/sys/fs/cgroup';
@@ -18,9 +18,15 @@ export const SUPERVISOR_LEAF = 'supervisor';
 
 // The scope unit's name for an engine home and an incarnation (D2 §3.1):
 // `surety-<home>-<incarnation>.scope`, `<home>` the first sixteen hex digits
-// of the SHA-256 of $SURETY_HOME as given.
+// of the SHA-256 of $SURETY_HOME's resolved path (SEAM.md §124).
 export function homeHash(home: string): string {
-  return createHash('sha256').update(home).digest('hex').slice(0, 16);
+  let real = home;
+  try {
+    real = realpathSync(home);
+  } catch {
+    // judged as given
+  }
+  return createHash('sha256').update(real).digest('hex').slice(0, 16);
 }
 
 export function scopeUnit(home: string, incarnation: string): string {
@@ -84,9 +90,21 @@ export function readProcs(path: string): number[] | null {
 
 export type KillResult = { state: 'written' } | { state: 'absent' } | { state: 'refused'; detail: string };
 
+// The last line of defence for every write that kills, moves or removes
+// (D2 §§3.3, 3.4): a path the engine acts on is an engine scope of the form
+// `surety-<16 hex>-inc_<ULID>.scope` under /sys/fs/cgroup, or one directory
+// directly inside one (its supervisor leaf, a domain, a probe cgroup). An
+// empty path, the scope's parent (`app.slice`), the user manager's own
+// cgroup, or anything with `..` is never written, whatever the store says.
+// The callers verify more first: that the scope is this home's and, for a
+// domain, the one of the incarnation that owned it.
+const ENGINE_SCOPE_PATH = /^\/sys\/fs\/cgroup(\/[^/]+)+\/surety-[0-9a-f]{16}-inc_[0-9A-HJKMNP-TV-Z]{26}\.scope(\/[A-Za-z0-9_]+)?$/;
+export const isEngineScopePath = (path: string): boolean => typeof path === 'string' && !path.split('/').includes('..') && ENGINE_SCOPE_PATH.test(path);
+
 // `cgroup.kill` (kernel 5.14): every process of the subtree is sent SIGKILL.
 // Writing it is not termination; only a later `populated 0` is (D2 §3.2).
 export function writeKill(path: string): KillResult {
+  if (!isEngineScopePath(path)) return { state: 'refused', detail: `${path || '(empty)'} is not an engine scope's cgroup; nothing was written` };
   try {
     writeFileSync(join(path, 'cgroup.kill'), '1');
     return { state: 'written' };
@@ -125,6 +143,7 @@ export interface DomainLimits {
 // the directory's inode. A limit that cannot be set is an error: a domain
 // without its bounds is not launched.
 export function createDomainCgroup(path: string, limits: DomainLimits): number {
+  if (!isEngineScopePath(path)) throw new Error(`${path || '(empty)'} is not inside an engine scope`);
   mkdirSync(path);
   writeFileSync(join(path, 'memory.max'), String(limits.memoryMax));
   writeFileSync(join(path, 'memory.swap.max'), '0');
@@ -136,6 +155,7 @@ export function createDomainCgroup(path: string, limits: DomainLimits): number {
 
 // Remove an empty cgroup. Only after `terminated` is recorded (D2 §3.2).
 export function removeCgroup(path: string): boolean {
+  if (!isEngineScopePath(path)) return false;
   try {
     rmdirSync(path);
     return true;
@@ -146,6 +166,7 @@ export function removeCgroup(path: string): boolean {
 
 // Move a process (all its threads) into a cgroup.
 export function movePid(path: string, pid: number): void {
+  if (!isEngineScopePath(path)) throw new Error(`${path || '(empty)'} is not an engine scope's cgroup`);
   writeFileSync(join(path, 'cgroup.procs'), String(pid));
 }
 
@@ -196,6 +217,12 @@ export function verifyDomainPath(recorded: string, args: { parent: string; home:
   if (m[1] !== homeHash(args.home)) return { where: 'outside', detail: `${dirname(recorded)} is a scope of another engine home` };
   if (m[2] !== args.incarnation) return { where: 'outside', detail: `${dirname(recorded)} is not the scope of incarnation ${args.incarnation}, which owned the domain` };
   return { where: 'inside', detail: recorded };
+}
+
+// Is `path` the scope of `incarnation` of this home, directly under the
+// verified parent (D2 §3.3)?
+export function isHomeScope(path: string, args: { parent: string; home: string; incarnation: string }): boolean {
+  return dirname(path) === args.parent && basename(path) === scopeUnit(args.home, args.incarnation) && isEngineScopePath(path);
 }
 
 // The scopes of earlier incarnations of this home under the verified parent,

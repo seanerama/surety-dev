@@ -31,7 +31,7 @@ import type { RunHandle, Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 import { pausePoint, seamMainFault } from '../testing/seam.js';
-import { SUPERVISOR_LEAF, cgroupInode, homeScopes, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
+import { SUPERVISOR_LEAF, cgroupInode, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
 import { managerReachable } from './scope.js';
 
 export type Verdict = { terminated: true } | { terminated: false; unknown: string | null };
@@ -233,7 +233,10 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   return { terminated: true };
 }
 
+// One member, by its host pid as the verified domain's cgroup.procs listed it:
+// never 0, 1, a negative pid or the engine itself.
 function signal(pid: number, sig: NodeJS.Signals): void {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return;
   try {
     process.kill(pid, sig);
   } catch {
@@ -265,8 +268,8 @@ export async function closePriorSupervisors(rt: Runtime, recorded: { incarnation
       unknown.set(inc, unreachable);
       continue;
     }
-    if (dirname(path) !== parent) {
-      unknown.set(inc, `the prior scope ${path} is outside the verified hierarchy`);
+    if (!isHomeScope(path, { parent, home: rt.home, incarnation: inc })) {
+      unknown.set(inc, `the prior scope ${path} is not this home's scope for ${inc} in the verified hierarchy`);
       continue;
     }
     const scopeState = readPopulated(path);

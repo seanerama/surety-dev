@@ -313,11 +313,15 @@ function onMessage(m: Msg): void {
   } else if (m.t === 'term') {
     if (terminating) return;
     terminating = true;
-    try {
-      // Every process of the pid namespace but the init (kill(2), pid -1).
-      process.kill(-1, 'SIGTERM');
-    } catch {
-      // nothing left to signal
+    // Every process of the pid namespace but the init (kill(2), pid -1):
+    // only as process 1 of a pid namespace the launcher created, never
+    // anywhere else, where -1 would mean every process of the uid.
+    if (process.pid === 1) {
+      try {
+        process.kill(-1, 'SIGTERM');
+      } catch {
+        // nothing left to signal
+      }
     }
     leaveWhenAlone();
   } else if (m.t === 'challenge') {
@@ -392,6 +396,9 @@ async function init(): Promise<void> {
 }
 
 const stage = process.argv[2];
+// The init is process 1 of the pid namespace the launcher created, or it is
+// nothing: outside one it would start a backend on the host.
+if (process.pid !== 1) process.exit(65);
 if (stage === 'setup') void setup();
 else if (stage === 'init') void init();
 else process.exit(64);

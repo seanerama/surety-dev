@@ -155,3 +155,33 @@ test('the launch state moves only along D2 A.4, and termination needs closure', 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('nothing is killed, moved or removed outside an engine scope, whatever the store says', () => {
+  const parent = '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice';
+  const scope = `${parent}/${cgroup.scopeUnit('/srv/h', INC)}`;
+  const refused = ['', parent, `${parent}/`, '/sys/fs/cgroup', '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service', `${scope}/../..`, `${scope}/a/b`, `/tmp/${cgroup.scopeUnit('/srv/h', INC)}`, `${parent}/other.scope`];
+  for (const path of refused) {
+    assert.equal(cgroup.isEngineScopePath(path), false, `${path || '(empty)'} is not an engine scope path`);
+    const k = cgroup.writeKill(path);
+    assert.equal(k.state, 'refused', `cgroup.kill is not written at ${path || '(empty)'}`);
+    assert.equal(cgroup.removeCgroup(path), false);
+    assert.throws(() => cgroup.movePid(path, process.pid));
+  }
+  assert.equal(cgroup.isEngineScopePath(scope), true);
+  assert.equal(cgroup.isEngineScopePath(`${scope}/supervisor`), true);
+  assert.equal(cgroup.isEngineScopePath(`${scope}/${DOM}`), true);
+  assert.equal(cgroup.isHomeScope(scope, { parent, home: '/srv/h', incarnation: INC }), true);
+  assert.equal(cgroup.isHomeScope(scope, { parent, home: '/srv/other', incarnation: INC }), false, "another home's scope is never a prior scope of this one");
+  assert.equal(cgroup.isHomeScope(scope, { parent, home: '/srv/h', incarnation: 'inc_01J00000000000000000000099' }), false);
+});
+
+test('a recorded process group is signalled only when the recorded process leads it', async () => {
+  const { signalRecordedGroup, signalFound } = await import(join(dist, 'invoke', 'processes.js'));
+  const { processStartTime } = await import(join(dist, 'lock.js'));
+  const start = processStartTime(process.pid);
+  // pgid 1 (or 0, or another group) never reaches kill(2): the call refuses
+  // before any signal, so this test process survives to assert it.
+  for (const pgid of [1, 0, -1, process.pid + 1]) assert.equal(signalRecordedGroup(process.pid, pgid, start, 'SIGKILL'), false, `pgid ${pgid}`);
+  for (const pid of [0, 1, -1]) assert.equal(signalFound({ pid, startTime: start }, 'SIGKILL'), false, `pid ${pid}`);
+  assert.equal(signalFound({ pid: process.pid, startTime: start }, 'SIGKILL'), false, 'never the engine itself');
+});

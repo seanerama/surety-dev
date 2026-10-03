@@ -42,6 +42,9 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // and then remove the domain runs between them.
   const may = await rt.read<{ cgroup_path: string | null; may: boolean }>('domain.may_create', { domain: claim.domain });
   if (!may.may || may.cgroup_path === null) return null;
+  // The recorded path must be this domain's directory in this engine's own
+  // scope; anything else is never created, entered or killed.
+  if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
   const inode = createDomainCgroup(may.cgroup_path, { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') });
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
 
