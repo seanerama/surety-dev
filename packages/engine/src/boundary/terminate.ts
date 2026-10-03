@@ -192,7 +192,9 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   if (final.state === 'unreadable') return unknown(`cgroup.events cannot be read: ${final.detail}`);
   if (final.state === 'populated' && final.value === 1) {
     if (args.observeOnly) {
-      await rt.engine('domain.observed', { domain: d.id, observation: 'running', detail: 'populated 1' }).catch(() => {});
+      // Still populated: termination is not established, and the
+      // quarantine's observation stays `unknown` (SEAM.md §128).
+      await rt.engine('domain.observed', { domain: d.id, observation: 'unknown', detail: 'populated 1' }).catch(() => {});
       return { terminated: false, unknown: null };
     }
     return unknown(`populated 1 persists after kill_grace (${killMs / 1000} s)`);

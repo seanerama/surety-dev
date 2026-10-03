@@ -676,6 +676,17 @@ export class Launcher {
       this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, asIs: true });
       return true;
     }
+    // The backend's exit report, read after the pause: the backend exited
+    // while the engine was stopped, and the run ends by its exit with what
+    // it sent before it (SEAM.md §130); nothing is re-granted.
+    if (gate.exit) {
+      handle.expiryExempt = true;
+      handle.gate = null;
+      for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+      gate.exit();
+      gate.release();
+      return true;
+    }
     const populated = readPopulated(handle.claim.cgroup_path);
     if (populated.state !== 'populated' || populated.value !== 1 || !launch.alive) {
       dropGate();
@@ -693,7 +704,8 @@ export class Launcher {
       handle.expiryExempt = true;
       handle.gate = null;
       for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
-      if (gate.exit) gate.exit();
+      const reported = gate.exit as (() => void) | null;
+      if (reported) reported();
       else {
         // The init's report is lost or not yet read: the response says how
         // the backend ended.
@@ -720,7 +732,7 @@ export class Launcher {
     // lease re-granted; then its exit, if it exited meanwhile.
     handle.gate = null;
     for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
-    gate.exit?.();
+    (gate.exit as (() => void) | null)?.();
     gate.release();
     return true;
   }

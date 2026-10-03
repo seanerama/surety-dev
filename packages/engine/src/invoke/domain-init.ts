@@ -384,14 +384,13 @@ async function init(): Promise<void> {
   child.stdin!.end(spec.stdin ?? '');
   child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
   child.stdout!.on('end', () => send({ t: 'eof' }));
+  // The init exits once the backend has (SEAM.md §126): its report written,
+  // process 1 of the sandbox goes, and the kernel ends every process left in
+  // its pid namespace, a daemon the backend started among them.
   child.on('exit', (code, signal) => {
     exit = { code, signal: signalNumber(signal) };
-    if (!channelOpen) onChannelLost();
     reportExit();
-    const again = setInterval(() => {
-      if (acked || terminating) clearInterval(again);
-      else reportExit();
-    }, 500);
+    setTimeout(() => process.exit(0), 20);
   });
 }
 
