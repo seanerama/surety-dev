@@ -226,6 +226,25 @@ export function snapshotTree(workspace, base) {
   }
 }
 
+// The tree of a checkout's tracked files as they are on disk (M2 slice 2,
+// row M46 `adopt`; SEAM.md §106), computed here and not read from the
+// engine: the tree of `head` with every tracked path refreshed from the work
+// tree, in an index of its own. Untracked files are not part of it; the
+// checkout's own index and HEAD are not touched.
+export function trackedTree(checkout, head) {
+  const gitDir = gitQuiet(checkout, ['rev-parse', '--absolute-git-dir']);
+  const index = join(gitDir, `fixture-tracked-index-${process.hrtime.bigint()}`);
+  const env = { GIT_INDEX_FILE: index, GIT_ATTR_NOSYSTEM: '1' };
+  const run = (args) => execFileSync('git', [...QUIET, ...noFilters(checkout), '--git-dir', gitDir, '--work-tree', checkout, ...args], { env: { ...gitEnv(checkout), ...env }, encoding: 'utf8' }).trim();
+  try {
+    run(['read-tree', head]);
+    run(['add', '-u', '--', '.']);
+    return run(['write-tree']);
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
 // `-c` arguments that switch off every filter driver the repository's
 // configuration names (clean, smudge and process), for test-side git.
 function noFilters(repo) {

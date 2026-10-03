@@ -21,12 +21,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { waitFor } from './harness/engine.mjs';
-import { answerAndHoldEffect, assertEffectInvalidated, assertPreview, assertStaleAnswer, consume, decision, decisionsOfKind, intentsOf } from './harness/decisions.mjs';
-import { addGitProject } from './harness/gitruns.mjs';
-import { assertOperations, eventsOfType, outOfBand, registryOf, revisionsOf } from './harness/journal.mjs';
-import { checkoutState, commitOnRef, fileAt, refOid } from './harness/repos.mjs';
+import { releaseBarrier, waitFor, within } from './harness/engine.mjs';
+import { INTENT_BARRIER, answer, answerAndHoldEffect, assertEffectInvalidated, assertPreview, assertStaleAnswer, consume, decision, decisionsOfKind, intentsOf, reachBarrier } from './harness/decisions.mjs';
+import { addGitProject, addItem, roleThatHolds, runToHold } from './harness/gitruns.mjs';
+import { armBarrier, assertOperations, eventsOfType, managedCheckouts, operationsOf, outOfBand, registryOf, revisionsOf } from './harness/journal.mjs';
+import { changedPaths, checkoutState, commitOnRef, fileAt, parentsOf, refOid, trackedTree, treeOf } from './harness/repos.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { step } from './harness/scripted.mjs';
 
 const ORIGINAL = 'export const lib = 1;\n';
 const edit = (n) => `export const lib = ${n}; // the developer's edit number ${n}\n`;
@@ -98,6 +99,95 @@ describe('M46 a checkout observation', () => {
     assert.deepEqual([readFileSync(file, 'utf8'), oobRefs(fx, project)], [edit(3), []], 'nothing was stashed or reset: the edit made in between is still there');
     assert.equal(outOfBand(fx.home, project.id).filter((row) => row.disposition !== null).length, 0, 'no observation was recorded as reconciled');
     await raisedAgain(fx, project, previewed);
+  });
+});
+
+// M2 slice 2, B2 (SEAM.md §106): the other answer a checkout observation
+// offers. `adopt` takes the developer's edits as the new starting point: the
+// engine commits the reviewed tracked content as one out-of-band revision on
+// the integration branch, through the journal, and the project goes on from
+// it. Nothing of the edits is lost or duplicated, and the developer's files
+// are left as they were.
+describe('M46 adopt of a checkout', () => {
+  test('adopt takes the edits as the new starting point: one engine-made out-of-band revision on the integration branch holds exactly the reviewed content, the observation is reconciled, the files are untouched and not observed again, and the next run is based on it', async (t) => {
+    const { fx, project, file, observed, previewed } = await dirtyCheckout(t);
+    const repo = project.repo.path;
+    const reviewed = trackedTree(repo, project.base);
+    const [checkout] = managedCheckouts(fx.home, project.id).filter((c) => c.kind === 'integration_worktree');
+    assert.deepEqual([checkout.baseline.head, JSON.parse(observed.found).tracked_tree_hash], [project.base, reviewed], 'the fixture is live: the observation found the tree the checkout holds, on the baseline');
+
+    await consume(fx, project.id, previewed, 'adopt');
+    await waitFor(() => outOfBand(fx.home, project.id)[0].disposition === 'adopt' && intentsOf(fx.home, previewed.id)[0]?.status === 'done', { what: 'the adoption to be recorded and its effect done' });
+
+    // One commit on the branch, on top of where it was, holding exactly what was reviewed.
+    const adopted = refOid(repo, project.repo.ref);
+    assert.notEqual(adopted, project.base, 'the integration branch moved');
+    assert.deepEqual(parentsOf(repo, adopted), [project.base], 'by one commit, on top of where it was');
+    assert.equal(treeOf(repo, adopted), reviewed, 'whose tree is exactly the tracked content that was reviewed');
+    assert.deepEqual(changedPaths(repo, project.base, adopted), { 'src/lib.js': 'M' }, 'it changes the edited file and nothing else');
+    assert.equal(fileAt(repo, adopted, 'src/lib.js'), edit(1), 'and holds the edit');
+    assert.equal(registryOf(fx.home, project.id)[project.repo.ref].expected_oid, adopted, 'the registry expects the branch there');
+    const outOfBandRevisions = revisionsOf(fx.home, { project: project.id }).filter((row) => row.kind === 'out_of_band');
+    assert.deepEqual(outOfBandRevisions.map((row) => [row.sha, row.created_by_run]), [[adopted, null]], 'one out-of-band revision records the commit, made by no run');
+
+    // Through the journal: the branch update is a compare-and-swap from the
+    // commit the branch was at, and every operation of the project is sound.
+    const moves = operationsOf(fx.home, { project: project.id, journalKind: 'ref_update' }).filter((op) => op.events[0].payload.ref === project.repo.ref);
+    assert.deepEqual(moves.map((op) => [op.events[0].payload.old_oid, op.events[0].payload.new_oid, op.status, op.finalized]), [[project.base, adopted, 'succeeded', true]], 'the branch update was journaled as a compare-and-swap and finalized');
+    assertOperations(fx.home, { project: project.id });
+    assert.deepEqual(intentsOf(fx.home, previewed.id).map((intent) => intent.status), ['done'], 'the effect was intended at consumption and is done');
+    assert.equal(eventsOfType(fx.home, 'repo.reconciled').length, 1, 'the observation is reconciled once');
+
+    // The developer's files are as they were left; the checkout, still on the
+    // branch, now stands at the adopted commit and is not observed again.
+    assert.equal(readFileSync(file, 'utf8'), edit(1), "the developer's edit is where it was: nothing was reset or stashed");
+    assert.deepEqual([checkoutState(repo).head, checkoutState(repo).branch], [adopted, project.repo.ref], 'the checkout is on the integration branch at the adopted commit');
+    await tick(fx.engine, project.id);
+    await fx.engine.kill();
+    await fx.start();
+    await tick(fx.engine, project.id);
+    assert.deepEqual(outOfBand(fx.home, project.id).map((row) => [row.id, row.disposition]), [[observed.id, 'adopt']], "the engine's own adoption is not observed in turn, across ticks and a restart");
+    assert.equal(readFileSync(file, 'utf8'), edit(1));
+
+    // The project dispatches again, and the next run starts from the adopted commit, edits included.
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThatHolds([step.write('src/next.js', 'export const next = 1;\n')])]);
+    const { run, workspace } = await runToHold(fx, project.id, item);
+    assert.equal(run.base_revision, adopted, "the next run's base is the adopted commit");
+    assert.equal(readFileSync(join(workspace.path, 'src/lib.js'), 'utf8'), edit(1), 'its workspace holds the adopted edit');
+    fx.scripted.release(item);
+  });
+
+  test('the file is edited again after the answer and before the effect: the adoption is invalidated, never made, and the edit is preserved', async (t) => {
+    const { fx, project, file, previewed } = await dirtyCheckout(t);
+    const repo = project.repo.path;
+    // The answer is accepted and its effect intended; the engine is held
+    // before the fresh comparison that precedes the effect (SEAM.md §76).
+    await armBarrier(fx.engine, INTENT_BARRIER, 'pause');
+    const pending = answer(fx.engine, project.id, previewed, 'adopt').catch((err) => err);
+    // The response may be held until the barrier is released; one that comes
+    // back at once is a refusal, or an engine that runs the effect at a tick.
+    const early = await within(pending, 1500);
+    if (early !== null) assert.equal(early.status, 200, `adopt of a checkout is accepted (body: ${early.text})`);
+    await reachBarrier(fx, project.id, INTENT_BARRIER);
+    assert.deepEqual([decision(fx.home, previewed.id).status, intentsOf(fx.home, previewed.id).map((intent) => intent.status)], ['consumed', ['pending']], 'the decision is consumed with one effect intent that has not begun');
+
+    writeFileSync(file, edit(3));
+    await assertEffectInvalidated(fx, previewed, {
+      release: async () => {
+        await releaseBarrier(fx.engine, INTENT_BARRIER);
+        return pending;
+      },
+    });
+    assert.deepEqual(
+      [refOid(repo, project.repo.ref), registryOf(fx.home, project.id)[project.repo.ref].expected_oid, revisionsOf(fx.home, { project: project.id }).filter((row) => row.kind === 'out_of_band').length, readFileSync(file, 'utf8')],
+      [project.base, project.base, 0, edit(3)],
+      'nothing was adopted: the branch and the registry are where they were, no revision was recorded, and the edit made in between is still there',
+    );
+    assert.equal(outOfBand(fx.home, project.id).filter((row) => row.disposition !== null).length, 0, 'no observation was recorded as reconciled');
+    assert.equal(eventsOfType(fx.home, 'repo.reconciled').length, 0);
+    const next = await raisedAgain(fx, project, previewed);
+    assert.notDeepEqual(next.manifest.found, previewed.manifest.found, 'the new preview shows what is there now');
   });
 });
 
