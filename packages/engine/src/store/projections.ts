@@ -221,6 +221,129 @@ export function openDecisions(db: Db, args: { project: string }) {
   };
 }
 
+// GET /v1/projects/:p/decisions/:d (D1 §11.3; brief B4): one decision of the
+// project by its identifier, whatever its status, in the list's form, with
+// its status, its generation, what its preview is bound to (the dependency
+// manifest) and its answer once given. A decision of another project is not
+// found here.
+export function readDecision(db: Db, args: { project: string; decision: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  const d = db
+    .prepare(
+      `SELECT "id", "project", "kind", "subject_type", "subject_id", "semantic_generation", "status", "question", "options", "dependency_manifest", "preview_hash",
+         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason"
+       FROM "decisions" WHERE "id" = ?`,
+    )
+    .get(args.decision) as Record<string, unknown> | undefined;
+  if (!d || d.project !== args.project) throw notFound('decision', args.decision);
+  return {
+    ...head,
+    decision: {
+      id: d.id,
+      kind: d.kind,
+      subject_type: d.subject_type,
+      subject_id: d.subject_id,
+      semantic_generation: d.semantic_generation,
+      status: d.status,
+      question: d.question,
+      options: JSON.parse(d.options as string) as unknown[],
+      dependency_manifest: JSON.parse(d.dependency_manifest as string) as Record<string, unknown>,
+      preview_hash: d.preview_hash,
+      raised_at: d.raised_at,
+      target_seconds: d.target_seconds,
+      escalated_at: d.escalated_at,
+      answer: parseJson<Record<string, unknown>>((d.answer as string | null) ?? null),
+      consumed_at: d.consumed_at,
+      invalidated_reason: d.invalidated_reason,
+    },
+  };
+}
+
+// ---- operations (D1 §§3.5, 11.3; brief B4) -----------------------------------------------
+
+interface OperationRow {
+  id: string;
+  seq: number;
+  kind: string;
+  status: string;
+  subject: string;
+  target: string;
+  finalizer_inputs: string;
+  outcome_detail: string | null;
+  remaining_scope: string | null;
+  linked_prior: string | null;
+  created_at: string;
+  finalized_at: string | null;
+  journal_kind: string | null;
+  state: string | null;
+}
+
+// GET /v1/projects/:p/operations: every operation of the project, in `seq`
+// order, whatever its state: pending and blocked ones included. Each with its
+// kind, the journal's state and the operation's status, its intent as the
+// journal's `intended` event froze it (what it was to do), its purpose, its
+// attempts with their reconciliation reads, and, when one holds it, the open
+// blocker and what can be answered. Nothing is probed: a state is as stored.
+export function readOperations(db: Db, args: { project: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  const rows = db
+    .prepare(
+      `SELECT o."id", o."seq", o."kind", o."status", o."subject", o."target", o."finalizer_inputs", o."outcome_detail", o."remaining_scope", o."linked_prior",
+         o."created_at", o."finalized_at", s."journal_kind", s."state"
+       FROM "operations" o LEFT JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."project" = ? ORDER BY o."seq"`,
+    )
+    .all(args.project) as OperationRow[];
+  const intended = db.prepare(`SELECT "payload" FROM "git_journal_events" WHERE "operation" = ? AND "event_kind" = 'intended' ORDER BY "seq" LIMIT 1`);
+  const attempts = db.prepare(
+    'SELECT "attempt_number", "status", "started_at", "finished_at", "reconciliation_reads" FROM "operation_attempts" WHERE "operation" = ? ORDER BY "attempt_number"',
+  );
+  const blocker = db.prepare(`SELECT "id", "options" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`);
+  return {
+    ...head,
+    operations: rows.map((o) => {
+      const intent = intended.get(o.id) as { payload: string } | undefined;
+      const held = blocker.get(o.id) as { id: string; options: string } | undefined;
+      const inputs = parseJson<{ purpose?: string }>(o.finalizer_inputs);
+      return {
+        id: o.id,
+        seq: o.seq,
+        kind: o.kind,
+        journal_kind: o.journal_kind,
+        state: o.state,
+        status: o.status,
+        purpose: inputs?.purpose ?? null,
+        intent: intent ? (JSON.parse(intent.payload) as Record<string, unknown>) : null,
+        subject: parseJson<Record<string, unknown>>(o.subject),
+        attempts: (attempts.all(o.id) as { attempt_number: number; status: string; started_at: string; finished_at: string | null; reconciliation_reads: string }[]).map((a) => ({
+          attempt_number: a.attempt_number,
+          status: a.status,
+          started_at: a.started_at,
+          finished_at: a.finished_at,
+          reconciliation_reads: JSON.parse(a.reconciliation_reads) as unknown[],
+        })),
+        outcome_detail: parseJson<Record<string, unknown>>(o.outcome_detail),
+        remaining_scope: parseJson<Record<string, unknown>>(o.remaining_scope),
+        linked_prior: o.linked_prior,
+        created_at: o.created_at,
+        finalized_at: o.finalized_at,
+        blocker: held ? { decision: held.id, options: JSON.parse(held.options) as unknown[] } : null,
+      };
+    }),
+  };
+}
+
+// GET /v1/projects/:p/environments (D1 §11.3; brief B4): the project's
+// environments with their current observation, as the project read shows
+// them. M1 keeps no observation history and runs no observation job, so
+// there is none to show.
+export function readEnvironments(db: Db, args: { project: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  return { ...head, environments: environmentsOf(db, args.project) };
+}
+
 // GET /v1/projects/:p/candidates/:c (D1 §11.3; SEAM.md §95): the candidate,
 // the protected version it was nominated under beside the effective one, the
 // candidate whose lineage started from it, and the latest stored evaluation

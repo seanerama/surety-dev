@@ -11,7 +11,7 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
-import { listProjects, openDecisions, readCandidate, readGate, readProject, readWork, runTail } from './projections.js';
+import { listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
@@ -139,6 +139,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'candidate.read': (d, a) => readCandidate(d, a),
   'candidate.gate': (d, a) => readGate(d, a),
   'work.list': (d, a) => readWork(d, a),
+  'decision.read': (d, a) => readDecision(d, a),
+  'operations.list': (d, a) => readOperations(d, a),
+  'environments.list': (d, a) => readEnvironments(d, a),
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
   'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
