@@ -1109,3 +1109,16 @@ The one review of the slice (E31) found the six entries built and sound except w
 **Consequences elsewhere.** No change to D1. Triage buckets A and B are settled; bucket C stays recorded.
 
 ---
+
+## E56. D2 draft 1 cross-reviewed; Sean's dispositions (decided by Sean, 2026-10-03)
+
+Astra's one cross-review of D2 draft 1 (`docs/reviews/D2/sdlc-review-D2-Astra.md`) approves it with amendments: nine blocking objections, five suggestions, all nine proposed D1 corrections accepted (five with a variant), one new correction, and a recommendation on each of the eleven open questions matching the draft's. Three objections were reproduced on this host as primitives (a launcher can enter a cgroup after it was observed empty; a host pathname socket is reachable through a read-only bind; Codex 0.159.2 ships with `multi_agent` enabled). Sean went through the findings one at a time; the dispositions are in `docs/reviews/D2/sdlc-review-D2-dispositions.md`.
+
+1. **All nine blocking objections accepted as written** (B01 launch closure before termination; B02 validated mount authority; B03 egress connect bound to the validated address; B04 a scoped qualification authority; B05 native delegation disabled and canary attempts witnessed; B06 reporting granularity separate from enforceable budget boundary; B07 known usage retained on a cancelled run; B08 volatile storage for provider files and pre-admission secret screening, the before-disk promise unchanged; B09 a resource envelope beyond memory and pids).
+2. **All five suggestions accepted** (N01 fresh challenge-response for a pause re-grant; N02 separate total classification of exit and domain observation; N03 current versus historical host qualification; N04 explicit canary diagnostics and capability scope; N05 the bootstrap opt-in kept out of qualified M2).
+3. **Corrections to D1 K1 to K10 accepted**, five with Astra's variants, K10 (the qualification authority, D1 §17.11 and §15.1) new. K3 changes the accepted M1 bootstrap case to opt in explicitly and adds a default-off case; the Verifier makes that change when D2 is built.
+4. **Q1 to Q7 and C1 to C4 decided as recommended:** dedicated API keys; the role holds its key in M2 with the stated metering limitation; WSL2 eligible to qualify; filters, LFS and partial clones unsupported; Codex's inner sandbox off; the UI's bootstrap decided with the UI; paid canaries only by explicit command; the Alpha exception through finding disposition with snapshotted evidence; both Reviewer restrictions; the token-reading acceptance withdrawn with the sandbox; estimates counted apart from reported dollars with the unknown allowance charged once.
+
+**What follows (E48 item 2):** draft 2 applies the dispositions, the driver checks it against the brief and the dispositions, and Sean approves D2 to build. No draft 3 unless Sean asks. Then the M2 acceptance plan and build spec, and the D3 brief.
+
+---
