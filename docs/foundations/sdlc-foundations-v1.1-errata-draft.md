@@ -1296,3 +1296,17 @@ The one review of the slice (E31) found the trust table, the dispatch rule (no a
 **Consequences elsewhere.** No change to D1. D2 §3.1's "created by `systemd-run --user --scope`" is read as E64 item 4 says. `docs/acceptance/reports/M2-not-claimed.md` "After slice 11" gains item 7's entries.
 
 ---
+
+## E66. M2 slice 11 merged: the engine runs a role inside a real boundary (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's record under Sean's delegation; nothing new is decided here.
+
+`build/m2-s11` merged to `main` at `d673fb3` (`--no-ff`) after the fix round of E65: S1 and the bounded launcher wait; a never-authorized launch ending `refused` and uncharged, also through quarantine and clearance; the path check requiring `dom_<ULID>`; the inode compared before any signal; the grace period ended early only on `populated 0` or absence. The driver's rerun on the branch tip `c2067a4`: `node scripts/run-tests.mjs acceptance --slice 11` passed 924 of 924 cases in 145 files, none skipped, M117 among them; `npm run test:unit` passed 146 tests in 30 files; the builder boundary check from a clean scratch worktree listed 37 paths, all inside the role's; after the run the user manager was `running` and no `surety-*` scope was left.
+
+After this slice the engine runs in its incarnation scope, checks the host at every start and reports the result, places and authorizes a launcher per invocation, closes before it observes termination, recovers by closing and observing prior supervisor leaves, quarantines on `unknown`, and re-grants a lease after a pause only on a fresh challenge; the scripted backend runs inside the real sandbox. No `host_qualifications` row is `active` yet: H9 and H10 wait for slice 12's probes, so no real backend can be dispatched, as intended.
+
+**Open from this slice, carried, none blocking:** E64 items 4 and 5 and E65 items 6 and 8 (Sean); E65 item 7's recorded items, assigned to slices 12 and 13; the Verifier pass over kernel-lane wall-clock comparisons (with the closing pass).
+
+**Next:** slice 12, rows M119 to M128 (M2 plan §3.4, §3.5): the mount plan, the probes P1 to P19 with their seeded targets and controls, the handover of the workspace, the egress proxy. Its Verifier, Builder and Reviewer are briefed with E64 item 2: P13 is among its probes.
+
+---
