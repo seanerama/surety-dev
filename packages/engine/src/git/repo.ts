@@ -3,7 +3,7 @@
 // be made: `unknown` is a value, never taken for "absent" or "clean".
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
+import { copyFileSync, lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type GitContext, SHA, git, gitOk } from './exec.js';
@@ -166,8 +166,13 @@ export async function listWorktrees(ctx: GitContext): Promise<WorktreeEntry[] | 
 }
 
 // The baseline of a checkout (D1 §7.6): its HEAD, its index's content (the
-// staged entries, not their stat data) and the tree its tracked files hold
-// on disk. null when any of it cannot be read.
+// staged entries, not their stat data) and the tree of its tracked content:
+// what `git commit -a` would commit (SEAM.md §111), every path the index
+// lists refreshed from the work tree, so a staged addition is in it, a staged
+// version superseded on disk gives way to the disk's, a tracked file deleted
+// from disk is not, and an untracked file is not. Computed on a copy of the
+// checkout's index: the checkout's own index is not written. null when any
+// of it cannot be read.
 export interface Baseline {
   head: string;
   index_hash: string;
@@ -185,7 +190,16 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   const index = join(scratch, `baseline-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
-    if ((await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
+    let copied = false;
+    try {
+      copyFileSync(join(ctx.gitDir, 'index'), index);
+      copied = true;
+    } catch (err) {
+      // A checkout with no index file yet holds what HEAD holds; any other
+      // failure is a read that could not be made.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+    }
+    if (!copied && (await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
     if ((await gitOk(ctx, ['add', '-u', '--', '.'], { env })) === null) return null;
     const tree = (await gitOk(ctx, ['write-tree'], { env }))?.trim() ?? '';
     if (!SHA.test(tree)) return null;

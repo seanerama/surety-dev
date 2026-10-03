@@ -85,7 +85,7 @@ export class Acceptor {
       try {
         const end = await this.step(run);
         if (end !== null && isWait(end)) {
-          if (!(await this.awaitJournal(handle, end.wait))) return;
+          await this.awaitJournal(handle, end.wait);
           failures = -1;
           continue;
         }
@@ -105,29 +105,38 @@ export class Acceptor {
     }
   }
 
-  // Wait until the journal has finalized or failed `operation`, holding the
-  // run: its lease is renewed meanwhile (D1 §8.3). The tick's journal step
-  // probes and reconciles the operation (D1 §§7.10, 8.1 step 2). Returns
-  // false when the run is no longer the pipeline's (a Stop or an Abandon
-  // took it), true once the operation is settled.
+  // Wait until the journal has finalized or failed `operation` (D1 §§4.5
+  // step 4, 7.10; SEAM.md §§47, 110, 112). The tick's journal step probes and
+  // reconciles it (D1 §8.1 step 2). While the run is the pipeline's, its
+  // lease is renewed (D1 §8.3). Once its end is decided (a Stop or an
+  // Abandon confirmed, a deadline, an expiry: in memory, or recorded as the
+  // run leaving `validating`), nothing renews the lease (E27 item 5), but the
+  // wait goes on: the run is not ended while an operation it issued is
+  // unresolved, so that an integration git did make is integrated before the
+  // end takes its course, and one it did not make is failed first. Returns
+  // once the operation is settled; the next pass then sees the run as it is.
   private async awaitJournal(handle: RunHandle, operation: string): Promise<boolean> {
     const { run, generation } = handle.claim;
     const renewEveryMs = (this.rt.setting('lease_ttl') * 1000) / 4;
     let renewed = performance.now();
     let renewing = true;
     for (;;) {
-      const state = await this.rt.read<string | null>('run.state', { run }).catch(() => 'validating');
-      if (state !== 'validating') return false;
       const op = await this.rt.engine<{ state: string }>('journal.detail', { operation }).catch(() => null);
       if (op && (op.state === 'finalized' || op.state === 'failed')) return true;
+      const decided = handle.ending || handle.intended !== null || handle.leaseLost;
+      if (decided) renewing = false;
       if (renewing && performance.now() - renewed >= renewEveryMs) {
-        renewed = performance.now();
-        const at = await this.rt.engine<string | null>('run.renew', { run, generation }).catch((err) => {
-          log('lease renewal', err, { run });
-          return undefined;
-        });
-        if (at === null) renewing = false;
-        else if (typeof at === 'string') handle.renewedAtMs = Math.max(handle.renewedAtMs, Date.parse(at));
+        const state = await this.rt.read<string | null>('run.state', { run }).catch(() => null);
+        if (state !== 'validating' || handle.ending || handle.intended !== null) renewing = false;
+        else {
+          renewed = performance.now();
+          const at = await this.rt.engine<string | null>('run.renew', { run, generation }).catch((err) => {
+            log('lease renewal', err, { run });
+            return undefined;
+          });
+          if (at === null) renewing = false;
+          else if (typeof at === 'string') handle.renewedAtMs = Math.max(handle.renewedAtMs, Date.parse(at));
+        }
       }
       await sleep(WAIT_POLL_MS);
     }

@@ -183,9 +183,10 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return {};
     case 'oob_adopt': {
       // The developer's edits are on the integration branch (brief B2): the
-      // checkout's baseline is what it holds now, the observation is
-      // reconciled, and the next run's base is the adopted commit, which the
-      // registry now expects.
+      // checkout's baseline is what it holds now (HEAD the adopted commit,
+      // its index set to it by the effect, its files untouched), the
+      // observation is reconciled, and the next run's base is the adopted
+      // commit, which the registry now expects.
       if (inputs.checkout && inputs.baseline) tx.db.prepare('UPDATE "managed_checkouts" SET "baseline" = ? WHERE "id" = ?').run(JSON.stringify(inputs.baseline), inputs.checkout);
       tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'adopt' WHERE "id" = ? AND "disposition" IS NULL`).run(inputs.oob);
       tx.emit('repo.reconciled', { project: op.project, out_of_band_change: inputs.oob }, { disposition: 'adopt', checkout: inputs.checkout, ref: inputs.ref, adopted: inputs.new_oid });

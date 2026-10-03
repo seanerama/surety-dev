@@ -353,7 +353,13 @@ export function oobOptions(tx: Tx, o: { subject_kind: string; ref: string | null
   if (o.subject_kind === 'checkout') {
     return [
       { key: 'stash', label: 'Stash', consequence: 'The engine commits the checkout as it is to an oob ref and restores its baseline.', effect: { disposition: 'stash' } },
-      { key: 'adopt', label: 'Adopt', consequence: 'What the checkout holds becomes its baseline.', effect: { disposition: 'adopt' } },
+      {
+        key: 'adopt',
+        label: 'Adopt',
+        consequence:
+          "The engine commits the checkout's tracked content (what git commit -a would commit) onto the integration branch's expected commit, moves the branch to that commit, and sets the checkout's index to it. The checkout's files are not touched.",
+        effect: { disposition: 'adopt' },
+      },
     ];
   }
   const row = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(o.ref) as RegistryRow;
@@ -401,12 +407,13 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
       const checkout = tx.db.prepare('SELECT "path", "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string; baseline: string };
       return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found } })]);
     }
-    // `adopt` (D1 §§7.6, 7.8; brief B2): the edits found become the new
-    // starting point. The engine commits the checkout's tracked content as
-    // reviewed onto the commit the integration branch is expected at, as an
-    // out-of-band revision, and moves the branch to it through the journal;
-    // the developer's checkout is left as it is, and what it holds then is its
-    // baseline. Only edits on top of the expected commit are adopted this way:
+    // `adopt` (D1 §§7.6, 7.8; brief B2; SEAM.md §§106, 111): the edits found
+    // become the new starting point. The engine commits the checkout's
+    // tracked content as reviewed (what `git commit -a` would commit) onto
+    // the commit the integration branch is expected at, as an out-of-band
+    // revision, moves the branch to it through the journal, and sets the
+    // checkout's index to it; the checkout's files are not touched, and what
+    // it holds then is its baseline. Only edits on top of the expected commit are adopted this way:
     // a checkout whose HEAD moved is the branch's own observation to settle.
     const found = parseJson<{ head?: string }>(row.found);
     const expected = parseJson<{ head?: string }>(row.expected);

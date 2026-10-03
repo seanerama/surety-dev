@@ -167,12 +167,13 @@ export class Effects {
   }
 }
 
-// A checkout observation answered `adopt` (D1 §§7.6, 7.8; brief B2): the
-// checkout's tracked content as reviewed is committed by the engine onto the
-// expected head, as an out-of-band revision, and the integration branch is
-// moved to it through the journal; the finalizer of that move records the
-// checkout's new baseline and reconciles the observation. Nothing in the
-// developer's checkout is written: its files and its index stay as they are.
+// A checkout observation answered `adopt` (D1 §§7.6, 7.8; brief B2; SEAM.md
+// §§106, 111): the checkout's tracked content as reviewed (what `git commit
+// -a` would commit) is committed by the engine onto the expected head, as an
+// out-of-band revision; the checkout's index is set to that commit's tree;
+// and the integration branch is moved to it through the journal, whose
+// finalizer records the checkout's new baseline and reconciles the
+// observation. The checkout's files are not touched.
 async function adoptCheckout(rt: Runtime, journal: Journal, row: IntentRow): Promise<void> {
   const facts = await rt.engine<{ repo: string; path: string; baseline: { head: string } } | null>('oob.stash_facts', { intent: row.id });
   if (facts === null) return;

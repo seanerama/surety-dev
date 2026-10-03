@@ -114,7 +114,7 @@ export function beginStash(
 // revision, and the compare-and-swap of the integration branch onto it are
 // journaled. The ref update's finalizer, fixed now, records what the
 // checkout then holds as its baseline: its HEAD the new commit, its index
-// and its files as they are.
+// the adopted tree's (the effect sets it so), its files as they are.
 export function beginAdopt(
   tx: Tx,
   args: { intent: string; facts: Facts; repo: string; tree: string; parent: string; sha: string; content: string; index_hash: string; before_index?: string; deadlineSeconds: number },
