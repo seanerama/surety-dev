@@ -65,7 +65,13 @@ lines.on('close', () => {
     waiter = null;
     w(null);
   }
+  onChannelLost();
 });
+
+// The engine is gone. The backend and whatever it started go on: the
+// boundary, not the init, ends them. Once nothing is left, there is nobody to
+// report to, and the init goes too.
+let onChannelLost: () => void = () => {};
 process.stdout.on('error', () => {
   channelOpen = false;
 });
@@ -326,6 +332,18 @@ function onMessage(m: Msg): void {
 }
 
 async function init(): Promise<void> {
+  onChannelLost = () => {
+    acked = true;
+    if (exit !== null) {
+      maybeLeave();
+      const watch = setInterval(() => {
+        if (others().length === 0) {
+          clearInterval(watch);
+          maybeLeave();
+        }
+      }, 250);
+    }
+  };
   send({ t: 'hello', stage: 'init' });
   const msg = await next();
   if (!msg || msg.t !== 'backend') process.exit(0);
@@ -364,6 +382,7 @@ async function init(): Promise<void> {
   child.stdout!.on('end', () => send({ t: 'eof' }));
   child.on('exit', (code, signal) => {
     exit = { code, signal: signalNumber(signal) };
+    if (!channelOpen) onChannelLost();
     reportExit();
     const again = setInterval(() => {
       if (acked || terminating) clearInterval(again);
