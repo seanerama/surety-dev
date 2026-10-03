@@ -41,9 +41,9 @@ export async function contentAndSpecChange(t, changeKind, opts) {
   assertNotApplied(fx, ctx, ctx.headBefore);
   const second = await nextGeneration(fx, project.id, first, { changed: 'tree' });
   assert.deepEqual(
-    { tree: second.manifest.tree, head: second.manifest.integration_revision, status: second.manifest.proposal_status },
-    { tree: replaced, head: ctx.headBefore, status: proposal.status },
-    'the next generation shows the tree it would now apply; the integration branch and the proposal are as they were',
+    { tree: second.manifest.tree, head: second.manifest.integration_revision, status: second.manifest.proposal_status, spec: second.manifest.spec_revision },
+    { tree: replaced, head: ctx.headBefore, status: proposal.status, spec: first.manifest.spec_revision },
+    'the next generation shows the tree it would now apply; the integration branch, the proposal and the specification are as they were',
   );
 
   // 2. The approved specification changes: the baseline gains a requirement.
