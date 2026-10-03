@@ -1235,3 +1235,15 @@ The one review of the slice (E31) found the trust table, the dispatch rule (no a
 **Consequences elsewhere.** No change to D1 or D2.
 
 ---
+
+## E63. M2 slice 10 merged: the kernel lane is built (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's record under Sean's delegation; nothing new is decided here.
+
+`build/m2-s10` merged to `main` at `b09f8da` (`--no-ff`) after the two review fixes (E62 S1, S2) and the two upheld objections (002, 003; E61). The driver's rerun on the branch tip `8ff950a`: `node scripts/run-tests.mjs acceptance --slice 10` passed 874 of 874 cases in 136 files, none skipped; `npm run test:unit` passed 29 files (137 tests); the builder boundary check from a clean scratch worktree listed 52 paths, all inside the role's. The slice adds migration 0007 (trust table, qualification attempts, the boundary rows), the trust and qualification transitions, the launcher's choke point with the fixture route, backend resolution per role (E61 item 4), the sandbox plan's validation, the ledger's allowance, the result-field rebuild, and 21 engine keys in the contract (E61 item 2).
+
+**Open from this slice, carried, none blocking:** E61 items 1 to 8 and E62 questions 1 to 4 (Sean); E62's suspected items, assigned to slices 11 to 13 where their rows live.
+
+**Next:** slice 11, the sandbox lane's boundary rows M110 to M118 (M2 plan §3.2, §3.3; build spec §9), with the closing Verifier pass on slice 10 running alongside.
+
+---
