@@ -15,7 +15,7 @@ import { eventsAbout } from '../invariants.mjs';
 import { addProject, addWork, run as runRow, scriptedEngine, tick, waitForRun } from '../runs.mjs';
 import { script } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
-import { cgroupOfPid, procsOf, scopePathOf, scopeUnit, subtreeControl } from './cgroup.mjs';
+import { cgroupOfPid, endScopeLeftovers, procsOf, scopePathOf, scopeUnit, scopeUnitPrefix, subtreeControl } from './cgroup.mjs';
 import { members, roleMembers } from './procs.mjs';
 
 // Ticks only when a test asks; short real-time grace periods, a little
@@ -43,6 +43,13 @@ export function sandboxEnv() {
 export async function sandboxEngine(t, { config = {}, barriers = [], until = 'full', start = true, env = {} } = {}) {
   const fx = await scriptedEngine(t, { config: { ...SANDBOX_CONFIG, ...config }, start: false, env: { ...sandboxEnv(), ...env } });
   fx.lane = 'sandbox';
+  // Nothing of this fixture's engines outlives its test: a launcher left
+  // waiting at a barrier by a case that failed is ended with its scope. The
+  // prefix is taken now, while the home is there to resolve.
+  const prefix = scopeUnitPrefix(fx.home);
+  t.after(() => {
+    endScopeLeftovers(prefix);
+  });
   const plainStart = fx.start;
   fx.start = (opts = {}) => plainStart({ ...opts, args: [...HOST_CHECKS_RUN, ...(opts.args ?? [])] });
   if (start) await fx.start({ barriers, until });
