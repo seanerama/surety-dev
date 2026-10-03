@@ -29,7 +29,7 @@ import { recordsOf } from './harness/records.mjs';
 import { addProject, addWork, answerDecision, assertRunEnded, assertRunQuarantined, requestTick, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, daemonReexec, makeLeaf, makeUnreadable, moveIntoCgroup, populated, procsOf, removeCgroup, restoreReadable, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, eventsOf, roleAlive, roleHolding, sandboxEngine, updateDomain, waitForEvent } from './harness/sandbox/lane.mjs';
-import { memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
+import { hostProcess, memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
 import { cgroupSentinel } from './harness/sandbox/sentinel.mjs';
 import { script, step } from './harness/scripted.mjs';
 
@@ -61,10 +61,16 @@ async function assertHoldsAcrossTicks(fx, project, runId, before, n = 2) {
 }
 
 // M17's clearance, once: terminated, the reservation released, the run
-// ended with its outcome, and the project free.
-async function assertClearedOnce(fx, project, runId, outcome) {
+// ended with its outcome, and the project free. `launched` false: the run's
+// launch was never authorized, so no role code ever ran: its invocation is
+// recorded refused, never launched, and is not charged (SEAM.md §§24, 125).
+async function assertClearedOnce(fx, project, runId, outcome, { launched = true } = {}) {
   await waitForRunState(fx.home, runId, 'ended');
-  const ended = assertRunEnded(fx.home, runId, { outcome, launched: true, recovery: false });
+  const ended = assertRunEnded(fx.home, runId, { outcome, launched, recovery: false });
+  if (!launched) {
+    assert.deepEqual(ended.receipts.map((r) => r.statuses), [['dispatch_started', 'refused']], 'a run whose launch was never authorized is recorded refused, never launched, also when it ends by a quarantine\'s clearance');
+    assert.deepEqual(ended.receipts.flatMap((r) => r.ledger), [], 'and is not charged');
+  }
   assert.equal(ended.domains[0].status, 'terminated');
   assert.equal(ended.domains[0].observation, 'terminated');
   assert.equal(eventsOf(fx.home, 'domain', ended.domains[0].id, 'domain.quarantined').length, 1);
@@ -213,10 +219,99 @@ describe('M115 every unknown quarantines', () => {
     const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
     assert.ok([200, 404, 409].includes(res.status), `the launcher is released (or is already gone): ${res.status}`);
     await tick(fx.engine, project);
-    await assertClearedOnce(fx, project, run.id, 'stopped');
+    await assertClearedOnce(fx, project, run.id, 'stopped', { launched: false });
     assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'the released launcher got no grant');
     assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'and ran nothing');
     await waitForWork(fx.home, item, 'held');
+  });
+
+  // The slice-11 review's S1 (E31: one case per confirmed serious finding).
+  // D2 §3.2: "populated 0 on a domain whose launcher is outstanding is not
+  // termination"; §3.4: each tick observes a quarantined domain again "under
+  // the same closure prerequisites". The launcher here is this engine's
+  // child, alive in the supervisor leaf, never placed, its exit never
+  // established (the launcher_wait fault left it so): the domain's cgroup is
+  // empty and stays empty, and a tick that took populated 0 for termination
+  // would end the run while a launcher can still enter the domain.
+  test("S1 (the slice-11 review): while this engine's launcher is outstanding (alive, unplaced, its exit not established) a tick keeps the domain unknown and the run quarantined and records no termination; once the launcher is released and gone, having been granted nothing and having run nothing, the next tick clears the quarantine once", async (t) => {
+    const fx = await sandboxEngine(t, { config: GRACE, barriers: ['launcher.before_placement=pause'] });
+    const scope = await assertEngineInScope(fx);
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(item, [script.complete()]);
+    fx.scripted.script(waiting, [script.complete()]);
+    await requestTick(fx.engine, project);
+    await fx.engine.waitUntil('barrier:launcher.before_placement');
+    const run = await waitForRun(fx.home, item);
+    const domain = domainOf(fx.home, run.id);
+    const launchers = procsOf(scope.supervisor).filter((p) => p !== fx.engine.pid && /node$/.test(hostProcess(p)?.cmdline[0] ?? ''));
+    assert.equal(launchers.length, 1, `the launcher waits in the supervisor leaf (members: ${procsOf(scope.supervisor).join(', ')})`);
+    const [launcher] = launchers;
+
+    // The Stop cannot establish the launcher's exit: unknown, quarantine.
+    await armFault(fx.engine, { point: 'launcher_wait' });
+    await stopRun(fx.engine, project, run.id);
+    await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
+    const before = assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
+
+    // The launcher is outstanding: alive, still in the supervisor leaf, not a
+    // member of the domain, whose cgroup is there and empty.
+    const outstanding = (when) => {
+      assert.ok(hostProcess(launcher) !== null, `${when}: the launcher (host pid ${launcher}) is alive`);
+      assert.ok(procsOf(scope.supervisor).includes(launcher), `${when}: it is still in the supervisor leaf`);
+      assert.equal(cgroupExists(domain.cgroup_path), true, `${when}: the domain's directory is there`);
+      assert.deepEqual(procsOf(domain.cgroup_path), [], `${when}: the launcher is not a member of the domain`);
+      assert.equal(populated(domain.cgroup_path), 0, `${when}: the domain reads populated 0`);
+      assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.placed'), [], `${when}: it never placed itself`);
+    };
+    outstanding('the fixture is live, after the Stop');
+
+    // Ticks, with the launcher outstanding: populated 0 is not termination.
+    for (let i = 1; i <= 2; i++) {
+      await tick(fx.engine, project);
+      assert.deepEqual(
+        eventsOf(fx.home, 'domain', domain.id, 'domain.terminated').map((e) => e.seq),
+        [],
+        `tick ${i} recorded domain.terminated while this engine's launcher is outstanding: alive, unplaced, its exit not established. D2 §3.2: "populated 0 on a domain whose launcher is outstanding is not termination"; a tick observes under the same closure prerequisites (§3.4)`,
+      );
+      const row = domainOf(fx.home, run.id);
+      assert.deepEqual([row.status, row.observation, row.launch_state], ['quarantined', 'unknown', 'closed'], `tick ${i}: the domain stays quarantined and unknown, its launch closed`);
+      await assertHoldsAcrossTicks(fx, project, run.id, before, 0);
+      outstanding(`after tick ${i} (a tick signals nothing)`);
+      assert.equal(runsOf(fx.home, waiting).length, 0, `tick ${i}: nothing else of the project is dispatched`);
+    }
+
+    // The launcher is released. Closure forbids the grant, so it gets none
+    // and runs nothing of the role; it leaves by itself. Whether it placed
+    // itself on the way (D2 §3.2 lets a launcher be "itself a member" after
+    // closure) is not pinned; that it is gone and the domain empty is.
+    const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
+    assert.equal(res.status, 200, `the waiting launcher is released (${res.status} ${res.text})`);
+    await waitHostGone(launcher, { timeoutMs: 20_000 });
+    await waitFor(() => (populated(domain.cgroup_path) === 0 ? true : undefined), { timeoutMs: 10_000, what: 'the domain to read populated 0 once the launcher is gone' });
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'the released launcher was granted nothing');
+    assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'and ran nothing of the role');
+    // Gone, and the domain empty; the engine clears nothing without observing.
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated'), [], 'no termination is recorded before the tick that observes it');
+    assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
+
+    // The condition is lifted: the launcher has exited and the domain is
+    // empty with its launch closed. The next tick clears it, once.
+    await tick(fx.engine, project);
+    const ended = await assertClearedOnce(fx, project, run.id, 'stopped', { launched: false });
+    const terminated = eventsOf(fx.home, 'domain', domain.id, 'domain.terminated');
+    assert.equal(terminated.length, 1, 'one domain.terminated');
+    assert.ok(eventsOf(fx.home, 'domain', domain.id, 'domain.placed').every((e) => e.seq < terminated[0].seq), 'no placement is recorded after the termination (B12)');
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'never authorized');
+    assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'no role was ever launched for the run');
+    await waitForWork(fx.home, item, 'held');
+    assert.equal(ended.run.outcome, 'stopped');
+    const settled = JSON.stringify(assertRunEnded(fx.home, run.id, { outcome: 'stopped', launched: false, recovery: false }));
+    // The project is free again, and repeating the observation writes nothing.
+    await tick(fx.engine, project);
+    await waitForWork(fx.home, waiting, 'complete');
+    assert.equal(JSON.stringify(assertRunEnded(fx.home, run.id, { outcome: 'stopped', launched: false, recovery: false })), settled, 'further ticks write nothing more about the cleared run');
   });
 
   test('(f) cgroup.kill refused during termination: unknown and quarantined with the role alive, across a restart; writable again, a tick observes populated 1 and keeps the quarantine; the role gone, the next tick clears it', async (t) => {

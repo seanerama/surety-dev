@@ -157,6 +157,58 @@ export function killCgroup(dir) {
   writeFileSync(join(dir, 'cgroup.kill'), '1');
 }
 
+// What a fixture's engines left in their scopes when its test is over: a
+// launcher waiting at a barrier outlives its engine (SEAM.md §125), and a
+// case that fails before it releases the launcher would leave it, and its
+// scope, behind. Every member of every child cgroup of every scope whose
+// unit name starts with `prefix` (one home's: `scopeUnitPrefix(home)`) is
+// ended, by `cgroup.kill`, or one by one where a case left that file
+// unwritable. Confined like every other change here: only inside a test
+// engine's scope. Returns the directories it emptied. Never throws.
+export function endScopeLeftovers(prefix) {
+  const ended = [];
+  if (!/^surety-[0-9a-f]{16}-$/.test(prefix)) return ended;
+  let scopes = [];
+  try {
+    scopes = listScopes(prefix);
+  } catch {
+    return ended; // no user manager to ask: nothing of this lane can be running under it
+  }
+  for (const { unit } of scopes) {
+    const scope = scopePathOf(unit);
+    if (scope === null || testScopePosition(scope) !== 'scope') continue;
+    let children = [];
+    try {
+      children = childCgroups(scope);
+    } catch {
+      continue; // gone meanwhile
+    }
+    for (const child of children) {
+      const dir = join(scope, child);
+      try {
+        const pids = procsOf(dir);
+        if (pids.length === 0) continue;
+        try {
+          killCgroup(dir);
+        } catch {
+          if (testScopePosition(dir) !== 'inside') continue;
+          for (const pid of pids) {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              // gone
+            }
+          }
+        }
+        ended.push(dir);
+      } catch {
+        // gone meanwhile
+      }
+    }
+  }
+  return ended;
+}
+
 // Write a pid into a cgroup's `cgroup.procs` from the test's side: the
 // kernel refuses it unless the test may migrate the process (same uid,
 // write access to the destination and the common ancestor).
