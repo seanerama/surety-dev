@@ -168,7 +168,8 @@
       "M118-pause-regrant.test.mjs"
     ],
     "12": [
-      "M110-qualification-per-start.test.mjs"
+      "M110-qualification-per-start.test.mjs",
+      "M119-validated-mount-plan.test.mjs"
     ]
   },
   "sandbox": [
@@ -181,6 +182,7 @@
     "M116-membership-cannot-be-escaped.test.mjs",
     "M117-processes-and-descriptors.test.mjs",
     "M118-pause-regrant.test.mjs",
-    "M110-qualification-per-start.test.mjs"
+    "M110-qualification-per-start.test.mjs",
+    "M119-validated-mount-plan.test.mjs"
   ]
 }

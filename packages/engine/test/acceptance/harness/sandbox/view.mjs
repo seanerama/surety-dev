@@ -27,8 +27,9 @@ import { newId } from '../ids.mjs';
 import { getPolicy } from '../journal.mjs';
 import { readRun } from '../reads.mjs';
 import { recordFile, recordRow } from '../records.mjs';
-import { tick, waitForRun, waitForRunState } from '../runs.mjs';
-import { VALID_RESULT, acting, hostNamespaces, namespacesOf, step } from '../scripted.mjs';
+import { assertRunEnded, requestTick, runsOf, tick, waitForRun, waitForRunState, waitForWork } from '../runs.mjs';
+import { VALID_RESULT, acting, hostNamespaces, namespacesOf, script, step } from '../scripted.mjs';
+import { eventsNamed } from '../trust.mjs';
 import { cgroupOfPid } from './cgroup.mjs';
 import { domainOf, roleProcess } from './lane.mjs';
 
@@ -276,4 +277,46 @@ export async function approveWidening(fx, project, change) {
   const policy = await atRevision(fx, project, (before.revision ?? 0) + 1);
   assert.deepEqual(policy.effective[key], change[key], `${key}: approved, the effective policy holds the value`);
   return policy;
+}
+
+// ---- a dispatch refused before any launcher starts (SEAM.md §§116, 120) -----------------
+
+// Tick, and require the item's run to end `refused` / `preflight_refused`
+// with `code`, nothing launched: no launcher placed, no scripted launch. The
+// project parks a refused item at once (PARK_ON_REFUSAL). Returns {run, shown}.
+export async function refusedBeforeLaunch(fx, project, item, code, what) {
+  const launches = fx.scripted.launches().length;
+  // A role that is launched after all finishes at once, so that the case
+  // fails at its assertion and not at a wait.
+  fx.scripted.script(item, [script.complete()]);
+  await requestTick(fx.engine, project);
+  const run = await waitForRun(fx.home, item, { state: 'ended' });
+  assertRunEnded(fx.home, run.id, { outcome: 'refused', reason_class: 'preflight_refused', launched: false, recovery: false });
+  assert.equal(fx.scripted.launches().length, launches, `${what}: no role was launched`);
+  assert.deepEqual(eventsNamed(fx.home, 'domain.placed').filter((event) => event.subject?.run === run.id), [], `${what}: no launcher was placed`);
+  const shown = await readRun(fx.engine, project, run.id);
+  assert.equal(shown.code, code, `${what}: the run read carries the code (refusal: ${JSON.stringify(shown.refusal ?? null)})`);
+  assert.equal(shown.refusal?.code, code, `${what}: and the refusal in its form`);
+  const parked = await waitForWork(fx.home, item, 'parked');
+  assert.equal(runsOf(fx.home, item).length, 1, `${what}: the one refusal parks the item (${parked.status})`);
+  return { run, shown };
+}
+
+// ---- descriptors (D2 §2.3 "nothing is inherited"; A.6 P14; as row M117 (c) judges them) --
+
+// Of a `self_status` probe's descriptor table, those beyond 0 to 2 that are
+// not the runtime's own: an anonymous inode, /dev/null or a random device, a
+// pipe both of whose ends are in the same table (or one of 0 to 2). What is
+// left was inherited.
+export function inheritedDescriptors(fds) {
+  const own = Object.entries(fds).filter(([fd]) => Number(fd) > 2);
+  const pipeEnds = Object.values(fds).filter((v) => v.startsWith('pipe:'));
+  const stdPipes = new Set(['0', '1', '2'].map((fd) => fds[fd]).filter((v) => v?.startsWith('pipe:')));
+  return own.filter(([, target]) => {
+    if (target.startsWith('anon_inode:')) return false;
+    if (target === '/dev/null' || target === '/dev/urandom' || target === '/dev/random') return false;
+    if (target.startsWith('unreadable:')) return false;
+    if (target.startsWith('pipe:')) return !(pipeEnds.filter((v) => v === target).length >= 2 || stdPipes.has(target));
+    return true;
+  });
 }
