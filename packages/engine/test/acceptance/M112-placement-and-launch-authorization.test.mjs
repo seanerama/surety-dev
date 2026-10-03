@@ -19,7 +19,7 @@ import { describe, test } from 'node:test';
 
 import { CONTRACT } from './harness/fixtures.mjs';
 import { releaseBarrier, waitFor } from './harness/engine.mjs';
-import { addProject, addWork, advanceClock, assertRunEnded, leasesOf, requestTick, runsOf, stopRun, tick, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
+import { addProject, addWork, advanceClock, assertRunEnded, leasesOf, requestTick, runsOf, stopRun, tick, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, populated, procsOf, waitCgroupGone, waitPopulated } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, checkOf, domainOf, domainRow, eventsOf, hostSection, ownershipOf, receiptOf, roleProcess, sandboxEngine, scopeOf, waitForEvent } from './harness/sandbox/lane.mjs';
 import { hostProcess, members, scriptedMembers } from './harness/sandbox/procs.mjs';
@@ -195,11 +195,32 @@ describe('M112 placement and launch authorization', () => {
     assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.placed'), [], 'never placed');
     assertGrantRefused(fx, run, domain, '(e)');
     await waitCgroupGone(domain.cgroup_path);
-    // Repaired like any failed run: the next dispatch completes the work.
-    fx.scripted.defaultScript(script.complete());
+
+    // Repaired like any failed run (SEAM.md §§15, 125). The repair run's role
+    // is the item's first scripted launch, since the killed launcher's run
+    // launched none, so it follows the item's first script and holds at the
+    // gate (objection 004): the case reads it there, in a domain of its own,
+    // placed and authorized, and then lets it finish.
     await tick(fx.engine, project);
+    const repairLaunch = await fx.scripted.waitForHolding({ work_item: item });
+    const repair = await waitForRun(fx.home, item, { index: 1, state: 'executing' });
+    assert.equal(repairLaunch.run, repair.id, 'the role that holds is the repair run\'s');
+    assert.equal(repairLaunch.launch_index, 0, "it is the item's first scripted launch: the run whose launcher was killed launched no role");
+    assert.equal(fx.scripted.launches({ work_item: item }).length, 1, 'one scripted launch for the item, the repair\'s');
+    const repairDomain = domainOf(fx.home, repair.id);
+    assert.notEqual(repairDomain.id, domain.id, 'the repair run has a domain of its own');
+    assert.deepEqual([repairDomain.status, repairDomain.launch_state], ['launched', 'authorized'], 'placed and authorized like any launch');
+    assert.equal(eventsOf(fx.home, 'domain', repairDomain.id, 'domain.placed').length, 1);
+    assert.equal(eventsOf(fx.home, 'domain', repairDomain.id, 'domain.launch_authorized').length, 1);
+    assert.equal((await roleProcess(fx, repairDomain, repairLaunch)).pid > 0, true, 'host-read: the repair role is a member of its domain');
+    assert.equal(workItem(fx.home, item).repair_attempts, 1, 'the re-dispatch after the failed run is one repair attempt');
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.placed'), [], 'the first domain was still never placed');
+    assert.equal(cgroupExists(domain.cgroup_path), false, 'and its directory stays gone');
+
+    fx.scripted.release(item);
     await waitForWork(fx.home, item, 'complete');
-    assert.ok(runsOf(fx.home, item).length >= 2, 'a repair run followed');
+    assertRunEnded(fx.home, repair.id, { outcome: 'completed', reason_class: 'none', launched: true, recovery: false });
+    assert.equal(runsOf(fx.home, item).length, 2, 'the failed run and its one repair');
   });
 
   test('(g) [not_exercised] the observer\'s record of a late launcher: H13 is not exercised on this host and no observer evidence exists', async (t) => {
