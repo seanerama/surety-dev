@@ -20,13 +20,13 @@
 // written against, which has no probe suite (COVERAGE.md, "M2 slice 12").
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { addGitProject } from './harness/gitruns.mjs';
 import { readRun } from './harness/reads.mjs';
-import { holdSecret } from './harness/records.mjs';
+import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { addWork, assertRunEnded, requestTick, waitForRun } from './harness/runs.mjs';
 import { checkOf, hostSection, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { withStore } from './harness/store.mjs';
@@ -127,5 +127,41 @@ describe('M124 a probe needs its seeded target and its control', () => {
     assert.equal(h13.result, 'not_exercised', `the observer is not exercised on this host (${h13.observed})`);
     assert.ok(typeof h13.observed === 'string' && h13.observed.length > 0, 'and the engine says why');
     for (const p of host.probes ?? []) assert.equal(p.observer ?? null, null, `${p.id} cites no observer evidence`);
+  });
+
+  // The slice-12 review's S2 (D2 A.6 P2, §2.8; SEAM §138 and the section
+  // "Amended after the slice-12 review"): a probe passes only on targets that
+  // were seeded, verified from the host, and attempted by the role with the
+  // negative denied. P2's evidence names every target its verdict counts,
+  // each with the role's own attempts; on a fresh home the engine log, a
+  // record and another domain's area are among them (the engine seeds what
+  // is not there yet).
+  test('S2 (the slice-12 review): on a fresh home, the start-up suite\'s P2 evidence names each target it counts (the store, the engine log, a record, another domain\'s area), each seeded and host-verified, each attempted by the role and refused ENOENT; P2 passes only so', async (t) => {
+    const fx = await sandboxEngine(t);
+    const home = realpathSync(fx.home);
+    const row = withStore(fx.home, (db) => db.prepare('SELECT * FROM "host_qualifications" ORDER BY rowid DESC LIMIT 1').get());
+    assert.ok(row, 'the start wrote its host qualification');
+    const evidence = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, row.evidence)), 'utf8'));
+    const p2 = evidence.probes?.find((p) => p.id === 'P2');
+    assert.ok(p2, 'the evidence holds P2');
+    const rowP2 = JSON.parse(row.probes).find((p) => p.id === 'P2');
+    assert.ok(
+      Array.isArray(p2.targets) && p2.targets.length > 0,
+      `P2's evidence names each target its verdict counts, with the role's attempts at it (SEAM §138); it holds ${JSON.stringify({ result: rowP2?.result, detail: p2.detail, keys: Object.keys(p2) })}, and the role's own P2 report was ${JSON.stringify(evidence.suite?.lines?.p2?.results ?? null).slice(0, 600)}`,
+    );
+    for (const target of p2.targets) {
+      const what = `P2 target ${target.kind} (${target.path})`;
+      assert.ok(typeof target.path === 'string' && (target.path.startsWith(`${home}/`) || target.path.startsWith(`${fx.home}/`)), `${what}: a path in the engine home`);
+      assert.equal(target.host_verified, true, `${what}: seeded and read from the host before the role's attempt`);
+      assert.ok(Array.isArray(target.attempts) && target.attempts.length > 0, `${what}: the role attempted it (attempts: ${JSON.stringify(target.attempts)})`);
+      for (const a of target.attempts) assert.deepEqual([a.outcome, ['ENOENT', 'ENOTDIR'].includes(a.error)], ['failed', true], `${what}: refused as absent from the role's view (${JSON.stringify(a)})`);
+    }
+    const kinds = p2.targets.map((x) => x.kind);
+    for (const kind of ['store', 'engine_log', 'record', 'other_domain']) assert.ok(kinds.includes(kind), `P2 counts a target of kind ${kind} (it counts ${kinds.join(', ')})`);
+    const at = (kind) => p2.targets.find((x) => x.kind === kind).path.replace(`${fx.home}/`, `${home}/`);
+    assert.equal(at('engine_log'), join(home, 'engine.log'), 'the engine log is the real one');
+    assert.ok(at('record').startsWith(join(home, 'records') + '/'), 'the record is under records/');
+    assert.ok(at('other_domain').startsWith(join(home, 'domains') + '/'), 'the other domain\'s area is under domains/');
+    assert.deepEqual([rowP2.result, rowP2.target_seeded, rowP2.negative], ['passed', true, 'denied'], 'and P2 passes on them');
   });
 });

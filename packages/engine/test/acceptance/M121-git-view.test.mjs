@@ -29,13 +29,15 @@
 
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { sha256Hex } from './harness/engine.mjs';
 import { PERMITTED_EDIT, addGitProject, addItem, permittedEdit } from './harness/gitruns.mjs';
-import { assertCommitted, operationsOf } from './harness/journal.mjs';
+import { assertCommitted, changePolicy, operationsOf } from './harness/journal.mjs';
 import { addLinkedWorktree, gitQuiet } from './harness/repos.mjs';
+import { holdSecret } from './harness/records.mjs';
 import { addWork, getRow } from './harness/runs.mjs';
 import { eventsOf, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
@@ -224,5 +226,54 @@ describe('M121 the repository\'s configuration and hooks; git through the view',
     const intended = withStore(fx.home, (db) => db.prepare(`SELECT "seq", "subject", "payload" FROM "events" WHERE "type" = 'git.journal_intended' ORDER BY "seq"`).all()).filter((e) => `${e.subject} ${e.payload}`.includes(commitOp.id));
     assert.ok(terminated !== null && intended.length === 1, `one domain.terminated and one intent of the run's commit (terminated ${terminated}, intents ${intended.length})`);
     assert.ok(terminated < intended[0].seq, `the domain was terminated (${terminated}) before the snapshot's commit was intended (${intended[0].seq})`);
+  });
+
+  // The slice-12 review's S1 (D2 §2.5; SEAM §135, "Materialization", and the
+  // section "Amended after the slice-12 review"): the upper layer is screened
+  // for every registered secret before it is materialized, and a path is
+  // part of what is materialized. A held secret as a file's name, or as a
+  // directory's, refuses the materialization exactly as the same secret in
+  // a file's content does (the control, run first on the same engine).
+  test('S1 (the slice-12 review): a held secret as a file name and as a directory name refuses the materialization as the secret in a file\'s content does: nothing reaches the checkout or any ref, the run ends as the content control ends', async (t) => {
+    const fx = await sandboxEngine(t);
+    const project = await addGitProject(fx);
+    const repo = project.repo.path;
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
+    const secret = `sk-review-secret-${randomBytes(12).toString('hex')}`;
+    await holdSecret(fx.engine, 'review/s1/secret', secret);
+
+    const attempt = async (what, steps) => {
+      const refsBefore = gitQuiet(repo, ['for-each-ref', '--format=%(refname) %(objectname)']);
+      const role = await armedRole(fx, project.id, await addItem(fx, project.id, 'fix'), { before: [...steps, step.write('src/plain.txt', `plain, beside ${what}\n`)] });
+      const ended = await role.release();
+      const checkout = getRow(fx.home, 'workspaces', role.run.workspace).path;
+      return { ended, checkout, refsBefore, refsAfter: gitQuiet(repo, ['for-each-ref', '--format=%(refname) %(objectname)']) };
+    };
+    const nothingReached = (r, what, paths) => {
+      assert.equal(r.refsAfter, r.refsBefore, `${what}: no ref moved and none was made`);
+      for (const p of paths) assert.equal(existsSync(join(r.checkout, p)), false, `${what}: host-read, ${p} did not reach the checkout`);
+      assert.equal(existsSync(join(r.checkout, 'src/plain.txt')), false, `${what}: nor did anything else of the refused materialization`);
+      const named = gitQuiet(repo, ['log', '--all', '--format=', '--name-only']).split('\n').filter((n) => n.includes(secret));
+      assert.deepEqual(named, [], `${what}: no commit of any ref names the secret`);
+      assert.ok(!r.refsAfter.includes(secret), `${what}: no ref's name holds it`);
+    };
+
+    // The control: the secret in a file's content.
+    const control = await attempt('the content control', [step.write('src/holds-it.txt', `x ${secret} y\n`)]);
+    assert.notEqual(control.ended.outcome, 'completed', `control: the secret in a file's content refuses the run (${control.ended.outcome}/${control.ended.reason_class}: ${control.ended.reason_text})`);
+    nothingReached(control, 'control', ['src/holds-it.txt']);
+
+    for (const [what, path] of [
+      ['a file named with the secret', `src/${secret}.txt`],
+      ['a directory named with the secret', `docs/${secret}/readme.txt`],
+    ]) {
+      const r = await attempt(what, [step.write(path, 'harmless content\n')]);
+      assert.deepEqual(
+        [r.ended.outcome, r.ended.reason_class],
+        [control.ended.outcome, control.ended.reason_class],
+        `${what}: the held secret in a path refuses the materialization as the content control does (D2 §2.5: screened for every registered secret before materialization); the run ended ${r.ended.outcome}/${r.ended.reason_class} (${r.ended.reason_text})`,
+      );
+      nothingReached(r, what, [path, path.split('/').slice(0, 2).join('/')]);
+    }
   });
 });
