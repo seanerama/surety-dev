@@ -9,7 +9,8 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [spec/M1-build-spec.md](spec/M1-build-spec.md) | How M1 is built: scope, roles, corrections to the design, slices, definition of done. Start here. |
 | [spec/handoff-2026-10-03.md](spec/handoff-2026-10-03.md) | Handoff for the next orchestrator: where M1 stands, what waits for Sean, how the build is driven, host facts, what not to do. |
 | [spec/M2-input-triage.md](spec/M2-input-triage.md) | Confirmed by Sean (E48): the eighteen untested behaviours sorted into before a real agent, in M2, and later. |
-| [spec/M2-slice-1-hardening.md](spec/M2-slice-1-hardening.md) | The first slice of M2: the five gate-integrity entries of the triage, their cases, the procedure and what done means. |
+| [spec/M2-slice-1-hardening.md](spec/M2-slice-1-hardening.md) | The first slice of M2 (built and merged 2026-10-03, E50 to E52): the five gate-integrity entries of the triage, their cases, the procedure and what done means. |
+| [spec/M2-slice-2-legibility.md](spec/M2-slice-2-legibility.md) | The second slice of M2: bucket B of the triage, the six entries a first real project needs to be usable and legible. |
 | [spec/templates/project-spec-template.md](spec/templates/project-spec-template.md) | The specification a project gives Surety: the identifiers the engine registers and the prose around them. |
 | [spec/templates/spec-assistant-prompt.md](spec/templates/spec-assistant-prompt.md) | A paste-ready prompt for an assistant that works an idea into that specification with the owner, in the manner of Spec-Driven-Devops's Vision Assistant. |
 | [spec/templates/idea-brief-template.md](spec/templates/idea-brief-template.md) | One page the owner fills in before a Spec Assistant session, so the conversation starts from something written. |
