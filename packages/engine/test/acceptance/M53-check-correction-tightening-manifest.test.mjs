@@ -70,17 +70,21 @@ describe('M53 the check_correction_tightening manifest', () => {
     assert.deepEqual(approvalsOf(fx.home, previewed.id).map((row) => [row.subject_type, row.subject_id, row.result_hash]), [['protected_proposal', proposal.id, proposal.diff_hash]], 'the approval is of that proposal and that diff');
   });
 
-  test('a Reviewer approves a tightening: the proposal is applied with the Reviewer as its approver, and the human decision about it is closed', async (t) => {
+  // K8 change (M2 slice 10, row M106 (b); D2 §5 C2; COVERAGE.md "M2 slice
+  // 10"): this case had the Reviewer's approval apply the tightening and
+  // close the human's question. Until D3's classifier is qualified a
+  // Reviewer's approval of a tightening is a recommendation.
+  test("a Reviewer approves a tightening: a recommendation, which applies nothing and leaves the human's decision open with its preview; the human's approval then applies it with the human as its approver", async (t) => {
     const ctx = await correction(t, 'tightening');
     const { fx, project, proposal, decision: previewed } = ctx;
-    const { run } = await reviewerApproves(fx, project, proposal);
-    await waitApplied(fx, project, proposal);
-    assertApplied(fx, project, { proposal, previous: ctx.previous, headBefore: ctx.headBefore, authority: 'reviewer', changeKind: 'tightening' });
-    assert.equal(proposalsOf(fx.home, project.id)[0].approver, run.id, "the proposal names the Reviewer's run as its approver");
+    await reviewerApproves(fx, project, proposal);
     await tick(fx.engine, project.id);
-    assert.equal(decision(fx.home, previewed.id).status, 'invalidated', 'the human was not needed: the question is closed');
-    assertRefused(await answer(fx.engine, project.id, previewed, 'approve'), 409, CODES.invalidated, 'answering a decision another path has settled');
-    assert.equal(approvalsOf(fx.home, previewed.id).length, 0);
+    assert.equal(assertNotApplied(fx, ctx, ctx.headBefore).status, 'classified', "a Reviewer's approval applies nothing: the proposal still awaits an approval");
+    assert.deepEqual([decision(fx.home, previewed.id).status, decision(fx.home, previewed.id).preview_hash], ['open', previewed.preview_hash], 'the human decision is still open, with the preview it had');
+    await consume(fx, project.id, previewed, 'approve');
+    await waitApplied(fx, project, proposal);
+    assertApplied(fx, project, { proposal, previous: ctx.previous, headBefore: ctx.headBefore, authority: 'human', changeKind: 'tightening' });
+    assert.equal(approvalsOf(fx.home, previewed.id).length, 1, 'one approval, the human\'s');
   });
 
   test('the integration branch moves between preview and answer: the approval is stale although the correction can still be approved; the next generation is bound to the new revision and is applied onto it', async (t) => {

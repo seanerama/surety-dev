@@ -100,9 +100,10 @@ export const waitForPostScan = (home, id, state) => waitFor(() => recordRow(home
 
 // Give the engine's redactor a resolved secret: from now on the engine holds
 // `value` for the reference `ref`, in memory only. The values the tests use
-// are synthetic.
-export async function holdSecret(engine, ref, value) {
-  const res = await engine.post('/v1/harness/secrets', { ref, value });
+// are synthetic. `extra` adds what M2 records with a provider key: its
+// provider-side cap, `provider_cap_usd` (SEAM.md §116).
+export async function holdSecret(engine, ref, value, extra = {}) {
+  const res = await engine.post('/v1/harness/secrets', { ref, value, ...extra });
   assert.ok(res.status >= 200 && res.status <= 299, `hold a secret → ${res.status} ${res.text}`);
 }
 

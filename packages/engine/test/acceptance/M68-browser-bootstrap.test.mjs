@@ -19,6 +19,16 @@
 // Each browser case prints the browser's version and what it put on the
 // wire: that is the qualification evidence Review B14 asks for. A browser
 // that cannot be launched fails its cases; nothing is skipped.
+//
+// K3 change (M2 slice 10, row M107 (b); D2 §2.6, K3, N05; E56 item 3, E58
+// item 11; SEAM.md §115; COVERAGE.md "M2 slice 10"): the bootstrap route is
+// off by default under D2, served only when the engine setting
+// `ui_bootstrap` is true. This file is the labelled compatibility test: its
+// engine opts in with `ui_bootstrap: true` and every assertion below is
+// unchanged. The default-off case, with the token never read, is row M107
+// (M107-bootstrap-off-by-default.test.mjs). With the exception on, any
+// local uid can obtain the token (D2 §8 class C): this file claims no
+// protection from other local users.
 
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
@@ -61,7 +71,8 @@ describe('M68 fresh-browser bootstrap', () => {
   const ctx = {};
 
   // One engine for the cases below, started with the shell the first time a
-  // case asks for it. A case that cannot have it fails with the reason.
+  // case asks for it. A case that cannot have it fails with the reason. It
+  // opts in to the bootstrap route (K3): the compatibility test's engine.
   let built = null;
   const fixture = () =>
     (built ??= (async () => {
@@ -69,7 +80,7 @@ describe('M68 fresh-browser bootstrap', () => {
       shared.context.after(() => removeDir(root));
       mkdirSync(join(root, 'shell'));
       ctx.shell = shellDirectory(join(root, 'shell'));
-      Object.assign(ctx, await projectFixture(shared.context, { args: ['--harness-shell', ctx.shell.dir] }));
+      Object.assign(ctx, await projectFixture(shared.context, { args: ['--harness-shell', ctx.shell.dir], config: { ui_bootstrap: true } }));
       ctx.origin = selfOrigin(ctx.engine);
       return ctx;
     })());
