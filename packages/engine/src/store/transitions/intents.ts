@@ -10,8 +10,8 @@ import type { IntentResult, IntentSpec } from './journal.js';
 import { type PolicyCommit, intendPolicyCommit, policyFacts } from './project.js';
 import { completeIntent } from './protected.js';
 import { markStale } from './evidence.js';
-import { type Facts, revalidateIntent } from './queue.js';
-import { nextCounter, projectRepoRow } from './repo.js';
+import { type Facts, invalidateIntent, revalidateIntent } from './queue.js';
+import { nextCounter, projectRepoRow, registryRow } from './repo.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -105,6 +105,63 @@ export function beginStash(
     extra: { intent: args.intent },
   });
   if ('operation' in made) markExecuting(tx, args.intent, intent.project, made.operation, 'oob_stash');
+  return made;
+}
+
+// An adoption of a checkout's edits begins (brief B2; D1 §§7.6, 7.8): what
+// the checkout holds now is compared with what the preview showed; the
+// commit of its tracked content on the expected head, as an out-of-band
+// revision, and the compare-and-swap of the integration branch onto it are
+// journaled. The ref update's finalizer, fixed now, records what the
+// checkout then holds as its baseline: its HEAD the new commit, its index
+// and its files as they are.
+export function beginAdopt(
+  tx: Tx,
+  args: { intent: string; facts: Facts; repo: string; tree: string; parent: string; sha: string; content: string; index_hash: string; deadlineSeconds: number },
+): IntentResult | null {
+  if (!revalidateIntent(tx, args.intent, args.facts)) return null;
+  const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { project: string; plan: string };
+  const plan = JSON.parse(intent.plan) as { observation: string; checkout: string; ref: string };
+  const reg = registryRow(tx, intent.project, plan.ref);
+  // The branch moved since the answer: the edits are not adopted onto a head
+  // nobody reviewed them against. The intent is withdrawn; integrity observes
+  // what is there now.
+  if (reg === undefined || reg.expected_oid !== args.parent) {
+    invalidateIntent(tx, args.intent);
+    return null;
+  }
+  const follow: IntentSpec = {
+    project: intent.project,
+    kind: 'ref_update',
+    payload: { repo: args.repo, ref: plan.ref, old_oid: args.parent, new_oid: args.sha },
+    target: { repo: args.repo, ref: plan.ref },
+    subject: { out_of_band_change: plan.observation, adopt: args.sha },
+    finalizer: {
+      purpose: 'oob_adopt',
+      ref: plan.ref,
+      ref_kind: 'integration',
+      new_oid: args.sha,
+      oob: plan.observation,
+      intent: args.intent,
+      checkout: plan.checkout,
+      baseline: { head: args.sha, index_hash: args.index_hash, tracked_tree_hash: args.tree },
+    },
+    deadlineSeconds: args.deadlineSeconds,
+  };
+  const made = intendCommit(tx, {
+    project: intent.project,
+    repo: args.repo,
+    purpose: 'adopt',
+    tree: args.tree,
+    parent: args.parent,
+    sha: args.sha,
+    content: args.content,
+    revisionKind: 'out_of_band',
+    follow,
+    deadlineSeconds: args.deadlineSeconds,
+    extra: { intent: args.intent },
+  });
+  if ('operation' in made) markExecuting(tx, args.intent, intent.project, made.operation, 'oob_adopt');
   return made;
 }
 

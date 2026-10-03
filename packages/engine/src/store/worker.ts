@@ -85,7 +85,7 @@ import { chainBoundary, resumeWork } from './transitions/work.js';
 import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, recordAncestry } from './transitions/evidence.js';
 import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from './transitions/gates.js';
-import { beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
+import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
@@ -237,6 +237,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
+  'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),
   'oob.stashed': (tx, a) => stashed(tx, a),
   'notify.sending': (tx, a) => notificationSending(tx, a),
   'notify.outcome': (tx, a) => notificationOutcome(tx, a),

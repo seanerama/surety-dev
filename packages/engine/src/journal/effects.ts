@@ -52,6 +52,11 @@ export async function precondition(op: OpDetail, home: string): Promise<Refusal 
   if (op.kind === 'ref_update') {
     const inputs = op.inputs as unknown as RefInputs;
     if (inputs.ref_kind !== 'integration') return null;
+    // Adopting a checkout's edits moves the branch that checkout has checked
+    // out onto the commit of what it holds: the checkout is not left behind,
+    // its files are the new commit's (brief B2). Nothing else may move a
+    // checked-out integration branch (RN R5).
+    if (inputs.purpose === 'oob_adopt') return null;
     const branch = op.payload.ref!.slice('refs/heads/'.length);
     const at = await branchCheckedOutAt(op.payload.repo, branch, home);
     if (at === 'unknown') return null; // the effect itself will meet what cannot be read

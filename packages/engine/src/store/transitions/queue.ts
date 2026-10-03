@@ -31,7 +31,7 @@ import { contentHash, getCandidate, markStale, predecessors } from './evidence.j
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
-import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef } from './repo.js';
+import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
@@ -379,6 +379,14 @@ const OOB: KindSpec = {
   },
   reraise: false,
   answer: answerOutOfBand,
+  // An answer whose effect could not be made (the subject changed again, or
+  // the branch moved): the observation it answered is closed unreconciled,
+  // and integrity observes what is there now and asks about that (SEAM.md
+  // §79). Nothing is raised here.
+  withdraw(tx, d) {
+    tx.db.prepare('UPDATE "out_of_band_changes" SET "closed_at" = ? WHERE "id" = ? AND "disposition" IS NULL AND "closed_at" IS NULL').run(tx.at, d.subject_id);
+    return false;
+  },
 };
 
 // The answers to an observation (D1 §7.6; SEAM.md §§32, 79). The caller has
@@ -397,8 +405,28 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
       const checkout = tx.db.prepare('SELECT "path", "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string; baseline: string };
       return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found } })]);
     }
-    // `adopt` of a checkout is not built in M1 (SEAM.md §79: not exercised).
-    throw new Refusal(501, 'unsupported', 'Adopting what a checkout holds is not available in this engine revision.', 'Nothing was changed. Answer stash, or put the checkout back yourself.', { decision: d.id });
+    // `adopt` (D1 §§7.6, 7.8; brief B2): the edits found become the new
+    // starting point. The engine commits the checkout's tracked content as
+    // reviewed onto the commit the integration branch is expected at, as an
+    // out-of-band revision, and moves the branch to it through the journal;
+    // the developer's checkout is left as it is, and what it holds then is its
+    // baseline. Only edits on top of the expected commit are adopted this way:
+    // a checkout whose HEAD moved is the branch's own observation to settle.
+    const found = parseJson<{ head?: string }>(row.found);
+    const expected = parseJson<{ head?: string }>(row.expected);
+    const reg = registryRow(tx, row.project, integrationRef(projectRepoRow(tx, row.project).integration_branch));
+    if (!found?.head || found.head !== expected?.head || reg === undefined || reg.expected_oid !== found.head) {
+      throw new Refusal(
+        409,
+        'out_of_band_change',
+        `The checkout's HEAD is not at the commit the engine expects for the integration branch, so its edits cannot be adopted onto it.`,
+        'Settle the observation of the integration branch first, or answer stash.',
+        { decision: d.id, checkout: row.checkout },
+      );
+    }
+    consumeDecision(tx, d, option, note);
+    const checkout = tx.db.prepare('SELECT "path" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string };
+    return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_adopt', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found, ref: reg.ref } })]);
   }
   if (row.subject_kind !== 'ref') throw illegal('An answer to a repository observation', { decision: d.id });
   const reg = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(row.ref) as RegistryRow;
@@ -1032,7 +1060,7 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
 // EFFECT_PRECONDITION_CHANGED, the consumption's local transition withdrawn,
 // and the next generation raised with no approval. An intent already done or
 // invalidated is left as it is.
-function invalidateIntent(tx: Tx, intentId: string): void {
+export function invalidateIntent(tx: Tx, intentId: string): void {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(intentId) as { id: string; project: string; decision: string; status: string; kind: string } | undefined;
   if (!intent || intent.status === 'done' || intent.status === 'invalidated') return;
   const d = getDecision(tx, intent.decision)!;

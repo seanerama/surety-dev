@@ -27,7 +27,7 @@ interface IntentRow {
   project: string;
   decision: string;
   status: 'pending' | 'executing' | 'done' | 'invalidated';
-  kind: 'protected_application' | 'policy_widening' | 'oob_stash';
+  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt';
   plan: Record<string, unknown>;
   operation: string | null;
 }
@@ -88,6 +88,9 @@ export class Effects {
       case 'oob_stash':
         await this.stash(row);
         return;
+      case 'oob_adopt':
+        await this.adopt(row);
+        return;
     }
   }
 
@@ -114,6 +117,10 @@ export class Effects {
       }
     }
     await this.rt.services?.journal(row.project);
+  }
+
+  private adopt(row: IntentRow): Promise<void> {
+    return adoptCheckout(this.rt, this.journal, row);
   }
 
   // A checkout observation answered `stash` (SEAM.md §79): its tracked
@@ -158,6 +165,48 @@ export class Effects {
     }
     await this.rt.engine('oob.stashed', { intent: row.id });
   }
+}
+
+// A checkout observation answered `adopt` (D1 §§7.6, 7.8; brief B2): the
+// checkout's tracked content as reviewed is committed by the engine onto the
+// expected head, as an out-of-band revision, and the integration branch is
+// moved to it through the journal; the finalizer of that move records the
+// checkout's new baseline and reconciles the observation. Nothing in the
+// developer's checkout is written: its files and its index stay as they are.
+async function adoptCheckout(rt: Runtime, journal: Journal, row: IntentRow): Promise<void> {
+  const facts = await rt.engine<{ repo: string; path: string; baseline: { head: string } } | null>('oob.stash_facts', { intent: row.id });
+  if (facts === null) return;
+  if (row.status === 'pending') {
+    const ctx = await checkoutContext(facts.repo, facts.path);
+    const now = ctx === null ? null : await checkoutBaseline(ctx, rt.scratch);
+    const found = now === null ? 'unreadable' : JSON.stringify(now);
+    let made: { operation: string } | { fenced: true } | { operation: string; existing: boolean } = { fenced: true };
+    if (now !== null) {
+      const message = messageText({
+        title: `surety: adopt the developer's edits of ${facts.path}`,
+        trailers: [
+          ['Surety-Project', row.project],
+          ['Surety-Observation', String(row.plan.observation)],
+          ['Surety-Kind', 'out_of_band'],
+        ],
+      });
+      const content = commitContent({ tree: now.tracked_tree_hash, parent: now.head, message, at: nowIso() });
+      const sha = await commitId(facts.repo, content);
+      if (sha !== null) {
+        made = await journal.withProject(row.project, () =>
+          journal.intend(
+            'oob.begin_adopt',
+            { intent: row.id, facts: { found }, repo: facts.repo, tree: now.tracked_tree_hash, parent: now.head, sha, content, index_hash: now.index_hash, deadlineSeconds: rt.setting('git_deadline') },
+            'commit_tree',
+          ),
+        );
+      }
+    } else {
+      await rt.engine('intent.revalidate', { intent: row.id, facts: { found } });
+    }
+    if ('operation' in made) await journal.withProject(row.project, () => journal.drive(made.operation));
+  }
+  await rt.services?.journal(row.project);
 }
 
 // The application of an approved proposal (SEAM.md §69): its changes onto

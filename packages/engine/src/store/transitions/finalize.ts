@@ -31,7 +31,7 @@ export interface DiscardInputs {
 }
 
 export interface CommitInputs {
-  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash';
+  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt';
   run?: string;
   sha: string;
   parent: string;
@@ -52,7 +52,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'protected';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -75,6 +75,9 @@ export interface RefInputs {
   change?: Record<string, number>;
   // out-of-band
   oob?: string;
+  // an adopted checkout, and the baseline it holds once the branch moved
+  checkout?: string;
+  baseline?: Baseline;
   // a policy that widens authority, and the decision that confirmed it
   widens?: boolean;
   decision?: string;
@@ -178,6 +181,18 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return {};
     case 'oob_keep':
       return {};
+    case 'oob_adopt': {
+      // The developer's edits are on the integration branch (brief B2): the
+      // checkout's baseline is what it holds now, the observation is
+      // reconciled, and the next run's base is the adopted commit, which the
+      // registry now expects.
+      if (inputs.checkout && inputs.baseline) tx.db.prepare('UPDATE "managed_checkouts" SET "baseline" = ? WHERE "id" = ?').run(JSON.stringify(inputs.baseline), inputs.checkout);
+      tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'adopt' WHERE "id" = ? AND "disposition" IS NULL`).run(inputs.oob);
+      tx.emit('repo.reconciled', { project: op.project, out_of_band_change: inputs.oob }, { disposition: 'adopt', checkout: inputs.checkout, ref: inputs.ref, adopted: inputs.new_oid });
+      markStale(tx, { project: op.project });
+      if (inputs.intent) completeIntent(tx, inputs.intent);
+      return {};
+    }
     case 'oob_discard': {
       tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'discard' WHERE "id" = ? AND "disposition" IS NULL`).run(inputs.oob);
       tx.emit('repo.reconciled', { project: op.project, out_of_band_change: inputs.oob }, { disposition: 'discard', ref: inputs.ref, restored: inputs.new_oid });

@@ -12,7 +12,11 @@ export interface IntegrityFacts {
   ref: string;
   registry: RegistryRow[];
   moving: Record<string, string[]>;
-  checkouts: (CheckoutRow & { active: boolean; adminDir: string | null })[];
+  // `pending`: the baseline a journaled adoption of the checkout's edits will
+  // record when its branch update is finalized (brief B2). What the checkout
+  // holds while that update is in flight is the engine's own write, never an
+  // observation.
+  checkouts: (CheckoutRow & { active: boolean; adminDir: string | null; pending: Baseline | null })[];
 }
 
 export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFacts {
@@ -29,6 +33,7 @@ export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFact
     ...c,
     active: c.owner_run !== null && run_state !== 'ended',
     adminDir: metadata_baseline ? ((JSON.parse(metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
+    pending: adoptionInFlight(tx, args.project, c.id),
   }));
   return {
     repo: p.dev_repo_path,
@@ -37,6 +42,17 @@ export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFact
     moving: movingRefs(tx.db, args.project),
     checkouts,
   };
+}
+
+function adoptionInFlight(tx: Tx, project: string, checkout: string): Baseline | null {
+  const row = tx.db
+    .prepare(
+      `SELECT o."finalizer_inputs" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id"
+       WHERE o."project" = ? AND s."state" NOT IN ('finalized', 'failed') AND json_extract(o."finalizer_inputs", '$.purpose') = 'oob_adopt'
+       AND json_extract(o."finalizer_inputs", '$.checkout') = ? ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(project, checkout) as { finalizer_inputs: string } | undefined;
+  return row ? ((JSON.parse(row.finalizer_inputs) as { baseline?: Baseline }).baseline ?? null) : null;
 }
 
 export interface IntegrityReport {
