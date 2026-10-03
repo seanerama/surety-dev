@@ -674,6 +674,9 @@ function readBootstrapToken(state: EngineState): string {
   return state.token;
 }
 
+// D2 §6: H1 to H13, H13 optional.
+const HOST_CHECKS = Array.from({ length: 13 }, (_, i) => `H${i + 1}`);
+
 interface TrustView {
   backends: string[];
   host_qualification: unknown;
@@ -705,9 +708,10 @@ async function engineInfo(state: EngineState) {
     // is active.
     bootstrap_exception: bootstrap,
     host: {
-      // The host checks of D2 §6 are not run by this engine revision: none
-      // is passed, and real backends are refused (isolation_unqualified).
-      checks_run: false,
+      // The host checks of D2 §6 are not run by this engine revision: each
+      // is reported not exercised, never passed, and a real backend is
+      // refused (isolation_unqualified) without a current qualification.
+      checks: HOST_CHECKS.map((id) => ({ id, result: 'not_exercised', observed: null, optional: id === 'H13' })),
       qualification: trust?.host_qualification ?? null,
       latest: trust?.latest_host_qualification ?? null,
     },

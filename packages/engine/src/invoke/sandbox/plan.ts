@@ -74,12 +74,14 @@ async function forbiddenRoots(ctx: ForbiddenContext): Promise<{ root: string; wh
     const r = await real(path);
     if (r !== path) out.push({ root: r, why });
   };
-  await add(ctx.home, 'the engine home');
-  for (const r of ctx.repositories) await add(r, 'a registered repository');
-  for (const w of ctx.workspaces) await add(w, 'a workspace');
-  for (const c of ctx.checkouts) await add(c, 'a managed checkout');
+  // The most specific first, so that a refusal names the narrowest reason (a
+  // credential location inside the engine home is named as the former).
   const operator = homedir();
   for (const c of CREDENTIAL_LOCATIONS) await add(join(operator, c), 'an operator credential location');
+  for (const c of ctx.checkouts) await add(c, 'a managed checkout');
+  for (const w of ctx.workspaces) await add(w, 'a workspace');
+  for (const r of ctx.repositories) await add(r, 'a registered repository');
+  await add(ctx.home, 'the engine home');
   for (const t of HOST_TREES) await add(t, `the host's ${t}`);
   return out;
 }

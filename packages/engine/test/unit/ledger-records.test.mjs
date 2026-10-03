@@ -70,3 +70,22 @@ test('only a command that cannot run a filter driver skips the query', () => {
     assert.equal(mayRunFilter(args), true, args.join(' '));
   }
 });
+
+test('C4: the unknown allowance in force is the original limit less what is known, reconciled by corrections, never below zero', async () => {
+  const { fold } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+  const row = (over) => ({
+    id: 'led_1', invocation: 'inv_1', role: 'builder', day_utc: '2026-10-03', billable_in: 100, cached_in: null, out: 50, cost_status: 'unknown', cost_usd: null,
+    usage_complete: 0, corrects: null, correction_seq: null, unknown_allowance_tokens: 850, ...over,
+  });
+  // A limit of 1000: 150 observed, 850 unknown.
+  assert.equal(fold([row({})]).unknown_allowance_tokens, 850);
+  // A correction adds 300 known tokens: the allowance falls, the original row is not changed.
+  const correction = row({ id: 'led_2', corrects: 'led_1', correction_seq: 1, billable_in: 200, out: 100, unknown_allowance_tokens: null });
+  assert.equal(fold([row({}), correction]).unknown_allowance_tokens, 550);
+  // One that carries more than the limit leaves none, not a negative.
+  assert.equal(fold([row({}), { ...correction, billable_in: 5000 }]).unknown_allowance_tokens, 0);
+  // One that says the usage is complete leaves none.
+  assert.equal(fold([row({}), { ...correction, usage_complete: 1 }]).unknown_allowance_tokens, 0);
+  // An invocation charged no allowance has none.
+  assert.equal(fold([row({ unknown_allowance_tokens: null })]).unknown_allowance_tokens, null);
+});

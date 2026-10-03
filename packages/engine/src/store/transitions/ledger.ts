@@ -267,7 +267,7 @@ const addKnown = (a: number | null, b: number | null): number | null => (b === n
 
 // One invocation's rows, original first and corrections in order: amounts
 // summed over the rows that know them; status and completeness of the last.
-function fold(rows: LedgerRow[]): Account {
+export function fold(rows: LedgerRow[]): Account {
   const sorted = [...rows].sort((x, y) => (x.correction_seq ?? 0) - (y.correction_seq ?? 0));
   const original = sorted[0]!;
   const last = sorted.at(-1)!;
