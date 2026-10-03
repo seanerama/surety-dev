@@ -245,9 +245,13 @@ interface BackendSpec {
 let exit: { code: number | null; signal: number | null } | null = null;
 let backendPid: number | null = null;
 let terminating = false;
-// The engine has acknowledged the exit report. Until it has, the report is
-// sent again every half second and the init stays: an engine that was
-// paused reads it, or asks by a challenge, when it resumes (D2 §3.5).
+// The engine has acknowledged the exit report (or is gone). The init sends
+// the report once, after the backend's output has ended (or two seconds
+// after its exit, if a descendant holds the output open), and then exits:
+// process 1 gone, the kernel ends what is left in the pid namespace. An
+// engine paused meanwhile reads the queued report when it resumes (D2 §3.5;
+// SEAM.md §130). The acknowledgement is kept for the paths that leave
+// before the backend's exit (the engine's term, the engine gone).
 let acked = false;
 
 const signalNumber = (name: string | null): number | null => (name === null ? null : ((constants.signals as Record<string, number>)[name] ?? null));

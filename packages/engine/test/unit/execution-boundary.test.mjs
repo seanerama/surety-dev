@@ -185,3 +185,14 @@ test('a recorded process group is signalled only when the recorded process leads
   for (const pid of [0, 1, -1]) assert.equal(signalFound({ pid, startTime: start }, 'SIGKILL'), false, `pid ${pid}`);
   assert.equal(signalFound({ pid: process.pid, startTime: start }, 'SIGKILL'), false, 'never the engine itself');
 });
+
+test('a domain id edited to "." or ".." never verifies as a domain path', () => {
+  const parent = '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice';
+  const scope = `${parent}/${cgroup.scopeUnit('/srv/h', INC)}`;
+  for (const domain of ['.', '..', '', 'dom_x', `${DOM}/..`]) {
+    const verdict = cgroup.verifyDomainPath(`${scope}/${domain}`, { parent, home: '/srv/h', domain, incarnation: INC });
+    assert.equal(verdict.where, 'outside', `domain id ${JSON.stringify(domain)}`);
+  }
+  assert.equal(cgroup.verifyDomainPath(`${scope}/..`, { parent, home: '/srv/h', domain: DOM, incarnation: INC }).where, 'outside', 'a recorded path with ..');
+  assert.equal(cgroup.DOMAIN_ID.test(DOM), true);
+});

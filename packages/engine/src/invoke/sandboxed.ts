@@ -303,14 +303,19 @@ export class SandboxLaunch {
 
   // An unplaced launcher is the engine's own child: killed through its handle
   // and its exit awaited (D2 §3.2 step 2).
-  async killUnplaced(): Promise<void> {
-    if (!this.alive) return;
+  // True once the launcher's exit is observed; false if it is not within
+  // `boundMs`: then its exit cannot be established (D2 §3.4).
+  async killUnplaced(boundMs: number): Promise<boolean> {
+    if (!this.alive) return true;
     try {
       this.child.kill('SIGKILL');
     } catch {
       // gone meanwhile
     }
-    await this.launcherExited;
+    let timer: NodeJS.Timeout | undefined;
+    const exited = await Promise.race([this.launcherExited.then(() => true), new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), boundMs)))]);
+    clearTimeout(timer);
+    return exited;
   }
 
   closeChannel(): void {

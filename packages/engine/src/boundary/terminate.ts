@@ -32,7 +32,7 @@ import type { RunHandle, Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 import { pausePoint, seamMainFault } from '../testing/seam.js';
-import { SUPERVISOR_LEAF, cgroupInode, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
+import { DOMAIN_ID, SUPERVISOR_LEAF, cgroupInode, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
 import { managerReachable } from './scope.js';
 
 export type Verdict = { terminated: true } | { terminated: false; unknown: string | null };
@@ -133,10 +133,24 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     return { terminated: false, unknown: why };
   };
   if (args.knownUnknown) return unknown(args.knownUnknown);
-  // 2. The launcher.
-  if (launch && !args.observeOnly) {
-    if (seamMainFault('launcher_wait')) return unknown("the launcher's exit could not be established (injected fault)");
-    if (launch.alive && launch.placedPid === null) await launch.killUnplaced();
+  // 2. The launcher (D2 §3.2): its exit, or its membership, is established
+  // before anything is observed as termination, at a tick's re-observation
+  // too (§3.4, "under the same closure prerequisites"). An unplaced launcher
+  // is killed through its handle and its exit awaited for at most
+  // `kill_grace`, the bound the kernel is given to end what `cgroup.kill`
+  // signals; past it the exit cannot be established and the domain is
+  // `unknown`. A re-observation signals nothing: it finds the launcher still
+  // outstanding and leaves the domain `unknown`.
+  if (launch) {
+    const outstanding = launch.alive && launch.placedPid === null;
+    if (args.observeOnly) {
+      if (outstanding) return unknown('the launcher is outstanding and is not a member');
+    } else {
+      if (seamMainFault('launcher_wait')) return unknown("the launcher's exit could not be established (injected fault)");
+      if (outstanding && !(await launch.killUnplaced(rt.setting('kill_grace') * 1000))) {
+        return unknown(`the launcher's exit could not be established within kill_grace (${rt.setting('kill_grace')} s)`);
+      }
+    }
   }
   const where = placeOf(rt, d, args.incarnation);
   if (where !== null) return unknown(where);
@@ -159,15 +173,24 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     return p.value === 0 ? 'empty' : 'populated';
   };
 
+  // The directory at the recorded path must be the one the engine created
+  // (its inode), before anything is signalled: a directory recreated there is
+  // another cgroup, `unknown`, and nothing of it is touched (D2 §3.4).
+  if (readPopulated(path).state !== 'absent' && d.cgroup_inode !== null && cgroupInode(path) !== d.cgroup_inode) {
+    return unknown(`${path} is not the cgroup the engine created for the domain (another directory is there)`);
+  }
+
   if (!args.observeOnly) {
     // 3. TERM through the init, or to the members from the host.
     let state = empty();
     if (state === 'populated') {
       if (!(launch?.term() ?? false)) for (const pid of readProcs(path) ?? []) signal(pid, 'SIGTERM');
       termSent = true;
+      // The grace period ends early only on `populated 0` or absence read;
+      // a read that fails meanwhile is no reason to kill sooner.
       while (performance.now() - start < graceMs) {
         state = empty();
-        if (state !== 'populated') break;
+        if (state === 'empty' || state === 'absent') break;
         await sleep(100);
       }
     }
@@ -208,7 +231,7 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     const scopes = homeScopes(dirname(dirname(path)), rt.home);
     if (scopes === null) return unknown(`${dirname(dirname(path))} cannot be read, so the domain's absence is not established`);
   }
-  if (!args.observeOnly && launch && launch.alive && launch.placedPid === null) return unknown("the launcher is outstanding and is not a member");
+  if (launch && launch.alive && launch.placedPid === null) return unknown('the launcher is outstanding and is not a member');
   await pausePoint('boundary.before_terminated');
   const read = final.state === 'populated' ? counters(path) : null;
   const resources = read && (read.oom_kill !== null || read.pids_max !== null) ? read : {};
@@ -243,7 +266,7 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   // The domain's area under the engine home (its context package and the
   // setup stage's two mountpoints, empty on the host) goes with it.
   try {
-    rmSync(join(rt.home, 'domains', d.id), { recursive: true, force: true });
+    if (DOMAIN_ID.test(d.id)) rmSync(join(rt.home, 'domains', d.id), { recursive: true, force: true });
   } catch (err) {
     log('domain area', err, { domain: d.id });
   }

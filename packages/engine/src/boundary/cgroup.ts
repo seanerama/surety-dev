@@ -209,7 +209,13 @@ export interface PathVerdict {
 // verified parent (`app.slice` of this user's manager)? A path that is not,
 // whatever is there, is outside the verified hierarchy and its domain is
 // `unknown` (D2 §§3.3, 3.4).
+export const DOMAIN_ID = /^dom_[0-9A-HJKMNP-TV-Z]{26}$/;
+
 export function verifyDomainPath(recorded: string, args: { parent: string; home: string; domain: string; incarnation: string }): PathVerdict {
+  // A domain id is `dom_<ULID>`: an id edited to `.` or `..` would name the
+  // scope or its parent.
+  if (!DOMAIN_ID.test(args.domain)) return { where: 'outside', detail: `${args.domain} is not a domain id` };
+  if (typeof recorded !== 'string' || recorded.split('/').includes('..')) return { where: 'outside', detail: `${recorded} is not a path the engine records` };
   if (dirname(dirname(recorded)) !== args.parent) return { where: 'outside', detail: `${recorded} is not under ${args.parent}` };
   if (basename(recorded) !== args.domain) return { where: 'outside', detail: `${recorded} is not the directory of ${args.domain}` };
   const m = SCOPE_NAME.exec(basename(dirname(recorded)));

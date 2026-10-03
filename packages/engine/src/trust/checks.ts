@@ -137,7 +137,7 @@ async function runTrial(rt: Runtime, scope: Scope | null, tools: ResolvedTools, 
   const finished = await Promise.race([launch.launcherExited.then(() => true), sleep(remaining).then(() => false)]);
   if (!finished) {
     if (cgroup) writeKill(cgroup);
-    await launch.killUnplaced();
+    await launch.killUnplaced(rt.setting('kill_grace') * 1000);
   }
   // The trial's probe cgroup is emptied and removed; what it held is gone.
   if (cgroup) {
