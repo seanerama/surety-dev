@@ -7,6 +7,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | Document | Purpose |
 |---|---|
 | [spec/M1-build-spec.md](spec/M1-build-spec.md) | How M1 is built: scope, roles, corrections to the design, slices, definition of done. Start here. |
+| [spec/handoff-2026-10-03.md](spec/handoff-2026-10-03.md) | Handoff for the next orchestrator: where M1 stands, what waits for Sean, how the build is driven, host facts, what not to do. |
 | [spec/M2-input-triage.md](spec/M2-input-triage.md) | Draft for Sean: the eighteen untested behaviours sorted into before a real agent, in M2, and later. |
 | [spec/templates/project-spec-template.md](spec/templates/project-spec-template.md) | The specification a project gives Surety: the identifiers the engine registers and the prose around them. |
 | [spec/templates/spec-assistant-prompt.md](spec/templates/spec-assistant-prompt.md) | A paste-ready prompt for an assistant that works an idea into that specification with the owner, in the manner of Spec-Driven-Devops's Vision Assistant. |
