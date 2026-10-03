@@ -17,7 +17,7 @@
 // answers for a ref with no change in between are slice 3's (rows M24, M28).
 
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -25,7 +25,7 @@ import { releaseBarrier, waitFor, within } from './harness/engine.mjs';
 import { INTENT_BARRIER, answer, answerAndHoldEffect, assertEffectInvalidated, assertPreview, assertStaleAnswer, consume, decision, decisionsOfKind, intentsOf, reachBarrier } from './harness/decisions.mjs';
 import { addGitProject, addItem, roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { armBarrier, assertOperations, eventsOfType, managedCheckouts, operationsOf, outOfBand, registryOf, revisionsOf } from './harness/journal.mjs';
-import { changedPaths, checkoutState, commitOnRef, fileAt, parentsOf, refOid, trackedTree, treeOf } from './harness/repos.mjs';
+import { changedPaths, checkoutState, commitOnRef, fileAt, gitQuiet, parentsOf, refOid, trackedTree, treeOf } from './harness/repos.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
@@ -44,6 +44,36 @@ async function dirtyCheckout(t) {
   const [observed] = outOfBand(fx.home, project.id);
   assert.deepEqual([observed?.subject_kind, observed?.decision.options], ['checkout', ['adopt', 'stash']], 'the fixture is live: a checkout observation offering stash and adopt');
   return { fx, project, file, observed, previewed: assertPreview(decision(fx.home, observed.decision.id)) };
+}
+
+// The slice-2 review's fixture (S1, S2; SEAM.md §111): a developer's checkout
+// of the integration branch with a new file staged, and a tracked file whose
+// staged version was then superseded in the work tree, observed, and the
+// decision about it previewed. `reviewed` is the tree the checkout's tracked
+// content is, computed test-side (`trackedTree`): what `git commit -a` would
+// commit, so it holds the staged file and the work-tree version of the edit.
+const ADDED = 'export const added = 1;\n';
+async function stagedCheckout(t) {
+  const fx = await scriptedEngine(t);
+  const project = await addGitProject(fx, { primary: 'integration', files: { 'src/lib.js': ORIGINAL } });
+  const repo = project.repo.path;
+  const added = join(repo, 'src/new.js');
+  const file = join(repo, 'src/lib.js');
+  writeFileSync(added, ADDED);
+  gitQuiet(repo, ['add', 'src/new.js']);
+  writeFileSync(file, edit(1));
+  gitQuiet(repo, ['add', 'src/lib.js']);
+  writeFileSync(file, edit(2));
+  const reviewed = trackedTree(repo);
+  assert.deepEqual(
+    [checkoutState(repo).staged, fileAt(repo, reviewed, 'src/new.js'), fileAt(repo, reviewed, 'src/lib.js')],
+    ['M\tsrc/lib.js\nA\tsrc/new.js', ADDED, edit(2)],
+    'the fixture is live: a new file and an edit are staged, the edit superseded on disk, and the reviewed tree holds the staged file and the work-tree edit',
+  );
+  await tick(fx.engine, project.id);
+  const [observed] = outOfBand(fx.home, project.id);
+  assert.deepEqual([observed?.subject_kind, observed?.decision.options], ['checkout', ['adopt', 'stash']], 'the fixture is live: a checkout observation offering stash and adopt');
+  return { fx, project, repo, added, file, reviewed, observed, previewed: assertPreview(decision(fx.home, observed.decision.id)) };
 }
 
 // The decision the engine raised after it found the subject changed again:
@@ -100,6 +130,28 @@ describe('M46 a checkout observation', () => {
     assert.equal(outOfBand(fx.home, project.id).filter((row) => row.disposition !== null).length, 0, 'no observation was recorded as reconciled');
     await raisedAgain(fx, project, previewed);
   });
+
+  // The slice-2 review, S2 (SEAM.md §111): a staged new file is stashed, not lost.
+  test('stash of a checkout with a staged new file and a staged edit superseded on disk: the oob ref holds the staged file and the work-tree edit, and the checkout is back at its baseline with nothing lost that the ref does not hold', async (t) => {
+    const { fx, project, repo, added, file, reviewed, observed, previewed } = await stagedCheckout(t);
+    await consume(fx, project.id, previewed, 'stash');
+    await waitFor(() => outOfBand(fx.home, project.id)[0].disposition === 'stash' && intentsOf(fx.home, previewed.id)[0]?.status === 'done', { what: 'the stash to be recorded and its effect done' });
+
+    const kept = oobRefs(fx, project);
+    assert.equal(kept.length, 1, 'one registered oob ref');
+    assert.equal(treeOf(repo, kept[0]), reviewed, `it holds the tree the checkout's tracked content was: the index plus the work-tree content of the paths the index lists (against the baseline the ref changes ${JSON.stringify(changedPaths(repo, project.base, kept[0]))})`);
+    assert.deepEqual(changedPaths(repo, project.base, kept[0]), { 'src/lib.js': 'M', 'src/new.js': 'A' }, 'against the baseline: the staged addition and the edit, nothing else');
+    assert.deepEqual([fileAt(repo, kept[0], 'src/new.js'), fileAt(repo, kept[0], 'src/lib.js')], [ADDED, edit(2)], 'the staged file is in the stash, and the edit as the work tree had it, which supersedes the staged version');
+
+    // The checkout is at its baseline: HEAD, index and files as the baseline
+    // says; the staged file is in the stash and not on disk as a stray.
+    assert.deepEqual([checkoutState(repo).head, gitQuiet(repo, ['status', '--porcelain', '--untracked-files=all']), readFileSync(file, 'utf8')], [project.base, '', ORIGINAL], 'the checkout is back at its baseline, clean');
+    assert.ok(!existsSync(added) || readFileSync(added, 'utf8') === ADDED, 'what is on disk of the new file, if anything, is what the ref holds');
+    assert.deepEqual(outOfBand(fx.home, project.id).map((row) => [row.id, row.disposition]), [[observed.id, 'stash']]);
+    assertOperations(fx.home, { project: project.id });
+    await tick(fx.engine, project.id);
+    assert.equal(outOfBand(fx.home, project.id).length, 1, "the engine's own restore is not observed in turn");
+  });
 });
 
 // M2 slice 2, B2 (SEAM.md §106): the other answer a checkout observation
@@ -112,7 +164,7 @@ describe('M46 adopt of a checkout', () => {
   test('adopt takes the edits as the new starting point: one engine-made out-of-band revision on the integration branch holds exactly the reviewed content, the observation is reconciled, the files are untouched and not observed again, and the next run is based on it', async (t) => {
     const { fx, project, file, observed, previewed } = await dirtyCheckout(t);
     const repo = project.repo.path;
-    const reviewed = trackedTree(repo, project.base);
+    const reviewed = trackedTree(repo);
     const [checkout] = managedCheckouts(fx.home, project.id).filter((c) => c.kind === 'integration_worktree');
     assert.deepEqual([checkout.baseline.head, JSON.parse(observed.found).tracked_tree_hash], [project.base, reviewed], 'the fixture is live: the observation found the tree the checkout holds, on the baseline');
 
@@ -188,6 +240,36 @@ describe('M46 adopt of a checkout', () => {
     assert.equal(eventsOfType(fx.home, 'repo.reconciled').length, 0);
     const next = await raisedAgain(fx, project, previewed);
     assert.notDeepEqual(next.manifest.found, previewed.manifest.found, 'the new preview shows what is there now');
+  });
+
+  // The slice-2 review, S1 (SEAM.md §111): a staged new file is adopted, not lost.
+  test('adopt of a checkout with a staged new file and a staged edit superseded on disk: the adopted revision holds the index plus the work-tree content of the paths the index lists, git status is clean afterwards, the file is on disk and in the next run\'s base', async (t) => {
+    const { fx, project, repo, added, file, reviewed, observed, previewed } = await stagedCheckout(t);
+    await consume(fx, project.id, previewed, 'adopt');
+    await waitFor(() => outOfBand(fx.home, project.id)[0].disposition === 'adopt' && intentsOf(fx.home, previewed.id)[0]?.status === 'done', { what: 'the adoption to be recorded and its effect done' });
+
+    const adopted = refOid(repo, project.repo.ref);
+    assert.deepEqual(parentsOf(repo, adopted), [project.base], 'the integration branch gained one commit, on top of where it was');
+    assert.equal(treeOf(repo, adopted), reviewed, 'whose tree is the index plus the work-tree content of the paths the index lists: what git commit -a would have committed');
+    assert.deepEqual(changedPaths(repo, project.base, adopted), { 'src/lib.js': 'M', 'src/new.js': 'A' }, 'it adds the staged file and changes the edited one, nothing else');
+    assert.deepEqual([fileAt(repo, adopted, 'src/new.js'), fileAt(repo, adopted, 'src/lib.js')], [ADDED, edit(2)], 'the staged file is adopted, and the edit as the work tree had it, which supersedes the staged version');
+    assert.equal(registryOf(fx.home, project.id)[project.repo.ref].expected_oid, adopted);
+
+    // Afterwards: the files are on disk as the developer had them, and git
+    // status is clean (E53 item 3: the index is reset to the adopted commit).
+    assert.deepEqual([readFileSync(added, 'utf8'), readFileSync(file, 'utf8')], [ADDED, edit(2)], 'the new file and the edit are on disk as the developer left them');
+    assert.deepEqual([checkoutState(repo).head, checkoutState(repo).branch, gitQuiet(repo, ['status', '--porcelain', '--untracked-files=all'])], [adopted, project.repo.ref, ''], 'the checkout is on the branch at the adopted commit, with nothing staged, modified or untracked');
+    assertOperations(fx.home, { project: project.id });
+    await tick(fx.engine, project.id);
+    assert.deepEqual(outOfBand(fx.home, project.id).map((row) => [row.id, row.disposition]), [[observed.id, 'adopt']], 'not observed again');
+
+    // The next run starts from the adopted commit, the staged file in its base.
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThatHolds([step.write('src/next.js', 'export const next = 1;\n')])]);
+    const { run, workspace } = await runToHold(fx, project.id, item);
+    assert.equal(run.base_revision, adopted, "the next run's base is the adopted commit");
+    assert.deepEqual([readFileSync(join(workspace.path, 'src/new.js'), 'utf8'), readFileSync(join(workspace.path, 'src/lib.js'), 'utf8')], [ADDED, edit(2)], 'its workspace holds the adopted file and edit');
+    fx.scripted.release(item);
   });
 });
 

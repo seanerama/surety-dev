@@ -26,18 +26,29 @@
 //   - the run then ends completed and its work is integrated: nothing
 //     appears twice (one commit naming the run, one revision, one run of the
 //     item, no repair) and nothing is lost (the edit is on the branch).
+//
+// The second case is the slice-2 review's (S3; SEAM.md §112): a Stop
+// confirmed while the run's branch update is ambiguous does not end the run
+// before the journal has established what git did. The killed write is made
+// to have landed by hand (a late completion the tool cannot produce); the
+// probe then finds it applied, the integration is finalized and the work
+// integrated, and only then does the Stop take its course: the run stopped,
+// the work held, nothing done twice.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { reachBarrier } from './harness/decisions.mjs';
+import { assertWorkHistory } from './harness/invariants.mjs';
 import { releaseBarrier, waitFor } from './harness/engine.mjs';
 import { askingForTicks } from './harness/gates.mjs';
 import { PERMITTED_EDIT, addGitProject, addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
 import { heldGitWrites } from './harness/held-writes.mjs';
-import { assertOperation, assertOperations, operationDetails, recoveryBarrier, registryOf, revisionsOf } from './harness/journal.mjs';
-import { changedPaths, commitsNaming, parentsOf, refOid, refsContaining, treeOf } from './harness/repos.mjs';
-import { assertRunEnded, requestTick, run as runRow, runsOf, scriptedEngine, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
+import { assertOperation, assertOperations, eventsOfType, operationDetails, recoveryBarrier, registryOf, revisionsOf } from './harness/journal.mjs';
+import { changedPaths, commitsNaming, gitQuiet, parentsOf, refOid, refsContaining, treeOf } from './harness/repos.mjs';
+import { assertRunEnded, leasesOf, requestTick, run as runRow, runsOf, scriptedEngine, stopRun, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
+import { withStore } from './harness/store.mjs';
+import { sleep } from './harness/mono.mjs';
 import { script } from './harness/scripted.mjs';
 
 const GIT_DEADLINE = 2;
@@ -59,10 +70,10 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     writes.holdCommit();
     writes.holdRefUpdate(project.repo.ref);
     await requestTick(fx.engine, project.id);
-    const run = await waitForRun(fx.home, item, { state: 'executing' });
-    // A second item of the project, added once the run is under way (the
-    // scheduler would dispatch verification work first), to show what is and
-    // is not dispatched meanwhile.
+    const run = await waitForRun(fx.home, item);
+    // A second item of the project, added once the run exists (the scheduler
+    // would dispatch verification work first), to show what is and is not
+    // dispatched meanwhile.
     const later = await addItem(fx, project.id, 'verification');
     fx.scripted.script(later, [script.complete()]);
     const opOf = (kind) => operationDetails(fx.home, { project: project.id, run: run.id, journalKind: kind })[0];
@@ -155,5 +166,71 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     await tick(fx.engine, project.id);
     await tickUntil(fx.engine, project.id, () => workItem(fx.home, later).status === 'complete', { what: 'the second item to complete once the project is unblocked' });
     assert.equal(runsOf(fx.home, item).length, 1, 'and the integrated work was never run again');
+  });
+
+  // The slice-2 review, S3 (SEAM.md §112).
+  test('a Stop confirmed while the branch update is ambiguous, the killed write having in fact landed: the run is not ended before the journal has established it, the integration is finalized and the work integrated, and only then is the run stopped and the work held', async (t) => {
+    const writes = heldGitWrites(t);
+    const fx = await scriptedEngine(t, { env: writes.env, config: { git_deadline: GIT_DEADLINE } });
+    const project = await addGitProject(fx);
+    const repo = project.repo.path;
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    writes.holdRefUpdate(project.repo.ref);
+    await requestTick(fx.engine, project.id);
+    const run = await waitForRun(fx.home, item);
+    const opOf = () => operationDetails(fx.home, { project: project.id, run: run.id, journalKind: 'ref_update' })[0];
+
+    // The commit is made; the branch update is held and killed at the deadline.
+    const ambiguous = await waitFor(
+      () => {
+        const op = opOf();
+        return op && op.events.some((e) => e.kind === 'ambiguous') ? op : undefined;
+      },
+      { timeoutMs: 30_000 + KILL_WAIT_MS, what: "the run's branch update to be ambiguous" },
+    );
+    assert.deepEqual([ambiguous.state, ambiguous.attempts.map((a) => a.status), refOid(repo, project.repo.ref)], ['ambiguous', ['ambiguous'], project.base], 'the fixture is live: the branch update was killed, recorded ambiguous, and the branch has not moved');
+    const { old_oid: base, new_oid: sha } = ambiguous.payload;
+    assert.deepEqual([base, commitsNaming(repo, `Surety-Run: ${run.id}`)], [project.base, [sha]], "the intent moves the branch from the base to the run's one commit");
+    const before = runRow(fx.home, run.id);
+    assert.notEqual(before.state, 'ended', `the fixture is live: the run waits on its ambiguous write (SEAM.md §110); it is ${before.state}${before.state === 'ended' ? ` (${before.outcome} / ${before.reason_class}: ${before.reason_text})` : ''}`);
+
+    // The killed write lands after all: made by hand with the same
+    // compare-and-swap, which stands in for a late completion the tool
+    // cannot produce. This is exactly what ambiguity covers.
+    gitQuiet(repo, ['update-ref', project.repo.ref, sha, base]);
+    writes.release('update-ref');
+    assert.equal(refOid(repo, project.repo.ref), sha, 'the fixture is live: the branch is at the commit, as the killed write would have left it');
+
+    // A Stop is confirmed. The end is decided: nothing renews the lease
+    // (E27 item 5). But the run is not ended while its operation is
+    // unresolved (D1 §4.5 step 4; SEAM.md §47): with no tick, nothing is
+    // reconciled and nothing ends.
+    await stopRun(fx.engine, project.id, run.id);
+    const leaseAfterStop = leasesOf(fx.home, run.id).filter((lease) => lease.resource_kind === 'run').map((lease) => [lease.renewed_at, lease.expires_at]);
+    await sleep(3000);
+    const waiting = runRow(fx.home, run.id);
+    assert.deepEqual(
+      [waiting.state === 'ended', opOf().state, workItem(fx.home, item).status === 'held'],
+      [false, 'ambiguous', false],
+      `three seconds after the Stop the run has not ended and the work is not held while the operation is still ambiguous (the run is ${waiting.state}${waiting.state === 'ended' ? `, ${waiting.outcome} / ${waiting.reason_class}` : ''}, the work ${workItem(fx.home, item).status})`,
+    );
+    assert.deepEqual(leasesOf(fx.home, run.id).filter((lease) => lease.resource_kind === 'run').map((lease) => [lease.renewed_at, lease.expires_at]), leaseAfterStop, 'the lease was not renewed once the end was decided');
+
+    // The next tick's journal step probes: applied. The integration is
+    // finalized, the work integrated, and then the Stop takes its course.
+    await tick(fx.engine, project.id);
+    await tickUntil(fx.engine, project.id, () => runRow(fx.home, run.id).state === 'ended', { max: 6, what: 'the run to end once its operation is finalized' });
+    const made = opOf();
+    assertOperation(made, "the run's integration after the probe");
+    assert.deepEqual([made.state, made.status, made.attempts.map((a) => a.status)], ['finalized', 'succeeded', ['reconciled_succeeded']], 'the probe found the write applied and finalized the operation without a new attempt');
+    assertRunEnded(fx.home, run.id, { outcome: 'stopped', reason_class: 'human_stop', workspace: 'retained', launched: true });
+    const path = withStore(fx.home, (db) => assertWorkHistory(db, item));
+    assert.deepEqual([workItem(fx.home, item).status, path.slice(path.lastIndexOf('integrating'))], ['held', ['integrating', 'integrated', 'held']], 'the work went integrating, integrated by the finalizer, then held by the Stop');
+    assert.equal(eventsOfType(fx.home, 'work.integrated').filter((event) => event.subject?.work_item === item).length, 1, 'one work.integrated event names the item');
+    assert.deepEqual([refOid(repo, project.repo.ref), registryOf(fx.home, project.id)[project.repo.ref].expected_oid, revisionsOf(fx.home, { run: run.id }).map((row) => [row.kind, row.sha])], [sha, sha, [['engine_commit', sha]]], 'the branch is at the commit, the registry expects it there, and one revision records it');
+    assert.deepEqual([runsOf(fx.home, item).length, workItem(fx.home, item).repair_attempts], [1, 0], 'one run, no repair: nothing is done twice');
+    assertOperations(fx.home, { project: project.id });
+    assert.deepEqual(writes.heldLog().map((line) => line.split(' ')[1]), ['update-ref'], 'one write was held in all');
   });
 });
