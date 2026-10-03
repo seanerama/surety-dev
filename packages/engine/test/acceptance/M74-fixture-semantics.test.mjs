@@ -24,6 +24,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { consume, openDecision } from './harness/decisions.mjs';
 import { PROTECTED_FILES, capturedProposal, check, effectiveVersion, evaluationsOf, installChecks, nominated, passAll, reasonCodes, reviewerApproves, stageGate, successor, waitApplied } from './harness/gates.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { revisionsOf } from './harness/journal.mjs';
@@ -123,9 +124,11 @@ describe('M74 the states the accepted screens show are states the kernel produce
     assert.equal(satisfied.outcome, 'satisfied', `the fixture is live: the stage gate was satisfied before the correction (reasons: ${reasonCodes(satisfied).join(', ')})`);
     const previous = effectiveVersion(fx.home, project);
 
-    // A tightening correction, approved by a Reviewer and applied; then the next candidate.
+    // A tightening correction, recommended by a Reviewer, approved by the
+    // human (K8; M2 slice 10, row M106 (b)) and applied; then the next candidate.
     const proposal = await capturedProposal(fx, ctx.project, { changeKind: 'tightening' });
     await reviewerApproves(fx, ctx.project, proposal);
+    await consume(fx, project, await openDecision(fx, project, 'check_correction_tightening', proposal.id), 'approve');
     await waitApplied(fx, ctx.project, proposal);
     const version = effectiveVersion(fx.home, project);
     assert.notEqual(version.id, previous.id, 'the fixture is live: a new protected version is in effect');

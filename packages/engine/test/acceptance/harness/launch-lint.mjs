@@ -5,10 +5,15 @@
 //
 // The rule. A file under packages/engine/src/ may name a module that can
 // start a process only if it is in one of three places:
-//   - `invoke/`, the choke point, where a backend is launched;
+//   - `invoke/`, the choke point, where a backend is launched, and with D2
+//     the launcher (`unshare`, `setpriv`, `ip`) and the domain init;
 //   - `git/exec.ts`, the one file that runs git;
 //   - `testing/`, the seam folder, whose harness-only code runs the scripted
-//     notification sink and kills the engine at a barrier.
+//     notification sink and kills the engine at a barrier;
+// and, since M2 slice 10 (row M109 (c); D2 §3.1; M2 build spec §5), in the
+// boundary's own helper modules named in D2_HELPERS, each one file that
+// starts one host tool the engine checks for and never a backend. The
+// Builder names a helper; the Verifier adds it here (SEAM.md §121).
 // "Naming" is any string or template literal that is such a module's name,
 // wherever it stands: a static import, `import()`, `require()`, a re-export,
 // `process.getBuiltinModule()`. One use is allowed everywhere: a static
@@ -25,10 +30,20 @@ import { moduleRefs, tokenize } from './source-lint.mjs';
 // Modules, and internal bindings, through which a Node process starts another.
 export const PROCESS_MODULES = ['child_process', 'node:child_process', 'cluster', 'node:cluster', 'spawn_sync', 'process_wrap'];
 
+// The boundary's helper modules outside invoke/ that may start a process
+// (M2 slice 10, row M109 (c)): one file per helper, with the host tool it
+// runs. `boundary/scope.ts` is the build spec's starting name for the
+// incarnation scope (§7: `src/boundary/`); a Builder who arranges the
+// modules otherwise names the file and the Verifier changes this list.
+export const D2_HELPERS = [
+  { where: 'boundary/scope.ts', why: 'the incarnation scope: systemd-run at start (D2 §3.1)', tool: 'systemd-run' },
+];
+
 export const ALLOWED = [
   { where: 'invoke/', why: 'the choke point' },
   { where: 'git/exec.ts', why: 'the git runner' },
   { where: 'testing/', why: 'the seam folder' },
+  ...D2_HELPERS,
 ];
 
 const allowed = (file) => ALLOWED.some(({ where }) => (where.endsWith('/') ? file.startsWith(where) : file === where));

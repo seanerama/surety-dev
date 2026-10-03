@@ -1,5 +1,5 @@
 {
-  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent whose preconditions are checked again immediately before a journaled operation is made (D1 §10.5). Stop and Abandon act through the run-end protocol and record none. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76).",
+  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3) and the two D2 adds for M2 (A.7: `qualification_approval`, `trust_activation`; SEAM.md §117), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent whose preconditions are checked again immediately before a journaled operation is made (D1 §10.5). Stop and Abandon act through the run-end protocol and record none. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76). `effect_options` names the options of a kind marked `effect: false` whose positive answer nevertheless records an effect intent: `finding_disposition`'s `alpha_exception` writes `findings.alpha_exception` as an effect (D2 §5 C1; SEAM.md §119). The two trust kinds are engine-scoped: their decision rows have no project, and they are read and answered through `GET /v1/decisions` and `POST /v1/decisions/:d/answer` (SEAM.md §117).",
   "codes": {
     "stale": "decision_stale",
     "consumed": "decision_consumed",
@@ -40,9 +40,10 @@
     },
     "finding_disposition": {
       "subject_types": ["finding"],
-      "options": ["approve", "reject"],
+      "options": ["approve", "reject", "alpha_exception"],
       "manifest": ["finding_status", "disposition", "proposed_disposition", "effective_severity", "sensitive_area", "evidence", "defer_target", "linked_issue", "applicable", "candidate_revision", "acceptance_content_hash", "policy_revision"],
-      "effect": false
+      "effect": false,
+      "effect_options": ["alpha_exception"]
     },
     "severity_lower": {
       "subject_types": ["finding"],
@@ -73,6 +74,18 @@
       "options": ["approve", "reject"],
       "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision"],
       "effect": true
+    },
+    "qualification_approval": {
+      "subject_types": ["qualification_attempt"],
+      "options": ["approve", "reject"],
+      "manifest": ["attempt_status", "binary_sha256", "help_sha256", "template", "template_version", "model", "auth_mode", "host_qualification", "host_eligibility", "fixture_project", "candidate_egress", "canary_deadlines", "spend"],
+      "effect": false
+    },
+    "trust_activation": {
+      "subject_types": ["trust_entry"],
+      "options": ["approve", "reject"],
+      "manifest": ["entry_status", "binary_sha256", "help_sha256", "template", "template_version", "capabilities", "profile_fingerprint", "host_id", "host_eligibility", "evidence", "evidence_fingerprint"],
+      "effect": false
     }
   }
 }
