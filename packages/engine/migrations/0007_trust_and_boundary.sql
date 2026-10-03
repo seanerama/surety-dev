@@ -143,11 +143,7 @@ CREATE TABLE qualification_attempts (
   canaries TEXT NOT NULL DEFAULT '[]',
   unexpected_contacts TEXT NOT NULL DEFAULT '[]',
   trust_entry TEXT REFERENCES trust_entries(id),
-  invalidated_reason TEXT,
-  -- Engine-owned: what labels a row a harness fixture wrote (SEAM.md §7).
-  test_fixture INTEGER NOT NULL DEFAULT 0 CHECK (test_fixture IN (0, 1)),
-  -- Only the consumption of a qualification_approval authorizes (D2 A.4).
-  CHECK (status IN ('proposed', 'invalidated') OR decision IS NOT NULL OR test_fixture = 1)
+  invalidated_reason TEXT
 );
 
 -- ---- trust_entries (D2 §§4.1, 4.2, 7.3, A.3) ----
@@ -193,8 +189,6 @@ CREATE TABLE trust_entries (
   activated_by TEXT REFERENCES decisions(id),
   revoked_at TEXT,
   revoked_reason TEXT,
-  -- Engine-owned: what labels a row a harness fixture wrote (SEAM.md §7).
-  test_fixture INTEGER NOT NULL DEFAULT 0 CHECK (test_fixture IN (0, 1)),
   CHECK (status <> 'active' OR activated_by IS NOT NULL),
   CHECK (status <> 'active' OR mode = 'one_shot_headless'),
   CHECK (status <> 'active' OR usage_granularity <> 'none'),

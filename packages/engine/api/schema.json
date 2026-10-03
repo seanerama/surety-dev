@@ -2513,9 +2513,6 @@
         },
         "invalidated_reason": {
           "required": false
-        },
-        "test_fixture": {
-          "required": true
         }
       }
     },
@@ -3070,9 +3067,6 @@
         },
         "revoked_reason": {
           "required": false
-        },
-        "test_fixture": {
-          "required": true
         }
       }
     },

@@ -1031,8 +1031,9 @@ const TRUST_ACTIVATION: KindSpec = {
   preview(tx, d, facts) {
     const entry = getEntry(tx.db, d.subject_id);
     // An entry whose canaries observed no usage cannot be activated (D2
-    // §4.2): the question is never asked about it.
-    if (!entry || entry.status !== 'proposed' || entry.usage_granularity === 'none') return null;
+    // §4.2), nor can a session-mode one (§1.8): the question is never asked
+    // about either.
+    if (!entry || entry.status !== 'proposed' || entry.usage_granularity === 'none' || entry.mode !== 'one_shot_headless') return null;
     const manifest = entryManifest(tx.db, entry, facts?.records);
     const running = hostIdentity();
     return {

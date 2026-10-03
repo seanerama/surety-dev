@@ -47,8 +47,9 @@ export const CREDENTIAL_LOCATIONS = [
   '.config/git/credentials',
 ];
 
-// Host trees no widening may reach (D2 §2.3), with the WSL ones.
-const HOST_TREES = ['/run', '/var/run', '/proc', '/sys', '/dev', '/mnt', '/tmp', '/var/tmp', '/dev/shm', '/usr/lib/wsl', '/init'];
+// Host trees no widening may reach (D2 §2.3), with WSL's own paths (its
+// interop and driver trees; DrvFs is under /mnt).
+const HOST_TREES = ['/run', '/var/run', '/proc', '/sys', '/dev', '/mnt', '/tmp', '/usr/lib/wsl', '/init'];
 
 // How many directory entries one path's walk may visit before it is refused
 // as unestablished.

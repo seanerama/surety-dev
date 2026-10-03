@@ -293,6 +293,14 @@ export function seamBackends(): BackendSpec[] {
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')] }];
 }
 
+// What runs a backend a trust entry authorizes (D2 §4.1): in the kernel lane
+// of the harness, the scripted child stands in for it (M2 plan §2.1), as for
+// the scripted backend. Outside harness mode there is no stand-in: only the
+// sandbox launcher may run a real backend, and this engine revision has none.
+export function seamStandIn(_entry: { backend: string; binary_path: string }): BackendSpec | null {
+  return seamBackends()[0] ?? null;
+}
+
 const INSTRUCTIONS = ['auto', 'running', 'terminated', 'unknown'];
 
 // The scripted execution boundary (SEAM.md §14), asked per domain. Its

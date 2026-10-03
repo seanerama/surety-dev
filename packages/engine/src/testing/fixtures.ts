@@ -32,7 +32,7 @@ import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal }
 import { raiseQuestion } from '../store/transitions/queue.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import { proposeAttempt, proposeEntry } from '../store/transitions/qualification.js';
-import { type AttemptInput, type EntryInput, getAttempt, getEntry, recordHostQualification, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
+import { type AttemptInput, type EntryInput, authorizeAttempt, getAttempt, getEntry, recordHostQualification, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from '../trust/host.js';
 
 // The label on every event a fixture causes (SEAM.md §10, §15).
@@ -452,10 +452,9 @@ export function installAttempt(db: Database, actor: Actor, args: { body: Attempt
     const hq = historicalHostRow(tx, args.incarnation, args.evidence, args.body.mechanism_fingerprint);
     const { attempt, decision } = proposeAttempt(tx, attemptInput(args.body, hq), FIXTURE_LABEL);
     if (args.body.status === 'authorized') {
-      tx.db.prepare(`UPDATE "qualification_attempts" SET "status" = 'authorized' WHERE "id" = ?`).run(attempt.id);
       const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "id" = ?`).get(decision) as DecisionRow | undefined;
       if (open) invalidateDecision(tx, open, 'the fixture installed the attempt authorized');
-      tx.emit('qualification.authorized', { project: attempt.fixture_project, qualification_attempt: attempt.id, decision: null }, FIXTURE_LABEL);
+      authorizeAttempt(tx, attempt, null, FIXTURE_LABEL);
     }
     const row = getAttempt(tx.db, attempt.id)!;
     return { qualification_attempt: { id: row.id, status: row.status }, decision: args.body.status === 'proposed' ? decision : null };
@@ -555,7 +554,7 @@ export function installTrustEntry(
     };
     const { entry, decision } = proposeEntry(tx, input, FIXTURE_LABEL);
     tx.db.prepare(`UPDATE "qualification_attempts" SET "trust_entry" = ? WHERE "id" = ?`).run(entry.id, attempt.id);
-    if (f.status === 'revoked') revokeEntry(tx, entry, 'test_fixture');
+    if (f.status === 'revoked') revokeEntry(tx, entry, 'test_fixture', FIXTURE_LABEL);
     const row = getEntry(tx.db, entry.id)!;
     const d = decision === null ? undefined : (tx.db.prepare('SELECT "id", "preview_hash", "status" FROM "decisions" WHERE "id" = ?').get(decision) as { id: string; preview_hash: string; status: string } | undefined);
     return {

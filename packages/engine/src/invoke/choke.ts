@@ -29,7 +29,7 @@ import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runt
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamStandIn } from '../testing/seam.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
@@ -107,15 +107,20 @@ export class Launcher {
     await pausePoint('dispatch.domain_allocated');
     await pausePoint('dispatch.receipt_committed');
 
+    // What runs the backend: the scripted one for the scripted backend; for
+    // one a trust entry authorizes, what the test seam stands in with, or
+    // nothing: without the sandbox launcher, which this engine revision does
+    // not have, a real backend is never run (D2 §5 C3).
+    const runs = claim.trust_entry === null ? backend : seamStandIn({ backend: claim.backend, binary_path: claim.binary_path ?? '' });
     let ready = false;
     try {
-      ready = await this.prepare(handle, backend, target.repo);
+      ready = await this.prepare(handle, runs, target.repo);
     } catch (err) {
       log('dispatch', err, { run: claim.run });
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
-    if (ready && backend) void this.launch(handle, backend);
+    if (ready && runs) void this.launch(handle, runs);
     return true;
   }
 
@@ -136,7 +141,15 @@ export class Launcher {
       // The refusal is the end the engine decided, and it is kept with the
       // handle: if recording it fails, the engine's retry records the same
       // refusal, never a failure (SEAM.md §24).
-      const refusal = claim.refusal ?? { code: 'backend_refused', text: 'no backend is qualified', detail: { code: 'backend_refused' } };
+      const refusal =
+        claim.refusal ??
+        (claim.trust_entry !== null
+          ? {
+              code: 'isolation_unqualified',
+              text: 'the sandbox launcher that would run this backend is not part of this engine revision',
+              detail: { code: 'isolation_unqualified', trust_entry: claim.trust_entry },
+            }
+          : { code: 'backend_refused', text: 'no backend is qualified', detail: { code: 'backend_refused' } });
       this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, { ...refusal.detail, text: refusal.text });
       return false;
     }

@@ -174,6 +174,7 @@ export interface Claim {
   // `budget_boundary_unenforceable`).
   backend: string;
   trust_entry: string | null;
+  binary_path: string | null;
   refusal: { code: string; text: string; detail: Record<string, unknown> } | null;
 }
 
@@ -317,6 +318,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     lease_renewed_at: tx.at,
     backend: backend.backend,
     trust_entry: trustEntry,
+    binary_path: backend.kind === 'entry' ? backend.entry.binary_path : null,
     refusal: backend.kind === 'refused' ? { code: backend.code, text: backend.text, detail: backend.detail } : null,
   };
 }

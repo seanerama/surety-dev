@@ -62,7 +62,6 @@ export interface AttemptRow {
   unexpected_contacts: string;
   trust_entry: string | null;
   invalidated_reason: string | null;
-  test_fixture: number;
 }
 
 export interface Boundary {
@@ -107,7 +106,6 @@ export interface EntryRow {
   activated_by: string | null;
   revoked_at: string | null;
   revoked_reason: string | null;
-  test_fixture: number;
 }
 
 const json = <T>(text: string): T => JSON.parse(text) as T;
@@ -116,8 +114,6 @@ export const getEntry = (db: Db, id: string): EntryRow | undefined => db.prepare
 export const getAttempt = (db: Db, id: string): AttemptRow | undefined => db.prepare('SELECT * FROM "qualification_attempts" WHERE "id" = ?').get(id) as AttemptRow | undefined;
 const getHostRow = (db: Db, id: string): HostQualificationRow | undefined =>
   db.prepare('SELECT * FROM "host_qualifications" WHERE "id" = ?').get(id) as HostQualificationRow | undefined;
-
-const fixtureLabel = (row: { test_fixture: number }) => (row.test_fixture === 1 ? { test_fixture: true } : {});
 
 // ---- host qualifications (D2 §7.1) ----------------------------------------------------------
 
@@ -241,8 +237,8 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
   tx.db
     .prepare(
       `INSERT INTO "qualification_attempts" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "template", "template_version",
-         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "test_fixture")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)`,
+         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
     )
     .run(
       id,
@@ -262,7 +258,6 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
       JSON.stringify(args.candidate_egress),
       JSON.stringify(args.canary_deadlines),
       JSON.stringify(args.spend),
-      label.test_fixture === true ? 1 : 0,
     );
   tx.emit('qualification.proposed', { project: args.fixture_project, qualification_attempt: id }, { ...label, backend: args.backend, version: args.version, model: args.model });
   return getAttempt(tx.db, id)!;
@@ -275,9 +270,9 @@ function moveAttempt(tx: Tx, a: AttemptRow, to: AttemptRow['status'], extra: Rec
 }
 
 // The consumption of the attempt's qualification_approval (D2 §7.2, Q7).
-export function authorizeAttempt(tx: Tx, a: AttemptRow, decision: string): void {
+export function authorizeAttempt(tx: Tx, a: AttemptRow, decision: string | null, label: Record<string, unknown> = {}): void {
   moveAttempt(tx, a, 'authorized', { decision });
-  tx.emit('qualification.authorized', { project: a.fixture_project, qualification_attempt: a.id, decision }, fixtureLabel(a));
+  tx.emit('qualification.authorized', { project: a.fixture_project, qualification_attempt: a.id, decision }, label);
 }
 
 export function startAttempt(tx: Tx, args: { attempt: string }): AttemptRow {
@@ -289,19 +284,24 @@ export function startAttempt(tx: Tx, args: { attempt: string }): AttemptRow {
 
 // A change to a bound dependency invalidates the attempt (D2 §7.2); a replay
 // is a new attempt with a new approval.
-export function invalidateAttempt(tx: Tx, a: AttemptRow, reason: string): void {
+export function invalidateAttempt(tx: Tx, a: AttemptRow, reason: string, label: Record<string, unknown> = {}): void {
   if (a.status === 'invalidated' || a.status === 'succeeded' || a.status === 'failed') return;
   moveAttempt(tx, a, 'invalidated', { invalidated_reason: reason });
-  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...fixtureLabel(a), status: 'invalidated', reason });
+  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...label, status: 'invalidated', reason });
 }
 
-export function finishAttempt(tx: Tx, a: AttemptRow, args: { outcome: 'succeeded' | 'failed'; canaries: unknown[]; unexpected_contacts?: unknown[]; trust_entry?: string | null }): void {
+export function finishAttempt(
+  tx: Tx,
+  a: AttemptRow,
+  args: { outcome: 'succeeded' | 'failed'; canaries: unknown[]; unexpected_contacts?: unknown[]; trust_entry?: string | null },
+  label: Record<string, unknown> = {},
+): void {
   moveAttempt(tx, a, args.outcome, {
     canaries: JSON.stringify(args.canaries),
     unexpected_contacts: JSON.stringify(args.unexpected_contacts ?? []),
     trust_entry: args.trust_entry ?? null,
   });
-  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...fixtureLabel(a), status: args.outcome, trust_entry: args.trust_entry ?? null });
+  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...label, status: args.outcome, trust_entry: args.trust_entry ?? null });
 }
 
 // What a qualification_approval binds (D2 A.7): the attempt's full binding.
@@ -430,8 +430,8 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
       `INSERT INTO "trust_entries" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "mode", "template", "template_version",
          "model", "auth_mode", "capabilities", "host_id", "host_qualification", "isolation", "boundary", "profile_fingerprint", "egress_hosts", "usage_granularity",
          "usage_semantics", "cost_reporting", "enforceable_boundaries", "result_channel", "session_qualified", "provider_files", "term_to_exit_ms",
-         "qualification_attempt", "evidence", "evidence_fingerprint", "status", "test_fixture")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'proposed', ?)`,
+         "qualification_attempt", "evidence", "evidence_fingerprint", "status")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'proposed')`,
     )
     .run(
       id,
@@ -463,7 +463,6 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
       e.qualification_attempt,
       JSON.stringify(e.evidence),
       evidenceFingerprint(tx.db, e),
-      label.test_fixture === true ? 1 : 0,
     );
   tx.emit('trust.proposed', { project: attempt.fixture_project, trust_entry: id, qualification_attempt: attempt.id }, { ...label, backend: e.backend, version: e.version, mode: e.mode });
   return getEntry(tx.db, id)!;
@@ -476,16 +475,16 @@ export function activateEntry(tx: Tx, entry: EntryRow, decision: string): void {
   assertEdge('TrustStatus', entry.status, 'active', { trust_entry: entry.id });
   tx.db.prepare(`UPDATE "trust_entries" SET "status" = 'active', "activated_by" = ? WHERE "id" = ?`).run(decision, entry.id);
   const attempt = getAttempt(tx.db, entry.qualification_attempt);
-  tx.emit('trust.activated', { project: attempt?.fixture_project ?? null, trust_entry: entry.id, decision }, { ...fixtureLabel(entry), backend: entry.backend, version: entry.version });
+  tx.emit('trust.activated', { project: attempt?.fixture_project ?? null, trust_entry: entry.id, decision }, { backend: entry.backend, version: entry.version });
 }
 
 // D2 §7.3: revocation refuses new dispatch and touches no running domain.
-export function revokeEntry(tx: Tx, entry: EntryRow, reason: string): void {
+export function revokeEntry(tx: Tx, entry: EntryRow, reason: string, label: Record<string, unknown> = {}): void {
   if (entry.status === 'revoked') return;
   assertEdge('TrustStatus', entry.status, 'revoked', { trust_entry: entry.id });
   tx.db.prepare(`UPDATE "trust_entries" SET "status" = 'revoked', "revoked_at" = ?, "revoked_reason" = ? WHERE "id" = ?`).run(tx.at, reason, entry.id);
   const attempt = getAttempt(tx.db, entry.qualification_attempt);
-  tx.emit('trust.revoked', { project: attempt?.fixture_project ?? null, trust_entry: entry.id }, { ...fixtureLabel(entry), reason });
+  tx.emit('trust.revoked', { project: attempt?.fixture_project ?? null, trust_entry: entry.id }, { ...label, reason });
 }
 
 // The project the trust_activation decision about an entry belongs to: the
@@ -559,9 +558,9 @@ export type Resolution =
 // refused with no fallback (§1.8); an authorized qualification attempt is
 // never considered (K10). Then the policy's budget boundary must be one the
 // entry enforces (§4.2), and a current compatible host qualification must
-// exist (§4.1). Outside harness mode the sandbox launcher this engine
-// revision does not have yet would be needed: refused, never run without it
-// (§5 C3).
+// exist (§4.1). What then runs the backend is the choke point's: without
+// the sandbox launcher, which this engine revision does not have yet, it
+// refuses (§5 C3).
 export function resolveBackend(db: Db, args: { project: string; role: string; scripted: string | null }): Resolution {
   const options = projectOptions(db, args.project);
   const selected = options.backends[args.role] ?? null;
@@ -594,7 +593,7 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
 
   if (selected === null || selected.backend === 'scripted') {
     if (selected !== null && selected.mode === 'session_headless') return refuse('scripted', 'backend_refused', 'session mode is refused on every backend in M2 (D2 §1.8)', { mode: selected.mode });
-    if (args.scripted === null) return refuse('scripted', 'backend_refused', 'no backend is qualified: the scripted backend exists only in harness mode');
+    if (args.scripted === null) return refuse('scripted', 'backend_refused', 'no backend is qualified: the project names none with an active trust entry, and this engine has no scripted backend');
     return boundaryRefusal('scripted', SCRIPTED_BOUNDARIES, {}, args.scripted, 'scripted') ?? { kind: 'scripted', backend: 'scripted', version: args.scripted, model: 'scripted' };
   }
 
@@ -615,9 +614,6 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
   const host = hostEligibility(db, entry);
   if (!host.eligible) {
     return refuse(backend, 'isolation_unqualified', 'no current host qualification compatible with the entry exists', { ...at, host_eligibility: host }, entry.version, entry.model);
-  }
-  if (entry.test_fixture !== 1 || args.scripted === null) {
-    return refuse(backend, 'isolation_unqualified', 'the sandbox launcher that would run this backend is not part of this engine revision', at, entry.version, entry.model);
   }
   return { kind: 'entry', backend, version: entry.version, model: entry.model, entry };
 }
@@ -647,7 +643,6 @@ const entryView = (db: Db, e: EntryRow) => ({
   activated_by: e.activated_by,
   revoked_at: e.revoked_at,
   revoked_reason: e.revoked_reason,
-  test_fixture: e.test_fixture === 1,
 });
 
 // GET /v1/engine's trust part (D2 A.7): the current host qualification, the
@@ -693,7 +688,6 @@ export function trustView(db: Db, args: { scripted: boolean }) {
       canaries: json<unknown>(a.canaries),
       trust_entry: a.trust_entry,
       invalidated_reason: a.invalidated_reason,
-      test_fixture: a.test_fixture === 1,
     })),
   };
 }
