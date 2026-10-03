@@ -12,21 +12,38 @@
 // answer and effect, refuses or invalidates it. The Verifier never approves
 // a correction, and a correction the classifier could not classify never
 // takes this path.
+//
+// The last case (M2 slice 1 review, S1; SEAM.md §104) moves the integration
+// branch at the latest moment of all: after the answer, after the
+// application's commit, before its branch update. The update's
+// compare-and-swap is the effect's conditional execution (D1 §10.5), so it
+// fails without effect and the intent is invalidated like any other.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { CODES, answer, answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
+import { CODES, answer, answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, consume, decision, decisionsOfKind, decisionsOn, intentsOf, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
+import { releaseBarrier, waitFor } from './harness/engine.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { assertApplied, assertNotApplied, assertProposalRejected, capturedProposal, correction, proposalsOf, reviewerApproves, roleRun, waitApplied } from './harness/gates.mjs';
-import { addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
-import { changePolicy } from './harness/journal.mjs';
-import { refOid } from './harness/repos.mjs';
-import { tick } from './harness/runs.mjs';
+import { PROTECTED_FILES, askingForTicks, assertApplied, assertNotApplied, assertProposalRejected, capturedProposal, classify, correction, effectiveVersion, governedEdit, proposalsOf, protectedVersions, reviewerApproves, roleRun, waitApplied } from './harness/gates.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, roleThatHolds, runToEnd, runToHold, step } from './harness/gitruns.mjs';
+import { armBarrier, changePolicy, journalBarrier, operationsOf } from './harness/journal.mjs';
+import { parentsOf, refOid } from './harness/repos.mjs';
+import { runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { contentAndSpecChange } from './harness/stale-correction.mjs';
 
 const KIND = 'check_correction_tightening';
 const head = (project) => refOid(project.repo.path, project.repo.ref);
+
+// Tick until `read()` satisfies `done`, at most `max` times, and return the
+// last reading whatever it is: the assertion that follows says what it was.
+async function settle(fx, project, read, done, { max = 4 } = {}) {
+  for (let i = 0; ; i++) {
+    const value = read();
+    if (done(value) || i === max) return value;
+    await tick(fx.engine, project);
+  }
+}
 
 describe('M53 the check_correction_tightening manifest', () => {
   test('the human owner approves a tightening through its own kind: the bound proposal is applied, with the human as its approver', async (t) => {
@@ -130,5 +147,77 @@ describe('M53 the check_correction_tightening manifest', () => {
     assertProposalRejected(fx, ctx);
     await assertQuestionClosed(fx, project.id, previewed);
     assertProposalRejected(fx, ctx);
+  });
+
+  // M2 slice 1 review, S1 (SEAM.md §104). The staging is the Reviewer's: a
+  // Builder held in its workspace; a human tightening, open; the Builder's
+  // integration intended with old = H and paused; the answer, whose
+  // application's commit intent is paused in turn; the integration released
+  // first, so it moves the branch H → R before the application's branch
+  // update, intended with old = H, is attempted. No tick is asked for while
+  // a journal barrier is paused: the order of the two drives is the lock's.
+  test("the integration branch moves after the answer, between the application's commit and its branch update: the update fails without effect, the effect is invalidated, the approval and the intended version are withdrawn, nothing is left blocked, the project dispatches again, and the question is asked again against the new head", async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx, { tier: 'T1', files: PROTECTED_FILES });
+    const previous = effectiveVersion(fx.home, project.id);
+    const H = head(project);
+
+    const fix = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(fix, [roleThatHolds([permittedEdit()])]);
+    await runToHold(fx, project.id, fix);
+
+    const proposal = await governedEdit(fx, project, { protected_paths: ['.surety/checks/', 'docs/policy/'] });
+    await classify(fx.engine, proposal.id, 'tightening');
+    const previewed = await askingForTicks(fx, project.id, () => decisionsOn(fx.home, KIND, proposal.id).find((row) => row.status === 'open'), 'the tightening to be offered for approval');
+    assert.equal(previewed.manifest.integration_revision, H, 'the fixture is live: the preview is against the head the Builder started from');
+    const ctx = { project, previous, proposal };
+
+    // 1. The Builder's integration is intended, old = H, and waits before its swap.
+    const swap = journalBarrier('ref_update', 'intent_committed');
+    await armBarrier(fx.engine, swap, 'pause');
+    fx.scripted.release(fix);
+    await fx.engine.waitUntil(`barrier:${swap}`);
+
+    // 2. The human approves while the branch is still at H: consumed, one intent.
+    const commit = journalBarrier('commit_tree', 'intent_committed');
+    await armBarrier(fx.engine, commit, 'pause');
+    const pending = answer(fx.engine, project.id, previewed, 'approve').catch((err) => err);
+    await waitFor(() => (intentsOf(fx.home, previewed.id).length === 1 ? true : undefined), { what: 'the approval to record its effect intent' });
+
+    // 3. The integration goes on; the application's commit is intended with the branch at H.
+    await releaseBarrier(fx.engine, swap);
+    await fx.engine.waitUntil(`barrier:${commit}`);
+    assert.equal(head(project), H, "the fixture is live: the application's commit is intended against H, which the integration is about to move");
+
+    // 4. Both go on. The integration, queued first, moves the branch H → R.
+    await releaseBarrier(fx.engine, commit);
+    await pending;
+    await waitForRun(fx.home, fix, { state: 'ended' });
+    const R = head(project);
+    assert.deepEqual([parentsOf(project.repo.path, R), workItem(fx.home, fix).status], [[H], 'integrated'], "the fixture is live: the Builder's commit is integrated on H");
+
+    // The branch update's compare-and-swap found R, not H: the effect's conditional execution failed, and that is a changed precondition.
+    const intent = await settle(fx, project.id, () => intentsOf(fx.home, previewed.id)[0], (row) => ['invalidated', 'done'].includes(row.status));
+    assert.deepEqual([intent.status, intent.invalidated_reason], ['invalidated', CODES.intent_invalidated], "the application's branch update found the branch moved off its old commit: the effect is invalidated, not left executing");
+
+    // Withdrawn: the proposal awaits an approval again, and the version intended for it is not authorized.
+    assert.equal(assertNotApplied(fx, ctx, R).status, 'classified', 'the approval is withdrawn with the effect: the proposal awaits an approval again');
+    const unauthorized = (version) => version.authorized === 0 && version.effective_from === null;
+    assert.ok(protectedVersions(fx.home, project.id).filter((version) => version.proposal === proposal.id).every(unauthorized), 'no version of the proposal is authorized or effective');
+
+    // Nothing is left for a person to unblock or for recovery to carry.
+    assert.deepEqual(decisionsOfKind(fx.home, project.id, 'blocker').filter((row) => row.status === 'open').map((row) => [row.subject_type, row.question]), [], 'no blocker is open: a failed compare-and-swap is not an ambiguity');
+    assert.deepEqual(operationsOf(fx.home, { project: project.id }).filter((op) => !['finalized', 'failed'].includes(op.state)).map((op) => [op.journal_kind, op.state]), [], 'every operation of the project is finalized or failed: none is left ambiguous or in flight');
+
+    // The question is asked again, against R, with no approval; and the project goes on.
+    const next = await openDecision(fx, project.id, KIND, proposal.id);
+    assert.deepEqual([next.id !== previewed.id, next.manifest.integration_revision, approvalsOf(fx.home, next.id).length], [true, R, 0], 'the next generation is bound to the new head and starts with no approval');
+    const second = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(second, [roleThat([step.write('src/second.js', 'export const second = 2;\n')])]);
+    await tick(fx.engine, project.id);
+    assert.equal(runsOf(fx.home, second).length, 1, 'the next work item is dispatched on the next tick');
+    await runToEnd(fx, project.id, second);
+    assert.deepEqual([parentsOf(project.repo.path, head(project)), workItem(fx.home, second).status], [[R], 'integrated'], "the integrated work stayed on the branch: the second item's commit is on R");
+    assert.ok(protectedVersions(fx.home, project.id).filter((version) => version.proposal === proposal.id).every(unauthorized), 'and the withdrawn version never became authorized');
   });
 });
