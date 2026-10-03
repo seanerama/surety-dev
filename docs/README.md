@@ -18,10 +18,11 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 must pass. |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
 | [design/sdlc-design-D2-brief.md](design/sdlc-design-D2-brief.md) | The brief for D2 (backend adapters, control-plane isolation, the execution boundary, the trust table): what it must answer, what it inherits, how it is produced and judged. |
+| [design/sdlc-design-D2-ebpf-note.md](design/sdlc-design-D2-ebpf-note.md) | Companion to D2: an optional eBPF execution observer as qualification evidence, approved as a prototype (E57). |
 | [design/sdlc-design-D2-backends-and-isolation.md](design/sdlc-design-D2-backends-and-isolation.md) | D2 draft 1: the adapter contract, the namespace sandbox, the cgroup execution boundary, the trust table and qualification; nine proposed D1 corrections, seven open questions, 59 test statements. Cross-reviewed (E56); draft 2 applies the dispositions. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
-| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E56 amending the foundations. |
+| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E57 amending the foundations. |
 
 ## Background and record
 
