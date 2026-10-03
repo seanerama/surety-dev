@@ -1467,6 +1467,18 @@ Accepted files that use the harness modules this pass changed, each alone on the
 | A hard link to a forbidden file inside an approved read path | M119 | E62 question 3 is open with Sean; the recommended reading is class C. |
 | An observer's evidence (M124 (e), M128 (g)) | — | `[not_exercised]` until H13 passes (E57). |
 
+**The objections of the slice-12 Builder** (006 to 010; answered by the Verifier on `verify/m2-s12-obj` from `main` at `3054c58`, 2026-10-03; SEAM, "Amended after the slice-12 objections"). Each changes its case and no assertion that a case makes of the engine:
+
+| Objection | Ruling | Case change |
+|---|---|---|
+| 006, M112 (g), M116 (d) | upheld | "no observer evidence" counts the observer's envelopes (`collector_version`), not every `qualification_evidence` record |
+| 007, M122 (e) | upheld | compared while the domain lives, then stopped; M119 (a), (b) the same (a hidden pin on the domain area's survival, the Verifier's own) |
+| 008, M125 (a)/(b) | upheld in part | an environment the host's `/proc` file refuses (`EACCES`) is read from the process's memory (`env_start`/`env_end`, `process_vm_readv`); both reads agree where both work; the bare `EACCES` acceptance refused; M117 (b) unchanged |
+| 009, M125 (c) | upheld, with the helper's second fault | `armedRole` scripts and finds the item's next launch and that launch's run |
+| 010, M117 (c) | upheld in part | the control is a Builder's (`fix`) workspace write, read on the integration branch; `/tmp` refused |
+
+Run, each file alone, on `build/m2-s12` at `cf92925` (a detached scratch worktree with the changed files copied in, removed afterwards; not an acceptance run): M112 6 of 6, M116 4 of 4 (both showing the role contained), then M119 7 of 7, M122 5 of 5, M125 3 of 3 (its first run failed (c) at the helper's second fault, fixed and rerun), M117 3 of 3, and the other users of the changed helper, M120 4 of 4, M121 5 of 5, M123 5 of 5, M126 2 of 2, M127 3 of 3, M128 6 of 6.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

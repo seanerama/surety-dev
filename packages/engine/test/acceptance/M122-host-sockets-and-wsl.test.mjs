@@ -46,7 +46,7 @@ import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { addProject, addWork, getRow } from './harness/runs.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
-import { addProfiledWork, approveWidening, assertMountTableIsPlan, byPath, hostMounts, mountPlanOf, probedRun, refusedBeforeLaunch } from './harness/sandbox/view.mjs';
+import { addProfiledWork, approveWidening, armedRole, assertMountTableIsPlan, byPath, hostMounts, mountPlanOf, probedRun, refusedBeforeLaunch } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
 import { PARK_ON_REFUSAL } from './harness/trust.mjs';
 
@@ -207,7 +207,14 @@ describe('M122 host sockets, the user bus, Docker, WSL interop and host mounts',
     else t.diagnostic('[not_exercised] P12\'s WSL claim: not a WSL2 host; the plan comparison still runs');
 
     const item = await addProfiledWork(fx, project, 'verification', { profile: 'probe' });
-    const { run, domain, probe } = await probedRun(fx, project, item, { before: [step.probe('mount_table'), step.probe('stat_paths', { paths: ['/mnt/c', '/mnt'] })] });
+    // Objection 007: the table is compared with the plan while the domain
+    // lives; at termination the engine removes the domain's cgroup directory
+    // and its sibling (D2 §3.2; SEAM.md §§126, 127), the sources of the
+    // plan's two cgroup entries. The role holds after its probes, and the
+    // run is stopped once the comparison is made.
+    const role = await armedRole(fx, project, item, { before: [step.probe('mount_table'), step.probe('stat_paths', { paths: ['/mnt/c', '/mnt'] })], thenHold: true });
+    await role.release();
+    const { run, domain, probe } = role;
     assert.equal(domain.profile, 'probe');
     const plan = await mountPlanOf(fx, project, run.id);
     assert.equal(plan.profile, 'probe');
@@ -215,5 +222,6 @@ describe('M122 host sockets, the user bus, Docker, WSL interop and host mounts',
     assert.deepEqual(mounts.filter((m) => /^(9p|drvfs|virtiofs)$/.test(m.fstype) || /drvfs/i.test(`${m.source} ${m.superopts}`)).map((m) => m.line), [], 'no 9p, DrvFs or virtiofs entry');
     assert.equal(byPath(probe('stat_paths'))['/mnt/c'].outcome, 'failed', 'no /mnt/c');
     assert.deepEqual(plan.entries.filter((e) => e.kind === 'cgroup').map((e) => e.target).sort(), ['/surety/cgroup/domain', '/surety/cgroup/sibling'], 'the probe profile\'s plan carries its two cgroup directories (SEAM.md §127), which the table matched');
+    await role.stop();
   });
 });

@@ -40,6 +40,7 @@ import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
   aliasesOf,
   approveWidening,
+  armedRole,
   assertMountTableIsPlan,
   byPath,
   hostMounts,
@@ -69,14 +70,22 @@ describe('M119 the validated mount plan has the authority', () => {
     const item = await addWork(fx.engine, project, 'verification');
     const shmName = `surety-role-${randomBytes(6).toString('hex')}`;
     t.after(() => rmSync(join('/dev/shm', shmName), { force: true }));
-    const { run, domain, launch, probe } = await probedRun(fx, project, item, {
+    // Objection 007 (a correction of this case's own, made with it): the
+    // table is compared with the plan while the domain lives. A bind source in
+    // the domain's area is the engine's to keep or remove at termination,
+    // which this case does not pin; the role holds after its steps and the run
+    // is stopped once the comparison is made.
+    const first = await armedRole(fx, project, item, {
       before: [
         step.probe('mount_table'),
         step.probe('context_dump', { root: '/etc', label: 'etc' }),
         step.probe('list_dirs', { paths: ['/dev', '/dev/shm'] }),
       ],
       acts: (act) => [act.shm(shmName)],
+      thenHold: true,
     });
+    await first.release();
+    const { run, domain, launch, probe } = first;
     assert.deepEqual([launch.cwd, launch.workspace], ['/surety/workspace', '/surety/workspace'], 'the role runs in /surety/workspace, and its request names that as its workspace');
 
     // The plan, published, and the table against it.
@@ -127,6 +136,7 @@ describe('M119 the validated mount plan has the authority', () => {
     assert.equal(existsSync(join('/dev/shm', shmName)), false, 'host-witnessed: the role\'s file is not in the host\'s /dev/shm');
 
     // The fingerprint: the same plan gives the same one; a widening another.
+    await first.stop();
     const again = await addWork(fx.engine, project, 'verification');
     const second = await probedRun(fx, project, again, {});
     assert.equal((await mountPlanOf(fx, project, second.run.id)).fingerprint, plan.fingerprint, 'a second run of the same project and profile has the same plan fingerprint (the domain\'s own paths are not part of it)');
@@ -150,10 +160,18 @@ describe('M119 the validated mount plan has the authority', () => {
     const link = join(scratch, 'link-to-toolchain');
     await approveWidening(fx, id, { sandbox_read_paths: [link] });
     const item = await addWork(fx.engine, id, 'verification');
-    const { run, domain, probe } = await probedRun(fx, id, item, {
+    // Objection 007 (a correction of this case's own, made with it): the
+    // table is compared with the plan while the domain lives. A bind source in
+    // the domain's area is the engine's to keep or remove at termination,
+    // which this case does not pin; the role holds after its steps and the run
+    // is stopped once the comparison is made.
+    const widened = await armedRole(fx, id, item, {
       before: [step.probe('mount_table'), step.probe('open_paths', { paths: [join(real, 'tool.txt'), join(link, 'tool.txt')] }), step.probe('stat_paths', { paths: [link], follow: false })],
       acts: (act) => [act.write(join(real, 'written-by-the-role.txt'))],
+      thenHold: true,
     });
+    await widened.release();
+    const { run, domain, probe } = widened;
     const plan = await mountPlanOf(fx, id, run.id);
     assertMountTableIsPlan(probe('mount_table'), plan, ctxOf(fx, run, domain));
     const entry = plan.entries.find((e) => e.target === real);
@@ -166,6 +184,8 @@ describe('M119 the validated mount plan has the authority', () => {
     assert.equal(probe('write_probe').outcome, 'refused', `the widening is read-only to the role (${JSON.stringify(probe('write_probe'))})`);
     assert.deepEqual(readdirSync(real), ['tool.txt'], 'host-witnessed: nothing was written into the permitted directory');
     assert.notEqual(plan.fingerprint, unwidened.fingerprint, 'a widening changes the plan\'s fingerprint');
+
+    await widened.stop();
 
     const alias = join(scratch, 'link-to-home');
     await approveWidening(fx, id, { sandbox_read_paths: [alias] });
