@@ -1,8 +1,9 @@
 // Reads of the engine's projections for rows M70, M74 and M01 (SEAM.md §§91,
-// 95): the project list and one project's combined projection, a project's
-// open decisions, a candidate, and a read that gives up after a stated number
-// of bytes or milliseconds, for the record reads that must refuse instead of
-// serving or waiting.
+// 95, 98): the project list and one project's combined projection, a
+// project's open decisions, its work items, a candidate, a candidate's latest
+// gate evaluation, and a read that gives up after a stated number of bytes or
+// milliseconds, for the record reads that must refuse instead of serving or
+// waiting.
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -50,6 +51,29 @@ export async function listDecisions(engine, project) {
   assert.equal(res.status, 200, `GET /v1/projects/${project}/decisions (body: ${res.text})`);
   assertReadEnvelope(res.body, `GET /v1/projects/${project}/decisions`);
   assert.ok(Array.isArray(res.body.decisions), `the read lists decisions (body: ${res.text.slice(0, 300)})`);
+  return res.body;
+}
+
+// GET /v1/projects/:p/work: {served_at, snapshot_seq, work_items: [...]},
+// every work item of the project (SEAM.md §98; D1 §11.3; E47).
+export async function listWork(engine, project) {
+  const res = await engine.get(`/v1/projects/${project}/work`);
+  assert.equal(res.status, 200, `GET /v1/projects/${project}/work (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET /v1/projects/${project}/work`);
+  assert.ok(Array.isArray(res.body.work_items), `the read lists work items (body: ${res.text.slice(0, 300)})`);
+  return res.body;
+}
+
+// GET /v1/projects/:p/candidates/:c/gates/:kind: {served_at, snapshot_seq,
+// evaluation: {...}}, the latest stored evaluation of that gate kind for the
+// candidate (SEAM.md §98; D1 §11.3; E47). For the refusals (no evaluation
+// yet, another project's candidate) a test calls the route itself.
+export async function readGate(engine, project, candidate, kind) {
+  const path = `/v1/projects/${project}/candidates/${candidate}/gates/${kind}`;
+  const res = await engine.get(path);
+  assert.equal(res.status, 200, `GET ${path} (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET ${path}`);
+  assert.equal(res.body.evaluation?.gate_kind, kind, `the answer is an evaluation of the gate kind in the path (body: ${res.text.slice(0, 300)})`);
   return res.body;
 }
 

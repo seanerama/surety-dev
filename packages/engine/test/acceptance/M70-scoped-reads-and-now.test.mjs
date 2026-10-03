@@ -27,9 +27,19 @@
 // One engine with two projects, each with a Stop asked for and not confirmed,
 // for the decisions read (D1 §11.3; E39): a project's open decisions are
 // listed with what a person needs to answer one, another project's are not
-// shown, and a consumed decision is no longer listed. The other reads D1
-// §11.3 lists (one decision, work, operations, a gate, environments) are not
-// pinned.
+// shown, and a consumed decision is no longer listed.
+//
+// Two more reads, one case each, added after M1 was accepted (D1 §11.3; E44
+// item 3, E47; SEAM.md §98). A project's work items: each with its kind,
+// status, subject, trigger and chain, and when it is blocked the blocker
+// (its reason, the decision it waits on, the options offered); the fixture
+// has one item waiting at the chain boundary and one parked. A candidate's
+// gate: the latest recorded evaluation of a gate kind with its outcome, its
+// reasons naming their subjects, the scope's required checks with their
+// states, and whether it is stale; the read evaluates nothing, so before an
+// evaluation it is not found. Both are scoped to the project and write
+// nothing. The reads D1 §11.3 lists that remain unpinned: one decision by
+// id, operations, environments as a route of their own.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -39,14 +49,15 @@ import { after, describe, test } from 'node:test';
 
 import { isRefusalBody } from './harness/engine.mjs';
 import { assertRefused, eventsSince, maxEventSeq } from './harness/fixtures.mjs';
-import { decision } from './harness/decisions.mjs';
-import { addEnvironment, sharedFixture } from './harness/gates.mjs';
-import { runToEnd } from './harness/gitruns.mjs';
+import { decision, openDecision } from './harness/decisions.mjs';
+import { addEnvironment, check, evaluationsOf, installChecks, nominated, postResult, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
+import { addItem, runToEnd } from './harness/gitruns.mjs';
+import { changePolicy, workItemsOf } from './harness/journal.mjs';
 import { awayFromMidnight, getLedger } from './harness/ledger.mjs';
 import { sleep, timed } from './harness/mono.mjs';
-import { boundedGet, listDecisions, listProjects, readProject, readRun } from './harness/reads.mjs';
+import { boundedGet, listDecisions, listProjects, listWork, readGate, readProject, readRun } from './harness/reads.mjs';
 import { readRecord, recordFile, recordRow } from './harness/records.mjs';
-import { addProject, addWork, advanceClock, scriptedEngine, tick, waitForQuarantine, waitForRun } from './harness/runs.mjs';
+import { addProject, addWork, advanceClock, scriptedEngine, tick, waitForQuarantine, waitForRun, waitForWork } from './harness/runs.mjs';
 import { BOUNDARY, script } from './harness/scripted.mjs';
 import { dumpStore, withStore } from './harness/store.mjs';
 
@@ -259,6 +270,172 @@ describe('M70 the decisions read', () => {
     assert.deepEqual(await shownTo('mine'), [], 'the consumed decision is no longer listed');
     assert.equal((await readProject(engine, p.mine)).project.open_decisions?.count, 0, "and the project's own projection counts none");
     assert.deepEqual((await shownTo('other')).map((shown) => [shown.id, shown.preview_hash]), [[row.other.id, row.other.preview_hash]], "the other project's open decision is still listed, unchanged");
+  });
+});
+
+// What a read may not do (SEAM.md §91): change a row, write an event, launch
+// a role. `exclude` is the existing read-purity case's: the log, the engine's
+// bookkeeping, and the leases the engine renews on its own.
+const quiet = (fx) => {
+  const stored = () => withStore(fx.home, (db) => dumpStore(db, { exclude: ['events', 'engine_incarnations', 'leases'] }));
+  const before = { rows: stored(), seq: maxEventSeq(fx.home), launches: fx.scripted.launches().length };
+  return (what) => {
+    assert.deepEqual(stored(), before.rows, `${what}: no stored row changed`);
+    const written = [...new Set(eventsSince(fx.home, before.seq).map((event) => event.type))];
+    assert.deepEqual(written.filter((type) => !['run.heartbeat', 'engine.tick'].includes(type)), [], `${what}: no event was written for a read`);
+    assert.equal(fx.scripted.launches().length, before.launches, `${what}: no role was launched by a read`);
+  };
+};
+
+describe('M70 the work read', () => {
+  test("a project's work items are listed with kind, status, subject, trigger and chain, and a blocked item with its blocker: the reason, the decision it waits on and the options offered; another project's items are not shown; reading writes nothing", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+
+    // A project whose first stage was built, integrated and nominated. The
+    // candidate's verification, which the engine made on the Builder's run,
+    // waits at the chain boundary (SEAM.md §40): eligible, not dispatched,
+    // with a blocker decision offering continue and cancel.
+    const ctx = await nominated(fx);
+    const mine = ctx.project.id;
+    const stageWork = ctx.items[0];
+    const verification = workItemsOf(fx.home, mine).find((work) => work.kind === 'verification' && work.subject?.candidate === ctx.candidate.id);
+    assert.ok(verification, 'the fixture is live: the nomination created verification work');
+    const boundary = await openDecision(fx, mine, 'blocker', verification.id);
+
+    // And one item a fixture made that is parked: a fix whose one permitted
+    // run crashed (SEAM.md §15), with a blocker decision offering retry and cancel.
+    await changePolicy(engine, mine, { repair_attempts_max: 0 });
+    const fix = await addItem(fx, mine, 'fix');
+    fx.scripted.script(fix, [script.crash(3)]);
+    await runToEnd(fx, mine, fix);
+    await waitForWork(fx.home, fix, 'parked');
+    const parked = await openDecision(fx, mine, 'blocker', fix);
+
+    // Another project with an item of its own: eligible, nothing blocks it.
+    const other = (await addProject(fx)).id;
+    const theirs = await addWork(engine, other, 'verification');
+
+    const rows = Object.fromEntries(workItemsOf(fx.home, mine).map((work) => [work.id, work]));
+    assert.deepEqual(
+      [stageWork, verification.id, fix].map((id) => [rows[id].status, rows[id].blocker?.reason ?? null, rows[id].blocker?.decision ?? null]),
+      [['verifying', null, null], ['eligible', 'max_chained_roles', boundary.id], ['parked', 'repair_attempts_max', parked.id]],
+      'the fixture is live: the stage work is verifying with no blocker, the verification waits at the chain boundary, the fix is parked, and each blocker names its decision',
+    );
+
+    // The read lists the project's items, each as its row has it.
+    const listed = (await listWork(engine, mine)).work_items;
+    assert.deepEqual(listed.map((shown) => shown.id), Object.keys(rows), "every work item of the project, each once, oldest first, and no other project's");
+    for (const shown of listed) {
+      const row = rows[shown.id];
+      assert.deepEqual(
+        [shown.kind, shown.status, shown.subject, shown.trigger_source, shown.trigger_id, shown.trigger_generation, shown.chain],
+        [row.kind, row.status, row.subject, row.trigger_source, row.trigger_id, row.trigger_generation, row.chain],
+        `item ${shown.id} is shown with its kind, status, subject, trigger and chain, as its row has them`,
+      );
+    }
+    const shown = Object.fromEntries(listed.map((item) => [item.id, item]));
+    assert.deepEqual(
+      [stageWork, verification.id, fix].map((id) => [shown[id].kind, shown[id].status, shown[id].chain]),
+      [['stage_build', 'verifying', 0], ['verification', 'eligible', 1], ['fix', 'parked', 0]],
+      "the stage's work (a fixture's, chain 0) is verifying; the verification the engine made on the Builder's run (chain 1) is eligible; the fix (a fixture's) is parked",
+    );
+    assert.deepEqual([shown[stageWork].subject, shown[verification.id].subject], [{ stage: ctx.stage }, { candidate: ctx.candidate.id }], 'each with what it is about');
+    assert.equal(shown[stageWork].blocker, null, 'an item nothing blocks has no blocker');
+
+    // A blocked item carries its blocker: why, which decision, and what can be answered.
+    const blocked = (id, decision, offered) => {
+      const blocker = shown[id].blocker;
+      assert.ok(blocker && typeof blocker === 'object', `the blocked item ${id} shows its blocker (${JSON.stringify(shown[id])})`);
+      assert.deepEqual([blocker.reason, blocker.raised_at, blocker.decision], [rows[id].blocker.reason, rows[id].blocker.raised_at, decision.id], `the blocker of ${id}: its reason, when it was raised and the open decision that holds the item, as stored`);
+      assert.ok(Array.isArray(blocker.options), `and the options that decision offers (${JSON.stringify(blocker)})`);
+      assert.deepEqual(blocker.options.map((option) => option.key), decision.options.map((option) => option.key), 'each with its key, in the stored order');
+      assert.deepEqual([...blocker.options.map((option) => option.key)].sort(), offered, `the answers a person can give for ${blocker.reason}`);
+    };
+    blocked(verification.id, boundary, ['cancel', 'continue']);
+    assert.equal(shown[verification.id].blocker.reason, 'max_chained_roles', 'the verification waits for a person at the chain boundary');
+    blocked(fix, parked, ['cancel', 'retry']);
+    assert.equal(shown[fix].blocker.reason, 'repair_attempts_max', 'the fix is parked at the repair limit');
+
+    // The other project sees its own item and nothing of the first project's.
+    assert.deepEqual(
+      (await listWork(engine, other)).work_items.map((item) => [item.id, item.kind, item.status, item.chain, item.blocker]),
+      [[theirs, 'verification', 'eligible', 0, null]],
+      "the other project's one item, eligible and unblocked, and none of the first project's",
+    );
+
+    // Reading writes nothing.
+    const unchanged = quiet(fx);
+    for (let round = 0; round < 3; round++) {
+      await listWork(engine, mine);
+      await listWork(engine, other);
+    }
+    unchanged('after six reads of the work of two projects');
+  });
+});
+
+describe('M70 the gate read', () => {
+  const KEYS = ['id', 'gate_kind', 'outcome', 'reasons', 'check_states', 'scope', 'stale'];
+  const pick = (evaluation) => Object.fromEntries(KEYS.map((key) => [key, evaluation?.[key]]));
+  const fromRow = (row) => ({ id: row.id, gate_kind: row.gate_kind, outcome: row.outcome, reasons: JSON.parse(row.reasons), check_states: JSON.parse(row.check_states), scope: row.scope, stale: row.stale === 1 });
+
+  test("a candidate's gate read returns the latest recorded evaluation of that kind, with its outcome, its reasons naming their subjects, the scope's required checks with their states, and whether it is stale; it evaluates nothing, so before any evaluation it is not found; another project's path is not found", async (t) => {
+    const fx = await scriptedEngine(t);
+    const engine = fx.engine;
+    const ctx = await nominated(fx);
+    const project = ctx.project.id;
+    const candidate = ctx.candidate.id;
+    const k = (await installChecks(engine, project, [check('login', { requirements: ['R1'] })])).id;
+    const other = (await addProject(fx)).id;
+    const path = (p) => `/v1/projects/${p}/candidates/${candidate}/gates/stage`;
+    const recorded = () => evaluationsOf(fx.home, candidate, 'stage');
+
+    // Before any evaluation: the read finds none, and makes none.
+    assert.equal(recorded().length, 0, 'the fixture is live: no stage evaluation of the candidate has been recorded (its verification waits at the chain boundary)');
+    const none = await engine.get(path(project));
+    assertRefused(none, 404, 'not_found', 'the gate read before any evaluation');
+    assert.deepEqual([none.body.subject?.candidate, none.body.subject?.gate_kind], [candidate, 'stage'], `the refusal names what was not found, the candidate and the gate kind (body: ${none.text})`);
+    assert.equal(recorded().length, 0, 'the read evaluated nothing');
+
+    // One evaluation, asked for by its route: not satisfied, the one required check missing.
+    const first = await stageGate(fx, ctx);
+    assert.deepEqual(
+      [first.outcome, first.reasons, first.check_states],
+      ['not_satisfied', [{ code: 'CHECK_NOT_PASSED', subjects: [k.login] }], { [k.login]: 'missing' }],
+      'the fixture is live: the evaluation is not satisfied, for the check that was never executed',
+    );
+    assert.equal(recorded().length, 1);
+
+    // The read returns that evaluation: what the route answered, and what the store holds.
+    const shown = (await readGate(engine, project, candidate, 'stage')).evaluation;
+    assert.deepEqual(pick(shown), pick(first), 'the read returns what the evaluation route answered: id, gate kind, outcome, reasons with their subjects, check states, scope, staleness');
+    assert.deepEqual(pick(shown), fromRow(recorded()[0]), 'and what the store recorded, exactly');
+    assert.deepEqual(Object.keys(shown.check_states).sort(), [...scopeOf(fx.home, recorded()[0]).required].sort(), "the check states are the scope's required checks, each with its state, and no other");
+    assert.deepEqual([shown.outcome, shown.stale, shown.reasons.map((reason) => [reason.code, reason.subjects])], ['not_satisfied', false, [['CHECK_NOT_PASSED', [k.login]]]], 'not satisfied, not stale, and the reason names the check it is about');
+
+    // A later evaluation of the same kind: the read returns the latest, not the first.
+    await postResult(engine, project, { candidate, check: k.login, exit_status: 1 });
+    const second = await stageGate(fx, ctx);
+    assert.notEqual(second.id, first.id, 'the fixture is live: a second evaluation was recorded');
+    assert.equal(second.check_states[k.login], 'failed', 'the fixture is live: the second evaluation saw the failed execution');
+    const again = (await readGate(engine, project, candidate, 'stage')).evaluation;
+    const latest = recorded().at(-1);
+    assert.notEqual(latest.id, first.id);
+    assert.deepEqual(pick(again), fromRow(latest), 'the read returns the latest recorded evaluation of the kind');
+    assert.equal(again.check_states[k.login], 'failed');
+
+    // Scoped to the project: the same candidate through another project's path is not found.
+    assertRefused(await engine.get(path(other)), 404, 'not_found', "the gate read through another project's path");
+
+    // Reading evaluates nothing and writes nothing, however often.
+    const count = recorded().length;
+    const unchanged = quiet(fx);
+    for (let round = 0; round < 3; round++) {
+      await readGate(engine, project, candidate, 'stage');
+      await engine.get(path(other));
+    }
+    assert.equal(recorded().length, count, 'no evaluation was recorded by a read');
+    unchanged('after six gate reads');
   });
 });
 
