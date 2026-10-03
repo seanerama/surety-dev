@@ -16,6 +16,7 @@ import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { resolveBackend } from './trust.js';
+import { keyVariable } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -153,6 +154,9 @@ export interface ClaimArgs {
   // with a scripted directory), else null.
   scripted: string | null;
   maxConcurrentRuns: number;
+  // The provider-side cap held with each secret reference that has one
+  // (D2 §4.2, Q2; SEAM.md §120).
+  providerCaps?: Record<string, number>;
 }
 
 export interface Claim {
@@ -174,8 +178,11 @@ export interface Claim {
   // `budget_boundary_unenforceable`).
   backend: string;
   trust_entry: string | null;
-  binary_path: string | null;
-  refusal: { code: string; text: string; detail: Record<string, unknown> } | null;
+  // What the choke point launches for a real backend: the entry's binary.
+  entry: { backend: string; binary_path: string; binary_sha256: string; model: string; key_ref: string } | null;
+  // A refusal in its form (code, reason, what_to_do, subject), recorded
+  // with the run's end (SEAM.md §116).
+  refusal: { code: string; reason: string; what_to_do: string; subject: Record<string, unknown> } | null;
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
@@ -285,13 +292,31 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     )
     .run(lease, tx.at, run, args.incarnation, tx.at, tx.at, addSeconds(tx.at, leaseTtl));
 
+  // A real backend's grant names its provider key's reference and the
+  // variable the adapter's template delivers it in; the key's provider-side
+  // cap, if one is held with it, is recorded as configured evidence, never
+  // as the engine's enforcement (D2 §§2.5, 4.2; SEAM.md §§116, 120).
+  const keyRef = `backend/${backend.backend}/api_key`;
+  const real = backend.kind === 'entry';
+  const cap = real ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
   tx.db
     .prepare(
-      `INSERT INTO "capability_grants" ("id", "created_at", "project", "run", "capabilities", "env_allowlist", "secret_refs", "issued_at", "expires_at")
-       VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
+      `INSERT INTO "capability_grants" ("id", "created_at", "project", "run", "capabilities", "env_allowlist", "secret_refs", "issued_at", "expires_at", "provider_cap")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(grant, tx.at, item.project, run, JSON.stringify(['workspace_write']), JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION']), tx.at, deadlineAt);
+    .run(
+      grant,
+      tx.at,
+      item.project,
+      run,
+      JSON.stringify(['workspace_write']),
+      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend)] : [])]),
+      JSON.stringify(real ? [keyRef] : []),
+      tx.at,
+      deadlineAt,
+      cap === undefined ? null : JSON.stringify({ status: 'configured', usd: cap, reference: keyRef }),
+    );
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
 
   const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
@@ -318,8 +343,19 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     lease_renewed_at: tx.at,
     backend: backend.backend,
     trust_entry: trustEntry,
-    binary_path: backend.kind === 'entry' ? backend.entry.binary_path : null,
-    refusal: backend.kind === 'refused' ? { code: backend.code, text: backend.text, detail: backend.detail } : null,
+    entry:
+      backend.kind === 'entry'
+        ? { backend: backend.backend, binary_path: backend.entry.binary_path, binary_sha256: backend.entry.binary_sha256, model: backend.entry.model, key_ref: keyRef }
+        : null,
+    refusal:
+      backend.kind === 'refused'
+        ? {
+            code: backend.code,
+            reason: backend.reason,
+            what_to_do: backend.what_to_do,
+            subject: backend.code === 'budget_boundary_unenforceable' ? { ...backend.subject, overshoot: { bounded_by: 'deadline', deadline_at: deadlineAt } } : backend.subject,
+          }
+        : null,
   };
 }
 

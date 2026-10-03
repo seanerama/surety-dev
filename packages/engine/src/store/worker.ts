@@ -11,7 +11,7 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
-import { listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOperations, readProject, readWork, runTail } from './projections.js';
+import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
@@ -88,7 +88,7 @@ import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationFacts, beginApplication } from './transitions/protected.js';
-import { answerBatch, applyAlphaException, decisionRecords, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
+import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { mountContext } from './reads.js';
 import { trustView } from './transitions/trust.js';
@@ -178,7 +178,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
-  'decision.records': (d, a: { project: string; decision: string }) => decisionRecords(d, a),
+  'decisions.engine': (d) => engineDecisions(d),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the

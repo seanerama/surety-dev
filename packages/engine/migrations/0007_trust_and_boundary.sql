@@ -9,10 +9,12 @@
 
 -- ---- decisions: qualification_approval and trust_activation (D2 A.2, A.7) ----
 
+-- The two trust kinds are engine-scoped (SEAM.md §117): their rows have no
+-- project; every other kind keeps one.
 CREATE TABLE decisions_0007 (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
-  project TEXT NOT NULL REFERENCES projects(id),
+  project TEXT REFERENCES projects(id),
   seq INTEGER NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN (
     'idea_accept', 'spec_approval', 'spec_change', 'architecture_approval', 'plan_approval',
@@ -41,20 +43,47 @@ CREATE TABLE decisions_0007 (
   consumed_at TEXT,
   invalidated_reason TEXT,
   UNIQUE (project, seq),
-  UNIQUE (project, kind, subject_type, subject_id, semantic_generation, scope)
+  UNIQUE (project, kind, subject_type, subject_id, semantic_generation, scope),
+  CHECK ((project IS NULL) = (kind IN ('qualification_approval', 'trust_activation')))
 );
 INSERT INTO decisions_0007 SELECT * FROM decisions;
 DROP TABLE decisions;
 ALTER TABLE decisions_0007 RENAME TO decisions;
 CREATE INDEX decisions_by_subject ON decisions(subject_id, kind);
 CREATE INDEX decisions_open ON decisions(project, status);
+-- An engine-scoped decision's identity, which UNIQUE cannot hold over a null
+-- project.
+CREATE UNIQUE INDEX decisions_engine_identity ON decisions(kind, subject_type, subject_id, semantic_generation, scope) WHERE project IS NULL;
+
+-- ---- approvals: an engine-scoped decision's approval has no project ----
+
+CREATE TABLE approvals_0007 (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  project TEXT REFERENCES projects(id),
+  decision TEXT NOT NULL REFERENCES decisions(id),
+  actor TEXT NOT NULL,
+  consequence TEXT NOT NULL,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  acceptance_content_hash TEXT,
+  result_hash TEXT,
+  policy_revision TEXT REFERENCES policy_revisions(id),
+  protected_delta_shown TEXT,
+  consumed_at TEXT NOT NULL
+);
+INSERT INTO approvals_0007 SELECT * FROM approvals;
+DROP TABLE approvals;
+ALTER TABLE approvals_0007 RENAME TO approvals;
 
 -- ---- records: the four kinds D2 A.2 adds ----
 
+-- An engine-scoped record (a trust entry's or a host qualification's
+-- evidence; SEAM.md §116) has no project.
 CREATE TABLE records_0007 (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
-  project TEXT NOT NULL REFERENCES projects(id),
+  project TEXT REFERENCES projects(id),
   kind TEXT NOT NULL CHECK (kind IN (
     'transcript', 'tool_output', 'check_output', 'result', 'raw_user_report', 'parked_result',
     'proposal_rationale', 'assessment_evidence', 'containment_evidence', 'recovery_plan',
@@ -132,9 +161,9 @@ CREATE TABLE qualification_attempts (
   template_version TEXT NOT NULL,
   model TEXT NOT NULL,
   auth_mode TEXT NOT NULL CHECK (auth_mode IN ('api_key')),
-  host_qualification TEXT NOT NULL REFERENCES host_qualifications(id),
+  host_qualification TEXT REFERENCES host_qualifications(id),
   profile_fingerprint TEXT NOT NULL,
-  fixture_project TEXT NOT NULL REFERENCES projects(id),
+  fixture_project TEXT REFERENCES projects(id),
   candidate_egress TEXT NOT NULL,
   canary_deadlines TEXT NOT NULL,
   spend TEXT NOT NULL,
@@ -169,9 +198,9 @@ CREATE TABLE trust_entries (
   auth_mode TEXT NOT NULL CHECK (auth_mode IN ('api_key')),
   capabilities TEXT NOT NULL,
   host_id TEXT NOT NULL,
-  host_qualification TEXT NOT NULL REFERENCES host_qualifications(id),
-  isolation TEXT NOT NULL CHECK (isolation IN ('linux_namespaces_d2')),
-  boundary TEXT NOT NULL CHECK (boundary IN ('cgroup2_user_delegated_d2')),
+  host_qualification TEXT REFERENCES host_qualifications(id),
+  isolation TEXT NOT NULL CHECK (isolation IN ('linux-namespaces-1')),
+  boundary TEXT NOT NULL CHECK (boundary IN ('cgroup2-delegated-scope-1')),
   profile_fingerprint TEXT NOT NULL,
   egress_hosts TEXT NOT NULL,
   usage_granularity TEXT NOT NULL CHECK (usage_granularity IN ('model_call', 'invocation', 'none')),
@@ -252,10 +281,14 @@ ALTER TABLE invocation_status_observations ADD COLUMN exit_evidence TEXT;
 ALTER TABLE ledger_rows ADD COLUMN unknown_allowance_tokens INTEGER CHECK (unknown_allowance_tokens IS NULL OR unknown_allowance_tokens >= 0);
 
 -- Engine-owned. A Reviewer's Alpha exception proposal awaiting the human
--- (D2 §5 C1), and what a run's report proposed that the engine refused before
--- raising anything, shown on the run read.
+-- (D2 §5 C1), and what became of each proposal a Reviewer's run made (proposed
+-- or refused, and why), shown on the run read (SEAM.md §119).
 ALTER TABLE findings ADD COLUMN proposed_alpha_exception TEXT;
-ALTER TABLE runs ADD COLUMN report_refusals TEXT;
+ALTER TABLE runs ADD COLUMN alpha_exception_outcomes TEXT;
+
+-- D2 §4.2, Q2: the provider-side cap of the key a grant names, recorded as
+-- configured evidence, never as the engine's enforcement (SEAM.md §120).
+ALTER TABLE capability_grants ADD COLUMN provider_cap TEXT;
 
 -- Engine-owned. A Reviewer's approval of a tightening is a recommendation
 -- until D3's classifier is qualified (D2 §5 C2, K8): recorded, never applied.

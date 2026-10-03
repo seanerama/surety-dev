@@ -173,6 +173,23 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: await engineInfo(state) }) };
     }
 
+    // The engine-scoped decisions (SEAM.md §117): trust_activation and
+    // qualification_approval belong to no project.
+    if (s.length === 2 && s[1] === 'decisions' && get) {
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'decisions.engine', args: {} }) }) };
+    }
+    if (s.length === 4 && s[1] === 'decisions' && s[3] === 'answer' && post) {
+      const decision = decodeSegment(s[2]!);
+      if (decision === null) return null;
+      return {
+        kind: 'prepared',
+        name: 'decision.answer',
+        prepare: async (b) => {
+          const body = onlyFields(b, ['option', 'preview_hash', 'note']);
+          return { project: null, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts: {} };
+        },
+      };
+    }
     if (s.length === 2 && s[1] === 'projects' && post) {
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }
@@ -674,13 +691,9 @@ function readBootstrapToken(state: EngineState): string {
   return state.token;
 }
 
-// D2 §6: H1 to H13, H13 optional.
-const HOST_CHECKS = Array.from({ length: 13 }, (_, i) => `H${i + 1}`);
-
 interface TrustView {
   backends: string[];
   host_qualification: unknown;
-  latest_host_qualification: unknown;
   trust_entries: unknown[];
   qualification_attempts: unknown[];
 }
@@ -707,14 +720,10 @@ async function engineInfo(state: EngineState) {
     // protection from other local uids is claimed and no host qualification
     // is active.
     bootstrap_exception: bootstrap,
-    host: {
-      // The host checks of D2 §6 are not run by this engine revision: each
-      // is reported not exercised, never passed, and a real backend is
-      // refused (isolation_unqualified) without a current qualification.
-      checks: HOST_CHECKS.map((id) => ({ id, result: 'not_exercised', observed: null, optional: id === 'H13' })),
-      qualification: trust?.host_qualification ?? null,
-      latest: trust?.latest_host_qualification ?? null,
-    },
+    // D2 §6, §7.1 (SEAM.md §§114, 118): the checks, the host's eligibility
+    // and where it comes from. The checks are not built in this engine
+    // revision: each is not_exercised, never passed.
+    host_qualification: trust?.host_qualification ?? null,
     trust_entries: trust?.trust_entries ?? null,
     qualification_attempts: trust?.qualification_attempts ?? null,
   });

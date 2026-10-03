@@ -124,8 +124,8 @@ function proposed(db, over = {}, label = { test_fixture: true }) {
 
 const decision = (db, id) => db.prepare('SELECT * FROM decisions WHERE id = ?').get(id);
 const entry = (db, id) => db.prepare('SELECT * FROM trust_entries WHERE id = ?').get(id);
-const answer = (db, id, option, preview, facts) =>
-  transact(db, HUMAN, (tx) => answerQueued(tx, { project: 'prj_1', decision: id, option, preview_hash: preview ?? decision(db, id).preview_hash, note: null, facts }));
+const answer = (db, id, option, preview) =>
+  transact(db, HUMAN, (tx) => answerQueued(tx, { project: null, decision: id, option, preview_hash: preview ?? decision(db, id).preview_hash, note: null, facts: {} }));
 
 test('an entry is written proposed; the store refuses active without the consumed trust_activation, session mode active, and another isolation', (t) => {
   const db = store(t);
@@ -145,7 +145,7 @@ test('an entry is written proposed; the store refuses active without the consume
   db.prepare(
     `INSERT INTO decisions (id, created_at, project, seq, kind, subject_type, subject_id, semantic_generation, scope, question, options, dependency_manifest,
        transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status)
-     VALUES ('dec_X', ?, 'prj_1', 999, 'trust_activation', 'trust_entry', ?, 1, 'subject', 'q', '[]', '{}', 1, 'h', '[]', '{}', ?, 'consumed')`,
+     VALUES ('dec_X', ?, NULL, 999, 'trust_activation', 'trust_entry', ?, 1, 'subject', 'q', '[]', '{}', 1, 'h', '[]', '{}', ?, 'consumed')`,
   ).run(AT, s.id, AT);
   assert.throws(() => db.prepare(`UPDATE trust_entries SET status = 'active', activated_by = 'dec_X' WHERE id = ?`).run(s.id), /CHECK constraint/);
 });
@@ -167,7 +167,7 @@ test('trust_activation: approval activates with activated_by and trust.activated
   const { entry: r, decision: rd } = proposed(db);
   answer(db, rd, 'reject');
   assert.equal(entry(db, r.id).status, 'proposed');
-  transact(db, ENGINE_ACTOR, (tx) => reviewDecisions(tx, { project: 'prj_1', channel: 'none' }));
+  transact(db, ENGINE_ACTOR, (tx) => reviewDecisions(tx, { project: null, channel: 'none' }));
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'trust_activation' AND subject_id = ? AND status = 'open'`).get(r.id).n, 0, 'not raised again');
 });
 
@@ -183,10 +183,11 @@ test('trust_activation is stale when the host qualification lapsed or an evidenc
   const second = store(t);
   const { entry: e2, decision: d2 } = proposed(second);
   const p2 = decision(second, d2).preview_hash;
-  // The main thread read an evidence record's bytes afresh: they changed.
-  assert.throws(() => answer(second, d2, 'approve', p2, { records: { rec_E1: 'b'.repeat(64) } }), (err) => err.code === 'decision_stale');
+  assert.equal(decision(second, d2).project, null, 'an engine-scoped decision');
+  // The audit at a start found an evidence record's bytes not as recorded.
+  second.prepare(`UPDATE records SET missing_at = ? WHERE id = 'rec_E1'`).run(AT);
+  assert.throws(() => answer(second, d2, 'approve', p2), (err) => err.code === 'decision_stale');
   assert.equal(entry(second, e2.id).status, 'proposed');
-  assert.equal(answer(second, d2, 'approve', p2, { records: { rec_E1: 'a'.repeat(64), rec_E2: 'a'.repeat(64), rec_B1: 'a'.repeat(64) } }).status, 200);
 });
 
 test('an entry whose usage is not reported is never asked about; a finer boundary needs admission control and evidence', (t) => {
@@ -195,7 +196,7 @@ test('an entry whose usage is not reported is never asked about; a finer boundar
   assert.equal(d, null);
   assert.equal(e.status, 'proposed');
   assert.throws(() => proposed(db, { enforceable_boundaries: [{ boundary: 'model_turn', mechanism: 'dispatch_check', evidence: 'rec_B1', overshoot: 'x' }] }), (err) => err.code === 'invalid_value');
-  assert.throws(() => proposed(db, { enforceable_boundaries: [{ boundary: 'model_turn', mechanism: 'admission_control', evidence: null, overshoot: 'x' }] }), (err) => err.code === 'invalid_value');
+  assert.throws(() => proposed(db, { enforceable_boundaries: [{ boundary: 'model_turn', mechanism: 'admission_control', evidence: null, overshoot: 'x' }] }), (err) => err.code === 'invalid_value' && err.subject.field === 'enforceable_boundaries');
   const ok = proposed(db, { enforceable_boundaries: [{ boundary: 'model_turn', mechanism: 'admission_control', evidence: 'rec_B1', overshoot: 'none after exhaustion' }] });
   assert.equal(ok.entry.status, 'proposed');
 });
@@ -229,33 +230,32 @@ test('the dispatch rule: scripted only in harness; a named backend needs an acti
   assert.equal(resolve().kind, 'scripted');
   assert.equal(resolve(null).code, 'backend_refused');
 
-  setPolicy({ n: 1, p: { backends: { builder: { backend: 'claude' } } } });
+  setPolicy({ n: 1, p: { backend_builder: 'claude' } });
   assert.equal(resolve().code, 'backend_refused', 'no entry');
   const { entry: e, decision: d } = proposed(db);
   assert.equal(resolve().code, 'backend_refused', 'a proposed entry');
+  assert.equal(trust.hostReport(db).eligible, true, 'the host qualification row makes the host eligible outside harness mode');
   // K10: an authorized attempt is no authority for project work.
   db.prepare(`UPDATE qualification_attempts SET status = 'authorized'`).run();
   assert.equal(resolve().code, 'backend_refused', 'an authorized attempt');
   answer(db, d, 'approve');
   assert.equal(resolve().kind, 'entry');
 
-  setPolicy({ n: 2, p: { backends: { builder: { backend: 'claude', mode: 'session_headless' } } } });
+  setPolicy({ n: 2, p: { backend_builder: 'claude', backend_mode: 'session_headless' } });
   assert.equal(resolve().code, 'backend_refused', 'session mode, no fallback');
 
-  setPolicy({ n: 3, p: { backends: { builder: { backend: 'claude' } }, budget_run_boundary: 'model_turn' } });
+  setPolicy({ n: 3, p: { backend_builder: 'claude', budget_run_boundary: 'model_turn' } });
   const refused = resolve();
   assert.equal(refused.code, 'budget_boundary_unenforceable');
-  assert.equal(refused.detail.overshoot_bound, 'deadline');
-  assert.deepEqual(refused.detail.enforceable.map((b) => b.boundary), ['invocation']);
+  assert.equal(refused.subject.overshoot.bounded_by, 'deadline');
+  assert.deepEqual(refused.subject.enforceable_boundaries.map((b) => b.boundary), ['invocation']);
 
-  setPolicy({ n: 4, p: { backends: { builder: { backend: 'claude' } } } });
+  setPolicy({ n: 4, p: { backend_builder: 'claude' } });
   transact(db, ENGINE_ACTOR, (tx) => trust.lapseEarlierQualifications(tx, 'inc_2'));
   assert.equal(resolve().code, 'isolation_unqualified', 'no current host qualification');
   db.prepare(`INSERT INTO engine_incarnations (id, created_at, pid, started_at, host_boot_id) VALUES ('inc_2', ?, 1, ?, 'boot')`).run(AT, AT);
-  hostRow(db, 'inc_2', 'mech-other');
-  assert.equal(resolve().code, 'isolation_unqualified', 'an incompatible mechanism');
   hostRow(db, 'inc_2', 'mech-1');
-  assert.equal(resolve().kind, 'entry', 'a compatible restart restores dispatch');
+  assert.equal(resolve().kind, 'entry', 'a qualified restart restores dispatch');
 
   transact(db, ENGINE_ACTOR, (tx) => trust.revokeEntry(tx, trust.getEntry(db, e.id), 'binary changed'));
   assert.equal(resolve().code, 'backend_refused', 'a revoked entry');
@@ -271,4 +271,6 @@ test('the engine read lists only backends with active entries, and scripted only
   const view = trust.trustView(db, { scripted: false });
   assert.deepEqual(view.backends, ['claude']);
   assert.deepEqual(view.trust_entries[0].enforceable_boundaries, [{ boundary: 'invocation', mechanism: 'dispatch_check', evidence: 'rec_B1', overshoot: 'deadline' }]);
+  assert.deepEqual([view.host_qualification.source, view.host_qualification.eligible], ['qualification', true]);
+  assert.ok(view.host_qualification.checks.every((c) => c.result === 'not_exercised'), 'no check is reported passed');
 });

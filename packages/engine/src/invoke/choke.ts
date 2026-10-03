@@ -11,7 +11,9 @@
 // across the spawn, a git call or a read of the role's output.
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Readable } from 'node:stream';
@@ -29,7 +31,9 @@ import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runt
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamStandIn } from '../testing/seam.js';
+import { pausePoint, seamBackends } from '../testing/seam.js';
+import { heldProviderCaps, heldSecret } from '../records/redact.js';
+import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
@@ -62,12 +66,36 @@ function parseResult(value: unknown, role: string): RunResult | null {
 
 // The role's environment is constructed, never inherited (D1 §17(4)): no
 // engine home, no token, no git or editor variables.
-function childEnv(claim: Claim): NodeJS.ProcessEnv {
+// A real backend's environment adds exactly the variable its template names
+// for the provider key, with the value resolved from the grant's reference
+// (D2 §§1.2, 2.5).
+function childEnv(claim: Claim, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     PATH: '/usr/local/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     [DOMAIN_MARKER]: claim.domain,
     [INVOCATION_MARKER]: claim.invocation,
+    ...extra,
+  };
+}
+
+const refusalForm = (code: string, reason: string, whatToDo: string, subject: Record<string, unknown>) => ({ code, reason, what_to_do: whatToDo, subject });
+
+// What the choke point spawns for a backend a trust entry authorizes: its
+// binary, its adapter's template arguments, and the provider key in the
+// variable the template names (D2 §§1.2, 2.5, 4.5, 4.6). null when the
+// engine has no adapter for the backend.
+function realBackend(claim: Claim): BackendSpec | null {
+  const e = claim.entry!;
+  const template = TEMPLATES[e.backend];
+  if (!template) return null;
+  const key = heldSecret(e.key_ref);
+  return {
+    id: e.backend,
+    version: template.version,
+    command: e.binary_path,
+    args: template.render({ model: e.model, invocation: claim.invocation }),
+    env: key === null ? {} : { [template.keyVariable]: key },
   };
 }
 
@@ -80,8 +108,7 @@ export class Launcher {
   async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
     // The scripted backend, which only harness mode has. Every other backend
     // is chosen by the claim from the project's policy and the trust table
-    // (D2 §4.1); in this engine revision a fixture entry of the harness runs
-    // the scripted child, as the kernel lane's stand-in.
+    // (D2 §4.1).
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
     // The run's base is the commit the registry expects the integration
     // branch at, or the checkpoint the work continues from (D1 §7.4); the
@@ -92,6 +119,7 @@ export class Launcher {
       incarnation: this.rt.incarnation,
       scripted: backend?.version ?? null,
       maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
+      providerCaps: heldProviderCaps(),
     });
     if (!claim) return false;
     const handle = newHandle(claim);
@@ -107,11 +135,9 @@ export class Launcher {
     await pausePoint('dispatch.domain_allocated');
     await pausePoint('dispatch.receipt_committed');
 
-    // What runs the backend: the scripted one for the scripted backend; for
-    // one a trust entry authorizes, what the test seam stands in with, or
-    // nothing: without the sandbox launcher, which this engine revision does
-    // not have, a real backend is never run (D2 §5 C3).
-    const runs = claim.trust_entry === null ? backend : seamStandIn({ backend: claim.backend, binary_path: claim.binary_path ?? '' });
+    // What runs: the scripted backend, or the binary a trust entry names with
+    // its adapter's template arguments (D2 §§1.2, 4.5, 4.6).
+    const runs = claim.entry === null ? backend : realBackend(claim);
     let ready = false;
     try {
       ready = await this.prepare(handle, runs, target.repo);
@@ -143,15 +169,34 @@ export class Launcher {
       // refusal, never a failure (SEAM.md §24).
       const refusal =
         claim.refusal ??
-        (claim.trust_entry !== null
-          ? {
-              code: 'isolation_unqualified',
-              text: 'the sandbox launcher that would run this backend is not part of this engine revision',
-              detail: { code: 'isolation_unqualified', trust_entry: claim.trust_entry },
-            }
-          : { code: 'backend_refused', text: 'no backend is qualified', detail: { code: 'backend_refused' } });
-      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, { ...refusal.detail, text: refusal.text });
+        refusalForm(
+          'backend_refused',
+          claim.entry !== null ? `The adapter for ${claim.backend} is not part of this engine revision.` : 'No backend is qualified for this role.',
+          'Name a backend this engine can run for the role.',
+          { backend: claim.backend },
+        );
+      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
       return false;
+    }
+    // D2 §1.2: the binary is the one the entry names, by path and SHA-256;
+    // a mismatch is refused before anything is launched.
+    if (claim.entry !== null) {
+      let found: string | null;
+      try {
+        found = createHash('sha256').update(await readFile(claim.entry.binary_path)).digest('hex');
+      } catch {
+        found = null;
+      }
+      if (found !== claim.entry.binary_sha256) {
+        const refusal = refusalForm(
+          'backend_refused',
+          `The binary at ${claim.entry.binary_path} ${found === null ? 'cannot be read' : 'is not the one the trust entry names'}.`,
+          'Qualify the binary that is installed, or restore the one the entry names.',
+          { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path, expected_sha256: claim.entry.binary_sha256, found_sha256: found },
+        );
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
     }
     // The widening a project's policy may make to the mount plan, validated
     // before every launch, approved or not (D2 §2.3): a refusal names the
@@ -159,7 +204,19 @@ export class Launcher {
     const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
     const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
     if (refused !== null) {
-      this.never(handle, 'refused', 'preflight_refused', 'never', 'mount_plan_refused', { code: 'mount_plan_refused', ...refused });
+      this.never(
+        handle,
+        'refused',
+        'preflight_refused',
+        'never',
+        'mount_plan_refused',
+        refusalForm(
+          'mount_plan_refused',
+          `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
+          'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
+          { path: refused.path, reason: refused.reason },
+        ),
+      );
       return false;
     }
     if (handle.abort) {
@@ -271,7 +328,7 @@ export class Launcher {
     try {
       child = spawn(backend.command, backend.args, {
         cwd: handle.workspacePath!,
-        env: childEnv(claim),
+        env: childEnv(claim, backend.env),
         detached: true,
         stdio: ['pipe', 'pipe', 'ignore'],
       });

@@ -19,7 +19,9 @@
 // offset, so both threads take the same time.
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -120,6 +122,8 @@ export interface SeamInit {
   scripted: string | null;
   // --harness-probe: the outcome every probe of a journal kind reports.
   probes: Record<string, string>;
+  // --harness-host-checks and --harness-host-check (SEAM.md §114).
+  hostChecks: { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'> };
 }
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
@@ -144,7 +148,7 @@ class InjectedFault extends Error {
   }
 }
 
-let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null, probes: {} };
+let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null, probes: {}, hostChecks: { mode: 'run', forced: {} } };
 let clockCell: BigInt64Array | null = null;
 let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
@@ -179,7 +183,14 @@ const registry = new Map<string, { spec: BarrierSpec; state: BarrierState; resum
 // The command line's --harness flag, --harness-barrier values and
 // --harness-scripted directory. Returns a usage problem to report, or null.
 // Called once, before the engine starts.
-export function configureHarness(harness: boolean, barrierValues: string[], scripted: string | null = null, probeValues: string[] = []): string | null {
+export function configureHarness(
+  harness: boolean,
+  barrierValues: string[],
+  scripted: string | null = null,
+  probeValues: string[] = [],
+  hostChecksMode: string | null = null,
+  hostCheckValues: string[] = [],
+): string | null {
   const barriers: BarrierSpec[] = [];
   for (const value of barrierValues) {
     const spec = parseBarrier(value, barriers.length);
@@ -195,9 +206,25 @@ export function configureHarness(harness: boolean, barrierValues: string[], scri
     if (at <= 0 || !(JOURNAL_KINDS as readonly string[]).includes(kind) || !PROBE_OUTCOMES.includes(outcome)) return `unknown journal kind or outcome in --harness-probe ${value}`;
     probes[kind] = outcome;
   }
-  if (!harness && (barriers.length > 0 || scripted !== null || probeValues.length > 0)) return 'harness flags are accepted only with --harness';
+  if (hostChecksMode !== null && hostChecksMode !== 'unrun' && hostChecksMode !== 'run') return `--harness-host-checks takes unrun or run, not ${hostChecksMode}`;
+  const forced: Record<string, 'failed' | 'not_exercised'> = {};
+  for (const value of hostCheckValues) {
+    const m = /^(H(?:[1-9]|1[0-3]))=(failed|not_exercised)$/.exec(value);
+    if (!m) return `--harness-host-check takes <Hn>=<failed|not_exercised>, not ${value}`;
+    forced[m[1]!] = m[2] as 'failed' | 'not_exercised';
+  }
+  if (!harness && (barriers.length > 0 || scripted !== null || probeValues.length > 0 || hostChecksMode !== null || hostCheckValues.length > 0)) return 'harness flags are accepted only with --harness';
   const shared = harness && barriers.length > 0 ? new SharedArrayBuffer(4 * barriers.length) : null;
-  adopt({ harness, barriers: harness ? barriers : [], shared, clock: harness ? new SharedArrayBuffer(8) : null, scripted: harness ? scripted : null, probes: harness ? probes : {} });
+  adopt({
+    harness,
+    barriers: harness ? barriers : [],
+    shared,
+    clock: harness ? new SharedArrayBuffer(8) : null,
+    scripted: harness ? scripted : null,
+    probes: harness ? probes : {},
+    // In harness mode the host checks are left unrun unless asked for.
+    hostChecks: harness ? { mode: (hostChecksMode as 'unrun' | 'run' | null) ?? 'unrun', forced } : { mode: 'run', forced: {} },
+  });
   registry.clear();
   for (const spec of init.barriers) registry.set(spec.name, { spec, state: 'armed' });
   return null;
@@ -293,12 +320,12 @@ export function seamBackends(): BackendSpec[] {
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')] }];
 }
 
-// What runs a backend a trust entry authorizes (D2 §4.1): in the kernel lane
-// of the harness, the scripted child stands in for it (M2 plan §2.1), as for
-// the scripted backend. Outside harness mode there is no stand-in: only the
-// sandbox launcher may run a real backend, and this engine revision has none.
-export function seamStandIn(_entry: { backend: string; binary_path: string }): BackendSpec | null {
-  return seamBackends()[0] ?? null;
+// The host checks switch and its overrides (SEAM.md §114): null outside
+// harness mode, where every start runs the checks.
+// Under `unrun` the harness vouches for the host (source "harness").
+export function seamHostChecks(): { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'>; vouched: 'harness' | null } | null {
+  if (!init.harness) return null;
+  return { mode: init.hostChecks.mode, forced: { ...init.hostChecks.forced }, vouched: init.hostChecks.mode === 'unrun' ? 'harness' : null };
 }
 
 const INSTRUCTIONS = ['auto', 'running', 'terminated', 'unknown'];
@@ -561,10 +588,18 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'secrets') {
     return route(200, async (body) => {
       const b = isObject(body) ? body : {};
-      if (typeof b.ref !== 'string' || b.ref.length === 0 || typeof b.value !== 'string' || b.value.length === 0 || Object.keys(b).some((k) => k !== 'ref' && k !== 'value')) {
-        throw new Refusal(400, 'invalid_value', 'A secret needs a "ref" and a non-empty "value".', 'Send {"ref": <name>, "value": <the secret>}.', { field: 'value' });
+      const cap = b.provider_cap_usd;
+      if (
+        typeof b.ref !== 'string' ||
+        b.ref.length === 0 ||
+        typeof b.value !== 'string' ||
+        b.value.length === 0 ||
+        (cap !== undefined && (typeof cap !== 'number' || !Number.isFinite(cap) || cap <= 0)) ||
+        Object.keys(b).some((k) => k !== 'ref' && k !== 'value' && k !== 'provider_cap_usd')
+      ) {
+        throw new Refusal(400, 'invalid_value', 'A secret needs a "ref" and a non-empty "value", and optionally a positive "provider_cap_usd".', 'Send {"ref": <name>, "value": <the secret>, "provider_cap_usd"?: <USD>}.', { field: 'value' });
       }
-      holdSecret(b.ref, b.value);
+      holdSecret(b.ref, b.value, cap as number | undefined);
       // The value is held in memory only and never answered back.
       return { held: b.ref };
     });
@@ -670,30 +705,33 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       const parsed = parseHostQualification(body);
       const rt = hooks.runtime();
       const { writeWholeRecord } = await import('../records/files.js');
-      const evidence = await writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
+      const evidence = await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
       return storeOp(OP.fixtureHostQualification, { body: parsed, incarnation: rt.incarnation, evidence, actor: hooks.actor });
     });
   }
+  // The "help" of a stand-in binary is its own file (SEAM.md §116).
+  const helpOf = async (path: string): Promise<string> => {
+    try {
+      return createHash('sha256').update(await readFile(path)).digest('hex');
+    } catch {
+      throw new Refusal(400, 'invalid_value', `The binary ${path} cannot be read.`, 'Name the stand-in binary the test wrote.', { field: 'binary' });
+    }
+  };
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'qualification-attempt') {
     return route(201, async (body) => {
       const parsed = parseAttemptFixture(body);
-      const rt = hooks.runtime();
-      const { writeWholeRecord } = await import('../records/files.js');
-      const evidence = await writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
-      return storeOp(OP.fixtureAttempt, { body: parsed, incarnation: rt.incarnation, evidence, actor: hooks.actor });
+      return storeOp(OP.fixtureAttempt, { body: parsed, helpSha256: await helpOf(parsed.binary.path), actor: hooks.actor });
     });
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'trust-entry') {
     return route(201, async (body) => {
       const parsed = parseEntryFixture(body);
+      const helpSha256 = await helpOf(parsed.binary.path);
       const rt = hooks.runtime();
       const { writeWholeRecord } = await import('../records/files.js');
-      const write = (text: string) => writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(text) });
       const evidence: string[] = [];
-      for (const text of parsed.evidenceTexts) evidence.push(await write(text));
-      const boundaryEvidence: (string | null)[] = [];
-      for (const b of parsed.entry.enforceable_boundaries) boundaryEvidence.push(b.evidenceText === null ? null : await write(b.evidenceText));
-      return storeOp(OP.fixtureTrustEntry, { body: parsed, incarnation: rt.incarnation, evidence, boundaryEvidence, actor: hooks.actor });
+      for (const text of parsed.evidence) evidence.push(await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(text) }));
+      return storeOp(OP.fixtureTrustEntry, { body: parsed, evidence, helpSha256, actor: hooks.actor });
     });
   }
   return null;
@@ -742,9 +780,9 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
     case OP.fixtureHostQualification:
       return installHostQualification(store(), a.actor, a as unknown as { body: HostQualificationFixture; incarnation: string; evidence: string });
     case OP.fixtureAttempt:
-      return installAttempt(store(), a.actor, a as unknown as { body: AttemptFixture; incarnation: string; evidence: string });
+      return installAttempt(store(), a.actor, a as unknown as { body: AttemptFixture; helpSha256: string });
     case OP.fixtureTrustEntry:
-      return installTrustEntry(store(), a.actor, a as unknown as { body: EntryFixture; incarnation: string; evidence: string[]; boundaryEvidence: (string | null)[] });
+      return installTrustEntry(store(), a.actor, a as unknown as { body: EntryFixture; evidence: string[]; helpSha256: string });
     case OP.listFaults:
       return faults.map((f) => ({ ...f }));
     case OP.findingProject:
@@ -843,7 +881,7 @@ export function seamTokenRead(): void {
   if (!f) return;
   f.remaining -= 1;
   f.hit += 1;
-  throw new Refusal(500, 'store_error', 'injected fault: token read', 'The harness armed a token_read fault.', { fault: 'token_read' });
+  throw new Refusal(500, 'token_read_failed', 'The API token could not be read (an injected fault).', 'Retry the request.', { fault: 'token_read' });
 }
 
 // A budget check reads a project's spend (SEAM.md §61).

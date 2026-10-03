@@ -111,7 +111,7 @@ export function chargeInvocation(
   const raw = foldObservations(obs);
   const n = obs.length === 0 ? NOTHING_OBSERVED : normalize(raw);
   const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') ? 1 : 0;
-  const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length);
+  const allowance = complete === 1 || !ENGINE_ENDED.includes(run.outcome ?? '') ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length);
   const id = tx.newId('led_');
   tx.db
     .prepare(
@@ -156,13 +156,14 @@ function runLimit(db: Db, invocation: string, project: string): number {
   return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
 }
 
-// C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9): an invocation whose
-// usage is incomplete is charged, once, on its original row, the run's
-// budget_run_billable_tokens less the billable tokens observed, not below
-// zero. It is charged where the backend is known to report usage: an
-// invocation of a trust entry's backend, and one of the scripted provider
-// that reported some (an M1 scripted role that reports none is a provider
-// that said nothing, as M1 accepted, and is charged nothing more).
+// C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9; SEAM.md §120): an
+// invocation the engine ended, or recovered, is charged, once, on its
+// original row, the run's budget_run_billable_tokens less the billable tokens
+// observed, not below zero. It is charged where the backend is known to
+// report usage: an invocation of a trust entry's backend, and one of the
+// scripted provider that reported some (an M1 scripted role that reports
+// none is a provider that said nothing, as M1 accepted, and is charged
+// nothing more).
 function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number): number | null {
   const receipt = db.prepare('SELECT "trust_entry" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { trust_entry: string | null } | undefined;
   if (observations === 0 && (receipt?.trust_entry ?? null) === null) return null;
@@ -280,12 +281,11 @@ export function fold(rows: LedgerRow[]): Account {
       cost_usd: addKnown(acc.cost_usd, r.cost_usd),
     };
   }
-  // The allowance was the run's limit less what the original row observed;
-  // what corrections add since is no longer unknown.
+  // The allowance in force is the original row's until a correction says
+  // the usage is complete, and 0 from then on (SEAM.md §120).
   let allowance: number | null = null;
   if (original.unknown_allowance_tokens !== null && original.unknown_allowance_tokens !== undefined) {
-    const limit = original.unknown_allowance_tokens + (billable(original) ?? 0);
-    allowance = last.usage_complete === 1 ? 0 : Math.max(0, limit - (billable(acc) ?? 0));
+    allowance = sorted.slice(1).some((r) => r.usage_complete === 1) ? 0 : original.unknown_allowance_tokens;
   }
   return {
     invocation: original.invocation,
@@ -331,6 +331,8 @@ export function totalsOf(accounts: Account[]): Record<string, number | null> {
     estimated_usd: usd(estimated),
     unknown_cost_invocations: unknown.length,
     unknown_cost_tokens: sum(billable, unknown),
+    // C4: the allowances in force (SEAM.md §120); null when none carries one.
+    unknown_allowance_tokens: sum((a) => a.unknown_allowance_tokens),
   };
 }
 
@@ -435,7 +437,10 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
   let runningAllowanceTokens = 0;
   for (const u of underWay) {
     const so = observedSoFar(db, u.id);
-    accounts.push({ ...so, unknown_allowance_tokens: null });
+    // An estimate is the price table's word on a charged invocation, kept on
+    // its ledger row with the table's version: an invocation under way counts
+    // its reported cost as it arrives, and its estimate once it is charged.
+    accounts.push({ ...so, cost_usd: so.cost_status === 'estimated' ? null : so.cost_usd, unknown_allowance_tokens: null });
     if (opts.dispatch) runningAllowanceTokens += Math.max(0, runLimit(db, u.id, project) - (billable(so) ?? 0));
   }
   let unknownCostTokens = 0;

@@ -412,10 +412,10 @@
       "session_headless"
     ],
     "IsolationMechanism": [
-      "linux_namespaces_d2"
+      "linux-namespaces-1"
     ],
     "BoundaryMechanism": [
-      "cgroup2_user_delegated_d2"
+      "cgroup2-delegated-scope-1"
     ],
     "UsageGranularity": [
       "model_call",
@@ -758,7 +758,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "decision": {
@@ -878,6 +878,9 @@
           "required": true
         },
         "revoked_at": {
+          "required": false
+        },
+        "provider_cap": {
           "required": false
         }
       }
@@ -1019,7 +1022,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "seq": {
@@ -2474,14 +2477,14 @@
           "enum": "AuthMode"
         },
         "host_qualification": {
-          "required": true,
+          "required": false,
           "references": "host_qualifications"
         },
         "profile_fingerprint": {
           "required": true
         },
         "fixture_project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "candidate_egress": {
@@ -2525,7 +2528,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "kind": {
@@ -2797,7 +2800,7 @@
         "content_hash": {
           "required": false
         },
-        "report_refusals": {
+        "alpha_exception_outcomes": {
           "required": false
         }
       }
@@ -2999,7 +3002,7 @@
           "required": true
         },
         "host_qualification": {
-          "required": true,
+          "required": false,
           "references": "host_qualifications"
         },
         "isolation": {
@@ -3920,15 +3923,18 @@
     "qualification_approval": {
       "enabled": true,
       "manifest": [
+        "attempt_status",
         "binary_sha256",
         "help_sha256",
         "template",
+        "template_version",
         "model",
         "auth_mode",
         "host_qualification",
-        "fixture",
-        "egress",
-        "deadlines",
+        "host_eligibility",
+        "fixture_project",
+        "candidate_egress",
+        "canary_deadlines",
         "spend"
       ],
       "target_seconds": 172800
@@ -3936,14 +3942,16 @@
     "trust_activation": {
       "enabled": true,
       "manifest": [
+        "entry_status",
         "binary_sha256",
         "help_sha256",
         "template",
+        "template_version",
         "capabilities",
         "profile_fingerprint",
         "host_id",
         "host_eligibility",
-        "entry_status",
+        "evidence",
         "evidence_fingerprint"
       ],
       "target_seconds": 172800
@@ -4382,6 +4390,126 @@
       "ui_bootstrap": {
         "default": false,
         "type": "boolean"
+      },
+      "max_concurrent_domains": {
+        "default": 2,
+        "min": 1,
+        "max": 8,
+        "integer": true
+      },
+      "host_reserve_memory": {
+        "default": 2147483648,
+        "min": 536870912,
+        "max": 68719476736,
+        "integer": true
+      },
+      "host_reserve_disk": {
+        "default": 5368709120,
+        "min": 1073741824,
+        "max": 1099511627776,
+        "integer": true
+      },
+      "domain_memory_max": {
+        "default": 8589934592,
+        "min": 536870912,
+        "max": 68719476736,
+        "integer": true
+      },
+      "domain_tasks_max": {
+        "default": 1024,
+        "min": 64,
+        "max": 16384,
+        "integer": true
+      },
+      "domain_writable_bytes": {
+        "default": 4294967296,
+        "min": 67108864,
+        "max": 34359738368,
+        "integer": true
+      },
+      "domain_writable_inodes": {
+        "default": 200000,
+        "min": 1000,
+        "max": 2000000,
+        "integer": true
+      },
+      "result_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
+      },
+      "provider_files_max_bytes": {
+        "default": 67108864,
+        "min": 1048576,
+        "max": 1073741824,
+        "integer": true
+      },
+      "collect_entries_max": {
+        "default": 10000,
+        "min": 100,
+        "max": 1000000,
+        "integer": true
+      },
+      "collect_deadline": {
+        "default": 60,
+        "min": 5,
+        "max": 600,
+        "integer": true
+      },
+      "stream_line_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
+      },
+      "stream_queue_max_bytes": {
+        "default": 8388608,
+        "min": 1048576,
+        "max": 67108864,
+        "integer": true
+      },
+      "egress_resolve_timeout": {
+        "default": 5,
+        "min": 1,
+        "max": 30,
+        "integer": true
+      },
+      "egress_connect_timeout": {
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "integer": true
+      },
+      "egress_tunnel_max_seconds": {
+        "default": 1800,
+        "min": 60,
+        "max": 10800,
+        "integer": true
+      },
+      "egress_tunnels_max": {
+        "default": 16,
+        "min": 1,
+        "max": 128,
+        "integer": true
+      },
+      "egress_buffer_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
+      },
+      "egress_log_max_bytes": {
+        "default": 4194304,
+        "min": 262144,
+        "max": 67108864,
+        "integer": true
+      },
+      "pause_challenge_timeout": {
+        "default": 5,
+        "min": 1,
+        "max": 30,
+        "integer": true
       }
     },
     "project": {
@@ -4524,9 +4652,53 @@
         "type": "absolute_paths",
         "widening": "added"
       },
-      "backends": {
-        "default": {},
-        "type": "role_backends",
+      "backend_builder": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_verifier": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_reviewer": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_architect": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_mode": {
+        "default": "one_shot_headless",
+        "type": "enum",
+        "values": [
+          "one_shot_headless",
+          "session_headless"
+        ],
         "widening": "never"
       }
     }

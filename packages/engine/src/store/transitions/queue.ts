@@ -18,6 +18,7 @@ import type { CommandResult, Effect } from './control.js';
 import {
   type DecisionKind,
   type DecisionRow,
+  type DecisionSpec,
   type OptionSpec,
   consumeDecision,
   currentPreview,
@@ -35,7 +36,7 @@ import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepo
 import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
-import { activateEntry, attemptManifest, authorizeAttempt, entryEvidence, entryManifest, getAttempt, getEntry } from './trust.js';
+import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { hostIdentity } from '../../trust/host.js';
 
@@ -47,15 +48,13 @@ type Db = Tx['db'];
 export interface Facts {
   head?: string | null;
   found?: string | null;
-  // The hash of each record's bytes as the main thread read them just now
-  // (null: unreadable), for a decision whose manifest binds records.
-  records?: Record<string, string | null>;
 }
 
 export interface Preview {
   manifest: Record<string, unknown>;
   options: OptionSpec[];
   question: string;
+  evidence?: DecisionSpec['evidence'];
   blockedWorkItems?: string[];
   blockedOperation?: string;
 }
@@ -92,7 +91,20 @@ function recordApproval(tx: Tx, d: DecisionRow, args: { consequence: string; sub
          "policy_revision", "consumed_at")
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, d.project, d.id, tx.actor.actor_kind, args.consequence, args.subjectType, args.subjectId, args.contentHash ?? null, args.resultHash ?? null, policyRevisionId(tx.db, d.project), tx.at);
+    .run(
+      id,
+      tx.at,
+      d.project,
+      d.id,
+      tx.actor.actor_kind,
+      args.consequence,
+      args.subjectType,
+      args.subjectId,
+      args.contentHash ?? null,
+      args.resultHash ?? null,
+      d.project === null ? null : policyRevisionId(tx.db, d.project),
+      tx.at,
+    );
   return id;
 }
 
@@ -519,11 +531,11 @@ const changeOf = (d: Subject): Policy =>
   ((JSON.parse(d.options) as { key: string; effect_plan: { change?: Policy } }[]).find((o) => o.key === 'approve')?.effect_plan.change ?? {}) as Policy;
 
 const WIDENING: KindSpec = {
-  preview: (tx, d) => widenPreview(tx, d.project, changeOf(d)),
+  preview: (tx, d) => widenPreview(tx, d.project!, changeOf(d)),
   manifest(tx, d) {
-    const p = widenPreview(tx, d.project, changeOf(d));
+    const p = widenPreview(tx, d.project!, changeOf(d));
     if (p) return p.manifest;
-    const revision = policyRevision(tx.db, d.project);
+    const revision = policyRevision(tx.db, d.project!);
     return { base_revision: revision, base_blob: null, proposed_policy: null, widens: [] };
   },
   reraise: false,
@@ -531,7 +543,7 @@ const WIDENING: KindSpec = {
     consumeDecision(tx, d, option, note);
     if (option !== 'approve') return consumed(d);
     const plan = (JSON.parse(d.options) as { key: string; effect_plan: Record<string, unknown> }[]).find((o) => o.key === 'approve')!.effect_plan;
-    const approval = recordApproval(tx, d, { consequence: 'the widened policy is committed', subjectType: 'project', subjectId: d.project });
+    const approval = recordApproval(tx, d, { consequence: 'the widened policy is committed', subjectType: 'project', subjectId: d.project! });
     return consumed(d, [recordIntent(tx, d, { approval, kind: 'policy_widening', plan })]);
   },
   withdraw: () => true,
@@ -654,7 +666,9 @@ function alphaManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     proposed_disposition: 'alpha_exception',
     effective_severity: f.effective_severity,
     sensitive_area: f.sensitive_area,
-    evidence: findingEvidence(tx, f),
+    // The containment evidence the proposal was retained in (SEAM.md §119).
+    evidence: recordState(tx.db, p?.containment_evidence ?? null),
+    finding_evidence: findingEvidence(tx, f),
     scope: findingScope(f),
     defer_target: null,
     linked_issue: null,
@@ -663,7 +677,6 @@ function alphaManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     candidate_revision: candidate?.revision ?? null,
     acceptance_content_hash: candidate ? contentHash(tx.db, f.project, candidate) : null,
     reviewed_content_hash: p?.acceptance_content_hash ?? null,
-    containment_evidence: recordState(tx.db, p?.containment_evidence ?? null),
     proposed_by_run: p?.run ?? null,
     policy_revision: policyRevisionId(tx.db, f.project),
   };
@@ -677,10 +690,11 @@ const ALPHA_EXCEPTION: KindSpec = {
     const candidate = getCandidate(tx.db, p.candidate);
     // The question stands only while the exception could be made: a High
     // finding in no sensitive area, open against that candidate (C1).
-    if (f.effective_severity !== 'high' || f.sensitive_area !== null || f.status !== 'open' || !candidate || !findingApplies(tx.db, f, candidate)) return null;
+    if (f.effective_severity !== 'high' || f.sensitive_area !== null || (f.status !== 'open' && f.status !== 'dispositioned') || !candidate || !findingApplies(tx.db, f, candidate)) return null;
     const manifest = alphaManifest(tx, f);
     return {
       manifest,
+      evidence: [{ record: p.containment_evidence, provenance: 'claimed' }],
       options: [
         {
           key: 'alpha_exception',
@@ -691,7 +705,7 @@ const ALPHA_EXCEPTION: KindSpec = {
             alpha_exception: {
               candidate: p.candidate,
               acceptance_content_hash: manifest.acceptance_content_hash,
-              containment_evidence: p.containment_evidence,
+              evidence: p.containment_evidence,
               testing_purpose: p.testing_purpose,
             },
           },
@@ -740,7 +754,7 @@ export function applyAlphaException(tx: Tx, args: { intent: string }): boolean {
   const plan = JSON.parse(intent.plan) as { finding: string; alpha_exception: Record<string, unknown> };
   tx.db
     .prepare('UPDATE "findings" SET "alpha_exception" = ?, "proposed_alpha_exception" = NULL WHERE "id" = ?')
-    .run(JSON.stringify({ ...plan.alpha_exception, decision: intent.decision }), plan.finding);
+    .run(JSON.stringify({ ...plan.alpha_exception, decision: intent.decision, at: tx.at }), plan.finding);
   tx.db.prepare(`UPDATE "effect_intents" SET "status" = 'done' WHERE "id" = ?`).run(intent.id);
   tx.emit('intent.done', { project: intent.project, intent: intent.id, decision: intent.decision }, { kind: 'alpha_exception', finding: plan.finding });
   markStale(tx, { project: intent.project });
@@ -1028,13 +1042,13 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
 // ---- trust_activation and qualification_approval (D2 §§4.1, 7.2, A.7) ----------------------
 
 const TRUST_ACTIVATION: KindSpec = {
-  preview(tx, d, facts) {
+  preview(tx, d) {
     const entry = getEntry(tx.db, d.subject_id);
     // An entry whose canaries observed no usage cannot be activated (D2
     // §4.2), nor can a session-mode one (§1.8): the question is never asked
     // about either.
     if (!entry || entry.status !== 'proposed' || entry.usage_granularity === 'none' || entry.mode !== 'one_shot_headless') return null;
-    const manifest = entryManifest(tx.db, entry, facts?.records);
+    const manifest = entryManifest(tx.db, entry);
     const running = hostIdentity();
     return {
       manifest,
@@ -1051,9 +1065,9 @@ const TRUST_ACTIVATION: KindSpec = {
       question: `A qualification attempt succeeded for ${entry.backend} ${entry.version} on this host. Activate its trust entry?`,
     };
   },
-  manifest(tx, d, facts) {
+  manifest(tx, d) {
     const entry = getEntry(tx.db, d.subject_id);
-    return entry ? entryManifest(tx.db, entry, facts?.records) : { entry: d.subject_id, entry_status: null };
+    return entry ? entryManifest(tx.db, entry) : { entry_status: null };
   },
   reraise: true,
   answer(tx, d, option, note) {
@@ -1170,15 +1184,44 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   check_correction_loosening: CORRECTION_KEYS,
   check_correction_unclassifiable: CORRECTION_KEYS,
   // D2 A.7.
-  qualification_approval: ['binary_sha256', 'help_sha256', 'template', 'model', 'auth_mode', 'host_qualification', 'fixture', 'egress', 'deadlines', 'spend'],
-  trust_activation: ['binary_sha256', 'help_sha256', 'template', 'capabilities', 'profile_fingerprint', 'host_id', 'host_eligibility', 'entry_status', 'evidence_fingerprint'],
+  qualification_approval: [
+    'attempt_status',
+    'binary_sha256',
+    'help_sha256',
+    'template',
+    'template_version',
+    'model',
+    'auth_mode',
+    'host_qualification',
+    'host_eligibility',
+    'fixture_project',
+    'candidate_egress',
+    'canary_deadlines',
+    'spend',
+  ],
+  trust_activation: [
+    'entry_status',
+    'binary_sha256',
+    'help_sha256',
+    'template',
+    'template_version',
+    'capabilities',
+    'profile_fingerprint',
+    'host_id',
+    'host_eligibility',
+    'evidence',
+    'evidence_fingerprint',
+  ],
 };
 
 // ---- raising, answering, revalidating ---------------------------------------------------
 
 // Raise the question of `kind` about a subject as it stands now, or return
 // the open one with the same preview; null if the question does not stand.
-export function raiseQuestion(tx: Tx, args: { project: string; kind: DecisionKind; subjectType: string; subjectId: string; scope?: string; options?: string; question?: string }): DecisionRow | null {
+export function raiseQuestion(
+  tx: Tx,
+  args: { project: string | null; kind: DecisionKind; subjectType: string; subjectId: string; scope?: string; options?: string; question?: string; evidence?: DecisionSpec['evidence'] },
+): DecisionRow | null {
   const seed: Subject = { project: args.project, kind: args.kind, subject_type: args.subjectType, subject_id: args.subjectId, scope: args.scope ?? 'subject', options: args.options ?? '[]' };
   const p = KINDS[args.kind].preview(tx, seed);
   if (p === null) return null;
@@ -1195,6 +1238,7 @@ export function raiseQuestion(tx: Tx, args: { project: string; kind: DecisionKin
     manifest: p.manifest,
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
+    evidence: args.evidence ?? p.evidence,
   });
   if (args.kind === 'blocker' && args.subjectType === 'work_item') {
     // The item's blocker names the decision that holds it.
@@ -1208,7 +1252,7 @@ export function raiseQuestion(tx: Tx, args: { project: string; kind: DecisionKin
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §76).
-export function answerQueued(tx: Tx, args: { project: string; decision: string; option: unknown; preview_hash: unknown; note: unknown; facts?: Facts | undefined }): CommandResult {
+export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; facts?: Facts | undefined }): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
   if (d.status === 'invalidated') {
@@ -1340,8 +1384,10 @@ export function effectFailed(tx: Tx, op: { id: string; inputs: Record<string, un
 // one whose question no longer stands is invalidated. Then aging: an open
 // decision past its target is escalated, once per generation, with one
 // notification intent.
-export function reviewDecisions(tx: Tx, args: { project: string; channel: string }): { escalated: number } {
-  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY "seq"`).all(args.project) as DecisionRow[];
+// `project` null: the engine-scoped decisions (SEAM.md §117), which no project
+// escalates or notifies about.
+export function reviewDecisions(tx: Tx, args: { project: string | null; channel: string }): { escalated: number } {
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" IS ? AND "status" = 'open' ORDER BY "seq"`).all(args.project) as DecisionRow[];
   for (const d of open) {
     const spec = KINDS[d.kind as DecisionKind];
     if (!spec || d.kind === 'out_of_band_change') continue;
@@ -1358,6 +1404,7 @@ export function reviewDecisions(tx: Tx, args: { project: string; channel: string
     raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
   }
   let escalated = 0;
+  if (args.project === null) return { escalated };
   const now = Date.parse(tx.at);
   const aging = tx.db
     .prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' AND "escalated_at" IS NULL AND "target_seconds" IS NOT NULL ORDER BY "seq"`)
@@ -1397,14 +1444,4 @@ export function decisionSubjectRead(db: Db, args: { project: string; decision: s
   const ref = row.ref ? (db.prepare('SELECT "ref" FROM "ref_registry" WHERE "id" = ?').get(row.ref) as { ref: string }).ref : null;
   const checkout = row.checkout ? (db.prepare('SELECT "path" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string }).path : null;
   return { kind: d.kind, oob: { subject_kind: row.subject_kind, repo, ref, checkout } };
-}
-
-// The records a decision's manifest binds by content, which the main thread
-// hashes afresh before an answer (D1 §10.5): a trust entry's evidence.
-export function decisionRecords(db: Db, args: { project: string; decision: string }): { id: string; path: string | null }[] {
-  const d = db.prepare('SELECT "project", "kind", "subject_id" FROM "decisions" WHERE "id" = ?').get(args.decision) as { project: string; kind: string; subject_id: string } | undefined;
-  if (!d || d.project !== args.project || d.kind !== 'trust_activation') return [];
-  const entry = getEntry(db, d.subject_id);
-  if (!entry) return [];
-  return entryEvidence(entry).map((id) => ({ id, path: (db.prepare('SELECT "path" FROM "records" WHERE "id" = ?').get(id) as { path: string | null } | undefined)?.path ?? null }));
 }

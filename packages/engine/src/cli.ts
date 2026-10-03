@@ -42,6 +42,8 @@ let shellDir: string | null = null;
 let homeFsType: string | null = null;
 const barrierValues: string[] = [];
 const probeValues: string[] = [];
+const hostCheckValues: string[] = [];
+let hostChecksMode: string | null = null;
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
@@ -53,7 +55,9 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-scripted' ||
     flag === '--harness-probe' ||
     flag === '--harness-shell' ||
-    flag === '--harness-home-fstype'
+    flag === '--harness-home-fstype' ||
+    flag === '--harness-host-checks' ||
+    flag === '--harness-host-check'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -68,6 +72,11 @@ for (let i = 0; i < args.length; i++) {
       // The shell reaches the engine as an ordinary parameter: a directory of
       // static files to serve (SEAM.md §90).
       shellDir = isAbsolute(value) ? value : resolve(value);
+    } else if (flag === '--harness-host-checks') {
+      // Whether the host checks run at start (SEAM.md §114).
+      hostChecksMode = value;
+    } else if (flag === '--harness-host-check') {
+      hostCheckValues.push(value);
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -80,7 +89,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
-const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, probeValues);
+const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, probeValues, hostChecksMode, hostCheckValues);
 if (harnessProblem !== null) usage(harnessProblem);
 
 const home = process.env.SURETY_HOME;

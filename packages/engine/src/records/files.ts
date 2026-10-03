@@ -38,7 +38,7 @@ async function writeAll(handle: FileHandle, data: Buffer, position: number): Pro
 // A record written whole, such as a role's result: redacted, written and
 // synced under a temporary name, renamed to its immutable name, the
 // directory synced, and then published in one transaction. Returns its id.
-export async function writeWholeRecord(rt: Runtime, args: { project: string; run: string | null; kind: string; content: Buffer }): Promise<string> {
+export async function writeWholeRecord(rt: Runtime, args: { project: string | null; run: string | null; kind: string; content: Buffer }): Promise<string> {
   const dir = recordsDir(rt.home);
   const id = newId('rec_');
   const redactor = new StreamRedactor();

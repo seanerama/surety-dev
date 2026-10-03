@@ -5,7 +5,7 @@
 import { isAbsolute, normalize } from 'node:path';
 
 import { Refusal } from '../refusal.js';
-import { BUDGET_BOUNDARIES, DISPATCHED_ROLES, type OptionSpec, PROJECT_OPTIONS, PROJECT_POLICY, TRUST_MODES, numberInSpec } from './schema.js';
+import { BUDGET_BOUNDARIES, type OptionSpec, PROJECT_OPTIONS, PROJECT_POLICY, numberInSpec } from './schema.js';
 
 // A value of an ungoverned key: a number, or one of the typed options.
 export type PolicyValue = number | string | boolean | string[] | Record<string, unknown>;
@@ -46,7 +46,7 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
         // maximum, so a policy that declares one is refused rather than
         // recorded as if it were enforced.
         throw new Refusal(
-          409,
+          400,
           'hard_cap_unenforceable',
           'The engine cannot enforce a hard spending maximum: within an invocation, overshoot is bounded only by the deadline, and a backend holds its own key.',
           "Set a spending limit on the backend's dedicated API key at the provider; the engine records it as configured, never as enforced. Nothing was changed.",
@@ -64,21 +64,6 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
       if (!Array.isArray(value) || !value.every(ok)) throw invalidValue(key, 'an array of absolute, normalized paths');
       if (new Set(value).size !== value.length) throw invalidValue(key, 'an array of distinct paths');
       return [...value];
-    }
-    case 'role_backends': {
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidValue(key, 'an object of role to {"backend", "mode"?}');
-      const out: Record<string, unknown> = {};
-      for (const [role, given] of Object.entries(value as Record<string, unknown>)) {
-        if (!(DISPATCHED_ROLES as readonly string[]).includes(role)) throw invalidValue(`${key}.${role}`, `a role among ${DISPATCHED_ROLES.join(', ')}`);
-        const sel = typeof given === 'string' ? { backend: given } : given;
-        if (typeof sel !== 'object' || sel === null || Array.isArray(sel)) throw invalidValue(`${key}.${role}`, 'a backend name or {"backend", "mode"?}');
-        const s = sel as Record<string, unknown>;
-        for (const field of Object.keys(s)) if (field !== 'backend' && field !== 'mode') throw invalidValue(`${key}.${role}`, 'an object of "backend" and "mode" only');
-        if (typeof s.backend !== 'string' || s.backend.length === 0) throw invalidValue(`${key}.${role}.backend`, 'a backend name');
-        if (s.mode !== undefined && (typeof s.mode !== 'string' || !(TRUST_MODES as readonly string[]).includes(s.mode))) throw invalidValue(`${key}.${role}.mode`, `one of ${TRUST_MODES.join(', ')}`);
-        out[role] = { backend: s.backend, mode: (s.mode as string | undefined) ?? 'one_shot_headless' };
-      }
-      return out;
     }
   }
 }

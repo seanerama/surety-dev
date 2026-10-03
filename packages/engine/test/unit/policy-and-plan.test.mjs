@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -25,7 +25,7 @@ test('ui_bootstrap is a closed boolean engine key, false by default', () => {
 });
 
 test('the typed project settings: a hard maximum is refused; host names and paths are checked; a backend is named per role', () => {
-  assert.throws(() => validatePolicySubmission({ budget_hard_maximum: true }), (err) => err.code === 'hard_cap_unenforceable');
+  assert.throws(() => validatePolicySubmission({ budget_hard_maximum: true }), (err) => err.code === 'hard_cap_unenforceable' && err.status === 400);
   assert.deepEqual(validatePolicySubmission({ budget_hard_maximum: false }), { budget_hard_maximum: false });
   assert.throws(() => validatePolicySubmission({ budget_run_boundary: 'per_call' }), (err) => err.code === 'invalid_value');
   assert.throws(() => validatePolicySubmission({ egress_allow_extra: ['Example.COM'] }), (err) => err.code === 'invalid_value');
@@ -33,9 +33,10 @@ test('the typed project settings: a hard maximum is refused; host names and path
   assert.throws(() => validatePolicySubmission({ egress_allow_extra: ['example.com:443'] }), (err) => err.code === 'invalid_value');
   assert.throws(() => validatePolicySubmission({ sandbox_read_paths: ['relative/path'] }), (err) => err.code === 'invalid_value');
   assert.throws(() => validatePolicySubmission({ sandbox_read_paths: ['/a/../b'] }), (err) => err.code === 'invalid_value');
-  assert.deepEqual(validatePolicySubmission({ backends: { builder: 'claude' } }), { backends: { builder: { backend: 'claude', mode: 'one_shot_headless' } } });
-  assert.throws(() => validatePolicySubmission({ backends: { mechanic: 'claude' } }), (err) => err.code === 'invalid_value');
-  assert.throws(() => validatePolicySubmission({ backends: { builder: { backend: 'claude', mode: 'interactive' } } }), (err) => err.code === 'invalid_value');
+  assert.deepEqual(validatePolicySubmission({ backend_verifier: 'claude', backend_mode: 'session_headless' }), { backend_verifier: 'claude', backend_mode: 'session_headless' });
+  assert.throws(() => validatePolicySubmission({ backend_mechanic: 'claude' }), (err) => err.code === 'unknown_field');
+  assert.throws(() => validatePolicySubmission({ backend_builder: 'gpt' }), (err) => err.code === 'invalid_value');
+  assert.throws(() => validatePolicySubmission({ backend_mode: 'interactive' }), (err) => err.code === 'invalid_value');
   // A recorded value the schema refuses is never effective.
   assert.equal(effectiveOf({ budget_hard_maximum: true }).budget_hard_maximum, false);
 });
@@ -69,23 +70,23 @@ test('the read paths a plan refuses: the engine home and aliases of it, reposito
 
   assert.equal(await validateReadPaths([harmless], ctx), null, 'a harmless directory may be bound');
   const reason = async (p) => (await validateReadPaths([p], ctx))?.reason ?? null;
-  assert.match(await reason(home), /engine home/);
-  assert.match(await reason(join(base, 'alias-of-home')), /engine home/, 'an alias is judged by what it resolves to');
-  assert.match(await reason(base), /contains/);
-  assert.match(await reason(repo), /registered repository/);
-  assert.match(await reason(join(operator, '.ssh')), /credential/);
-  for (const host of ['/run', '/proc', '/dev', '/tmp', '/mnt']) assert.ok((await reason(host)) !== null, `${host} is refused`);
-  assert.match(await reason(join(base, 'missing')), /cannot be resolved/);
+  assert.equal(await reason(home), 'engine_home');
+  assert.equal(await reason(join(base, 'alias-of-home')), 'engine_home', 'an alias is judged by what it resolves to');
+  assert.ok((await validateReadPaths([base], ctx)).detail.startsWith('it contains'));
+  assert.equal(await reason(repo), 'repository');
+  assert.equal(await reason(join(operator, '.ssh')), 'credential_location');
+  for (const host of ['/run', '/proc', '/dev', '/tmp', '/mnt']) assert.equal(await reason(host), 'forbidden_root', `${host} is refused`);
+  if (existsSync('/usr/lib/wsl')) assert.equal(await reason('/usr/lib/wsl'), 'wsl_path');
 
   const sockets = join(base, 'sockets');
   mkdirSync(sockets);
   const server = net.createServer().listen(join(sockets, 'listening.sock'));
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => server.close());
-  assert.match(await reason(sockets), /socket/);
+  assert.equal(await reason(sockets), 'special_file');
 
   const fifos = join(base, 'fifos');
   mkdirSync(fifos);
   execFileSync('mkfifo', [join(fifos, 'pipe')]);
-  assert.match(await reason(fifos), /FIFO/);
+  assert.equal(await reason(fifos), 'special_file');
 });

@@ -33,6 +33,9 @@ export class Tx {
   readonly id = newId('tx_');
   readonly at = nowIso();
   readonly events: EventRef[] = [];
+  // Fields every event of this transaction carries in its payload: the
+  // label of a caller that installs test setup through the transitions.
+  stamp: Record<string, unknown> = {};
 
   constructor(
     readonly db: Database,
@@ -65,7 +68,7 @@ export class Tx {
         this.actor.actor_kind,
         this.actor.actor_id,
         this.actor.request_id,
-        JSON.stringify(payload),
+        JSON.stringify({ ...this.stamp, ...payload }),
         this.id,
       );
     this.events.push(ref);

@@ -56,7 +56,11 @@ export interface ProjectOptions {
   budget_hard_maximum: boolean;
   egress_allow_extra: string[];
   sandbox_read_paths: string[];
-  backends: Record<string, { backend: string; mode: string }>;
+  backend_builder: string;
+  backend_verifier: string;
+  backend_reviewer: string;
+  backend_architect: string;
+  backend_mode: string;
 }
 
 export function projectOptions(db: Database, project: string): ProjectOptions {

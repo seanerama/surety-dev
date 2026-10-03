@@ -31,6 +31,27 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   git_deadline: int(60, 1, 600),
   git_deadline_long: int(600, 60, 3600),
   git_output_cap: int(8_388_608, 65_536, 268_435_456),
+  // D2 A.7, bytes in bytes (SEAM.md §115).
+  max_concurrent_domains: int(2, 1, 8),
+  host_reserve_memory: int(2_147_483_648, 536_870_912, 68_719_476_736),
+  host_reserve_disk: int(5_368_709_120, 1_073_741_824, 1_099_511_627_776),
+  domain_memory_max: int(8_589_934_592, 536_870_912, 68_719_476_736),
+  domain_tasks_max: int(1024, 64, 16_384),
+  domain_writable_bytes: int(4_294_967_296, 67_108_864, 34_359_738_368),
+  domain_writable_inodes: int(200_000, 1000, 2_000_000),
+  result_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  provider_files_max_bytes: int(67_108_864, 1_048_576, 1_073_741_824),
+  collect_entries_max: int(10_000, 100, 1_000_000),
+  collect_deadline: int(60, 5, 600),
+  stream_line_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  stream_queue_max_bytes: int(8_388_608, 1_048_576, 67_108_864),
+  egress_resolve_timeout: int(5, 1, 30),
+  egress_connect_timeout: int(10, 1, 60),
+  egress_tunnel_max_seconds: int(1800, 60, 10_800),
+  egress_tunnels_max: int(16, 1, 128),
+  egress_buffer_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  egress_log_max_bytes: int(4_194_304, 262_144, 67_108_864),
+  pause_challenge_timeout: int(5, 1, 30),
 };
 
 export const ENGINE_FIXED: Record<string, number> = { body_cap: BODY_CAP, upload_cap: UPLOAD_CAP };
@@ -61,6 +82,27 @@ export const ENGINE_KEYS = [
   'decision_targets',
   // D2 §2.6, K3: the token bootstrap route answers only when this is true.
   'ui_bootstrap',
+  // D2 A.7.
+  'max_concurrent_domains',
+  'host_reserve_memory',
+  'host_reserve_disk',
+  'domain_memory_max',
+  'domain_tasks_max',
+  'domain_writable_bytes',
+  'domain_writable_inodes',
+  'result_max_bytes',
+  'provider_files_max_bytes',
+  'collect_entries_max',
+  'collect_deadline',
+  'stream_line_max_bytes',
+  'stream_queue_max_bytes',
+  'egress_resolve_timeout',
+  'egress_connect_timeout',
+  'egress_tunnel_max_seconds',
+  'egress_tunnels_max',
+  'egress_buffer_max_bytes',
+  'egress_log_max_bytes',
+  'pause_challenge_timeout',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
@@ -153,16 +195,16 @@ export type BudgetBoundary = (typeof BUDGET_BOUNDARIES)[number];
 
 export const TRUST_MODES = ['one_shot_headless', 'session_headless'] as const;
 
-// The roles a project's work is dispatched to (store/transitions/runs.ts
-// ROLE_OF), which a project may assign a backend.
-export const DISPATCHED_ROLES = ['builder', 'verifier', 'reviewer', 'architect'] as const;
+// The backends a role may be dispatched to: the scripted one (harness mode
+// only) and those the engine has an adapter for (D2 §4.5, §4.6).
+export const BACKEND_NAMES = ['scripted', 'claude', 'codex'] as const;
 
 // Ungoverned project keys that are not numbers (D2 A.7). `widening` says when
 // a change of the key widens what the engine may do unasked: `added` when it
 // adds an element the effective value lacks, `coarser` when it names a
 // coarser budget boundary, `never` when no change does.
 export interface OptionSpec {
-  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'role_backends';
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths';
   default: unknown;
   values?: readonly string[];
   widening: 'added' | 'coarser' | 'never';
@@ -177,11 +219,14 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   // Widenings (D2 §§2.3, 2.4).
   egress_allow_extra: { type: 'host_names', default: [], widening: 'added' },
   sandbox_read_paths: { type: 'absolute_paths', default: [], widening: 'added' },
-  // The backend each role is dispatched to, among the active trust entries
-  // (D2 §4.1): {"<role>": {"backend": <name>, "mode"?: <TrustMode>}}. A role
-  // not named is dispatched to the scripted backend, which exists only in
-  // harness mode.
-  backends: { type: 'role_backends', default: {}, widening: 'never' },
+  // The backend each role is dispatched to, among the active trust entries,
+  // and the mode (D2 §4.1; SEAM.md §115). `scripted` exists only in harness
+  // mode.
+  backend_builder: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
 };
 
 // A JSON number of the right kind inside its range. null, strings and

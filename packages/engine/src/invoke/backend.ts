@@ -10,6 +10,8 @@ export interface BackendSpec {
   // The program spawned for an invocation, as an argument array.
   command: string;
   args: string[];
+  // Variables beyond the constructed environment (a provider key).
+  env?: Record<string, string>;
 }
 
 // What the execution boundary reports of a domain (build spec §6

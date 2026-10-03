@@ -126,6 +126,14 @@ function publicCode(reason: string | null, text: string | null): string | null {
   }
 }
 
+function refusalOf(run: Record<string, unknown>): Record<string, unknown> | null {
+  const code = publicCode(run.reason_class as string | null, run.reason_text as string | null);
+  if (code === null) return null;
+  const stored = parseJson<Record<string, unknown>>((run.reason_detail as string | null) ?? null);
+  if (stored && stored.code === code && typeof stored.reason === 'string') return { code, reason: stored.reason, what_to_do: stored.what_to_do ?? null, subject: stored.subject ?? {} };
+  return { code, reason: (run.reason_text as string | null) ?? code, what_to_do: null, subject: {} };
+}
+
 // GET /v1/projects/:p/runs/:r. A read: it writes nothing.
 export function runRepresentation(db: Tx['db'], args: { project: string; run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
@@ -165,13 +173,12 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       outcome: run.outcome,
       reason_class: run.reason_class,
       code: publicCode(run.reason_class as string | null, run.reason_text as string | null),
-      // Why a dispatch was refused before launch, as the engine decided it
-      // (D2 §§2.3, 4.1, 4.2): the entry, the boundary it enforces and the
-      // deadline as the overshoot bound; the path the mount plan refused.
-      refusal: run.reason_class === 'preflight_refused' ? (parseJson<Record<string, unknown>>((run.reason_detail as string | null) ?? null) ?? { code: publicCode('preflight_refused', run.reason_text as string | null) }) : null,
-      // What the role's report proposed that the engine refused before
-      // raising anything (D2 §5 C1).
-      report_refusals: parseJson<unknown[]>((run.report_refusals as string | null) ?? null) ?? [],
+      // The refusal in its form beside the code (SEAM.md §116): what the
+      // engine decided before launch, with its subject.
+      refusal: refusalOf(run),
+      // What became of each Alpha exception proposal the run's Reviewer made
+      // (SEAM.md §119).
+      alpha_exception_proposals: parseJson<unknown[]>((run.alpha_exception_outcomes as string | null) ?? null) ?? [],
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

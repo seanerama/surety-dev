@@ -77,7 +77,7 @@ export function alphaRefusal(db: Tx['db'], f: FindingRow | undefined, project: s
   if (!candidate) return 'no_reviewed_candidate';
   if (f.effective_severity !== 'high') return 'not_high';
   if (f.sensitive_area !== null) return 'sensitive_area';
-  if (f.status !== 'open' || !findingApplies(db, f, candidate)) return 'not_open_against_reviewed_candidate';
+  if ((f.status !== 'open' && f.status !== 'dispositioned') || !findingApplies(db, f, candidate)) return 'not_open_against_candidate';
   return null;
 }
 
@@ -231,18 +231,14 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   // option alpha_exception, its containment argument retained as claimed
   // evidence. What was refused is kept on the run.
   if (role === 'reviewer' && (report.alpha_exception_proposals ?? []).length > 0) {
-    const refusals: { finding: string; index: number; reason: string; detail?: string }[] = [];
+    const outcomes: { finding: string; outcome: 'proposed' | 'refused'; reason: string | null; decision: string | null }[] = [];
     const reviewed = (tx.db.prepare('SELECT "content_hash" FROM "runs" WHERE "id" = ?').get(run.id) as { content_hash: string | null }).content_hash;
     for (const [i, p] of (report.alpha_exception_proposals ?? []).entries()) {
       const prepared = args.alpha?.[i];
-      if (!prepared || 'refusal' in prepared) {
-        refusals.push({ finding: p.finding, index: i, reason: prepared && 'refusal' in prepared ? prepared.refusal : 'not_prepared', ...(prepared && 'refusal' in prepared && prepared.detail ? { detail: prepared.detail } : {}) });
-        continue;
-      }
       const f = findingOf(tx, p.finding);
-      const reason = alphaRefusal(tx.db, f, project, candidate);
-      if (reason !== null) {
-        refusals.push({ finding: p.finding, index: i, reason });
+      const reason = alphaRefusal(tx.db, f, project, candidate) ?? (!prepared ? 'not_prepared' : 'refusal' in prepared ? prepared.refusal : null);
+      if (reason !== null || !prepared || 'refusal' in prepared) {
+        outcomes.push({ finding: p.finding, outcome: 'refused', reason: reason ?? 'not_prepared', decision: null });
         continue;
       }
       const proposed = {
@@ -255,9 +251,18 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
         at: tx.at,
       };
       tx.db.prepare('UPDATE "findings" SET "proposed_alpha_exception" = ? WHERE "id" = ?').run(JSON.stringify(proposed), f!.id);
-      raiseQuestion(tx, { project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f!.id, scope: ALPHA_SCOPE });
+      const d = raiseQuestion(tx, {
+        project,
+        kind: 'finding_disposition',
+        subjectType: 'finding',
+        subjectId: f!.id,
+        scope: ALPHA_SCOPE,
+        // D1 A.3: the argument is the agent's, retained as claimed evidence.
+        evidence: [{ record: prepared.record, provenance: 'claimed' }],
+      });
+      outcomes.push({ finding: p.finding, outcome: d ? 'proposed' : 'refused', reason: d ? null : 'not_open_against_candidate', decision: d?.id ?? null });
     }
-    if (refusals.length > 0) tx.db.prepare('UPDATE "runs" SET "report_refusals" = ? WHERE "id" = ?').run(JSON.stringify(refusals.map((r) => ({ field: 'alpha_exception_proposals', ...r }))), run.id);
+    tx.db.prepare('UPDATE "runs" SET "alpha_exception_outcomes" = ? WHERE "id" = ?').run(JSON.stringify(outcomes), run.id);
   }
 }
 

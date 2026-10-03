@@ -10,7 +10,6 @@ import {
   type AttemptRow,
   type EntryInput,
   type EntryRow,
-  entryProject,
   finishAttempt,
   getAttempt,
   writeAttempt,
@@ -22,7 +21,7 @@ import type { Tx } from './tx.js';
 // person authorizes it (Q7).
 export function proposeAttempt(tx: Tx, input: AttemptInput, label: Record<string, unknown> = {}): { attempt: AttemptRow; decision: string | null } {
   const attempt = writeAttempt(tx, input, label);
-  const d = raiseQuestion(tx, { project: attempt.fixture_project, kind: 'qualification_approval', subjectType: 'qualification_attempt', subjectId: attempt.id });
+  const d = raiseQuestion(tx, { project: null, kind: 'qualification_approval', subjectType: 'qualification_attempt', subjectId: attempt.id });
   return { attempt, decision: d?.id ?? null };
 }
 
@@ -31,7 +30,7 @@ export function proposeAttempt(tx: Tx, input: AttemptInput, label: Record<string
 // about: it cannot be activated (D2 §4.2).
 export function proposeEntry(tx: Tx, input: EntryInput, label: Record<string, unknown> = {}): { entry: EntryRow; decision: string | null } {
   const entry = writeEntry(tx, input, label);
-  const d = raiseQuestion(tx, { project: entryProject(tx.db, entry), kind: 'trust_activation', subjectType: 'trust_entry', subjectId: entry.id });
+  const d = raiseQuestion(tx, { project: null, kind: 'trust_activation', subjectType: 'trust_entry', subjectId: entry.id });
   return { entry, decision: d?.id ?? null };
 }
 
