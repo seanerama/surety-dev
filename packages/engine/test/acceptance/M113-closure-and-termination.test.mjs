@@ -28,7 +28,7 @@ import { CONTRACT } from './harness/fixtures.mjs';
 import { releaseBarrier } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { armBarrier, registryOf } from './harness/journal.mjs';
-import { abandonRun, addProject, addWork, advanceClockInSteps, assertRunEnded, assertRunQuarantined, getRow, requestTick, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, CLOCK_SLACK_MS } from './harness/runs.mjs';
+import { abandonRun, addProject, addWork, advanceClockInSteps, assertRunEnded, assertRunQuarantined, getRow, requestTick, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
 import { cgroupExists, makeUnreadable, populated, procsOf, readEvents, restoreReadable, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, domainRow, eventsOf, receiptOf, roleAlive, roleHolding, sandboxEngine, terminalObservation, waitForEvent } from './harness/sandbox/lane.mjs';
 import { hostProcess, memberByInnerPid } from './harness/sandbox/procs.mjs';
@@ -48,8 +48,10 @@ const seqOf = (events, i = 0) => events[i]?.seq ?? null;
 function assertClosedThenTerminated(fx, run, domain, what) {
   const row = domainRow(fx.home, domain.id);
   assert.deepEqual([row.status, row.launch_state, row.observation], ['terminated', 'closed', 'terminated'], `${what}: the domain is terminated with its launch closed`);
+  // Both times are recorded; their order is read from the events' sequence
+  // below, not from the two timestamps: the host's wall clock steps back by
+  // about three seconds every half minute (SEAM.md §126, "Times").
   assert.ok(row.launch_closed_at && row.observed_at, `${what}: launch_closed_at and observed_at are set`);
-  assert.ok(Date.parse(row.launch_closed_at) <= Date.parse(row.observed_at) + CLOCK_SLACK_MS, `${what}: closure precedes the observation`);
   const closed = seqOf(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_closed'));
   const terminated = seqOf(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated'));
   const ended = seqOf(eventsOf(fx.home, 'run', run.id, 'run.ended'));
@@ -75,8 +77,23 @@ describe('M113 TERM then kill, closure on every path', () => {
     const stoppedAt = performance.now();
     await stopRun(fx.engine, project, run.id);
     await waitForEvent(fx.home, 'domain', domain.id, 'domain.launch_closed');
+    // Monotonic from here: the closure had happened by `closedSeenAt`.
+    const closedSeenAt = performance.now();
     assert.equal(roleAlive(domain, launch), true, 'closure comes first: the role, which ignores TERM, is still alive right after domain.launch_closed');
     assert.equal(domainRow(fx.home, domain.id).launch_state, 'closed');
+    // How long the role, which ignores TERM, lives on after the closure,
+    // read from the host on the monotonic clock: the kill may not come
+    // before terminate_grace has passed, and the domain cannot be observed
+    // empty while the role lives.
+    let lastAliveAt = closedSeenAt;
+    while (roleAlive(domain, launch) && performance.now() - closedSeenAt < 40_000) {
+      lastAliveAt = performance.now();
+      await sleep(50);
+    }
+    assert.ok(
+      lastAliveAt - closedSeenAt >= (grace.terminate_grace - 1) * 1000,
+      `the role was still alive ${Math.round(lastAliveAt - closedSeenAt)} ms after the test saw the closure: the kill, and so the observation, comes no earlier than terminate_grace (${grace.terminate_grace} s) after closure`,
+    );
 
     await fx.engine.waitUntil('barrier:boundary.before_terminated', { timeoutMs: 40_000 });
     assert.ok(performance.now() - stoppedAt >= (grace.terminate_grace - 1) * 1000, 'the kill came no earlier than terminate_grace');
@@ -89,8 +106,7 @@ describe('M113 TERM then kill, closure on every path', () => {
 
     await releaseBarrier(fx.engine, 'boundary.before_terminated');
     await waitForRunState(fx.home, run.id, 'ended');
-    const row = assertClosedThenTerminated(fx, run, domain, '(a)');
-    assert.ok(Date.parse(row.observed_at) - Date.parse(row.launch_closed_at) >= grace.terminate_grace * 1000 - CLOCK_SLACK_MS, `observed_at is at least terminate_grace (${grace.terminate_grace} s) after closure (${row.launch_closed_at} → ${row.observed_at})`);
+    assertClosedThenTerminated(fx, run, domain, '(a)');
     assertRunEnded(fx.home, run.id, { outcome: 'stopped', reason_class: 'human_stop', workspace: 'retained', launched: true, recovery: false });
     const terminal = terminalObservation(fx.home, receiptOf(fx.home, run.id).id);
     assert.equal(terminal.exit_class, 'engine_signaled', `exit class (${JSON.stringify(terminal)})`);

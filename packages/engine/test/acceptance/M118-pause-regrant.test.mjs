@@ -27,7 +27,7 @@ import { CONTRACT } from './harness/fixtures.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { originalRowOf } from './harness/ledger.mjs';
-import { addProject, addWork, advanceClockInSteps, assertRunEnded, CLOCK_SLACK_MS, leasesOf, run as runRow, stopRun, tick, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
+import { addProject, addWork, advanceClockInSteps, assertRunEnded, leasesOf, run as runRow, stopRun, tick, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
 import { cgroupExists, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
 import { eventsOf, receiptOf, roleAlive, roleHolding, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { step } from './harness/scripted.mjs';
@@ -37,8 +37,18 @@ const LEASE_TTL = CONTRACT.engine.lease_ttl.min;
 const PAUSE_MS = (LEASE_TTL + 3) * 1000;
 const CONFIG = { lease_ttl: LEASE_TTL, terminate_grace: 3, kill_grace: 2 };
 
+// The engine's clock is the host's wall clock, which on this host steps back
+// by about three seconds every half minute. The engine is stopped for the
+// whole pause, so every time it records is either from before the SIGSTOP or
+// from after the SIGCONT; "after the pause" is told by the midpoint, with a
+// quarter of a minute to spare on either side, never by a slack of seconds.
+const afterThePause = (iso, stoppedAt) => Date.parse(iso) > stoppedAt + PAUSE_MS / 2;
+// Two engine timestamps a moment apart can straddle one step of the clock.
+const STEP_SLACK_MS = 5000;
+
 const runLease = (home, runId) => leasesOf(home, runId).find((l) => l.resource_kind === 'run');
 const regrants = (home, runId) => eventsOf(home, 'run', runId, 'run.lease_regranted');
+const maxSeq = (home) => withStore(home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
 const usageRows = (home, invocation) => withStore(home, (db) => db.prepare('SELECT * FROM "usage_observations" WHERE "invocation" = ? ORDER BY "seq"').all(invocation));
 
 // SIGSTOP the engine past lease_ttl, then SIGCONT. Returns the wall-clock
@@ -59,9 +69,12 @@ describe('M118 a healthy run survives a pause', () => {
     const { run, domain, launch } = await roleHolding(fx, project, item, { on_term: 'exit', after: [step.result()] });
     const before = runLease(fx.home, run.id);
     const deadline = runRow(fx.home, run.id).deadline_at;
+    const seqBeforePause = maxSeq(fx.home);
 
-    const { contAt } = await pause(fx);
+    const { stoppedAt } = await pause(fx);
     assert.equal(roleAlive(domain, launch), true, 'the fixture is live: the role lived through the pause');
+    // The test asks for a tick; an engine that ticks by itself as soon as it
+    // finds the lease expired has re-granted already, which is as good.
     await tick(fx.engine, project);
     const [event] = await waitFor(() => {
       const found = regrants(fx.home, run.id);
@@ -70,18 +83,25 @@ describe('M118 a healthy run survives a pause', () => {
     assert.equal(event.payload.generation, before.generation, 'the same generation: fencing is unchanged');
     const c = event.payload.challenge;
     assert.ok(c && typeof c.nonce === 'string' && /^[0-9a-f]{16,}$/.test(c.nonce), `a fresh nonce (${JSON.stringify(c)})`);
-    assert.ok(Date.parse(c.sent_at) >= contAt - CLOCK_SLACK_MS, `the challenge was sent after the pause (${c.sent_at} vs ${new Date(contAt).toISOString()})`);
-    assert.ok(Date.parse(c.answered_at) >= Date.parse(c.sent_at) - CLOCK_SLACK_MS, 'and answered after it was sent');
+    assert.equal(afterThePause(c.sent_at, stoppedAt), true, `the challenge was sent after the pause (${c.sent_at}; stopped at ${new Date(stoppedAt).toISOString()} for ${PAUSE_MS / 1000} s)`);
+    assert.equal(afterThePause(c.answered_at, stoppedAt), true, 'and answered after the pause');
+    assert.ok(Date.parse(c.answered_at) >= Date.parse(c.sent_at) - STEP_SLACK_MS, 'and not before it was sent');
     assert.equal(c.backend_state, 'running', 'the init reported the backend running');
     const after = runLease(fx.home, run.id);
     assert.equal(after.id, before.id, 'the same lease row');
     assert.equal(after.generation, before.generation);
     assert.ok(Date.parse(after.expires_at) > Date.parse(before.expires_at), `expires_at renewed (${before.expires_at} → ${after.expires_at})`);
     assert.ok(Date.parse(event.payload.expires_at) > Date.parse(before.expires_at) && Date.parse(after.expires_at) >= Date.parse(event.payload.expires_at), `the event carries the renewed expiry, and later renewals only move it on (${event.payload.expires_at}, now ${after.expires_at})`);
-    assert.ok(Date.parse(after.renewed_at) >= Date.parse(c.answered_at) - CLOCK_SLACK_MS, 'the renewal is the re-grant\'s, not a buffered heartbeat\'s');
+    assert.equal(afterThePause(after.renewed_at, stoppedAt), true, 'the lease is renewed again once it is re-granted');
     assert.equal(runRow(fx.home, run.id).deadline_at, deadline, 'deadline_at is unchanged');
     assert.equal(runRow(fx.home, run.id).state, 'executing', 'the run goes on');
     assert.equal(regrants(fx.home, run.id).length, 1, 'one re-grant');
+    // A heartbeat the role sent during the pause, read after it, renewed
+    // nothing before the fresh challenge: of everything recorded about the
+    // run since the pause began, no heartbeat's renewal precedes the re-grant.
+    const sincePause = eventsOf(fx.home, 'run', run.id, 'run.%').filter((e) => e.seq > seqBeforePause && ['run.heartbeat', 'run.lease_regranted'].includes(e.type));
+    assert.equal(sincePause[0]?.type, 'run.lease_regranted', `the first renewal after the pause is the re-grant's, not a buffered heartbeat's (${sincePause.slice(0, 4).map((e) => `${e.seq}:${e.type}`).join(', ')})`);
+    assert.equal(sincePause[0].seq, event.seq);
 
     fx.scripted.release(item);
     await waitForRunState(fx.home, run.id, 'ended');
@@ -105,7 +125,7 @@ describe('M118 a healthy run survives a pause', () => {
     assert.deepEqual(regrants(fx.home, run.id), [], 'no re-grant without a fresh response');
     assertRunEnded(fx.home, run.id, { outcome: 'recovered', reason_class: 'recovered', launched: true, recovery: false });
     const after = leasesOf(fx.home, run.id).find((l) => l.id === before.id);
-    assert.ok(Date.parse(after.renewed_at) <= stoppedAt + CLOCK_SLACK_MS, `a heartbeat buffered during the pause renewed nothing (last renewal ${after.renewed_at}, stopped at ${new Date(stoppedAt).toISOString()})`);
+    assert.equal(afterThePause(after.renewed_at, stoppedAt), false, `a heartbeat buffered during the pause renewed nothing (last renewal ${after.renewed_at}, stopped at ${new Date(stoppedAt).toISOString()})`);
     assert.equal(roleAlive(domain, launch), false, 'the role was terminated through the boundary');
     await waitCgroupGone(domain.cgroup_path);
     assert.equal(terminalObservation(fx.home, receiptOf(fx.home, run.id).id).exit_evidence.signal_by_engine, true);
