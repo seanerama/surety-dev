@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { waitFor } from './engine.mjs';
-import { isAlive, procStartTime } from './proc.mjs';
+import { isAlive, procStartTime, signalPid } from './proc.mjs';
 
 const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'scripted', 'child.mjs');
 
@@ -294,14 +294,9 @@ export class Scripted {
       }
     }
     const killed = [];
-    for (const pid of pids) {
-      try {
-        process.kill(pid, 'SIGKILL');
-        killed.push(pid);
-      } catch {
-        // already gone
-      }
-    }
+    // Pids read from a log a role wrote: only what may be signalled at all
+    // (proc.mjs, `signallable`); already gone is not an error.
+    for (const pid of pids) if (signalPid(pid, 'SIGKILL')) killed.push(pid);
     return killed;
   }
 }

@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
 import { waitFor } from '../engine.mjs';
+import { signalPid, signallable } from '../proc.mjs';
 import { cgroupOfPid, moveIntoCgroup, procsOf, scopePathOf } from './cgroup.mjs';
 import { hostProcess, isHostAlive } from './procs.mjs';
 
@@ -39,7 +40,7 @@ export async function cgroupSentinel(t, dir = null) {
       const scope = scopePathOf(unit);
       if (scope === null) return undefined;
       try {
-        return procsOf(scope).find((p) => /(^|\/)sleep$/.test(hostProcess(p)?.cmdline[0] ?? ''));
+        return procsOf(scope).find((p) => signallable(p) && /(^|\/)sleep$/.test(hostProcess(p)?.cmdline[0] ?? ''));
       } catch {
         return undefined;
       }
@@ -53,11 +54,7 @@ export async function cgroupSentinel(t, dir = null) {
     alive: () => isHostAlive(pid),
     cgroup: () => cgroupOfPid(pid),
     kill: () => {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // gone
-      }
+      signalPid(pid, 'SIGKILL');
     },
   };
   t.after(() => sentinel.kill());

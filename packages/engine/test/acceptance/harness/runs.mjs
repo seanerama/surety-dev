@@ -214,8 +214,12 @@ export async function answerDecision(engine, project, decision, option) {
 export const advanceClock = async (engine, seconds) => expectStatus(await engine.post('/v1/harness/clock/advance', { seconds }), 200, 'clock advance');
 
 // The slack a comparison between an engine timestamp and the controlled
-// clock allows for a host clock that steps back (SEAM.md §23).
-export const CLOCK_SLACK_MS = 2000;
+// clock allows for a host clock that steps back (SEAM.md §23). Two seconds
+// when the host stepped back by under one; the step was measured at 2.93 s
+// every 32 s on 2026-10-03 (E65 addendum), so four. Its one remaining use is
+// the wait below, which asserts nothing; no case compares with it any more
+// (SEAM.md, "Amended after the slice-11 review", "The clock").
+export const CLOCK_SLACK_MS = 4000;
 
 // Move the clock forward by `seconds` in steps shorter than the lease TTL the
 // test configured, leaving real time between steps for the roles' heartbeats
