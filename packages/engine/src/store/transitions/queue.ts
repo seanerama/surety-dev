@@ -139,18 +139,18 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           ? `its integration was refused: the integration branch is checked out in the worktree ${blocker.worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
           : (PARK_TEXT[blocker.reason] ?? blocker.reason);
       return {
-        // The continuation an answer allows is the item eligible again, from
-        // the checkpoint it stores, if any (D1 §7.4): a changed checkpoint is
-        // another consequence of the same answer (build spec §6 correction 22).
+        // The continuation an answer allows (SEAM.md §105): the status a retry
+        // resumes the item to, and the revision its next run starts from as
+        // the item stores it (its checkpoint, D1 §7.4; null: the head). A
+        // changed checkpoint is another consequence of the same answer
+        // (build spec §6 correction 22).
         manifest: {
           work_item: item.id,
           subject_status: 'parked',
           cause: blocker.reason,
           quarantined: false,
           evidence: workEvidence(tx, item.id),
-          continuation: 'eligible',
-          continue_from: item.continue_from,
-          stored_continuation: item.continuation,
+          continuation: { status: 'eligible', from: item.continue_from },
         },
         options: [
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
@@ -168,9 +168,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           cause: 'max_chained_roles',
           quarantined: false,
           evidence: workEvidence(tx, item.id),
-          continuation: 'dispatch',
-          continue_from: item.continue_from,
-          stored_continuation: item.continuation,
+          continuation: { status: 'dispatch', from: item.continue_from },
         },
         options: [
           { key: 'continue', label: 'Continue', consequence: 'The work starts a new chain and the scheduler dispatches it.', effect: { work_item: item.id, chain: 0 } },
@@ -188,7 +186,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     const run = getRun(tx, d.subject_id);
     if (!run || run.state !== 'finalizing' || run.quarantined !== 1) return null;
     return {
-      manifest: { run: run.id, subject_status: run.state, cause: 'termination_unobserved', quarantined: true, evidence: BLOCKER_EVIDENCE, continuation: null, continue_from: null, stored_continuation: null },
+      manifest: { run: run.id, subject_status: run.state, cause: 'termination_unobserved', quarantined: true, evidence: BLOCKER_EVIDENCE, continuation: null },
       options: [
         {
           key: 'acknowledge',
@@ -220,8 +218,6 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         quarantined: false,
         evidence: BLOCKER_EVIDENCE,
         continuation: null,
-        continue_from: null,
-        stored_continuation: null,
       },
       options: [
         {
@@ -253,7 +249,7 @@ export const PARK_TEXT: Record<string, string> = {
 const BLOCKER: KindSpec = {
   preview: blockerPreview,
   manifest: (tx, d) =>
-    blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null, continue_from: null, stored_continuation: null },
+    blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null },
   reraise: true,
   answer(tx, d, option, note) {
     if (d.subject_type === 'work_item') {
@@ -899,7 +895,7 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
 const CORRECTION_KEYS = ['proposal_status', 'tree', 'diff_hash', 'base_revision', 'integration_revision', 'classification', 'evidence', 'effective_protected_version', 'spec_revision', 'scope_approval', 'policy_revision'];
 const CONTROL_KEYS = ['run', 'stoppable', 'domains', 'lease_generation', 'workspace', 'workspace_snapshot', 'workspace_fate', 'work_fate'];
 export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = {
-  blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation', 'continue_from', 'stored_continuation'],
+  blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,
   out_of_band_change: ['subject_kind', 'expected', 'found'],

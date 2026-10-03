@@ -4,7 +4,7 @@
 // the expected head, as an out-of-band revision, with the branch update to
 // follow; the finalizer of that update makes the commit the registry's
 // expectation, records what the checkout then holds as its baseline (HEAD
-// the new commit, index and files as they were), reconciles the observation
+// the new commit, its index the adopted tree's, files as they were), reconciles the observation
 // and completes the intent. A checkout whose HEAD is not the expected head
 // is not adopted onto it. Against a scratch store; no git is run.
 
@@ -35,6 +35,7 @@ const H = 'a'.repeat(40); // the expected head, checked out in the developer's c
 const S = 'c'.repeat(40); // the engine's commit of the checkout's edits
 const BASELINE = { head: H, index_hash: 'i'.repeat(64), tracked_tree_hash: 't'.repeat(40) };
 const EDITED = { head: H, index_hash: 'i'.repeat(64), tracked_tree_hash: 'e'.repeat(40) };
+const ADOPTED_INDEX = 'j'.repeat(64); // the checkout's index once set to the adopted tree
 
 function store(t, found = EDITED) {
   const dir = mkdtempSync(join(tmpdir(), 'surety-unit-'));
@@ -76,7 +77,7 @@ test('adopt: the edits become one engine-made out-of-band commit on the integrat
   assert.deepEqual([intent.kind, intent.status, db.prepare('SELECT status FROM decisions WHERE id = ?').get(d.id).status], ['oob_adopt', 'pending', 'consumed']);
 
   const made = transact(db, ENGINE_ACTOR, (tx) =>
-    beginAdopt(tx, { intent: intent.id, facts: { found: JSON.stringify(EDITED) }, repo: '/repo', tree: EDITED.tracked_tree_hash, parent: H, sha: S, content: 'commit', index_hash: EDITED.index_hash, deadlineSeconds: 60 }),
+    beginAdopt(tx, { intent: intent.id, facts: { found: JSON.stringify(EDITED) }, repo: '/repo', tree: EDITED.tracked_tree_hash, parent: H, sha: S, content: 'commit', index_hash: ADOPTED_INDEX, before_index: EDITED.index_hash, deadlineSeconds: 60 }),
   );
   assert.equal(db.prepare('SELECT status FROM effect_intents WHERE id = ?').get(intent.id).status, 'executing');
   // While the branch update is in flight, what the checkout will hold is the engine's own write.
@@ -84,13 +85,13 @@ test('adopt: the edits become one engine-made out-of-band commit on the integrat
   const follow = receipts.follow;
   assert.equal(typeof follow, 'string', 'the branch update follows the commit');
   const inFlight = integrityFacts({ db }, { project: 'prj_1' }).checkouts.find((c) => c.id === 'mco_1');
-  assert.deepEqual(inFlight.pending, { head: S, index_hash: EDITED.index_hash, tracked_tree_hash: EDITED.tracked_tree_hash });
+  assert.deepEqual(inFlight.pending, { heads: [S, H], indexes: [ADOPTED_INDEX, EDITED.index_hash], tree: EDITED.tracked_tree_hash });
   const payload = JSON.parse(db.prepare(`SELECT payload FROM git_journal_events WHERE operation = ? AND event_kind = 'intended'`).get(follow).payload);
   assert.deepEqual([payload.ref, payload.old_oid, payload.new_oid], ['refs/heads/main', H, S], 'a compare-and-swap from the expected head');
 
   drive(db, follow);
   assert.equal(db.prepare(`SELECT expected_oid FROM ref_registry WHERE ref = 'refs/heads/main'`).get().expected_oid, S, 'the next base is the adopted commit');
-  assert.deepEqual(JSON.parse(db.prepare(`SELECT baseline FROM managed_checkouts WHERE id = 'mco_1'`).get().baseline), { head: S, index_hash: EDITED.index_hash, tracked_tree_hash: EDITED.tracked_tree_hash });
+  assert.deepEqual(JSON.parse(db.prepare(`SELECT baseline FROM managed_checkouts WHERE id = 'mco_1'`).get().baseline), { head: S, index_hash: ADOPTED_INDEX, tracked_tree_hash: EDITED.tracked_tree_hash }, 'the index bound is the adopted one');
   assert.equal(db.prepare('SELECT disposition FROM out_of_band_changes WHERE id = ?').get(o.id).disposition, 'adopt');
   assert.equal(db.prepare('SELECT status FROM effect_intents WHERE id = ?').get(intent.id).status, 'done');
   assert.deepEqual(

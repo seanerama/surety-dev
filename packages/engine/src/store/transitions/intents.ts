@@ -117,7 +117,7 @@ export function beginStash(
 // and its files as they are.
 export function beginAdopt(
   tx: Tx,
-  args: { intent: string; facts: Facts; repo: string; tree: string; parent: string; sha: string; content: string; index_hash: string; deadlineSeconds: number },
+  args: { intent: string; facts: Facts; repo: string; tree: string; parent: string; sha: string; content: string; index_hash: string; before_index?: string; deadlineSeconds: number },
 ): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, args.facts)) return null;
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { project: string; plan: string };
@@ -145,6 +145,10 @@ export function beginAdopt(
       intent: args.intent,
       checkout: plan.checkout,
       baseline: { head: args.sha, index_hash: args.index_hash, tracked_tree_hash: args.tree },
+      // What the checkout may hold while the adoption is in flight: HEAD at
+      // the parent or the new commit, its index as found or as adopted.
+      parent: args.parent,
+      before_index: args.before_index ?? args.index_hash,
     },
     deadlineSeconds: args.deadlineSeconds,
   };

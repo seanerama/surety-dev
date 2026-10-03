@@ -11,7 +11,7 @@
 import { commitContent, messageText } from '../git/commit.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import { checkoutContext } from '../git/integrity.js';
-import { checkoutBaseline, readRef } from '../git/repo.js';
+import { checkoutBaseline, readRef, treeIndexHash } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
@@ -192,14 +192,35 @@ async function adoptCheckout(rt: Runtime, journal: Journal, row: IntentRow): Pro
       });
       const content = commitContent({ tree: now.tracked_tree_hash, parent: now.head, message, at: nowIso() });
       const sha = await commitId(facts.repo, content);
-      if (sha !== null) {
+      // The checkout's index is made the adopted commit's, so that it reads
+      // clean once its HEAD follows the branch (Sean's decision on B2); its
+      // files are not touched. The index it will then have is bound in the
+      // baseline the branch update's finalizer records.
+      const adoptedIndex = ctx === null ? null : await treeIndexHash(ctx, now.tracked_tree_hash, rt.scratch);
+      if (sha !== null && adoptedIndex !== null) {
         made = await journal.withProject(row.project, () =>
           journal.intend(
             'oob.begin_adopt',
-            { intent: row.id, facts: { found }, repo: facts.repo, tree: now.tracked_tree_hash, parent: now.head, sha, content, index_hash: now.index_hash, deadlineSeconds: rt.setting('git_deadline') },
+            {
+              intent: row.id,
+              facts: { found },
+              repo: facts.repo,
+              tree: now.tracked_tree_hash,
+              parent: now.head,
+              sha,
+              content,
+              index_hash: adoptedIndex,
+              before_index: now.index_hash,
+              deadlineSeconds: rt.setting('git_deadline'),
+            },
             'commit_tree',
           ),
         );
+        if ('operation' in made && !('existing' in made && made.existing) && ctx !== null) {
+          if ((await gitOk(ctx, ['read-tree', now.tracked_tree_hash])) === null) {
+            log('adopt', new Error(`the index of ${facts.path} could not be set to the adopted tree`), { intent: row.id });
+          }
+        }
       }
     } else {
       await rt.engine('intent.revalidate', { intent: row.id, facts: { found } });

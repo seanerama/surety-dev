@@ -133,9 +133,10 @@ test('a blocker binds the evidence its parked item rests on: a record of the run
 test('a blocker binds the continuation a retry resumes: a changed stored checkpoint is a changed preview', (t) => {
   const db = store(t);
   const d = raise(db, 'blocker', 'work_item', 'wi_1');
-  assert.deepEqual([JSON.parse(d.dependency_manifest).continuation, JSON.parse(d.dependency_manifest).continue_from], ['eligible', null]);
+  assert.deepEqual(JSON.parse(d.dependency_manifest).continuation, { status: 'eligible', from: null });
   db.prepare(`UPDATE work_items SET continue_from = ? WHERE id = 'wi_1'`).run(R2);
-  assertStale(db, d, 'retry', 'continue_from');
+  assertStale(db, d, 'retry', 'continuation');
+  assert.deepEqual(JSON.parse(decisionsOf(db, 'blocker', 'wi_1')[1].dependency_manifest).continuation, { status: 'eligible', from: R2 });
 });
 
 test('a finding’s disposition binds its scope: a lineage finding made project-wide, still applicable, is a changed preview', (t) => {

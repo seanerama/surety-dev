@@ -119,6 +119,7 @@ type FaultSpec =
   | { point: 'before_event'; event_type: string }
   | { point: 'audit_write' }
   | { point: 'budget_read'; project: string }
+  | { point: 'status_read'; project: string }
   | { point: 'lease_read' };
 type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
@@ -713,6 +714,8 @@ function armFault(fault: unknown): FaultSpec & { times: number } {
     parsed = { point: 'audit_write' };
   } else if (f.point === 'budget_read' && typeof f.project === 'string' && only('point', 'project')) {
     parsed = { point: 'budget_read', project: f.project };
+  } else if (f.point === 'status_read' && typeof f.project === 'string' && only('point', 'project')) {
+    parsed = { point: 'status_read', project: f.project };
   } else if (f.point === 'lease_read' && only('point')) {
     parsed = { point: 'lease_read' };
   }
@@ -721,7 +724,7 @@ function armFault(fault: unknown): FaultSpec & { times: number } {
       400,
       'invalid_value',
       'Unknown fault.',
-      'Send {"point":"before_event","event_type":...}, {"point":"audit_write"}, {"point":"budget_read","project":...}, {"point":"lease_read"} or {"point":"tick_step",...}, each with an optional "times".',
+      'Send {"point":"before_event","event_type":...}, {"point":"audit_write"}, {"point":"budget_read","project":...}, {"point":"status_read","project":...}, {"point":"lease_read"} or {"point":"tick_step",...}, each with an optional "times".',
       { field: 'point' },
     );
   }
@@ -743,6 +746,11 @@ function fire(matches: (f: Fault) => boolean, what: string): void {
 // A budget check reads a project's spend (SEAM.md §61).
 export function seamBudgetRead(project: string): void {
   fire((f) => f.point === 'budget_read' && f.project === project, `budget read of ${project}`);
+}
+
+// A read computes a project's NOW (SEAM.md §107).
+export function seamStatusRead(project: string): void {
+  fire((f) => f.point === 'status_read' && f.project === project, `status read of ${project}`);
 }
 
 // A launch reads the run's lease before its spawn (SEAM.md §61).

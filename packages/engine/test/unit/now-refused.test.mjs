@@ -62,15 +62,22 @@ test('an unreadable repository is refused ahead of the decision about it, and na
   assert.deepEqual([now(db).state, now(db).cause], ['idle', null]);
 });
 
-test('an unsettled out-of-band change is refused, naming its subject; settled, the project is what it would otherwise be', (t) => {
+test('an unsettled out-of-band change of the integration branch is refused, naming it; settled, the project is what it would otherwise be', (t) => {
   const db = store(t);
-  const o = transact(db, ENGINE_ACTOR, (tx) => recordObservation(tx, 'prj_1', { subject: 'checkout', checkout: 'mco_1', expected: JSON.stringify(BASELINE), found: JSON.stringify({ ...BASELINE, tracked_tree_hash: 'e'.repeat(40) }) }));
+  db.prepare(`INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES ('ref_main', ?, 'prj_1', 'refs/heads/main', 'integration', ?, 0)`).run(AT, H);
+  const o = transact(db, ENGINE_ACTOR, (tx) => recordObservation(tx, 'prj_1', { subject: 'ref', ref: 'ref_main', expected: H, found: 'b'.repeat(40) }));
   const shown = now(db);
   assert.deepEqual([shown.state, shown.cause, shown.primary_action], ['refused', 'out_of_band_change', 'answer_decision']);
-  assert.match(shown.reason, /checkout \/repo/);
-  db.prepare(`UPDATE out_of_band_changes SET disposition = 'stash' WHERE id = ?`).run(o.id);
+  assert.match(shown.reason, /integration branch refs\/heads\/main/);
+  db.prepare(`UPDATE out_of_band_changes SET disposition = 'discard' WHERE id = ?`).run(o.id);
   db.prepare(`UPDATE decisions SET status = 'consumed' WHERE id = ?`).run(o.decision);
   assert.equal(now(db).state, 'idle');
+});
+
+test('a checkout changed outside the engine leaves it able to act: its question is waiting on a person', (t) => {
+  const db = store(t);
+  transact(db, ENGINE_ACTOR, (tx) => recordObservation(tx, 'prj_1', { subject: 'checkout', checkout: 'mco_1', expected: JSON.stringify(BASELINE), found: JSON.stringify({ ...BASELINE, tracked_tree_hash: 'e'.repeat(40) }) }));
+  assert.deepEqual([now(db).state, now(db).cause], ['waiting_on_you', null]);
 });
 
 test('a journal operation whose effect is not established is refused', (t) => {

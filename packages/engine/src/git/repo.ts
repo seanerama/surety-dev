@@ -195,6 +195,20 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   }
 }
 
+// The index hash (as checkoutBaseline computes it) an index read from `tree`
+// has, computed on an index of its own: nothing of the checkout is written.
+export async function treeIndexHash(ctx: GitContext, tree: string, scratch: string): Promise<string | null> {
+  const index = join(scratch, `tree-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    if ((await gitOk(ctx, ['read-tree', tree], { env })) === null) return null;
+    const staged = await gitOk(ctx, ['ls-files', '--stage', '-z'], { env });
+    return staged === null ? null : sha256(staged);
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
 // What a worktree's HEAD file says: a detached commit, a branch, or null if
 // it cannot be read.
 export function readHeadFile(gitDir: string): { detached: string } | { branch: string } | null {

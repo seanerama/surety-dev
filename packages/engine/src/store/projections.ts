@@ -11,7 +11,8 @@ import type { Database } from 'better-sqlite3';
 import { nowIso, nowMs } from '../clock.js';
 import { Refusal } from '../refusal.js';
 import { notFound, parseJson } from './transitions/common.js';
-import { ledgerView } from './transitions/ledger.js';
+import { exhaustedLimits, ledgerView } from './transitions/ledger.js';
+import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
@@ -84,11 +85,11 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
   }
   const observations = db
     .prepare(
-      `SELECT o."id", o."subject_kind", o."decision", r."ref", c."path" FROM "out_of_band_changes" o
+      `SELECT o."id", o."subject_kind", o."decision", r."ref", r."kind", c."path" FROM "out_of_band_changes" o
        LEFT JOIN "ref_registry" r ON r."id" = o."ref" LEFT JOIN "managed_checkouts" c ON c."id" = o."checkout"
        WHERE o."project" = ? AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at", o."id"`,
     )
-    .all(project) as { id: string; subject_kind: string; decision: string; ref: string | null; path: string | null }[];
+    .all(project) as { id: string; subject_kind: string; decision: string; ref: string | null; kind: string | null; path: string | null }[];
   const unreadable = observations.find((o) => o.subject_kind === 'repository');
   if (unreadable) {
     return {
@@ -97,12 +98,15 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
       primary: 'restore_repository_access',
     };
   }
-  const change = observations[0];
+  // An observation that holds the project (SEAM.md §§32, 107): the
+  // integration branch changed outside the engine. One of another subject
+  // (a checkout, another ref) leaves the engine able to act; its decision is
+  // waiting on a person.
+  const change = observations.find((o) => o.subject_kind === 'ref' && o.kind === 'integration');
   if (change) {
-    const what = change.subject_kind === 'ref' ? `the registered ref ${change.ref}` : `the checkout ${change.path}`;
     return {
       cause: 'out_of_band_change',
-      reason: `The engine cannot act on this project: ${what} was changed outside the engine (${change.id}), and the change is not settled.`,
+      reason: `The engine cannot act on this project: its integration branch ${change.ref} was changed outside the engine (out-of-band change ${change.id}), and the change is not settled.`,
       primary: 'answer_decision',
     };
   }
@@ -116,6 +120,18 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
       cause: 'journal_blocked',
       reason: `The engine cannot act on this project: what git did for operation ${blocked.id} is not established, and nothing is dispatched until it is.`,
       primary: 'inspect_operation',
+    };
+  }
+  // The store fails for the project (D1 §§6.6, 12.3; SEAM.md §107): the read
+  // of its spend a budget check makes, made here with the check's own fault
+  // point. What would refuse a dispatch refuses the status.
+  try {
+    exhaustedLimits(db, project, { check: true });
+  } catch (err) {
+    return {
+      cause: 'store_error',
+      reason: `The engine cannot act on this project: the store could not read its budget (${err instanceof Error ? err.message : String(err)}), and nothing is dispatched until it can.`,
+      primary: 'inspect_store',
     };
   }
   return null;
@@ -218,6 +234,7 @@ function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
   const decisions = openDecisionCount(db, project);
   let now;
   try {
+    seamStatusRead(project);
     now = nowOf(db, project, runs, decisions, maxConcurrentRuns);
   } catch (err) {
     now = unknownNow(err);
@@ -346,8 +363,8 @@ interface OperationRow {
 // order, whatever its state: pending and blocked ones included. Each with its
 // kind, the journal's state and the operation's status, its intent as the
 // journal's `intended` event froze it (what it was to do), its purpose, its
-// attempts with their reconciliation reads, and, when one holds it, the open
-// blocker and what can be answered. Nothing is probed: a state is as stored.
+// attempts with their reconciliation reads, and the id of the open blocker
+// decision that holds it, or null (SEAM.md §108). Nothing is probed: a state is as stored.
 export function readOperations(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
@@ -362,12 +379,12 @@ export function readOperations(db: Db, args: { project: string }) {
   const attempts = db.prepare(
     'SELECT "attempt_number", "status", "started_at", "finished_at", "reconciliation_reads" FROM "operation_attempts" WHERE "operation" = ? ORDER BY "attempt_number"',
   );
-  const blocker = db.prepare(`SELECT "id", "options" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`);
+  const blocker = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`);
   return {
     ...head,
     operations: rows.map((o) => {
       const intent = intended.get(o.id) as { payload: string } | undefined;
-      const held = blocker.get(o.id) as { id: string; options: string } | undefined;
+      const held = blocker.get(o.id) as { id: string } | undefined;
       const inputs = parseJson<{ purpose?: string }>(o.finalizer_inputs);
       return {
         id: o.id,
@@ -391,7 +408,7 @@ export function readOperations(db: Db, args: { project: string }) {
         linked_prior: o.linked_prior,
         created_at: o.created_at,
         finalized_at: o.finalized_at,
-        blocker: held ? { decision: held.id, options: JSON.parse(held.options) as unknown[] } : null,
+        blocker: held?.id ?? null,
       };
     }),
   };

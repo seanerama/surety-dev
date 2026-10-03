@@ -83,8 +83,7 @@ test('the operations read lists every operation of the project, pending and bloc
   assert.deepEqual([p.intent.ref, p.intent.old_oid, p.intent.new_oid], ['refs/surety/oob/1', OLD, NEW], 'the intent as the journal froze it');
   assert.deepEqual([b.state, b.status, b.attempts.length, b.attempts[0].status], ['ambiguous', 'ambiguous', 1, 'ambiguous']);
   assert.equal(b.attempts[0].reconciliation_reads.at(-1).result, 'unknown');
-  assert.equal(typeof b.blocker.decision, 'string');
-  assert.deepEqual(b.blocker.options.map((o) => o.key), ['acknowledge']);
+  assert.equal(b.blocker, db.prepare(`SELECT id FROM decisions WHERE kind = 'blocker' AND subject_id = ? AND status = 'open'`).get(blocked).id, 'the open blocker decision');
 });
 
 test('one decision by its id: the list’s shape with its status, preview and answer; another project’s is not found', (t) => {

@@ -297,7 +297,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `check_correction_unclassifiable`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
 - `finding_disposition`: enabled; manifest finding_status, disposition, proposed_disposition, effective_severity, sensitive_area, evidence, scope, defer_target, linked_issue, applicable, candidate_revision, acceptance_content_hash, policy_revision
 - `severity_lower`: enabled; manifest finding_status, effective_severity, to, sensitive_area, evidence, scope, applicable, candidate_revision, acceptance_content_hash, policy_revision
-- `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation, continue_from, stored_continuation
+- `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation
 - `out_of_band_change`: enabled; manifest subject_kind, expected, found
 - `rollout_partial`: not enabled in M1
 - `publication_first_visibility`: not enabled in M1

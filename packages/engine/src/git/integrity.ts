@@ -61,7 +61,7 @@ export async function observeIntegrity(rt: Runtime, project: string): Promise<vo
     const same3 = (b: { head: string; index_hash: string; tracked_tree_hash: string }) => now.head === b.head && now.index_hash === b.index_hash && now.tracked_tree_hash === b.tracked_tree_hash;
     // An adoption of this checkout's edits in flight: the branch it has
     // checked out is being moved by the engine onto exactly what it holds.
-    if (c.pending !== null && same3(c.pending)) continue;
+    if (c.pending !== null && now.tracked_tree_hash === c.pending.tree && c.pending.heads.includes(now.head) && c.pending.indexes.includes(now.index_hash)) continue;
     if (!same3(baseline)) {
       report.checkouts.push({ id: c.id, expected: c.baseline, found: now });
     }

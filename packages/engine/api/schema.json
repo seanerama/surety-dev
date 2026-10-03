@@ -3336,9 +3336,7 @@
         "quarantined",
         "cause",
         "evidence",
-        "continuation",
-        "continue_from",
-        "stored_continuation"
+        "continuation"
       ],
       "target_seconds": 14400
     },
