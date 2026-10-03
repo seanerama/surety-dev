@@ -20,12 +20,13 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [acceptance/sdlc-M2-acceptance-plan.md](acceptance/sdlc-M2-acceptance-plan.md) | The 42 acceptance rows M101 to M142 M2 must pass, in three lanes; adopted 2026-10-03 (E59). |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
 | [design/sdlc-design-D2-brief.md](design/sdlc-design-D2-brief.md) | The brief for D2 (backend adapters, control-plane isolation, the execution boundary, the trust table): what it must answer, what it inherits, how it is produced and judged. |
-| [design/sdlc-design-D3-brief.md](design/sdlc-design-D3-brief.md) | The brief for D3 (the protected acceptance path, the check runner, the diff classifier, validation scope): what it must answer, what it inherits, how it is produced and judged. Drafted after D2's approval; its draft 1 starts when Sean says. |
+| [design/sdlc-design-D3-brief.md](design/sdlc-design-D3-brief.md) | The brief for D3 (the protected acceptance path, the check runner, the diff classifier, validation scope): what it must answer, what it inherits, how it is produced and judged. |
+| [design/sdlc-design-D3-checks.md](design/sdlc-design-D3-checks.md) | D3 draft 1 (E60): closed schemas for the governed set, discovery as a function of a tree, the check runner in D2's sandbox, the diff classifier with its conservative fallback, validation scope; five proposed corrections, seven open questions, 53 test statements. Awaiting Astra's cross-review. |
 | [design/sdlc-design-D2-ebpf-note.md](design/sdlc-design-D2-ebpf-note.md) | Companion to D2: an optional eBPF execution observer as qualification evidence, approved as a prototype (E57). |
 | [design/sdlc-design-D2-backends-and-isolation.md](design/sdlc-design-D2-backends-and-isolation.md) | D2 draft 2, approved to build (E58): the adapter contract, the namespace sandbox, the cgroup execution boundary with launch closure, the trust table and qualification attempts, the optional observer; ten D1 corrections, 73 test statements. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
-| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E59 amending the foundations. |
+| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E60 amending the foundations. |
 
 ## Background and record
 
@@ -36,6 +37,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [reviews/predecessors/](reviews/predecessors/) | Two reviews of spec-driven-devops, Verity and the Verity console, including the incident record the design is tested against. |
 | [reviews/D1/](reviews/D1/) | The three cross-reviews of D1, the dispositions, and the briefs that requested them. The draft-3 review explains most of the corrections in the build spec. |
 | [reviews/D2/](reviews/D2/) | The cross-review brief for D2 draft 1, Astra's review (approve with amendments), and Sean's dispositions (E56). |
+| [reviews/D3/](reviews/D3/) | The cross-review brief for D3 draft 1 (for Astra), and her review and its dispositions when they exist. |
 | [acceptance/reports/M1-report.md](acceptance/reports/M1-report.md) | The M1 acceptance report: the run, versions, qualified load limits, review findings, what is not claimed, and the hands-on walkthrough (`M1-hands-on.sh`). |
 | [acceptance/reports/M1-not-claimed.md](acceptance/reports/M1-not-claimed.md) | The 33 cases left unwritten under the lean procedure, classed, so a passing M1 is not read as covering them. |
 | [acceptance/objections/](acceptance/objections/) | Builder objections to acceptance tests, and the Verifier's answers. |
