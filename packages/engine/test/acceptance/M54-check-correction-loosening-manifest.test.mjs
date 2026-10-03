@@ -13,13 +13,14 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, answerAndHoldEffect, assertEffectInvalidated, assertStaleAnswer, consume, decision, nextGeneration } from './harness/decisions.mjs';
+import { answer, answerAndHoldEffect, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, consume, decision, nextGeneration, reject } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { GOVERNED_FILE, assertApplied, assertNotApplied, correction, reviewerApproves, scopeApproval, waitApplied } from './harness/gates.mjs';
+import { GOVERNED_FILE, assertApplied, assertNotApplied, assertProposalRejected, correction, reviewerApproves, scopeApproval, waitApplied } from './harness/gates.mjs';
 import { addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { commitOnRef, refOid } from './harness/repos.mjs';
 import { tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
+import { contentAndSpecChange } from './harness/stale-correction.mjs';
 
 const WIDER = '{"expect": [200, 500]}\n';
 const head = (project) => refOid(project.repo.path, project.repo.ref);
@@ -81,5 +82,22 @@ describe('M54 the check_correction_loosening manifest', () => {
     await consume(fx, project.id, next, 'approve');
     await waitApplied(fx, project, proposal);
     applied(ctx);
+  });
+
+  // M2 slice 1, A3 (SEAM.md §101).
+  test("the proposal's content, and then the approved specification, change between preview and answer: each refuses the earlier preview, applies nothing, and is a new generation that shows the change", async (t) => {
+    await contentAndSpecChange(t, 'loosening', { content: WIDER });
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the proposal is rejected and nothing is applied, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const ctx = await correction(t, 'loosening', { content: WIDER });
+    const { fx, project, decision: previewed } = ctx;
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the correction offers reject');
+
+    await reject(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
+    await assertQuestionClosed(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
   });
 });

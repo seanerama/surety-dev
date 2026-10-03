@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { releaseBarrier, waitFor } from './engine.mjs';
 import { assertRefused } from './fixtures.mjs';
 import { armBarrier } from './journal.mjs';
-import { tickUntil } from './runs.mjs';
+import { tick, tickUntil } from './runs.mjs';
 import { withStore } from './store.mjs';
 
 export const DECISIONS = JSON.parse(readFileSync(new URL('../contract/decisions.json', import.meta.url), 'utf8'));
@@ -118,6 +118,28 @@ export async function assertStaleAnswer(fx, project, previewed, option) {
   assert.equal(approvalsOf(fx.home, previewed.id).length, 0, 'no approval is recorded');
   assert.equal(intentsOf(fx.home, previewed.id).length, 0, 'no effect is intended');
   return res;
+}
+
+// The answer `reject` (M2 slice 1, A4; SEAM.md §102): accepted, the decision
+// consumed with that answer, and nothing approved or intended by it. What
+// the rejected thing is left as is each kind's (the case asserts it).
+export async function reject(fx, project, row) {
+  const consumed = await consume(fx, project, row, 'reject');
+  assert.equal(approvalsOf(fx.home, row.id).length, 0, 'a rejection approves nothing');
+  assert.equal(intentsOf(fx.home, row.id).length, 0, 'a rejection intends no effect');
+  return consumed;
+}
+
+// The question a rejected decision asked is closed: over `ticks` ticks the
+// engine raises no decision of that kind about that subject, and the
+// rejected one still reads consumed with its answer (SEAM.md §102).
+export async function assertQuestionClosed(fx, project, rejected, { ticks = 3 } = {}) {
+  for (let i = 0; i < ticks; i++) await tick(fx.engine, project);
+  const open = decisionsOn(fx.home, rejected.kind, rejected.subject_id).filter((row) => row.status === 'open');
+  assert.deepEqual(open.map((row) => row.id), [], `no ${rejected.kind} decision about ${rejected.subject_id} is open after the rejection, however many ticks run`);
+  const same = decision(fx.home, rejected.id);
+  assert.deepEqual([same.status, same.answer?.option], ['consumed', 'reject'], 'the rejected decision is closed with its answer recorded');
+  assert.equal(approvalsOf(fx.home, rejected.id).length, 0, 'and still approves nothing');
 }
 
 // After a change that leaves the question standing, the engine invalidates
