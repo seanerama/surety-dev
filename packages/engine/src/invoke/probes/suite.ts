@@ -67,6 +67,8 @@ export interface ProbeResult {
   // A host class that excuses a probe that could not run (P11 off WSL2; P20
   // in slice 12).
   excused?: string;
+  // P2: each target its verdict counts, with the role's attempts at it.
+  targets?: { kind: string; path: string; host_verified: boolean; attempts: { path: string; outcome: string; error: string | null }[] }[];
 }
 
 export const probeRow = (p: ProbeResult) => ({ id: p.id, target_seeded: p.target_seeded, negative: p.negative, control: p.control, result: p.result, reason: p.reason });
@@ -442,10 +444,9 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   const realHome = realpathSync(home);
   const port = rt.config.values.api_port;
   const tag = randomBytes(6).toString('hex');
-  // What an earlier suite of this home left (a crash during it): swept by
-  // the tag it recorded, exact names only; then this suite's tag recorded
-  // before it makes anything outside the home.
-  sweepProbeLeftovers(home);
+  // What an earlier suite of this home left was swept before the start-up
+  // trial and this suite began (trust/checks.ts); this suite's tag is
+  // recorded before it makes anything outside the home.
   writeFileSync(join(home, 'sandbox', TAG_FILE), `${tag}\n`, { mode: 0o600 });
   const run = (id: string) => overrides[id] !== 'cannot_run';
   const neg = (id: string) => run(id) && overrides[id] !== 'negative_unattempted';
@@ -480,20 +481,38 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   cleanups.push(() => {
     if (BOX_ID.test(otherArea.slice(otherArea.lastIndexOf('/') + 1))) rmSync(otherArea, { recursive: true, force: true });
   });
-  const p2 = [join(home, 'store.db'), join(home, 'engine.lock'), engineLog, recordSentinel, join(otherArea, 'sentinel')];
+  const p2Targets: { kind: string; path: string }[] = [
+    { kind: 'store', path: join(home, 'store.db') },
+    { kind: 'engine_lock', path: join(home, 'engine.lock') },
+    { kind: 'engine_log', path: engineLog },
+    { kind: 'record', path: recordSentinel },
+    { kind: 'other_domain', path: join(otherArea, 'sentinel') },
+  ];
   try {
     const rec = readdirSync(join(home, 'records')).find((n) => n.startsWith('rec_') && !n.endsWith('.tmp'));
-    if (rec) p2.push(join(home, 'records', rec));
+    if (rec) p2Targets.push({ kind: 'record', path: join(home, 'records', rec) });
   } catch {
     // the record sentinel stands for the records
   }
+  // Each target by its host path, by its real path and through
+  // /proc/self/root: the role's attempts at it.
+  const aliasesOf = (path: string): string[] => {
+    let real = path;
+    try {
+      real = realpathSync(path);
+    } catch {
+      // judged as given
+    }
+    return [...new Set([path, real, `/proc/self/root${real}`])];
+  };
+  const p2 = p2Targets.flatMap((t) => aliasesOf(t.path));
   // P3: a second populated workspace and a developer checkout.
   const ws2 = mkdtempSync(join(home, 'sandbox', 'probe-ws2-'));
   writeFileSync(join(ws2, 'sentinel.txt'), `second workspace ${tag}\n`);
   cleanups.push(() => rmSync(ws2, { recursive: true, force: true }));
   const p3 = [join(ws2, 'sentinel.txt'), join(fixture.repo, 'sentinel.txt')];
   // Each target read back from the host now, before any instruction names it.
-  const seededP2 = Object.fromEntries(p2.map((t) => [t, readable(t)]));
+  const seededP2 = Object.fromEntries(p2Targets.map((t) => [t.path, readable(t.path)]));
   const seededP3 = Object.fromEntries(p3.map((t) => [t, readable(t)]));
   const seededToken = readable(token);
   // P4, P5: the fixture repository's configuration and hooks, as the host sees them.
@@ -908,15 +927,27 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const own = (fds?.own as Record<string, string> | undefined) ?? {};
     const named = Object.values(own).filter((v) => p2.some((t) => v === t || v.startsWith(`${realHome}/`) || v.startsWith(`${home}/`)));
     const initFd = (fds?.init as { outcome?: string; error?: string } | undefined) ?? null;
-    const t = perTarget(p2, seededP2, r);
+    // Each target its verdict counts, with its own attempts (SEAM.md §138).
+    const targets = p2Targets.map((x) => ({
+      kind: x.kind,
+      path: x.path,
+      host_verified: seededP2[x.path] === true,
+      attempts: aliasesOf(x.path)
+        .filter((a) => r !== null && r[a] !== undefined)
+        .map((a) => ({ path: a, outcome: r![a] === 'opened' ? 'opened' : 'failed', error: r![a] === 'opened' ? null : r![a]! })),
+    }));
+    const t = perTarget(p2, Object.fromEntries(p2Targets.flatMap((x) => aliasesOf(x.path).map((a) => [a, seededP2[x.path] === true]))), r);
     const held = t.denied && named.length === 0 && initFd?.outcome === 'refused';
-    return verdict(ctx, 'P2', {
-      seeded: t.seeded,
-      negative: t.attempted && fds ? `${fmt(r)}; descriptors naming the home: ${named.length}; /proc/1/fd ${initFd?.outcome ?? '?'} ${initFd?.error ?? ''}`.trim() : null,
-      held,
-      control: p2.every(readable),
-      detail: `${p2.length} engine-home targets, each judged: ${p2.join(', ')}${t.note ? `; ${t.note}` : ''}`,
-    });
+    return {
+      ...verdict(ctx, 'P2', {
+        seeded: t.seeded,
+        negative: t.attempted && fds ? `${fmt(r)}; descriptors naming the home: ${named.length}; /proc/1/fd ${initFd?.outcome ?? '?'} ${initFd?.error ?? ''}`.trim() : null,
+        held,
+        control: p2Targets.every((x) => readable(x.path)),
+        detail: `${p2Targets.length} engine-home targets, each judged with its aliases${t.note ? `; ${t.note}` : ''}`,
+      }),
+      targets,
+    };
   });
   judge('P3', () => {
     const o = L('p3');

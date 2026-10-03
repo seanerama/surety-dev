@@ -24,7 +24,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type Scope, managerReachable } from '../boundary/scope.js';
 import { CGROUP_ROOT, createDomainCgroup, ownCgroup, readControllers, readPopulated, removeCgroup, writeKill } from '../boundary/cgroup.js';
-import { PROBES, type SuiteOutcome, probeRow, runProbeSuite } from '../invoke/probes/suite.js';
+import { PROBES, type SuiteOutcome, probeRow, runProbeSuite, sweepProbeLeftovers } from '../invoke/probes/suite.js';
 import { filesystemOf } from '../home-fs.js';
 import { newId } from '../ids.js';
 import { INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
@@ -281,6 +281,14 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     log('host checks', err, { what: 'init node copy' });
   }
   let trial: Trial | null = null;
+  // What a suite of this home left by a crash during it (its probe areas,
+  // its scratch, the two names outside the home its recorded tag gives) is
+  // swept first, before the trial and the suite make their own.
+  try {
+    sweepProbeLeftovers(rt.home);
+  } catch (err) {
+    log('host checks', err, { what: 'sweep' });
+  }
   // The isolation probe suite (D2 §2.8, A.6) runs beside the trial.
   const suiteRun = runProbeSuite(rt, { scope, tools, initCopy, deadline, wsl2 }).catch((err): SuiteOutcome => {
     log('host checks', err, { what: 'probe suite' });
