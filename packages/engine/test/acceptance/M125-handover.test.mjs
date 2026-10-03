@@ -29,7 +29,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { sha256Hex } from './harness/engine.mjs';
+import { sha256Hex, waitFor } from './harness/engine.mjs';
 import { installGatedPlan } from './harness/gates.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
@@ -80,7 +80,11 @@ describe('M125 what is handed over', () => {
     const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: HOSTILE }] });
     const item = plan.stages[0].work_item;
     await requestTick(fx.engine, project);
-    const launch = await standIn.waitForLaunch({}, { timeoutMs: 60_000 });
+    // The stand-in's launch, or the run's end without one (then the case
+    // fails at once, with the refusal).
+    await waitFor(() => standIn.launches().length > 0 || runsOf(fx.home, item)[0]?.state === 'ended', { timeoutMs: 60_000, what: 'the stand-in to be launched' });
+    const [launch] = standIn.launches();
+    assert.ok(launch, `the stand-in was launched (the run: ${JSON.stringify((await readRun(fx.engine, project, runsOf(fx.home, item)[0].id)).refusal)})`);
     const run = await waitForRun(fx.home, item, { state: 'executing' });
     const domain = domainOf(fx.home, run.id);
 
