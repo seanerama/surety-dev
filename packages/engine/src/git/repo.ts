@@ -190,9 +190,13 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   const index = join(scratch, `baseline-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
+    // Where the checkout's index is, as git resolves it (a linked worktree's
+    // `.git` may be a file naming its metadata directory).
+    const at = (await gitOk(ctx, ['rev-parse', '--path-format=absolute', '--git-path', 'index']))?.trim() ?? '';
+    if (at === '') return null;
     let copied = false;
     try {
-      copyFileSync(join(ctx.gitDir, 'index'), index);
+      copyFileSync(at, index);
       copied = true;
     } catch (err) {
       // A checkout with no index file yet holds what HEAD holds; any other

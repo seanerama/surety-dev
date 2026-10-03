@@ -64,3 +64,14 @@ test('a checkout with nothing changed reads as its HEAD’s tree', async (t) => 
   const read = await checkoutBaseline(repoContext(repo), scratch);
   assert.equal(read.tracked_tree_hash, git('rev-parse', 'HEAD^{tree}'));
 });
+
+test('a linked worktree reached through its .git file is read from its own index', async (t) => {
+  const { repo, scratch, git } = scratchRepo(t);
+  const ws = join(dirname(repo), 'ws');
+  git('worktree', 'add', '-q', '--detach', ws, 'HEAD');
+  writeFileSync(join(ws, 'added.js'), 'added\n');
+  execFileSync('git', ['-C', ws, 'add', 'added.js']);
+  const read = await checkoutBaseline(repoContext(ws), scratch);
+  assert.notEqual(read, null, 'a .git file is not an unreadable checkout');
+  assert.deepEqual(git('ls-tree', '--name-only', read.tracked_tree_hash).split('\n'), ['added.js', 'gone.js', 'lib.js']);
+});
