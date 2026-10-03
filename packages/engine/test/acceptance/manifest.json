@@ -172,7 +172,8 @@
       "M119-validated-mount-plan.test.mjs",
       "M120-control-plane-invisible.test.mjs",
       "M121-git-view.test.mjs",
-      "M122-host-sockets-and-wsl.test.mjs"
+      "M122-host-sockets-and-wsl.test.mjs",
+      "M123-protected-set-read-only.test.mjs"
     ]
   },
   "sandbox": [
@@ -189,6 +190,7 @@
     "M119-validated-mount-plan.test.mjs",
     "M120-control-plane-invisible.test.mjs",
     "M121-git-view.test.mjs",
-    "M122-host-sockets-and-wsl.test.mjs"
+    "M122-host-sockets-and-wsl.test.mjs",
+    "M123-protected-set-read-only.test.mjs"
   ]
 }
