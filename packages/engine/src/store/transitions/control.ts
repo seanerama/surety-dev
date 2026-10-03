@@ -4,7 +4,7 @@
 // commits with its api.act record (store worker, `mutate`).
 
 import { Refusal } from '../../refusal.js';
-import { illegal, notFound } from './common.js';
+import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, consumeDecision, currentPreview, openDecision, stale } from './decisions.js';
 import { type Facts, KINDS, answerQueued, raiseQuestion, wireControl } from './queue.js';
 import { beginEnd, getRun } from './runs.js';
@@ -106,6 +106,8 @@ export function answerDecision(tx: Tx, args: { project: string; decision: string
   return answerQueued(tx, args);
 }
 
+const PREFLIGHT_CODES = ['backend_refused', 'isolation_unqualified', 'budget_boundary_unenforceable', 'mount_plan_refused'];
+
 // D1 A.7: the public code reported on a run's representation.
 function publicCode(reason: string | null, text: string | null): string | null {
   switch (reason) {
@@ -115,7 +117,8 @@ function publicCode(reason: string | null, text: string | null): string | null {
     case 'integration_conflict':
       return reason;
     case 'preflight_refused':
-      return text === 'isolation_unqualified' ? 'isolation_unqualified' : 'backend_refused';
+      // D2 A.7: why a dispatch was refused before launch.
+      return text !== null && PREFLIGHT_CODES.includes(text) ? text : 'backend_refused';
     case 'budget':
       return 'budget_exhausted';
     default:
@@ -123,13 +126,22 @@ function publicCode(reason: string | null, text: string | null): string | null {
   }
 }
 
+function refusalOf(run: Record<string, unknown>): Record<string, unknown> | null {
+  const code = publicCode(run.reason_class as string | null, run.reason_text as string | null);
+  if (code === null) return null;
+  const stored = parseJson<Record<string, unknown>>((run.reason_detail as string | null) ?? null);
+  if (stored && stored.code === code && typeof stored.reason === 'string') return { code, reason: stored.reason, what_to_do: stored.what_to_do ?? null, subject: stored.subject ?? {} };
+  return { code, reason: (run.reason_text as string | null) ?? code, what_to_do: null, subject: {} };
+}
+
 // GET /v1/projects/:p/runs/:r. A read: it writes nothing.
 export function runRepresentation(db: Tx['db'], args: { project: string; run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
   const domains = db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
-  const receipts = (db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string }[]).map((r) => ({
+  const receipts = (db.prepare('SELECT "id", "trust_entry" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string; trust_entry: string | null }[]).map((r) => ({
     id: r.id,
+    trust_entry: r.trust_entry,
     statuses: (db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(r.id) as { status: string }[]).map(
       (o) => o.status,
     ),
@@ -161,6 +173,12 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       outcome: run.outcome,
       reason_class: run.reason_class,
       code: publicCode(run.reason_class as string | null, run.reason_text as string | null),
+      // The refusal in its form beside the code (SEAM.md §116): what the
+      // engine decided before launch, with its subject.
+      refusal: refusalOf(run),
+      // What became of each Alpha exception proposal the run's Reviewer made
+      // (SEAM.md §119).
+      alpha_exception_proposals: parseJson<unknown[]>((run.alpha_exception_outcomes as string | null) ?? null) ?? [],
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

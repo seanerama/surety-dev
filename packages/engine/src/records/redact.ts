@@ -15,9 +15,20 @@ const secrets = new Map<string, Buffer>();
 const detectors = new Map<string, RegExp>();
 
 // A resolved secret: from now on its value is redacted. Held in memory only.
-export function holdSecret(ref: string, value: string): void {
+export function holdSecret(ref: string, value: string, providerCapUsd?: number): void {
   if (value.length > 0) secrets.set(ref, Buffer.from(value, 'utf8'));
+  if (providerCapUsd !== undefined) caps.set(ref, providerCapUsd);
 }
+
+// The provider-side caps held with secret references (D2 §4.2, Q2): a limit
+// the provider enforces on the key, which the engine records and never
+// enforces.
+const caps = new Map<string, number>();
+export const heldProviderCaps = (): Record<string, number> => Object.fromEntries(caps);
+
+// The value held for a secret reference, resolved for a grant that names it
+// (D2 §2.5); null when none is held.
+export const heldSecret = (ref: string): string | null => secrets.get(ref)?.toString('utf8') ?? null;
 
 export function registerDetector(name: string, pattern: string): void {
   detectors.set(name, new RegExp(pattern));

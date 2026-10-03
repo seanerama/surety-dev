@@ -19,7 +19,9 @@
 // offset, so both threads take the same time.
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -57,6 +59,12 @@ import {
   installFixtureTrigger,
   installReuse,
   installScopeApproval,
+  installAttempt,
+  installTrustEntry,
+  parseAttemptFixture,
+  parseEntryFixture,
+  type AttemptFixture,
+  type EntryFixture,
   parseAlphaException,
   parsePlanBody,
   parseProjectBody,
@@ -111,6 +119,8 @@ export interface SeamInit {
   scripted: string | null;
   // --harness-probe: the outcome every probe of a journal kind reports.
   probes: Record<string, string>;
+  // --harness-host-checks and --harness-host-check (SEAM.md §114).
+  hostChecks: { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'> };
 }
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
@@ -123,6 +133,9 @@ type FaultSpec =
   | { point: 'lease_read' };
 type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
+// Faults the main thread fires (M2 plan §2.3): the bootstrap route's read of
+// the token.
+type MainFault = { point: 'token_read'; times: number; remaining: number; hit: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
 // interrupts rolls back and is reported like any other store failure.
@@ -132,11 +145,12 @@ class InjectedFault extends Error {
   }
 }
 
-let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null, probes: {} };
+let init: SeamInit = { harness: false, barriers: [], shared: null, clock: null, scripted: null, probes: {}, hostChecks: { mode: 'run', forced: {} } };
 let clockCell: BigInt64Array | null = null;
 let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
 const tickFaults: TickFault[] = [];
+const mainFaults: MainFault[] = [];
 
 type SeamMessage = { seam: 'barrier'; name: string; state: BarrierState };
 
@@ -166,7 +180,14 @@ const registry = new Map<string, { spec: BarrierSpec; state: BarrierState; resum
 // The command line's --harness flag, --harness-barrier values and
 // --harness-scripted directory. Returns a usage problem to report, or null.
 // Called once, before the engine starts.
-export function configureHarness(harness: boolean, barrierValues: string[], scripted: string | null = null, probeValues: string[] = []): string | null {
+export function configureHarness(
+  harness: boolean,
+  barrierValues: string[],
+  scripted: string | null = null,
+  probeValues: string[] = [],
+  hostChecksMode: string | null = null,
+  hostCheckValues: string[] = [],
+): string | null {
   const barriers: BarrierSpec[] = [];
   for (const value of barrierValues) {
     const spec = parseBarrier(value, barriers.length);
@@ -182,9 +203,25 @@ export function configureHarness(harness: boolean, barrierValues: string[], scri
     if (at <= 0 || !(JOURNAL_KINDS as readonly string[]).includes(kind) || !PROBE_OUTCOMES.includes(outcome)) return `unknown journal kind or outcome in --harness-probe ${value}`;
     probes[kind] = outcome;
   }
-  if (!harness && (barriers.length > 0 || scripted !== null || probeValues.length > 0)) return 'harness flags are accepted only with --harness';
+  if (hostChecksMode !== null && hostChecksMode !== 'unrun' && hostChecksMode !== 'run') return `--harness-host-checks takes unrun or run, not ${hostChecksMode}`;
+  const forced: Record<string, 'failed' | 'not_exercised'> = {};
+  for (const value of hostCheckValues) {
+    const m = /^(H(?:[1-9]|1[0-3]))=(failed|not_exercised)$/.exec(value);
+    if (!m) return `--harness-host-check takes <Hn>=<failed|not_exercised>, not ${value}`;
+    forced[m[1]!] = m[2] as 'failed' | 'not_exercised';
+  }
+  if (!harness && (barriers.length > 0 || scripted !== null || probeValues.length > 0 || hostChecksMode !== null || hostCheckValues.length > 0)) return 'harness flags are accepted only with --harness';
   const shared = harness && barriers.length > 0 ? new SharedArrayBuffer(4 * barriers.length) : null;
-  adopt({ harness, barriers: harness ? barriers : [], shared, clock: harness ? new SharedArrayBuffer(8) : null, scripted: harness ? scripted : null, probes: harness ? probes : {} });
+  adopt({
+    harness,
+    barriers: harness ? barriers : [],
+    shared,
+    clock: harness ? new SharedArrayBuffer(8) : null,
+    scripted: harness ? scripted : null,
+    probes: harness ? probes : {},
+    // In harness mode the host checks are left unrun unless asked for.
+    hostChecks: harness ? { mode: (hostChecksMode as 'unrun' | 'run' | null) ?? 'unrun', forced } : { mode: 'run', forced: {} },
+  });
   registry.clear();
   for (const spec of init.barriers) registry.set(spec.name, { spec, state: 'armed' });
   return null;
@@ -278,6 +315,14 @@ export function clockOffsetMs(): number {
 export function seamBackends(): BackendSpec[] {
   if (!init.harness || init.scripted === null) return [];
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')] }];
+}
+
+// The host checks switch and its overrides (SEAM.md §114): null outside
+// harness mode, where every start runs the checks.
+// Under `unrun` the harness vouches for the host (source "harness").
+export function seamHostChecks(): { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'>; vouched: 'harness' | null } | null {
+  if (!init.harness) return null;
+  return { mode: init.hostChecks.mode, forced: { ...init.hostChecks.forced }, vouched: init.hostChecks.mode === 'unrun' ? 'harness' : null };
 }
 
 const INSTRUCTIONS = ['auto', 'running', 'terminated', 'unknown'];
@@ -406,6 +451,9 @@ const OP = {
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
+  fixtureAttempt: 'harness.fixture_attempt',
+  fixtureTrustEntry: 'harness.fixture_trust_entry',
+  listFaults: 'harness.list_faults',
   findingProject: 'harness.finding_project',
   projectRepo: 'harness.project_repo',
   workTransition: 'harness.work_transition',
@@ -484,9 +532,26 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       restricted: false,
       handler: async () => {
         tickFaults.length = 0;
+        mainFaults.length = 0;
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
+    };
+  }
+  if (s.length === 1 && s[0] === 'faults' && get) {
+    // What is armed, and how often each main-thread fault fired.
+    return {
+      restricted: true,
+      handler: async () => ({
+        status: 200,
+        body: {
+          faults: [
+            ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...tickFaults.map((f) => ({ ...f })),
+            ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
+          ],
+        },
+      }),
     };
   }
   if (!post) return null;
@@ -519,10 +584,18 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'secrets') {
     return route(200, async (body) => {
       const b = isObject(body) ? body : {};
-      if (typeof b.ref !== 'string' || b.ref.length === 0 || typeof b.value !== 'string' || b.value.length === 0 || Object.keys(b).some((k) => k !== 'ref' && k !== 'value')) {
-        throw new Refusal(400, 'invalid_value', 'A secret needs a "ref" and a non-empty "value".', 'Send {"ref": <name>, "value": <the secret>}.', { field: 'value' });
+      const cap = b.provider_cap_usd;
+      if (
+        typeof b.ref !== 'string' ||
+        b.ref.length === 0 ||
+        typeof b.value !== 'string' ||
+        b.value.length === 0 ||
+        (cap !== undefined && (typeof cap !== 'number' || !Number.isFinite(cap) || cap <= 0)) ||
+        Object.keys(b).some((k) => k !== 'ref' && k !== 'value' && k !== 'provider_cap_usd')
+      ) {
+        throw new Refusal(400, 'invalid_value', 'A secret needs a "ref" and a non-empty "value", and optionally a positive "provider_cap_usd".', 'Send {"ref": <name>, "value": <the secret>, "provider_cap_usd"?: <USD>}.', { field: 'value' });
       }
-      holdSecret(b.ref, b.value);
+      holdSecret(b.ref, b.value, cap as number | undefined);
       // The value is held in memory only and never answered back.
       return { held: b.ref };
     });
@@ -619,8 +692,34 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'allocate') return route(200, (body) => storeOp(OP.allocate, { body, actor: hooks.actor }));
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
-      armed: isObject(body) && body.point === 'tick_step' ? armTickFault(body) : await storeOp(OP.armFault, body),
+      armed:
+        isObject(body) && body.point === 'tick_step' ? armTickFault(body) : isObject(body) && body.point === 'token_read' ? armMainFault(body) : await storeOp(OP.armFault, body),
     }));
+  }
+  // The "help" of a stand-in binary is its own file (SEAM.md §116).
+  const helpOf = async (path: string): Promise<string> => {
+    try {
+      return createHash('sha256').update(await readFile(path)).digest('hex');
+    } catch {
+      throw new Refusal(400, 'invalid_value', `The binary ${path} cannot be read.`, 'Name the stand-in binary the test wrote.', { field: 'binary' });
+    }
+  };
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'qualification-attempt') {
+    return route(201, async (body) => {
+      const parsed = parseAttemptFixture(body);
+      return storeOp(OP.fixtureAttempt, { body: parsed, helpSha256: await helpOf(parsed.binary.path), actor: hooks.actor });
+    });
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'trust-entry') {
+    return route(201, async (body) => {
+      const parsed = parseEntryFixture(body);
+      const helpSha256 = await helpOf(parsed.binary.path);
+      const rt = hooks.runtime();
+      const { writeWholeRecord } = await import('../records/files.js');
+      const evidence: string[] = [];
+      for (const text of parsed.evidence) evidence.push(await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(text) }));
+      return storeOp(OP.fixtureTrustEntry, { body: parsed, evidence, helpSha256, actor: hooks.actor });
+    });
   }
   return null;
 }
@@ -665,6 +764,12 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installAlphaException(store(), a.actor, a.args as { finding: string; record: string; purpose: string });
     case OP.fixtureReuse:
       return installReuse(store(), a.actor, a.body);
+    case OP.fixtureAttempt:
+      return installAttempt(store(), a.actor, a as unknown as { body: AttemptFixture; helpSha256: string });
+    case OP.fixtureTrustEntry:
+      return installTrustEntry(store(), a.actor, a as unknown as { body: EntryFixture; evidence: string[]; helpSha256: string });
+    case OP.listFaults:
+      return faults.map((f) => ({ ...f }));
     case OP.findingProject:
       return findingProject(store(), a.finding as string);
     case OP.projectRepo:
@@ -741,6 +846,27 @@ function fire(matches: (f: Fault) => boolean, what: string): void {
   fault.remaining -= 1;
   if (fault.remaining <= 0) faults.splice(i, 1);
   throw new InjectedFault(what);
+}
+
+function armMainFault(body: Record<string, unknown>): { point: 'token_read'; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => k !== 'point' && k !== 'times') || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown token_read fault.', 'Send {"point":"token_read","times"?: <n>}.', { field: 'point' });
+  }
+  mainFaults.push({ point: 'token_read', times, remaining: times, hit: 0 });
+  return { point: 'token_read', times };
+}
+
+// The bootstrap route reads the token (M107; D2 §2.6): an armed `token_read`
+// fault fails that read, which the route reaches only when the bootstrap
+// exception is in force.
+export function seamTokenRead(): void {
+  if (!init.harness) return;
+  const f = mainFaults.find((m) => m.point === 'token_read' && m.remaining > 0);
+  if (!f) return;
+  f.remaining -= 1;
+  f.hit += 1;
+  throw new Refusal(500, 'token_read_failed', 'The API token could not be read (an injected fault).', 'Retry the request.', { fault: 'token_read' });
 }
 
 // A budget check reads a project's spend (SEAM.md §61).

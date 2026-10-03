@@ -8,7 +8,8 @@ import { intendCommit } from './accept.js';
 import type { IntentSpec } from './journal.js';
 import { journalBlocks } from './journal.js';
 import { type Baseline, addCheckout, blockingObservation, integrationRef, openLineage, projectRepoRow, registerRef } from './repo.js';
-import { policyRevision, projectPolicy } from './settings.js';
+import { policyRevision, projectEffective } from './settings.js';
+import type { Policy } from '../../config/project-policy.js';
 import type { CommandResult } from './control.js';
 import { type ProtectedSet, captureProposal, recordInitialVersion } from './protected.js';
 import { raiseQuestion, widenScope } from './queue.js';
@@ -134,7 +135,7 @@ export function policyFacts(tx: Tx, args: { project: string }) {
     repo: p.dev_repo_path,
     branch: p.integration_branch,
     head: head?.expected_oid ?? null,
-    effective: projectPolicy(tx.db, args.project),
+    effective: projectEffective(tx.db, args.project),
     revision: policyRevision(tx.db, args.project),
     blocking: blocking?.subject_kind ?? null,
     journalBlocked: journalBlocks(tx.db, args.project),
@@ -158,8 +159,8 @@ export interface PolicyCommit {
   revision: number;
   commit: PreparedCommit;
   blob: string;
-  effective: Record<string, number>;
-  change: Record<string, number>;
+  effective: Policy;
+  change: Policy;
   deadlineSeconds: number;
 }
 
@@ -178,7 +179,7 @@ export interface GovernedEdit {
 // is never applied here: it becomes a protected proposal (202).
 export function submitPolicy(
   tx: Tx,
-  args: { project: string; body: unknown; ordinary: Record<string, number>; widens: string[]; governed: GovernedEdit | null; prepared: PolicyCommit | null },
+  args: { project: string; body: unknown; ordinary: Policy; widens: string[]; governed: GovernedEdit | null; prepared: PolicyCommit | null },
 ): CommandResult {
   getProject(tx, args.project);
   const facts = policyFacts(tx, { project: args.project });

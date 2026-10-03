@@ -11,7 +11,9 @@
 // across the spawn, a git call or a read of the role's output.
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Readable } from 'node:stream';
@@ -21,7 +23,7 @@ import { repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
 import { ACCEPTED_KINDS } from '../runs/accept.js';
-import { parseReport } from '../runs/report.js';
+import { fieldAllowed, parseReport } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
@@ -30,7 +32,10 @@ import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
 import { pausePoint, seamBackends } from '../testing/seam.js';
+import { heldProviderCaps, heldSecret } from '../records/redact.js';
+import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
+import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
 export interface DispatchTarget {
@@ -47,10 +52,11 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
-function parseResult(value: unknown): RunResult | null {
+function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   if (r.status !== 'completed' || typeof r.summary !== 'string') return null;
+  if (!fieldAllowed(r, role)) return null;
   if (r.checkpoint !== undefined && typeof r.checkpoint !== 'boolean') return null;
   if (r.nominate !== undefined && typeof r.nominate !== 'boolean') return null;
   const report = parseReport(r);
@@ -60,12 +66,36 @@ function parseResult(value: unknown): RunResult | null {
 
 // The role's environment is constructed, never inherited (D1 §17(4)): no
 // engine home, no token, no git or editor variables.
-function childEnv(claim: Claim): NodeJS.ProcessEnv {
+// A real backend's environment adds exactly the variable its template names
+// for the provider key, with the value resolved from the grant's reference
+// (D2 §§1.2, 2.5).
+function childEnv(claim: Claim, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     PATH: '/usr/local/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     [DOMAIN_MARKER]: claim.domain,
     [INVOCATION_MARKER]: claim.invocation,
+    ...extra,
+  };
+}
+
+const refusalForm = (code: string, reason: string, whatToDo: string, subject: Record<string, unknown>) => ({ code, reason, what_to_do: whatToDo, subject });
+
+// What the choke point spawns for a backend a trust entry authorizes: its
+// binary, its adapter's template arguments, and the provider key in the
+// variable the template names (D2 §§1.2, 2.5, 4.5, 4.6). null when the
+// engine has no adapter for the backend.
+function realBackend(claim: Claim): BackendSpec | null {
+  const e = claim.entry!;
+  const template = TEMPLATES[e.backend];
+  if (!template) return null;
+  const key = heldSecret(e.key_ref);
+  return {
+    id: e.backend,
+    version: template.version,
+    command: e.binary_path,
+    args: template.render({ model: e.model, invocation: claim.invocation }),
+    env: key === null ? {} : { [template.keyVariable]: key },
   };
 }
 
@@ -76,6 +106,9 @@ export class Launcher {
   // before its spawn is durable when this returns true. The launch goes on
   // asynchronously (D1 §8.1 step 9).
   async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
+    // The scripted backend, which only harness mode has. Every other backend
+    // is chosen by the claim from the project's policy and the trust table
+    // (D2 §4.1).
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
     // The run's base is the commit the registry expects the integration
     // branch at, or the checkpoint the work continues from (D1 §7.4); the
@@ -84,8 +117,9 @@ export class Launcher {
       project: target.project,
       workItem: item.id,
       incarnation: this.rt.incarnation,
-      backend: { id: M1_BACKEND, version: backend?.version ?? 'unqualified' },
+      scripted: backend?.version ?? null,
       maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
+      providerCaps: heldProviderCaps(),
     });
     if (!claim) return false;
     const handle = newHandle(claim);
@@ -101,35 +135,88 @@ export class Launcher {
     await pausePoint('dispatch.domain_allocated');
     await pausePoint('dispatch.receipt_committed');
 
+    // What runs: the scripted backend, or the binary a trust entry names with
+    // its adapter's template arguments (D2 §§1.2, 4.5, 4.6).
+    const runs = claim.entry === null ? backend : realBackend(claim);
     let ready = false;
     try {
-      ready = await this.prepare(handle, backend, target.repo);
+      ready = await this.prepare(handle, runs, target.repo);
     } catch (err) {
       log('dispatch', err, { run: claim.run });
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
-    if (ready && backend) void this.launch(handle, backend);
+    if (ready && runs) void this.launch(handle, runs);
     return true;
   }
 
   // The run will never be spawned into by this incarnation.
-  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string): void {
+  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string, detail?: Record<string, unknown>): void {
     handle.phase = phase;
     handle.settle();
-    this.rt.requestEnd(handle, reasonText === undefined ? { outcome, reason } : { outcome, reason, reasonText });
+    this.rt.requestEnd(handle, { outcome, reason, ...(reasonText === undefined ? {} : { reasonText }), ...(detail === undefined ? {} : { detail }) });
   }
 
   // Backend check, workspace, dispatch_started. Returns false if the run is
   // not to be spawned.
   private async prepare(handle: RunHandle, backend: BackendSpec | null, repo: string): Promise<boolean> {
     const { claim } = handle;
-    if (!backend) {
-      // D1 §15.1: an unqualified backend is refused before launch. The
-      // refusal is the end the engine decided, and it is kept with the
+    if (claim.refusal || !backend) {
+      // D1 §15.1, D2 §4.1: an unqualified backend, mode or host is refused
+      // before launch: before any domain is placed or any process started.
+      // The refusal is the end the engine decided, and it is kept with the
       // handle: if recording it fails, the engine's retry records the same
       // refusal, never a failure (SEAM.md §24).
-      this.never(handle, 'refused', 'preflight_refused', 'never', 'backend_refused');
+      const refusal =
+        claim.refusal ??
+        refusalForm(
+          'backend_refused',
+          claim.entry !== null ? `The adapter for ${claim.backend} is not part of this engine revision.` : 'No backend is qualified for this role.',
+          'Name a backend this engine can run for the role.',
+          { backend: claim.backend },
+        );
+      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+      return false;
+    }
+    // D2 §1.2: the binary is the one the entry names, by path and SHA-256;
+    // a mismatch is refused before anything is launched.
+    if (claim.entry !== null) {
+      let found: string | null;
+      try {
+        found = createHash('sha256').update(await readFile(claim.entry.binary_path)).digest('hex');
+      } catch {
+        found = null;
+      }
+      if (found !== claim.entry.binary_sha256) {
+        const refusal = refusalForm(
+          'backend_refused',
+          `The binary at ${claim.entry.binary_path} ${found === null ? 'cannot be read' : 'is not the one the trust entry names'}.`,
+          'Qualify the binary that is installed, or restore the one the entry names.',
+          { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path, expected_sha256: claim.entry.binary_sha256, found_sha256: found },
+        );
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
+    }
+    // The widening a project's policy may make to the mount plan, validated
+    // before every launch, approved or not (D2 §2.3): a refusal names the
+    // path and why, and no launcher starts.
+    const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
+    const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    if (refused !== null) {
+      this.never(
+        handle,
+        'refused',
+        'preflight_refused',
+        'never',
+        'mount_plan_refused',
+        refusalForm(
+          'mount_plan_refused',
+          `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
+          'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
+          { path: refused.path, reason: refused.reason },
+        ),
+      );
       return false;
     }
     if (handle.abort) {
@@ -241,7 +328,7 @@ export class Launcher {
     try {
       child = spawn(backend.command, backend.args, {
         cwd: handle.workspacePath!,
-        env: childEnv(claim),
+        env: childEnv(claim, backend.env),
         detached: true,
         stdio: ['pipe', 'pipe', 'ignore'],
       });
@@ -361,7 +448,7 @@ export class Launcher {
       if (handle.ending) return;
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
-      const result = parseResult(sent);
+      const result = parseResult(sent, handle.claim.role);
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
       // A valid result is kept as a record, published before anything

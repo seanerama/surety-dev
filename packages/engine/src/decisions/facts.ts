@@ -10,7 +10,9 @@ import { ensureAncestry } from '../gates/prepare.js';
 import type { Runtime } from '../runtime.js';
 import type { Facts } from '../store/transitions/queue.js';
 
-export async function answerFacts(rt: Runtime, project: string, decision: string): Promise<Facts> {
+export async function answerFacts(rt: Runtime, project: string | null, decision: string): Promise<Facts> {
+  // An engine-scoped decision reads nothing afresh (SEAM.md §117).
+  if (project === null) return {};
   // The acceptance content of a candidate is part of some previews.
   await ensureAncestry(rt, project).catch(() => undefined);
   const subject = await rt.read<{ kind: string; oob: { subject_kind: string; repo: string; ref: string | null; checkout: string | null } | null } | null>('decision.subject', { project, decision });

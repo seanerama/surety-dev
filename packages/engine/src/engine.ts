@@ -195,7 +195,12 @@ export async function serve(opts: ServeOptions): Promise<void> {
   try {
     await store.call('open', {
       lock,
-      settings: { lease_ttl: config.values.lease_ttl, git_deadline: config.values.git_deadline, decision_targets: config.values.decision_targets },
+      settings: {
+        lease_ttl: config.values.lease_ttl,
+        git_deadline: config.values.git_deadline,
+        decision_targets: config.values.decision_targets,
+        ui_bootstrap: config.values.ui_bootstrap,
+      },
     });
   } catch (err) {
     return fail('store', err);

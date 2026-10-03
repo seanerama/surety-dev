@@ -28,17 +28,18 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { nowIso } from '../clock.js';
 import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
-import { isAncestor, mergeBase, treeOf } from '../git/repo.js';
+import { catBlob, isAncestor, mergeBase, treeOf } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
 import type { Journal, Settled } from '../journal/driver.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { type RunEnd, type RunHandle, type Runtime, log } from '../runtime.js';
 import type { AcceptFacts } from '../store/transitions/accept.js';
-import { canonical } from '../store/transitions/common.js';
+import { canonical, sha256 } from '../store/transitions/common.js';
 import { governedText } from '../protected/set.js';
 import { diffHashOf } from '../projects/commands.js';
-import { writeWholeRecord } from '../records/files.js';
+import { readRecordBytes, writeWholeRecord } from '../records/files.js';
+import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
 
@@ -351,7 +352,65 @@ export class Acceptor {
 
   // What a Verifier's or a Reviewer's role reported, recorded with its run.
   private async recordReport(facts: AcceptFacts): Promise<void> {
-    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts) });
+    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts), alpha: await this.alphaOf(facts) });
+  }
+
+  // A Reviewer's Alpha exception proposals (D2 §5 C1): one that may be made
+  // has every reference its argument makes resolved, to a path at the
+  // reviewed revision or to a record, into retained content, published with
+  // the argument as a containment_evidence record (provenance claimed); one
+  // that may not is refused before anything is published or raised.
+  private async alphaOf(facts: AcceptFacts): Promise<AlphaPrepared[]> {
+    const proposals = facts.run.role === 'reviewer' ? (facts.result?.report?.alpha_exception_proposals ?? []) : [];
+    const out: AlphaPrepared[] = [];
+    for (const p of proposals) {
+      const check = await this.rt.read<{ ok: true; project: string; candidate: string; revision: string } | { ok: false; reason: string }>('alpha.check', { run: facts.run.id, finding: p.finding });
+      if (!check.ok) {
+        out.push({ refusal: check.reason });
+        continue;
+      }
+      const references: Record<string, unknown>[] = [];
+      let unresolved: string | null = null;
+      for (const ref of p.references) {
+        if ('path' in ref) {
+          const content = await catBlob(repoContext(facts.project.repo), check.revision, ref.path);
+          if (content === null) {
+            unresolved = `the path ${ref.path} at ${check.revision}`;
+            break;
+          }
+          references.push({ path: ref.path, revision: check.revision, sha256: sha256(content), content });
+        } else {
+          const row = await this.rt.read<{ project: string; path: string | null; sha256: string | null; bytes: number | null; published: number } | null>('record.row', { record: ref.record });
+          const bytes = row && row.project === check.project && row.published === 1 && row.path !== null ? await readRecordBytes(this.rt.home, { path: row.path, sha256: row.sha256, bytes: row.bytes }) : null;
+          if (bytes === null) {
+            unresolved = `the record ${ref.record}`;
+            break;
+          }
+          references.push({ record: ref.record, sha256: row!.sha256, content: bytes.toString('utf8') });
+        }
+      }
+      if (unresolved !== null) {
+        out.push({ refusal: 'reference_unresolved', detail: unresolved });
+        continue;
+      }
+      const evidence = {
+        provenance: 'claimed',
+        proposed_by_run: facts.run.id,
+        finding: p.finding,
+        candidate: check.candidate,
+        revision: check.revision,
+        containment_text: p.containment_text,
+        testing_purpose: p.testing_purpose,
+        references,
+      };
+      try {
+        out.push({ record: await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'containment_evidence', content: Buffer.from(JSON.stringify(evidence)) }) });
+      } catch (err) {
+        log('containment evidence', err, { run: facts.run.id });
+        out.push({ refusal: 'evidence_unwritable' });
+      }
+    }
+    return out;
   }
 
   // Drive every operation the run issued that has not settled, a few times

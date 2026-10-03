@@ -45,6 +45,7 @@ test('totals of nothing are null, not zero', () => {
     estimated_usd: null,
     unknown_cost_invocations: 0,
     unknown_cost_tokens: null,
+    unknown_allowance_tokens: null,
   });
 });
 
@@ -69,4 +70,21 @@ test('only a command that cannot run a filter driver skips the query', () => {
   for (const args of [['add', '-A'], ['write-tree'], ['read-tree', 'HEAD'], ['status'], ['reset', '--hard'], ['worktree', 'add', '--detach', '--', '/p', 'x'], ['worktree', 'remove', '/p'], ['hash-object', 'a.txt'], ['cat-file', '--filters', 'x'], ['ls-files', '-m'], ['frobnicate']]) {
     assert.equal(mayRunFilter(args), true, args.join(' '));
   }
+});
+
+test('C4: the unknown allowance in force is the original row\'s until a correction says the usage is complete', async () => {
+  const { fold } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+  const row = (over) => ({
+    id: 'led_1', invocation: 'inv_1', role: 'builder', day_utc: '2026-10-03', billable_in: 100, cached_in: null, out: 50, cost_status: 'unknown', cost_usd: null,
+    usage_complete: 0, corrects: null, correction_seq: null, unknown_allowance_tokens: 850, ...over,
+  });
+  // A limit of 1000: 150 observed, 850 unknown.
+  assert.equal(fold([row({})]).unknown_allowance_tokens, 850);
+  // A correction that does not say the usage is complete leaves the allowance in force.
+  const correction = row({ id: 'led_2', corrects: 'led_1', correction_seq: 1, billable_in: 200, out: 100, unknown_allowance_tokens: null });
+  assert.equal(fold([row({}), correction]).unknown_allowance_tokens, 850);
+  // One that says the usage is complete releases it.
+  assert.equal(fold([row({}), { ...correction, usage_complete: 1 }]).unknown_allowance_tokens, 0);
+  // An invocation charged no allowance has none.
+  assert.equal(fold([row({ unknown_allowance_tokens: null })]).unknown_allowance_tokens, null);
 });

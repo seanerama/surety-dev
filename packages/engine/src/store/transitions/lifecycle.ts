@@ -8,7 +8,9 @@ import { illegal } from './common.js';
 
 type Edge = readonly [string, string];
 
-export const LIFECYCLES: Readonly<Record<'RunState' | 'DomainStatus' | 'AuthorizationStatus', readonly Edge[]>> = {
+export const LIFECYCLES: Readonly<
+  Record<'RunState' | 'DomainStatus' | 'AuthorizationStatus' | 'LaunchState' | 'QualificationAttemptStatus' | 'TrustStatus' | 'HostQualificationStatus', readonly Edge[]>
+> = {
   RunState: [
     ['created', 'claimed'],
     ['claimed', 'executing'],
@@ -41,6 +43,27 @@ export const LIFECYCLES: Readonly<Record<'RunState' | 'DomainStatus' | 'Authoriz
     ['issued', 'superseded'],
     ['consumed', 'superseded'],
   ],
+  // D2 A.4.
+  LaunchState: [
+    ['authorizable', 'authorized'],
+    ['authorizable', 'closed'],
+    ['authorized', 'closed'],
+  ],
+  QualificationAttemptStatus: [
+    ['proposed', 'authorized'],
+    ['proposed', 'invalidated'],
+    ['authorized', 'running'],
+    ['authorized', 'invalidated'],
+    ['running', 'succeeded'],
+    ['running', 'failed'],
+    ['running', 'invalidated'],
+  ],
+  TrustStatus: [
+    ['proposed', 'active'],
+    ['proposed', 'revoked'],
+    ['active', 'revoked'],
+  ],
+  HostQualificationStatus: [['active', 'lapsed']],
 };
 
 export type Lifecycle = keyof typeof LIFECYCLES;

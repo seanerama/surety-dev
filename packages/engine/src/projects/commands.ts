@@ -8,7 +8,7 @@ import { rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { nowIso } from '../clock.js';
-import { validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
+import { type Policy, validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
 import { GOVERNED_FILE, GOVERNED_KEYS, governedText, protectedSetAt } from '../protected/set.js';
 import { writeWholeRecord } from '../records/files.js';
 import { canonical } from '../store/transitions/common.js';
@@ -122,7 +122,7 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
     repo: string;
     branch: string;
     head: string | null;
-    effective: Record<string, number>;
+    effective: Policy;
     revision: number | null;
     blocking: string | null;
   }>('project.policy_facts', { project });
@@ -174,15 +174,15 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
 export async function preparePolicyCommit(
   rt: Runtime,
   project: string,
-  facts: { repo: string; branch: string; head: string | null; effective: Record<string, number>; revision: number | null },
-  change: Record<string, number>,
+  facts: { repo: string; branch: string; head: string | null; effective: Policy; revision: number | null },
+  change: Policy,
 ): Promise<Record<string, unknown>> {
   const ctx = repoContext(facts.repo);
   const head = await readRef(ctx, `refs/heads/${facts.branch}`);
   if (head.state === 'unknown' || facts.head === null) throw policyRefusal('repository');
   if (head.state === 'missing' || head.oid !== facts.head) throw policyRefusal('ref');
   if ((await treeOf(ctx, facts.head)) === null) throw policyRefusal('repository');
-  const effective: Record<string, number> = { ...facts.effective, ...change };
+  const effective: Policy = { ...facts.effective, ...change };
   const sorted = Object.fromEntries(Object.keys(effective).sort().map((k) => [k, effective[k]!]));
   const content = `${JSON.stringify(sorted, null, 2)}\n`;
   const revision = (facts.revision ?? 0) + 1;

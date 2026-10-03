@@ -151,6 +151,15 @@ export function openCorrectionDecisions(tx: Tx, proposal: string): DecisionRow[]
 export function classifyProposal(tx: Tx, args: { proposal: string; changeKind: ChangeKind }, label: Record<string, unknown>): ProposalRow {
   const p = getProposal(tx, args.proposal);
   if (!p) throw notFound('proposal', args.proposal);
+  if (p.status === 'approved') {
+    // The classifier run again on an approved proposal before its
+    // application (D2 §5 C2, K8: classification is an effect precondition):
+    // its answer is recorded, and the application's precondition read
+    // finds it.
+    tx.db.prepare('UPDATE "protected_proposals" SET "classified_change_kind" = ? WHERE "id" = ?').run(args.changeKind, p.id);
+    tx.emit('protected.classified', { project: p.project, proposal: p.id }, { ...label, change_kind: args.changeKind, from: p.status, to: p.status });
+    return getProposal(tx, p.id)!;
+  }
   if (!['captured', 'classified', 'awaiting_human'].includes(p.status)) throw illegal(`Classifying a ${p.status} proposal`, { proposal: p.id, status: p.status });
   const status = args.changeKind === 'tightening' ? 'classified' : 'awaiting_human';
   tx.db.prepare('UPDATE "protected_proposals" SET "classified_change_kind" = ?, "status" = ? WHERE "id" = ?').run(args.changeKind, status, p.id);
@@ -168,14 +177,20 @@ export function approveProposal(tx: Tx, p: ProposalRow, approver: string, author
   tx.emit('protected.approved', { project: p.project, proposal: p.id }, { approver, authority, from: p.status });
 }
 
-// A Reviewer's run approves a proposal (E13): only one classified as
-// tightening. The open human decision about it is closed. A Reviewer's
-// approval of anything else approves nothing.
+// A Reviewer's run "approves" a proposal (E13; D2 §5 C2, K8): until D3's
+// classifier is qualified, the approval of a tightening is a recommendation,
+// recorded on the proposal and applying nothing: the proposal stays
+// unapplied, the effective version unchanged, and the human's
+// check_correction_tightening question open. A Reviewer's approval of
+// anything else is not even recorded.
 export function reviewerApprove(tx: Tx, args: { proposal: string; run: string }): boolean {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'classified' || p.classified_change_kind !== 'tightening') return false;
-  approveProposal(tx, p, args.run, 'reviewer');
-  for (const d of openCorrectionDecisions(tx, p.id)) invalidateDecision(tx, d, 'a Reviewer approved the proposal');
+  const row = tx.db.prepare('SELECT "recommendations" FROM "protected_proposals" WHERE "id" = ?').get(p.id) as { recommendations: string };
+  const list = JSON.parse(row.recommendations) as { run: string }[];
+  if (list.some((r) => r.run === args.run)) return false;
+  list.push({ run: args.run, authority: 'reviewer', recommends: 'approve', at: tx.at } as { run: string });
+  tx.db.prepare('UPDATE "protected_proposals" SET "recommendations" = ? WHERE "id" = ?').run(JSON.stringify(list), p.id);
   return true;
 }
 

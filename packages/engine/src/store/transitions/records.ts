@@ -97,6 +97,9 @@ export function recordScan(tx: Tx, args: { record: string; hit: boolean; by: str
   }
   tx.db.prepare(`UPDATE "records" SET "post_scan" = 'hit' WHERE "id" = ?`).run(record.id);
   tx.emit('record.secret_found', { project: record.project, record: record.id }, { by: args.by });
+  // An engine-scoped record has no project to raise a finding on: it is no
+  // longer served, and its hit stands.
+  if (record.project === null) return;
   // A secret found in a stored record raises one Critical security finding
   // on the project, raised by the engine and no run (D1 §14.2; SEAM.md §72).
   const finding = raiseFinding(tx, {
@@ -122,16 +125,21 @@ const REFERENCED = `(EXISTS (SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id
     AND EXISTS (SELECT 1 FROM "gate_evaluations" g WHERE g."candidate" = cr."candidate"))
   OR EXISTS (SELECT 1 FROM "protected_proposals" p WHERE p."rationale" = rec."id")
   OR EXISTS (SELECT 1 FROM "applicability_assessments" a WHERE a."evidence" = rec."id")
-  OR EXISTS (SELECT 1 FROM "findings" f WHERE f."alpha_exception" IS NOT NULL AND json_extract(f."alpha_exception", '$.containment_evidence') = rec."id"))`;
+  OR EXISTS (SELECT 1 FROM "findings" f WHERE f."alpha_exception" IS NOT NULL AND (json_extract(f."alpha_exception", '$.containment_evidence') = rec."id" OR json_extract(f."alpha_exception", '$.evidence') = rec."id"))
+  OR EXISTS (SELECT 1 FROM "findings" f WHERE f."proposed_alpha_exception" IS NOT NULL AND json_extract(f."proposed_alpha_exception", '$.containment_evidence') = rec."id")
+  OR EXISTS (SELECT 1 FROM "trust_entries" t, json_each(t."evidence") e WHERE e."value" = rec."id")
+  OR EXISTS (SELECT 1 FROM "host_qualifications" h WHERE h."evidence" = rec."id"))`;
 
 // Published records whose retention has passed and that nothing refers to.
-export function expirableRecords(db: Db, now: string): { id: string; project: string; path: string }[] {
+export function expirableRecords(db: Db, now: string): { id: string; project: string | null; path: string }[] {
   const rows = db
     .prepare(`SELECT rec."id", rec."project", rec."path", rec."created_at" FROM "records" rec WHERE rec."published" = 1 AND rec."path" IS NOT NULL AND NOT ${REFERENCED}`)
-    .all() as { id: string; project: string; path: string; created_at: string }[];
+    .all() as { id: string; project: string | null; path: string; created_at: string }[];
   const days = new Map<string, number>();
   const nowMs = Date.parse(now);
   return rows.filter((r) => {
+    // An engine-scoped record belongs to no project's retention.
+    if (r.project === null) return false;
     if (!days.has(r.project)) days.set(r.project, projectPolicy(db, r.project).record_retention_days!);
     return Date.parse(r.created_at) + days.get(r.project)! * 86_400_000 <= nowMs;
   });

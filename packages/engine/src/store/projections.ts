@@ -301,6 +301,19 @@ export function openDecisions(db: Db, args: { project: string }) {
   };
 }
 
+// GET /v1/decisions (SEAM.md §117): the open engine-scoped decisions, in the
+// list's form.
+export function engineDecisions(db: Db) {
+  const head = envelope(db);
+  const rows = db
+    .prepare(
+      `SELECT "id", "kind", "subject_type", "subject_id", "question", "options", "preview_hash", "raised_at", "target_seconds", "escalated_at"
+       FROM "decisions" WHERE "project" IS NULL AND "status" = 'open' ORDER BY "seq"`,
+    )
+    .all() as Record<string, unknown>[];
+  return { ...head, decisions: rows.map((d) => ({ ...d, options: JSON.parse(d.options as string) as unknown[] })) };
+}
+
 // GET /v1/projects/:p/decisions/:d (D1 §11.3; brief B4): one decision of the
 // project by its identifier, whatever its status, in the list's form, with
 // its status, its generation, what its preview is bound to (the dependency

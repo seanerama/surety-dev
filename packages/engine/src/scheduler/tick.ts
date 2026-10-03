@@ -132,6 +132,9 @@ export class Scheduler {
       await this.rt.engine('gate.evaluate', { project, candidate: g.candidate, kind: 'stage', stage: g.stage, ...facts }).catch((err) => log('stage gate', err, { project, ...g }));
     }
     await this.rt.engine('decisions.review', { project, channel: seamNotifyChannel() ?? 'none' });
+    // The engine-scoped decisions (SEAM.md §117) are reviewed with every
+    // project's tick: a dependency that changed raises their next generation.
+    await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
     await deliverNotifications(this.rt, project);
   }
