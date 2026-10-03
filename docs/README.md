@@ -26,7 +26,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [design/sdlc-design-D2-backends-and-isolation.md](design/sdlc-design-D2-backends-and-isolation.md) | D2 draft 2, approved to build (E58): the adapter contract, the namespace sandbox, the cgroup execution boundary with launch closure, the trust table and qualification attempts, the optional observer; ten D1 corrections, 73 test statements. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
-| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E63 amending the foundations. |
+| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E64 amending the foundations. |
 
 ## Background and record
 
@@ -40,6 +40,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [reviews/D3/](reviews/D3/) | The cross-review brief for D3 draft 1 (for Astra), and her review and its dispositions when they exist. |
 | [acceptance/reports/M1-report.md](acceptance/reports/M1-report.md) | The M1 acceptance report: the run, versions, qualified load limits, review findings, what is not claimed, and the hands-on walkthrough (`M1-hands-on.sh`). |
 | [acceptance/reports/M1-not-claimed.md](acceptance/reports/M1-not-claimed.md) | The 33 cases left unwritten under the lean procedure, classed, so a passing M1 is not read as covering them. |
+| [acceptance/reports/M2-not-claimed.md](acceptance/reports/M2-not-claimed.md) | M2's running not-claimed list, grown slice by slice, each item with its row, class and the slice where it is claimed. |
 | [acceptance/objections/](acceptance/objections/) | Builder objections to acceptance tests, and the Verifier's answers. |
 | [mockup/](mockup/) | The accepted MVP UI design, eight screens. |
 | [history/](history/) | A slot for the original design-session documents, not yet recovered. |
