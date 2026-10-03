@@ -2,7 +2,9 @@
 // and IPv6. An address is forbidden if it is loopback, private (RFC 1918,
 // the shared address space, IPv6 site-local), link-local, unique-local,
 // unspecified, multicast, reserved or broadcast, an IPv4-mapped, -compatible,
-// NAT64 or 6to4 form of a forbidden IPv4 address, or an address of this host.
+// NAT64 or 6to4 form of a forbidden IPv4 address, any IPv4-translated
+// (::ffff:0:0/96) or local-use NAT64 (64:ff9b:1::/48) address, or an address
+// of this host.
 // The whole answer set is refused when any address in it is forbidden.
 // Pure functions; nothing here resolves or connects.
 
@@ -92,6 +94,10 @@ function v6Reason(g: number[]): AddressReason | null {
   // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible, deprecated).
   if (zeroUpTo(5) && g[5] === 0xffff) return v4Reason(embedded(6, 7));
   if (zeroUpTo(6)) return v4Reason(embedded(6, 7)) ?? 'reserved';
+  // ::ffff:0:0/96, IPv4-translated (RFC 2765): refused whole.
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return 'reserved';
+  // 64:ff9b:1::/48, local-use NAT64 (RFC 8215): refused whole.
+  if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return 'reserved';
   // 64:ff9b::/96, the NAT64 prefix, carries an IPv4 address.
   if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) return v4Reason(embedded(6, 7));
   // 2002::/16, 6to4, carries one in its second and third groups.

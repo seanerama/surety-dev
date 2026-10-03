@@ -90,8 +90,10 @@ async function runTrial(rt: Runtime, scope: Scope | null, tools: ResolvedTools, 
   const t = tools.paths;
   if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root || !t.mknod) return fail(`missing tools: ${tools.missing.join(', ')}`);
   const id = newId('probe_');
-  const area = join(rt.home, 'domains', id);
-  for (const d of ['root', 'vol', 'context', 'workspace']) mkdirSync(join(area, d), { recursive: true, mode: 0o700 });
+  const made = join(rt.home, 'domains', id);
+  for (const d of ['root', 'vol', 'context', 'workspace']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
+  // The area by its real path (a home reached through a link).
+  const area = realpathSync(made);
   let cgroup: string | null = null;
   if (scope) {
     cgroup = join(scope.path, id);

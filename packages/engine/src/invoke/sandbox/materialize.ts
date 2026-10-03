@@ -27,7 +27,19 @@ type Action =
 
 export type MaterializeResult =
   | { state: 'materialized'; written: string[]; removed: string[]; skipped: { path: string; why: string }[] }
-  | { state: 'refused'; reason: 'secret' | 'workspace' | 'unreadable'; path: string | null; detail: string };
+  | { state: 'refused'; reason: 'secret' | 'workspace' | 'unreadable' | 'caps'; path: string | null; detail: string };
+
+// The snapshot's caps (D1 §7.3; M19: `snapshot_max_files`,
+// `snapshot_max_bytes`, `snapshot_max_file_bytes`), applied to what would be
+// materialized before anything is written: what the snapshot would refuse is
+// never copied into the checkout, and the copy is bounded by them.
+export interface MaterializeCaps {
+  files: number;
+  bytes: number;
+  fileBytes: number;
+}
+
+class OverCaps extends Error {}
 
 // The run's own workspace, and nothing else: a real directory directly
 // under `<home>/workspaces/`, reached without a link.
@@ -98,17 +110,31 @@ function kindOf(path: string): 'dir' | 'file' | 'link' | 'other' | 'absent' {
 
 // The changes, directory by directory, from the upper layer's directories
 // and the overlay's final contents.
-function plan(hold: VolatileHold, workspace: string): { actions: Action[]; skipped: { path: string; why: string }[] } {
+function plan(hold: VolatileHold, workspace: string, caps: MaterializeCaps): { actions: Action[]; skipped: { path: string; why: string }[] } {
   const upper = join(hold.vol, 'upper');
   const merged = hold.merged!;
   const actions: Action[] = [];
   const skipped: { path: string; why: string }[] = [];
+  let changed = 0;
+  let bytes = 0;
+  // Counted as the walk goes, so that a role that left more than the caps
+  // allow is refused without the walk reading all of it.
+  const count = (path: string, size: number) => {
+    changed++;
+    bytes += size;
+    if (changed > caps.files) throw new OverCaps(`the role changed more than snapshot_max_files (${caps.files}) entries`);
+    if (size > caps.fileBytes) throw new OverCaps(`${path} is ${size} bytes, more than snapshot_max_file_bytes (${caps.fileBytes})`);
+    if (bytes > caps.bytes) throw new OverCaps(`the role changed more than snapshot_max_bytes (${caps.bytes}) bytes`);
+  };
   const walk = (rel: string): void => {
     const now = new Set(readdirSync(join(merged, rel)));
     const ws = kindOf(join(workspace, rel)) === 'dir' ? readdirSync(join(workspace, rel)) : [];
     for (const name of ws) {
       if (rel === '' && name === '.git') continue;
-      if (!now.has(name)) actions.push({ kind: 'delete', path: join(rel, name) });
+      if (!now.has(name)) {
+        count(join(rel, name), 0);
+        actions.push({ kind: 'delete', path: join(rel, name) });
+      }
     }
     for (const name of [...now].sort()) {
       if (rel === '' && name === '.git') continue;
@@ -119,8 +145,14 @@ function plan(hold: VolatileHold, workspace: string): { actions: Action[]; skipp
       if (st.isDirectory()) {
         actions.push({ kind: 'dir', path: p, mode: st.mode & 0o777 });
         if (kindOf(join(upper, p)) === 'dir') walk(p);
-      } else if (st.isFile()) actions.push({ kind: 'file', path: p, source: join(merged, p), mode: st.mode & 0o777 });
-      else if (st.isSymbolicLink()) actions.push({ kind: 'link', path: p, target: readlinkSync(join(merged, p)) });
+      } else if (st.isFile()) {
+        count(p, st.size);
+        actions.push({ kind: 'file', path: p, source: join(merged, p), mode: st.mode & 0o777 });
+      } else if (st.isSymbolicLink()) {
+        const target = readlinkSync(join(merged, p));
+        count(p, Buffer.byteLength(target));
+        actions.push({ kind: 'link', path: p, target });
+      }
       else skipped.push({ path: p, why: 'not a regular file, directory or link' });
     }
   };
@@ -174,18 +206,24 @@ function copyInto(source: string, target: string, mode: number): void {
   }
 }
 
-export function materialize(args: { hold: VolatileHold; home: string; workspace: string }): MaterializeResult {
+export function materialize(args: { hold: VolatileHold; home: string; workspace: string; caps: MaterializeCaps }): MaterializeResult {
   const { hold, workspace } = args;
   const bad = verifyWorkspace(args.home, workspace);
   if (bad !== null) return { state: 'refused', reason: 'workspace', path: workspace, detail: bad };
   if (hold.merged === null) return { state: 'refused', reason: 'unreadable', path: null, detail: "the workspace's overlay is not held" };
   let planned: ReturnType<typeof plan>;
   try {
-    planned = plan(hold, workspace);
+    planned = plan(hold, workspace, args.caps);
   } catch (err) {
+    if (err instanceof OverCaps) return { state: 'refused', reason: 'caps', path: null, detail: err.message };
     return { state: 'refused', reason: 'unreadable', path: null, detail: `what the role left could not be read: ${(err as Error).message}` };
   }
-  // The secret screen (D2 §2.5): before anything is written.
+  // The secret screen (D2 §2.5): before anything is written, every name the
+  // materialization would write or remove (each component of its path) and
+  // every content and link target. A hit anywhere refuses all of it.
+  for (const a of planned.actions) {
+    if (scanBytes(Buffer.from(a.path)).hit) return { state: 'refused', reason: 'secret', path: null, detail: `a path the role left names a registered secret (a ${a.kind === 'dir' ? 'directory' : a.kind === 'delete' ? 'removal' : a.kind})` };
+  }
   for (const a of planned.actions) {
     if (a.kind === 'file' && fileHasSecret(a.source)) return { state: 'refused', reason: 'secret', path: a.path, detail: `${a.path} holds a registered secret` };
     if (a.kind === 'link' && scanBytes(Buffer.from(a.target)).hit) return { state: 'refused', reason: 'secret', path: a.path, detail: `the link ${a.path} names a registered secret` };

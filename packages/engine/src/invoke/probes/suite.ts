@@ -150,8 +150,11 @@ function containedFromHost(launcherPid: number, cgroup: string): string | null {
 async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy: string, o: BoxOptions): Promise<Box> {
   const t = tools.paths;
   const id = newId('probe_');
-  const area = join(rt.home, 'domains', id);
-  for (const d of ['root', 'vol', 'context', 'git', 'workspace']) mkdirSync(join(area, d), { recursive: true, mode: 0o700 });
+  // The area by its real path: the plan and the hold name what the setup
+  // stage's mount namespace resolves, whatever links the home is reached by.
+  const made = join(rt.home, 'domains', id);
+  for (const d of ['root', 'vol', 'context', 'git', 'workspace']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
+  const area = realpathSync(made);
   o.context(join(area, 'context'));
   copyFileSync(PROBE_PROGRAM, join(area, 'context', 'probe'));
   const cgroup = join(scope.path, id);
@@ -178,7 +181,7 @@ async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy
   const plan = buildPlan({
     area,
     context: join(area, 'context'),
-    workspace: f ? f.worktree : join(area, 'workspace'),
+    workspace: f ? realpathSync(f.worktree) : join(area, 'workspace'),
     readPaths: [],
     writablePaths: [],
     binds: [
@@ -277,6 +280,85 @@ async function closeBox(rt: Runtime, box: Box): Promise<void> {
 
 const line = (box: Box, id: string): Obj | null => box.lines.find((l) => l.id === id) ?? null;
 
+// ---- what a suite leaves outside its sandboxes, and the sweep of it ---------------------------
+
+// The tag of the suite in progress, recorded in the home before the suite
+// makes anything outside it, so that the next start sweeps exactly what this
+// home's suite made: nothing of another home's or another user's.
+const TAG_FILE = 'probe-tag';
+const TAG = /^[0-9a-f]{12}$/;
+export const probeTmpDir = (tag: string): string => `/tmp/surety-probe-${tag}`;
+export const probeShmFile = (tag: string): string => `/dev/shm/surety-probe-${tag}`;
+const SANDBOX_LEFTOVERS = /^(probe-ws2-|probe-role-|probe-fifo-)/;
+
+// At the start of a suite: what an earlier one of this home left, by a crash
+// during it. The home's own probe areas (`<home>/domains/probe_<ULID>`) and
+// scratch entries (`<home>/sandbox/probe-ws2-*`, `probe-role-*`,
+// `probe-fifo-*`); outside the home only the two exact names the recorded tag
+// gives, each removed only if it is what the suite made (a directory or a
+// regular file of this uid, never a link), the directory only with its one
+// socket and only when nothing else is in it.
+export function sweepProbeLeftovers(home: string): string[] {
+  const swept: string[] = [];
+  const uid = process.getuid?.() ?? -1;
+  const domains = join(home, 'domains');
+  try {
+    for (const n of readdirSync(domains)) {
+      if (!BOX_ID.test(n)) continue;
+      rmSync(join(domains, n), { recursive: true, force: true });
+      swept.push(join(domains, n));
+    }
+  } catch {
+    // no domains yet
+  }
+  const sandbox = join(home, 'sandbox');
+  try {
+    for (const n of readdirSync(sandbox)) {
+      if (!SANDBOX_LEFTOVERS.test(n)) continue;
+      rmSync(join(sandbox, n), { recursive: true, force: true });
+      swept.push(join(sandbox, n));
+    }
+  } catch {
+    // no sandbox directory yet
+  }
+  let tag = '';
+  try {
+    tag = readFileSync(join(sandbox, TAG_FILE), 'utf8').trim();
+  } catch {
+    return swept;
+  }
+  if (!TAG.test(tag)) return swept;
+  const shm = probeShmFile(tag);
+  try {
+    const st = lstatSync(shm);
+    if (st.isFile() && st.uid === uid) {
+      rmSync(shm);
+      swept.push(shm);
+    }
+  } catch {
+    // not there
+  }
+  const dir = probeTmpDir(tag);
+  try {
+    const st = lstatSync(dir);
+    if (st.isDirectory() && st.uid === uid) {
+      const sock = join(dir, 'listening.sock');
+      try {
+        const ss = lstatSync(sock);
+        if (ss.isSocket() && ss.uid === uid) rmSync(sock);
+      } catch {
+        // no socket
+      }
+      rmdirSync(dir);
+      swept.push(dir);
+    }
+  } catch {
+    // not there, or not empty: left
+  }
+  rmSync(join(sandbox, TAG_FILE), { force: true });
+  return swept;
+}
+
 // ---- the suite's own resolver (P8) -------------------------------------------------------------
 
 // Constructed answers, counted: the suite needs no DNS and no internet.
@@ -360,6 +442,11 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   const realHome = realpathSync(home);
   const port = rt.config.values.api_port;
   const tag = randomBytes(6).toString('hex');
+  // What an earlier suite of this home left (a crash during it): swept by
+  // the tag it recorded, exact names only; then this suite's tag recorded
+  // before it makes anything outside the home.
+  sweepProbeLeftovers(home);
+  writeFileSync(join(home, 'sandbox', TAG_FILE), `${tag}\n`, { mode: 0o600 });
   const run = (id: string) => overrides[id] !== 'cannot_run';
   const neg = (id: string) => run(id) && overrides[id] !== 'negative_unattempted';
   const cleanups: (() => void | Promise<void>)[] = [];
@@ -377,21 +464,38 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   // P1: the real api.token, and its aliases.
   const token = join(home, 'api.token');
   const tokenForms = [...new Set([token, join(realHome, 'api.token'), `/proc/self/root${realHome}/api.token`, `/surety/..${realHome}/api.token`, `/surety/workspace/../..${realHome}/api.token`])];
-  // P2: the store, the lock, a record, another domain's area; engine.log if
-  // the home has one.
-  const p2 = [join(home, 'store.db'), join(home, 'engine.lock')];
-  if (existsSync(join(home, 'engine.log'))) p2.push(join(home, 'engine.log'));
+  // P2: the store, the lock, the engine log, a record, another domain's
+  // area: each seeded (made where the home has none yet) and read back from
+  // the host before the instructions are written, so that every target the
+  // probe counts is one the role is told to open (D2 A.6 P2; SEAM.md §138).
+  const engineLog = join(home, 'engine.log');
+  if (!existsSync(engineLog)) writeFileSync(engineLog, '', { mode: 0o600 });
+  mkdirSync(join(home, 'records'), { recursive: true, mode: 0o700 });
+  const recordSentinel = join(home, 'records', `probe-sentinel-${tag}`);
+  writeFileSync(recordSentinel, tag, { mode: 0o600 });
+  cleanups.push(() => rmSync(recordSentinel, { force: true }));
+  const otherArea = join(home, 'domains', newId('probe_'));
+  mkdirSync(otherArea, { recursive: true, mode: 0o700 });
+  writeFileSync(join(otherArea, 'sentinel'), tag, { mode: 0o600 });
+  cleanups.push(() => {
+    if (BOX_ID.test(otherArea.slice(otherArea.lastIndexOf('/') + 1))) rmSync(otherArea, { recursive: true, force: true });
+  });
+  const p2 = [join(home, 'store.db'), join(home, 'engine.lock'), engineLog, recordSentinel, join(otherArea, 'sentinel')];
   try {
     const rec = readdirSync(join(home, 'records')).find((n) => n.startsWith('rec_') && !n.endsWith('.tmp'));
     if (rec) p2.push(join(home, 'records', rec));
   } catch {
-    // no record yet
+    // the record sentinel stands for the records
   }
   // P3: a second populated workspace and a developer checkout.
   const ws2 = mkdtempSync(join(home, 'sandbox', 'probe-ws2-'));
   writeFileSync(join(ws2, 'sentinel.txt'), `second workspace ${tag}\n`);
   cleanups.push(() => rmSync(ws2, { recursive: true, force: true }));
   const p3 = [join(ws2, 'sentinel.txt'), join(fixture.repo, 'sentinel.txt')];
+  // Each target read back from the host now, before any instruction names it.
+  const seededP2 = Object.fromEntries(p2.map((t) => [t, readable(t)]));
+  const seededP3 = Object.fromEntries(p3.map((t) => [t, readable(t)]));
+  const seededToken = readable(token);
   // P4, P5: the fixture repository's configuration and hooks, as the host sees them.
   const configHash = () => {
     try {
@@ -427,7 +531,8 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     abstractServer.listen(`\0${abstractName}`, () => resolve(true));
   });
   cleanups.push(() => void abstractServer.close());
-  const sockDir = mkdtempSync('/tmp/surety-probe-');
+  const sockDir = probeTmpDir(tag);
+  mkdirSync(sockDir, { mode: 0o700 });
   const sockPath = join(sockDir, 'listening.sock');
   const pathServer = net.createServer((c) => c.destroy());
   const pathUp = await new Promise<boolean>((resolve) => {
@@ -451,7 +556,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   } catch {
     // no WSL runtime directory
   }
-  const shmSentinel = `/dev/shm/surety-probe-${tag}`;
+  const shmSentinel = probeShmFile(tag);
   let shmSeeded = false;
   try {
     closeSync(openSync(shmSentinel, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600));
@@ -498,7 +603,10 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     [names.loop6]: [['::1']],
     [names.ula]: [['fd00::1']],
     [names.mapped]: [['::ffff:127.0.0.1']],
-    [names.rebind]: [['10.9.9.9'], ['127.0.0.1']],
+    // The first answer validates (a documentation address, routed nowhere:
+    // the connection is attempted to it and times out); the second is
+    // loopback and is refused.
+    [names.rebind]: [['192.0.2.77'], ['127.0.0.1']],
   });
   const echoBytes = randomBytes(64);
 
@@ -516,10 +624,12 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   add('P5', { id: 'p5', kind: 'git', commands: [['rev-parse', '--git-path', 'hooks']] }, 'negative');
   add('P5', { id: 'p5w', kind: 'attempts', ops: [{ op: 'create', path: '/surety/git/hooks/pre-commit', content: '#!/bin/sh\nexit 0\n' }] }, 'negative');
   add('P5', { id: 'p5l', kind: 'exec', argv: ['/usr/bin/ls', '-A', '/surety/git/hooks'] }, 'negative');
-  add('P6', { id: 'p6', kind: 'connect', targets: [{ host: '127.0.0.1', port }, { host: '::1', port }, ...hostAddrs.map((a) => ({ host: a, port }))] }, 'negative');
+  const p6Targets = [{ host: '127.0.0.1', port }, { host: '::1', port }, ...hostAddrs.map((a) => ({ host: a, port }))];
+  add('P6', { id: 'p6', kind: 'connect', targets: p6Targets }, 'negative');
   add('P6', { id: 'p6c', kind: 'connect', targets: [{ host: '127.0.0.1', port: FORWARDER_PORT }] }, 'control');
   add('P7', { id: 'p7', kind: 'http', host: '127.0.0.1', port, path: '/v1/token/bootstrap' }, 'negative');
-  add('P7', { id: 'p7p', kind: 'tunnels', port: FORWARDER_PORT, requests: [{ authority: `127.0.0.1:${port}` }, { authority: `[::1]:${port}` }, ...hostAddrs.map((a) => ({ authority: a.includes(':') ? `[${a}]:${port}` : `${a}:${port}` }))] }, 'negative');
+  const p7Requests = [{ authority: `127.0.0.1:${port}` }, { authority: `[::1]:${port}` }, ...hostAddrs.map((a) => ({ authority: a.includes(':') ? `[${a}]:${port}` : `${a}:${port}` }))];
+  add('P7', { id: 'p7p', kind: 'tunnels', port: FORWARDER_PORT, requests: p7Requests }, 'negative');
   add('P8', { id: 'p8', kind: 'tunnels', port: FORWARDER_PORT, requests: [names.unlisted, names.private, names.mixed, names.loop6, names.ula, names.mapped, names.rebind, names.rebind].map((n) => ({ authority: `${n}:443` })) }, 'negative');
   add('P8', { id: 'p8c', kind: 'tunnels', port: FORWARDER_PORT, requests: [{ authority: `${ECHO_HOST}:443`, send: echoBytes.toString('base64') }] }, 'control');
   add('P9', { id: 'p9', kind: 'connect', targets: [{ abstract: abstractName }] }, 'negative');
@@ -554,6 +664,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     },
     'negative',
   );
+  const p19Ops = ((box.find((a) => a.id === 'p19')?.ops as unknown[] | undefined) ?? []).length;
   add('P19', { id: 'p19c', kind: 'write_read', path: `${ws}/src/probe-${tag}.txt`, content: tag }, 'control');
   // P13 last: it signals every process the program can see.
   add('P13', { id: 'p13', kind: 'signal_all' }, 'negative');
@@ -693,14 +804,6 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     : null;
   if (p16Box) opened.push(p16Box);
 
-  // P2's other domain's area: a sentinel in the P16 box's area.
-  const otherArea = p16Box;
-  if (otherArea) {
-    const s = join(otherArea.area, 'sentinel');
-    writeFileSync(s, tag);
-    p2.push(s);
-  }
-
   // The host controls run meanwhile (P4's and P5's after the sandboxes, so
   // that the repository is compared before and after the role alone).
   const p11Control = winPresent && run('P11') ? runHost(WIN_EXE, ['/c', 'echo', marker], { cwd: '/' }) : Promise.resolve(null);
@@ -775,13 +878,28 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     }
   };
   const openResults = (o: Obj | null) => (o?.results as Record<string, string> | undefined) ?? null;
-  const allAbsent = (r: Record<string, string> | null, codes = DENIED_ABSENT) => r !== null && Object.keys(r).length > 0 && Object.values(r).every((c) => codes.includes(c));
   const fmt = (r: Record<string, string> | null) => (r ? Object.entries(r).map(([p, c]) => `${p}: ${c}`).join(', ') : 'nothing');
+  // Each target on its own (SEAM.md §138): seeded and read back from the
+  // host before the instructions named it, attempted by the role, denied.
+  // A target the role did not attempt leaves the negative not attempted;
+  // nothing is counted in place of a target.
+  const perTarget = (targets: string[], seeded: Record<string, boolean>, r: Record<string, string> | null, codes = DENIED_ABSENT) => {
+    const unseeded = targets.filter((t) => seeded[t] !== true);
+    const unattempted = targets.filter((t) => r === null || r[t] === undefined);
+    const allowed = targets.filter((t) => r !== null && r[t] !== undefined && !codes.includes(r[t]!));
+    return {
+      seeded: targets.length > 0 && unseeded.length === 0,
+      attempted: targets.length > 0 && unattempted.length === 0,
+      denied: targets.length > 0 && unattempted.length === 0 && allowed.length === 0,
+      note: [unseeded.length ? `not seeded: ${unseeded.join(', ')}` : '', unattempted.length ? `not attempted: ${unattempted.join(', ')}` : '', allowed.length ? `not denied: ${allowed.map((t) => `${t} ${r?.[t]}`).join(', ')}` : ''].filter(Boolean).join('; '),
+    };
+  };
 
   judge('P1', () => {
     const o = L('p1');
     const r = openResults(o);
-    return verdict(ctx, 'P1', { seeded: readable(token), negative: refusedBy(o) ?? (o ? fmt(r) : null), held: allAbsent(r), control: readable(token), detail: `the token by its host path and aliases: ${fmt(r)}` });
+    const t = perTarget(tokenForms, Object.fromEntries(tokenForms.map((f) => [f, seededToken])), r);
+    return verdict(ctx, 'P1', { seeded: t.seeded, negative: refusedBy(o) ?? (t.attempted ? fmt(r) : null), held: t.denied, control: readable(token), detail: `the token by its host path and aliases: ${fmt(r)}${t.note ? `; ${t.note}` : ''}` });
   });
   judge('P2', () => {
     const o = L('p2');
@@ -790,20 +908,27 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const own = (fds?.own as Record<string, string> | undefined) ?? {};
     const named = Object.values(own).filter((v) => p2.some((t) => v === t || v.startsWith(`${realHome}/`) || v.startsWith(`${home}/`)));
     const initFd = (fds?.init as { outcome?: string; error?: string } | undefined) ?? null;
-    const seeded = p2.every(readable) && p2.length >= 3;
-    const held = allAbsent(r) && named.length === 0 && initFd?.outcome === 'refused';
-    return verdict(ctx, 'P2', { seeded, negative: o && fds ? `${fmt(r)}; descriptors naming the home: ${named.length}; /proc/1/fd ${initFd?.outcome ?? '?'} ${initFd?.error ?? ''}`.trim() : null, held, control: p2.every(readable), detail: `${p2.length} engine-home targets` });
+    const t = perTarget(p2, seededP2, r);
+    const held = t.denied && named.length === 0 && initFd?.outcome === 'refused';
+    return verdict(ctx, 'P2', {
+      seeded: t.seeded,
+      negative: t.attempted && fds ? `${fmt(r)}; descriptors naming the home: ${named.length}; /proc/1/fd ${initFd?.outcome ?? '?'} ${initFd?.error ?? ''}`.trim() : null,
+      held,
+      control: p2.every(readable),
+      detail: `${p2.length} engine-home targets, each judged: ${p2.join(', ')}${t.note ? `; ${t.note}` : ''}`,
+    });
   });
   judge('P3', () => {
     const o = L('p3');
     const c = L('p3c');
     const r = openResults(o);
+    const t = perTarget(p3, seededP3, r);
     return verdict(ctx, 'P3', {
-      seeded: p3.every(readable),
-      negative: o ? fmt(r) : null,
-      held: allAbsent(r),
+      seeded: t.seeded,
+      negative: t.attempted ? fmt(r) : null,
+      held: t.denied,
       control: c?.outcome === 'read' && c.content === fixture.sentinel.content,
-      detail: `a second workspace and the fixture's checkout; the role's own sentinel ${c?.outcome ?? 'not read'}`,
+      detail: `a second workspace and the fixture's checkout; the role's own sentinel ${c?.outcome ?? 'not read'}${t.note ? `; ${t.note}` : ''}`,
     });
   });
   judge('P4', () => {
@@ -839,34 +964,55 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const o = L('p6');
     const c = L('p6c');
     const r = (o?.results as { host?: string; outcome: string }[] | undefined) ?? null;
-    const held = r !== null && r.length > 0 && r.every((x) => x.outcome !== 'connected');
+    // Every target named was attempted: one result per target, in order.
+    const attempted = r !== null && r.length === p6Targets.length && p6Targets.every((x, i) => r[i]?.host === x.host);
+    const held = attempted && r.every((x) => x.outcome !== 'connected');
     const control = ((c?.results as { outcome: string }[] | undefined) ?? [])[0]?.outcome === 'connected';
-    return verdict(ctx, 'P6', { seeded: listenerAlive, negative: r ? r.map((x) => `${x.host}: ${x.outcome}`).join(', ') : null, held, control, detail: `the engine's port ${port}, alive from the host ${listenerAlive}` });
+    return verdict(ctx, 'P6', { seeded: listenerAlive, negative: attempted ? r.map((x) => `${x.host}: ${x.outcome}`).join(', ') : null, held, control, detail: `the engine's port ${port}, alive from the host ${listenerAlive}` });
   });
   judge('P7', () => {
     const d = L('p7');
     const p = L('p7p');
     const tunnels = (p?.results as { authority: string; status: number | null }[] | undefined) ?? null;
-    const held = d !== null && d.outcome !== 'answered' && tunnels !== null && tunnels.every((x) => x.status === 403);
-    return verdict(ctx, 'P7', { seeded: listenerAlive, negative: d && tunnels ? `direct ${String(d.outcome)}; through the proxy ${tunnels.map((x) => `${x.authority}: ${x.status}`).join(', ')}` : null, held, control: listenerAlive, detail: 'GET /v1/token/bootstrap by every route the role has' });
+    const attempted = d !== null && tunnels !== null && tunnels.length === p7Requests.length && p7Requests.every((x, i) => tunnels[i]?.authority === x.authority);
+    const held = attempted && d.outcome !== 'answered' && tunnels.every((x) => x.status === 403);
+    return verdict(ctx, 'P7', { seeded: listenerAlive, negative: attempted ? `direct ${String(d.outcome)}; through the proxy ${tunnels.map((x) => `${x.authority}: ${x.status}`).join(', ')}` : null, held, control: listenerAlive, detail: 'GET /v1/token/bootstrap by every route the role has' });
   });
   judge('P8', () => {
     const o = L('p8');
     const c = L('p8c');
     const r = (o?.results as { authority: string; status: number | null }[] | undefined) ?? null;
-    const refusedAll = r !== null && r.length === 8 && r.every((x) => x.status === 403);
+    const policy = [names.unlisted, names.private, names.mixed, names.loop6, names.ula, names.mapped].map((n) => `${n}:443`);
+    const attempted = r !== null && r.length === policy.length + 2;
+    const refusedAll = attempted && policy.every((a, i) => r[i]?.authority === a && r[i]?.status === 403);
     // One resolution per attempt: the listed names were asked once each, the
     // rebinding name once per attempt, and each answer judged on its own.
     const q = resolver.queries;
     const once = q.get(names.private) === 1 && q.get(names.mixed) === 1 && q.get(names.rebind) === 2 && !q.has(names.unlisted);
-    const logged = main.proxy?.entries ?? [];
-    const rebinds = logged.filter((e) => e.authority === `${names.rebind}:443`).map((e) => e.resolved.join(' '));
+    // Rebinding: the first attempt connected to the validated numeric
+    // address of its own answer (a documentation address, so it reached
+    // nothing); the retry resolved again, got loopback, and was refused.
+    const logged = (main.proxy?.entries ?? []).filter((e) => e.authority === `${names.rebind}:443`);
+    const [first, second] = logged;
+    const rebound =
+      attempted &&
+      logged.length === 2 &&
+      first!.decision === 'accepted' &&
+      first!.address === '192.0.2.77' &&
+      first!.resolved.join(' ') === '192.0.2.77' &&
+      r[policy.length]?.status !== 200 &&
+      second!.decision === 'refused' &&
+      second!.reason === 'address_policy' &&
+      second!.address === null &&
+      second!.resolved.join(' ') === '127.0.0.1' &&
+      r[policy.length + 1]?.status === 403;
+    const rebinds = logged.map((e) => `${e.resolved.join(' ')} → ${e.address ?? 'nothing'} (${e.decision}${e.ended ? `, ${e.ended}` : ''})`);
     const tunnel = ((c?.results as { status: number | null; same?: boolean }[] | undefined) ?? [])[0];
     const echoed = echoEndpoint.of(main.id).some((e) => e.received.subarray(0, echoBytes.length).equals(echoBytes));
     return verdict(ctx, 'P8', {
       seeded: true,
-      negative: r ? `${r.map((x) => `${x.authority}: ${x.status}`).join(', ')}; resolutions ${JSON.stringify(Object.fromEntries(q))}; rebinding answers ${rebinds.join(' | ')}` : null,
-      held: refusedAll && once && rebinds.length === 2 && rebinds[0] !== rebinds[1],
+      negative: attempted ? `${r.map((x) => `${x.authority}: ${x.status}`).join(', ')}; resolutions ${JSON.stringify(Object.fromEntries(q))}; rebinding ${rebinds.join(' | ')}` : null,
+      held: refusedAll && once && rebound,
       control: tunnel?.status === 200 && tunnel.same === true && echoed && p8Role === 403,
       detail: `the echo tunnel ${tunnel?.status ?? '?'} unchanged ${tunnel?.same ?? '?'}, witnessed ${echoed}; the role profile's echo ${p8Role ?? '?'}`,
     });
@@ -888,12 +1034,13 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const o = L('p10');
     const c = L('p10c');
     const r = openResults(o);
+    const t = perTarget(p10, Object.fromEntries(p10.map((x) => [x, true])), r);
     return verdict(ctx, 'P10', {
-      seeded: shmSeeded && p10.length > 0,
-      negative: o ? `${fmt(r)}${dockerPresent ? '' : '; the Docker socket: not_exercised, absent on this host'}` : null,
-      held: allAbsent(r),
+      seeded: shmSeeded && t.seeded,
+      negative: t.attempted ? `${fmt(r)}${dockerPresent ? '' : '; the Docker socket: not_exercised, absent on this host'}` : null,
+      held: t.denied,
       control: c?.outcome === 'same',
-      detail: `${p10.length} host endpoints verified by lstat, none connected to`,
+      detail: `${p10.length} host endpoints verified by lstat, none connected to${t.note ? `; ${t.note}` : ''}`,
     });
   });
   if (!args.wsl2) results.push(notRun('P11', 'not a WSL2 host: WSL interop does not exist here', 'not_wsl2'));
@@ -995,7 +1142,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     return verdict(ctx, 'P19', {
       seeded: fixture.protectedFiles.every((f) => readable(join(fixture.worktree, f))),
       negative: r ? r.map((x) => `${x.op} ${x.path.replace('/surety/workspace/', '')}: ${x.outcome}`).join(', ') : null,
-      held: r !== null && r.length > 0 && r.every((x) => x.outcome !== 'written'),
+      held: r !== null && r.length === p19Ops && r.every((x) => x.outcome !== 'written'),
       control: c?.outcome === 'same',
       detail: `the protected roots ${fixture.protectedRoots.join(', ')} for a role other than the Verifier`,
     });
@@ -1010,6 +1157,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
 
   for (const b of opened) await closeBox(rt, b).catch((err) => log('probe suite', err, { box: b.id }));
   for (const c of cleanups.reverse()) await Promise.resolve(c()).catch(() => {});
+  rmSync(join(home, 'sandbox', TAG_FILE), { force: true });
 
   const ordered = PROBES.map((id) => results.find((r) => r.id === id) ?? notRun(id, 'the probe was not judged'));
   return { probes: ordered, plan: planEvidence, evidence };

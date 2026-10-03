@@ -74,7 +74,7 @@ export interface EgressEntry {
   // `refused` when no connection was attempted, `accepted` when the proxy
   // attempted one.
   decision: 'accepted' | 'refused';
-  reason: null | 'not_listed' | 'port' | 'address_policy' | 'resolve_failed' | 'resolve_timeout' | 'tunnels_max' | 'bad_request';
+  reason: null | 'not_listed' | 'port' | 'address_policy' | 'resolve_failed' | 'resolve_timeout' | 'tunnels_max' | 'bad_request' | 'header_timeout';
   resolved: string[];
   address: string | null;
   opened_at: string;
@@ -87,7 +87,6 @@ export interface EgressEntry {
 
 export const EGRESS_SOCKET_NAME = 'egress.sock';
 const HEADER_MAX = 8192;
-const HEADER_TIMEOUT_MS = 10_000;
 
 // A host name canonical: lower case, no trailing dot; an IPv6 literal without
 // its brackets.
@@ -109,7 +108,7 @@ export function parseAuthority(text: string): { host: string; port: number } | n
   return { host, port };
 }
 
-const STATUS_TEXT: Record<number, string> = { 200: 'Connection established', 400: 'Bad Request', 403: 'Forbidden', 405: 'Method Not Allowed', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout' };
+const STATUS_TEXT: Record<number, string> = { 200: 'Connection established', 400: 'Bad Request', 403: 'Forbidden', 408: 'Request Timeout', 405: 'Method Not Allowed', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout' };
 
 export class DomainProxy {
   readonly socketPath: string;
@@ -117,6 +116,10 @@ export class DomainProxy {
   truncated = false;
   private logBytes = 0;
   private active = 0;
+  // Connections accepted that have not yet sent their CONNECT.
+  private pending = 0;
+  // Connections accepted over the limit, waiting to be refused by name.
+  private overflow = 0;
   private seq = 0;
   private server: net.Server | null = null;
   private readonly open = new Set<Duplex>();
@@ -212,6 +215,10 @@ export class DomainProxy {
     return true;
   }
 
+  // A connection holds a slot of `egress_tunnels_max` from the moment it is
+  // accepted, before its CONNECT: the role cannot hold more connections
+  // open than the limit by never sending one. A connection that sends none
+  // within `egress_connect_timeout` is refused, and logged.
   private accept(client: net.Socket): void {
     if (this.closing) {
       client.destroy();
@@ -220,22 +227,49 @@ export class DomainProxy {
     this.open.add(client);
     client.once('close', () => this.open.delete(client));
     client.on('error', () => client.destroy());
+    const limit = { key: 'egress_tunnels_max', value: this.opts.limits.tunnelsMax };
+    // Over the limit: the connection is refused once it names what it asked
+    // for (so the log says), and at most as many such connections wait for
+    // their CONNECT as the limit itself; beyond that it is refused at once.
+    const over = this.active + this.pending >= this.opts.limits.tunnelsMax;
+    if (over && this.overflow >= this.opts.limits.tunnelsMax) {
+      this.refuse(client, this.entry('(before CONNECT)'), 503, 'tunnels_max', limit);
+      return;
+    }
+    if (over) this.overflow++;
+    else this.pending++;
+    let waiting = true;
+    const settle = () => {
+      if (!waiting) return;
+      waiting = false;
+      if (over) this.overflow--;
+      else this.pending--;
+      clearTimeout(timer);
+      client.off('data', onData);
+    };
+    client.once('close', settle);
     let head = Buffer.alloc(0);
-    const timer = setTimeout(() => client.destroy(), HEADER_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      settle();
+      this.refuse(client, this.entry('(no CONNECT)'), 408, 'header_timeout', { key: 'egress_connect_timeout', value: this.opts.limits.connectTimeoutMs / 1000 });
+    }, this.opts.limits.connectTimeoutMs);
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
       const end = head.indexOf('\r\n\r\n');
       if (end < 0) {
         if (head.length > HEADER_MAX) {
-          clearTimeout(timer);
-          client.off('data', onData);
+          settle();
           this.refuse(client, this.entry('(unparsed)'), 400, 'bad_request');
         }
         return;
       }
-      clearTimeout(timer);
-      client.off('data', onData);
+      settle();
       client.pause();
+      if (over) {
+        const authority = (head.subarray(0, end).toString('latin1').split('\r\n')[0] ?? '').split(' ')[1] ?? '(unparsed)';
+        this.refuse(client, this.entry(authority), 503, 'tunnels_max', limit);
+        return;
+      }
       void this.request(client, head.subarray(0, end).toString('latin1'), head.subarray(end + 4)).catch(() => client.destroy());
     };
     client.on('data', onData);
@@ -305,7 +339,7 @@ export class DomainProxy {
         return;
       }
     }
-    if (this.active >= this.opts.limits.tunnelsMax) {
+    if (this.active + this.pending >= this.opts.limits.tunnelsMax) {
       this.refuse(client, e, 503, 'tunnels_max', { key: 'egress_tunnels_max', value: this.opts.limits.tunnelsMax });
       return;
     }

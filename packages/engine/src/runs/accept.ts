@@ -187,9 +187,11 @@ export class Acceptor {
     if (handle && handle.sandbox !== null && !handle.materialized && facts.workspace!.snapshot_tree === null) {
       const hold = handle.sandbox.volatile;
       if (hold === null || !hold.held) return failed('infra_error', 'what the role left in its workspace is no longer held, so nothing of it can be materialized');
-      const m = materialize({ hold, home: this.rt.home, workspace: ws.path });
+      const m = materialize({ hold, home: this.rt.home, workspace: ws.path, caps: facts.caps });
       if (m.state === 'refused') {
         if (m.reason === 'secret') return failed('infra_error', `the secret screen refused the workspace's materialization: ${m.detail}; nothing of it reached the checkout`);
+        // What the snapshot would refuse is never copied into the checkout.
+        if (m.reason === 'caps') return failed('diff_violation', `the workspace's materialization was refused: ${m.detail}; nothing of it reached the checkout`);
         return failed('infra_error', `what the role left could not be materialized: ${m.detail}`);
       }
       handle.materialized = true;

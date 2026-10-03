@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -25,6 +25,10 @@ const { materialize, verifyWorkspace } = await import(join(dist, 'invoke', 'sand
 const { protectedBinds } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
 const { viewConfig, objectFormat } = await import(join(dist, 'invoke', 'sandbox', 'gitview.js'));
 const { holdSecret } = await import(join(dist, 'records', 'redact.js'));
+const { DomainProxy } = await import(join(dist, 'invoke', 'proxy', 'proxy.js'));
+const { sweepProbeLeftovers, probeShmFile, probeTmpDir } = await import(join(dist, 'invoke', 'probes', 'suite.js'));
+const net = await import('node:net');
+const CAPS = { files: 5000, bytes: 104_857_600, fileBytes: 10_485_760 };
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'surety-unit-s12-'));
 
@@ -49,6 +53,8 @@ test('the address policy refuses every forbidden family and the host, and lets d
     ['64:ff9b::7f00:1', 'loopback'],
     ['2002:7f00:1::', 'loopback'],
     ['192.168.7.7', 'private'],
+    ['::ffff:0:8.8.8.8', 'reserved'],
+    ['64:ff9b:1::808:808', 'reserved'],
     ['not-an-address', 'not_numeric'],
   ]) {
     assert.equal(addressReason(a, host), why, a);
@@ -128,7 +134,7 @@ test('materialization writes the role\'s changes into the run\'s own workspace o
     mkdirSync(join(hold.merged, 'keep'));
     writeFileSync(join(hold.merged, 'keep', 'k.txt'), 'k');
     writeFileSync(join(hold.merged, '.git'), 'gitdir: /surety/git\n');
-    const r = materialize({ hold, home, workspace: ws });
+    const r = materialize({ hold, home, workspace: ws, caps: CAPS });
     assert.equal(r.state, 'materialized', JSON.stringify(r));
     assert.equal(readFileSync(join(ws, 'a.txt'), 'utf8'), 'changed');
     assert.equal(readFileSync(join(ws, 'new', 'n.txt'), 'utf8'), 'n');
@@ -160,7 +166,7 @@ test('materialization refuses a workspace that is not the engine home\'s, and wr
       writeFileSync(join(base, 'clean.txt'), 'clean');
       writeFileSync(join(base, 'leak.txt'), `the key is ${JSON.stringify(secret)}`);
     }
-    const r = materialize({ hold, home, workspace: ws });
+    const r = materialize({ hold, home, workspace: ws, caps: CAPS });
     assert.equal(r.state, 'refused');
     assert.equal(r.reason, 'secret');
     assert.equal(existsSync(join(ws, 'clean.txt')), false, 'nothing is written when any file holds a secret');
@@ -201,4 +207,108 @@ test('the git view\'s configuration is core settings only, and keeps a repositor
     rmSync(dir, { recursive: true, force: true });
   }
   void readlinkSync;
+});
+
+test('the secret screen refuses a held secret written as a file name or a directory name, writing nothing; the snapshot caps refuse before anything is written', () => {
+  const dir = scratch();
+  try {
+    const home = join(dir, 'home');
+    const secret = `sk-unit-name-${process.pid}-screen`;
+    holdSecret('unit/name', secret);
+    for (const [label, rel] of [['file name', `src/${secret}.txt`], ['directory name', `docs/${secret}/readme.txt`]]) {
+      const ws = join(home, 'workspaces', `run_${label.replace(' ', '_')}`);
+      mkdirSync(ws, { recursive: true });
+      const root = join(dir, label.replace(' ', '_'));
+      const hold = fakeHold(root);
+      for (const base of [join(hold.vol, 'upper'), hold.merged]) {
+        mkdirSync(join(base, dirname(rel)), { recursive: true });
+        writeFileSync(join(base, rel), 'clean content');
+        writeFileSync(join(base, 'other.txt'), 'other');
+      }
+      const r = materialize({ hold, home, workspace: ws, caps: CAPS });
+      assert.deepEqual([r.state, r.reason], ['refused', 'secret'], `${label}: ${JSON.stringify(r)}`);
+      assert.ok(!JSON.stringify(r).includes(secret), 'the refusal does not repeat the secret');
+      assert.equal(existsSync(join(ws, 'other.txt')), false, `${label}: nothing is written`);
+    }
+    const ws = join(home, 'workspaces', 'run_caps');
+    mkdirSync(ws, { recursive: true });
+    const hold = fakeHold(join(dir, 'caps'));
+    for (const base of [join(hold.vol, 'upper'), hold.merged]) for (let i = 0; i < 5; i++) writeFileSync(join(base, `f${i}.txt`), 'x'.repeat(10));
+    for (const [caps, what] of [[{ ...CAPS, files: 4 }, 'files'], [{ ...CAPS, fileBytes: 9 }, 'file bytes'], [{ ...CAPS, bytes: 40 }, 'bytes']]) {
+      const r = materialize({ hold, home, workspace: ws, caps });
+      assert.deepEqual([r.state, r.reason], ['refused', 'caps'], `${what}: ${JSON.stringify(r)}`);
+      assert.deepEqual(readdirSync(ws), [], `${what}: nothing written`);
+    }
+    assert.equal(materialize({ hold, home, workspace: ws, caps: CAPS }).state, 'materialized');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the proxy counts a connection against egress_tunnels_max from its accept, refuses one beyond by name, and logs a connection that never sends its CONNECT', async () => {
+  const dir = scratch();
+  const refusals = [];
+  const proxy = new DomainProxy({
+    area: dir,
+    domain: 'dom_unit',
+    run: null,
+    invocation: null,
+    profile: 'role',
+    allow: [],
+    limits: { resolveTimeoutMs: 1000, connectTimeoutMs: 1000, tunnelMaxMs: 60_000, tunnelsMax: 1, bufferMaxBytes: 65536, logMaxBytes: 262144 },
+    resolver: { resolve: async () => [] },
+    echo: null,
+    onRefused: (r) => refusals.push(r),
+  });
+  await proxy.listen();
+  const path = join(dir, 'egress.sock');
+  const open = () => new Promise((resolve) => { const c = net.connect(path, () => resolve(c)); });
+  const answer = (c) => new Promise((resolve) => { let t = ''; c.on('data', (d) => { t += d; }); c.on('close', () => resolve(t)); });
+  try {
+    const silent = await open();
+    const silentEnd = answer(silent);
+    await new Promise((r) => setTimeout(r, 100));
+    const second = await open();
+    const secondEnd = answer(second);
+    second.write('CONNECT named.example:443 HTTP/1.1\r\n\r\n');
+    assert.match(await secondEnd, /^HTTP\/1\.1 503/, 'the slot is held by the silent connection: the second is refused');
+    assert.match(await silentEnd, /^HTTP\/1\.1 408/, 'the silent one is refused at egress_connect_timeout');
+    const reasons = proxy.entries.map((e) => [e.authority, e.reason]);
+    assert.deepEqual(reasons, [['named.example:443', 'tunnels_max'], ['(no CONNECT)', 'header_timeout']]);
+    assert.deepEqual(refusals.map((r) => r.reason), ['tunnels_max', 'header_timeout']);
+  } finally {
+    await proxy.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the sweep removes this home\'s probe areas and scratch, and outside the home only the exact names its recorded tag gives', () => {
+  const dir = scratch();
+  const tag = Array.from({ length: 12 }, (_, i) => '0123456789abcdef'[(process.pid + i * 7) % 16]).join('');
+  const other = 'f'.repeat(12) === tag ? 'e'.repeat(12) : 'f'.repeat(12);
+  try {
+    const home = join(dir, 'home');
+    mkdirSync(join(home, 'domains', 'probe_01ARZ3NDEKTSV4RRFFQ69G5FAV'), { recursive: true });
+    mkdirSync(join(home, 'domains', 'dom_01ARZ3NDEKTSV4RRFFQ69G5FAV'), { recursive: true });
+    mkdirSync(join(home, 'sandbox', 'probe-ws2-abc'), { recursive: true });
+    mkdirSync(join(home, 'sandbox', 'probe-fixture'), { recursive: true });
+    writeFileSync(join(home, 'sandbox', 'probe-tag'), `${tag}\n`);
+    writeFileSync(probeShmFile(tag), '');
+    mkdirSync(probeTmpDir(tag));
+    writeFileSync(probeShmFile(other), '');
+    const swept = sweepProbeLeftovers(home);
+    assert.equal(existsSync(join(home, 'domains', 'probe_01ARZ3NDEKTSV4RRFFQ69G5FAV')), false);
+    assert.equal(existsSync(join(home, 'domains', 'dom_01ARZ3NDEKTSV4RRFFQ69G5FAV')), true, 'a run\'s domain area is not the sweep\'s');
+    assert.equal(existsSync(join(home, 'sandbox', 'probe-ws2-abc')), false);
+    assert.equal(existsSync(join(home, 'sandbox', 'probe-fixture')), true);
+    assert.equal(existsSync(probeShmFile(tag)), false);
+    assert.equal(existsSync(probeTmpDir(tag)), false);
+    assert.equal(existsSync(probeShmFile(other)), true, 'another tag\'s entry is untouched');
+    assert.ok(swept.length >= 4);
+  } finally {
+    rmSync(probeShmFile(other), { force: true });
+    rmSync(probeShmFile(tag), { force: true });
+    rmSync(probeTmpDir(tag), { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

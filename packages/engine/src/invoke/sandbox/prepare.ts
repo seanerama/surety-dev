@@ -7,7 +7,7 @@
 // backend's argument array, its constructed environment, its working
 // directory, its standard input and the egress forwarder.
 
-import { lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { recordsDir, writeWholeRecord } from '../../records/files.js';
@@ -98,8 +98,11 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
 
   // The domain's area: the setup stage's two mountpoints, the context
   // package (mounted read-only at /surety/context) and the git view's seed.
-  const area = domainArea(rt.home, claim.domain);
-  for (const d of ['root', 'vol', 'context', 'git']) mkdirSync(join(area, d), { recursive: true, mode: 0o700 });
+  // The area by its real path: the plan and the hold name what the setup
+  // stage's mount namespace resolves, whatever links the home is reached by.
+  const made = domainArea(rt.home, claim.domain);
+  for (const d of ['root', 'vol', 'context', 'git']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
+  const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
   writeContextPackage(join(area, 'context'), claim, facts, {
@@ -138,7 +141,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   }
 
   // The git metadata view (D2 §2.7), from the workspace the journal made.
-  const workspace = handle.workspacePath!;
+  const workspace = realpathSync(handle.workspacePath!);
   const link = workspaceLink(repo, workspace);
   if (link === null) throw new Error(`the workspace ${workspace} has no worktree metadata the engine can read`);
   const git = seedGitView({ repo, adminDir: link.adminDir, seed: join(area, 'git'), head: claim.base_revision });
