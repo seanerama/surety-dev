@@ -15,9 +15,9 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { CODES, answer, approvalsOf, assertStaleAnswer, consume, nextGeneration, openDecision } from './harness/decisions.mjs';
+import { CODES, answer, approvalsOf, assertQuestionClosed, assertStaleAnswer, consume, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { check, finding, installChecks, nominated, passAll, raiseFindings, reasonSubjects, review, scopeOf, stageGate } from './harness/gates.mjs';
+import { check, finding, findingState, installChecks, nominated, passAll, raiseFindings, reasonSubjects, review, scopeOf, stageGate } from './harness/gates.mjs';
 import { advanceClock, scriptedEngine } from './harness/runs.mjs';
 
 const DAY = 86_400;
@@ -100,5 +100,22 @@ describe('M50 the finding_disposition manifest', () => {
     assertRefused(await answer(fx.engine, project, previewed, 'approve'), 409, [CODES.stale, CODES.invalidated], 'approving a deferral whose target has passed');
     undisposed(fx, found);
     assert.equal(approvalsOf(fx.home, previewed.id).length, 0);
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the finding is as it was before the deferral was proposed, the gate still wants a disposition, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const { fx, ctx, project, found, proposeDefer } = await mediumFinding(t);
+    const before = findingState(finding(fx.home, found.id));
+    await proposeDefer(inDays(3));
+    const previewed = await openDecision(fx, project, 'finding_disposition', found.id);
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the disposition offers reject');
+
+    await reject(fx, project, previewed);
+    assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'the finding is as it was: open, with no disposition, no authority, no issue and no target');
+    const evaluation = await stageGate(fx, ctx);
+    assert.deepEqual(reasonSubjects(evaluation, 'FINDING_UNSATISFIED'), [found.id], 'no part of the deferral took effect: the gate still names the finding as undisposed');
+    assert.equal(evaluation.outcome, 'not_satisfied');
+    await assertQuestionClosed(fx, project, previewed);
+    assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'and the ticks changed nothing of it');
   });
 });

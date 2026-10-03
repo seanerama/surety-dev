@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
-import { answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertStaleAnswer, confirmRequired, consume, decision, decisionsOfKind, decisionsOn, intentsOf } from './harness/decisions.mjs';
+import { answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, confirmRequired, consume, decision, decisionsOfKind, decisionsOn, intentsOf, reject } from './harness/decisions.mjs';
 import { GOVERNED_FILE, PROTECTED_FILES, effectiveVersion, proposalsOf } from './harness/gates.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates, writePlan } from './harness/gitruns.mjs';
 import { changePolicy, getPolicy, policyRevisions, workItemsOf } from './harness/journal.mjs';
@@ -129,5 +129,23 @@ describe('M49 the policy_widening manifest', () => {
     assert.ok(!('required_checks' in JSON.parse(fileAt(project.repo.path, head(project), '.surety/policy.json'))), 'which holds no governed key');
     assert.equal(fileAt(project.repo.path, head(project), GOVERNED_FILE), PROTECTED_FILES[GOVERNED_FILE], 'the governed file is as it was');
     assert.deepEqual([effectiveVersion(fx.home, project.id).id, proposalsOf(fx.home, project.id)[0].status], [authorized.id, 'captured'], 'the effective protected version is unchanged and the proposal is still only captured');
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the policy is as it was, nothing is committed, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const before = await getPolicy(fx.engine, project.id);
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the widening offers reject');
+
+    await reject(fx, project.id, previewed);
+    const after = await getPolicy(fx.engine, project.id);
+    assert.deepEqual([after.revision, after.effective], [before.revision, before.effective], 'the effective policy is as it was: no revision, the chain limit at its default');
+    assert.equal(after.effective.max_chained_roles, 1);
+    assert.deepEqual(policyRevisions(fx.home, project.id), [], 'no policy revision was recorded');
+    assert.equal(head(project), project.base, 'nothing was committed to the integration branch');
+    await assertQuestionClosed(fx, project.id, previewed);
+    assert.deepEqual([(await getPolicy(fx.engine, project.id)).effective.max_chained_roles, head(project)], [1, project.base], 'and the ticks widened and committed nothing');
   });
 });
