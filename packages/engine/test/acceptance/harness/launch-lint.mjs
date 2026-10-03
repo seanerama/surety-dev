@@ -35,8 +35,14 @@ export const PROCESS_MODULES = ['child_process', 'node:child_process', 'cluster'
 // runs. `boundary/scope.ts` is the build spec's starting name for the
 // incarnation scope (§7: `src/boundary/`); a Builder who arranges the
 // modules otherwise names the file and the Verifier changes this list.
+// M2 slice 11 (SEAM.md §124): the engine enters its scope in place, so the
+// scope's helper asks the user manager through `busctl` (StartTransientUnit
+// with PIDs) instead of `systemd-run`, which runs a command, and reads the
+// manager's view of the scope with `systemctl --user`; the same one file
+// runs both, and nothing else outside invoke/ starts a process.
 export const D2_HELPERS = [
-  { where: 'boundary/scope.ts', why: 'the incarnation scope: systemd-run at start (D2 §3.1)', tool: 'systemd-run' },
+  { where: 'boundary/scope.ts', why: 'the incarnation scope: busctl --user (StartTransientUnit with PIDs) at start (D2 §3.1; SEAM.md §124)', tool: 'busctl' },
+  { where: 'boundary/scope.ts', why: "the incarnation scope: systemctl --user, the manager's view of a scope at start and in recovery (D2 §3.3)", tool: 'systemctl' },
 ];
 
 export const ALLOWED = [

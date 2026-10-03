@@ -155,6 +155,32 @@
       "M107-bootstrap-off-by-default.test.mjs",
       "M108-widening-settings.test.mjs",
       "M109-no-unsandboxed-entry.test.mjs"
+    ],
+    "11": [
+      "M110-host-checks-and-scope.test.mjs",
+      "M111-other-home-untouched.test.mjs",
+      "M112-placement-and-launch-authorization.test.mjs",
+      "M113-closure-and-termination.test.mjs",
+      "M114-restart-observes-before-it-believes.test.mjs",
+      "M115-every-unknown-quarantines.test.mjs",
+      "M116-membership-cannot-be-escaped.test.mjs",
+      "M117-processes-and-descriptors.test.mjs",
+      "M118-pause-regrant.test.mjs"
+    ],
+    "12": [
+      "M110-qualification-per-start.test.mjs"
     ]
-  }
+  },
+  "sandbox": [
+    "M110-host-checks-and-scope.test.mjs",
+    "M111-other-home-untouched.test.mjs",
+    "M112-placement-and-launch-authorization.test.mjs",
+    "M113-closure-and-termination.test.mjs",
+    "M114-restart-observes-before-it-believes.test.mjs",
+    "M115-every-unknown-quarantines.test.mjs",
+    "M116-membership-cannot-be-escaped.test.mjs",
+    "M117-processes-and-descriptors.test.mjs",
+    "M118-pause-regrant.test.mjs",
+    "M110-qualification-per-start.test.mjs"
+  ]
 }

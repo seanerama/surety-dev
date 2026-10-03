@@ -4,7 +4,7 @@
 // the scripts that program follows, the boundary's instructions, and the log
 // the program writes of every launch.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,7 +58,41 @@ export const step = {
   // One more process that carries the role's domain marker and outlives the
   // role. By default it keeps the role's stdout open and ends on SIGTERM.
   descendant: (opts = {}) => ({ descendant: opts }),
+  // M2 slice 11 (SEAM.md §127; D2 A.6 P16): a detached daemon that
+  // setsid()s, clears its environment, double-forks and appends to
+  // pings/<name>.jsonl in the scripted directory every ping_ms (default
+  // 100); it ignores SIGTERM unless on_term is 'exit'.
+  daemon: (name, { on_term = 'ignore', ping_ms = 100 } = {}) => ({ daemon: { name, on_term, ping_ms } }),
+  // M2 slice 11 (SEAM.md §127): one probe action, logged as a `probe` entry.
+  // `signal_all` is refused here: it is scripted only through signalAll().
+  probe: (action, args = {}) => {
+    if (action === 'signal_all') throw new Error('script signal_all through step.signalAll(hostPidNamespace()): it kills every process the role can see (SEAM.md §127, "The guard")');
+    return { probe: { action, ...args } };
+  },
+  // P13's action (row M117 (a)): SIGKILL to every pid the role sees, then
+  // kill(-1, SIGKILL). It carries the host's pid namespace so that the role
+  // program refuses to run it anywhere but in another one (SEAM.md §127,
+  // "The guard"); a test releases the role into it only after it has seen,
+  // from the host, that the role is in a pid namespace of its own.
+  signalAll: (hostPidNs) => {
+    if (typeof hostPidNs !== 'string' || !/^pid:\[\d+\]$/.test(hostPidNs)) throw new Error(`signalAll needs the host's pid namespace, as hostPidNamespace() reads it (got ${JSON.stringify(hostPidNs)})`);
+    return { probe: { action: 'signal_all', host_pid_ns: hostPidNs } };
+  },
+  // The guard of signalAll alone: what the role would decide, with no signal sent.
+  signalAllCheck: (hostPidNs) => ({ probe: { action: 'signal_all_check', host_pid_ns: hostPidNs } }),
 };
+
+// The host's pid namespace, as the test process sees its own.
+export const hostPidNamespace = () => readlinkSync('/proc/self/ns/pid');
+// The pid namespace of a host process, or null when it cannot be read
+// (which a test must treat as "not shown to be sandboxed").
+export function pidNamespaceOf(pid) {
+  try {
+    return readlinkSync(`/proc/${pid}/ns/pid`);
+  } catch {
+    return null;
+  }
+}
 
 // Whole scripts for the common cases.
 export const script = {
@@ -156,6 +190,36 @@ export class Scripted {
     return this.log().filter((e) => e.pid === pid && (event === undefined || e.event === event));
   }
 
+  // What was logged on behalf of one invocation (the role, its daemons and
+  // probes), optionally of one event. In the sandbox lane pids restart per
+  // domain (SEAM.md §125), so the invocation is the key, not the pid.
+  eventsOfInvocation(invocation, event) {
+    return this.log().filter((e) => e.invocation === invocation && (event === undefined || e.event === event));
+  }
+
+  // The `probe` entries of one invocation, by action.
+  probes(invocation, action) {
+    return this.eventsOfInvocation(invocation, 'probe').filter((e) => action === undefined || e.action === action);
+  }
+
+  // The daemons a role started (SEAM.md §127), each as the role logged it:
+  // {name, ready, daemon_pid (in the sandbox's pid namespace), daemon_session, daemon_parent, daemon_env_count}.
+  daemons(invocation) {
+    return this.eventsOfInvocation(invocation, 'daemon');
+  }
+
+  // The ping lines a daemon wrote so far (SEAM.md §127).
+  pings(name) {
+    const file = join(this.dir, 'pings', `${name}.jsonl`);
+    if (!existsSync(file)) return [];
+    const text = readFileSync(file, 'utf8');
+    return text
+      .slice(0, text.lastIndexOf('\n') + 1)
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line));
+  }
+
   // The descendants the roles started (scripted/child.mjs), each as
   // {pid, start_time, pgrp, parent, domain, invocation, holds_stdout, on_term,
   // ready}: `pid` and `start_time` are the descendant's own, so isLive()
@@ -197,7 +261,10 @@ export class Scripted {
       () => {
         const launch = this.launches(filter).at(-1);
         if (!launch) return undefined;
-        return this.eventsOf(launch.pid, 'holding').some((e) => e.hold === name) ? launch : undefined;
+        // The invocation is matched as well as the pid: in the sandbox lane
+        // pids restart in every domain (SEAM.md §125), and an earlier role's
+        // entry under the same pid is not this launch's.
+        return this.eventsOf(launch.pid, 'holding').some((e) => e.hold === name && (launch.invocation === null || e.invocation === launch.invocation)) ? launch : undefined;
       },
       { timeoutMs, what: `a launch matching ${JSON.stringify(filter)} to reach hold "${name}"` },
     );
