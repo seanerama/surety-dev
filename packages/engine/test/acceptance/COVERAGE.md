@@ -1479,6 +1479,16 @@ Accepted files that use the harness modules this pass changed, each alone on the
 
 Run, each file alone, on `build/m2-s12` at `cf92925` (a detached scratch worktree with the changed files copied in, removed afterwards; not an acceptance run): M112 6 of 6, M116 4 of 4 (both showing the role contained), then M119 7 of 7, M122 5 of 5, M125 3 of 3 (its first run failed (c) at the helper's second fault, fixed and rerun), M117 3 of 3, and the other users of the changed helper, M120 4 of 4, M121 5 of 5, M123 5 of 5, M126 2 of 2, M127 3 of 3, M128 6 of 6.
 
+**After the slice-12 review** (S1, S2; E31: one Verifier case per confirmed serious finding; written 2026-10-03 on `verify/m2-s12-review` from `main` at `cb67b92`; SEAM, "Amended after the slice-12 review"). Run, each file alone, on `build/m2-s12` at `43f707a` (a detached scratch worktree with the changed files copied in, removed afterwards; not an acceptance run):
+
+| What | File, case | On `43f707a` |
+|---|---|---|
+| **S1**, the screen covers paths | `M121-git-view.test.mjs`, "S1 (the slice-12 review): a held secret as a file name and as a directory name refuses the materialization as the secret in a file's content does …": a held secret; the content control first (refused, nothing in the checkout or any ref); then a file named with it and a directory named with it, each with a plain file beside it | **Fails** at the defect: "a file named with the secret: the held secret in a path refuses the materialization as the content control does (D2 §2.5 …); the run ended completed/none (null)". The control passed its part first. The other five cases pass. |
+| **S2**, P2 names what it counts | `M124-probe-needs-target-and-control.test.mjs`, "S2 (the slice-12 review): on a fresh home, the start-up suite's P2 evidence names each target it counts …" | **Fails** at the defect: P2 `passed` with detail "3 engine-home targets", no `targets`, while the role's own P2 report holds two paths, `store.db` and `engine.lock`. The other five cases pass. |
+| Sockets at their own path | M119 (c), M122 (a): `shortSocketDir`, `listenUnix` | M119 7 of 7, M122 5 of 5. |
+
+**M125 (c) and the plan's list** (a question, not a change). M125 (c) pins: the package holds exactly the files its manifest lists; each file is of a known kind; the prompt carries the stage's goal; there is one `requirement` entry per bound requirement, whose `source` is the requirement's id; a resumed run has `prior_run` entries sourced from the prior run's records; there is no raw report; the package is read-only. It does not pin a requirement's **text**, nor ADRs, constraints, the phase plan or dependency interfaces: the plan fixture binds requirement keys only and none of the others, and SEAM §139 asks for an entry per bound item with its source, not its content. The plan's M125 (c) lists "the bound requirements, ADRs, constraints and phase plan, dependency interfaces" (D2 §1.3). Whether "the bound requirement" means its approved text in the package or a reference to it is put to Sean; the case is unchanged.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

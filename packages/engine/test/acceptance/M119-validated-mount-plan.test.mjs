@@ -27,7 +27,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import net from 'node:net';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -45,11 +44,13 @@ import {
   byPath,
   hostMounts,
   inheritedDescriptors,
+  listenUnix,
   mountPlanOf,
   probedRun,
   refusedBeforeLaunch,
   seedOperatorHome,
   seedSentinel,
+  shortSocketDir,
 } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
 import { PARK_ON_REFUSAL } from './harness/trust.mjs';
@@ -199,18 +200,15 @@ describe('M119 the validated mount plan has the authority', () => {
     const fx = await sandboxEngine(t);
     const id = (await addGitProject(fx)).id;
     await changePolicy(fx.engine, id, PARK_ON_REFUSAL);
-    const scratch = makeTempDir('m119-special');
-    t.after(() => removeDir(scratch));
+    // A short directory of the test's own (the slice-12 review: a socket
+    // path past 107 bytes is bound truncated, at another path).
+    const scratch = shortSocketDir(t, 'm119');
     mkdirSync(join(scratch, 'with-socket'));
     let connections = 0;
-    const server = net.createServer(() => {
+    const server = await listenUnix(t, join(scratch, 'with-socket', 'listener.sock'), (socket) => {
       connections++;
+      socket.destroy();
     });
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(join(scratch, 'with-socket', 'listener.sock'), resolve);
-    });
-    t.after(() => new Promise((resolve) => server.close(resolve)));
     assert.ok(statSync(join(scratch, 'with-socket', 'listener.sock')).isSocket(), 'the target is seeded: a listening socket, host-read without connecting');
     mkdirSync(join(scratch, 'with-fifo'));
     assert.equal(spawnSync('mkfifo', [join(scratch, 'with-fifo', 'pipe')]).status, 0);
