@@ -1,6 +1,6 @@
 # Before a real agent runs: triage of what M1 does not claim
 
-**Status:** confirmed by Sean, 2026-10-03 (errata E48). Owner's document. Written after Astra's milestone assessment (errata E46) asked that the eighteen real behaviours no test establishes be prioritised deliberately before real-agent use.
+**Status:** confirmed by Sean, 2026-10-03 (errata E48). Owner's document. **Bucket A was built and merged as M2 slice 1 on 2026-10-03 (E50 to E52).** Written after Astra's milestone assessment (errata E46) asked that the eighteen real behaviours no test establishes be prioritised deliberately before real-agent use.
 
 Source: `docs/acceptance/reports/M1-not-claimed.md`, class B. Each row below is one of those eighteen (two have since been built, errata E47). The bucket says when it should be settled. "Settled" means a test and a build, or a recorded decision that it stays unbuilt, never silence.
 

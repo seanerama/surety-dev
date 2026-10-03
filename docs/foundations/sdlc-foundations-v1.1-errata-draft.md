@@ -1025,3 +1025,22 @@ The one review of the slice (E31) found the five entries sound in the engine, no
 **Consequences elsewhere.** No change to D1.
 
 ---
+
+## E52. M2 slice 1 merged (provisional, 2026-10-03)
+
+**Status: provisional** for the driver's readings; the slice's merge is under Sean's standing delegation.
+
+`build/m2-s1` merged to `main` at `0512ed5` after the driver's rerun on its tip `7b10f34`: 817 of 817 acceptance cases in 126 files (the whole suite, `--slice 8`), 101 of 101 unit tests in 22 files, the builder boundary check clean (13 paths). One earlier full run on the pre-fix branch had failed a single M15 lease-renewal case while the Reviewer's probes loaded the machine; its message showed the lease renewed two seconds before the check while the test had counted 70 s on the monotonic clock, and the file passed alone 8 of 8: the clock, not the engine, as the rerun-alone rule expects.
+
+**What the slice built.** For the five entries: a candidate's gates carry `OUT_OF_BAND_CHANGE` while its nomination marker has an open observation (A1); a correction's manifest binds a hash of the project's requirements as the approved specification's revision (A3). The other three entries held already and are now claimed by passing cases (A2, A4, A5). For the review's finding S1 (E51): a `ref_update` that is `conflicting`, still `intended`, never attempted by any incarnation, and whose ref sits at the engine's own registered value rather than its old commit is refused as a compare-and-swap failure instead of going to the probe and blocking; whenever an operation fails without its effect, the intent it carried is invalidated with `EFFECT_PRECONDITION_CHANGED`, the approval withdrawn (the proposal back to `classified` or `awaiting_human`; a widening's question standing), the next generation raised with no approval against the new head, and no blocker left open. Unit tests: 18 new (marker, correction preview and reject, reuse across versions, the application race).
+
+**Readings the Builder fixed, not pinned by a case, for Sean:**
+
+1. **The withdrawn version row is deleted.** The intended `protected_versions` row of an application that failed without effect, never authorized and never effective, is deleted rather than kept and marked, because the store allows one version per proposal and re-approval needs the slot. Keeping it would need a migration and a contract change. Recommendation: keep the delete.
+2. **Two variants covered by the same rule and pinned by no case:** an approved policy widening whose commit's branch update is overtaken (the Reviewer's probe reproduced the defect for it; the fix is in the shared path), and an application a Reviewer approved, which carries no intent and whose approval is withdrawn and question raised again. Recommendation: one case for the widening when a Verifier pass next has room; recorded in `COVERAGE.md`.
+
+**Done against the brief (`docs/spec/M2-slice-1-hardening.md` section 4):** the cases exist, are in `COVERAGE.md`, and pass with the whole suite on the merged engine; every design question is in E50, E51 and here; nothing outside the five entries was built except the review's confirmed finding, as E31 provides. Outstanding: the Verifier updates the counts of `M1-not-claimed.md` against a run of `npm test` on `main`, and E51's design questions wait for Sean (the gate's own read of the marker before an authorization; re-asking after a rejection, E50).
+
+**Consequences elsewhere.** No change to D1. The triage (`docs/spec/M2-input-triage.md`) bucket A is settled.
+
+---
