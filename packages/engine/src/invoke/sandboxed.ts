@@ -93,6 +93,9 @@ export class SandboxLaunch {
   private readonly challenges = new Map<string, (r: ChallengeResponse) => void>();
   // Messages to drop before acting on them (the seam's `init_report_lost`).
   dropExitReport = false;
+  // What the setup stage reported of the start-up trial's overlay.
+  overlay: { ok: boolean; detail: string } | null = null;
+  setupFailure: string | null = null;
 
   constructor(
     spec: LaunchSpec,
@@ -195,7 +198,11 @@ export class SandboxLaunch {
         }
         return;
       case 'setup_failed':
-        this.hooks.setupFailed(String(m.detail ?? 'the sandbox could not be built'));
+        this.setupFailure = String(m.detail ?? 'the sandbox could not be built');
+        this.hooks.setupFailed(this.setupFailure);
+        return;
+      case 'overlay':
+        this.overlay = { ok: m.ok === true, detail: String(m.detail ?? '') };
         return;
       case 'ready':
         await this.hooks.barrier('init.before_backend');
@@ -212,7 +219,16 @@ export class SandboxLaunch {
         this.output.end();
         return;
       case 'exit':
-        if (this.dropExitReport) return;
+        // Under the seam's `init_report_lost` the report is acknowledged and
+        // lost here, before the engine knows of it. Otherwise the engine
+        // acknowledges it when it acts on it (`ackExit`): the init stays
+        // until then, so that an engine resumed from a pause can still ask
+        // it (D2 §3.5).
+        if (this.dropExitReport) {
+          this.send({ t: 'exit_ack' });
+          return;
+        }
+        if (this.exitReport !== null) return;
         this.exitReport = {
           code: typeof m.code === 'number' ? m.code : null,
           signal: typeof m.signal === 'number' ? m.signal : null,
@@ -237,6 +253,11 @@ export class SandboxLaunch {
       default:
         return;
     }
+  }
+
+  // The engine has the backend's exit report.
+  ackExit(): void {
+    this.send({ t: 'exit_ack' });
   }
 
   // TERM through the init, which relays it to every process of the sandbox

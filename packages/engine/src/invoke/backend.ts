@@ -12,6 +12,8 @@ export interface BackendSpec {
   args: string[];
   // Variables beyond the constructed environment (a provider key).
   env?: Record<string, string>;
+  // Host paths the sandbox binds at their real paths beyond its profile's.
+  binds?: { path: string; writable: boolean }[];
 }
 
 // What the execution boundary reports of a domain (build spec §6

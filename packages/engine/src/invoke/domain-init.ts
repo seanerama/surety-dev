@@ -108,13 +108,36 @@ interface Plan {
   skeleton: Entry[];
   // fstab lines, the targets absolute host paths under `stage`.
   fstab: string[];
-  // Entries made after the mounts, inside mounted filesystems.
+  // Entries made after the first table, inside mounted filesystems, and the
+  // second table's mounts on them.
   late: Entry[];
+  lateFstab: string[];
   tools: { mount: string; umount: string; pivot_root: string; ip: string; unshare: string; setpriv: string };
   uid: number;
   gid: number;
   initNode: string; // in the new root
   initScript: string; // in the new root
+  // The start-up trial (D2 §6 H11): mount an overlay whose upper layer is on
+  // the volatile filesystem, write through it, and report.
+  overlayTrial?: boolean;
+}
+
+function overlayTrial(plan: Plan): { ok: boolean; detail: string } {
+  const base = join(plan.vol, '.overlay-trial');
+  const [lower, upper, work, merged] = ['lower', 'upper', 'work', 'merged'].map((d) => join(base, d)) as [string, string, string, string];
+  try {
+    for (const d of [lower, upper, work, merged]) mkdirSync(d, { recursive: true });
+    writeFileSync(join(lower, 'kept'), 'lower');
+    run(plan.tools.mount, ['-t', 'overlay', 'surety-overlay', '-o', `lowerdir=${lower},upperdir=${upper},workdir=${work}`, merged]);
+    writeFileSync(join(merged, 'kept'), 'changed');
+    writeFileSync(join(merged, 'new'), 'new');
+    const lowerKept = readFileSync(join(lower, 'kept'), 'utf8') === 'lower';
+    const upperHas = readFileSync(join(upper, 'kept'), 'utf8') === 'changed';
+    run(plan.tools.umount, [merged]);
+    return { ok: lowerKept && upperHas, detail: lowerKept && upperHas ? 'an overlay with its upper layer on the volatile tmpfs took writes; its lower layer stayed unchanged' : 'the overlay did not keep its layers apart' };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
 }
 
 function run(cmd: string, args: string[]): void {
@@ -160,6 +183,12 @@ async function setup(): Promise<void> {
     run(tools.mount, ['--all', '--fstab', fstab]);
     unlinkSync(fstab);
     for (const e of plan.late) make(plan.stage, e);
+    if (plan.lateFstab.length > 0) {
+      writeFileSync(fstab, `${plan.lateFstab.join('\n')}\n`);
+      run(tools.mount, ['--all', '--fstab', fstab]);
+      unlinkSync(fstab);
+    }
+    if (plan.overlayTrial) send({ t: 'overlay', ...overlayTrial(plan) });
     run(tools.ip, ['link', 'set', 'lo', 'up']);
     process.chdir(plan.stage);
     mkdirSync('.oldroot');
@@ -210,6 +239,10 @@ interface BackendSpec {
 let exit: { code: number | null; signal: number | null } | null = null;
 let backendPid: number | null = null;
 let terminating = false;
+// The engine has acknowledged the exit report. Until it has, the report is
+// sent again every half second and the init stays: an engine that was
+// paused reads it, or asks by a challenge, when it resumes (D2 §3.5).
+let acked = false;
 
 const signalNumber = (name: string | null): number | null => (name === null ? null : ((constants.signals as Record<string, number>)[name] ?? null));
 
@@ -245,8 +278,33 @@ function leaveWhenAlone(): void {
   }, 100);
 }
 
+function reportExit(): void {
+  if (exit === null || acked) return;
+  send({ t: 'exit', code: exit.code, signal: exit.signal });
+}
+
+// A sandbox whose backend has exited, whose report the engine has, and in
+// which nothing else lives, ends (D2 §§3.2, 4.4): descendants keep it until
+// the engine's term.
+function maybeLeave(): void {
+  if (exit !== null && acked && others().length === 0) leaveWhenAlone();
+}
+
 function onMessage(m: Msg): void {
-  if (m.t === 'term') {
+  if (m.t === 'exit_ack') {
+    acked = true;
+    maybeLeave();
+    // Descendants that outlive the backend keep the sandbox until the
+    // engine's term; check again as they go.
+    if (exit !== null && others().length > 0) {
+      const watch = setInterval(() => {
+        if (others().length === 0) {
+          clearInterval(watch);
+          maybeLeave();
+        }
+      }, 250);
+    }
+  } else if (m.t === 'term') {
     if (terminating) return;
     terminating = true;
     try {
@@ -306,10 +364,11 @@ async function init(): Promise<void> {
   child.stdout!.on('end', () => send({ t: 'eof' }));
   child.on('exit', (code, signal) => {
     exit = { code, signal: signalNumber(signal) };
-    send({ t: 'exit', code, signal: exit.signal });
-    // A sandbox with nothing left in it ends with its backend; one with
-    // descendants alive waits for the engine's term (D2 §§3.2, 4.4).
-    if (others().length === 0) leaveWhenAlone();
+    reportExit();
+    const again = setInterval(() => {
+      if (acked || terminating) clearInterval(again);
+      else reportExit();
+    }, 500);
   });
 }
 

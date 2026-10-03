@@ -55,12 +55,16 @@ export interface Plan {
   volDirs: string[];
   skeleton: Entry[];
   fstab: string[];
+  // Made, and mounted, after the first table: what lies under a mount of
+  // the first (a widening's path under /tmp, say).
   late: Entry[];
+  lateFstab: string[];
   tools: Tools;
   uid: number;
   gid: number;
   initNode: string;
   initScript: string;
+  overlayTrial?: boolean;
 }
 
 export interface PlanInput {
@@ -104,16 +108,24 @@ export function hostMountPoints(): string[] {
 const esc = (p: string): string => p.replace(/[\\ \t\n]/g, (c) => `\\${c.charCodeAt(0).toString(8).padStart(3, '0')}`);
 
 class Builder {
-  readonly skeleton: Entry[] = [];
-  readonly fstab: string[] = [];
+  skeleton: Entry[] = [];
+  fstab: string[] = [];
+  readonly late: Entry[] = [];
+  readonly lateFstab: string[] = [];
   private readonly made = new Set<string>();
+
+  // From here on, entries and mounts go to the second phase.
+  second(): void {
+    this.skeleton = this.late;
+    this.fstab = this.lateFstab;
+  }
 
   constructor(
     private readonly stage: string,
     private readonly mounts: string[],
   ) {}
 
-  private entry(e: Entry): void {
+  entry(e: Entry): void {
     if (this.made.has(e.path)) return;
     this.made.add(e.path);
     this.skeleton.push(e);
@@ -225,6 +237,9 @@ export function buildPlan(input: PlanInput): Plan {
   b.line(join(vol, 'out'), '/surety/out', 'none', 'bind,nosuid,nodev');
   b.dir('/tmp', 0o1777);
   b.line(join(vol, 'tmp'), '/tmp', 'none', 'bind,nosuid,nodev');
+  const first = { skeleton: b.skeleton, fstab: b.fstab };
+  b.second();
+  b.entry({ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' });
   for (const p of input.readPaths) {
     for (const d of parents(p)) b.dir(d);
     b.bind(p);
@@ -240,9 +255,10 @@ export function buildPlan(input: PlanInput): Plan {
     volBytes: input.volBytes,
     volInodes: input.volInodes,
     volDirs: ['home', 'out', 'tmp'],
-    skeleton: b.skeleton,
-    fstab: b.fstab,
-    late: [{ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' }],
+    skeleton: first.skeleton,
+    fstab: first.fstab,
+    late: b.late,
+    lateFstab: b.lateFstab,
     tools: input.tools,
     uid: process.getuid?.() ?? 1000,
     gid: process.getgid?.() ?? 1000,
@@ -257,7 +273,7 @@ export function planFingerprint(plan: Plan): string {
   const strip = (s: string) => s.split(plan.stage).join('<root>').split(plan.vol).join('<vol>');
   const shape = {
     skeleton: plan.skeleton.map((e) => ({ ...e, content: e.content === undefined ? undefined : createHash('sha256').update(e.content).digest('hex') })),
-    fstab: plan.fstab.map(strip).filter((l) => !l.includes('/surety/context') && !l.includes('/surety/workspace')),
+    fstab: [...plan.fstab, ...plan.lateFstab].map(strip).filter((l) => !l.includes('/surety/context') && !l.includes('/surety/workspace')),
     volBytes: plan.volBytes,
     volInodes: plan.volInodes,
   };

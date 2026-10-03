@@ -148,16 +148,26 @@ export interface HostQualificationInput {
   checks: unknown[];
   probes: unknown[];
   evidence: string;
+  // Whether every required check passed (D2 §6: H1 to H12, H10 only on
+  // WSL2); and if not, which did not and why.
+  qualifies?: boolean;
+  unqualified?: string | null;
 }
 
-// The checks of a start passed (D2 §7.1): the row is written and the
-// previous one lapses. While the bootstrap exception is in force the row is
-// written and never active (D2 §2.6, N05).
+// The checks of a start (D2 §7.1): one row per start. A start whose checks
+// all passed writes its row `active` and lapses the previous one. A start
+// whose checks did not all pass writes its row already lapsed, with the
+// checks that kept it from qualifying as the reason, so what was observed is
+// kept and nothing about it is current. While the bootstrap exception is in
+// force the row is written and never active (D2 §2.6, N05).
 export function recordHostQualification(tx: Tx, args: HostQualificationInput, label: Record<string, unknown> = {}): HostQualificationRow {
   if (!tx.db.prepare('SELECT 1 FROM "records" WHERE "id" = ? AND "published" = 1').get(args.evidence)) throw notFound('record', args.evidence);
   const exception = engineSettings().ui_bootstrap === true;
+  const qualifies = args.qualifies !== false;
+  const active = qualifies && !exception;
+  const reason = exception ? 'bootstrap_exception' : qualifies ? null : `unqualified: ${args.unqualified ?? 'a required check did not pass'}`;
   const previous = currentHostQualification(tx.db);
-  if (previous && !exception) lapse(tx, previous, 'superseded');
+  if (previous && active) lapse(tx, previous, 'superseded');
   const id = tx.newId('hq_');
   tx.db
     .prepare(
@@ -176,14 +186,39 @@ export function recordHostQualification(tx: Tx, args: HostQualificationInput, la
       JSON.stringify(args.probes),
       exception ? 1 : 0,
       args.evidence,
-      exception ? 'lapsed' : 'active',
+      active ? 'active' : 'lapsed',
       args.incarnation,
       tx.at,
-      exception ? tx.at : null,
-      exception ? 'bootstrap_exception' : null,
+      active ? null : tx.at,
+      reason,
     );
-  if (!exception) tx.emit('host.qualified', { host_qualification: id }, { ...label, mechanism_fingerprint: args.mechanism_fingerprint, incarnation: args.incarnation });
+  if (active) tx.emit('host.qualified', { host_qualification: id }, { ...label, mechanism_fingerprint: args.mechanism_fingerprint, incarnation: args.incarnation });
   return getHostRow(tx.db, id)!;
+}
+
+export interface CheckResult {
+  id: string;
+  result: 'passed' | 'failed' | 'not_exercised';
+  observed: string | null;
+  remedy?: string | null;
+  required?: boolean;
+}
+
+// This start's row (any status), if its checks have been recorded.
+function thisStartsRow(db: Db): HostQualificationRow | undefined {
+  const incarnation = engineSettings().incarnation;
+  if (!incarnation) return undefined;
+  return db.prepare('SELECT * FROM "host_qualifications" WHERE "incarnation" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(incarnation) as HostQualificationRow | undefined;
+}
+
+// The first reason the host is not eligible, in the message's shape (D2 §6):
+// `isolation unqualified: H3 failed: <observed>; <remedy>; real backends are
+// refused until then.`
+export function unqualifiedMessage(checks: CheckResult[]): string | null {
+  const first = checks.find((c) => c.result === 'failed') ?? checks.find((c) => c.result === 'not_exercised' && c.required === true);
+  if (!first) return null;
+  const what = first.result === 'failed' ? 'failed' : 'not exercised';
+  return `isolation unqualified: ${first.id} ${what}: ${first.observed ?? 'nothing was observed'}${first.remedy ? `; ${first.remedy}` : ''}; real backends are refused until then.`;
 }
 
 // The host checks as this engine reports them (D2 §6; SEAM.md §§114, 118).
@@ -200,17 +235,33 @@ export function hostReport(db: Db) {
   // Who vouches for the host when the checks are left unrun (the seam names
   // itself); null when the eligibility rests on a qualification.
   const vouched = switches?.vouched ?? null;
-  const checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : null }));
+  const row = mode === 'run' ? thisStartsRow(db) : undefined;
+  let checks: CheckResult[];
+  let probes: unknown[] = [];
+  if (row) {
+    // What this start's checks observed, forced results included.
+    checks = JSON.parse(row.checks) as CheckResult[];
+    probes = JSON.parse(row.probes) as unknown[];
+  } else if (mode === 'run') {
+    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : 'not yet run at this start', required: id !== 'H13' }));
+  } else {
+    checks = HOST_CHECKS.map((id) => ({ id, result: forced[id] ?? 'not_exercised', observed: forced[id] ? `${forced[id]} (forced)` : null }));
+  }
   const failed = checks.filter((c) => c.result === 'failed').map((c) => c.id);
   const current = currentHostQualification(db) ?? null;
+  const eligible = failed.length === 0 && (vouched !== null || current !== null);
   return {
     mode,
-    eligible: failed.length === 0 && (vouched !== null || current !== null),
+    eligible,
     source: vouched ?? 'qualification',
     host_qualification: current?.id ?? null,
     mechanism_fingerprint: current?.mechanism_fingerprint ?? null,
     failed_checks: failed,
     checks,
+    probes,
+    // This start's row, active or not, and why it is not (D2 §7.1).
+    this_start: row ? { id: row.id, status: row.status, lapsed_reason: row.lapsed_reason, evidence: row.evidence, bootstrap_exception: row.bootstrap_exception === 1 } : null,
+    message: eligible ? null : (unqualifiedMessage(checks) ?? 'isolation unqualified: no current host qualification; real backends are refused until then.'),
   };
 }
 
@@ -587,13 +638,14 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
       entry.model,
     );
   }
+  const report = hostReport(db);
   const host = hostEligibility(db);
   if (!host.eligible) {
     return refuse(
       'isolation_unqualified',
-      `No current host qualification makes this host eligible to run ${backend}${host.failed_checks.length > 0 ? ` (failed: ${host.failed_checks.join(', ')})` : ''}.`,
+      `${report.message ?? 'isolation unqualified'} No current host qualification makes this host eligible to run ${backend}${host.failed_checks.length > 0 ? ` (failed: ${host.failed_checks.join(', ')})` : ''}.`,
       'Start the engine where the host checks pass; real backends are refused until then.',
-      { trust_entry: entry.id, host_eligibility: host },
+      { trust_entry: entry.id, host_eligibility: host, checks: report.checks.filter((c) => c.result !== 'passed').map((c) => c.id) },
       entry.version,
       entry.model,
     );

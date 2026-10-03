@@ -96,6 +96,16 @@ const MAIN_BARRIERS: readonly string[] = [
   'notify.delivered',
   // SEAM.md §§33, 45: one per journal kind and boundary.
   ...JOURNAL_KINDS.flatMap((kind) => JOURNAL_BOUNDARIES.map((boundary) => `journal.${kind}.${boundary}`)),
+  // M2 plan §2.3: the launch boundaries of D2 §3.2, the init's start of the
+  // backend, the record of termination, and the incarnation scope's creation
+  // (before the lock and the listener, so only `kill` can be released there).
+  'launcher.before_placement',
+  'launcher.placed',
+  'launcher.before_authorization',
+  'launcher.authorized',
+  'init.before_backend',
+  'boundary.before_terminated',
+  'scope.before_create',
 ];
 const BARRIER_NAMES: readonly string[] = [...WORKER_BARRIERS, ...MAIN_BARRIERS];
 const PROBE_OUTCOMES = ['absent', 'applied', 'partial', 'conflicting', 'unknown'];
@@ -134,8 +144,11 @@ type FaultSpec =
 type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
 // Faults the main thread fires (M2 plan §2.3): the bootstrap route's read of
-// the token.
-type MainFault = { point: 'token_read'; times: number; remaining: number; hit: number };
+// the token; the execution boundary's (the user manager unreachable, the
+// backend's exit report lost, a challenge's response dropped, a launcher's
+// exit that cannot be established).
+const MAIN_FAULTS = ['token_read', 'manager_unreachable', 'init_report_lost', 'challenge_response_dropped', 'launcher_wait'] as const;
+type MainFault = { point: (typeof MAIN_FAULTS)[number]; times: number; remaining: number; hit: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
 // interrupts rolls back and is reported like any other store failure.
@@ -311,10 +324,12 @@ export function clockOffsetMs(): number {
 // ---- backends and the execution boundary (main thread) ----------------------
 
 // The backends a dispatch may use. In M1 the only one is the scripted backend,
-// and only with --harness --harness-scripted (SEAM.md §§12, 13).
+// and only with --harness --harness-scripted (SEAM.md §§12, 13). In the
+// sandbox lane it runs inside the real sandbox, with its directory (the test's
+// instrument: its program, its scripts and its launch log) bound read-write.
 export function seamBackends(): BackendSpec[] {
   if (!init.harness || init.scripted === null) return [];
-  return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')] }];
+  return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')], binds: [{ path: init.scripted, writable: true }] }];
 }
 
 // The host checks switch and its overrides (SEAM.md §114): null outside
@@ -323,6 +338,15 @@ export function seamBackends(): BackendSpec[] {
 export function seamHostChecks(): { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'>; vouched: 'harness' | null } | null {
   if (!init.harness) return null;
   return { mode: init.hostChecks.mode, forced: { ...init.hostChecks.forced }, vouched: init.hostChecks.mode === 'unrun' ? 'harness' : null };
+}
+
+// Which execution boundary holds this engine's runs in harness mode
+// (SEAM.md §§14, 114): the scripted one in the kernel lane (`unrun`), the
+// real one in the sandbox lane (`run`). null outside harness mode, where
+// there is only the real one.
+export function seamBoundary(): 'scripted' | 'real' | null {
+  if (!init.harness) return null;
+  return init.hostChecks.mode === 'unrun' ? 'scripted' : 'real';
 }
 
 const INSTRUCTIONS = ['auto', 'running', 'terminated', 'unknown'];
@@ -693,7 +717,11 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
       armed:
-        isObject(body) && body.point === 'tick_step' ? armTickFault(body) : isObject(body) && body.point === 'token_read' ? armMainFault(body) : await storeOp(OP.armFault, body),
+        isObject(body) && body.point === 'tick_step'
+          ? armTickFault(body)
+          : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
+            ? armMainFault(body)
+            : await storeOp(OP.armFault, body),
     }));
   }
   // The "help" of a stand-in binary is its own file (SEAM.md §116).
@@ -848,13 +876,26 @@ function fire(matches: (f: Fault) => boolean, what: string): void {
   throw new InjectedFault(what);
 }
 
-function armMainFault(body: Record<string, unknown>): { point: 'token_read'; times: number } {
+function armMainFault(body: Record<string, unknown>): { point: MainFault['point']; times: number } {
   const times = body.times === undefined ? 1 : body.times;
+  const point = body.point as MainFault['point'];
   if (Object.keys(body).some((k) => k !== 'point' && k !== 'times') || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
-    throw new Refusal(400, 'invalid_value', 'Unknown token_read fault.', 'Send {"point":"token_read","times"?: <n>}.', { field: 'point' });
+    throw new Refusal(400, 'invalid_value', `Unknown ${point} fault.`, `Send {"point":"${point}","times"?: <n>}.`, { field: 'point' });
   }
-  mainFaults.push({ point: 'token_read', times, remaining: times, hit: 0 });
-  return { point: 'token_read', times };
+  mainFaults.push({ point, times, remaining: times, hit: 0 });
+  return { point, times };
+}
+
+// A main-thread fault of the execution boundary (M2 plan §2.3): true, once
+// per arming (or `times` times), where the engine is to behave as if the
+// fault had happened. Always false outside harness mode.
+export function seamMainFault(point: Exclude<MainFault['point'], 'token_read'>): boolean {
+  if (!init.harness) return false;
+  const f = mainFaults.find((m) => m.point === point && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 // The bootstrap route reads the token (M107; D2 §2.6): an armed `token_read`

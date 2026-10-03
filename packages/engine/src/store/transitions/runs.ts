@@ -16,6 +16,7 @@ import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { resolveBackend } from './trust.js';
+import { closeLaunch } from './boundary.js';
 import { keyVariable } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
@@ -123,12 +124,14 @@ function statuses(tx: Tx, invocation: string): InvocationStatus[] {
   );
 }
 
-function observe(tx: Tx, run: RunRow, invocation: string, status: InvocationStatus): void {
+function observe(tx: Tx, run: RunRow, invocation: string, status: InvocationStatus, exit: { exit_class: string | null; exit_evidence: string | null } | null = null): void {
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "invocation_status_observations" WHERE "invocation" = ?').get(invocation) as { n: number };
   tx.db
-    .prepare('INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at") VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(tx.newId('iso_'), tx.at, run.project, invocation, n, status, tx.at);
-  tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status, seq: n });
+    .prepare(
+      'INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(tx.newId('iso_'), tx.at, run.project, invocation, n, status, tx.at, exit?.exit_class ?? null, exit?.exit_evidence ?? null);
+  tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) });
 }
 
 const TERMINAL_OBSERVATIONS: InvocationStatus[] = ['ended', 'unknown', 'refused'];
@@ -157,6 +160,9 @@ export interface ClaimArgs {
   // The provider-side cap held with each secret reference that has one
   // (D2 §4.2, Q2; SEAM.md §120).
   providerCaps?: Record<string, number>;
+  // The incarnation's scope, when the run's domain is a cgroup of the real
+  // boundary (D2 §§3.1, 3.2): the domain is allocated with its path under it.
+  scope?: string | null;
 }
 
 export interface Claim {
@@ -172,6 +178,9 @@ export interface Claim {
   base_revision: string;
   // When the run lease was taken, on the engine clock.
   lease_renewed_at: string;
+  // The domain's cgroup under the incarnation's scope; null on the scripted
+  // boundary.
+  cgroup_path: string | null;
   // The backend the run is dispatched to (D2 §4.1): the trust entry that
   // authorizes it, if any; or why it is refused before any domain or
   // process (`backend_refused`, `isolation_unqualified`,
@@ -322,9 +331,15 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
   const invocation = allocateReceipt(tx, run, { trustEntry });
   const domain = tx.newId('dom_');
+  // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
+  // with its cgroup path when the real boundary will hold it.
+  const cgroupPath = args.scope ? `${args.scope}/${domain}` : null;
   tx.db
-    .prepare(`INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status") VALUES (?, ?, ?, ?, ?, 'allocated')`)
-    .run(domain, tx.at, item.project, run, invocation);
+    .prepare(
+      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state")
+       VALUES (?, ?, ?, ?, ?, 'allocated', 'role', ?, 'authorizable')`,
+    )
+    .run(domain, tx.at, item.project, run, invocation, cgroupPath);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
@@ -341,6 +356,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     deadline_at: deadlineAt,
     base_revision: baseRevision,
     lease_renewed_at: tx.at,
+    cgroup_path: cgroupPath,
     backend: backend.backend,
     trust_entry: trustEntry,
     entry:
@@ -566,16 +582,25 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
 // launched. A later step of the run-end protocol, repeated after a failure,
 // then reads it from the store and cannot charge an invocation that never ran
 // (SEAM.md §24).
-export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean }): void {
+export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean; evidence?: Record<string, unknown> | null }): void {
   const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
-    | { id: string; run: string; project: string; status: DomainStatus; invocation: string }
+    | { id: string; run: string; project: string; status: DomainStatus; invocation: string; launch_state: string; exit_class: string | null; exit_evidence: string | null }
     | undefined;
   if (!d) throw notFound('domain', args.domain);
   if (d.status === 'terminated') return;
   assertEdge('DomainStatus', d.status, 'terminated', { domain: d.id });
-  tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated' WHERE "id" = ?`).run(d.id);
+  // D2 A.4: a domain is terminated only with its launch closed. On the real
+  // boundary closure has its own transaction, before any signal; on the
+  // scripted boundary of the kernel lane, where no launcher exists, it is
+  // recorded here.
+  closeLaunch(tx, { domain: d.id, cause: 'termination' });
+  tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`).run(tx.at, tx.at, d.id);
   tx.db.prepare('UPDATE "process_ownership" SET "termination_confirmed_at" = ? WHERE "domain" = ?').run(tx.at, d.id);
-  tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, { from: d.status, observed: args.observed });
+  const payload: Record<string, unknown> = { from: d.status, observed: args.observed };
+  if (args.evidence) payload.evidence = args.evidence;
+  if (d.exit_class) payload.exit_class = d.exit_class;
+  if (d.exit_evidence) payload.exit_evidence = JSON.parse(d.exit_evidence) as unknown;
+  tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, payload);
   if (!args.observed) {
     const seen = statuses(tx, d.invocation);
     if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
@@ -650,7 +675,11 @@ export function finishRun(
     let terminal = args.invocations[receipt.id];
     if (terminal === undefined) terminal = seen.includes('launched') ? 'ended' : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     if (seen.includes('launched') && terminal === 'refused') terminal = 'unknown';
-    observe(tx, run, receipt.id, terminal);
+    // How the backend ended, as the boundary established it (D2 §1.6, A.3).
+    const exit = tx.db.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "invocation" = ? ORDER BY "created_at" DESC LIMIT 1').get(receipt.id) as
+      | { exit_class: string | null; exit_evidence: string | null }
+      | undefined;
+    observe(tx, run, receipt.id, terminal, terminal === 'refused' ? null : (exit ?? null));
     if (terminal !== 'refused') chargeInvocation(tx, run, receipt);
   }
 
@@ -793,7 +822,18 @@ export interface EndFacts {
   run: RunRow;
   repo: string;
   lease: LeaseRow | null;
-  domains: { id: string; status: DomainStatus; invocation: string; pid: number | null; pgid: number | null; pid_start_time: string | null }[];
+  domains: {
+    id: string;
+    status: DomainStatus;
+    invocation: string;
+    pid: number | null;
+    pgid: number | null;
+    pid_start_time: string | null;
+    cgroup_path: string | null;
+    cgroup_inode: number | null;
+    launch_binding: string | null;
+    incarnation: string;
+  }[];
   receipts: { id: string; statuses: InvocationStatus[] }[];
   workspace: { id: string; path: string; disposition: string; base_revision: string; current_base: string; snapshot_tree: string | null; metadata_baseline: string | null } | null;
 }
@@ -803,7 +843,7 @@ export function endFacts(tx: Tx, runId: string): EndFacts {
   const repo = (tx.db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(run.project) as { dev_repo_path: string }).dev_repo_path;
   const domains = tx.db
     .prepare(
-      `SELECT d."id", d."status", d."invocation", o."pid", o."pgid", o."pid_start_time"
+      `SELECT d."id", d."status", d."invocation", o."pid", o."pgid", o."pid_start_time", d."cgroup_path", d."cgroup_inode", d."launch_binding", o."incarnation"
        FROM "execution_domains" d LEFT JOIN "process_ownership" o ON o."domain" = d."id" WHERE d."run" = ? ORDER BY d."id"`,
     )
     .all(runId) as EndFacts['domains'];

@@ -13,6 +13,8 @@ export interface EngineSettings {
   decision_targets: Record<string, number | null>;
   // D2 §2.6: the bootstrap exception is in force.
   ui_bootstrap?: boolean;
+  // The running incarnation, set when the store is opened.
+  incarnation?: string;
 }
 
 let settings: EngineSettings | null = null;

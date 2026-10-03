@@ -8,6 +8,9 @@
 //      are accounted for (journal/driver.ts), and taken the way its probe
 //      outcome leads: finalize, retry, complete, withdraw or block. A blocked
 //      operation does not keep the engine restricted.
+//   1a. The execution boundary (D2 §3.3): every domain not terminated is
+//      closed; every prior incarnation's supervisor leaf is killed and
+//      observed empty, or what could not be makes its domains `unknown`.
 //   2. Every run that has not ended goes through the run-end protocol: an
 //      outcome already recorded is kept, a run with none gets `recovered`,
 //      and its run.ended event records this incarnation's recovery. The
@@ -26,10 +29,21 @@ import { auditRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { reconcileProject } from '../scheduler/tick.js';
+import { closePriorSupervisors } from '../boundary/terminate.js';
 import type { RunRow } from '../store/transitions/runs.js';
 
 export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Journal): Promise<{ runs: number }> {
   await reconcileProject(rt, journal);
+
+  // D2 §3.3: before any run is ended, every domain not terminated is closed,
+  // so no launcher of a prior incarnation can be authorized; then the
+  // supervisor leaf of every prior incarnation of this home is killed and
+  // observed empty, or its scope's absence established. What cannot be
+  // makes that incarnation's domains `unknown`.
+  const open = await rt.read<{ id: string }[]>('boundary.unterminated');
+  for (const d of open) await rt.engine('domain.close', { domain: d.id, cause: 'recovery' });
+  const prior = await rt.read<{ incarnation: string; scope_cgroup: string }[]>('boundary.prior_scopes', { incarnation: rt.incarnation });
+  if (prior.length > 0 || rt.scope !== null) ender.priorUnknown = await closePriorSupervisors(rt, prior);
 
   const runs = await rt.engine<RunRow[]>('run.unended');
   const recovery = { recovery: rt.incarnation };

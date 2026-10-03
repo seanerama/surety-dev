@@ -14,6 +14,9 @@ import { processState } from './invoke/processes.js';
 import type { Journal } from './journal/driver.js';
 import type { Claim, Outcome, ReasonClass } from './store/transitions/runs.js';
 import type { StoreClient } from './store/client.js';
+import type { Scope } from './boundary/scope.js';
+import type { SandboxLaunch } from './invoke/sandboxed.js';
+import { seamBoundary } from './testing/seam.js';
 
 export interface RunEnd {
   outcome: Outcome;
@@ -25,6 +28,9 @@ export interface RunEnd {
   // Recorded with the outcome (runs.reason_text, runs.reason_detail).
   reasonText?: string;
   detail?: Record<string, unknown>;
+  // Recorded as decided, whatever the lease's expiry: a deadline or a budget
+  // found passed when the engine resumed from a pause (D2 §3.5).
+  asIs?: boolean;
 }
 
 export interface RunHandle {
@@ -79,6 +85,17 @@ export interface RunHandle {
   // Set when the role sent a valid result that could not be recorded
   // however often it was tried: why (SEAM.md §61).
   resultLost: string | null;
+  // On the real boundary: the launch (the launcher, then the domain init's
+  // channel), from its spawn on (D2 §§1.1, 3.2).
+  sandbox: SandboxLaunch | null;
+  // The backend has been started inside the sandbox (the init said so).
+  backendStarted: boolean;
+  // The project's approved `sandbox_read_paths`, validated for this launch.
+  readPaths: string[];
+  // While the engine has resumed from a pause that outlived the run lease:
+  // what the role sent meanwhile, and its exit, held until the tick's fresh
+  // challenge decides (D2 §3.5).
+  gate: { lines: string[]; exit: (() => void) | null; released: Promise<void>; release: () => void } | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -110,6 +127,10 @@ export function newHandle(claim: Claim): RunHandle {
     baseline: null,
     output: null,
     resultLost: null,
+    sandbox: null,
+    backendStarted: false,
+    readPaths: [],
+    gate: null,
   };
 }
 
@@ -164,6 +185,8 @@ export interface Services {
   journal(project: string): Promise<void>;
   // Make the effect of a consumed decision (decisions/effects.ts).
   effect(intent: string): Promise<void>;
+  // The re-grant of an expired run lease after a pause (D2 §3.5).
+  regrant(run: string): Promise<boolean>;
 }
 
 export class Runtime {
@@ -186,8 +209,57 @@ export class Runtime {
     mkdirSync(this.scratch, { recursive: true, mode: 0o700 });
   }
 
-  setting(key: 'tick_interval' | 'tick_budget' | 'tick_step_budget' | 'terminate_grace' | 'kill_grace' | 'max_concurrent_runs' | 'git_deadline' | 'lease_ttl'): number {
+  // The incarnation scope (D2 §3.1), null when the engine runs without one.
+  scope: Scope | null = null;
+  private hostChecks: (() => Promise<unknown>) | null = null;
+  private recheck: Promise<unknown> | null = null;
+
+  setting(
+    key:
+      | 'tick_interval'
+      | 'tick_budget'
+      | 'tick_step_budget'
+      | 'terminate_grace'
+      | 'kill_grace'
+      | 'max_concurrent_runs'
+      | 'git_deadline'
+      | 'lease_ttl'
+      | 'domain_memory_max'
+      | 'domain_tasks_max'
+      | 'domain_writable_bytes'
+      | 'domain_writable_inodes'
+      | 'pause_challenge_timeout',
+  ): number {
     return this.config.values[key];
+  }
+
+  // Which execution boundary a run's domain is held by (D2 §5 C3): the real
+  // one, through the launcher, the sandbox and the incarnation's scope; or,
+  // only in harness mode, the scripted boundary of the kernel lane (SEAM.md
+  // §§14, 114), which the harness also falls back to when this start has no
+  // scope (M2 plan M110 (b)). Outside harness mode it is always the real one;
+  // without a scope no real backend is eligible to be dispatched to it.
+  boundary(): 'scripted' | 'real' {
+    const harness = seamBoundary();
+    if (harness === 'scripted') return 'scripted';
+    if (harness === 'real' && this.scope === null) return 'scripted';
+    return 'real';
+  }
+
+  // The host checks, run at start and again when a sandbox fails to build
+  // (D2 §7.1).
+  async runHostChecks(run: () => Promise<unknown>): Promise<void> {
+    this.hostChecks = run;
+    await run();
+  }
+
+  rerunHostChecks(): void {
+    if (!this.hostChecks || this.recheck) return;
+    this.recheck = this.hostChecks()
+      .catch((err) => log('host checks', err, { cause: 'sandbox build failed' }))
+      .finally(() => {
+        this.recheck = null;
+      });
   }
 
   // An engine transition: one store transaction, actor engine.
@@ -211,7 +283,7 @@ export class Runtime {
   requestEnd(handle: RunHandle, end: RunEnd): void {
     if (handle.ending) return;
     handle.ending = true;
-    handle.intended = { ...end, decidedAt: end.decidedAt ?? isoAt(nowMs()) };
+    handle.intended = end.asIs ? { ...end } : { ...end, decidedAt: end.decidedAt ?? isoAt(nowMs()) };
     void this.services?.endRun(handle.claim.run, handle.intended).catch((err) => log('run end', err, { run: handle.claim.run }));
   }
 
@@ -264,6 +336,13 @@ export class Runtime {
         for (const [run, handle] of this.handles) {
           if (handle.ending || handle.phase === 'never' || handle.phase === 'aborted') continue;
           if (now >= handle.deadlineMs) {
+            // A run on the real boundary whose lease the engine has not
+            // renewed for a whole lease_ttl was paused with the engine: the
+            // tick's re-grant decides it, its deadline first (D2 §3.5).
+            if (handle.sandbox !== null && now - handle.renewedAtMs >= this.setting('lease_ttl') * 1000) {
+              this.services?.requestTick();
+              continue;
+            }
             this.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline' });
             continue;
           }

@@ -96,8 +96,8 @@ export const EVENT_OWNERS = {
   'notification.unknown': 'store/transitions/notify.ts',
   'environment.observed': 'store/transitions/environments.ts',
   'engine.backup': 'store/transitions/engine.ts',
-  // D2 A.5, the trust table's part. The domain, egress, lease and secret
-  // events join with the sandbox lane's slices, which emit them.
+  // D2 A.5, the trust table's part. The egress and secret events join with
+  // the sandbox lane's later slices, which emit them.
   'host.qualified': 'store/transitions/trust.ts',
   'host.qualification_lapsed': 'store/transitions/trust.ts',
   'qualification.proposed': 'store/transitions/trust.ts',
@@ -106,6 +106,11 @@ export const EVENT_OWNERS = {
   'trust.proposed': 'store/transitions/trust.ts',
   'trust.activated': 'store/transitions/trust.ts',
   'trust.revoked': 'store/transitions/trust.ts',
+  // D2 A.5, the boundary's part (M2 slice 11).
+  'domain.placed': 'store/transitions/boundary.ts',
+  'domain.launch_authorized': 'store/transitions/boundary.ts',
+  'domain.launch_closed': 'store/transitions/boundary.ts',
+  'run.lease_regranted': 'store/transitions/boundary.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;
