@@ -464,7 +464,7 @@ function signalAllRefusal(spec) {
 //   - this process sees at most SIGNAL_ALL_MAX_VISIBLE processes.
 // Returns the reasons to refuse; an empty list means it may run. It writes
 // nothing, connects to nothing and starts no process.
-const GUARDED = new Set(['write_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -975,6 +975,40 @@ async function runProbe(spec) {
           entry.outcome = 'refused';
           entry.error = errorOf(err);
         }
+        break;
+      }
+      case 'git_path_probe': {
+        // P4, P5 (D2 A.6): where git resolves one of its own paths
+        // (`git rev-parse --git-path <name>`), what is there, and whether
+        // a file can be created or written at it.
+        const done = spawnSync('git', ['rev-parse', '--git-path', spec.name], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
+        entry.name = spec.name;
+        entry.status = done.status;
+        entry.stderr = (done.stderr ?? '').slice(0, 500);
+        if (done.status !== 0) {
+          entry.outcome = 'unresolved';
+          break;
+        }
+        const resolved = resolve(process.cwd(), done.stdout.trim());
+        entry.resolved = resolved;
+        try {
+          const st = statSync(resolved);
+          entry.type = typeOf(st);
+          if (st.isDirectory()) entry.listing = readdirSync(resolved).sort();
+        } catch (err) {
+          entry.type = `absent:${errorOf(err)}`;
+        }
+        // A directory: a new file inside it; a file: an append to it.
+        const target = spec.create !== undefined ? join(resolved, spec.create) : resolved;
+        entry.target = target;
+        try {
+          if (spec.create !== undefined) writeFileSync(target, spec.content ?? '#!/bin/sh\necho planted by the role\n', { mode: 0o755 });
+          else appendFileSync(target, spec.content ?? '\n[probe]\n\tliteral = written\n');
+          entry.write = { outcome: 'written' };
+        } catch (err) {
+          entry.write = { outcome: 'refused', error: errorOf(err) };
+        }
+        entry.outcome = 'probed';
         break;
       }
       case 'protected_ops': {

@@ -170,7 +170,8 @@
     "12": [
       "M110-qualification-per-start.test.mjs",
       "M119-validated-mount-plan.test.mjs",
-      "M120-control-plane-invisible.test.mjs"
+      "M120-control-plane-invisible.test.mjs",
+      "M121-git-view.test.mjs"
     ]
   },
   "sandbox": [
@@ -185,6 +186,7 @@
     "M118-pause-regrant.test.mjs",
     "M110-qualification-per-start.test.mjs",
     "M119-validated-mount-plan.test.mjs",
-    "M120-control-plane-invisible.test.mjs"
+    "M120-control-plane-invisible.test.mjs",
+    "M121-git-view.test.mjs"
   ]
 }

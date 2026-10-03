@@ -27,7 +27,7 @@ import { newId } from '../ids.mjs';
 import { getPolicy } from '../journal.mjs';
 import { readRun } from '../reads.mjs';
 import { recordFile, recordRow } from '../records.mjs';
-import { assertRunEnded, requestTick, runsOf, tick, waitForRun, waitForRunState, waitForWork } from '../runs.mjs';
+import { assertRunEnded, requestTick, runsOf, stopRun, tick, waitForRun, waitForRunState, waitForWork } from '../runs.mjs';
 import { VALID_RESULT, acting, hostNamespaces, namespacesOf, script, step } from '../scripted.mjs';
 import { eventsNamed } from '../trust.mjs';
 import { cgroupOfPid } from './cgroup.mjs';
@@ -65,12 +65,17 @@ export async function addProfiledWork(fx, project, kind = 'verification', { prof
 // holds at "armed"; the test reads from the host that the role is contained;
 // `release()` lets the role run `acts(acting(hostNs))` (the guarded probes)
 // and `after`, send a valid result (unless `result` is false) and exit, and
-// waits for the run to end. Returns {run, domain, launch, member, release,
-// probes, probe}: `probes(action)` are the role's entries of that action,
-// `probe(action, label)` the one entry, required to exist.
-export async function armedRole(fx, project, item, { before = [], acts = () => [], after = [], result = {}, on_term = 'exit', timeoutMs = 90_000 } = {}) {
+// waits for the run to end. With `thenHold`, the role sends no result and
+// holds again at "done" after its steps: `release()` then returns once it
+// is there, so that the host can be read with the role's steps behind it and
+// its domain still alive, and `stop()` ends the run by a Stop. Returns {run,
+// domain, launch, member, release, stop, probes, probe, gits}: `probes(action)`
+// are the role's entries of that action, `probe(action, label)` the one
+// entry, required to exist; `gits()` its `git` steps' entries in order.
+export async function armedRole(fx, project, item, { before = [], acts = () => [], after = [], result = {}, thenHold = false, on_term = 'exit', timeoutMs = 90_000 } = {}) {
   const hostNs = hostNamespaces();
-  const steps = [...before, step.hold('armed'), ...acts(acting(hostNs)), ...after, ...(result === false ? [] : [step.result({ ...VALID_RESULT, ...result })])];
+  const ending = thenHold ? [step.hold('done')] : result === false ? [] : [step.result({ ...VALID_RESULT, ...result })];
+  const steps = [...before, step.hold('armed'), ...acts(acting(hostNs)), ...after, ...ending];
   fx.scripted.script(item, [{ steps, on_term }]);
   await tick(fx.engine, project);
   const launch = await fx.scripted.waitForHolding({ work_item: item }, 'armed');
@@ -82,14 +87,20 @@ export async function armedRole(fx, project, item, { before = [], acts = () => [
   const probe = (action, label) => {
     const found = probes(action, label);
     assert.equal(found.length, 1, `the role logged one ${action} probe${label === undefined ? '' : ` labelled ${label}`} (it logged ${found.length}; all: ${fx.scripted.probes(launch.invocation).map((p) => `${p.action}${p.label ? `:${p.label}` : ''}`).join(', ') || 'none'})`);
-    if (found[0].guard !== undefined) assert.equal(found[0].outcome === 'refused_unsandboxed', false, `the role program's own guard let ${action} run inside the sandbox (${JSON.stringify(found[0].guard)})`);
+    if (found[0].guard !== undefined) assert.notEqual(found[0].outcome, 'refused_unsandboxed', `the role program's own guard let ${action} run inside the sandbox (${JSON.stringify(found[0].guard)})`);
     return found[0];
   };
+  const gits = () => fx.scripted.eventsOfInvocation(launch.invocation, 'git');
   const release = async () => {
     fx.scripted.release(item, 'armed');
+    if (thenHold) return fx.scripted.waitForHolding({ work_item: item }, 'done', { timeoutMs });
     return waitForRunState(fx.home, run.id, 'ended', { timeoutMs });
   };
-  return { run, domain, launch, member, hostNs, release, probes, probe };
+  const stop = async () => {
+    await stopRun(fx.engine, project, run.id);
+    return waitForRunState(fx.home, run.id, 'ended', { timeoutMs });
+  };
+  return { run, domain, launch, member, hostNs, release, stop, probes, probe, gits };
 }
 
 // The same, released at once: for a role whose probes need nothing read

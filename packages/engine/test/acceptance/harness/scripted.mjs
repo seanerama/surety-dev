@@ -90,7 +90,7 @@ export const step = {
 // refuses to script one, and `acting(hostNamespaces())` scripts them. A test
 // releases a role into one only after it has read, from the host, that the
 // role is contained (harness/sandbox/view.mjs, assertContained).
-export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
 const NS_KINDS = ['pid', 'net', 'mnt'];
 const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
 
@@ -118,6 +118,9 @@ export function acting(hostNs) {
   return {
     // Create or overwrite a file at `path` (absolute, or relative to the workspace).
     write: (path, args = {}) => one('write_probe', { path, ...args }),
+    // P4, P5: where git resolves `name` (config, hooks), what is there, and
+    // a write at it (`create`: a new file of that name inside it).
+    gitPath: (name, args = {}) => one('git_path_probe', { name, ...args }),
     // P19: every way of changing the protected file and directory given (workspace-relative).
     protectedOps: (file, dir, args = {}) => one('protected_ops', { file, dir, ...args }),
     // The role's own /dev/shm: a file written and read back.
