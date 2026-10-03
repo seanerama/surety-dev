@@ -97,3 +97,124 @@ The table is **engine-owned**: only the qualification transition writes a row, a
 **4.5 Claude Code 2.1.288** (T2). Proposed template: `claude --bare -p --output-format stream-json --verbose --model <m> --tools <role list> --permission-mode bypassPermissions --no-session-persistence --session-id <uuid> <prompt>`, with `ANTHROPIC_API_KEY` from the grant. Established from `claude --help`: every flag above exists; `-p` skips the workspace trust dialog and silently ignores settings files that fail validation; `--bare` skips hooks, plugins, CLAUDE.md auto-discovery and keychain reads and takes Anthropic authentication "strictly" from `ANTHROPIC_API_KEY` or an `apiKeyHelper`, never OAuth; `--tools` sets "the list of available tools from the built-in set", where `--allowed-tools` only pre-approves (CH §3.7 records at 2.1.281 that non-prompting tools ran whatever the allow list said); `--max-turns` is absent from help (CH records it as accepted but hidden). Not established, each with the method that will establish it in the canary of §7.2: that `--verbose` is still required with `stream-json` (CH, 2.1.281); which stream events carry usage and whether per model call (CH records `usage` and `total_cost_usd` on the final `result` line at 2.1.281), hence `usage_boundary`; the terminal success fields (CH: `subtype`, `is_error`); whether `--tools` removes `Agent`, `ScheduleWakeup` and `Workflow` (CH incident 7), read from the stream's initial event if it lists tools; that `HTTPS_PROXY`, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` are honoured (names present in the binary) and which hosts it contacts; what it writes despite `--no-session-persistence`; exit statuses; TERM behaviour; and whether `bypassPermissions` is refused for a process that believes itself root, which the nested user namespace avoids by running the role as uid 1000. Cost reporting: `reported` if `total_cost_usd` is present at this version.
 
 **4.6 Codex CLI 0.159.2** (T2). Proposed template: `codex exec --json --ephemeral --ignore-user-config --ignore-rules --strict-config --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -C /surety/workspace -m <m> -o /surety/out/last-message.txt -`, with the prompt on standard input and `CODEX_HOME` in the private home. Established from `codex exec --help`: every flag above; `--ignore-user-config` still takes authentication from `CODEX_HOME`; `--dangerously-bypass-approvals-and-sandbox` is "intended solely for running in environments that are externally sandboxed", which is this mode (§9.2 Q5 on keeping Codex's own sandbox); `codex login --with-api-key` reads a key from standard input (`codex login --help`). Observed on disk: the release ships its own `bwrap` ("bubblewrap built for Codex") under `codex-resources/`, which is Codex's sandbox and not a host tool the engine uses; `~/.codex` holds `sessions/`, several SQLite state files and an app-server control socket. Not established, each settled by the canary: how the credential is best delivered (`OPENAI_API_KEY` is present in the binary; whether `exec` honours it without a login is not stated); which events carry usage and at what granularity (Verity's driver, `verity/bin/lib/agents/codex.cjs:754`, reads `usage` from `turn.completed` at 0.154.0, one per user turn, which would make `usage_boundary` `invocation`); whether the stream carries a thread id; the terminal success and failure events (CH: `turn.failed`, `error`); whether `exec` uses the shared app-server daemon (top-level `--no-daemon` exists; `exec` help does not list it); whether `multi_agent` is still on by default and must be passed to `--disable` (CH records it at 0.146.0 and 0.154.0; `codex features list` would show it and was not run); whether `HTTPS_PROXY` is honoured; what `--ephemeral` still writes; TERM behaviour. Cost reporting: `tokens_only` (CH §3.7), so its cost is `estimated` or `unknown` (§5 C4).
+
+---
+
+## 5. Decisions carried in by the build
+
+Each is a proposal for Sean with its alternative. None changes M1's accepted behaviour until he decides and a test pins it.
+
+**C1. What a real Reviewer proposes for the Alpha exception** (E34 item 4, E36 item 5). *Proposed.* A Reviewer run's structured result may carry `alpha_exception_proposals`, each naming a finding by id, the containment argument as text with references to workspace paths or records, and the testing purpose. The engine refuses a proposal before raising anything if the finding is not High, has a `sensitive_area`, or is not open against the candidate the Reviewer reviewed; otherwise it publishes the argument as a `containment_evidence` record with provenance `claimed` (D1 §3.4) and raises `finding_disposition` with an option `alpha_exception` whose effect plan writes `findings.alpha_exception` bound to the candidate's acceptance content hash. Only the human owner can consume it. Only a Reviewer run may propose; a Builder or Verifier field of that name makes the result invalid. The exception still never overrides a non-passed check (D1 §9.3 input 5). *Alternative:* a separate decision kind `alpha_exception`, which makes the exception visible as its own queue item at the cost of a 28th kind.
+
+**C2. The two Reviewer powers of E41** (E44 item 2, E48 item 3). A Reviewer that is a real agent reads role-written content, so what it decides alone is a claim that text in the candidate can steer. *(a) Lowering a finding from Critical to High. Proposed:* any lowering from Critical requires the human through `severity_lower`; the Reviewer proposes it. Critical to High at Alpha is one Alpha exception away from non-blocking, so it is a lowering "out of blocking range for the relevant stage" (F §6.3) once C1 exists. *Alternative:* F §6.3 read literally: High still blocks at every stage without an exception, and the exception needs the human (C1), so the Reviewer may lower Critical to High alone. *(b) A tightening a Reviewer approved, applied without a second classification. Proposed:* the classification is part of the effect's preconditions (proposal tree, base, effective protected version, classifier version), so application re-runs classification against the current effective version and an inequality invalidates the intent with `EFFECT_PRECONDITION_CHANGED` (D1 §10.5); and until D3's classifier is qualified, a Reviewer run's approval of a tightening is recorded as a recommendation while the human approves through `check_correction_tightening` (RN R4). *Alternative:* keep Reviewer authority over tightenings and add only the re-classification at application. Both changes are proposed corrections K7 and K8 (§9.1).
+
+**C3. Roles reading the token** (E25 item 2). M1 accepted that a scripted role, running as the engine's user in a directory under the engine home, could read `api.token`. *Proposed withdrawal:* once D2 is built, every dispatch outside harness mode runs in the sandbox of §2, and the scripted backend runs in it too whenever the harness is not using the scripted boundary, so the probe suite of §2.8 is executed against the real mechanism on every start. The acceptance is withdrawn by three tests: a scripted role in the `probe` profile finds `api.token`, `store.db` and `records/` absent and the API unreachable, with positive controls; a dispatch to an active entry is refused `isolation_unqualified` when the host qualification has lapsed; and no trust entry can be activated with `isolation` other than the sandbox mechanism. M1's existing tests, which run scripted roles unsandboxed against the scripted boundary, keep testing the kernel's reactions only (BS §8) and are labelled so in the M2 report. *Alternative:* none that keeps D1 §17 item 12; the only choice is whether the M1 tests are migrated into the sandbox, which the proposal does not require.
+
+**C4. Estimated cost and the daily budget** (E32 item 4, E37 carried). *Proposed:* the check of `budget_day_verified_usd` sums `reported` and `estimated` costs, each shown separately in the ledger read, because an estimate is closer to the truth than zero and Codex reports only tokens (§4.6), so without it a tokens-only backend would be bounded in dollars by nothing; the price table's version stays on each row (D1 §3.6). An invocation whose token counts are unknown charges its run's `budget_run_billable_tokens` against `budget_day_unknown_tokens`, so it is bounded by tokens as well as time (E16b). *Alternative:* a separate `budget_day_estimated_usd`, which keeps "verified" strictly reported at the cost of a fourth limit the operator must set. Proposed correction K6.
+
+---
+
+## 6. Host requirements the engine checks
+
+The engine runs these at every start and records each result; a failure leaves the engine running with real backends refused (`isolation_unqualified`) and the failing check, the value observed and the remedy readable on `GET /v1/engine`. None is a package dependency (brief §4).
+
+| Id | Requirement | How the engine checks it | Observed on this host |
+|---|---|---|---|
+| H1 | Linux, kernel at least 5.14 (`cgroup.kill`) | `uname`, and the file's presence in the engine's own scope | 6.6.87.2-microsoft-standard-WSL2 |
+| H2 | cgroup v2 unified at `/sys/fs/cgroup`, mounted `nsdelegate` | `/proc/self/mountinfo` | yes |
+| H3 | The user's systemd manager reachable; a transient scope with delegation creatable and owned by the engine's uid | the start-time re-exec itself (§3.1) | yes |
+| H4 | `memory` and `pids` controllers available in that scope; `cgroup.kill` and `cgroup.freeze` present | read `cgroup.controllers` and the files | `cpu memory pids` |
+| H5 | Unprivileged user namespaces with mount, pid, network, ipc, uts and cgroup namespaces | the probe suite's launch | yes |
+| H6 | `unshare` and `setpriv` (util-linux) and `ip` (iproute2), resolved to absolute paths, versions recorded | resolve and run `--version` | util-linux 2.39.3, `/usr/sbin/ip` |
+| H7 | The engine's `node` runnable from a read-only bind inside the sandbox | the probe suite's domain init | Node v22.22.0 |
+| H8 | The engine home on a permitted filesystem (E36 item 7) and outside every path a profile mounts | existing check; the profile's mount set | yes |
+| H9 | The isolation probe suite (A.6) passes, every negative with its positive control | §2.8 | not run (no engine yet) |
+| H10 | WSL2 only: the interop handler unreachable from a sandbox and no DrvFs or 9p mount visible | probes P11, P12 | `WSLInterop-late`, interpreter `/init`, flags `P` |
+
+Example message: `isolation unqualified: H3 failed: the systemd user manager is not reachable (XDG_RUNTIME_DIR unset); start surety from a login session of uid 1000 with a running user manager; real backends are refused until then.`
+
+---
+
+## 7. Qualification
+
+**7.1 A host.** Host qualification is the H checks of §6, run as a new startup step between repository integrity and lifting the listener to full mode (D1 §1.4 steps 5 and 6), bounded by `tick_step_budget`. Passing writes a `host_qualifications` row with the host identity (machine id), the kernel release, the tool versions, each check's observed value, and the probe suite's results as a `qualification_evidence` record; it supersedes the previous row, which becomes `lapsed`. Failing writes no `active` row, emits `host.qualification_lapsed`, and refuses real dispatch. A sandbox the launcher fails to build at dispatch refuses that run with `isolation_unqualified` and triggers the checks again at once. The probe suite needs no model and no network beyond the proxy's own refusal path, so it costs seconds and no money.
+
+**7.2 A backend.** `surety qualify <backend> --mode one_shot_headless` (API `POST /v1/trust/qualify`) runs, on an active host qualification: the static checks (the resolved path, the hash, `--version`, the help hashes); then three canaries, each an ordinary run on an engine-owned fixture project inside the sandbox, charged to the ledger like any run. The **positive canary** asks for one file edit and a result: it yields the transcript, the usage observations, the terminal events, the result, the egress log, the private-home inventory and the exit class, which fill §4.5 or §4.6. The **cancellation canary** asks for long work and is cancelled after its first usage observation: it yields `term_to_exit_ms`, the exit class and what a cancelled run's usage looks like. The **containment canary** instructs the agent to try to read `$SURETY_HOME/api.token` by its host path, connect to the engine's port, write `.git/config`, reach a host not on the egress list, and to write a liveness marker in the workspace first; it passes only if the marker exists and the transcript shows the attempts ran (the positive control, A04) and every attempt failed. A canary that fails to authenticate or never runs a command is a failed qualification, never a successful denial (AH §5.2). Success writes the entry as `proposed` with every record as evidence and raises `trust_activation`; the human's consumption makes it `active`.
+
+**7.3 Lapse and revocation.** An entry is revoked when its binary's hash or help hash changes, its adapter template version changes, or its host identity differs from the running host's. A failed host check suspends every entry on that host without revoking it: dispatch refuses until the checks pass again. Claude Code installs each version at its own path (`~/.local/share/claude/versions/2.1.288` resolves from `~/.local/bin/claude`), so an update elsewhere leaves a pinned entry valid until that file is removed or changed.
+
+**7.4 A second host.** Any Linux host on which H1 to H9 pass is qualified by §7.1 unchanged; trust entries are per host, so its backends are qualified by §7.2 again. A host that is not Linux has no cgroups or namespaces and needs its own mechanism, which would be an amendment to D2.
+
+**7.5 The incident record.** D2 is tested against the predecessor incidents that concern backends, isolation and termination.
+
+| Incident | What D2 does about it |
+|---|---|
+| CH #2, AH §5.2: Codex enforcement was a no-op; 567 stub tests green; the child got every credential | Nothing a backend enforces on itself is credited (§2.2, §4.6); the environment is constructed (§1.2); qualification needs a real-binary containment canary with a positive control (§7.2) |
+| CH #3: headless Codex 0% success; a test lane that could not authenticate | No native output schema (§1.4); a canary that cannot authenticate fails qualification (§7.2) |
+| CH #4, #5: sandboxed git and networking broke roles | The engine still performs git (E2); the role's git is read-only by design (§2.3); egress is an explicit list on the trust entry (§2.4) |
+| CH #6, #14: unknown cost became zero | Unknown and estimated costs are distinct and counted (§1.5, §5 C4) |
+| CH #7, AH §5.9: headless delegation outlived its parent; non-prompting tools ran regardless | Every descendant and any daemon is a domain member and dies with it (§3.1, §4.4); `--tools` sets the available set, verified by the canary (§4.5) |
+| CH #16: a new provider got maximum trust by omission | No entry, no dispatch; entries are proposed only by qualification and activated only by the human (§4.1) |
+| CH #20: a stall with no timeout | Every cancellation ends in `cgroup.kill` and an observation; `unknown` quarantines (§3.2, §3.4) |
+| CH §3.7 F-D: Codex wrote a trust entry into the user's config despite `--ignore-user-config` | `CODEX_HOME` is the private home; whatever it writes is inventoried and deleted (§4.3) |
+| CH §4.3, E42: a token endpoint readable by a page or any local program | Roles cannot reach the API; the bootstrap route is off by default (§2.6) |
+
+---
+
+## 8. What D2 does not claim
+
+In the form of `M1-not-claimed.md`: class A is outside the threat model, class B is real behaviour that no test or canary has yet established, class C is a limitation accepted by design.
+
+**Class A.** Protection against root, a kernel exploit, the user's systemd manager, a compromised operator account or Windows-side software on a WSL2 host (§2.1). What the provider retains of what it is sent.
+
+**Class B.** Every item listed as not established in §4.5 and §4.6 until the canaries of §7.2 have run and the entry is active. That the operating system's isolation probes in §2.8 behave as on this host on any other kernel. That storage honours a sync (unchanged from M1, E32 item 1).
+
+**Class C.** The role can read the provider credential it holds (§2.5). The role can read all of the repository's objects and refs, which F §3.10.8 permits. The role can send anything it can read to an allowed egress host, including the provider; the proxy limits where data goes, not what. At the `invocation` boundary, token overshoot within one invocation is bounded only by the deadline (§4.2). A same-uid process outside every domain (the operator's own software) can still read the token file and replace a backend binary; the hash check at dispatch catches a replacement made before dispatch, not one made between the check and the exec. With `ui_bootstrap` on, any local uid can obtain the token (§2.6). Sessions, filter drivers, Git LFS, partial clones and any host other than Linux are not supported.
+
+---
+
+## 9. Proposed corrections and open questions for Sean
+
+### 9.1 Proposed corrections to D1
+
+| # | D1 says | Proposed | Test that pins it |
+|---|---|---|---|
+| K1 | §2.7: the child is spawned into a new process group, "after which the domain is `launched`" | A domain is `launched` only when the launcher has placed itself in the domain's cgroup and reported it (`domain.placed`); `containment_id` on ownership holds the cgroup path; markers and groups stay diagnostic | `D2-B03 placement-before-launch` |
+| K2 | §1.4: the first startup step writes the lock | Step 0: the engine re-executes inside its incarnation scope (§3.1); a failure leaves the engine starting normally with H3 failed, never a startup refusal | `D2-H02 incarnation-scope-or-unqualified` |
+| K3 | §11.1, §17 item 2: `GET /v1/token/bootstrap` is always served under browser evidence | Served only when `ui_bootstrap` is true (default false); otherwise `bootstrap_disabled`, before any token read | `D2-I12 bootstrap-disabled-by-default` |
+| K4 | §15.1: the result is collected from the invocation | For a real backend the result is the file of §1.4, read only after observed termination, no-follow, and accepted only on exit class `clean`; an undeliverable result is an `unaccepted_result` record | `D2-A05 result-after-termination-only`, `D2-A06 result-link-refused` |
+| K5 | §8.1 step 1 with E26 item 1 as replaced by E36 item 6 | An expired lease is re-granted, same generation, iff §3.5's three conditions hold; `run.lease_regranted` | `D2-B09 pause-regrant`, `D2-B10 no-regrant-after-crash` |
+| K6 | §13.3: limits and boundaries named in prose | `budget_run_boundary` is a project setting; a finer boundary than the trust entry's refuses with `budget_boundary_unenforceable`; C4's two counting rules | `D2-T05 boundary-refusal`, `D2-C04 estimated-counts`, `D2-C05 unknown-tokens-charged` |
+| K7 | §9.4: other downgrades by the Reviewer or human | Any lowering from Critical requires the human (C2a) | `D2-C02 critical-lowering-needs-human` |
+| K8 | §7.9: tightening by a Reviewer run or human | Classification is an effect precondition; until D3's classifier is qualified a Reviewer's tightening approval is a recommendation (C2b) | `D2-C03 tightening-reclassified` |
+| K9 | §19.3: isolation "expected on this host to be a dedicated unprivileged user" | The sandbox of §2.2; a dedicated user is not available without root | `D2-I01` to `D2-I11` |
+
+### 9.2 Open questions
+
+**Q1. Provider authentication.** (a) Dedicated API keys for the engine, one per provider, delivered by the grant (`--bare` for Claude Code); (b) the operator's subscription credentials (a `claude setup-token` token, which `--bare` never reads, or a ChatGPT login in `CODEX_HOME`). *Recommended (a):* one environment value per provider that the engine resolves and redacts, spend limits set at the provider, and no copy of the operator's login inside a sandbox.
+
+**Q2. Withholding the credential from the role.** (a) The role holds its provider key (§2.5); (b) the egress proxy terminates the backend's API traffic over a plain-HTTP base URL inside the sandbox and adds the credential itself, which would also give the engine observed per-model-call usage. (b) needs each backend to accept a custom base URL, which is not established (`ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` are present in the binaries). *Recommended (a) for M2,* and the canaries record whether (b) is possible.
+
+**Q3. Is WSL2 a qualified host?** (a) Yes, subject to H10 (§2.2); (b) development only, with qualification deferred to a native Linux host. *Recommended (a):* the mechanism is the Linux kernel's and the WSL-specific escape paths are checked.
+
+**Q4. Filter drivers, Git LFS and partial clones** (I6). (a) Unsupported in M2, as E29 item 1 and E37 item 1 stand; (b) supported by running engine git's driver and fetch steps inside a domain with the `check`-like profile D3 defines, with the driver set recorded at registration and a change treated as an integrity observation. *Recommended (a);* (b) after D3.
+
+**Q5. Codex's own sandbox.** (a) Disabled by the flag meant for external sandboxes (§4.6), so a nested failure cannot masquerade as a tool error; (b) kept as defence in depth, qualified only if the canaries show it works nested. *Recommended (a):* it is not credited either way.
+
+**Q6. The bootstrap route when a UI ships.** (a) Serve it only to a connection whose socket the kernel attributes to the engine's uid, read from `/proc/net/tcp`; (b) a one-time code the CLI prints and the page asks for. *Recommended:* decide with the UI; neither is needed for M2.
+
+**Q7. Who may run a qualification canary.** Each costs real model calls. (a) The operator's `qualify` command spends with a confirmation showing the maximum (`confirm_required`); (b) qualification is also offered automatically when a binary's hash changes, still through confirmation. *Recommended (a).*
+
+### 9.3 Where each brief question is answered
+
+| Question | Section | Question | Section | Question | Section |
+|---|---|---|---|---|---|
+| A1 | §1.2 | I3 | §2.4 | T1 | §4.1 |
+| A2 | §1.4, K4 | I4 | §2.5, Q1, Q2 | T2 | §4.5, §4.6 |
+| A3 | §1.5, §4.2 | I5 | §2.1, §2.6, Q6 | T3 | §4.2, K6 |
+| A4 | §1.6, §3.2 | I6 | §2.7, Q4 | T4 | §4.3 |
+| A5 | §1.3, §2.3 | I7 | §2.8, §6, §7.1 | T5 | §4.4, §1.8 |
+| A6 | §1.7 | B1 | §3.1 to §3.3 | C1 | §5 |
+| I1 | §2.2, Q3 | B2 | §3.4 | C2 | §5, K7, K8 |
+| I2 | §2.3 | B3 | §3.5, K5 | C3 | §5 |
+| | | B4 | §3.6 | C4 | §5, K6 |
