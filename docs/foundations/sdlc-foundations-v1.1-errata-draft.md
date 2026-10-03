@@ -1085,6 +1085,8 @@ The one review of the slice (E31) found the six entries built and sound except w
 1. **A broken ancestry chain (E53 item 2):** the Reviewer, like the Verifier, recommends withdrawing the exclusion question rather than raising the next generation, since asking to exclude a finding from a candidate it no longer applies to is a nag. No engine path in M1 breaks a lineage; the case accepts either. Kept as built until Sean decides.
 2. **Stop of a run whose operation is blocked** (the probe cannot read the repository), after S3's fix: (a) the Stop waits and the run stays `finalizing` until the repository answers, shown as `repository_unreadable` or `journal_blocked` (the Reviewer's recommendation and D1 §4.5 step 4 as it reads; the driver's default); (b) end the run at once and have the late integration's finalizer apply "integrated, then held" to a held item.
 
+**Added after the Verifier's pass (also provisional):** the three cases are merged at `1c54130` (SEAM §111, §112; the harness's own `trackedTree` had the engine's defect and was corrected). A staged file after `stash` follows `git stash` semantics: the ref holds it and the checkout returns to its baseline, so the file leaves the work tree (alternative: left on disk untracked beside the stash). The pre-fix branch `e45919a` passed the whole suite, 834 of 834, before these cases.
+
 **Consequences elsewhere.** No change to D1.
 
 ---
