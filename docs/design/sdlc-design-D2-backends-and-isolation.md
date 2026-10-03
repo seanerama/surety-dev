@@ -218,3 +218,166 @@ In the form of `M1-not-claimed.md`: class A is outside the threat model, class B
 | I1 | §2.2, Q3 | B2 | §3.4 | C2 | §5, K7, K8 |
 | I2 | §2.3 | B3 | §3.5, K5 | C3 | §5 |
 | | | B4 | §3.6 | C4 | §5, K6 |
+
+No question of brief §3 is left unanswered; the answers that need Sean's choice are I1 (Q3), I4 (Q1, Q2), I5 for the UI (Q6), I6 (Q4), and C1 to C4 (§5).
+
+---
+
+## Appendix A. Closed enumerations
+
+Everything D2 adds to D1's Appendix A, in its notation. Per RN §3 the engine's schema and transition tables become the contract and the appendix is generated from them; this appendix is the starting point for those names, as D1's was (BS §2 item 6).
+
+### A.1 Id prefixes
+
+`hq_` host_qualifications; `trust_` trust_entries.
+
+### A.2 Enumerations
+
+- **DomainObservation:** running, terminated, unknown.
+- **SandboxProfile:** role, probe, check (reserved for D3).
+- **ExitClass:** clean, error_exit, engine_signaled, foreign_signal, resource_limit, unknown.
+- **TrustStatus:** proposed, active, revoked.
+- **HostQualificationStatus:** active, lapsed.
+- **TrustMode:** one_shot_headless, session_headless (reserved; never `active` in M2).
+- **BudgetBoundary:** model_turn, user_turn, invocation.
+- **CostReporting:** reported, tokens_only, none.
+- **ResultChannel:** file.
+- **HostCheckId:** H1 to H10 as §6.
+- **IsolationProbeId:** P1 to P20 as A.6.
+- **RecordKind**, added: provider_files, egress_log, qualification_evidence, unaccepted_result.
+- **DecisionKind**, added: trust_activation.
+
+### A.3 Tables and fields
+
+- **host_qualifications:** `host_id*`, `kernel*`, `tool_versions* {unshare, setpriv, ip, systemd, node}`, `checks* [{id =HostCheckId, observed, passed bool}]`, `probes* [{id =IsolationProbeId, negative, control, passed bool}]`, `evidence* →records`, `status* =HostQualificationStatus`, `incarnation* →engine_incarnations`, `qualified_at*`, `lapsed_at?`, `lapsed_reason?`.
+- **trust_entries:** `backend*`, `version*`, `binary_path*`, `binary_sha256*`, `help_sha256*`, `mode* =TrustMode`, `template_version*`, `host_id*`, `host_qualification* →host_qualifications`, `isolation*`, `boundary*`, `egress_hosts* []`, `usage_boundary? =BudgetBoundary`, `usage_semantics? =UsageSemantics`, `cost_reporting* =CostReporting`, `enforceable_boundaries* [=BudgetBoundary]`, `result_channel* =ResultChannel`, `session_qualified* bool`, `provider_files* {locations[], persistence_flags[], excluded[]}`, `term_to_exit_ms? int`, `evidence* [→records]`, `status* =TrustStatus`, `activated_by →decisions?`, `revoked_at?`, `revoked_reason?`. Null `usage_boundary` means usage is unknown in that mode and only a policy at `invocation` with unknown usage accepted may dispatch to it.
+- **engine_incarnations**, added: `scope_cgroup?` (null when H3 failed).
+- **execution_domains**, added: `profile* =SandboxProfile`, `cgroup_path?`, `placed_at?`, `observation? =DomainObservation`, `observed_at?`.
+- **process_ownership:** `containment_id` holds the domain's cgroup path (D1 §2.7 reserved it).
+- **invocation_receipts**, added: `trust_entry →trust_entries?` (null only for the scripted backend in harness mode).
+- **invocation_status_observations**, added: `exit_class? =ExitClass` on the terminal observation.
+- **Result schema**, added for Reviewer runs: `alpha_exception_proposals? [{finding, containment_text, references[], testing_purpose}]`.
+
+### A.4 Transitions
+
+**TrustStatus:** proposed→active (consumption of `trust_activation`); proposed→revoked; active→revoked. **HostQualificationStatus:** active→lapsed; a row is never reactivated. **DomainStatus** (D1 A.5 with BS §6 correction 13): allocated→launched now requires `placed_at`.
+
+### A.5 Event types, added
+
+`host.qualified` (§7.1 passing), `host.qualification_lapsed` (§7.1 failing or superseded), `trust.proposed` (§7.2), `trust.activated` (§7.2, consumption), `trust.revoked` (§7.3), `domain.placed` (§3.2), `domain.egress_refused` (§2.4), `run.lease_regranted` (§3.5).
+
+### A.6 Isolation probes
+
+Each probe runs inside a sandbox with the `probe` profile; it passes only if the negative fails as stated **and** its positive control succeeds in the same sandbox.
+
+| Id | Attempt (negative) | Expected | Positive control |
+|---|---|---|---|
+| P1 | open `$SURETY_HOME/api.token` by its host path | not found | read `/surety/context/prompt.md` |
+| P2 | open `store.db`, `engine.log`; list `records/`, `domains/` | not found | list `/surety/workspace` |
+| P3 | open a file of another workspace and of the developer's checkout | not found | read a workspace file |
+| P4 | write `.git/config`; read it | read-only; content is the engine's | `git status` in the workspace exits 0 |
+| P5 | create `.git/hooks/pre-commit` | read-only | list `.git/hooks` (empty) |
+| P6 | TCP connect to `127.0.0.1:<engine port>` while the engine listens | refused | connect to the in-sandbox forwarder |
+| P7 | `GET /v1/token/bootstrap` with forged same-origin headers | no connection | P6's control |
+| P8 | direct connect to a provider address; `CONNECT` to a host not listed; `CONNECT` to a listed host | unreachable; 403 and `domain.egress_refused` | the listed `CONNECT` answers 200 |
+| P9 | connect to an abstract unix socket the test opens in the host's namespace | not reachable | connect to one opened inside the sandbox |
+| P10 | open `/run/user/1000/bus`, `/var/run/docker.sock`, `/run/WSL/` | not found | open `/dev/null` |
+| P11 | WSL2 only: exec a file beginning `MZ` | exec fails | exec `/bin/true` |
+| P12 | WSL2 only: list `/mnt/c`, `/usr/lib/wsl` | not found | list `/usr/bin` |
+| P13 | `kill(-1, SIGKILL)` from a child; `kill(<engine host pid>)` | only the domain is affected; no such process | signal the probe's own child |
+| P14 | read `/proc/self/status` | `CapEff` 0, `NoNewPrivs` 1, uid 1000 | the probe is running |
+| P15 | write own pid to any `cgroup.procs`, mounting cgroup2 if it can | refused | `/proc/self/cgroup` reads `0::/` |
+| P16 | `setsid`, `env -i`, double fork, parent exits | still listed in the domain's `cgroup.procs`; gone after `cgroup.kill` | the listing itself |
+| P17 | `systemd-run --user true` | fails | `/bin/true` runs |
+| P18 | make `/surety/out/result.json` a link to the token's host path | result invalid; the token is never opened | a regular result file in a second run is accepted |
+| P19 | non-Verifier: write under a protected root | read-only | write a source file in the workspace |
+| P20 | fork without limit; allocate without limit | bounded by `pids.max`, `memory.max`; exit class `resource_limit` | one fork and one allocation succeed |
+
+### A.7 Error codes, decision kind, configuration, routes
+
+**Public codes, added:** `budget_boundary_unenforceable`, `bootstrap_disabled`, `qualification_failed`. Reused with D2 meaning: `backend_refused` (no active entry, hash or help mismatch, session mode), `isolation_unqualified` (no active host qualification, sandbox failed to build), `confirm_required` (a qualification's spend). RunReasonClass is unchanged: a sandbox that cannot be built is `preflight_refused`; `error_exit`, `foreign_signal` and `resource_limit` are `infra_error` with the exit class in `reason_text`.
+
+**Decision kind `trust_activation`.** Subject: the trust entry. Approval binds: the entry's evidence hash. Dependency manifest: binary path and hash, help hash, template version, host identity and qualification status, entry status. Default target 2 d.
+
+**Configuration, added:**
+
+| Key | Scope | Default | Range |
+|---|---|---|---|
+| `ui_bootstrap` | engine | false | bool |
+| `domain_memory_max` | engine | 8 GiB | 256 MiB to 64 GiB |
+| `domain_tasks_max` | engine | 1024 | 64 to 16384 |
+| `result_max_bytes` | engine | 1 MiB | 64 KiB to 16 MiB |
+| `provider_files_max_bytes` | engine | 64 MiB | 1 MiB to 1 GiB |
+| `budget_run_boundary` | project | invocation | `BudgetBoundary` |
+| `egress_allow_extra` | project | `[]` | host names; widening |
+| `sandbox_read_paths` | project | `[]` | absolute paths outside the engine home and every repository; widening |
+
+**Routes, added:** `POST /v1/trust/qualify` (§7.2); `GET /v1/engine` adds the active host qualification with each check, the trust entries with status, and `ui_bootstrap`.
+
+---
+
+## Appendix B. Contract precision pinned by tests
+
+Design review stops here (E20). Each row is a statement a test must pin, with a proposed name for the Verifier's M2 plan. **Lane:** `kernel` runs as M1 does, on the scripted adapter and boundary; `sandbox` runs the scripted backend inside the real sandbox and boundary, with no model and no network beyond the proxy; `real` runs a real backend binary against a model and is paid, separate from the others (D1 §18).
+
+| Test | Statement | Lane |
+|---|---|---|
+| D2-A01 argv-only | Every backend spawn is an argument array; the prompt is fixed role text not beginning with `-`; task content reaches the backend only through `/surety/context` | sandbox |
+| D2-A02 env-constructed | The backend's environment holds exactly the template's variables, the grant's secrets and the markers; nothing of the engine's environment | sandbox |
+| D2-A03 context-package | `/surety/context` is read-only, holds what the work item binds, and never a `raw_user_report` | sandbox |
+| D2-A04 binary-mismatch | A binary whose hash differs from the active entry's is refused `backend_refused` before the launcher starts; no domain launched, no ledger row | sandbox |
+| D2-A05 result-after-termination-only | The result file is read only after the domain observes `terminated`; a write after the backend's exit by a surviving member is included, never raced | sandbox |
+| D2-A06 result-link-refused | A link, FIFO, device or oversize `result.json` makes the result invalid and nothing it points to is opened (P18) | sandbox |
+| D2-A07 result-needs-clean-exit | A valid result with a terminal failure event is `invalid_result`; a result present at a deadline, budget stop, Stop or crash is an `unaccepted_result` record and the run keeps its cause's outcome | sandbox |
+| D2-A08 exit-classes | Each of the six exit classes is produced and maps as §1.6; only `clean` can complete | sandbox |
+| D2-A09 usage-unknown-is-null | A run with no usage events, or ended by the engine, has `usage_complete = false` and null token fields | sandbox |
+| D2-A10 resume-is-new-invocation | A resumed run has a new invocation and domain and no provider-resume argument | sandbox |
+| D2-A11 session-mode-refused | Session mode on any real entry is refused `backend_refused` before launch | kernel |
+| D2-A12 session-id-before-launch | Claude Code's `--session-id` is derived from the invocation and recorded before launch | sandbox |
+| D2-I01 token-invisible | P1 | sandbox |
+| D2-I02 control-plane-invisible | P2 | sandbox |
+| D2-I03 workspaces-and-checkout-invisible | P3 | sandbox |
+| D2-I04 repository-configuration | P4, P5 | sandbox |
+| D2-I05 api-unreachable | P6 | sandbox |
+| D2-I06 bootstrap-unreachable-from-role | P7 | sandbox |
+| D2-I07 egress-allowlist | P8; every connection is in the domain's `egress_log` | sandbox |
+| D2-I08 host-sockets-absent | P9, P10, P17 | sandbox |
+| D2-I09 wsl-escape-paths | P11, P12, on WSL2 hosts only | sandbox |
+| D2-I10 no-capabilities-no-signals | P13, P14 | sandbox |
+| D2-I11 protected-set-read-only | P19 for each non-Verifier role; the Verifier's protected writes are captured as a proposal | sandbox |
+| D2-I12 bootstrap-disabled-by-default | With `ui_bootstrap` false the route answers `bootstrap_disabled` and no token is read, whatever the headers | kernel |
+| D2-I13 secrets-redacted-and-excluded | A held secret written by the backend to its stream, its result and its private home is absent from every record; credential files are excluded; the private home is deleted | sandbox |
+| D2-I14 probe-needs-control | A probe whose positive control fails fails the suite; it is never a passed denial | sandbox |
+| D2-I15 widening-settings | Changing `egress_allow_extra` or `sandbox_read_paths` raises `policy_widening` | kernel |
+| D2-B01 membership-inescapable | P16 | sandbox |
+| D2-B02 no-migration | P15 | sandbox |
+| D2-B03 placement-before-launch | A domain becomes `launched` only after `domain.placed`; a launcher that cannot place itself executes nothing of the role's | sandbox |
+| D2-B04 term-then-kill | TERM reaches the backend through the domain init; after `terminate_grace`, `cgroup.kill`; `terminated` only on `populated 0` | sandbox |
+| D2-B05 restart-observes | After the engine is killed with a populated domain, the restarted engine observes it `running` and terminates it; a domain whose cgroup is gone is `terminated` | sandbox |
+| D2-B06 prior-supervisor-killed | A launcher left unplaced in a prior incarnation's supervisor leaf is killed at recovery and never executes role code | sandbox |
+| D2-B07 unknown-quarantines | Each §3.4 condition yields `unknown` and quarantine; only `populated 0` or absence clears it | sandbox |
+| D2-B08 other-home-untouched | Two engine homes on one host never observe, signal or kill each other's domains (E41 item 1) | sandbox |
+| D2-B09 pause-regrant | An engine stopped past `lease_ttl` with a live, supervised domain re-grants the lease on the same generation and the run completes | sandbox |
+| D2-B10 no-regrant-otherwise | A terminated or unknown domain, another incarnation's ownership, a silent channel, or a run already ending is never re-granted | sandbox |
+| D2-B11 resource-limits | P20 | sandbox |
+| D2-B12 cgroup-removed | A terminated domain's cgroup is removed after `terminated` is recorded | sandbox |
+| D2-T01 no-entry-refused | A real backend without an active entry is refused `backend_refused` before launch | kernel |
+| D2-T02 entry-only-by-qualification | No route or file write makes an entry `active`; only consumption of `trust_activation` does | kernel |
+| D2-T03 revoked-on-change | A changed binary hash, help hash, template version or host identity revokes the entry | sandbox |
+| D2-T04 host-lapse-suspends | A failed host check refuses real dispatch `isolation_unqualified` without revoking entries; passing checks restore dispatch | sandbox |
+| D2-T05 boundary-refusal | A policy boundary finer than the entry's is refused `budget_boundary_unenforceable` before launch | kernel |
+| D2-T06 provider-files | The private home is inventoried without following links, collected through the redactor up to the cap, and deleted | sandbox |
+| D2-T07 daemon-inside-domain | A detached daemon started by the backend is a member, dies with the domain, and holds back `open_idle` until it does | sandbox |
+| D2-T08 positive-canary | Per backend: the positive canary fills the entry's fields and its exit class is `clean` | real |
+| D2-T09 cancellation-canary | Per backend: `term_to_exit_ms` and the cancelled run's usage are recorded | real |
+| D2-T10 containment-canary | Per backend: the liveness marker exists, the attempts ran, and every attempt failed | real |
+| D2-T11 unauthenticated-canary | Per backend: a canary that cannot authenticate is `qualification_failed` | real |
+| D2-H01 host-checks-recorded | Each H check's observed value is recorded; a failure names the check and the remedy | sandbox |
+| D2-H02 incarnation-scope-or-unqualified | Without a reachable user manager the engine starts, H3 fails, and real dispatch is refused | sandbox |
+| D2-H03 qualification-per-start | Each passing start writes a row and lapses the previous one | sandbox |
+| D2-C01 alpha-exception-proposal | A Reviewer's proposal becomes a `claimed` record and a `finding_disposition` option only the human consumes; refused for non-High, sensitive-area or foreign findings; the field from another role invalidates the result | kernel |
+| D2-C02 critical-lowering-needs-human | A Reviewer's lowering from Critical is a proposal; only the human applies it (if K7 is accepted) | kernel |
+| D2-C03 tightening-reclassified | Application re-classifies; a changed classification or base invalidates the intent; a Reviewer's approval alone does not apply it before D3 (if K8 is accepted) | kernel |
+| D2-C04 estimated-counts | `estimated` cost counts toward `budget_day_verified_usd` and is shown apart from `reported` (if C4 is accepted) | kernel |
+| D2-C05 unknown-tokens-charged | An invocation with unknown tokens charges its run limit against `budget_day_unknown_tokens` (if C4 is accepted) | kernel |
+| D2-C06 no-unsandboxed-entry | No trust entry can be activated with an isolation other than the sandbox mechanism | kernel |
