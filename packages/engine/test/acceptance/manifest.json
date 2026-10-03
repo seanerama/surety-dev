@@ -175,7 +175,10 @@
       "M122-host-sockets-and-wsl.test.mjs",
       "M123-protected-set-read-only.test.mjs",
       "M124-probe-needs-target-and-control.test.mjs",
-      "M125-handover.test.mjs"
+      "M125-handover.test.mjs",
+      "M126-api-unreachable.test.mjs",
+      "M127-egress-address-bound.test.mjs",
+      "M128-proxy-limits.test.mjs"
     ]
   },
   "sandbox": [
@@ -195,6 +198,9 @@
     "M122-host-sockets-and-wsl.test.mjs",
     "M123-protected-set-read-only.test.mjs",
     "M124-probe-needs-target-and-control.test.mjs",
-    "M125-handover.test.mjs"
+    "M125-handover.test.mjs",
+    "M126-api-unreachable.test.mjs",
+    "M127-egress-address-bound.test.mjs",
+    "M128-proxy-limits.test.mjs"
   ]
 }

@@ -1120,7 +1120,10 @@ async function runProbe(spec) {
         // A TCP connection to each target; a connection that opens is closed
         // at once and nothing is sent on it.
         entry.results = [];
-        for (const t of (spec.targets ?? []).slice(0, 64)) {
+        // 'proxy': the forwarder HTTPS_PROXY names (the role's control).
+        const proxy = proxyOf();
+        const targets = spec.targets === 'proxy' ? (proxy === null ? [] : [{ host: proxy.host, port: proxy.port }]) : (spec.targets ?? []);
+        for (const t of targets.slice(0, 64)) {
           const r = await tcpOpen(t.host, t.port, spec.timeout_ms ?? 1500);
           r.socket?.destroy();
           entry.results.push({ host: t.host, port: t.port, outcome: r.outcome, error: r.error, elapsed_ms: r.elapsed_ms });

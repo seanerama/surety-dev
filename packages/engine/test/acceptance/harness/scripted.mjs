@@ -127,7 +127,7 @@ export function acting(hostNs) {
     shm: (name, args = {}) => one('shm_roundtrip', { name, ...args }),
     // A unix socket: {abstract} | {path} | {own: true}.
     unixConnect: (target, args = {}) => one('unix_connect', { ...target, ...args }),
-    // TCP connections to [{host, port}], nothing sent.
+    // TCP connections to [{host, port}] (or 'proxy': the forwarder HTTPS_PROXY names), nothing sent.
     tcpConnect: (targets, args = {}) => one('tcp_connect', { targets, ...args }),
     // One HTTP request to host:port, if a connection opens.
     httpRequest: (host, port, request, args = {}) => one('http_request', { host, port, ...request, ...args }),
