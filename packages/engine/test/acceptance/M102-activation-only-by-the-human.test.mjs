@@ -83,7 +83,7 @@ describe('M102 activation only by the human', () => {
     const listed = await listEngineDecisions(fx.engine);
     assert.deepEqual(listed.decisions.filter((item) => item.id === previewed.id).map((item) => [item.kind, item.subject_type, item.subject_id, item.preview_hash]), [[KIND, 'trust_entry', entry.id, previewed.preview_hash]], 'GET /v1/decisions shows the open engine-scoped decision with the preview hash an answer needs');
     const host = hostShown(await fx.engine.engineInfo());
-    assert.deepEqual([host.eligible, host.source, host.row], [true, 'harness', null], 'the engine read agrees: eligible by the harness, with no host_qualifications row');
+    assert.deepEqual([host.eligible, host.source, host.host_qualification], [true, 'harness', null], 'the engine read agrees: eligible by the harness, with no host_qualifications row');
 
     await consumeEngine(fx, previewed, 'approve');
     const activated = trustEntry(fx.home, entry.id);
