@@ -2,8 +2,9 @@
 // what a role sees of the repository at /surety/git. The workspace's `.git`
 // names it; it holds an engine-written `config` (core settings only, no
 // includes, no hooks path, no helper), the run's `HEAD`, a copy of the run's
-// index the role may change, an empty `hooks`, and the repository's objects
-// and refs read-only. The repository's own configuration, hooks, `info/`,
+// index the role may change, an empty `hooks`, the repository's refs
+// read-only, and its objects under an overlay whose writes stay on the
+// volatile filesystem. The repository's own configuration, hooks, `info/`,
 // `config.worktree`, credentials and every other worktree's metadata are not
 // in it. A repository with alternates is refused (`mount_plan_refused`;
 // E58 item 3), as is one whose objects or refs are not plain directories.

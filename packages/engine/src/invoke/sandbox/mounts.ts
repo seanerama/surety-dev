@@ -21,7 +21,10 @@
 // Verifier. `/surety/git` is the engine-constructed git metadata view (D2
 // §2.7): a directory on the volatile filesystem holding this run's index (a
 // copy, the role's own), and read-only binds of the engine's `config`, the
-// run's `HEAD`, an empty `hooks`, and the repository's `objects` and `refs`.
+// run's `HEAD`, an empty `hooks`, and the repository's `refs`; its `objects`
+// are an overlay whose lower layer is the repository's, read-only, and whose
+// upper layer is on the volatile filesystem (a role's `git add` works on its
+// own index, and no object it writes reaches the repository).
 //
 // Binds are non-recursive, so no host submount comes with them. Where a
 // permitted tree holds a host submount (on WSL2, /usr/lib/wsl/drivers is a 9p
@@ -316,7 +319,17 @@ export function buildPlan(input: PlanInput): Plan {
     b.bind(join(g.seed, 'config'), { target: join(GIT_VIEW, 'config'), noTarget: true });
     b.bind(join(g.seed, 'HEAD'), { target: join(GIT_VIEW, 'HEAD'), noTarget: true });
     b.bind(join(g.seed, 'hooks'), { target: join(GIT_VIEW, 'hooks'), noTarget: true, noexec: true });
-    b.bind(join(g.commonDir, 'objects'), { target: join(GIT_VIEW, 'objects'), noTarget: true, noexec: true });
+    // The objects as an overlay: the repository's read-only below, the
+    // volatile filesystem above, so that the role's `git add` writes its
+    // blobs where they go with the domain and nothing reaches the
+    // repository's own objects.
+    volEntries.push({ path: 'gitobj', kind: 'dir' }, { path: 'gitobj/upper', kind: 'dir' }, { path: 'gitobj/work', kind: 'dir' });
+    b.line(
+      'surety-objects',
+      join(GIT_VIEW, 'objects'),
+      'overlay',
+      `lowerdir=${esc(overlayPath(join(g.commonDir, 'objects')))},upperdir=${esc(overlayPath(join(vol, 'gitobj', 'upper')))},workdir=${esc(overlayPath(join(vol, 'gitobj', 'work')))},userxattr,nosuid,nodev,noexec`,
+    );
     b.bind(join(g.commonDir, 'refs'), { target: join(GIT_VIEW, 'refs'), noTarget: true, noexec: true });
     if (g.packedRefs) b.bind(join(g.commonDir, 'packed-refs'), { target: join(GIT_VIEW, 'packed-refs'), noTarget: true });
     if (g.shallow) b.bind(join(g.commonDir, 'shallow'), { target: join(GIT_VIEW, 'shallow'), noTarget: true });
