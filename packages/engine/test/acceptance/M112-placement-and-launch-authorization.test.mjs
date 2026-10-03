@@ -19,6 +19,7 @@ import { describe, test } from 'node:test';
 
 import { CONTRACT } from './harness/fixtures.mjs';
 import { releaseBarrier, waitFor } from './harness/engine.mjs';
+import { signalPid } from './harness/proc.mjs';
 import { addProject, addWork, advanceClock, assertRunEnded, leasesOf, requestTick, runsOf, stopRun, tick, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, populated, procsOf, waitCgroupGone, waitPopulated } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, checkOf, domainOf, domainRow, eventsOf, hostSection, ownershipOf, receiptOf, roleProcess, sandboxEngine, scopeOf, waitForEvent } from './harness/sandbox/lane.mjs';
@@ -119,9 +120,11 @@ describe('M112 placement and launch authorization', () => {
     const fx = await sandboxEngine(t, { barriers: ['launcher.before_authorization=pause'], config: LONG_GRACE });
     const { project, item, run, domain } = await launcherPausedAt(fx, 'launcher.before_authorization');
     assert.equal(populated(domain.cgroup_path), 1, 'the launcher is placed');
-    await advanceClock(fx.engine, LEASE_TTL + 1);
+    // One jump past the lease's whole lifetime, by a margin a step back of
+    // the host's wall clock cannot eat (M15's margin; E65 addendum).
+    const { now } = (await advanceClock(fx.engine, LEASE_TTL + 5)).body;
     const lease = runLease(fx.home, run.id);
-    assert.ok(Date.parse(lease.expires_at) < Date.now() + (LEASE_TTL + 1) * 1000, 'the fixture is live: the lease has expired on the controlled clock');
+    assert.ok(Date.parse(lease.expires_at) < Date.parse(now), `the fixture is live: the lease (expires ${lease.expires_at}) has expired on the controlled clock (${now})`);
 
     await releaseBarrier(fx.engine, 'launcher.before_authorization');
     await waitPopulated(domain.cgroup_path, 0);
@@ -186,7 +189,7 @@ describe('M112 placement and launch authorization', () => {
     const launchers = procsOf(scope.supervisor).filter((p) => p !== fx.engine.pid);
     assert.equal(launchers.length, 1, `the launcher waits in the supervisor leaf (members: ${procsOf(scope.supervisor).join(', ')})`);
     assert.equal(populated(domain.cgroup_path), 0, 'the domain is not populated before placement');
-    process.kill(launchers[0], 'SIGKILL');
+    assert.equal(signalPid(launchers[0], 'SIGKILL'), true, `the launcher (host pid ${launchers[0]}, read from the supervisor leaf) is killed`);
     const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
     assert.ok([200, 404, 409].includes(res.status), `releasing a dead launcher's barrier is a no-op (${res.status} ${res.text})`);
 

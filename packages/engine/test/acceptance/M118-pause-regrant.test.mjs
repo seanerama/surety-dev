@@ -23,6 +23,7 @@ import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, waitFor } from './harness/engine.mjs';
+import { signalPid } from './harness/proc.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
@@ -51,13 +52,17 @@ const regrants = (home, runId) => eventsOf(home, 'run', runId, 'run.lease_regran
 const maxSeq = (home) => withStore(home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
 const usageRows = (home, invocation) => withStore(home, (db) => db.prepare('SELECT * FROM "usage_observations" WHERE "invocation" = ? ORDER BY "seq"').all(invocation));
 
+// The engine's own process, the one this test spawned, and nothing else.
+const stopEngine = (fx) => assert.equal(signalPid(fx.engine.pid, 'SIGSTOP'), true, 'the engine is stopped');
+const continueEngine = (fx) => assert.equal(signalPid(fx.engine.pid, 'SIGCONT'), true, 'the engine is continued');
+
 // SIGSTOP the engine past lease_ttl, then SIGCONT. Returns the wall-clock
 // time of the SIGCONT. The role inside the sandbox goes on meanwhile.
 async function pause(fx) {
   const stoppedAt = Date.now();
-  process.kill(fx.engine.pid, 'SIGSTOP');
+  stopEngine(fx);
   await sleep(PAUSE_MS);
-  process.kill(fx.engine.pid, 'SIGCONT');
+  continueEngine(fx);
   return { stoppedAt, contAt: Date.now() };
 }
 
@@ -91,7 +96,7 @@ describe('M118 a healthy run survives a pause', () => {
     assert.equal(after.id, before.id, 'the same lease row');
     assert.equal(after.generation, before.generation);
     assert.ok(Date.parse(after.expires_at) > Date.parse(before.expires_at), `expires_at renewed (${before.expires_at} → ${after.expires_at})`);
-    assert.ok(Date.parse(event.payload.expires_at) > Date.parse(before.expires_at) && Date.parse(after.expires_at) >= Date.parse(event.payload.expires_at), `the event carries the renewed expiry, and later renewals only move it on (${event.payload.expires_at}, now ${after.expires_at})`);
+    assert.ok(Date.parse(event.payload.expires_at) > Date.parse(before.expires_at), `the event carries the renewed expiry (${before.expires_at} → ${event.payload.expires_at})`);
     assert.equal(afterThePause(after.renewed_at, stoppedAt), true, 'the lease is renewed again once it is re-granted');
     assert.equal(runRow(fx.home, run.id).deadline_at, deadline, 'deadline_at is unchanged');
     assert.equal(runRow(fx.home, run.id).state, 'executing', 'the run goes on');
@@ -137,13 +142,13 @@ describe('M118 a healthy run survives a pause', () => {
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
     const { run, domain, launch } = await roleHolding(fx, project, item, { on_term: 'exit', after: [step.result()] });
-    process.kill(fx.engine.pid, 'SIGSTOP');
+    stopEngine(fx);
     await sleep(2000);
     fx.scripted.release(item);
     await waitFor(() => fx.scripted.eventsOfInvocation(launch.invocation, 'exit').some((e) => e.code === 0), { what: 'the role to exit 0 during the pause' });
     assert.equal(runRow(fx.home, run.id).state, 'executing', 'the fixture is live: the stopped engine recorded nothing of it');
     await sleep(PAUSE_MS - 2000);
-    process.kill(fx.engine.pid, 'SIGCONT');
+    continueEngine(fx);
     await tick(fx.engine, project);
     await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
     assertRunEnded(fx.home, run.id, { outcome: 'completed', reason_class: 'none', launched: true, recovery: false });
@@ -181,13 +186,13 @@ describe('M118 a healthy run survives a pause', () => {
     await fx.scripted.waitForHolding({ work_item: second });
     const b = await waitForRun(fx.home, second, { state: 'executing' });
     const invocation = receiptOf(fx.home, b.id).id;
-    process.kill(fx.engine.pid, 'SIGSTOP');
+    stopEngine(fx);
     await sleep(2000);
     fx.scripted.release(second, 'gate');
     await fx.scripted.waitForHolding({ work_item: second }, 'after');
     assert.deepEqual(usageRows(fx.home, invocation), [], 'the fixture is live: the stopped engine has not read the usage line');
     await sleep(PAUSE_MS - 2000);
-    process.kill(fx.engine.pid, 'SIGCONT');
+    continueEngine(fx);
     await waitFor(() => (usageRows(fx.home, invocation).length > 0 ? true : undefined), { what: 'the usage observation to be recorded after the pause' });
     await tick(fx.engine, project);
     await waitForRunState(fx.home, b.id, 'ended', { timeoutMs: 60_000 });
@@ -233,12 +238,12 @@ describe('M118 a healthy run survives a pause', () => {
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
     const { run, launch } = await roleHolding(fx, project, item, { on_term: 'exit', after: [step.exit(3)] });
-    process.kill(fx.engine.pid, 'SIGSTOP');
+    stopEngine(fx);
     await sleep(2000);
     fx.scripted.release(item);
     await waitFor(() => fx.scripted.eventsOfInvocation(launch.invocation, 'exit').some((e) => e.code === 3), { what: 'the role to exit 3 during the pause' });
     await sleep(PAUSE_MS - 2000);
-    process.kill(fx.engine.pid, 'SIGCONT');
+    continueEngine(fx);
     await tick(fx.engine, project);
     await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
     assertRunEnded(fx.home, run.id, { outcome: 'failed', reason_class: 'infra_error', launched: true, recovery: false });

@@ -13,6 +13,7 @@ import { chmodSync, existsSync, readFileSync, readdirSync, realpathSync, rmdirSy
 import { join } from 'node:path';
 
 import { waitFor } from '../engine.mjs';
+import { signalPid, signallable } from '../proc.mjs';
 
 export const CGROUP_ROOT = '/sys/fs/cgroup';
 
@@ -192,13 +193,10 @@ export function endScopeLeftovers(prefix) {
           killCgroup(dir);
         } catch {
           if (testScopePosition(dir) !== 'inside') continue;
-          for (const pid of pids) {
-            try {
-              process.kill(pid, 'SIGKILL');
-            } catch {
-              // gone
-            }
-          }
+          // One by one, and only what may be signalled at all: never 0 (the
+          // test's own process group), 1, a negative number, or the test
+          // itself, whatever cgroup.procs held (harness/proc.mjs).
+          for (const pid of pids) signalPid(pid, 'SIGKILL');
         }
         ended.push(dir);
       } catch {
@@ -214,6 +212,8 @@ export function endScopeLeftovers(prefix) {
 // write access to the destination and the common ancestor).
 export function moveIntoCgroup(pid, dir) {
   assertInsideTestScope(dir, 'move a process into');
+  // A 0 written into cgroup.procs moves the writer itself.
+  if (!signallable(pid)) throw new Error(`refusing to move pid ${JSON.stringify(pid)}: not a process the tests may act on (harness/proc.mjs)`);
   const done = spawnSync('sh', ['-c', 'echo "$1" > "$2"', 'sh', String(pid), join(dir, 'cgroup.procs')], { encoding: 'utf8' });
   if (done.status !== 0) throw new Error(`writing pid ${pid} into ${dir}/cgroup.procs failed: ${done.stderr.trim()}`);
 }
