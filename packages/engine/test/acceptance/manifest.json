@@ -144,6 +144,17 @@
     ],
     "9": [
       "M15-git-write-deadline-in-a-running-engine.test.mjs"
+    ],
+    "10": [
+      "M101-no-entry-no-dispatch.test.mjs",
+      "M102-activation-only-by-the-human.test.mjs",
+      "M103-budget-boundary-and-hard-maximum.test.mjs",
+      "M104-estimated-cost-and-unknown-allowance.test.mjs",
+      "M105-alpha-exception-proposal.test.mjs",
+      "M106-reviewer-powers.test.mjs",
+      "M107-bootstrap-off-by-default.test.mjs",
+      "M108-widening-settings.test.mjs",
+      "M109-no-unsandboxed-entry.test.mjs"
     ]
   }
 }

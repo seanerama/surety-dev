@@ -9,16 +9,23 @@
 // old one. A candidate nominated before the change keeps its identity; the
 // next nomination is a successor under the new version.
 //
-// This file takes the authorized Reviewer path through a normal application
-// and the human tightening path through the two crashes. The provenance of
-// each human path (tightening, loosening, unclassifiable) is asserted with
-// the same judgement, `assertApplied`, in rows M53, M54 and M55. The
-// classification is a fixture and says so: it qualifies no classifier.
+// This file takes a Reviewer-recommended, human-approved tightening through
+// a normal application and the human tightening path through the two
+// crashes. The provenance of each human path (tightening, loosening,
+// unclassifiable) is asserted with the same judgement, `assertApplied`, in
+// rows M53, M54 and M55. The classification is a fixture and says so: it
+// qualifies no classifier.
+//
+// K8 change (M2 slice 10, row M106 (b); D2 §5 C2; COVERAGE.md "M2 slice
+// 10"): the first case had the Reviewer's approval apply the tightening.
+// Until D3's classifier is qualified a Reviewer's approval of a tightening
+// is a recommendation, so the case now has the human approve after the
+// Reviewer recommended; what the application does is unchanged.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, openDecision, reachBarrier, untilKilled } from './harness/decisions.mjs';
+import { answer, consume, openDecision, reachBarrier, untilKilled } from './harness/decisions.mjs';
 import {
   PROTECTED_FILES,
   assertApplied,
@@ -59,7 +66,7 @@ async function proposalAfterPass(t) {
 const head = (ctx) => refOid(ctx.project.repo.path, ctx.project.repo.ref);
 
 describe('M37 an approved protected proposal is applied through the journal', () => {
-  test('authorized by a Reviewer: one protected commit, one new effective version, the old evidence invalidated, the old candidate as it was, and the next nomination under the new version', async (t) => {
+  test('recommended by a Reviewer and authorized by the human: one protected commit, one new effective version, the old evidence invalidated, the old candidate as it was, and the next nomination under the new version', async (t) => {
     const ctx = await proposalAfterPass(t);
     const { fx, project, proposal, previous } = ctx;
     assert.equal(eventsOfType(fx.home, 'protected.classified').at(-1).payload.test_fixture, true, 'the classification is a fixture and is labelled as one');
@@ -68,9 +75,13 @@ describe('M37 an approved protected proposal is applied through the journal', ()
     await tick(fx.engine, project.id);
     assert.deepEqual([effectiveVersion(fx.home, project.id).id, head(ctx)], [previous.id, ctx.headBefore], 'a proposal nobody has approved is not applied');
 
+    // A Reviewer's approval is a recommendation until D3's classifier is qualified (K8): it applies nothing.
     await reviewerApproves(fx, project, proposal);
+    await tick(fx.engine, project.id);
+    assert.deepEqual([effectiveVersion(fx.home, project.id).id, head(ctx)], [previous.id, ctx.headBefore], "a Reviewer's recommendation is not an application");
+    await consume(fx, project.id, await openDecision(fx, project.id, 'check_correction_tightening', proposal.id), 'approve');
     await waitApplied(fx, project, proposal);
-    const version = assertApplied(fx, project, { proposal, previous, headBefore: ctx.headBefore, authority: 'reviewer', changeKind: 'tightening' });
+    const version = assertApplied(fx, project, { proposal, previous, headBefore: ctx.headBefore, authority: 'human', changeKind: 'tightening' });
     assert.equal(eventsOfType(fx.home, 'protected.applied').length, 1, 'one protected.applied');
 
     // The evidence that depended on the old version.

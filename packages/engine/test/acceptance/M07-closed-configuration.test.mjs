@@ -245,7 +245,8 @@ describe('M07 project policy', () => {
     const res = await engine.get(`/v1/projects/${project}/policy`);
     assert.equal(res.status, 200, res.text);
     for (const key of PROJECT_KEYS) {
-      assert.equal(res.body.effective[key], CONTRACT.project[key].default, `${key} default`);
+      // deepEqual since M2 slice 10: two D2 keys default to an empty list (SEAM.md §115).
+      assert.deepEqual(res.body.effective[key], CONTRACT.project[key].default, `${key} default`);
     }
     assert.equal(res.body.effective.max_concurrent_runs, 1);
   });
