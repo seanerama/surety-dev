@@ -598,7 +598,7 @@ Written by one Verifier session under E31. Each row has the fewest cases that pi
 | Four invocations with a reported, an estimated, an unknown and a measured-zero cost: one original row each, raw usage kept, cache reads apart from billable input, and the API's totals equal to the numbers stated in the fixture | `M59-metering-identity-and-normalization.test.mjs` | 4 | written |
 | A dispatch refused before launch has no ledger row, and a project that launched nothing reports no dispatch, not zero | same | 4 | written |
 
-Row closes in slice 4.
+Row closes in slice 4. **§120 change (M2 slice 10, objection 003):** the totals and `by_role` the two cases compare whole gain `unknown_allowance_tokens: null` (no invocation carries an allowance); nothing else changed. See "M2 slice 10".
 
 ### M60. Partial usage and idempotent delta corrections
 
@@ -608,7 +608,7 @@ Row closes in slice 4.
 | Usage observed before the engine was killed survives with the rest marked unknown; a second recovery and a tick add nothing | same | 4 | written |
 | A later correction is a delta row linked to the original, applied once however often it is sent, also after a restart; the fold gives the totals and settles what was uncertain | same | 4 | written |
 
-Row closes in slice 4.
+Row closes in slice 4. **§120 change (M2 slice 10, objection 003):** the totals the three cases compare whole gain `unknown_allowance_tokens`: null (both roles ended by themselves), 1,499,430 (the recovered run: the default run limit less its 570 observed tokens), 0 (after the correction that says the usage is complete); nothing else changed. See "M2 slice 10".
 
 ### M61. Budget boundaries and failed reads
 
@@ -631,7 +631,7 @@ Row closes in slice 4.
 
 | Case | File | Slice | Status |
 |---|---|---|---|
-| Ledger rows, totals, records and the budget refusal are the same after developer branch switches, a rebase, a squash, a linked worktree, a restart, and a moved and rebound repository; a correction sent again is not applied again; no runtime ledger in a tracked tree | `M62-accounting-survives-source-history-changes.test.mjs` | 4 | written |
+| Ledger rows, totals, records and the budget refusal are the same after developer branch switches, a rebase, a squash, a linked worktree, a restart, and a moved and rebound repository; a correction sent again is not applied again; no runtime ledger in a tracked tree (§120 change, M2 slice 10, objection 003: `TOTALS` gains `unknown_allowance_tokens: 1_497_500`, the stopped run's default run limit less its 2,500 observed tokens; nothing else changed) | `M62-accounting-survives-source-history-changes.test.mjs` | 4 | written; changed in M2 slice 10 |
 | Out-of-band changes block gates without hiding accounting | `M40-durable-evidence-invalidation.test.mjs` (first case) | 5 | written |
 
 ### M63. Durable record and chunk publication
@@ -1227,6 +1227,8 @@ Files and counts, as `node --test` reported them on `main` at `d3b57b2`: M46 4 o
 | M109 | 1 of 3 | (a), (b) **fail** at the policy key as M101. (c) **passes**: the engine's source keeps to the allowed list with `D2_HELPERS` added, a spawn of `claude` in `boundary/launch.ts`, `boundary/domains.ts`, `trust/qualify.ts` and `invoke-helpers/spawn.ts` is reported, the same under `invoke/adapters/claude.ts` is not; `boundary/scope.ts` is one file naming `systemd-run`. |
 
 The changed accepted tests, run the same way: M07 13 of 17 (the four that read the contract's keys fail: "exactly the closed key set"; `decision_targets.trust_activation` undefined; `config.ui_bootstrap` undefined; `budget_run_boundary` undefined); M73 10 of 11 ("qualification_approval is a DecisionKind"); M74-invocation-boundary 3 of 3; M37 2 of 3 (the K8 case: the Reviewer's approval moved the branch); M53 7 of 8 (the K8 case: the branch moved); M74-fixture-semantics 3 of 4 (the K8 case: no `check_correction_tightening` decision open after the Reviewer applied it); M68 2 of 8 (the K3 opt-in: exit 4 at start, as above). No other accepted file was run by this pass; the driver's rerun is the whole run.
+
+**The objections of the slice-10 Builder** (`docs/acceptance/objections/002-…`, `003-…`; answered by the Verifier on `verify/m2-s10-obj`, 2026-10-03). **002, upheld:** M101 (a) to (c), (e) and M108 (c) added a second item to a project whose first item had just been refused; a refused item returns to `eligible` (SEAM §15) and is offered again before the new one (one run per project, oldest first), and a tick the engine requests itself could refuse it twice. The projects of those cases now set `preflight_refusals_max` to 1 (`PARK_ON_REFUSAL` in `harness/trust.mjs`), so a refused item parks at its first refusal and the cases read it `parked` with one refusal and the blocker `preflight_refusals_max`; every refusal assertion is unchanged (SEAM §116). **003, upheld:** SEAM §120 put `unknown_allowance_tokens` into the ledger read's totals, and the three accepted cases that compare the totals whole now carry the key: M59 (`TOTALS`, `NO_DISPATCH`, `by_role`) null; M60 case 1 null, case 2 (recovered after 570 observed tokens) 1,499,430, case 3 (a complete correction) 0 in both readings; M62 (stopped at a day limit after 2,500 observed) 1,497,500. **A §120 change, not a weakening**: each value is the rule of §120 applied to the case's own fixture, and no other value changed. §120 is amended with E61 item 8 (a scripted invocation ended before any observation carries no allowance; a real backend's incomplete invocation always does) and says when the sum is null and when 0; `spend_today` is unchanged.
 
 **Recorded, not pinned** (each in the seam section named):
 

@@ -27,11 +27,13 @@ const FIXTURE = [
 
 // The totals of those four invocations. The invocation that reported no
 // cache read adds nothing to cached_in, and its cost is counted as unknown,
-// with its 790 billable tokens, not as zero.
-const TOTALS = { invocations: 4, billable_in: 1_001_900, cached_in: 2_030_000, out: 500_890, usage_incomplete: 0, reported_usd: 0.42, estimated_usd: 7, unknown_cost_invocations: 1, unknown_cost_tokens: 790 };
+// with its 790 billable tokens, not as zero. Every role ended by itself, so
+// no invocation carries an unknown allowance (M2 slice 10, SEAM.md §120;
+// objection 003): the key is there and null.
+const TOTALS = { invocations: 4, billable_in: 1_001_900, cached_in: 2_030_000, out: 500_890, usage_incomplete: 0, reported_usd: 0.42, estimated_usd: 7, unknown_cost_invocations: 1, unknown_cost_tokens: 790, unknown_allowance_tokens: null };
 
 // A project that dispatched nothing has no amounts at all.
-const NO_DISPATCH = { invocations: 0, billable_in: null, cached_in: null, out: null, usage_incomplete: 0, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null };
+const NO_DISPATCH = { invocations: 0, billable_in: null, cached_in: null, out: null, usage_incomplete: 0, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null, unknown_allowance_tokens: null };
 
 describe('M59 metering identity and normalization', () => {
   test('each launched invocation has one original ledger row with its raw usage and its normalized amounts, and the API totals are the fixture\'s', async (t) => {

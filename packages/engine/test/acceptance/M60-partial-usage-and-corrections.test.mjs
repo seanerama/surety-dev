@@ -54,7 +54,8 @@ describe('M60 partial usage and idempotent corrections', () => {
       assert.deepEqual(pick(originalRowOf(fx.home, run.id), ['billable_in', 'cached_in', 'out', 'usage_complete']), { billable_in: 400, cached_in: 40, out: 55, usage_complete: 1 });
     }
     const { totals } = await getLedger(fx.engine, project);
-    assert.deepEqual(totals, { invocations: 2, billable_in: 800, cached_in: 80, out: 110, usage_incomplete: 0, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 2, unknown_cost_tokens: 910 });
+    // Both roles ended by themselves: no allowance (SEAM.md §120; objection 003).
+    assert.deepEqual(totals, { invocations: 2, billable_in: 800, cached_in: 80, out: 110, usage_incomplete: 0, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 2, unknown_cost_tokens: 910, unknown_allowance_tokens: null });
   });
 
   test('usage observed before the engine was killed survives with the rest marked unknown, and finalizing again adds nothing', async (t) => {
@@ -68,7 +69,10 @@ describe('M60 partial usage and idempotent corrections', () => {
     await tick(fx.engine, project);
     assert.deepEqual(ledgerRows(fx.home, project).map((r) => r.id), [row.id], 'a second recovery and a tick leave the one original row');
     const { totals } = await getLedger(fx.engine, project);
-    assert.deepEqual(totals, { invocations: 1, billable_in: 500, cached_in: null, out: 70, usage_incomplete: 1, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 1, unknown_cost_tokens: 570 });
+    // Recovered after two observations, its usage incomplete: the allowance
+    // is the run's token limit (the default, 1,500,000) less the 570 billable
+    // tokens observed (SEAM.md §120; objection 003).
+    assert.deepEqual(totals, { invocations: 1, billable_in: 500, cached_in: null, out: 70, usage_incomplete: 1, reported_usd: null, estimated_usd: null, unknown_cost_invocations: 1, unknown_cost_tokens: 570, unknown_allowance_tokens: 1_499_430 });
   });
 
   test('a later correction is a delta row linked to the original, applied once however often it is sent, and it settles what was uncertain', async (t) => {
@@ -97,11 +101,13 @@ describe('M60 partial usage and idempotent corrections', () => {
     assert.equal(ledgerRows(fx.home, project).length, 2, 'one original and one correction');
     assert.equal(eventsOfType(fx.home, 'ledger.correction').length, 1, 'recorded once');
     assert.deepEqual(pick(originalRowOf(fx.home, run.id)), KNOWN_SO_FAR, 'the original row is as it was');
-    assert.deepEqual((await getLedger(fx.engine, project)).totals, { invocations: 1, billable_in: 620, cached_in: 60, out: 100, usage_incomplete: 0, reported_usd: 0.75, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null }, 'original plus correction, each once; nothing is uncertain any more');
+    // The correction says the usage is complete: the allowance the original
+    // row carries is released, 0 in force (SEAM.md §120; objection 003).
+    assert.deepEqual((await getLedger(fx.engine, project)).totals, { invocations: 1, billable_in: 620, cached_in: 60, out: 100, usage_incomplete: 0, reported_usd: 0.75, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null, unknown_allowance_tokens: 0 }, 'original plus correction, each once; nothing is uncertain any more');
 
     // A second correction that says nothing about cost or completeness changes neither.
     const second = await correct(fx.engine, { invocation, seq: 2, raw: { output_tokens: 5 } });
     assert.deepEqual([second.status, second.body?.created], [201, true], `a second correction (body: ${second.text})`);
-    assert.deepEqual((await getLedger(fx.engine, project)).totals, { invocations: 1, billable_in: 620, cached_in: 60, out: 105, usage_incomplete: 0, reported_usd: 0.75, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null });
+    assert.deepEqual((await getLedger(fx.engine, project)).totals, { invocations: 1, billable_in: 620, cached_in: 60, out: 105, usage_incomplete: 0, reported_usd: 0.75, estimated_usd: null, unknown_cost_invocations: 0, unknown_cost_tokens: null, unknown_allowance_tokens: 0 });
   });
 });

@@ -29,9 +29,9 @@ import { makeTempDir, removeDir, waitFor } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy, getPolicy, policyRevisions } from './harness/journal.mjs';
 import { readRun } from './harness/reads.mjs';
-import { addWork, assertRunEnded, getRow, requestTick, runsOf, scriptedEngine, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
+import { addWork, assertRunEnded, getRow, requestTick, runsOf, scriptedEngine, tickUntil, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
-import { eventsNamed } from './harness/trust.mjs';
+import { PARK_ON_REFUSAL, eventsNamed } from './harness/trust.mjs';
 
 const policyPath = (project) => `/v1/projects/${project}/policy`;
 
@@ -95,6 +95,11 @@ describe('M108 the widening settings', () => {
     await tickUntil(fx.engine, id, () => workItem(fx.home, first).status === 'complete', { what: 'a first run to leave a workspace' });
     const workspace = getRow(fx.home, 'workspaces', runsOf(fx.home, first)[0].workspace).path;
     assert.ok(existsSync(workspace), 'the fixture is live: a retained workspace exists');
+    // A refused item parks at its first refusal (objection 002): otherwise it
+    // returns to `eligible` and is offered before the next path's item
+    // (SEAM.md §15, one run per project, oldest first). Lowering the limit is
+    // an ordinary change.
+    await changePolicy(fx.engine, id, PARK_ON_REFUSAL);
 
     // Aliases and special files, seeded and verified from the host side.
     const scratch = makeTempDir('m108-special');
@@ -139,6 +144,8 @@ describe('M108 the widening settings', () => {
       assert.equal(shown.code, 'mount_plan_refused', `${what}: the run read carries the code (${JSON.stringify(shown.refusal ?? null)})`);
       assert.equal(shown.refusal?.subject?.path, path, `${what}: the refusal names the path as the policy gave it`);
       assert.ok(reasons.includes(shown.refusal?.subject?.reason), `${what}: the reason is ${reasons.join(' or ')} (it is ${JSON.stringify(shown.refusal?.subject?.reason)})`);
+      const parked = await waitForWork(fx.home, item, 'parked');
+      assert.deepEqual([parked.preflight_refusals, JSON.parse(parked.blocker).reason, runsOf(fx.home, item).length], [1, 'preflight_refusals_max', 1], `${what}: the one refusal is counted and the item is parked, out of the next path's way`);
     }
   });
 
