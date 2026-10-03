@@ -26,7 +26,7 @@ import { waitFor } from './harness/engine.mjs';
 import { newId } from './harness/ids.mjs';
 import { addProject, addWork, assertRunEnded, runsOf, stopRun, tick, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, populated, procsOf, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
-import { checkOf, domainOf, domainRow, eventsOf, hostSection, receiptOf, roleHolding, roleProcess, sandboxEngine, scopeOf, terminalObservation } from './harness/sandbox/lane.mjs';
+import { checkOf, domainOf, domainRow, eventsOf, hostSection, observerEnvelopes, receiptOf, roleHolding, roleProcess, sandboxEngine, scopeOf, terminalObservation } from './harness/sandbox/lane.mjs';
 import { hostProcess, memberByInnerPid } from './harness/sandbox/procs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -161,6 +161,10 @@ describe('M116 membership cannot be escaped', () => {
     const h13 = checkOf(hostSection(await fx.engine.engineInfo()), 'H13');
     assert.equal(h13.result, 'not_exercised', `the observer is not exercised on this host (${h13.observed})`);
     assert.ok(typeof h13.observed === 'string' && h13.observed.length > 0, 'and the engine says why');
-    assert.deepEqual(withStore(fx.home, (db) => db.prepare(`SELECT "id" FROM "records" WHERE "kind" = 'qualification_evidence'`).all()), [], 'no observer evidence envelope exists');
+    // Objection 006: from slice 12 the host qualification and every validated
+    // mount plan write qualification_evidence records; what must not exist is
+    // the observer's envelope (D2 A.3), whatever record would carry it.
+    const { envelopes } = observerEnvelopes(fx.home);
+    assert.deepEqual(envelopes, [], 'no observer evidence envelope exists in any qualification_evidence record');
   });
 });

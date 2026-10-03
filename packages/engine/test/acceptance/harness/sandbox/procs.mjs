@@ -7,6 +7,7 @@
 // allows; a process whose files cannot be read is reported as such, never
 // as absent.
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 
 import { waitFor } from '../engine.mjs';
@@ -118,3 +119,55 @@ export const waitMember = (dir, predicate, { timeoutMs = 20_000, what = 'a membe
     },
     { timeoutMs, what: `${what} in ${dir}` },
   );
+
+// ---- a process's environment block, read from its memory (objection 008) -------------------
+//
+// `/proc/<pid>/environ` is the process's initial environment block, the
+// bytes between `env_start` and `env_end` of its memory. For a non-dumpable
+// process whose /proc files the kernel gives to a root the host is not (the
+// domain init, by design: D2 §2.3, M117 (b)), the file's mode refuses the
+// host. The same bytes stay readable to the host by another route that the
+// role does not have: `/proc/<pid>/stat` shows `env_start` and `env_end`
+// (fields 50 and 51) to a reader the kernel lets ptrace-read the process,
+// and `process_vm_readv(2)` copies them under the ptrace check alone, with
+// no file-mode check. The host, uid 1000 in the initial user namespace,
+// owns the sandbox's user namespaces and so holds CAP_SYS_PTRACE over them;
+// the role, in the init's own namespace with no capability, does not. Node
+// has no binding for the call, so the host's python3 makes it (a host tool,
+// like git and systemd-run; no package). Read-only; the target is a process
+// of the test's own engine. Returns {env: Map, start, end}; throws with the
+// reason when the block cannot be read: unknown is never absence.
+const ENV_BLOCK_READER = String.raw`
+import ctypes, json, os, sys
+pid = int(sys.argv[1])
+stat = open(f"/proc/{pid}/stat").read()
+f = stat[stat.rindex(")") + 2:].split(" ")
+start, end = int(f[50 - 3]), int(f[51 - 3])
+if start == 0 or end <= start:
+    print(json.dumps({"error": "env_start/env_end are not shown to this reader"})); sys.exit(0)
+class iovec(ctypes.Structure):
+    _fields_ = [("iov_base", ctypes.c_void_p), ("iov_len", ctypes.c_size_t)]
+libc = ctypes.CDLL(None, use_errno=True)
+n = end - start
+buf = ctypes.create_string_buffer(n)
+local = iovec(ctypes.cast(buf, ctypes.c_void_p), n)
+remote = iovec(ctypes.c_void_p(start), n)
+r = libc.process_vm_readv(pid, ctypes.byref(local), 1, ctypes.byref(remote), 1, 0)
+if r != n:
+    e = ctypes.get_errno()
+    print(json.dumps({"error": f"process_vm_readv read {r} of {n} bytes ({os.strerror(e) if r < 0 else 'short'})"})); sys.exit(0)
+print(json.dumps({"start": start, "end": end, "env": [x.decode("latin1") for x in buf.raw.split(b"\0") if x]}))
+`;
+
+export function environFromMemory(pid) {
+  const done = spawnSync('python3', ['-c', ENV_BLOCK_READER, String(pid)], { encoding: 'utf8', timeout: 10_000 });
+  if (done.error || done.status !== 0) throw new Error(`the host could not run python3 to read pid ${pid}'s environment block (${done.error?.code ?? done.status}: ${(done.stderr ?? '').trim().slice(0, 300)})`);
+  const out = JSON.parse(done.stdout.trim());
+  if (out.error) throw new Error(`pid ${pid}'s environment block cannot be read from the host: ${out.error}`);
+  const env = new Map();
+  for (const entry of out.env) {
+    const eq = entry.indexOf('=');
+    if (eq > 0) env.set(entry.slice(0, eq), entry.slice(eq + 1));
+  }
+  return { env, start: out.start, end: out.end };
+}
