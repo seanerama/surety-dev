@@ -141,6 +141,9 @@
     "8": [
       "M24-nomination-ref-blocks-gates.test.mjs",
       "M28-replayed-result-against-new-protected-set.test.mjs"
+    ],
+    "9": [
+      "M15-git-write-deadline-in-a-running-engine.test.mjs"
     ]
   }
 }
