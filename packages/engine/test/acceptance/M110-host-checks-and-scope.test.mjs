@@ -46,6 +46,8 @@ import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { BACKENDS, PARK_ON_REFUSAL, StandIn, apiKeyRef, eventsNamed, installTrustEntry, useBackend } from './harness/trust.mjs';
 
+const isWsl2Host = () => /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+
 // What a sandbox-lane start on this host reports in this slice (SEAM.md
 // §123). Slice 12 turns H9 and H10 to `passed` and adds the active row.
 const EXPECTED_IN_SLICE_11 = Object.freeze({
@@ -57,13 +59,15 @@ const EXPECTED_IN_SLICE_11 = Object.freeze({
   H6: 'passed',
   H7: 'passed',
   H8: 'passed',
-  H9: 'not_exercised',
-  H10: 'not_exercised',
+  // Slice 12 (the probe suite): H9 and H10 pass. Changed by the slice-12
+  // Verifier as COVERAGE.md "M2 slice 11" permits in advance (SEAM.md §138).
+  H9: 'passed',
+  H10: isWsl2Host() ? 'passed' : 'not_exercised',
   H11: 'passed',
   H12: 'passed',
   H13: 'not_exercised',
 });
-const BLOCKING_NOT_EXERCISED = ['H9', 'H10'];
+const BLOCKING_NOT_EXERCISED = [];
 
 const STEPS_UNDER_RUN = ['scope', 'lock', 'listen', 'store', 'recovery', 'integrity', 'host_qualification', 'full', 'scheduler'];
 const M1_STEPS = ['lock', 'listen', 'store', 'recovery', 'integrity', 'full', 'scheduler'];
@@ -109,15 +113,19 @@ describe('M110 the host checks recorded; the engine in its scope', () => {
     assert.equal(host.scope_cgroup, scope.path, 'the host section shows the scope path the store records');
     assert.equal(listScopes(scopeUnitPrefix(fx.home)).length, 1, 'the manager lists one scope for this home');
 
-    // Not eligible in this slice: the blocking checks not exercised, no row.
-    assert.equal(host.eligible, false, 'the host is not eligible while H9 and H10 are not exercised');
+    // Slice 12: every required check passed, so the host is eligible on
+    // one active row (its shape is M110-qualification-per-start.test.mjs's).
+    // Changed from slice 11's "not eligible, no row" as COVERAGE.md "M2
+    // slice 11" permits in advance (SEAM.md §138).
+    assert.equal(host.eligible, true, 'the host is eligible once H9 and H10 pass');
     assert.equal(host.source, 'qualification', 'the eligibility rests on a qualification, not on the harness');
     assert.deepEqual(host.failed_checks, [], 'no check failed');
-    assert.deepEqual(host.not_exercised_checks, BLOCKING_NOT_EXERCISED, 'the blocking checks not exercised in this slice');
-    assert.equal(host.host_qualification, null, 'no host_qualifications row is current');
-    assert.match(host.message ?? '', /^isolation unqualified: H9 not_exercised: .+; .+; real backends are refused until then\.$/, `the message names the first blocking check in D2 §6's shape (message: ${host.message})`);
-    assert.deepEqual(hostRows(fx.home), [], 'a pass writes a row; a start with an unexercised check writes none');
-    assert.deepEqual(eventsNamed(fx.home, 'host.qualified'), [], 'and emits no host.qualified');
+    assert.deepEqual(host.not_exercised_checks, BLOCKING_NOT_EXERCISED, 'no blocking check is unexercised');
+    const rows = hostRows(fx.home).filter((r) => r.status === 'active');
+    assert.equal(rows.length, 1, 'one active host_qualifications row');
+    assert.equal(host.host_qualification, rows[0].id, 'and the engine read names it');
+    assert.equal(host.message, null, 'no message while eligible');
+    assert.equal(eventsNamed(fx.home, 'host.qualified').length, 1, 'one host.qualified');
 
     // The kernel lane is untouched: an unrun engine creates no scope, runs no
     // check and lists the M1 steps (M06).

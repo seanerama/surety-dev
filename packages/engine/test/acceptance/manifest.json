@@ -173,7 +173,8 @@
       "M120-control-plane-invisible.test.mjs",
       "M121-git-view.test.mjs",
       "M122-host-sockets-and-wsl.test.mjs",
-      "M123-protected-set-read-only.test.mjs"
+      "M123-protected-set-read-only.test.mjs",
+      "M124-probe-needs-target-and-control.test.mjs"
     ]
   },
   "sandbox": [
@@ -191,6 +192,7 @@
     "M120-control-plane-invisible.test.mjs",
     "M121-git-view.test.mjs",
     "M122-host-sockets-and-wsl.test.mjs",
-    "M123-protected-set-read-only.test.mjs"
+    "M123-protected-set-read-only.test.mjs",
+    "M124-probe-needs-target-and-control.test.mjs"
   ]
 }
