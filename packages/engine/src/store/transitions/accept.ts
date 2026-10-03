@@ -5,7 +5,7 @@
 // would have written the first time (E28 item 1).
 
 import { assertEdge } from './lifecycle.js';
-import { type Report, recordReport } from './findings.js';
+import { type AlphaPrepared, type Report, recordReport } from './findings.js';
 import { type ChangeKind, captureProposal, effectiveVersion } from './protected.js';
 import { projectPolicy } from './settings.js';
 import { illegal, notFound } from './common.js';
@@ -135,7 +135,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
 
 // A Verifier's or a Reviewer's run that changed nothing: what its role
 // reported is recorded (SEAM.md §68).
-export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string | null)[] }): void {
+export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string | null)[]; alpha?: AlphaPrepared[] }): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
   recordReport(tx, args);

@@ -15,6 +15,7 @@ import { checkoutBaseline, readRef, treeIndexHash } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
+import type { Policy } from '../config/project-policy.js';
 import { preparePolicyCommit } from '../projects/commands.js';
 import { protectedSetAt } from '../protected/set.js';
 import { nowIso } from '../clock.js';
@@ -27,7 +28,7 @@ interface IntentRow {
   project: string;
   decision: string;
   status: 'pending' | 'executing' | 'done' | 'invalidated';
-  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt';
+  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt' | 'alpha_exception';
   plan: Record<string, unknown>;
   operation: string | null;
 }
@@ -91,6 +92,11 @@ export class Effects {
       case 'oob_adopt':
         await this.adopt(row);
         return;
+      case 'alpha_exception':
+        // A store-only effect: its preconditions read again and the
+        // exception written in one transaction (D2 §5 C1).
+        if (row.status === 'pending') await this.rt.engine('alpha.apply', { intent: row.id });
+        return;
     }
   }
 
@@ -98,12 +104,12 @@ export class Effects {
   // the decision's effect, on the base its preview was bound to.
   private async widen(row: IntentRow): Promise<void> {
     if (row.status === 'pending') {
-      const facts = await this.rt.engine<{ repo: string; branch: string; head: string | null; effective: Record<string, number>; revision: number | null }>('project.policy_facts', {
+      const facts = await this.rt.engine<{ repo: string; branch: string; head: string | null; effective: Policy; revision: number | null }>('project.policy_facts', {
         project: row.project,
       });
       let prepared: Record<string, unknown> | null = null;
       try {
-        prepared = await preparePolicyCommit(this.rt, row.project, facts, row.plan.change as Record<string, number>);
+        prepared = await preparePolicyCommit(this.rt, row.project, facts, row.plan.change as Policy);
       } catch (err) {
         log('policy widening', err, { intent: row.id });
       }

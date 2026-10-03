@@ -57,6 +57,15 @@ import {
   installFixtureTrigger,
   installReuse,
   installScopeApproval,
+  installHostQualification,
+  installAttempt,
+  installTrustEntry,
+  parseHostQualification,
+  parseAttemptFixture,
+  parseEntryFixture,
+  type HostQualificationFixture,
+  type AttemptFixture,
+  type EntryFixture,
   parseAlphaException,
   parsePlanBody,
   parseProjectBody,
@@ -123,6 +132,9 @@ type FaultSpec =
   | { point: 'lease_read' };
 type Fault = FaultSpec & { times: number; remaining: number };
 type TickFault = { point: 'tick_step'; step: 'recover' | 'journal' | 'integrity'; project: string; delay_ms: number };
+// Faults the main thread fires (M2 plan §2.3): the bootstrap route's read of
+// the token.
+type MainFault = { point: 'token_read'; times: number; remaining: number; hit: number };
 
 // A failure the seam injects. It is not a Refusal, so the transaction it
 // interrupts rolls back and is reported like any other store failure.
@@ -137,6 +149,7 @@ let clockCell: BigInt64Array | null = null;
 let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
 const tickFaults: TickFault[] = [];
+const mainFaults: MainFault[] = [];
 
 type SeamMessage = { seam: 'barrier'; name: string; state: BarrierState };
 
@@ -406,6 +419,10 @@ const OP = {
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
+  fixtureHostQualification: 'harness.fixture_host_qualification',
+  fixtureAttempt: 'harness.fixture_attempt',
+  fixtureTrustEntry: 'harness.fixture_trust_entry',
+  listFaults: 'harness.list_faults',
   findingProject: 'harness.finding_project',
   projectRepo: 'harness.project_repo',
   workTransition: 'harness.work_transition',
@@ -484,9 +501,26 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       restricted: false,
       handler: async () => {
         tickFaults.length = 0;
+        mainFaults.length = 0;
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
+    };
+  }
+  if (s.length === 1 && s[0] === 'faults' && get) {
+    // What is armed, and how often each main-thread fault fired.
+    return {
+      restricted: true,
+      handler: async () => ({
+        status: 200,
+        body: {
+          faults: [
+            ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...tickFaults.map((f) => ({ ...f })),
+            ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
+          ],
+        },
+      }),
     };
   }
   if (!post) return null;
@@ -619,8 +653,40 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'allocate') return route(200, (body) => storeOp(OP.allocate, { body, actor: hooks.actor }));
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
-      armed: isObject(body) && body.point === 'tick_step' ? armTickFault(body) : await storeOp(OP.armFault, body),
+      armed:
+        isObject(body) && body.point === 'tick_step' ? armTickFault(body) : isObject(body) && body.point === 'token_read' ? armMainFault(body) : await storeOp(OP.armFault, body),
     }));
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'host-qualification') {
+    return route(201, async (body) => {
+      const parsed = parseHostQualification(body);
+      const rt = hooks.runtime();
+      const { writeWholeRecord } = await import('../records/files.js');
+      const evidence = await writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
+      return storeOp(OP.fixtureHostQualification, { body: parsed, incarnation: rt.incarnation, evidence, actor: hooks.actor });
+    });
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'qualification-attempt') {
+    return route(201, async (body) => {
+      const parsed = parseAttemptFixture(body);
+      const rt = hooks.runtime();
+      const { writeWholeRecord } = await import('../records/files.js');
+      const evidence = await writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
+      return storeOp(OP.fixtureAttempt, { body: parsed, incarnation: rt.incarnation, evidence, actor: hooks.actor });
+    });
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'trust-entry') {
+    return route(201, async (body) => {
+      const parsed = parseEntryFixture(body);
+      const rt = hooks.runtime();
+      const { writeWholeRecord } = await import('../records/files.js');
+      const write = (text: string) => writeWholeRecord(rt, { project: parsed.project, run: null, kind: 'qualification_evidence', content: Buffer.from(text) });
+      const evidence: string[] = [];
+      for (const text of parsed.evidenceTexts) evidence.push(await write(text));
+      const boundaryEvidence: (string | null)[] = [];
+      for (const b of parsed.entry.enforceable_boundaries) boundaryEvidence.push(b.evidenceText === null ? null : await write(b.evidenceText));
+      return storeOp(OP.fixtureTrustEntry, { body: parsed, incarnation: rt.incarnation, evidence, boundaryEvidence, actor: hooks.actor });
+    });
   }
   return null;
 }
@@ -665,6 +731,14 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installAlphaException(store(), a.actor, a.args as { finding: string; record: string; purpose: string });
     case OP.fixtureReuse:
       return installReuse(store(), a.actor, a.body);
+    case OP.fixtureHostQualification:
+      return installHostQualification(store(), a.actor, a as unknown as { body: HostQualificationFixture; incarnation: string; evidence: string });
+    case OP.fixtureAttempt:
+      return installAttempt(store(), a.actor, a as unknown as { body: AttemptFixture; incarnation: string; evidence: string });
+    case OP.fixtureTrustEntry:
+      return installTrustEntry(store(), a.actor, a as unknown as { body: EntryFixture; incarnation: string; evidence: string[]; boundaryEvidence: (string | null)[] });
+    case OP.listFaults:
+      return faults.map((f) => ({ ...f }));
     case OP.findingProject:
       return findingProject(store(), a.finding as string);
     case OP.projectRepo:
@@ -741,6 +815,27 @@ function fire(matches: (f: Fault) => boolean, what: string): void {
   fault.remaining -= 1;
   if (fault.remaining <= 0) faults.splice(i, 1);
   throw new InjectedFault(what);
+}
+
+function armMainFault(body: Record<string, unknown>): { point: 'token_read'; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => k !== 'point' && k !== 'times') || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown token_read fault.', 'Send {"point":"token_read","times"?: <n>}.', { field: 'point' });
+  }
+  mainFaults.push({ point: 'token_read', times, remaining: times, hit: 0 });
+  return { point: 'token_read', times };
+}
+
+// The bootstrap route reads the token (M107; D2 §2.6): an armed `token_read`
+// fault fails that read, which the route reaches only when the bootstrap
+// exception is in force.
+export function seamTokenRead(): void {
+  if (!init.harness) return;
+  const f = mainFaults.find((m) => m.point === 'token_read' && m.remaining > 0);
+  if (!f) return;
+  f.remaining -= 1;
+  f.hit += 1;
+  throw new Refusal(500, 'store_error', 'injected fault: token read', 'The harness armed a token_read fault.', { fault: 'token_read' });
 }
 
 // A budget check reads a project's spend (SEAM.md §61).

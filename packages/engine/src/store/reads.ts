@@ -2,7 +2,7 @@
 
 import type { Database } from 'better-sqlite3';
 
-import { policyRevision, projectPolicy as effectivePolicy } from './transitions/settings.js';
+import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
 import type { WorkRow } from './transitions/work.js';
@@ -65,4 +65,19 @@ export function quarantinedRuns(db: Database): { id: string; project: string }[]
     id: string;
     project: string;
   }[];
+}
+
+// What the mount plan's validation needs before a launch (D2 §2.3): the
+// project's widened read paths, and the locations no widening may reach that
+// the store knows of.
+export function mountContext(db: Database, args: { project: string }) {
+  const col = (sql: string) => (db.prepare(sql).all() as { p: string }[]).map((r) => r.p);
+  return {
+    paths: projectOptions(db, args.project).sandbox_read_paths,
+    context: {
+      repositories: col('SELECT DISTINCT "dev_repo_path" AS p FROM "projects"'),
+      workspaces: col(`SELECT "path" AS p FROM "workspaces" WHERE "disposition" <> 'discarded'`),
+      checkouts: col('SELECT "path" AS p FROM "managed_checkouts"'),
+    },
+  };
 }

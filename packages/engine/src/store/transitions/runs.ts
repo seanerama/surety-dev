@@ -15,6 +15,7 @@ import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
+import { resolveBackend } from './trust.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -148,7 +149,9 @@ export interface ClaimArgs {
   project: string;
   workItem: string;
   incarnation: string;
-  backend: { id: string; version: string };
+  // The scripted backend's version where this engine has it (harness mode
+  // with a scripted directory), else null.
+  scripted: string | null;
   maxConcurrentRuns: number;
 }
 
@@ -165,6 +168,13 @@ export interface Claim {
   base_revision: string;
   // When the run lease was taken, on the engine clock.
   lease_renewed_at: string;
+  // The backend the run is dispatched to (D2 §4.1): the trust entry that
+  // authorizes it, if any; or why it is refused before any domain or
+  // process (`backend_refused`, `isolation_unqualified`,
+  // `budget_boundary_unenforceable`).
+  backend: string;
+  trust_entry: string | null;
+  refusal: { code: string; text: string; detail: Record<string, unknown> } | null;
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
@@ -188,7 +198,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
-  if (exhaustedLimits(db, item.project, { check: opts.check ?? true }).length > 0) return 'budget exhausted';
+  if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -226,6 +236,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const role = ROLE_OF[item.kind]!;
   const policy = projectPolicy(tx.db, item.project);
   const deadlineSeconds = policy[`deadline_${role}`]!;
+  // The backend, from the policy and the trust table (D2 §4.1). A refusal is
+  // recorded with the run it refuses, before any domain is placed or any
+  // process started.
+  const backend = resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
@@ -248,13 +262,13 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
          "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined", "chain")
        VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
-    .run(run, tx.at, item.project, seq, item.id, role, args.backend.id, args.backend.version, args.backend.id, baseRevision, deadlineAt, parent, chain);
+    .run(run, tx.at, item.project, seq, item.id, role, backend.backend, backend.version, backend.model, baseRevision, deadlineAt, parent, chain);
   // The acceptance content the run is given, fixed now (E41 item 4).
   const candidateId = (JSON.parse(item.subject) as { candidate?: string }).candidate;
   const candidateRow = candidateId ? getCandidate(tx.db, candidateId) : undefined;
   if (candidateRow) tx.db.prepare('UPDATE "runs" SET "content_hash" = ? WHERE "id" = ?').run(contentHash(tx.db, item.project, candidateRow), run);
   const subject = { project: item.project, run, work_item: item.id };
-  tx.emit('run.created', subject, { seq, role, backend: args.backend.id, base_revision: baseRevision, parent_run: parent });
+  tx.emit('run.created', subject, { seq, role, backend: backend.backend, base_revision: baseRevision, parent_run: parent });
   tx.emit('run.claimed', subject, {});
 
   // An automatic re-dispatch after a failed run counts one repair (D1 §4.3).
@@ -279,7 +293,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     .run(grant, tx.at, item.project, run, JSON.stringify(['workspace_write']), JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION']), tx.at, deadlineAt);
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
 
-  const invocation = allocateReceipt(tx, run);
+  const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
+  const invocation = allocateReceipt(tx, run, { trustEntry });
   const domain = tx.newId('dom_');
   tx.db
     .prepare(`INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status") VALUES (?, ?, ?, ?, ?, 'allocated')`)
@@ -300,12 +315,15 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     deadline_at: deadlineAt,
     base_revision: baseRevision,
     lease_renewed_at: tx.at,
+    backend: backend.backend,
+    trust_entry: trustEntry,
+    refusal: backend.kind === 'refused' ? { code: backend.code, text: backend.text, detail: backend.detail } : null,
   };
 }
 
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -320,10 +338,10 @@ export function allocateReceipt(tx: Tx, runId: string): string {
   };
   tx.db
     .prepare(
-      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot")
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry")
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget));
+    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null);
   tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend });
   return id;
 }

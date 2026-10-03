@@ -39,7 +39,28 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   assessments: (v) => listOf(v, (a) => isString(a.assessment) && ['not_applicable', 'applicable'].includes(a.verdict as string)),
   proposal: (v) => isObject(v) && isString(v.rationale) && CHANGE_KINDS.includes(v.requested_change_kind as string),
   proposal_approval: (v) => isObject(v) && isString(v.proposal) && isString(v.reason),
+  // D2 §5 C1, A.3: a Reviewer's Alpha exception proposals. A reference is a
+  // workspace path at the reviewed revision or a record, given as
+  // {"path": <relative path>} or {"record": <record id>}.
+  alpha_exception_proposals: (v) =>
+    listOf(
+      v,
+      (p) =>
+        isString(p.finding) &&
+        isString(p.containment_text) &&
+        isString(p.testing_purpose) &&
+        Array.isArray(p.references) &&
+        p.references.every((r) => isObject(r) && Object.keys(r).length === 1 && ((isString(r.path) && r.path.length > 0) || (isString(r.record) && r.record.length > 0))),
+    ),
 };
+
+// Fields only one role may send: carried by another role's result, they make
+// it invalid (D2 §5 C1: an Alpha exception proposal is a Reviewer's).
+const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer' };
+
+export function fieldAllowed(result: Record<string, unknown>, role: string): boolean {
+  return Object.entries(ROLE_ONLY).every(([field, only]) => result[field] === undefined || role === only);
+}
 
 // The report a result carries: {} when it carries none, null when a field
 // has the wrong form.

@@ -4,7 +4,7 @@
 // commits with its api.act record (store worker, `mutate`).
 
 import { Refusal } from '../../refusal.js';
-import { illegal, notFound } from './common.js';
+import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, consumeDecision, currentPreview, openDecision, stale } from './decisions.js';
 import { type Facts, KINDS, answerQueued, raiseQuestion, wireControl } from './queue.js';
 import { beginEnd, getRun } from './runs.js';
@@ -106,6 +106,8 @@ export function answerDecision(tx: Tx, args: { project: string; decision: string
   return answerQueued(tx, args);
 }
 
+const PREFLIGHT_CODES = ['backend_refused', 'isolation_unqualified', 'budget_boundary_unenforceable', 'mount_plan_refused'];
+
 // D1 A.7: the public code reported on a run's representation.
 function publicCode(reason: string | null, text: string | null): string | null {
   switch (reason) {
@@ -115,7 +117,8 @@ function publicCode(reason: string | null, text: string | null): string | null {
     case 'integration_conflict':
       return reason;
     case 'preflight_refused':
-      return text === 'isolation_unqualified' ? 'isolation_unqualified' : 'backend_refused';
+      // D2 A.7: why a dispatch was refused before launch.
+      return text !== null && PREFLIGHT_CODES.includes(text) ? text : 'backend_refused';
     case 'budget':
       return 'budget_exhausted';
     default:
@@ -128,8 +131,9 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
   const domains = db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
-  const receipts = (db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string }[]).map((r) => ({
+  const receipts = (db.prepare('SELECT "id", "trust_entry" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string; trust_entry: string | null }[]).map((r) => ({
     id: r.id,
+    trust_entry: r.trust_entry,
     statuses: (db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(r.id) as { status: string }[]).map(
       (o) => o.status,
     ),
@@ -161,6 +165,13 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       outcome: run.outcome,
       reason_class: run.reason_class,
       code: publicCode(run.reason_class as string | null, run.reason_text as string | null),
+      // Why a dispatch was refused before launch, as the engine decided it
+      // (D2 §§2.3, 4.1, 4.2): the entry, the boundary it enforces and the
+      // deadline as the overshoot bound; the path the mount plan refused.
+      refusal: run.reason_class === 'preflight_refused' ? (parseJson<Record<string, unknown>>((run.reason_detail as string | null) ?? null) ?? { code: publicCode('preflight_refused', run.reason_text as string | null) }) : null,
+      // What the role's report proposed that the engine refused before
+      // raising anything (D2 §5 C1).
+      report_refusals: parseJson<unknown[]>((run.report_refusals as string | null) ?? null) ?? [],
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

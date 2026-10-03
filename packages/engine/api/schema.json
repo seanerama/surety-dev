@@ -75,7 +75,9 @@
       "abandon_confirm",
       "retire",
       "reactivate",
-      "policy_widening"
+      "policy_widening",
+      "qualification_approval",
+      "trust_activation"
     ],
     "DecisionStatus": [
       "open",
@@ -105,6 +107,21 @@
       "launched",
       "terminated",
       "quarantined"
+    ],
+    "SandboxProfile": [
+      "role",
+      "probe",
+      "check"
+    ],
+    "LaunchState": [
+      "authorizable",
+      "authorized",
+      "closed"
+    ],
+    "DomainObservation": [
+      "running",
+      "terminated",
+      "unknown"
     ],
     "FindingScope": [
       "project",
@@ -165,12 +182,24 @@
       "ambiguous",
       "finalized"
     ],
+    "HostQualificationStatus": [
+      "active",
+      "lapsed"
+    ],
     "InvocationStatus": [
       "dispatch_started",
       "refused",
       "launched",
       "ended",
       "unknown"
+    ],
+    "ExitClass": [
+      "engine_signaled",
+      "unknown",
+      "resource_limit",
+      "foreign_signal",
+      "clean",
+      "error_exit"
     ],
     "LeaseKind": [
       "run",
@@ -272,6 +301,17 @@
       "applied",
       "rejected"
     ],
+    "AuthMode": [
+      "api_key"
+    ],
+    "QualificationAttemptStatus": [
+      "proposed",
+      "authorized",
+      "running",
+      "succeeded",
+      "failed",
+      "invalidated"
+    ],
     "RecordKind": [
       "transcript",
       "tool_output",
@@ -282,7 +322,11 @@
       "proposal_rationale",
       "assessment_evidence",
       "containment_evidence",
-      "recovery_plan"
+      "recovery_plan",
+      "provider_files",
+      "egress_log",
+      "qualification_evidence",
+      "unaccepted_result"
     ],
     "PostScan": [
       "pending",
@@ -363,9 +407,37 @@
       "integrated",
       "verified"
     ],
+    "TrustMode": [
+      "one_shot_headless",
+      "session_headless"
+    ],
+    "IsolationMechanism": [
+      "linux_namespaces_d2"
+    ],
+    "BoundaryMechanism": [
+      "cgroup2_user_delegated_d2"
+    ],
+    "UsageGranularity": [
+      "model_call",
+      "invocation",
+      "none"
+    ],
     "UsageSemantics": [
       "cumulative",
       "delta"
+    ],
+    "CostReporting": [
+      "reported",
+      "tokens_only",
+      "none"
+    ],
+    "ResultChannel": [
+      "file"
+    ],
+    "TrustStatus": [
+      "proposed",
+      "active",
+      "revoked"
     ],
     "WorkItemKind": [
       "stage_build",
@@ -502,7 +574,15 @@
       "notification.failed",
       "notification.unknown",
       "environment.observed",
-      "engine.backup"
+      "engine.backup",
+      "host.qualified",
+      "host.qualification_lapsed",
+      "qualification.proposed",
+      "qualification.authorized",
+      "qualification.finished",
+      "trust.proposed",
+      "trust.activated",
+      "trust.revoked"
     ],
     "EngineMode": [
       "restricted",
@@ -1126,6 +1206,9 @@
         },
         "ended_at": {
           "required": false
+        },
+        "scope_cgroup": {
+          "required": false
         }
       }
     },
@@ -1283,6 +1366,39 @@
         "status": {
           "required": true,
           "enum": "DomainStatus"
+        },
+        "profile": {
+          "required": true,
+          "enum": "SandboxProfile"
+        },
+        "cgroup_path": {
+          "required": false
+        },
+        "placed_at": {
+          "required": false
+        },
+        "launch_state": {
+          "required": true,
+          "enum": "LaunchState"
+        },
+        "launch_binding": {
+          "required": false
+        },
+        "launch_authorized_at": {
+          "required": false
+        },
+        "launch_closed_at": {
+          "required": false
+        },
+        "observation": {
+          "required": false,
+          "enum": "DomainObservation"
+        },
+        "observed_at": {
+          "required": false
+        },
+        "resource_events": {
+          "required": false
         }
       }
     },
@@ -1383,6 +1499,9 @@
           "required": false
         },
         "proposed_severity_change": {
+          "required": false
+        },
+        "proposed_alpha_exception": {
           "required": false
         }
       }
@@ -1506,6 +1625,58 @@
         }
       }
     },
+    "host_qualifications": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "host_id": {
+          "required": true
+        },
+        "kernel": {
+          "required": true
+        },
+        "tool_versions": {
+          "required": true
+        },
+        "mechanism_fingerprint": {
+          "required": true
+        },
+        "checks": {
+          "required": true
+        },
+        "probes": {
+          "required": true
+        },
+        "bootstrap_exception": {
+          "required": true
+        },
+        "evidence": {
+          "required": true,
+          "references": "records"
+        },
+        "status": {
+          "required": true,
+          "enum": "HostQualificationStatus"
+        },
+        "incarnation": {
+          "required": true,
+          "references": "engine_incarnations"
+        },
+        "qualified_at": {
+          "required": true
+        },
+        "lapsed_at": {
+          "required": false
+        },
+        "lapsed_reason": {
+          "required": false
+        }
+      }
+    },
     "invocation_receipts": {
       "fields": {
         "id": {
@@ -1538,6 +1709,14 @@
         },
         "budget_snapshot": {
           "required": true
+        },
+        "trust_entry": {
+          "required": false,
+          "references": "trust_entries"
+        },
+        "qualification_attempt": {
+          "required": false,
+          "references": "qualification_attempts"
         }
       }
     },
@@ -1566,6 +1745,13 @@
         },
         "at": {
           "required": true
+        },
+        "exit_class": {
+          "required": false,
+          "enum": "ExitClass"
+        },
+        "exit_evidence": {
+          "required": false
         }
       }
     },
@@ -1681,6 +1867,9 @@
           "references": "ledger_rows"
         },
         "correction_seq": {
+          "required": false
+        },
+        "unknown_allowance_tokens": {
           "required": false
         }
       }
@@ -2184,6 +2373,9 @@
         },
         "changes_required_set": {
           "required": true
+        },
+        "recommendations": {
+          "required": true
         }
       }
     },
@@ -2241,6 +2433,88 @@
           "references": "protected_versions"
         },
         "roots": {
+          "required": true
+        }
+      }
+    },
+    "qualification_attempts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "backend": {
+          "required": true
+        },
+        "version": {
+          "required": true
+        },
+        "binary_path": {
+          "required": true
+        },
+        "binary_sha256": {
+          "required": true
+        },
+        "help_sha256": {
+          "required": true
+        },
+        "template": {
+          "required": true
+        },
+        "template_version": {
+          "required": true
+        },
+        "model": {
+          "required": true
+        },
+        "auth_mode": {
+          "required": true,
+          "enum": "AuthMode"
+        },
+        "host_qualification": {
+          "required": true,
+          "references": "host_qualifications"
+        },
+        "profile_fingerprint": {
+          "required": true
+        },
+        "fixture_project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate_egress": {
+          "required": true
+        },
+        "canary_deadlines": {
+          "required": true
+        },
+        "spend": {
+          "required": true
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "status": {
+          "required": true,
+          "enum": "QualificationAttemptStatus"
+        },
+        "canaries": {
+          "required": true
+        },
+        "unexpected_contacts": {
+          "required": true
+        },
+        "trust_entry": {
+          "required": false,
+          "references": "trust_entries"
+        },
+        "invalidated_reason": {
+          "required": false
+        },
+        "test_fixture": {
           "required": true
         }
       }
@@ -2525,6 +2799,9 @@
         },
         "content_hash": {
           "required": false
+        },
+        "report_refusals": {
+          "required": false
         }
       }
     },
@@ -2674,6 +2951,127 @@
           "required": true
         },
         "sha256": {
+          "required": true
+        }
+      }
+    },
+    "trust_entries": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "backend": {
+          "required": true
+        },
+        "version": {
+          "required": true
+        },
+        "binary_path": {
+          "required": true
+        },
+        "binary_sha256": {
+          "required": true
+        },
+        "help_sha256": {
+          "required": true
+        },
+        "mode": {
+          "required": true,
+          "enum": "TrustMode"
+        },
+        "template": {
+          "required": true
+        },
+        "template_version": {
+          "required": true
+        },
+        "model": {
+          "required": true
+        },
+        "auth_mode": {
+          "required": true,
+          "enum": "AuthMode"
+        },
+        "capabilities": {
+          "required": true
+        },
+        "host_id": {
+          "required": true
+        },
+        "host_qualification": {
+          "required": true,
+          "references": "host_qualifications"
+        },
+        "isolation": {
+          "required": true,
+          "enum": "IsolationMechanism"
+        },
+        "boundary": {
+          "required": true,
+          "enum": "BoundaryMechanism"
+        },
+        "profile_fingerprint": {
+          "required": true
+        },
+        "egress_hosts": {
+          "required": true
+        },
+        "usage_granularity": {
+          "required": true,
+          "enum": "UsageGranularity"
+        },
+        "usage_semantics": {
+          "required": false,
+          "enum": "UsageSemantics"
+        },
+        "cost_reporting": {
+          "required": true,
+          "enum": "CostReporting"
+        },
+        "enforceable_boundaries": {
+          "required": true
+        },
+        "result_channel": {
+          "required": true,
+          "enum": "ResultChannel"
+        },
+        "session_qualified": {
+          "required": true
+        },
+        "provider_files": {
+          "required": true
+        },
+        "term_to_exit_ms": {
+          "required": false
+        },
+        "qualification_attempt": {
+          "required": true,
+          "references": "qualification_attempts"
+        },
+        "evidence": {
+          "required": true
+        },
+        "evidence_fingerprint": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "TrustStatus"
+        },
+        "activated_by": {
+          "required": false,
+          "references": "decisions"
+        },
+        "revoked_at": {
+          "required": false
+        },
+        "revoked_reason": {
+          "required": false
+        },
+        "test_fixture": {
           "required": true
         }
       }
@@ -3242,6 +3640,70 @@
         "consumed",
         "superseded"
       ]
+    ],
+    "LaunchState": [
+      [
+        "authorizable",
+        "authorized"
+      ],
+      [
+        "authorizable",
+        "closed"
+      ],
+      [
+        "authorized",
+        "closed"
+      ]
+    ],
+    "QualificationAttemptStatus": [
+      [
+        "proposed",
+        "authorized"
+      ],
+      [
+        "proposed",
+        "invalidated"
+      ],
+      [
+        "authorized",
+        "running"
+      ],
+      [
+        "authorized",
+        "invalidated"
+      ],
+      [
+        "running",
+        "succeeded"
+      ],
+      [
+        "running",
+        "failed"
+      ],
+      [
+        "running",
+        "invalidated"
+      ]
+    ],
+    "TrustStatus": [
+      [
+        "proposed",
+        "active"
+      ],
+      [
+        "proposed",
+        "revoked"
+      ],
+      [
+        "active",
+        "revoked"
+      ]
+    ],
+    "HostQualificationStatus": [
+      [
+        "active",
+        "lapsed"
+      ]
     ]
   },
   "decisions": {
@@ -3460,6 +3922,37 @@
         "policy_revision"
       ],
       "target_seconds": 86400
+    },
+    "qualification_approval": {
+      "enabled": true,
+      "manifest": [
+        "binary_sha256",
+        "help_sha256",
+        "template",
+        "model",
+        "auth_mode",
+        "host_qualification",
+        "fixture",
+        "egress",
+        "deadlines",
+        "spend"
+      ],
+      "target_seconds": 172800
+    },
+    "trust_activation": {
+      "enabled": true,
+      "manifest": [
+        "binary_sha256",
+        "help_sha256",
+        "template",
+        "capabilities",
+        "profile_fingerprint",
+        "host_id",
+        "host_eligibility",
+        "entry_status",
+        "evidence_fingerprint"
+      ],
+      "target_seconds": 172800
     }
   },
   "events": {
@@ -3741,6 +4234,30 @@
     },
     "engine.backup": {
       "owner": "store/transitions/engine.ts"
+    },
+    "host.qualified": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "host.qualification_lapsed": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "qualification.proposed": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "qualification.authorized": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "qualification.finished": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "trust.proposed": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "trust.activated": {
+      "owner": "store/transitions/trust.ts"
+    },
+    "trust.revoked": {
+      "owner": "store/transitions/trust.ts"
     }
   },
   "config": {
@@ -3863,8 +4380,14 @@
           "finding_applicability_exclusion": 86400,
           "check_correction_tightening": 86400,
           "check_correction_loosening": 86400,
-          "check_correction_unclassifiable": 86400
+          "check_correction_unclassifiable": 86400,
+          "qualification_approval": 172800,
+          "trust_activation": 172800
         }
+      },
+      "ui_bootstrap": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "project": {
@@ -3981,6 +4504,36 @@
         "min": 1024,
         "max": 1073741824,
         "integer": true
+      },
+      "budget_run_boundary": {
+        "default": "invocation",
+        "type": "enum",
+        "values": [
+          "model_turn",
+          "user_turn",
+          "invocation"
+        ],
+        "widening": "coarser"
+      },
+      "budget_hard_maximum": {
+        "default": false,
+        "type": "boolean",
+        "widening": "never"
+      },
+      "egress_allow_extra": {
+        "default": [],
+        "type": "host_names",
+        "widening": "added"
+      },
+      "sandbox_read_paths": {
+        "default": [],
+        "type": "absolute_paths",
+        "widening": "added"
+      },
+      "backends": {
+        "default": {},
+        "type": "role_backends",
+        "widening": "never"
       }
     }
   }

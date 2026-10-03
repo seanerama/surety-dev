@@ -14,8 +14,8 @@ export const BODY_CAP = 1_048_576;
 export const UPLOAD_CAP = 8_388_608;
 export const DEFAULT_API_PORT = 7227;
 
-// Numeric engine keys. api_authority, body_cap, upload_cap and
-// decision_targets have their own rules (engine-config.ts).
+// Numeric engine keys. api_authority, body_cap, upload_cap, decision_targets
+// and the boolean keys have their own rules (engine-config.ts).
 export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   tick_interval: int(30, 5, 600),
   tick_budget: int(20, 5, 300),
@@ -34,6 +34,9 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
 };
 
 export const ENGINE_FIXED: Record<string, number> = { body_cap: BODY_CAP, upload_cap: UPLOAD_CAP };
+
+// Boolean engine keys and their defaults (D2 A.7).
+export const ENGINE_BOOLEANS: Record<string, boolean> = { ui_bootstrap: false };
 
 // The order in which keys are validated and reported. api_port precedes
 // api_authority because the authority is checked against the port.
@@ -56,6 +59,8 @@ export const ENGINE_KEYS = [
   'git_deadline_long',
   'git_output_cap',
   'decision_targets',
+  // D2 §2.6, K3: the token bootstrap route answers only when this is true.
+  'ui_bootstrap',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
@@ -89,6 +94,9 @@ export const DECISION_KINDS = [
   'policy_widening',
   'finding_applicability_exclusion',
   'check_correction_tightening',
+  // D2 A.2, A.7.
+  'qualification_approval',
+  'trust_activation',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
@@ -108,6 +116,9 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   check_correction_tightening: 86_400,
   check_correction_loosening: 86_400,
   check_correction_unclassifiable: 86_400,
+  // D2 A.7: default target 2 d.
+  qualification_approval: 172_800,
+  trust_activation: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project
@@ -132,6 +143,45 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   snapshot_max_files: int(5000, 1, 100_000),
   snapshot_max_bytes: int(104_857_600, 1_048_576, 1_073_741_824),
   snapshot_max_file_bytes: int(10_485_760, 1024, 1_073_741_824),
+};
+
+// The finer a budget boundary, the earlier in this list (D2 A.2
+// BudgetBoundary; §4.2): a model turn is finer than a user turn, which is
+// finer than the whole invocation.
+export const BUDGET_BOUNDARIES = ['model_turn', 'user_turn', 'invocation'] as const;
+export type BudgetBoundary = (typeof BUDGET_BOUNDARIES)[number];
+
+export const TRUST_MODES = ['one_shot_headless', 'session_headless'] as const;
+
+// The roles a project's work is dispatched to (store/transitions/runs.ts
+// ROLE_OF), which a project may assign a backend.
+export const DISPATCHED_ROLES = ['builder', 'verifier', 'reviewer', 'architect'] as const;
+
+// Ungoverned project keys that are not numbers (D2 A.7). `widening` says when
+// a change of the key widens what the engine may do unasked: `added` when it
+// adds an element the effective value lacks, `coarser` when it names a
+// coarser budget boundary, `never` when no change does.
+export interface OptionSpec {
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'role_backends';
+  default: unknown;
+  values?: readonly string[];
+  widening: 'added' | 'coarser' | 'never';
+}
+
+export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
+  // What policy requires the engine to stop at (D2 §4.2, K6).
+  budget_run_boundary: { type: 'enum', values: BUDGET_BOUNDARIES, default: 'invocation', widening: 'coarser' },
+  // A declared hard spending maximum: refused, no M2 mechanism enforces one
+  // (D2 §4.2; E58 item 6). Only false is accepted.
+  budget_hard_maximum: { type: 'boolean', default: false, widening: 'never' },
+  // Widenings (D2 §§2.3, 2.4).
+  egress_allow_extra: { type: 'host_names', default: [], widening: 'added' },
+  sandbox_read_paths: { type: 'absolute_paths', default: [], widening: 'added' },
+  // The backend each role is dispatched to, among the active trust entries
+  // (D2 §4.1): {"<role>": {"backend": <name>, "mode"?: <TrustMode>}}. A role
+  // not named is dispatched to the scripted backend, which exists only in
+  // harness mode.
+  backends: { type: 'role_backends', default: {}, widening: 'never' },
 };
 
 // A JSON number of the right kind inside its range. null, strings and

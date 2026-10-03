@@ -69,6 +69,20 @@ BEGIN SELECT RAISE(ABORT, 'schema_migrations is append-only'); END;
 
 export function migrate(db: Database, dir: string): { applied: string[] } {
   const files = listMigrations(dir);
+  // A migration may rebuild a table that others reference (SQLite cannot
+  // widen a CHECK constraint in place): the batch runs with foreign keys off,
+  // which SQLite allows to change only outside a transaction, and every
+  // foreign key is checked before the batch commits.
+  const foreignKeys = db.pragma('foreign_keys', { simple: true }) === 1;
+  if (foreignKeys) db.pragma('foreign_keys = OFF');
+  try {
+    return migrateBatch(db, files);
+  } finally {
+    if (foreignKeys) db.pragma('foreign_keys = ON');
+  }
+}
+
+function migrateBatch(db: Database, files: MigrationFile[]): { applied: string[] } {
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(HISTORY_DDL);
@@ -104,6 +118,13 @@ export function migrate(db: Database, dir: string): { applied: string[] } {
         throw failed('migration_failed', file.name, `Migration ${file.name} failed: ${(err as Error).message}`, 'Fix the migration and restart the engine; nothing from this batch was applied.');
       }
       record.run(file.seq, file.name, file.checksum, nowIso());
+    }
+    if (pending.length > 0) {
+      const broken = db.pragma('foreign_key_check') as { table: string; parent: string }[];
+      if (broken.length > 0) {
+        const [first] = broken;
+        throw failed('migration_failed', pending.at(-1)!.name, `The migrated store has ${broken.length} broken foreign key(s), the first in ${first!.table} referencing ${first!.parent}.`, 'Fix the migration and restart the engine; nothing from this batch was applied.');
+      }
     }
     if (pending.length > 0) barrier('migration.before_commit');
     db.exec('COMMIT');

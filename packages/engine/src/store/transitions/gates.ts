@@ -87,6 +87,7 @@ export interface FindingRow {
   resolution_verification: string | null;
   proposed_disposition: string | null;
   proposed_severity_change: string | null;
+  proposed_alpha_exception?: string | null;
 }
 
 // ---- scope ---------------------------------------------------------------------
@@ -216,11 +217,23 @@ export function findingApplies(db: Db, f: FindingRow, candidate: CandidateRow): 
 export const BLOCKING_SEVERITIES = ['critical', 'high'];
 
 // Is the finding blocking at this gate kind? Critical always; High unless,
-// at Alpha, its exception is recorded and it is in no sensitive area.
-export function blocks(f: Pick<FindingRow, 'effective_severity' | 'alpha_exception' | 'sensitive_area'>, kind: GateKind): boolean {
+// at Alpha, its exception is recorded and it is in no sensitive area. An
+// exception the human granted on a Reviewer's proposal is bound to a
+// candidate and its acceptance content hash (D2 §5 C1): it counts only for
+// that candidate while its content is that; given no candidate to judge by,
+// it is taken as recorded.
+export function blocks(
+  f: Pick<FindingRow, 'effective_severity' | 'alpha_exception' | 'sensitive_area'>,
+  kind: GateKind,
+  at?: { candidate: string; contentHash: string },
+): boolean {
   if (f.effective_severity === 'critical') return true;
   if (f.effective_severity !== 'high') return false;
-  if (kind === 'alpha_authorize' && f.alpha_exception !== null && f.sensitive_area === null) return false;
+  if (kind === 'alpha_authorize' && f.alpha_exception !== null && f.sensitive_area === null) {
+    const bound = JSON.parse(f.alpha_exception) as { candidate?: unknown; acceptance_content_hash?: unknown };
+    if (at === undefined || bound.candidate === undefined) return false;
+    return !(bound.candidate === at.candidate && bound.acceptance_content_hash === at.contentHash);
+  }
   return true;
 }
 
@@ -363,7 +376,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
         }
       }
     }
-    if (blocks(f, kind)) {
+    if (blocks(f, kind, { candidate: candidate.id, contentHash: scope.contentHash })) {
       blocking.push(f.id);
       continue;
     }

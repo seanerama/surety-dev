@@ -9,7 +9,18 @@
 
 import Database from 'better-sqlite3';
 
-import { DECISION_KINDS, DECISION_TARGET_DEFAULTS, DECISION_TARGET_RANGE, DECISION_KINDS_WITHOUT_TARGET, ENGINE_FIXED, ENGINE_KEYS, ENGINE_NUMBERS, PROJECT_POLICY } from '../config/schema.js';
+import {
+  DECISION_KINDS,
+  DECISION_TARGET_DEFAULTS,
+  DECISION_TARGET_RANGE,
+  DECISION_KINDS_WITHOUT_TARGET,
+  ENGINE_BOOLEANS,
+  ENGINE_FIXED,
+  ENGINE_KEYS,
+  ENGINE_NUMBERS,
+  PROJECT_OPTIONS,
+  PROJECT_POLICY,
+} from '../config/schema.js';
 import { DEFAULT_MIGRATIONS_DIR } from '../paths.js';
 import { migrate } from '../store/migrate.js';
 import { FRESHNESS, NOW_STATES, PROVENANCE } from '../store/projections.js';
@@ -164,6 +175,23 @@ const COLUMN_ENUMS: Record<string, string> = {
   'signoffs.scope': 'SignOffScope',
   'effect_intents.status': 'IntentStatus',
   'notification_intents.status': 'NotificationStatus',
+  // D2 A.2.
+  'host_qualifications.status': 'HostQualificationStatus',
+  'qualification_attempts.status': 'QualificationAttemptStatus',
+  'qualification_attempts.auth_mode': 'AuthMode',
+  'trust_entries.auth_mode': 'AuthMode',
+  'trust_entries.mode': 'TrustMode',
+  'trust_entries.status': 'TrustStatus',
+  'trust_entries.isolation': 'IsolationMechanism',
+  'trust_entries.boundary': 'BoundaryMechanism',
+  'trust_entries.usage_granularity': 'UsageGranularity',
+  'trust_entries.usage_semantics': 'UsageSemantics',
+  'trust_entries.cost_reporting': 'CostReporting',
+  'trust_entries.result_channel': 'ResultChannel',
+  'execution_domains.profile': 'SandboxProfile',
+  'execution_domains.launch_state': 'LaunchState',
+  'execution_domains.observation': 'DomainObservation',
+  'invocation_status_observations.exit_class': 'ExitClass',
 };
 
 const pascal = (text: string): string =>
@@ -197,6 +225,7 @@ function configSection(): ContractDocument['config'] {
     const number = ENGINE_NUMBERS[key];
     if (number) engine[key] = { default: number.default, min: number.min, max: number.max, integer: number.integer };
     else if (ENGINE_FIXED[key] !== undefined) engine[key] = { default: ENGINE_FIXED[key], fixed: true };
+    else if (ENGINE_BOOLEANS[key] !== undefined) engine[key] = { default: ENGINE_BOOLEANS[key], type: 'boolean' };
     else if (key === 'api_authority') engine[key] = { default: '127.0.0.1:<api_port>', allowed: ['127.0.0.1:<api_port>', 'localhost:<api_port>'] };
     else if (key === 'decision_targets') {
       engine[key] = {
@@ -210,6 +239,7 @@ function configSection(): ContractDocument['config'] {
   }
   const project: Record<string, Record<string, unknown>> = {};
   for (const [key, spec] of Object.entries(PROJECT_POLICY)) project[key] = { default: spec.default, min: spec.min, max: spec.max, integer: spec.integer };
+  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) project[key] = { default: spec.default, type: spec.type, ...(spec.values ? { values: [...spec.values] } : {}), widening: spec.widening };
   return { engine, project };
 }
 

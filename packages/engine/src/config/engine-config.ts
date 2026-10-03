@@ -11,6 +11,7 @@ import {
   DECISION_TARGET_DEFAULTS,
   DECISION_TARGET_RANGE,
   DEFAULT_API_PORT,
+  ENGINE_BOOLEANS,
   ENGINE_FIXED,
   ENGINE_KEYS,
   ENGINE_NUMBERS,
@@ -22,7 +23,7 @@ export type ConfigSource = 'file' | 'default';
 
 export interface EngineConfig {
   values: {
-    [K in EngineKey]: K extends 'api_authority' ? string : K extends 'decision_targets' ? Record<string, number | null> : number;
+    [K in EngineKey]: K extends 'api_authority' ? string : K extends 'decision_targets' ? Record<string, number | null> : K extends 'ui_bootstrap' ? boolean : number;
   };
   sources: Record<EngineKey, ConfigSource>;
 }
@@ -65,6 +66,10 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
       else throw invalidValue(key, `must be exactly ${allowed.join(' or ')}`);
     } else if (key === 'decision_targets') {
       values[key] = decisionTargets(given ? value : {});
+    } else if (key in ENGINE_BOOLEANS) {
+      if (!given) values[key] = ENGINE_BOOLEANS[key];
+      else if (typeof value === 'boolean') values[key] = value;
+      else throw invalidValue(key, 'must be true or false');
     } else if (key in ENGINE_FIXED) {
       const fixed = ENGINE_FIXED[key]!;
       if (given && value !== fixed) throw invalidValue(key, `is fixed at ${fixed}`);

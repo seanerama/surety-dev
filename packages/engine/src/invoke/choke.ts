@@ -21,7 +21,7 @@ import { repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
 import { ACCEPTED_KINDS } from '../runs/accept.js';
-import { parseReport } from '../runs/report.js';
+import { fieldAllowed, parseReport } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
@@ -31,6 +31,7 @@ import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactValue } from '../records/redact.js';
 import { pausePoint, seamBackends } from '../testing/seam.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
+import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
 export interface DispatchTarget {
@@ -47,10 +48,11 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
-function parseResult(value: unknown): RunResult | null {
+function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   if (r.status !== 'completed' || typeof r.summary !== 'string') return null;
+  if (!fieldAllowed(r, role)) return null;
   if (r.checkpoint !== undefined && typeof r.checkpoint !== 'boolean') return null;
   if (r.nominate !== undefined && typeof r.nominate !== 'boolean') return null;
   const report = parseReport(r);
@@ -76,6 +78,10 @@ export class Launcher {
   // before its spawn is durable when this returns true. The launch goes on
   // asynchronously (D1 §8.1 step 9).
   async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
+    // The scripted backend, which only harness mode has. Every other backend
+    // is chosen by the claim from the project's policy and the trust table
+    // (D2 §4.1); in this engine revision a fixture entry of the harness runs
+    // the scripted child, as the kernel lane's stand-in.
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
     // The run's base is the commit the registry expects the integration
     // branch at, or the checkpoint the work continues from (D1 §7.4); the
@@ -84,7 +90,7 @@ export class Launcher {
       project: target.project,
       workItem: item.id,
       incarnation: this.rt.incarnation,
-      backend: { id: M1_BACKEND, version: backend?.version ?? 'unqualified' },
+      scripted: backend?.version ?? null,
       maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
     });
     if (!claim) return false;
@@ -114,22 +120,33 @@ export class Launcher {
   }
 
   // The run will never be spawned into by this incarnation.
-  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string): void {
+  private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string, detail?: Record<string, unknown>): void {
     handle.phase = phase;
     handle.settle();
-    this.rt.requestEnd(handle, reasonText === undefined ? { outcome, reason } : { outcome, reason, reasonText });
+    this.rt.requestEnd(handle, { outcome, reason, ...(reasonText === undefined ? {} : { reasonText }), ...(detail === undefined ? {} : { detail }) });
   }
 
   // Backend check, workspace, dispatch_started. Returns false if the run is
   // not to be spawned.
   private async prepare(handle: RunHandle, backend: BackendSpec | null, repo: string): Promise<boolean> {
     const { claim } = handle;
-    if (!backend) {
-      // D1 §15.1: an unqualified backend is refused before launch. The
-      // refusal is the end the engine decided, and it is kept with the
+    if (claim.refusal || !backend) {
+      // D1 §15.1, D2 §4.1: an unqualified backend, mode or host is refused
+      // before launch: before any domain is placed or any process started.
+      // The refusal is the end the engine decided, and it is kept with the
       // handle: if recording it fails, the engine's retry records the same
       // refusal, never a failure (SEAM.md §24).
-      this.never(handle, 'refused', 'preflight_refused', 'never', 'backend_refused');
+      const refusal = claim.refusal ?? { code: 'backend_refused', text: 'no backend is qualified', detail: { code: 'backend_refused' } };
+      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, { ...refusal.detail, text: refusal.text });
+      return false;
+    }
+    // The widening a project's policy may make to the mount plan, validated
+    // before every launch, approved or not (D2 §2.3): a refusal names the
+    // path and why, and no launcher starts.
+    const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
+    const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    if (refused !== null) {
+      this.never(handle, 'refused', 'preflight_refused', 'never', 'mount_plan_refused', { code: 'mount_plan_refused', ...refused });
       return false;
     }
     if (handle.abort) {
@@ -361,7 +378,7 @@ export class Launcher {
       if (handle.ending) return;
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
-      const result = parseResult(sent);
+      const result = parseResult(sent, handle.claim.role);
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
       // A valid result is kept as a record, published before anything

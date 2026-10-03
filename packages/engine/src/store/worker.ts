@@ -88,7 +88,10 @@ import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationFacts, beginApplication } from './transitions/protected.js';
-import { answerBatch, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
+import { answerBatch, applyAlphaException, decisionRecords, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
+import { alphaCheck } from './transitions/findings.js';
+import { mountContext } from './reads.js';
+import { trustView } from './transitions/trust.js';
 
 export interface WorkerData {
   file: string;
@@ -172,6 +175,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'effects.due': (d, a: { project: string }) => effectsDue(d, a),
   'oob.stash_kept': (d, a: { intent: string }) => stashKept(d, a),
   'notify.due': (d, a: { project: string }) => notificationsDue(d, a),
+  'mount.context': (d, a: { project: string }) => mountContext(d, a),
+  'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
+  'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
+  'decision.records': (d, a: { project: string; decision: string }) => decisionRecords(d, a),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -239,6 +246,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),
   'oob.stashed': (tx, a) => stashed(tx, a),
+  'alpha.apply': (tx, a) => applyAlphaException(tx, a),
   'notify.sending': (tx, a) => notificationSending(tx, a),
   'notify.outcome': (tx, a) => notificationOutcome(tx, a),
 };

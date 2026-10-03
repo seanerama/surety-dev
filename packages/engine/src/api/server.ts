@@ -20,7 +20,7 @@ import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { seamBackends, seamDescribe, seamRoute } from '../testing/seam.js';
+import { seamBackends, seamDescribe, seamRoute, seamTokenRead } from '../testing/seam.js';
 import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
 import { SHELL_CSP, loadShell } from './shell.js';
 import { type TailSource, serveEvents, serveTail } from './streams.js';
@@ -170,7 +170,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: { mode: state.mode } }) };
     }
     if (s.length === 2 && s[1] === 'engine' && get) {
-      return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: engineInfo(state) }) };
+      return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: await engineInfo(state) }) };
     }
 
     if (s.length === 2 && s[1] === 'projects' && post) {
@@ -495,12 +495,31 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return void send({ status: 200, body: null, raw: file.bytes, type: file.type, headers });
     }
     if (get && target.path === '/v1/token/bootstrap') {
+      // D2 §2.6, K3: the route answers only while the bootstrap exception is
+      // in force, and otherwise refuses before the token is read.
+      if (state.config.values.ui_bootstrap !== true) {
+        return void refuse(
+          new Refusal(
+            403,
+            'bootstrap_disabled',
+            'The token bootstrap route is disabled: it trusts headers any local program can forge, so it answers only when the engine setting ui_bootstrap is true.',
+            'Read the token from api.token in the engine home, or set ui_bootstrap to true in config.json for an explicitly labelled compatibility test.',
+            { setting: 'ui_bootstrap' },
+          ),
+        );
+      }
       try {
         checkBootstrapEvidence(evidence);
       } catch (err) {
         return void refuse(err);
       }
-      return void send({ status: 200, body: { token: state.token } });
+      let token: string;
+      try {
+        token = readBootstrapToken(state);
+      } catch (err) {
+        return void refuse(err);
+      }
+      return void send({ status: 200, body: { token } });
     }
 
     // 3. Token.
@@ -648,15 +667,51 @@ function ledgerDay(query: string): string | null {
   return day;
 }
 
-function engineInfo(state: EngineState) {
+// The one place the bootstrap route reads the token (D2 §2.6), after the
+// setting and the evidence have been checked.
+function readBootstrapToken(state: EngineState): string {
+  seamTokenRead();
+  return state.token;
+}
+
+interface TrustView {
+  backends: string[];
+  host_qualification: unknown;
+  latest_host_qualification: unknown;
+  trust_entries: unknown[];
+  qualification_attempts: unknown[];
+}
+
+async function engineInfo(state: EngineState) {
+  const scripted = seamBackends().some((b) => b.id === 'scripted');
+  // The trust table, read from the store once it is open (D2 A.7). Unknown
+  // is not empty: while it cannot be read, it is null.
+  let trust: TrustView | null = null;
+  if (state.store && state.completed.includes('store')) {
+    trust = await state.store.call<TrustView>('read', { name: 'trust.view', args: { scripted } }).catch(() => null);
+  }
+  const bootstrap = state.config.values.ui_bootstrap === true;
   return seamDescribe({
     version: ENGINE_VERSION,
     incarnation: state.lock.incarnation_id,
     mode: state.mode,
-    // The backends a dispatch may use: in M1 only the scripted backend, and
-    // only where the test seam provides it.
-    backends: seamBackends().map((b) => b.id),
+    // The backends a dispatch may use: those with an active trust entry, and
+    // the scripted backend only where the test seam provides it (D2 §5 C3).
+    backends: trust?.backends ?? (scripted ? ['scripted'] : []),
     config: inspectEngineConfig(state.config),
     startup: { step: state.step, completed: [...state.completed], failed: state.failed },
+    // D2 §2.6: whether the bootstrap exception is in force; while it is, no
+    // protection from other local uids is claimed and no host qualification
+    // is active.
+    bootstrap_exception: bootstrap,
+    host: {
+      // The host checks of D2 §6 are not run by this engine revision: none
+      // is passed, and real backends are refused (isolation_unqualified).
+      checks_run: false,
+      qualification: trust?.host_qualification ?? null,
+      latest: trust?.latest_host_qualification ?? null,
+    },
+    trust_entries: trust?.trust_entries ?? null,
+    qualification_attempts: trust?.qualification_attempts ?? null,
   });
 }

@@ -111,12 +111,13 @@ export function chargeInvocation(
   const raw = foldObservations(obs);
   const n = obs.length === 0 ? NOTHING_OBSERVED : normalize(raw);
   const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') ? 1 : 0;
+  const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length);
   const id = tx.newId('led_');
   tx.db
     .prepare(
       `INSERT INTO "ledger_rows" ("id", "created_at", "project", "invocation", "run", "turn", "role", "provider", "model_requested", "model_observed", "raw_usage",
-         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc", "unknown_allowance_tokens")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -138,13 +139,40 @@ export function chargeInvocation(
       n.cost_status,
       n.cost_usd,
       tx.at.slice(0, 10),
+      allowance,
     );
-  tx.emit('ledger.row', { project: run.project, run: run.id, invocation: receipt.id }, { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1 });
+  tx.emit(
+    'ledger.row',
+    { project: run.project, run: run.id, invocation: receipt.id },
+    { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1, unknown_allowance_tokens: allowance },
+  );
+}
+
+// The run's token limit as its receipt fixed it at dispatch, or the
+// project's current one where the receipt holds none.
+function runLimit(db: Db, invocation: string, project: string): number {
+  const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
+  const snapshot = row ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown }) : {};
+  return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
+}
+
+// C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9): an invocation whose
+// usage is incomplete is charged, once, on its original row, the run's
+// budget_run_billable_tokens less the billable tokens observed, not below
+// zero. It is charged where the backend is known to report usage: an
+// invocation of a trust entry's backend, and one of the scripted provider
+// that reported some (an M1 scripted role that reports none is a provider
+// that said nothing, as M1 accepted, and is charged nothing more).
+function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number): number | null {
+  const receipt = db.prepare('SELECT "trust_entry" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { trust_entry: string | null } | undefined;
+  if (observations === 0 && (receipt?.trust_entry ?? null) === null) return null;
+  return Math.max(0, runLimit(db, invocation, project) - (billable(n) ?? 0));
 }
 
 // ---- corrections (SEAM.md §54) ---------------------------------------------------
 
 export interface LedgerRow extends Amounts {
+  unknown_allowance_tokens?: number | null;
   id: string;
   created_at: string;
   project: string;
@@ -229,6 +257,10 @@ export interface Account extends Amounts {
   cost_status: CostStatus;
   cost_usd: number | null;
   usage_complete: boolean;
+  // The unknown allowance in force (C4): the original row's, reconciled by
+  // the corrections since, without changing it. 0 once a correction says the
+  // usage is complete; never below zero; null where none was charged.
+  unknown_allowance_tokens: number | null;
 }
 
 const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
@@ -248,6 +280,13 @@ function fold(rows: LedgerRow[]): Account {
       cost_usd: addKnown(acc.cost_usd, r.cost_usd),
     };
   }
+  // The allowance was the run's limit less what the original row observed;
+  // what corrections add since is no longer unknown.
+  let allowance: number | null = null;
+  if (original.unknown_allowance_tokens !== null && original.unknown_allowance_tokens !== undefined) {
+    const limit = original.unknown_allowance_tokens + (billable(original) ?? 0);
+    allowance = last.usage_complete === 1 ? 0 : Math.max(0, limit - (billable(acc) ?? 0));
+  }
   return {
     invocation: original.invocation,
     role: original.role,
@@ -256,6 +295,7 @@ function fold(rows: LedgerRow[]): Account {
     cost_usd: acc.cost_usd === null ? null : money(acc.cost_usd),
     cost_status: last.cost_status,
     usage_complete: last.usage_complete === 1,
+    unknown_allowance_tokens: allowance,
   };
 }
 
@@ -314,6 +354,7 @@ const ROW_FIELDS = [
   'day_utc',
   'corrects',
   'correction_seq',
+  'unknown_allowance_tokens',
 ] as const;
 
 // GET /v1/projects/:p/ledger (D1 §11.3; SEAM.md §54). A read: it writes nothing.
@@ -338,6 +379,10 @@ export function ledgerView(db: Db, args: { project: string; day: string | null }
     totals: totalsOf(accounts),
     by_role: byRole,
     budget: { exhausted: exhaustedLimits(db, args.project, { check: false }) },
+    // What the project's current day counts against its two day limits (D2
+    // §5 C4): reported and estimated cost apart, the estimate never called
+    // verified; the unknown-cost tokens and the unknown allowances apart.
+    budget_day: budgetDay(db, args.project),
   };
 }
 
@@ -347,14 +392,29 @@ const DAY_LIMITS = ['budget_day_unknown_tokens', 'budget_day_verified_usd'] as c
 
 const today = (): string => nowIso().slice(0, 10);
 
-// A project's spend on the current UTC day of the engine's clock: the
-// billable tokens of the day's invocations whose cost is unknown, and the
-// reported cost of the day's invocations, the ones under way included, from
-// their observations as they arrive. An estimate is not verified cost.
+// A project's spend on the current UTC day of the engine's clock (D1 §13.3;
+// SEAM.md §55; D2 §5 C4), the invocations under way included, from their
+// observations as they arrive:
+//   - cost: reported and estimated apart; both count against
+//     budget_day_verified_usd, the estimate keeping its label;
+//   - unknown tokens: the billable tokens of the invocations whose cost is
+//     unknown, and the unknown allowance in force of each invocation whose
+//     usage is incomplete; at a dispatch, also the remaining allowance of each
+//     invocation under way, so that two dispatches cannot each pass against
+//     the same remaining budget.
 // `check`: this read is a budget check, and a store failure in it fails the
-// check (D1 §6.6).
-function daySpend(db: Db, project: string, check: boolean): { unknownTokens: number; verifiedUsd: number } {
-  if (check) seamBudgetRead(project);
+// check (D1 §6.6). `dispatch`: it is the check at a dispatch.
+interface DaySpend {
+  day: string;
+  reportedUsd: number;
+  estimatedUsd: number;
+  unknownCostTokens: number;
+  allowanceTokens: number;
+  runningAllowanceTokens: number;
+}
+
+function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: boolean }): DaySpend {
+  if (opts.check) seamBudgetRead(project);
   const day = today();
   const rows = db
     .prepare(
@@ -362,7 +422,7 @@ function daySpend(db: Db, project: string, check: boolean): { unknownTokens: num
        AND l."invocation" IN (SELECT "invocation" FROM "ledger_rows" WHERE "project" = ? AND "corrects" IS NULL AND "day_utc" = ?)`,
     )
     .all(project, project, day) as LedgerRow[];
-  const accounts: (Amounts & { cost_status: CostStatus; cost_usd: number | null })[] = accountsOf(rows);
+  const accounts: (Amounts & { cost_status: CostStatus; cost_usd: number | null; unknown_allowance_tokens: number | null })[] = accountsOf(rows);
   // Invocations under way: launched or about to be, with no terminal
   // observation and so no ledger row yet.
   const underWay = db
@@ -372,23 +432,47 @@ function daySpend(db: Db, project: string, check: boolean): { unknownTokens: num
        AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = r."id" AND o."status" IN ('ended', 'unknown', 'refused'))`,
     )
     .all(project) as { id: string }[];
-  for (const u of underWay) accounts.push(observedSoFar(db, u.id));
-  let unknownTokens = 0;
-  let verifiedUsd = 0;
-  for (const a of accounts) {
-    if (a.cost_status === 'unknown') unknownTokens += billable(a) ?? 0;
-    if ((a.cost_status === 'reported' || a.cost_status === 'measured_zero') && a.cost_usd !== null) verifiedUsd += a.cost_usd;
+  let runningAllowanceTokens = 0;
+  for (const u of underWay) {
+    const so = observedSoFar(db, u.id);
+    accounts.push({ ...so, unknown_allowance_tokens: null });
+    if (opts.dispatch) runningAllowanceTokens += Math.max(0, runLimit(db, u.id, project) - (billable(so) ?? 0));
   }
-  return { unknownTokens, verifiedUsd: money(verifiedUsd) };
+  let unknownCostTokens = 0;
+  let allowanceTokens = 0;
+  let reportedUsd = 0;
+  let estimatedUsd = 0;
+  for (const a of accounts) {
+    if (a.cost_status === 'unknown') unknownCostTokens += billable(a) ?? 0;
+    if ((a.cost_status === 'reported' || a.cost_status === 'measured_zero') && a.cost_usd !== null) reportedUsd += a.cost_usd;
+    if (a.cost_status === 'estimated' && a.cost_usd !== null) estimatedUsd += a.cost_usd;
+    allowanceTokens += a.unknown_allowance_tokens ?? 0;
+  }
+  return { day, reportedUsd: money(reportedUsd), estimatedUsd: money(estimatedUsd), unknownCostTokens, allowanceTokens, runningAllowanceTokens };
+}
+
+// The ledger read's account of the current day against the day limits.
+function budgetDay(db: Db, project: string) {
+  const spend = daySpend(db, project, { check: false });
+  return {
+    day: spend.day,
+    // Counted together against budget_day_verified_usd; never called
+    // verified together.
+    reported_usd: spend.reportedUsd,
+    estimated_usd: spend.estimatedUsd,
+    // Counted together against budget_day_unknown_tokens.
+    unknown_cost_tokens: spend.unknownCostTokens,
+    unknown_allowance_tokens: spend.allowanceTokens,
+  };
 }
 
 // The day limits the project's current day has passed, sorted.
-export function exhaustedLimits(db: Db, project: string, opts: { check: boolean }): string[] {
+export function exhaustedLimits(db: Db, project: string, opts: { check: boolean; dispatch?: boolean }): string[] {
   const policy = projectPolicy(db, project);
-  const spend = daySpend(db, project, opts.check);
+  const spend = daySpend(db, project, opts);
   const over: string[] = [];
-  if (spend.unknownTokens > policy.budget_day_unknown_tokens!) over.push('budget_day_unknown_tokens');
-  if (spend.verifiedUsd > policy.budget_day_verified_usd!) over.push('budget_day_verified_usd');
+  if (spend.unknownCostTokens + spend.allowanceTokens + spend.runningAllowanceTokens > policy.budget_day_unknown_tokens!) over.push('budget_day_unknown_tokens');
+  if (money(spend.reportedUsd + spend.estimatedUsd) > policy.budget_day_verified_usd!) over.push('budget_day_verified_usd');
   return over.sort((a, b) => DAY_LIMITS.indexOf(a as (typeof DAY_LIMITS)[number]) - DAY_LIMITS.indexOf(b as (typeof DAY_LIMITS)[number]));
 }
 

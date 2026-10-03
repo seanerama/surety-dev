@@ -6,8 +6,8 @@
 // a role reports changes a check state.
 
 import { parseJson } from './common.js';
-import { contentHash, getCandidate, markStale } from './evidence.js';
-import type { FindingRow } from './gates.js';
+import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
+import { type FindingRow, findingApplies } from './gates.js';
 import { reviewerApprove } from './protected.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun } from './runs.js';
@@ -28,9 +28,11 @@ export interface Report {
   assessments?: { assessment: string; verdict: 'not_applicable' | 'applicable' }[];
   proposal?: { rationale: string; requested_change_kind: string };
   proposal_approval?: { proposal: string; reason: string };
+  alpha_exception_proposals?: { finding: string; containment_text: string; references: ({ path: string } | { record: string })[]; testing_purpose: string }[];
 }
 
-const findingOf = (tx: Tx, id: string) => tx.db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
+const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
+const findingOf = (tx: Tx, id: string) => findingRowOf(tx.db, id);
 
 // A finding is raised (D1 §3.4). `run` null: an engine-origin finding.
 export function raiseFinding(
@@ -67,9 +69,39 @@ export function raiseFinding(
   return id;
 }
 
+// Why an Alpha exception may not be proposed for a finding, before anything
+// is raised (D2 §5 C1): it is not High, it has a sensitive area, or it is not
+// open against the candidate the Reviewer reviewed. null when it may.
+export function alphaRefusal(db: Tx['db'], f: FindingRow | undefined, project: string, candidate: CandidateRow | undefined): string | null {
+  if (!f || f.project !== project) return 'finding_not_found';
+  if (!candidate) return 'no_reviewed_candidate';
+  if (f.effective_severity !== 'high') return 'not_high';
+  if (f.sensitive_area !== null) return 'sensitive_area';
+  if (f.status !== 'open' || !findingApplies(db, f, candidate)) return 'not_open_against_reviewed_candidate';
+  return null;
+}
+
+// What the main thread reads before it retains a proposal's references: may
+// the proposal be made, and on what revision are its paths read.
+export function alphaCheck(db: Tx['db'], args: { run: string; finding: string }): { ok: true; project: string; candidate: string; revision: string } | { ok: false; reason: string } {
+  const run = db.prepare('SELECT "project", "work_item", "role" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string; role: string } | undefined;
+  if (!run || run.role !== 'reviewer') return { ok: false, reason: 'not_a_reviewer_run' };
+  const item = db.prepare('SELECT "subject" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { subject: string };
+  const subject = parseJson<{ candidate?: string }>(item.subject) ?? {};
+  const candidate = subject.candidate ? getCandidate(db, subject.candidate) : undefined;
+  const reason = alphaRefusal(db, findingRowOf(db, args.finding), run.project, candidate);
+  return reason === null ? { ok: true, project: run.project, candidate: candidate!.id, revision: candidate!.revision } : { ok: false, reason };
+}
+
+// What the main thread did with each Alpha exception proposal before the
+// report is recorded: the containment evidence it published, or why it
+// refused the proposal (an unresolved reference, an ineligible finding).
+export type AlphaPrepared = { record: string } | { refusal: string; detail?: string };
+
 // The run's report, recorded once. `evidence[i]` is the record the main
-// thread published for the i-th applicability entry's evidence.
-export function recordReport(tx: Tx, args: { run: string; evidence?: (string | null)[] | undefined }): void {
+// thread published for the i-th applicability entry's evidence; `alpha[i]`
+// what it did with the i-th Alpha exception proposal.
+export function recordReport(tx: Tx, args: { run: string; evidence?: (string | null)[] | undefined; alpha?: AlphaPrepared[] | undefined }): void {
   const run = getRun(tx, args.run);
   if (!run) return;
   const flag = tx.db.prepare('SELECT "report_recorded", "result_value" FROM "runs" WHERE "id" = ?').get(run.id) as { report_recorded: number; result_value: string | null };
@@ -142,8 +174,10 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
         continue;
       }
       if (role !== 'reviewer') continue;
-      if (BLOCKING.includes(f.effective_severity) && !BLOCKING.includes(c.to)) {
-        // Out of the blocking range: the human owner decides.
+      // Out of the blocking range, and any lowering from Critical (K7: a
+      // stricter policy for a real agent): the human owner decides. The
+      // Reviewer proposes; nothing it reports later applies it.
+      if (f.effective_severity === 'critical' || (BLOCKING.includes(f.effective_severity) && !BLOCKING.includes(c.to))) {
         tx.db.prepare('UPDATE "findings" SET "proposed_severity_change" = ? WHERE "id" = ?').run(JSON.stringify({ to: c.to, run: run.id }), f.id);
         raiseQuestion(tx, { project, kind: 'severity_lower', subjectType: 'finding', subjectId: f.id });
         continue;
@@ -189,6 +223,44 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     }
   }
 
-  // Only a Reviewer approves a proposal, and only a tightening (E13).
+  // A Reviewer's approval of a tightening is a recommendation (K8, E13).
   if (role === 'reviewer' && report.proposal_approval) reviewerApprove(tx, { proposal: report.proposal_approval.proposal, run: run.id });
+
+  // A Reviewer's Alpha exception proposals (D2 §5 C1): each is refused before
+  // anything is raised, or becomes a finding_disposition question with the
+  // option alpha_exception, its containment argument retained as claimed
+  // evidence. What was refused is kept on the run.
+  if (role === 'reviewer' && (report.alpha_exception_proposals ?? []).length > 0) {
+    const refusals: { finding: string; index: number; reason: string; detail?: string }[] = [];
+    const reviewed = (tx.db.prepare('SELECT "content_hash" FROM "runs" WHERE "id" = ?').get(run.id) as { content_hash: string | null }).content_hash;
+    for (const [i, p] of (report.alpha_exception_proposals ?? []).entries()) {
+      const prepared = args.alpha?.[i];
+      if (!prepared || 'refusal' in prepared) {
+        refusals.push({ finding: p.finding, index: i, reason: prepared && 'refusal' in prepared ? prepared.refusal : 'not_prepared', ...(prepared && 'refusal' in prepared && prepared.detail ? { detail: prepared.detail } : {}) });
+        continue;
+      }
+      const f = findingOf(tx, p.finding);
+      const reason = alphaRefusal(tx.db, f, project, candidate);
+      if (reason !== null) {
+        refusals.push({ finding: p.finding, index: i, reason });
+        continue;
+      }
+      const proposed = {
+        run: run.id,
+        candidate: candidate!.id,
+        // The acceptance content the Reviewer was given to review (E41 item 4).
+        acceptance_content_hash: reviewed ?? contentHash(tx.db, project, candidate!),
+        containment_evidence: prepared.record,
+        testing_purpose: p.testing_purpose,
+        at: tx.at,
+      };
+      tx.db.prepare('UPDATE "findings" SET "proposed_alpha_exception" = ? WHERE "id" = ?').run(JSON.stringify(proposed), f!.id);
+      raiseQuestion(tx, { project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f!.id, scope: ALPHA_SCOPE });
+    }
+    if (refusals.length > 0) tx.db.prepare('UPDATE "runs" SET "report_refusals" = ? WHERE "id" = ?').run(JSON.stringify(refusals.map((r) => ({ field: 'alpha_exception_proposals', ...r }))), run.id);
+  }
 }
+
+// The scope of the finding_disposition question an Alpha exception
+// proposal raises, apart from a Reviewer's other dispositions of the finding.
+export const ALPHA_SCOPE = 'alpha_exception';

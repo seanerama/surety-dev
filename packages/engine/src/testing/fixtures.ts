@@ -30,6 +30,10 @@ import {
 import type { DecisionKind } from '../store/transitions/decisions.js';
 import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal } from '../store/transitions/protected.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
+import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
+import { proposeAttempt, proposeEntry } from '../store/transitions/qualification.js';
+import { type AttemptInput, type EntryInput, getAttempt, getEntry, recordHostQualification, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
+import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from '../trust/host.js';
 
 // The label on every event a fixture causes (SEAM.md §10, §15).
 const FIXTURE_LABEL = { test_fixture: true } as const;
@@ -310,4 +314,256 @@ export function installObservation(db: Database, actor: Actor, body: unknown) {
   return transact(db, actor, (tx) =>
     recordObservation(tx, { project: str(b, 'project'), environment: str(b, 'environment'), condition: condition as ObservedCondition, observed_at: observedAt, source: str(b, 'source') }, FIXTURE_LABEL),
   );
+}
+
+// ---- the trust table's fixtures (M2 plan §2.3; SEAM.md, slice 10) ------------------------
+//
+// Test setup standing for what the host checks and a qualification attempt
+// would have established. Each writes through the engine's own transitions,
+// labelled as a fixture. None sets an entry `active`: only the human's
+// answer to its trust_activation does (D2 §4.1; M102).
+
+const MECHANISM_FINGERPRINT = 'fixture-mechanism-1';
+
+export interface HostQualificationFixture {
+  project: string;
+  mechanism_fingerprint: string;
+  kernel: string;
+  checks: unknown[];
+  probes: unknown[];
+  evidenceText: string;
+}
+
+export function parseHostQualification(body: unknown): HostQualificationFixture {
+  const b = objectBody(body, ['project', 'mechanism_fingerprint', 'kernel', 'checks', 'probes', 'evidence']);
+  const opt = (field: string, fallback: string) => (b[field] === undefined ? fallback : str(b, field));
+  const list = (field: string) => {
+    if (b[field] === undefined) return [];
+    if (!Array.isArray(b[field])) throw invalid(field, 'must be an array');
+    return b[field] as unknown[];
+  };
+  return {
+    project: str(b, 'project'),
+    mechanism_fingerprint: opt('mechanism_fingerprint', MECHANISM_FINGERPRINT),
+    kernel: opt('kernel', 'fixture-kernel'),
+    checks: list('checks'),
+    probes: list('probes'),
+    evidenceText: opt('evidence', 'host qualification fixture'),
+  };
+}
+
+// POST /v1/harness/fixtures/host-qualification: this incarnation's host
+// qualification, as the checks of a start would write it (D2 §7.1). While
+// the bootstrap exception is in force it is written and never active.
+export function installHostQualification(db: Database, actor: Actor, args: { body: HostQualificationFixture; incarnation: string; evidence: string }) {
+  const host = hostIdentity();
+  if (host === null) throw new Refusal(409, 'host_unidentified', 'The host identity cannot be read.', 'Check /etc/machine-id.', {});
+  return transact(db, actor, (tx) => {
+    const row = recordHostQualification(
+      tx,
+      {
+        incarnation: args.incarnation,
+        host_id: host,
+        kernel: args.body.kernel,
+        tool_versions: { fixture: true },
+        mechanism_fingerprint: args.body.mechanism_fingerprint,
+        checks: args.body.checks,
+        probes: args.body.probes,
+        evidence: args.evidence,
+      },
+      FIXTURE_LABEL,
+    );
+    return { host_qualification: { id: row.id, status: row.status, bootstrap_exception: row.bootstrap_exception === 1 } };
+  });
+}
+
+// A lapsed host qualification of this host, standing for the one an attempt
+// ran under where none is current: an entry's own row is historical anyway
+// (D2 §4.1).
+function historicalHostRow(tx: Parameters<Parameters<typeof transact>[2]>[0], incarnation: string, evidence: string, mechanism: string): string {
+  const current = tx.db.prepare(`SELECT "id", "mechanism_fingerprint" FROM "host_qualifications" WHERE "status" = 'active'`).get() as { id: string; mechanism_fingerprint: string } | undefined;
+  if (current && current.mechanism_fingerprint === mechanism) return current.id;
+  const id = tx.newId('hq_');
+  tx.db
+    .prepare(
+      `INSERT INTO "host_qualifications" ("id", "created_at", "host_id", "kernel", "tool_versions", "mechanism_fingerprint", "checks", "probes",
+         "bootstrap_exception", "evidence", "status", "incarnation", "qualified_at", "lapsed_at", "lapsed_reason")
+       VALUES (?, ?, ?, 'fixture-kernel', '{"fixture":true}', ?, '[]', '[]', 0, ?, 'lapsed', ?, ?, ?, 'test_fixture_historical')`,
+    )
+    .run(id, tx.at, hostIdentity() ?? 'unknown', mechanism, evidence, incarnation, tx.at, tx.at);
+  return id;
+}
+
+export interface AttemptFixture {
+  project: string;
+  backend: string;
+  version: string;
+  model: string;
+  status: 'proposed' | 'authorized';
+  binary_path: string;
+  binary_sha256: string;
+  mechanism_fingerprint: string;
+  evidenceText: string;
+}
+
+export function parseAttemptFixture(body: unknown): AttemptFixture {
+  const b = objectBody(body, ['project', 'backend', 'version', 'model', 'status', 'binary_path', 'binary_sha256', 'mechanism_fingerprint']);
+  const opt = (field: string, fallback: string) => (b[field] === undefined ? fallback : str(b, field));
+  const status = opt('status', 'proposed');
+  if (status !== 'proposed' && status !== 'authorized') throw invalid('status', 'must be proposed or authorized');
+  return {
+    project: str(b, 'project'),
+    backend: str(b, 'backend'),
+    version: opt('version', '0.0.0-standin'),
+    model: opt('model', 'standin-model'),
+    status,
+    binary_path: opt('binary_path', '/nonexistent/surety-standin'),
+    binary_sha256: opt('binary_sha256', '0'.repeat(64)),
+    mechanism_fingerprint: opt('mechanism_fingerprint', MECHANISM_FINGERPRINT),
+    evidenceText: 'qualification attempt fixture',
+  };
+}
+
+function attemptInput(f: { project: string; backend: string; version: string; model: string; binary_path: string; binary_sha256: string }, hq: string): AttemptInput {
+  return {
+    backend: f.backend,
+    version: f.version,
+    binary_path: f.binary_path,
+    binary_sha256: f.binary_sha256,
+    help_sha256: 'f'.repeat(64),
+    template: 'standin-template',
+    template_version: '1',
+    model: f.model,
+    auth_mode: 'api_key',
+    host_qualification: hq,
+    profile_fingerprint: 'fixture-profile-1',
+    fixture_project: f.project,
+    candidate_egress: [],
+    canary_deadlines: { positive: 600, cancellation: 600, containment: 600 },
+    spend: { cap: null, estimate: 0, label: 'estimate', overshoot: 'bounded by the deadline' },
+  };
+}
+
+// POST /v1/harness/fixtures/qualification-attempt: an attempt proposed with
+// its qualification_approval raised, or one standing authorized (K10: its
+// authority dispatches only its canaries, never project work).
+export function installAttempt(db: Database, actor: Actor, args: { body: AttemptFixture; incarnation: string; evidence: string }) {
+  return transact(db, actor, (tx) => {
+    const hq = historicalHostRow(tx, args.incarnation, args.evidence, args.body.mechanism_fingerprint);
+    const { attempt, decision } = proposeAttempt(tx, attemptInput(args.body, hq), FIXTURE_LABEL);
+    if (args.body.status === 'authorized') {
+      tx.db.prepare(`UPDATE "qualification_attempts" SET "status" = 'authorized' WHERE "id" = ?`).run(attempt.id);
+      const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "id" = ?`).get(decision) as DecisionRow | undefined;
+      if (open) invalidateDecision(tx, open, 'the fixture installed the attempt authorized');
+      tx.emit('qualification.authorized', { project: attempt.fixture_project, qualification_attempt: attempt.id, decision: null }, FIXTURE_LABEL);
+    }
+    const row = getAttempt(tx.db, attempt.id)!;
+    return { qualification_attempt: { id: row.id, status: row.status }, decision: args.body.status === 'proposed' ? decision : null };
+  });
+}
+
+export interface EntryFixture {
+  project: string;
+  status: 'proposed' | 'revoked';
+  entry: Omit<EntryInput, 'host_qualification' | 'qualification_attempt' | 'evidence' | 'enforceable_boundaries' | 'host_id'> & {
+    enforceable_boundaries: { boundary: unknown; mechanism: unknown; evidenceText: string | null; overshoot: unknown }[];
+  };
+  evidenceTexts: string[];
+  mechanism_fingerprint: string;
+}
+
+const BOUNDARY_FIELDS = ['boundary', 'mechanism', 'evidence', 'overshoot'];
+
+export function parseEntryFixture(body: unknown): EntryFixture {
+  const b = objectBody(body, [
+    'project', 'status', 'backend', 'version', 'binary_path', 'binary_sha256', 'help_sha256', 'mode', 'template', 'template_version', 'model', 'auth_mode',
+    'capabilities', 'isolation', 'boundary', 'profile_fingerprint', 'egress_hosts', 'usage_granularity', 'usage_semantics', 'cost_reporting',
+    'enforceable_boundaries', 'provider_files', 'term_to_exit_ms', 'evidence', 'mechanism_fingerprint',
+  ]);
+  const opt = (field: string, fallback: string) => (b[field] === undefined ? fallback : str(b, field));
+  const status = opt('status', 'proposed');
+  if (status !== 'proposed' && status !== 'revoked') {
+    throw invalid('status', 'must be proposed or revoked: only the human\'s answer to trust_activation makes an entry active');
+  }
+  const boundaries = b.enforceable_boundaries === undefined ? [{ boundary: 'invocation', mechanism: 'dispatch_check', evidence: 'the dispatch-time budget check and the run deadline', overshoot: 'deadline' }] : b.enforceable_boundaries;
+  if (!Array.isArray(boundaries)) throw invalid('enforceable_boundaries', 'must be an array');
+  const parsedBoundaries = boundaries.map((x: unknown, i: number) => {
+    const o = objectBody(x, BOUNDARY_FIELDS);
+    if (o.evidence !== undefined && typeof o.evidence !== 'string') throw invalid(`enforceable_boundaries[${i}].evidence`, 'must be the evidence text, or absent');
+    return { boundary: o.boundary, mechanism: o.mechanism, evidenceText: (o.evidence as string | undefined) ?? null, overshoot: o.overshoot };
+  });
+  const evidence = b.evidence === undefined ? ['qualification evidence fixture'] : strings(b.evidence, 'evidence');
+  return {
+    project: str(b, 'project'),
+    status,
+    mechanism_fingerprint: opt('mechanism_fingerprint', MECHANISM_FINGERPRINT),
+    evidenceTexts: evidence,
+    entry: {
+      backend: str(b, 'backend'),
+      version: opt('version', '0.0.0-standin'),
+      binary_path: opt('binary_path', '/nonexistent/surety-standin'),
+      binary_sha256: opt('binary_sha256', '0'.repeat(64)),
+      help_sha256: opt('help_sha256', 'f'.repeat(64)),
+      mode: opt('mode', 'one_shot_headless'),
+      template: opt('template', 'standin-template'),
+      template_version: opt('template_version', '1'),
+      model: opt('model', 'standin-model'),
+      auth_mode: opt('auth_mode', 'api_key'),
+      capabilities: (b.capabilities as EntryInput['capabilities'] | undefined) ?? { tools: [], denied: [], features_disabled: [], delegation_verified: true },
+      isolation: opt('isolation', ISOLATION_MECHANISM),
+      boundary: opt('boundary', BOUNDARY_MECHANISM),
+      profile_fingerprint: opt('profile_fingerprint', 'fixture-profile-1'),
+      egress_hosts: b.egress_hosts === undefined ? [] : strings(b.egress_hosts, 'egress_hosts'),
+      usage_granularity: opt('usage_granularity', 'model_call'),
+      usage_semantics: b.usage_semantics === undefined ? 'cumulative' : b.usage_semantics === null ? null : str(b, 'usage_semantics'),
+      cost_reporting: opt('cost_reporting', 'reported'),
+      enforceable_boundaries: parsedBoundaries,
+      result_channel: 'file',
+      session_qualified: false,
+      provider_files: (b.provider_files as EntryInput['provider_files'] | undefined) ?? { locations: [], persistence_flags: [], excluded: [] },
+      term_to_exit_ms: typeof b.term_to_exit_ms === 'number' ? b.term_to_exit_ms : null,
+    },
+  };
+}
+
+// POST /v1/harness/fixtures/trust-entry: an entry written proposed through
+// the transition a succeeded attempt uses, with its trust_activation raised
+// (or not, for an entry whose usage is not reported), or then revoked. The
+// attempt it names is a fixture that stands succeeded.
+export function installTrustEntry(
+  db: Database,
+  actor: Actor,
+  args: { body: EntryFixture; incarnation: string; evidence: string[]; boundaryEvidence: (string | null)[] },
+) {
+  const host = hostIdentity();
+  if (host === null) throw new Refusal(409, 'host_unidentified', 'The host identity cannot be read.', 'Check /etc/machine-id.', {});
+  return transact(db, actor, (tx) => {
+    const f = args.body;
+    const hq = historicalHostRow(tx, args.incarnation, args.evidence[0]!, f.mechanism_fingerprint);
+    const attempt = writeAttempt(tx, attemptInput({ project: f.project, backend: f.entry.backend, version: f.entry.version, model: f.entry.model, binary_path: f.entry.binary_path, binary_sha256: f.entry.binary_sha256 }, hq), FIXTURE_LABEL);
+    tx.db.prepare(`UPDATE "qualification_attempts" SET "status" = 'succeeded', "canaries" = ? WHERE "id" = ?`).run(
+      JSON.stringify(['positive', 'cancellation', 'containment'].map((kind) => ({ kind, run: null, passed: true }))),
+      attempt.id,
+    );
+    const input: EntryInput = {
+      ...f.entry,
+      host_id: host,
+      host_qualification: hq,
+      qualification_attempt: attempt.id,
+      evidence: args.evidence,
+      enforceable_boundaries: f.entry.enforceable_boundaries.map((x, i) => ({ boundary: x.boundary as string, mechanism: x.mechanism as string, evidence: args.boundaryEvidence[i] as string, overshoot: x.overshoot })),
+    };
+    const { entry, decision } = proposeEntry(tx, input, FIXTURE_LABEL);
+    tx.db.prepare(`UPDATE "qualification_attempts" SET "trust_entry" = ? WHERE "id" = ?`).run(entry.id, attempt.id);
+    if (f.status === 'revoked') revokeEntry(tx, entry, 'test_fixture');
+    const row = getEntry(tx.db, entry.id)!;
+    const d = decision === null ? undefined : (tx.db.prepare('SELECT "id", "preview_hash", "status" FROM "decisions" WHERE "id" = ?').get(decision) as { id: string; preview_hash: string; status: string } | undefined);
+    return {
+      trust_entry: { id: row.id, status: row.status },
+      qualification_attempt: { id: attempt.id },
+      host_qualification: { id: hq },
+      evidence: args.evidence,
+      decision: d && d.status === 'open' ? { id: d.id, preview_hash: d.preview_hash } : null,
+    };
+  });
 }
