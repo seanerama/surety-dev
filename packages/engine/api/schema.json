@@ -123,6 +123,14 @@
       "terminated",
       "unknown"
     ],
+    "ExitClass": [
+      "engine_signaled",
+      "unknown",
+      "resource_limit",
+      "foreign_signal",
+      "clean",
+      "error_exit"
+    ],
     "FindingScope": [
       "project",
       "lineage",
@@ -192,14 +200,6 @@
       "launched",
       "ended",
       "unknown"
-    ],
-    "ExitClass": [
-      "engine_signaled",
-      "unknown",
-      "resource_limit",
-      "foreign_signal",
-      "clean",
-      "error_exit"
     ],
     "LeaseKind": [
       "run",
@@ -582,7 +582,11 @@
       "qualification.finished",
       "trust.proposed",
       "trust.activated",
-      "trust.revoked"
+      "trust.revoked",
+      "domain.placed",
+      "domain.launch_authorized",
+      "domain.launch_closed",
+      "run.lease_regranted"
     ],
     "EngineMode": [
       "restricted",
@@ -1401,6 +1405,19 @@
           "required": false
         },
         "resource_events": {
+          "required": false
+        },
+        "terminated_at": {
+          "required": false
+        },
+        "cgroup_inode": {
+          "required": false
+        },
+        "exit_class": {
+          "required": false,
+          "enum": "ExitClass"
+        },
+        "exit_evidence": {
           "required": false
         }
       }
@@ -4260,6 +4277,18 @@
     },
     "trust.revoked": {
       "owner": "store/transitions/trust.ts"
+    },
+    "domain.placed": {
+      "owner": "store/transitions/boundary.ts"
+    },
+    "domain.launch_authorized": {
+      "owner": "store/transitions/boundary.ts"
+    },
+    "domain.launch_closed": {
+      "owner": "store/transitions/boundary.ts"
+    },
+    "run.lease_regranted": {
+      "owner": "store/transitions/boundary.ts"
     }
   },
   "config": {

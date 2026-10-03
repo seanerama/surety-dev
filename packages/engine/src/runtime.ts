@@ -240,9 +240,9 @@ export class Runtime {
   // scope (M2 plan M110 (b)). Outside harness mode it is always the real one;
   // without a scope no real backend is eligible to be dispatched to it.
   boundary(): 'scripted' | 'real' {
-    const harness = seamBoundary();
-    if (harness === 'scripted') return 'scripted';
-    if (harness === 'real' && this.scope === null) return 'scripted';
+    const chosen = seamBoundary();
+    if (chosen === 'scripted') return 'scripted';
+    if (chosen === 'real' && this.scope === null) return 'scripted';
     return 'real';
   }
 

@@ -192,6 +192,7 @@ const COLUMN_ENUMS: Record<string, string> = {
   'execution_domains.launch_state': 'LaunchState',
   'execution_domains.observation': 'DomainObservation',
   'invocation_status_observations.exit_class': 'ExitClass',
+  'execution_domains.exit_class': 'ExitClass',
 };
 
 const pascal = (text: string): string =>
