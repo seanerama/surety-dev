@@ -18,6 +18,12 @@
 // Every case here is expected to fail on the engine these tests were
 // written against, which charges no allowance and does not count an
 // estimate toward the verified day (COVERAGE.md, "M2 slice 10").
+//
+// The last case is the slice-10 review's S2 (E31: one Verifier case, one
+// Builder fix): a real backend's invocation that fails on its own with no
+// usage observed was charged no allowance, so the day never counted it. C4
+// charges every incomplete invocation of a trust entry's backend, however
+// it ended (SEAM.md §120, amended).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -26,8 +32,9 @@ import { armFault } from './harness/engine.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { PRICES, awayFromMidnight, correct, getLedger, invocationOf, ledgerRows, originalRowOf } from './harness/ledger.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
-import { addWork, assertRunEnded, runsOf, scriptedEngine, stopRun, tick, tickOnce, tickUntil, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
+import { addWork, assertRunEnded, countOf, runsOf, scriptedEngine, stopRun, tick, tickOnce, tickUntil, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
+import { installTrustEntry, realBackendProject, trustEntry } from './harness/trust.mjs';
 
 // The estimate the price table gives 400,000 billable input, 100,000 cached
 // and 500,000 output tokens: 0.8 + 0.05 + 4 USD.
@@ -147,5 +154,47 @@ describe('M104 estimated cost and the unknown allowance', () => {
     assert.deepEqual(ledgerRows(fx.home, project).map((row) => pick(row, Object.keys(expected))), [expected], 'after a restart and a tick: still the one row, the allowance charged once');
     const { totals } = await getLedger(fx.engine, project);
     assert.deepEqual(pick(totals, ['invocations', 'unknown_cost_tokens', 'unknown_allowance_tokens']), { invocations: 1, unknown_cost_tokens: 5000, unknown_allowance_tokens: 5000 });
+  });
+
+  // The slice-10 review's S2 (E31; SEAM.md §120 "Which incomplete invocations are charged").
+  test("S2: a real backend's invocation that fails on its own with no usage observed is charged the whole run limit as its allowance, counted in the totals and at the next dispatch, and released by a correction that completes it", async (t) => {
+    await awayFromMidnight();
+    // A real backend bound to the stand-in, which exits with no output: the
+    // run fails on its own, and nothing was observed of what it spent. A
+    // failed item parks at once (no repair), so it runs once.
+    const { fx, standIn, project } = await realBackendProject(t, { policy: { budget_run_billable_tokens: 10_000, repair_attempts_max: 0 } });
+    const entry = await installTrustEntry(fx.engine, standIn, { status: 'active' });
+    assert.equal(trustEntry(fx.home, entry.id)?.status, 'active', 'the fixture is live: an active entry for the backend');
+    const item = await addWork(fx.engine, project, 'verification');
+    await tick(fx.engine, project);
+    const run = await waitForRunState(fx.home, (await waitForRun(fx.home, item)).id, 'ended', { timeoutMs: 60_000 });
+    assertRunEnded(fx.home, run.id, { launched: true });
+    assert.ok(run.outcome !== 'refused' && run.outcome !== 'completed', `the fixture is live: the run ended on its own without completing (${run.outcome} / ${run.reason_class})`);
+    assert.equal(standIn.launches().length, 1, 'the stand-in was launched once');
+    const invocation = invocationOf(fx.home, run.id);
+    assert.equal(countOf(fx.home, 'usage_observations', '"invocation" = ?', invocation), 0, 'the fixture is live: nothing was observed of its usage');
+
+    const charged = originalRowOf(fx.home, run.id);
+    assert.deepEqual(pick(charged, ['billable_in', 'out', 'usage_complete', 'cost_status', 'unknown_allowance_tokens']), { billable_in: null, out: null, usage_complete: 0, cost_status: 'unknown', unknown_allowance_tokens: 10_000 }, 'its usage is incomplete and unknown, and the allowance is the whole run limit: a real backend is charged whether or not it observed usage');
+    const ledger = await getLedger(fx.engine, project);
+    assert.deepEqual(pick(ledger.totals, ['invocations', 'usage_incomplete', 'unknown_cost_invocations', 'unknown_cost_tokens', 'unknown_allowance_tokens']), { invocations: 1, usage_incomplete: 1, unknown_cost_invocations: 1, unknown_cost_tokens: null, unknown_allowance_tokens: 10_000 }, 'the totals count the allowance, and show no tokens as known');
+    assert.equal(ledger.rows.find((row) => row.id === charged.id)?.unknown_allowance_tokens, 10_000, 'the row shows it');
+
+    // At dispatch the day counts it: a limit below the allowance holds the next item.
+    await changePolicy(fx.engine, project, { budget_day_unknown_tokens: 9000 });
+    const next = await addWork(fx.engine, project, 'verification');
+    for (let i = 0; i < 2; i++) await tickOnce(fx.engine, project);
+    assert.equal(runsOf(fx.home, next).length, 0, 'the next dispatch is held: the allowance counts against the day');
+    assert.deepEqual((await getLedger(fx.engine, project)).budget, { exhausted: ['budget_day_unknown_tokens'] }, 'the hold names the unknown-token day limit');
+
+    // The provider's terminal usage, complete: the allowance is released and the day is within its limit.
+    const corrected = await correct(fx.engine, { invocation, seq: 1, raw: { input_tokens: 10, output_tokens: 5 }, usage_complete: true });
+    assert.equal(corrected.status, 201, `the correction is appended (body: ${corrected.text})`);
+    assert.deepEqual(originalRowOf(fx.home, run.id), charged, 'the original row is unchanged');
+    const settled = await getLedger(fx.engine, project);
+    assert.deepEqual(pick(settled.totals, ['unknown_cost_tokens', 'unknown_allowance_tokens', 'usage_incomplete']), { unknown_cost_tokens: 15, unknown_allowance_tokens: 0, usage_incomplete: 0 }, 'the known usage is the correction\'s and no allowance is in force');
+    assert.deepEqual(settled.budget, { exhausted: [] });
+    await tickOnce(fx.engine, project);
+    assert.equal(runsOf(fx.home, next).length, 1, 'the held work is dispatched once the allowance is released');
   });
 });

@@ -21,19 +21,29 @@
 // Every case here is expected to fail on the engine these tests were
 // written against, which knows no such result field (COVERAGE.md, "M2
 // slice 10").
+//
+// The last case is the slice-10 review's S1 (E31: one Verifier case, one
+// Builder fix): the exception bound content the Reviewer never reviewed.
+// The manifest's hash is the content in force when the Reviewer's run was
+// started (as a sign-off's, SEAM.md §70); a proposal made against content
+// that has since changed is refused `content_changed`; an open decision
+// whose content changes is withdrawn, not asked again on content nobody
+// reviewed; a granted exception lifts the block only while the content is
+// the one it was granted on (SEAM.md §119). Case (e)'s first step is
+// changed with it: after the content change the question is withdrawn.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { CODES, answer, assertStaleAnswer, consume, decision, decisionsOn, intentsOf, nextGeneration, openDecision, reject, untilKilled } from './harness/decisions.mjs';
-import { alphaTarget, check, checkResult, finding, installChecks, nominated, passAll, postResult, raiseFindings, reasonSubjects, review, roleRun, successor } from './harness/gates.mjs';
+import { alphaTarget, check, checkResult, finding, installChecks, nominated, passAll, postResult, raiseFindings, reasonSubjects, review, roleRun, scopeOf, stageGate, successor } from './harness/gates.mjs';
 import { changePolicy } from './harness/journal.mjs';
-import { permittedEdit } from './harness/gitruns.mjs';
+import { permittedEdit, roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { armBarrier } from './harness/journal.mjs';
 import { readRun } from './harness/reads.mjs';
 import { readRecord, recordRow, recordsOf } from './harness/records.mjs';
 import { fileAt } from './harness/repos.mjs';
-import { scriptedEngine, tickUntil } from './harness/runs.mjs';
+import { addWork, scriptedEngine, tick, tickUntil, waitForRunState } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 
 const KIND = 'finding_disposition';
@@ -74,6 +84,21 @@ async function reviewed(t) {
 }
 
 const exceptionOf = (fx, findingId) => JSON.parse(finding(fx.home, findingId).alpha_exception ?? 'null');
+
+// The candidate's acceptance content hash as the stage gate computes it now (SEAM.md §70).
+const contentNow = async (fx, ctx) => scopeOf(fx.home, await stageGate(fx, ctx)).acceptance_content_hash;
+
+// The question an open decision asked no longer stands (SEAM.md §76, §119):
+// within four ticks the decision is `invalidated`, and after three more no
+// finding_disposition about the finding is open and none was raised anew.
+async function assertWithdrawn(fx, project, previewed, findingId) {
+  const count = decisionsOn(fx.home, KIND, findingId).length;
+  await tickUntil(fx.engine, project, () => decision(fx.home, previewed.id).status === 'invalidated', { what: `the ${previewed.kind} decision to be invalidated` });
+  for (let i = 0; i < 3; i++) await tick(fx.engine, project);
+  const open = decisionsOn(fx.home, KIND, findingId).filter((row) => row.status === 'open');
+  assert.deepEqual(open.map((row) => row.id), [], 'no exception is asked about on content the Reviewer did not review');
+  assert.equal(decisionsOn(fx.home, KIND, findingId).length, count, 'no decision was raised in place of the withdrawn one');
+}
 
 describe('M105 the Alpha exception proposal', () => {
   test('(a) a High finding with no sensitive area, open against the reviewed candidate: claimed containment evidence with the referenced content retained, and a finding_disposition offering alpha_exception whose manifest binds the finding and the candidate; the run completes', async (t) => {
@@ -152,25 +177,33 @@ describe('M105 the Alpha exception proposal', () => {
     assert.equal(evaluation.check_states[k.import], 'failed');
   });
 
-  test('(e) a change to what the manifest binds: the acceptance content before the answer, the finding\'s status before the answer, and the sensitive area between the answer and the effect; each stales it with no write', async (t) => {
+  test('(e) a change to what the manifest binds: the acceptance content before the answer (the question is withdrawn), the finding\'s status before the answer, and the sensitive area between the answer and the effect; each stales it with no write', async (t) => {
     const { fx, ctx, project, high, proposal, propose } = await reviewed(t);
     await propose([proposal(high.id)]);
     const first = await openDecision(fx, project, KIND, high.id);
+    assert.equal(first.manifest.acceptance_content_hash, await contentNow(fx, ctx), 'the fixture is live: the preview binds the content the Reviewer reviewed, which is the content in force');
 
-    // 1. The candidate's acceptance content changes: another check covers R1.
+    // 1. The candidate's acceptance content changes: another check covers
+    // R1. The earlier answer is stale, and the question is withdrawn rather
+    // than asked again: nobody has reviewed the new content (the review's S1).
     await installChecks(fx.engine, project, [check('export', { requirements: ['R1'] })]);
     await assertStaleAnswer(fx, project, first, OPTION);
     assert.equal(exceptionOf(fx, high.id), null, 'nothing was written on the earlier preview');
-    const second = await nextGeneration(fx, project, first, { changed: 'acceptance_content_hash' });
-    assert.deepEqual([second.manifest.proposed_disposition, second.manifest.finding_status], [OPTION, 'open'], 'the next generation asks the same exception');
+    await assertWithdrawn(fx, project, first, high.id);
+    assert.ok(reasonSubjects(await (await alphaTarget(fx, ctx)).evaluate(), 'FINDING_BLOCKING').includes(high.id), 'the finding blocks Alpha under the new content');
+    // The Reviewer reviews the new content and proposes again: a new question, bound to it.
+    await propose([proposal(high.id)]);
+    const second = await openDecision(fx, project, KIND, high.id);
+    assert.deepEqual([second.id !== first.id, second.manifest.acceptance_content_hash, second.manifest.proposed_disposition], [true, await contentNow(fx, ctx), OPTION], 'the new proposal is bound to the content now in force');
 
     // 2. The finding's status changes: a Reviewer dispositions it fix (E43).
+    // The content is unchanged, so the question stands and is asked again.
     await review(fx, project, ctx.candidate.id, { dispositions: [{ finding: high.id, disposition: 'fix' }] });
     assert.equal(finding(fx.home, high.id).status, 'dispositioned', 'the fixture is live: the finding changed');
     await assertStaleAnswer(fx, project, second, OPTION);
     assert.equal(exceptionOf(fx, high.id), null);
     const third = await nextGeneration(fx, project, second, { changed: 'finding_status' });
-    assert.equal(third.manifest.finding_status, 'dispositioned');
+    assert.deepEqual([third.manifest.finding_status, third.manifest.acceptance_content_hash], ['dispositioned', second.manifest.acceptance_content_hash]);
 
     // 3. After the answer and before the effect the finding turns out to be
     // in a sensitive area: the engine is killed at the intent, the store
@@ -197,5 +230,43 @@ describe('M105 the Alpha exception proposal', () => {
     const evaluation = await (await alphaTarget(fx, ctx)).evaluate();
     assert.ok(reasonSubjects(evaluation, 'FINDING_BLOCKING').includes(high.id), 'the finding still blocks Alpha');
     assert.equal(decision(fx.home, previewed.id).status, 'consumed');
+  });
+
+  // The slice-10 review's S1 (E31; SEAM.md §119 "What the Reviewer reviewed").
+  test("S1: the acceptance content changes while the Reviewer's run is under way: the proposal is refused content_changed, nothing is raised and the finding still blocks; an exception granted on one content lifts no block under another", async (t) => {
+    const { fx, ctx, project, high, proposal, propose } = await reviewed(t);
+    const reviewedHash = await contentNow(fx, ctx);
+
+    // A. The Reviewer's run is started on that content and held before it
+    // reports; the content changes meanwhile (another check covers R1).
+    const item = await addWork(fx.engine, project, 'review', { subject: { candidate: ctx.candidate.id } });
+    fx.scripted.script(item, [roleThatHolds([], [], { alpha_exception_proposals: [proposal(high.id)] })]);
+    const { run } = await runToHold(fx, project, item);
+    await installChecks(fx.engine, project, [check('export', { requirements: ['R1'] })]);
+    const current = await contentNow(fx, ctx);
+    assert.notEqual(current, reviewedHash, 'the fixture is live: the acceptance content changed while the review was under way');
+    fx.scripted.release(item);
+    const ended = await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
+    assert.deepEqual([ended.outcome, ended.reason_class], ['completed', 'none'], 'a refused proposal is not an invalid result: the run completes');
+    assert.deepEqual(decisionsOn(fx.home, KIND, high.id), [], 'no finding_disposition was raised: the Reviewer reviewed content that is no longer in force');
+    assert.deepEqual(recordsOf(fx.home, project, 'containment_evidence'), [], 'no containment evidence was published');
+    const shown = await readRun(fx.engine, project, run.id);
+    assert.deepEqual((shown.alpha_exception_proposals ?? []).map((entry) => [entry.finding, entry.outcome, entry.reason, entry.decision]), [[high.id, 'refused', 'content_changed', null]], 'the run read says why');
+    assert.equal(exceptionOf(fx, high.id), null, 'nothing is written on the finding');
+    assert.ok(reasonSubjects(await (await alphaTarget(fx, ctx)).evaluate(), 'FINDING_BLOCKING').includes(high.id), 'the finding still blocks Alpha under the content nobody reviewed');
+
+    // B. The Reviewer reviews the content now in force and proposes again;
+    // the human grants the exception; then the content changes once more.
+    await propose([proposal(high.id)]);
+    const previewed = await openDecision(fx, project, KIND, high.id);
+    assert.equal(previewed.manifest.acceptance_content_hash, current, 'the fixture is live: the new proposal is bound to the content the Reviewer reviewed, now in force');
+    await consume(fx, project, previewed, OPTION);
+    await tickUntil(fx.engine, project, () => intentsOf(fx.home, previewed.id).find((row) => row.status === 'done'), { what: "the exception's effect to be done" });
+    assert.equal(exceptionOf(fx, high.id)?.acceptance_content_hash, current, 'the exception is written, bound to the content it was granted on');
+    assert.ok(!reasonSubjects(await (await alphaTarget(fx, ctx)).evaluate(), 'FINDING_BLOCKING').includes(high.id), 'under that content the finding no longer blocks Alpha');
+    await installChecks(fx.engine, project, [check('report', { requirements: ['R1'] })]);
+    assert.notEqual(await contentNow(fx, ctx), current, 'the fixture is live: the content changed again');
+    assert.ok(reasonSubjects(await (await alphaTarget(fx, ctx)).evaluate(), 'FINDING_BLOCKING').includes(high.id), 'under content the Reviewer did not review the finding blocks Alpha again');
+    assert.equal(exceptionOf(fx, high.id)?.acceptance_content_hash, current, 'the written exception is as it was, bound to the content it was granted on, and lifts nothing elsewhere');
   });
 });
