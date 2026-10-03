@@ -213,6 +213,16 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (candidate === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.read', args: { project, candidate } }) }) };
       }
+      if (rest.length === 1 && rest[0] === 'work' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'work.list', args: { project } }) }) };
+      }
+      // The latest recorded evaluation; a read, which evaluates nothing.
+      if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        const kind = decodeSegment(rest[3]!);
+        if (candidate === null || kind === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.gate', args: { project, candidate, kind } }) }) };
+      }
       if (rest.length === 3 && rest[0] === 'runs' && rest[2] === 'tail' && method === 'GET') {
         const run = decodeSegment(rest[1]!);
         if (run === null) return null;
