@@ -12,6 +12,8 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [spec/M2-slice-1-hardening.md](spec/M2-slice-1-hardening.md) | The first slice of M2: the five gate-integrity entries of the triage, their cases, the procedure and what done means. |
 | [spec/templates/project-spec-template.md](spec/templates/project-spec-template.md) | The specification a project gives Surety: the identifiers the engine registers and the prose around them. |
 | [spec/templates/spec-assistant-prompt.md](spec/templates/spec-assistant-prompt.md) | A paste-ready prompt for an assistant that works an idea into that specification with the owner, in the manner of Spec-Driven-Devops's Vision Assistant. |
+| [spec/templates/idea-brief-template.md](spec/templates/idea-brief-template.md) | One page the owner fills in before a Spec Assistant session, so the conversation starts from something written. |
+| [../.surety/spec/spec.md](../.surety/spec/spec.md) | Surety's own specification, drafted from the template on 2026-10-03: twenty requirements across the eight phases, M1's with the rows that established them, M2's in full. Draft until Sean approves it. |
 | [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 must pass. |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
 | [design/sdlc-design-D2-brief.md](design/sdlc-design-D2-brief.md) | The brief for D2 (backend adapters, control-plane isolation, the execution boundary, the trust table): what it must answer, what it inherits, how it is produced and judged. |
