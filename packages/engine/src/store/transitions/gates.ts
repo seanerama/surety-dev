@@ -30,7 +30,7 @@ import {
 } from './evidence.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
-import { blockingObservation } from './repo.js';
+import { type OobRow, blockingObservation, candidateObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 
@@ -323,9 +323,11 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     }
   }
 
-  // (3) No out-of-band change and no pending journal operation.
-  const observation = blockingObservation(db, args.project);
-  if (observation) add('OUT_OF_BAND_CHANGE', [observation.id]);
+  // (3) No out-of-band change and no pending journal operation: of the
+  // integration branch or the repository, for every gate of the project; of
+  // the candidate's own nomination ref, for that candidate's gates (row M24).
+  const observations = [blockingObservation(db, args.project), candidateObservation(db, args.project, candidate.seq)].filter((o): o is OobRow => o !== undefined);
+  if (observations.length > 0) add('OUT_OF_BAND_CHANGE', observations.map((o) => o.id));
   if (pending.length > 0) add('GIT_JOURNAL_PENDING', pending.map((op) => op.id));
 
   // (4) Every required check passed.

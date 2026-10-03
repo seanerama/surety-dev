@@ -220,3 +220,22 @@ export function blockingObservation(db: Tx['db'], project: string): OobRow | und
     )
     .get(project) as OobRow | undefined;
 }
+
+// The registered nomination ref of a candidate (D1 §7.7; SEAM.md §42).
+export const nominationRef = (seq: number): string => `refs/surety/cand/${seq}`;
+
+// Does an unreconciled observation of a candidate's own nomination ref hold
+// that candidate's gates (D1 §§7.6 "all block affected gates", 9.3(3); row
+// M24)? The marker names the revision the candidate is; while it has been
+// moved or deleted out of band and nobody has answered, what the candidate's
+// gates would vouch for is not established.
+export function candidateObservation(db: Tx['db'], project: string, seq: number): OobRow | undefined {
+  return db
+    .prepare(
+      `SELECT o.* FROM "out_of_band_changes" o JOIN "ref_registry" r ON r."id" = o."ref"
+       WHERE o."project" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL
+       AND r."kind" = 'nomination' AND r."ref" = ?
+       ORDER BY o."detected_at", o."id" LIMIT 1`,
+    )
+    .get(project, nominationRef(seq)) as OobRow | undefined;
+}

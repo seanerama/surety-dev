@@ -13,7 +13,7 @@
 
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
-import { raiseQuestion } from './queue.js';
+import { effectFailed, raiseQuestion } from './queue.js';
 import { markBlockedStale } from './evidence.js';
 import { runFinalizer } from './finalize.js';
 import type { Tx } from './tx.js';
@@ -316,6 +316,7 @@ function refuseInTx(tx: Tx, op: OpDetail, detail: Record<string, unknown>, incar
   tx.db.prepare('UPDATE "operations" SET "outcome_detail" = ? WHERE "id" = ?').run(JSON.stringify(detail), op.id);
   closeBlocker(tx, op, 'the operation failed');
   refreshStatus(tx, op.id);
+  effectFailed(tx, op);
 }
 
 // Issue the next attempt (D1 §2.5; correction 16): the first is admitted
@@ -472,6 +473,36 @@ export function withdrawOperation(tx: Tx, args: { operation: string; outcome: Pr
   tx.db.prepare('UPDATE "operations" SET "outcome_detail" = ?, "remaining_scope" = NULL WHERE "id" = ?').run(JSON.stringify({ reason: 'withdrawn', outcome: args.outcome }), op.id);
   closeBlocker(tx, op, 'the operation was withdrawn');
   refreshStatus(tx, op.id);
+  effectFailed(tx, op);
+}
+
+// A branch update this engine intended and never attempted (no attempt of
+// any incarnation) finds its ref where the engine itself registered it since,
+// off the commit the update was intended from (SEAM.md §104; E51): an
+// integration moved the branch between a protected application's or a policy
+// change's commit and its branch update. That is no ambiguity: nothing of the
+// update was ever tried, and the compare-and-swap it would make cannot hold.
+// It fails without effect, as a swap that git refused does (SEAM.md §43), and
+// what it was for is withdrawn (effectFailed). A ref anywhere else is still
+// the probe's `conflicting`, and blocks. Returns whether it was refused.
+export function refuseMovedBase(tx: Tx, args: { operation: string; found: string | null; incarnation: string }): boolean {
+  const op = opDetail(tx, args.operation);
+  if (op.kind !== 'ref_update' || op.state !== 'intended' || op.attempts.length > 0 || op.payload.ref === undefined) return false;
+  const old = op.payload.old_oid ?? null;
+  if (args.found === null || args.found === old || args.found === op.payload.new_oid) return false;
+  const reg = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(op.project, op.payload.ref) as { expected_oid: string } | undefined;
+  if (!reg || reg.expected_oid !== args.found) return false;
+  refuseInTx(
+    tx,
+    op,
+    {
+      reason: 'compare_and_swap_failed',
+      found: args.found,
+      text: `${op.payload.ref} is at ${args.found}, where the engine itself moved it after this update was intended from ${old ?? '(nothing)'}; the update was never attempted and is not made`,
+    },
+    args.incarnation,
+  );
+  return true;
 }
 
 // ---- reads ----------------------------------------------------------------------

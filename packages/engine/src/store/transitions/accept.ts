@@ -11,7 +11,7 @@ import { projectPolicy } from './settings.js';
 import { illegal, notFound } from './common.js';
 import { type CommitInputs, type PlanInput, type RefInputs, nextCandidateSeq } from './finalize.js';
 import { type IntentResult, type IntentSpec, intendOperation, opsOfRun } from './journal.js';
-import { type Baseline, integrationRef, nextCounter, projectRepoRow } from './repo.js';
+import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoRow } from './repo.js';
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, transitionWork } from './work.js';
@@ -325,7 +325,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
   tx.db.prepare('UPDATE "projects" SET "nomination_due" = NULL WHERE "id" = ?').run(args.project);
   if (pending) return { operation: pending.id, existing: true };
   const seq = nextCandidateSeq(tx, args.project);
-  const ref = `refs/surety/cand/${seq}`;
+  const ref = nominationRef(seq);
   const inputs: RefInputs = { purpose: 'nomination', ref, ref_kind: 'nomination', immutable: true, new_oid: due.revision, seq, by: due.by, chain: due.chain };
   return intendOperation(tx, {
     project: args.project,
