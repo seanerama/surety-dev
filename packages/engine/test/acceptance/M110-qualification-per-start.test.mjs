@@ -19,12 +19,13 @@
 // assertions; the row's shape is pinned here.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { addGitProject } from './harness/gitruns.mjs';
 import { readRun } from './harness/reads.mjs';
-import { holdSecret, recordRow } from './harness/records.mjs';
+import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { addWork, assertRunEnded, requestTick, waitForRun } from './harness/runs.mjs';
 import { HOST_CHECK_IDS, assertEngineInScope, checkOf, hostSection, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { withStore } from './harness/store.mjs';
@@ -58,6 +59,24 @@ function assertActiveRow(fx, info) {
     assert.ok('negative' in p && 'control' in p, `probe ${p.id} records its negative and its control`);
     assert.ok(['passed', 'failed', 'not_exercised'].includes(p.result), `probe ${p.id} has a result`);
   }
+  // Extended by the slice-12 Verifier, as this file's head provides (SEAM.md
+  // §138): a pass has every probe P1 to P19 passed against a seeded
+  // target, its negative denied and its control run; P20 is row M133's
+  // (slice 13) and is reported not_exercised in slice 12 with that reason.
+  const wsl2 = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+  for (const p of row.probes) {
+    if (p.id === 'P20') {
+      assert.ok(['passed', 'not_exercised'].includes(p.result), `P20 is passed or, in slice 12, not_exercised (${JSON.stringify(p)})`);
+      continue;
+    }
+    if (p.id === 'P11' && !wsl2) {
+      assert.equal(p.result, 'not_exercised', 'off WSL2, P11 is not exercised and excused');
+      continue;
+    }
+    assert.deepEqual([p.result, p.target_seeded, p.negative, p.control], ['passed', true, 'denied', true], `a pass has ${p.id} passed against a seeded target, its negative denied, its control run (${JSON.stringify(p)})`);
+  }
+  const doc = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, row.evidence)), 'utf8'));
+  assert.deepEqual(doc.probes?.map((p) => p.id), PROBE_IDS, 'the evidence record holds each probe\'s detail');
   assert.equal(row.bootstrap_exception, 0);
   const evidence = recordRow(fx.home, row.evidence);
   assert.ok(evidence && evidence.kind === 'qualification_evidence' && evidence.published === 1 && evidence.project === null, `the row's evidence is a published engine-scoped qualification_evidence record (${JSON.stringify(evidence)})`);

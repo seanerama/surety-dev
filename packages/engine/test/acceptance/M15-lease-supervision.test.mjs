@@ -25,7 +25,6 @@ import { armFault, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
 import { assertOneRunAtATime, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
-  CLOCK_SLACK_MS as RUNS_CLOCK_SLACK_MS,
   addProject,
   addWork,
   advanceClock,
@@ -56,12 +55,15 @@ assert.ok(LEASE_TTL * 8 < CONTRACT.project.deadline_reviewer.min, 'the cases nee
 const ms = (iso) => Date.parse(iso);
 // The engine's clock is the host's wall clock plus the offset the tests give
 // it, and a host's wall clock can step back: the host these tests were
-// written on steps back by about three quarters of a second every half
-// minute, when its time is synchronised. A timestamp the engine takes just
-// after it answered a clock advance can therefore be slightly earlier than
-// the `now` of that answer. Where a test asks "was this done after the
-// clock moved", it allows that much; the clock moves by many seconds.
-const CLOCK_SLACK_MS = RUNS_CLOCK_SLACK_MS;
+// written on stepped back by about three quarters of a second every half
+// minute, when its time is synchronised, and by 2.93 s when it was measured
+// again (E65 addendum). A timestamp the engine takes just after it answered
+// a clock advance can therefore be seconds earlier than the `now` of that
+// answer. Where a test asks "was this done after the clock moved", it does
+// not compare the timestamp with that `now` and an allowance: it asks
+// whether the row moved on from what it held before the clock moved, or it
+// compares across a margin of five seconds or a third of lease_ttl, which
+// every comparison below has.
 const runLease = (home, runId) => leasesOf(home, runId).find((l) => l.resource_kind === 'run' && l.released_at === null);
 const describeLease = (l) => (l ? `renewed_at ${l.renewed_at}, expires_at ${l.expires_at}, closing ${l.closing}` : 'no unreleased run lease');
 
@@ -190,14 +192,21 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     // A third of the lease's lifetime at a time. After each step a renewal is
     // due, and what is due is acted on within two seconds (SEAM.md §18).
     const third = Math.floor(LEASE_TTL / 3);
-    assert.ok(third * 1000 > 2 * CLOCK_SLACK_MS, 'a step of the clock is much longer than the slack allowed for the host clock');
     const steps = 7;
     for (let i = 1; i <= steps; i++) {
+      // The lease as it stands before this step of the clock.
+      const beforeStep = runLease(fx.home, first.id);
       const { now } = (await advanceClock(fx.engine, third)).body;
       const due = runLease(fx.home, first.id);
       assert.ok(due && ms(due.expires_at) > ms(now), `the lease of a supervised role is never found expired (step ${i}: clock ${now}; ${describeLease(due)})`);
-      // Renewed since this step: a renewal made before it is at least `third` seconds old.
-      const renewedSince = (l) => l && ms(l.renewed_at) >= ms(now) - CLOCK_SLACK_MS;
+      // Renewed since this step: the lease's last renewal has moved on from
+      // what it was before the step (E65 addendum). This was read as
+      // "renewed_at is no more than two seconds before the step's `now`";
+      // the host's wall clock steps back by more than that, and a renewal
+      // made a moment after the step could read as made before it. A renewal
+      // after the step is at least `third` seconds, less one such step of
+      // the host's clock, later than any made before it.
+      const renewedSince = (l) => l && l.renewed_at !== beforeStep.renewed_at && ms(l.renewed_at) > ms(beforeStep.renewed_at);
       await waitFor(() => renewedSince(runLease(fx.home, first.id)), { timeoutMs: 5000, what: 'the engine to renew the lease' }).catch(() => {});
       const lease = runLease(fx.home, first.id);
       assert.ok(
