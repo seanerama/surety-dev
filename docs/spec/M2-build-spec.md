@@ -1,6 +1,6 @@
 # Surety M2 build specification
 
-**Status:** draft, 2026-10-03; in force when section 9 is filled from the adopted M2 acceptance plan. **Owner:** Sean. **Changes:** by the owner only.
+**Status:** in force from 2026-10-03 (E59), with the M2 acceptance plan adopted the same day. **Owner:** Sean. **Changes:** by the owner only.
 **Readers:** the sessions that verify, build and review M2, and Sean.
 
 M1 built the kernel on a scripted stand-in for a coding agent (`docs/spec/M1-build-spec.md`; accepted, E45). M2 slices 1 and 2 closed the kernel's known gaps (E50 to E55). M2 proper, this document, makes the engine run **one real coding agent on one small project**, inside isolation the host qualifies and the engine observes. Everything the M1 spec fixes about roles, constraints and procedure stays in force; this document says only what M2 adds or changes.
@@ -27,7 +27,7 @@ The M1 spec's table (its section 2) stands, with these added. Where sources disa
 | **D2 brief** | `docs/design/sdlc-design-D2-brief.md` | What D2 had to answer; the inheritance rules. |
 | **Review** | `docs/reviews/D2/sdlc-review-D2-Astra.md` with `sdlc-review-D2-dispositions.md` | Astra's cross-review and Sean's dispositions (E56). Her section 8 says what each probe and statement must not let through; draft 2 applied it. |
 | **Observer** | `docs/design/sdlc-design-D2-ebpf-note.md` | The optional eBPF execution observer, a qualification-only prototype (E57). |
-| **M2 plan** | `docs/acceptance/sdlc-M2-acceptance-plan.md` | The M2 acceptance matrix, rows M101 onward, derived by a Verifier from D2 Appendix B and the real-backend journey; adopted by Sean. |
+| **M2 plan** | `docs/acceptance/sdlc-M2-acceptance-plan.md` | The M2 acceptance matrix: 42 rows M101 to M142 with 210 named cases, derived by a Verifier from D2 Appendix B and the real-backend journey; adopted 2026-10-03 (E59). |
 | **E** | the errata, E48 to E58 | M2's opening, the two slices, the review dispositions, the D2 approval with the architect's variants. |
 | **SEAM** | `packages/engine/test/acceptance/harness/SEAM.md` | The test contract as it stands (§§1 to 112); M2 extends it. |
 
@@ -120,7 +120,19 @@ The M1 seam stands for the kernel lane. M2 adds the sandbox lane, where the engi
 
 ## 9. Slices
 
-*To be filled from the adopted M2 acceptance plan's section 5 (execution order), in the M1 spec's form: a table of slices with their rows, what the engine does after each, and the known straddles. The plan's proposed order is: the kernel lane first (no sandbox needed: the trust table's refusals, the budget boundary refusals, C1 to C4, K3's bootstrap cases); then the sandbox lane in the order the boundary is built (host checks and the incarnation scope; launch state, termination and recovery; the mount plan and the probe suite; the proxy; volatile storage and the resource envelope; qualification attempts with the scripted stand-in); then the real lane (the three canaries, then the journey). Each slice follows the M1 procedure with the lanes of section 4.*
+From the adopted M2 acceptance plan, section 5 (`docs/acceptance/sdlc-M2-acceptance-plan.md`). Manifest slices continue from the two merged M2 slices (8 and 9). Each slice follows the M1 procedure with the lanes of section 4: Verifier on `verify/m2-s<N>`, Builder on `build/m2-s<N>` started at the same time and messaged when the cases reach `main`, one Reviewer pass, the driver's rerun of `--slice <N>` and the unit suite before each merge.
+
+| Slice | Rows | Lane | Needs on the host | After it the engine |
+|---|---|---|---|---|
+| 10 | M101 to M109 | kernel | nothing new | refuses every real backend without an active entry and a current host qualification; refuses a finer budget boundary than an entry enforces and any hard maximum; carries C1 to C4 (the Alpha exception proposal, the Reviewer's restricted powers, the withdrawal of the token acceptance, estimated and unknown cost); serves the bootstrap route only when `ui_bootstrap` is true (K3; the accepted M68 case opts in, a default-off case added); the store schema of D2 A.3; the M74 spawn lint allows the boundary's own helpers |
+| 11 | M110 to M118 | sandbox | a login session of uid 1000 with the user manager running; `unshare`, `setpriv`, `ip` | runs in its incarnation scope; checks the host (H1 to H12) at every start and reports the result; allocates domains with a launch state, places and authorizes a launcher, closes before it observes termination, recovers by closing and observing prior supervisor leaves, quarantines on `unknown`, re-grants a lease after a pause only on a fresh challenge; the scripted backend runs inside the real sandbox for the first time |
+| 12 | M119 to M128 | sandbox | as 11; `cmd.exe` as the WSL control | builds and validates the mount plan, the enumerated `/etc`, the git metadata view, the handover of the workspace; passes every probe P1 to P19 with its seeded target and control (H9 passes for the first time); runs the egress proxy with address binding, limits and the egress log |
+| 13 | M129 to M135 | sandbox | as 11 | reads the result only after termination with closure and on a clean exit; classifies exits by precedence; retains partial usage; screens for secrets before materialization and publication; bounds the volatile filesystem and the envelope (P20); writes and revokes trust entries; runs a qualification attempt end to end with scripted canaries and witnessed containment, without a model |
+| 14 | M136 to M142 | real, then report | a dedicated Anthropic API key with its provider-side cap; Sean's `qualification_approval` and `trust_activation`; Sean's hands-on run | runs the three canaries for Claude Code on `claude-sonnet-5-5` under one authorized attempt, activates the entry, completes the real-backend journey on both paths (a seeded defect for path two, a mixed run as the recorded fallback), and is reported |
+
+**What a Builder can build before any real backend is touched:** everything in slices 10 to 13 and the engine side of 14 (template rendering against a stand-in binary, the qualification transitions, scripted canaries, the attempt's spend estimate, the entry's fields). Nothing in slices 10 to 13 spends money or needs a key. The first paid invocation is M136's positive canary. The optional observer cases (M112, M116, M124, M128, M135) are written with their rows and report `not_exercised` until Sean's feasibility run and H13 pass.
+
+**Known straddles:** M107 (K3) edits an accepted M1 test's setup, recorded in `COVERAGE.md` as a K3 change; M110's host checks need a harness switch so that the kernel lane's engine starts (every M1 test) do not run the probe suite; the real lane's two decisions are answered by Sean through the API, with the test waiting, never by a fixture.
 
 ## 10. Done, and what comes after
 

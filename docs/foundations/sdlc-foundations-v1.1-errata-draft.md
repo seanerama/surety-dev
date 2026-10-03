@@ -1152,3 +1152,25 @@ D2 draft 2 (`docs/design/sdlc-design-D2-backends-and-isolation.md`, merged at `4
 **What follows (brief section 6 step 5):** the M2 acceptance plan and the M2 build spec, then the D3 brief. Sean's eBPF feasibility run (E57) precedes any observer work.
 
 ---
+
+## E59. The M2 acceptance plan adopted; the real lane's model and spend (decided by Sean, 2026-10-03; the rest provisional)
+
+A Verifier derived the M2 acceptance plan from D2 Appendix B and the real-backend journey (`docs/acceptance/sdlc-M2-acceptance-plan.md`, adopted from the Verifier's draft at `ff162c2`): 42 rows M101 to M142 (9 kernel, 26 sandbox, 5 real, a report row, a hands-on row) with 210 named cases, every one of the 73 Appendix B statements mapped by a script check, the ten corrections K1 to K10 covered, bucket C and D2 §8 carried as deferred traces, five slices (10 to 14). The M2 build spec (`docs/spec/M2-build-spec.md`) is in force with its slice table filled from the plan's section 5.
+
+**Decided by Sean:** the real lane runs Claude Code on `claude-sonnet-5-5` for all three roles of the journey, with `budget_run_billable_tokens` 300 000, `budget_day_verified_usd` 25, and a provider-side cap of 50 USD on the dedicated key (plan question 3; spec open question 4).
+
+**The plan's other questions, settled by the driver under delegation (provisional):**
+
+1. **The runner** (owner's `scripts/run-tests.mjs`) knows rows M01 to M74 and M101 to M142; files listed under manifest `real` are the paid lane, run only by `--lane real` and never by `npm test` or a slice; the full run still requires each real-lane row to have its file (plan question 1, option (a)). `CLAUDE.md` says so.
+2. **The real lane's two human steps** (`qualification_approval`, `trust_activation`) are answered by Sean through the API while the test waits with a long timeout and a printed prompt; no fixture answers as the human (question 2, option (a); Q7).
+3. **Path two of the real journey** uses a defect seeded in the stage's requirement that a real Verifier is expected to find; if it does not, the path is recorded as not established and run once more; a mixed run (real Builder, scripted Verifier and Reviewer) is the recorded fallback (question 4, option (a) with (b)).
+4. **P11's Windows-executable control** is a Windows executable every WSL2 host has (`cmd.exe` with an echo), its path and hash recorded, rather than a binary checked into the repository; D2 H10's "engine-shipped" is read as "named by the engine and verified present" (question 5, option (b)).
+5. **B15's "user manager stopped"** is tested with a real `daemon-reexec` plus a harness fault that makes the manager unreachable; a real stop is `not_exercised` unless Sean runs it privileged (question 6, option (a)).
+6. **Codex is not in M2;** its attempt and rows wait for M3 (question 7, option (a); E46, E48).
+7. **C05's concurrent-dispatch clause** is class A for M2 while `max_concurrent_runs` is 1 (question 8, option (a)).
+8. **`reject` on `trust_activation` and `qualification_approval`** leaves the entry or attempt `proposed` and closes the question, as E50 item 4 reads for the M1 kinds; what re-asking does follows Sean's open E50 question (question 10).
+9. The plan page's "set up the host" step is reworded: no agent account exists (K9); what remains for Sean is a login session with the user manager running, the three util-linux and iproute2 tools, the API key, and optionally the observer's loader (question 9).
+
+**Consequences elsewhere.** `scripts/run-tests.mjs` and `CLAUDE.md` changed by the owner. No change to D1 or D2.
+
+---

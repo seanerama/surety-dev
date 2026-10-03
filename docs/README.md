@@ -7,7 +7,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | Document | Purpose |
 |---|---|
 | [spec/M1-build-spec.md](spec/M1-build-spec.md) | How M1 was built: scope, roles, corrections to the design, slices, definition of done. Its roles and constraints stay in force. |
-| [spec/M2-build-spec.md](spec/M2-build-spec.md) | How M2 is built (draft until its slice table is filled from the M2 plan): one real backend on one small project under D2; the three test lanes; what is in and out; done. Start here for M2. |
+| [spec/M2-build-spec.md](spec/M2-build-spec.md) | How M2 is built: one real backend on one small project under D2; the three test lanes; five slices; what is in and out; done. Start here for M2. |
 | [spec/handoff-2026-10-03.md](spec/handoff-2026-10-03.md) | Handoff for the next orchestrator: where M1 stands, what waits for Sean, how the build is driven, host facts, what not to do. |
 | [spec/M2-input-triage.md](spec/M2-input-triage.md) | Confirmed by Sean (E48): the eighteen untested behaviours sorted into before a real agent, in M2, and later. |
 | [spec/M2-slice-1-hardening.md](spec/M2-slice-1-hardening.md) | The first slice of M2 (built and merged 2026-10-03, E50 to E52): the five gate-integrity entries of the triage, their cases, the procedure and what done means. |
@@ -16,7 +16,8 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [spec/templates/spec-assistant-prompt.md](spec/templates/spec-assistant-prompt.md) | A paste-ready prompt for an assistant that works an idea into that specification with the owner, in the manner of Spec-Driven-Devops's Vision Assistant. |
 | [spec/templates/idea-brief-template.md](spec/templates/idea-brief-template.md) | One page the owner fills in before a Spec Assistant session, so the conversation starts from something written. |
 | [../.surety/spec/spec.md](../.surety/spec/spec.md) | Surety's own specification, drafted from the template on 2026-10-03: twenty requirements across the eight phases, M1's with the rows that established them, M2's in full. Draft until Sean approves it. |
-| [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 must pass. |
+| [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 passed. |
+| [acceptance/sdlc-M2-acceptance-plan.md](acceptance/sdlc-M2-acceptance-plan.md) | The 42 acceptance rows M101 to M142 M2 must pass, in three lanes; adopted 2026-10-03 (E59). |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
 | [design/sdlc-design-D2-brief.md](design/sdlc-design-D2-brief.md) | The brief for D2 (backend adapters, control-plane isolation, the execution boundary, the trust table): what it must answer, what it inherits, how it is produced and judged. |
 | [design/sdlc-design-D3-brief.md](design/sdlc-design-D3-brief.md) | The brief for D3 (the protected acceptance path, the check runner, the diff classifier, validation scope): what it must answer, what it inherits, how it is produced and judged. Drafted after D2's approval; its draft 1 starts when Sean says. |
@@ -24,7 +25,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [design/sdlc-design-D2-backends-and-isolation.md](design/sdlc-design-D2-backends-and-isolation.md) | D2 draft 2, approved to build (E58): the adapter contract, the namespace sandbox, the cgroup execution boundary with launch closure, the trust table and qualification attempts, the optional observer; ten D1 corrections, 73 test statements. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
-| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E58 amending the foundations. |
+| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E59 amending the foundations. |
 
 ## Background and record
 
