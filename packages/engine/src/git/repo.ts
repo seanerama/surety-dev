@@ -3,7 +3,7 @@
 // be made: `unknown` is a value, never taken for "absent" or "clean".
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type GitContext, SHA, git, gitOk } from './exec.js';
@@ -185,25 +185,30 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   if (!SHA.test(head)) return null;
   const staged = await gitOk(ctx, ['ls-files', '--stage', '-z']);
   if (staged === null) return null;
-  // The tracked files as they are on disk: a scratch index started from the
-  // real one, refreshed from the work tree for tracked paths only.
+  // The tracked content as `git commit -a` would take it: a scratch index
+  // holding the real index's entries with no stat data, so that every path
+  // it lists is hashed again from the work tree. A copy that kept the stat
+  // data would trust a file rewritten within the same second at the same
+  // size, which git itself judges by the real index's own timestamp.
   const index = join(scratch, `baseline-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
     // Where the checkout's index is, as git resolves it (a linked worktree's
-    // `.git` may be a file naming its metadata directory).
+    // `.git` may be a file naming its metadata directory). A checkout with no
+    // index file yet holds what HEAD holds.
     const at = (await gitOk(ctx, ['rev-parse', '--path-format=absolute', '--git-path', 'index']))?.trim() ?? '';
     if (at === '') return null;
-    let copied = false;
+    let present: boolean;
     try {
-      copyFileSync(at, index);
-      copied = true;
+      lstatSync(at);
+      present = true;
     } catch (err) {
-      // A checkout with no index file yet holds what HEAD holds; any other
-      // failure is a read that could not be made.
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+      present = false;
     }
-    if (!copied && (await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
+    if (!present) {
+      if ((await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
+    } else if (staged !== '' && (await gitOk(ctx, ['update-index', '-z', '--index-info'], { env, input: staged })) === null) return null;
     if ((await gitOk(ctx, ['add', '-u', '--', '.'], { env })) === null) return null;
     const tree = (await gitOk(ctx, ['write-tree'], { env }))?.trim() ?? '';
     if (!SHA.test(tree)) return null;

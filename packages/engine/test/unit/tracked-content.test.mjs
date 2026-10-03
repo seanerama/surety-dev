@@ -75,3 +75,13 @@ test('a linked worktree reached through its .git file is read from its own index
   assert.notEqual(read, null, 'a .git file is not an unreadable checkout');
   assert.deepEqual(git('ls-tree', '--name-only', read.tracked_tree_hash).split('\n'), ['added.js', 'gone.js', 'lib.js']);
 });
+
+test('a staged version rewritten on disk at the same size within the same second is read as the disk has it, however much later the checkout is read', async (t) => {
+  const { repo, scratch, git } = scratchRepo(t);
+  writeFileSync(join(repo, 'lib.js'), 'two\n');
+  git('add', 'lib.js');
+  writeFileSync(join(repo, 'lib.js'), 'six\n');
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const read = await checkoutBaseline(repoContext(repo), scratch);
+  assert.equal(git('cat-file', 'blob', `${read.tracked_tree_hash}:lib.js`), 'six');
+});
