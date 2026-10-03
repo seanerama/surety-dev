@@ -681,9 +681,11 @@ export class Launcher {
     // it sent before it (SEAM.md §130); nothing is re-granted.
     if (gate.exit) {
       handle.expiryExempt = true;
-      handle.gate = null;
+      // The gate stays until its lines and the exit are taken: the launch's
+      // supervision waits for its release before it acts on the exit.
       for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
       gate.exit();
+      handle.gate = null;
       gate.release();
       return true;
     }
@@ -702,7 +704,8 @@ export class Launcher {
       // The backend exited during the pause: the run ends by its exit, with
       // what it sent before it (SEAM.md §130); nothing is re-granted.
       handle.expiryExempt = true;
-      handle.gate = null;
+      // The gate stays until its lines and the exit are taken: the launch's
+      // supervision waits for its release before it acts on the exit.
       for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
       const reported = gate.exit as (() => void) | null;
       if (reported) reported();
@@ -713,6 +716,7 @@ export class Launcher {
         handle.exit = { code: response.backend.code, signal: response.backend.signal === null ? null : String(response.backend.signal) };
         handle.exitAt = isoAt(nowMs());
       }
+      handle.gate = null;
       gate.release();
       return true;
     }
@@ -730,9 +734,9 @@ export class Launcher {
     handle.leaseLost = false;
     // What the role sent during the pause is acted on now, in order, on the
     // lease re-granted; then its exit, if it exited meanwhile.
-    handle.gate = null;
     for (const line of gate.lines) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
     (gate.exit as (() => void) | null)?.();
+    handle.gate = null;
     gate.release();
     return true;
   }

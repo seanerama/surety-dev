@@ -387,10 +387,22 @@ async function init(): Promise<void> {
   // The init exits once the backend has (SEAM.md §126): its report written,
   // process 1 of the sandbox goes, and the kernel ends every process left in
   // its pid namespace, a daemon the backend started among them.
+  // What the backend wrote before its exit is relayed first: the init waits
+  // for its output to end, or a moment if a descendant holds it open.
+  let outputEnded = false;
+  child.stdout!.on('end', () => {
+    outputEnded = true;
+  });
   child.on('exit', (code, signal) => {
     exit = { code, signal: signalNumber(signal) };
-    reportExit();
-    setTimeout(() => process.exit(0), 20);
+    const started = Date.now();
+    const leave = setInterval(() => {
+      if (outputEnded || Date.now() - started >= 2000) {
+        clearInterval(leave);
+        reportExit();
+        setTimeout(() => process.exit(0), 20);
+      }
+    }, 10);
   });
 }
 
