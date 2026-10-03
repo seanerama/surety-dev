@@ -17,12 +17,38 @@
 // design's). With it, the half of row M27 that needed evidence: a source
 // change after a nomination leaves the old candidate's evidence as it was.
 // A reused result bound to another protected version needs a second
-// version; it is not written (COVERAGE.md).
+// version: the second describe block (M2 slice 1, entry A5; SEAM.md §103)
+// lands an approved tightening between the two candidates and offers the
+// first candidate's pass to the second under an assessed reuse entry.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { ARTIFACT, addEnvironment, alphaTarget, check, checkResult, installChecks, nominated, postResult, reasonSubjects, reuseEvidence, scopeOf, sharedFixture, successor } from './harness/gates.mjs';
+import { consume, openDecision } from './harness/decisions.mjs';
+import {
+  ARTIFACT,
+  PROTECTED_FILES,
+  addEnvironment,
+  alphaTarget,
+  assertApplied,
+  capturedProposal,
+  check,
+  checkResult,
+  effectiveVersion,
+  installChecks,
+  nominated,
+  passAll,
+  postResult,
+  reasonCodes,
+  reasonSubjects,
+  reuseEvidence,
+  scopeOf,
+  sharedFixture,
+  stageGate,
+  successor,
+  waitApplied,
+} from './harness/gates.mjs';
+import { refOid } from './harness/repos.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 
 const CASES = ['plain', 'reused', 'runner', 'environment', 'unassessed', 'record_only', 'waived'];
@@ -94,5 +120,48 @@ describe('M41 a result of an earlier candidate counts only under a typed, assess
 
   test('an entry that is not assessed, one that offers a generic record, and one that offers no result leave the check unsatisfied', () => {
     assert.deepEqual([S.state('unassessed'), S.state('record_only'), S.state('waived')], ['missing', 'missing', 'missing']);
+  });
+});
+
+// M2 slice 1, A5 (SEAM.md §103). D1 §7.9 ("invalidates dependent evaluations
+// and results"), §9.2; build spec §6 corrections 17 and 18.
+describe('M41 a result is not reused across a change of the protected checks', () => {
+  test('a pass recorded for an earlier candidate under the version before an approved tightening landed, offered to a later candidate nominated under the new version by an assessed reuse entry, does not pass: the check is stale, and only a new execution under the new version satisfies it', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await nominated(fx, { files: PROTECTED_FILES });
+    const project = ctx.project.id;
+    const c1 = ctx.candidate;
+    const first = effectiveVersion(fx.home, project);
+    const k1 = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+    const [prior] = await passAll(fx.engine, project, c1.id, [k1.login]);
+    assert.equal((await stageGate(fx, ctx)).outcome, 'satisfied', 'the fixture is live: the pass satisfies the stage gate of candidate 1');
+
+    // Between the two candidates the protected checks change: a tightening a Verifier proposed is approved by the human and applied.
+    const headBefore = refOid(ctx.project.repo.path, ctx.project.repo.ref);
+    const proposal = await capturedProposal(fx, ctx.project, { changeKind: 'tightening' });
+    await consume(fx, project, await openDecision(fx, project, 'check_correction_tightening', proposal.id), 'approve');
+    await waitApplied(fx, ctx.project, proposal);
+    const version = assertApplied(fx, ctx.project, { proposal, previous: first, headBefore, authority: 'human', changeKind: 'tightening' });
+    assert.ok(checkResult(fx.home, prior.id).invalidated_at, 'the fixture is live: the application invalidated the pass recorded under the old version (row M37)');
+
+    // Candidate 2 is nominated under the new version; the new version's checks are declared; candidate 1's pass is offered to it.
+    const c2 = await successor(fx, ctx);
+    assert.equal(c2.nominated_protected_version, version.id, 'the fixture is live: candidate 2 is nominated under the new version');
+    const declared = await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })]);
+    assert.equal(declared.version, version.id, 'the fixture is live: the check now declared is the new version\'s');
+    await reuseEvidence(fx.engine, { project, candidate: c2.id, check: declared.id.login, check_result: prior.id, assessed: true });
+
+    const evaluation = await stageGate(fx, ctx, c2);
+    assert.equal(evaluation.check_states[declared.id.login], 'stale', 'the reused pass is bound to the superseded version: the check is stale, not passed');
+    assert.deepEqual(reasonCodes(evaluation), ['CHECK_NOT_PASSED'], `the gate asks for an execution and nothing else (reasons: ${reasonCodes(evaluation).join(', ')})`);
+    assert.deepEqual(reasonSubjects(evaluation, 'CHECK_NOT_PASSED'), [declared.id.login]);
+    assert.equal(evaluation.outcome, 'not_satisfied');
+    assert.deepEqual([...scopeOf(fx.home, evaluation).required], [declared.id.login], 'reuse removed nothing from the required set');
+
+    // The honest way: an execution of the check for candidate 2 under the new version.
+    await passAll(fx.engine, project, c2.id, [declared.id.login]);
+    const renewed = await stageGate(fx, ctx, c2);
+    assert.deepEqual([renewed.outcome, renewed.check_states[declared.id.login]], ['satisfied', 'passed'], 'a new execution under the new version satisfies the gate');
+    assert.ok(checkResult(fx.home, prior.id).invalidated_at, 'and the old pass is still invalidated');
   });
 });
