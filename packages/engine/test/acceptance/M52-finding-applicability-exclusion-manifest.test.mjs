@@ -14,8 +14,9 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { approvalsOf, assertStaleAnswer, consume, nextGeneration, openDecision } from './harness/decisions.mjs';
-import { acceptedRun, alphaTarget, assessmentsOf, check, finding, installChecks, nominated, passAll, raiseFindings, reasonCodes, reasonSubjects, review, successor } from './harness/gates.mjs';
+import { approvalsOf, assertQuestionClosed, assertStaleAnswer, consume, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
+import { acceptedRun, alphaTarget, assessmentsOf, check, finding, findingState, installChecks, nominated, passAll, raiseFindings, reasonCodes, reasonSubjects, review, successor } from './harness/gates.mjs';
+import { eventsOfType } from './harness/journal.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 
 // A High finding raised on candidate 1; candidate 2, its successor, with its
@@ -90,5 +91,21 @@ describe('M52 the finding_applicability_exclusion manifest', () => {
     blockedBy(await alpha.evaluate(), found);
     const next = await nextGeneration(fx, project, previewed, { changed: 'effective_severity' });
     assert.equal(next.manifest.effective_severity, 'critical');
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the assessment is rejected and authorizes nobody, the finding is as it was and still blocks the candidate, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const { fx, project, found, alpha, assessment, previewed } = await assessedExclusion(t);
+    const before = findingState(finding(fx.home, found.id));
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the exclusion offers reject');
+
+    await reject(fx, project, previewed);
+    const [rejected] = assessmentsOf(fx.home, project);
+    assert.deepEqual([rejected.id, rejected.status, rejected.authorized_by], [assessment.id, 'rejected', null], 'the assessment is in the rejected state D1 names, and nobody authorized it');
+    assert.equal(eventsOfType(fx.home, 'assessment.rejected').filter((event) => event.subject?.assessment === assessment.id).length, 1, 'one assessment.rejected names it');
+    assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'the finding is as it was: open and High');
+    blockedBy(await alpha.evaluate(), found);
+    await assertQuestionClosed(fx, project, previewed);
+    assert.deepEqual([assessmentsOf(fx.home, project).map((row) => row.status), findingState(finding(fx.home, found.id))], [['rejected'], before], 'and the ticks changed nothing of either');
   });
 });

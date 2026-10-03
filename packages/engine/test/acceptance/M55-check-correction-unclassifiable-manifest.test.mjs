@@ -15,11 +15,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertStaleAnswer, consume, decision, decisionsOn, openDecision } from './harness/decisions.mjs';
-import { PROPOSAL_RATIONALE, PROTECTED_FILES, assertApplied, assertNotApplied, capturedProposal, check, classify, correction, effectiveVersion, installChecks, nominated, passAll, reasonCodes, stageGate, waitApplied } from './harness/gates.mjs';
+import { answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, consume, decision, decisionsOn, openDecision, reject } from './harness/decisions.mjs';
+import { PROPOSAL_RATIONALE, PROTECTED_FILES, assertApplied, assertNotApplied, assertProposalRejected, capturedProposal, check, classify, correction, effectiveVersion, installChecks, nominated, passAll, reasonCodes, stageGate, waitApplied } from './harness/gates.mjs';
 import { registerDetector, waitForPostScan } from './harness/records.mjs';
 import { refOid } from './harness/repos.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
+import { contentAndSpecChange } from './harness/stale-correction.mjs';
 
 const KIND = 'check_correction_unclassifiable';
 const LOGIN = check('login', { requirements: ['R1'] });
@@ -80,5 +81,22 @@ describe('M55 the check_correction_unclassifiable manifest', () => {
     await waitForPostScan(fx.home, proposal.rationale, 'hit');
     await assertEffectInvalidated(fx, previewed, held);
     assertNotApplied(fx, ctx, ctx.headBefore);
+  });
+
+  // M2 slice 1, A3 (SEAM.md §101).
+  test("the proposal's content, and then the approved specification, change between preview and answer: each refuses the earlier preview, applies nothing, and is a new generation that shows the change", async (t) => {
+    await contentAndSpecChange(t, 'unclassifiable');
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the proposal is rejected and nothing is applied, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const ctx = await correction(t, 'unclassifiable');
+    const { fx, project, decision: previewed } = ctx;
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the correction offers reject');
+
+    await reject(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
+    await assertQuestionClosed(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
   });
 });

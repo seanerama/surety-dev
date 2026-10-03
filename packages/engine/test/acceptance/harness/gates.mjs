@@ -12,12 +12,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
+import { waitFor } from './engine.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './gitruns.mjs';
 import { hasIdForm } from './ids.mjs';
-import { consume, openDecision } from './decisions.mjs';
-import { candidatesOf, changePolicy } from './journal.mjs';
+import { consume, decisionsOn, openDecision } from './decisions.mjs';
+import { candidatesOf, changePolicy, eventsOfType } from './journal.mjs';
 import { listTree, parentsOf, refOid } from './repos.mjs';
-import { addWork, runsOf, scriptedEngine, tickUntil } from './runs.mjs';
+import { addWork, runsOf, scriptedEngine, tick, tickUntil } from './runs.mjs';
 import { step } from './scripted.mjs';
 import { withStore } from './store.mjs';
 
@@ -375,5 +376,76 @@ export function assertNotApplied(fx, { project, previous, proposal }, head) {
   assert.equal(effectiveVersion(fx.home, project.id).id, previous.id, 'the effective protected version is the one that was authorized');
   const row = proposalsOf(fx.home, project.id).find((found) => found.id === proposal.id);
   assert.ok(row.status !== 'applied' && row.resulting_version === null, `the proposal is not applied (it is ${row.status})`);
+  return row;
+}
+
+// ---- M2 slice 1: hardening before a backend (SEAM.md §§99 to 103) ------------------------
+
+// A human edit of a governed field through the policy route (SEAM.md §66):
+// answered 202 with the proposal it became. Returns the proposal's row,
+// `captured`, `proposed_by` human. (Row M35 has the same helper privately.)
+export async function governedEdit(fx, project, change) {
+  const res = await fx.engine.post(`/v1/projects/${project.id}/policy`, change);
+  assert.equal(res.status, 202, `a governed field takes the protected route (body: ${res.text})`);
+  const proposal = proposalsOf(fx.home, project.id).find((row) => row.id === res.body?.proposal?.id);
+  assert.ok(proposal, `the response names the proposal the edit became (body: ${res.text})`);
+  assert.deepEqual([proposal.proposed_by, proposal.status], ['human', 'captured']);
+  return proposal;
+}
+
+// Ask for ticks until `probe` answers, without waiting for the project's
+// runs to end: for a step taken while a role is held in its workspace
+// (rows M28 and M43). One tick round per attempt.
+export const askingForTicks = (fx, project, probe, what) =>
+  waitFor(
+    async () => {
+      const value = await probe();
+      if (value !== undefined && value !== null && value !== false) return value;
+      await tick(fx.engine, project, { rounds: 1 });
+      return undefined;
+    },
+    { intervalMs: 200, timeoutMs: 60_000, what },
+  );
+
+// A protected change landed by the human while a role's run is held: the
+// proposal is classified as `changeKind` by the fixture, the human approves
+// it through the decision of that kind, and the application is waited for
+// without waiting for the held run. Returns the new effective version.
+export async function humanApplies(fx, project, proposal, changeKind) {
+  const previous = effectiveVersion(fx.home, project.id);
+  await classify(fx.engine, proposal.id, changeKind);
+  const kind = `check_correction_${changeKind}`;
+  const decision = await askingForTicks(fx, project.id, () => decisionsOn(fx.home, kind, proposal.id).find((row) => row.status === 'open'), `the ${changeKind} to be offered for approval`);
+  await consume(fx, project.id, decision, 'approve');
+  await askingForTicks(fx, project.id, () => proposalsOf(fx.home, project.id).find((row) => row.id === proposal.id)?.status === 'applied', `the approved ${changeKind} to be applied`);
+  const version = effectiveVersion(fx.home, project.id);
+  assert.notEqual(version.id, previous.id, 'the application made a new effective version');
+  return version;
+}
+
+// What a finding is, in every respect the seam pins (SEAM.md §83): compared
+// before a decision about it is raised and after the decision is rejected.
+export const findingState = (row) => ({
+  status: row.status,
+  disposition: row.disposition,
+  disposition_authority: row.disposition_authority,
+  linked_issue: row.linked_issue,
+  defer_target: row.defer_target,
+  effective_severity: row.effective_severity,
+  severity_history: row.severity_history,
+  sensitive_area: row.sensitive_area,
+  reevaluations: row.reevaluations,
+  resolution_verification: row.resolution_verification,
+  alpha_exception: row.alpha_exception,
+});
+
+// A correction the human rejected (SEAM.md §102): the proposal is in the
+// `rejected` state D1 A.5 names, nothing of it was applied, no version was
+// recorded for it, and one `protected.rejected` names it. Returns the row.
+export function assertProposalRejected(fx, ctx) {
+  const row = assertNotApplied(fx, ctx, ctx.headBefore);
+  assert.equal(row.status, 'rejected', `the proposal is rejected (it is ${row.status})`);
+  assert.deepEqual(protectedVersions(fx.home, ctx.project.id).filter((version) => version.proposal === ctx.proposal.id), [], 'no protected version, intended or authorized, was recorded for it');
+  assert.equal(eventsOfType(fx.home, 'protected.rejected').filter((event) => event.subject?.proposal === ctx.proposal.id).length, 1, 'one protected.rejected event names the proposal');
   return row;
 }

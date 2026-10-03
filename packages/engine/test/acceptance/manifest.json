@@ -137,6 +137,10 @@
     ],
     "7": [
       "M01-journey-through-the-api.test.mjs"
+    ],
+    "8": [
+      "M24-nomination-ref-blocks-gates.test.mjs",
+      "M28-replayed-result-against-new-protected-set.test.mjs"
     ]
   }
 }

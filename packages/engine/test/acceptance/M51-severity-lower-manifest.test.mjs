@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { assertStaleAnswer, consume, decisionsOn, nextGeneration, openDecision } from './harness/decisions.mjs';
-import { check, finding, installChecks, nominated, passAll, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
+import { assertQuestionClosed, assertStaleAnswer, consume, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
+import { check, finding, findingState, installChecks, nominated, passAll, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -74,5 +74,21 @@ describe('M51 the severity_lower manifest', () => {
     assert.equal(finding(fx.home, found.id).effective_severity, 'high');
     const next = await nextGeneration(fx, project, previewed, { changed: 'sensitive_area' });
     assert.equal(next.manifest.sensitive_area, 'authentication');
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test('reject: the severity and its history are as they were, no check state changes, the decision is closed with the answer recorded, and the question is not raised again', async (t) => {
+    const { fx, project, found, lower, checkStates } = await findingOf(t, 'high');
+    const before = findingState(finding(fx.home, found.id));
+    const states = await checkStates();
+    await lower('medium');
+    const previewed = await openDecision(fx, project, 'severity_lower', found.id);
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the lowering offers reject');
+
+    await reject(fx, project, previewed);
+    assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'the finding is as it was: High, with the history it had');
+    assert.deepEqual(await checkStates(), states, 'no check state changed');
+    await assertQuestionClosed(fx, project, previewed);
+    assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'and the ticks changed nothing of it');
   });
 });

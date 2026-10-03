@@ -16,13 +16,14 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { CODES, answer, answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision } from './harness/decisions.mjs';
+import { CODES, answer, answerAndHoldEffect, approvalsOf, assertEffectInvalidated, assertQuestionClosed, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { assertApplied, assertNotApplied, capturedProposal, correction, proposalsOf, reviewerApproves, roleRun, waitApplied } from './harness/gates.mjs';
+import { assertApplied, assertNotApplied, assertProposalRejected, capturedProposal, correction, proposalsOf, reviewerApproves, roleRun, waitApplied } from './harness/gates.mjs';
 import { addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { refOid } from './harness/repos.mjs';
 import { tick } from './harness/runs.mjs';
+import { contentAndSpecChange } from './harness/stale-correction.mjs';
 
 const KIND = 'check_correction_tightening';
 const head = (project) => refOid(project.repo.path, project.repo.ref);
@@ -108,5 +109,26 @@ describe('M53 the check_correction_tightening manifest', () => {
     assert.equal(assertNotApplied(fx, { ...ctx, proposal: unknown }, ctx.headBefore).status, 'awaiting_human', 'a Reviewer cannot approve what the classifier could not classify');
     assert.equal(decisionsOn(fx.home, KIND, unknown.id).length, 0, 'and no tightening decision exists for it');
     await openDecision(fx, project.id, 'check_correction_unclassifiable', unknown.id);
+  });
+
+  // M2 slice 1, A3 (SEAM.md §101).
+  test("the proposal's content, and then the approved specification, change between preview and answer: each refuses the earlier preview, applies nothing, and is a new generation that shows the change", async (t) => {
+    await contentAndSpecChange(t, 'tightening');
+  });
+
+  // M2 slice 1, A4 (SEAM.md §102).
+  test("reject: the proposal is rejected and nothing is applied; a Reviewer's approval afterwards approves nothing; the decision is closed with the answer recorded, and the question is not raised again", async (t) => {
+    const ctx = await correction(t, 'tightening');
+    const { fx, project, proposal, decision: previewed } = ctx;
+    assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the correction offers reject');
+
+    await reject(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
+    // The human's rejection stands against the other authorized approver of a tightening.
+    await reviewerApproves(fx, project, proposal);
+    await tick(fx.engine, project.id);
+    assertProposalRejected(fx, ctx);
+    await assertQuestionClosed(fx, project.id, previewed);
+    assertProposalRejected(fx, ctx);
   });
 });
