@@ -216,6 +216,19 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'work' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'work.list', args: { project } }) }) };
       }
+      // The reads of D1 §11.3 added in M2 (brief B4): reads, which probe,
+      // evaluate and write nothing.
+      if (rest.length === 2 && rest[0] === 'decisions' && get) {
+        const decision = decodeSegment(rest[1]!);
+        if (decision === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'decision.read', args: { project, decision } }) }) };
+      }
+      if (rest.length === 1 && rest[0] === 'operations' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'operations.list', args: { project } }) }) };
+      }
+      if (rest.length === 1 && rest[0] === 'environments' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environments.list', args: { project } }) }) };
+      }
       // The latest recorded evaluation; a read, which evaluates nothing.
       if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && get) {
         const candidate = decodeSegment(rest[1]!);

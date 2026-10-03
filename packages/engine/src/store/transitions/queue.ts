@@ -27,11 +27,11 @@ import {
   raiseDecision,
   stale,
 } from './decisions.js';
-import { contentHash, getCandidate, markStale } from './evidence.js';
+import { contentHash, getCandidate, markStale, predecessors } from './evidence.js';
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
-import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef } from './repo.js';
+import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
@@ -108,6 +108,26 @@ function recordIntent(tx: Tx, d: DecisionRow, args: { approval: string | null; k
 
 const BLOCKER_EVIDENCE: unknown[] = [];
 
+// What a record a preview rests on is now: whether a detector has matched it
+// since (quarantined) and whether its bytes are gone (missing). A scan still
+// pending is not a change (SEAM.md §77).
+export function recordState(db: Db, id: string | null): { record: string | null; quarantined: boolean | null; missing: boolean | null } {
+  if (id === null) return { record: null, quarantined: null, missing: null };
+  const row = db.prepare('SELECT "post_scan", "missing_at" FROM "records" WHERE "id" = ?').get(id) as { post_scan: string; missing_at: string | null } | undefined;
+  return { record: id, quarantined: row ? row.post_scan === 'hit' : null, missing: row ? row.missing_at !== null : true };
+}
+
+// The evidence a blocked work item's question rests on (Review B12, "the
+// blocker cause, dependent evidence"): the run whose end blocked it and the
+// records that run left, its result and its transcript, as they are now.
+function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
+  const run = tx.db.prepare('SELECT "id", "result", "transcript" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(itemId) as
+    | { id: string; result: string | null; transcript: string | null }
+    | undefined;
+  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null) };
+  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
+}
+
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
@@ -119,7 +139,19 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           ? `its integration was refused: the integration branch is checked out in the worktree ${blocker.worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
           : (PARK_TEXT[blocker.reason] ?? blocker.reason);
       return {
-        manifest: { work_item: item.id, subject_status: 'parked', cause: blocker.reason, quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: 'eligible' },
+        // The continuation an answer allows (SEAM.md §105): the status a retry
+        // resumes the item to, and the revision its next run starts from as
+        // the item stores it (its checkpoint, D1 §7.4; null: the head). A
+        // changed checkpoint is another consequence of the same answer
+        // (build spec §6 correction 22).
+        manifest: {
+          work_item: item.id,
+          subject_status: 'parked',
+          cause: blocker.reason,
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: { status: 'eligible', from: item.continue_from },
+        },
         options: [
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
           { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
@@ -130,7 +162,14 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     }
     if (item.status === 'eligible' && blocker.reason === 'max_chained_roles') {
       return {
-        manifest: { work_item: item.id, subject_status: 'eligible', cause: 'max_chained_roles', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: 'dispatch' },
+        manifest: {
+          work_item: item.id,
+          subject_status: 'eligible',
+          cause: 'max_chained_roles',
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: { status: 'dispatch', from: item.continue_from },
+        },
         options: [
           { key: 'continue', label: 'Continue', consequence: 'The work starts a new chain and the scheduler dispatches it.', effect: { work_item: item.id, chain: 0 } },
           { key: 'cancel', label: 'Cancel', consequence: 'The work is cancelled without a launch.', effect: { work_item: item.id, to: 'cancelled' } },
@@ -171,7 +210,15 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     // What the probe could not establish is the cause; which reading it made
     // last is in the attempt's record, not in what the answer binds.
     return {
-      manifest: { operation: op.id, journal_kind: op.kind, subject_status: op.state, cause: 'effect_unconfirmed', quarantined: false, evidence: BLOCKER_EVIDENCE, continuation: null },
+      manifest: {
+        operation: op.id,
+        journal_kind: op.kind,
+        subject_status: op.state,
+        cause: 'effect_unconfirmed',
+        quarantined: false,
+        evidence: BLOCKER_EVIDENCE,
+        continuation: null,
+      },
       options: [
         {
           key: 'acknowledge',
@@ -201,7 +248,8 @@ export const PARK_TEXT: Record<string, string> = {
 
 const BLOCKER: KindSpec = {
   preview: blockerPreview,
-  manifest: (tx, d) => blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null },
+  manifest: (tx, d) =>
+    blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null },
   reraise: true,
   answer(tx, d, option, note) {
     if (d.subject_type === 'work_item') {
@@ -305,7 +353,13 @@ export function oobOptions(tx: Tx, o: { subject_kind: string; ref: string | null
   if (o.subject_kind === 'checkout') {
     return [
       { key: 'stash', label: 'Stash', consequence: 'The engine commits the checkout as it is to an oob ref and restores its baseline.', effect: { disposition: 'stash' } },
-      { key: 'adopt', label: 'Adopt', consequence: 'What the checkout holds becomes its baseline.', effect: { disposition: 'adopt' } },
+      {
+        key: 'adopt',
+        label: 'Adopt',
+        consequence:
+          "The engine commits the checkout's tracked content (what git commit -a would commit) onto the integration branch's expected commit, moves the branch to that commit, and sets the checkout's index to it. The checkout's files are not touched.",
+        effect: { disposition: 'adopt' },
+      },
     ];
   }
   const row = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(o.ref) as RegistryRow;
@@ -327,6 +381,14 @@ const OOB: KindSpec = {
   },
   reraise: false,
   answer: answerOutOfBand,
+  // An answer whose effect could not be made (the subject changed again, or
+  // the branch moved): the observation it answered is closed unreconciled,
+  // and integrity observes what is there now and asks about that (SEAM.md
+  // §79). Nothing is raised here.
+  withdraw(tx, d) {
+    tx.db.prepare('UPDATE "out_of_band_changes" SET "closed_at" = ? WHERE "id" = ? AND "disposition" IS NULL AND "closed_at" IS NULL').run(tx.at, d.subject_id);
+    return false;
+  },
 };
 
 // The answers to an observation (D1 §7.6; SEAM.md §§32, 79). The caller has
@@ -345,8 +407,29 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
       const checkout = tx.db.prepare('SELECT "path", "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string; baseline: string };
       return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found } })]);
     }
-    // `adopt` of a checkout is not built in M1 (SEAM.md §79: not exercised).
-    throw new Refusal(501, 'unsupported', 'Adopting what a checkout holds is not available in this engine revision.', 'Nothing was changed. Answer stash, or put the checkout back yourself.', { decision: d.id });
+    // `adopt` (D1 §§7.6, 7.8; brief B2; SEAM.md §§106, 111): the edits found
+    // become the new starting point. The engine commits the checkout's
+    // tracked content as reviewed (what `git commit -a` would commit) onto
+    // the commit the integration branch is expected at, as an out-of-band
+    // revision, moves the branch to it through the journal, and sets the
+    // checkout's index to it; the checkout's files are not touched, and what
+    // it holds then is its baseline. Only edits on top of the expected commit are adopted this way:
+    // a checkout whose HEAD moved is the branch's own observation to settle.
+    const found = parseJson<{ head?: string }>(row.found);
+    const expected = parseJson<{ head?: string }>(row.expected);
+    const reg = registryRow(tx, row.project, integrationRef(projectRepoRow(tx, row.project).integration_branch));
+    if (!found?.head || found.head !== expected?.head || reg === undefined || reg.expected_oid !== found.head) {
+      throw new Refusal(
+        409,
+        'out_of_band_change',
+        `The checkout's HEAD is not at the commit the engine expects for the integration branch, so its edits cannot be adopted onto it.`,
+        'Settle the observation of the integration branch first, or answer stash.',
+        { decision: d.id, checkout: row.checkout },
+      );
+    }
+    consumeDecision(tx, d, option, note);
+    const checkout = tx.db.prepare('SELECT "path" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string };
+    return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_adopt', plan: { observation: row.id, checkout: row.checkout, path: checkout.path, found: row.found, ref: reg.ref } })]);
   }
   if (row.subject_kind !== 'ref') throw illegal('An answer to a repository observation', { decision: d.id });
   const reg = tx.db.prepare('SELECT * FROM "ref_registry" WHERE "id" = ?').get(row.ref) as RegistryRow;
@@ -464,6 +547,28 @@ function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate
   };
 }
 
+// What a finding's question rests on beyond its severity (Review B12,
+// "finding status, current disposition/resolution/applicability, sensitivity
+// and relevant gate scope, acceptance-content binding, evidence"): its scope
+// as recorded, and its evidence, the report it was raised in and every record
+// a post-write scan raised it from, as they are now.
+function findingScope(f: FindingRow & { subject_id?: string }): Record<string, unknown> {
+  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate };
+}
+
+function findingEvidence(tx: Tx, f: FindingRow & { message?: string }): Record<string, unknown> {
+  const run = f.source_run ? (tx.db.prepare('SELECT "result" FROM "runs" WHERE "id" = ?').get(f.source_run) as { result: string | null } | undefined) : undefined;
+  const scanned = (tx.db.prepare('SELECT "id" FROM "records" WHERE "post_scan_finding" = ? ORDER BY "id"').all(f.id) as { id: string }[]).map((r) => recordState(tx.db, r.id));
+  return {
+    source_run: f.source_run,
+    report: recordState(tx.db, run?.result ?? null),
+    records: scanned,
+    category: f.category,
+    check: f.check,
+    message: f.message === undefined ? null : sha256(f.message),
+  };
+}
+
 interface ProposedDisposition {
   disposition: 'defer' | 'accept' | 'fix';
   linked_issue?: string | null;
@@ -479,7 +584,8 @@ function dispositionManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     proposed_disposition: proposed?.disposition ?? null,
     effective_severity: f.effective_severity,
     sensitive_area: f.sensitive_area,
-    evidence: [],
+    evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     defer_target: proposed?.defer_target ?? null,
     linked_issue: proposed?.linked_issue ?? null,
     ...findingBinding(tx, f),
@@ -582,6 +688,8 @@ function severityManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     effective_severity: f.effective_severity,
     to: proposed?.to ?? null,
     sensitive_area: f.sensitive_area,
+    evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     applicable,
     candidate_revision,
     acceptance_content_hash,
@@ -644,9 +752,16 @@ function exclusionManifest(tx: Tx, a: AssessmentRow): Record<string, unknown> {
     assessed_by_run: a.assessed_by_run,
     finding: a.finding,
     candidate: a.candidate,
-    ancestry: f.candidate,
+    // The candidate's ancestry (D1 §9.3(5); Review B18): the candidate the
+    // finding was raised against and the chain of candidates the assessed
+    // one descends from through started_from_candidate, which is what makes
+    // the finding apply to it.
+    ancestry: { finding_candidate: f.candidate, predecessors: candidate ? predecessors(tx.db, candidate) : null },
     acceptance_content_hash: candidate ? contentHash(tx.db, a.project, candidate) : null,
     effective_severity: f.effective_severity,
+    finding_status: f.status,
+    finding_evidence: findingEvidence(tx, f),
+    scope: findingScope(f),
     disposition: f.disposition,
     sensitive_area: f.sensitive_area,
     blocks_gate: blocksAnyGate(f),
@@ -799,6 +914,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'effective_severity',
     'sensitive_area',
     'evidence',
+    'scope',
     'defer_target',
     'linked_issue',
     'applicable',
@@ -806,7 +922,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'acceptance_content_hash',
     'policy_revision',
   ],
-  severity_lower: ['finding_status', 'effective_severity', 'to', 'sensitive_area', 'applicable', 'candidate_revision', 'acceptance_content_hash', 'policy_revision'],
+  severity_lower: ['finding_status', 'effective_severity', 'to', 'sensitive_area', 'evidence', 'scope', 'applicable', 'candidate_revision', 'acceptance_content_hash', 'policy_revision'],
   finding_applicability_exclusion: [
     'assessment_status',
     'evidence',
@@ -818,6 +934,9 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
     'ancestry',
     'acceptance_content_hash',
     'effective_severity',
+    'finding_status',
+    'finding_evidence',
+    'scope',
     'disposition',
     'sensitive_area',
     'blocks_gate',
@@ -944,7 +1063,7 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
 // EFFECT_PRECONDITION_CHANGED, the consumption's local transition withdrawn,
 // and the next generation raised with no approval. An intent already done or
 // invalidated is left as it is.
-function invalidateIntent(tx: Tx, intentId: string): void {
+export function invalidateIntent(tx: Tx, intentId: string): void {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(intentId) as { id: string; project: string; decision: string; status: string; kind: string } | undefined;
   if (!intent || intent.status === 'done' || intent.status === 'invalidated') return;
   const d = getDecision(tx, intent.decision)!;

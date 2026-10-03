@@ -513,7 +513,8 @@
       "waiting_on_you",
       "running",
       "ready",
-      "idle"
+      "idle",
+      "unknown"
     ],
     "ObservedCondition": [
       "healthy",
@@ -3302,6 +3303,7 @@
         "effective_severity",
         "sensitive_area",
         "evidence",
+        "scope",
         "defer_target",
         "linked_issue",
         "applicable",
@@ -3318,6 +3320,8 @@
         "effective_severity",
         "to",
         "sensitive_area",
+        "evidence",
+        "scope",
         "applicable",
         "candidate_revision",
         "acceptance_content_hash",
@@ -3429,6 +3433,9 @@
         "ancestry",
         "acceptance_content_hash",
         "effective_severity",
+        "finding_status",
+        "finding_evidence",
+        "scope",
         "disposition",
         "sensitive_area",
         "blocks_gate",

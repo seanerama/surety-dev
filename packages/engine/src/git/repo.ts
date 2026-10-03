@@ -166,8 +166,13 @@ export async function listWorktrees(ctx: GitContext): Promise<WorktreeEntry[] | 
 }
 
 // The baseline of a checkout (D1 §7.6): its HEAD, its index's content (the
-// staged entries, not their stat data) and the tree its tracked files hold
-// on disk. null when any of it cannot be read.
+// staged entries, not their stat data) and the tree of its tracked content:
+// what `git commit -a` would commit (SEAM.md §111), every path the index
+// lists refreshed from the work tree, so a staged addition is in it, a staged
+// version superseded on disk gives way to the disk's, a tracked file deleted
+// from disk is not, and an untracked file is not. Computed on a copy of the
+// checkout's index: the checkout's own index is not written. null when any
+// of it cannot be read.
 export interface Baseline {
   head: string;
   index_hash: string;
@@ -180,16 +185,48 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   if (!SHA.test(head)) return null;
   const staged = await gitOk(ctx, ['ls-files', '--stage', '-z']);
   if (staged === null) return null;
-  // The tracked files as they are on disk: a scratch index started from the
-  // real one, refreshed from the work tree for tracked paths only.
+  // The tracked content as `git commit -a` would take it: a scratch index
+  // holding the real index's entries with no stat data, so that every path
+  // it lists is hashed again from the work tree. A copy that kept the stat
+  // data would trust a file rewritten within the same second at the same
+  // size, which git itself judges by the real index's own timestamp.
   const index = join(scratch, `baseline-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
-    if ((await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
+    // Where the checkout's index is, as git resolves it (a linked worktree's
+    // `.git` may be a file naming its metadata directory). A checkout with no
+    // index file yet holds what HEAD holds.
+    const at = (await gitOk(ctx, ['rev-parse', '--path-format=absolute', '--git-path', 'index']))?.trim() ?? '';
+    if (at === '') return null;
+    let present: boolean;
+    try {
+      lstatSync(at);
+      present = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+      present = false;
+    }
+    if (!present) {
+      if ((await gitOk(ctx, ['read-tree', 'HEAD'], { env })) === null) return null;
+    } else if (staged !== '' && (await gitOk(ctx, ['update-index', '-z', '--index-info'], { env, input: staged })) === null) return null;
     if ((await gitOk(ctx, ['add', '-u', '--', '.'], { env })) === null) return null;
     const tree = (await gitOk(ctx, ['write-tree'], { env }))?.trim() ?? '';
     if (!SHA.test(tree)) return null;
     return { head, index_hash: sha256(staged), tracked_tree_hash: tree };
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
+// The index hash (as checkoutBaseline computes it) an index read from `tree`
+// has, computed on an index of its own: nothing of the checkout is written.
+export async function treeIndexHash(ctx: GitContext, tree: string, scratch: string): Promise<string | null> {
+  const index = join(scratch, `tree-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    if ((await gitOk(ctx, ['read-tree', tree], { env })) === null) return null;
+    const staged = await gitOk(ctx, ['ls-files', '--stage', '-z'], { env });
+    return staged === null ? null : sha256(staged);
   } finally {
     rmSync(index, { force: true });
   }

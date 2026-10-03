@@ -12,7 +12,11 @@ export interface IntegrityFacts {
   ref: string;
   registry: RegistryRow[];
   moving: Record<string, string[]>;
-  checkouts: (CheckoutRow & { active: boolean; adminDir: string | null })[];
+  // `pending`: the baseline a journaled adoption of the checkout's edits will
+  // record when its branch update is finalized (brief B2). What the checkout
+  // holds while that update is in flight is the engine's own write, never an
+  // observation.
+  checkouts: (CheckoutRow & { active: boolean; adminDir: string | null; pending: Pending | null })[];
 }
 
 export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFacts {
@@ -29,6 +33,7 @@ export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFact
     ...c,
     active: c.owner_run !== null && run_state !== 'ended',
     adminDir: metadata_baseline ? ((JSON.parse(metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
+    pending: adoptionInFlight(tx, args.project, c.id),
   }));
   return {
     repo: p.dev_repo_path,
@@ -37,6 +42,39 @@ export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFact
     moving: movingRefs(tx.db, args.project),
     checkouts,
   };
+}
+
+// An adoption in flight: its commit, or the branch update that follows it,
+// not yet finalized or failed. What the checkout may hold meanwhile: HEAD at
+// the parent or the adopted commit, the index as found or as adopted, the
+// tracked files as reviewed.
+export interface Pending {
+  heads: string[];
+  indexes: string[];
+  tree: string;
+}
+
+function adoptionInFlight(tx: Tx, project: string, checkout: string): Pending | null {
+  const row = tx.db
+    .prepare(
+      `SELECT o."finalizer_inputs" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id"
+       WHERE o."project" = ? AND s."state" NOT IN ('finalized', 'failed')
+       AND ((json_extract(o."finalizer_inputs", '$.purpose') = 'oob_adopt' AND json_extract(o."finalizer_inputs", '$.checkout') = ?)
+         OR (json_extract(o."finalizer_inputs", '$.purpose') = 'adopt' AND json_extract(o."finalizer_inputs", '$.follow.finalizer.checkout') = ?))
+       ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(project, checkout, checkout) as { finalizer_inputs: string } | undefined;
+  if (!row) return null;
+  const inputs = JSON.parse(row.finalizer_inputs) as { purpose: string; follow?: { finalizer: AdoptInputs } } & AdoptInputs;
+  const f = inputs.purpose === 'adopt' ? inputs.follow?.finalizer : inputs;
+  if (!f?.baseline) return null;
+  return { heads: [f.baseline.head, f.parent ?? f.baseline.head], indexes: [f.baseline.index_hash, f.before_index ?? f.baseline.index_hash], tree: f.baseline.tracked_tree_hash };
+}
+
+interface AdoptInputs {
+  baseline?: Baseline;
+  parent?: string;
+  before_index?: string;
 }
 
 export interface IntegrityReport {

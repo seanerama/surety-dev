@@ -11,7 +11,7 @@
 import { commitContent, messageText } from '../git/commit.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import { checkoutContext } from '../git/integrity.js';
-import { checkoutBaseline, readRef } from '../git/repo.js';
+import { checkoutBaseline, readRef, treeIndexHash } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
@@ -27,7 +27,7 @@ interface IntentRow {
   project: string;
   decision: string;
   status: 'pending' | 'executing' | 'done' | 'invalidated';
-  kind: 'protected_application' | 'policy_widening' | 'oob_stash';
+  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt';
   plan: Record<string, unknown>;
   operation: string | null;
 }
@@ -88,6 +88,9 @@ export class Effects {
       case 'oob_stash':
         await this.stash(row);
         return;
+      case 'oob_adopt':
+        await this.adopt(row);
+        return;
     }
   }
 
@@ -114,6 +117,10 @@ export class Effects {
       }
     }
     await this.rt.services?.journal(row.project);
+  }
+
+  private adopt(row: IntentRow): Promise<void> {
+    return adoptCheckout(this.rt, this.journal, row);
   }
 
   // A checkout observation answered `stash` (SEAM.md §79): its tracked
@@ -158,6 +165,70 @@ export class Effects {
     }
     await this.rt.engine('oob.stashed', { intent: row.id });
   }
+}
+
+// A checkout observation answered `adopt` (D1 §§7.6, 7.8; brief B2; SEAM.md
+// §§106, 111): the checkout's tracked content as reviewed (what `git commit
+// -a` would commit) is committed by the engine onto the expected head, as an
+// out-of-band revision; the checkout's index is set to that commit's tree;
+// and the integration branch is moved to it through the journal, whose
+// finalizer records the checkout's new baseline and reconciles the
+// observation. The checkout's files are not touched.
+async function adoptCheckout(rt: Runtime, journal: Journal, row: IntentRow): Promise<void> {
+  const facts = await rt.engine<{ repo: string; path: string; baseline: { head: string } } | null>('oob.stash_facts', { intent: row.id });
+  if (facts === null) return;
+  if (row.status === 'pending') {
+    const ctx = await checkoutContext(facts.repo, facts.path);
+    const now = ctx === null ? null : await checkoutBaseline(ctx, rt.scratch);
+    const found = now === null ? 'unreadable' : JSON.stringify(now);
+    let made: { operation: string } | { fenced: true } | { operation: string; existing: boolean } = { fenced: true };
+    if (now !== null) {
+      const message = messageText({
+        title: `surety: adopt the developer's edits of ${facts.path}`,
+        trailers: [
+          ['Surety-Project', row.project],
+          ['Surety-Observation', String(row.plan.observation)],
+          ['Surety-Kind', 'out_of_band'],
+        ],
+      });
+      const content = commitContent({ tree: now.tracked_tree_hash, parent: now.head, message, at: nowIso() });
+      const sha = await commitId(facts.repo, content);
+      // The checkout's index is made the adopted commit's, so that it reads
+      // clean once its HEAD follows the branch (Sean's decision on B2); its
+      // files are not touched. The index it will then have is bound in the
+      // baseline the branch update's finalizer records.
+      const adoptedIndex = ctx === null ? null : await treeIndexHash(ctx, now.tracked_tree_hash, rt.scratch);
+      if (sha !== null && adoptedIndex !== null) {
+        made = await journal.withProject(row.project, () =>
+          journal.intend(
+            'oob.begin_adopt',
+            {
+              intent: row.id,
+              facts: { found },
+              repo: facts.repo,
+              tree: now.tracked_tree_hash,
+              parent: now.head,
+              sha,
+              content,
+              index_hash: adoptedIndex,
+              before_index: now.index_hash,
+              deadlineSeconds: rt.setting('git_deadline'),
+            },
+            'commit_tree',
+          ),
+        );
+        if ('operation' in made && !('existing' in made && made.existing) && ctx !== null) {
+          if ((await gitOk(ctx, ['read-tree', now.tracked_tree_hash])) === null) {
+            log('adopt', new Error(`the index of ${facts.path} could not be set to the adopted tree`), { intent: row.id });
+          }
+        }
+      }
+    } else {
+      await rt.engine('intent.revalidate', { intent: row.id, facts: { found } });
+    }
+    if ('operation' in made) await journal.withProject(row.project, () => journal.drive(made.operation));
+  }
+  await rt.services?.journal(row.project);
 }
 
 // The application of an approved proposal (SEAM.md §69): its changes onto

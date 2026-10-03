@@ -22,6 +22,7 @@
 // issued is in flight (D1 §4.5 step 4); an effect on behalf of a run whose
 // lease is closing is refused in the store.
 
+import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { nowIso } from '../clock.js';
@@ -51,6 +52,19 @@ export const ACCEPTED_KINDS = [...INTEGRATING_KINDS, ...REPORTING_KINDS];
 
 const failed = (reason: RunEnd['reason'], text: string, detail?: Record<string, unknown>): RunEnd => ({ outcome: 'failed', reason, reasonText: text, ...(detail ? { detail } : {}) });
 
+// An operation the run issued whose effect git has not been made to tell
+// (its command killed at the deadline, or its probe blocked): the run is
+// neither ended nor failed on the strength of a timer (SEAM.md §§47, 110). It
+// waits, held, until the journal has established what git did; then the
+// pipeline goes on from durable state.
+interface Wait {
+  wait: string;
+}
+type StepEnd = RunEnd | null | Wait;
+const isWait = (s: StepEnd): s is Wait => s !== null && 'wait' in s;
+const unresolved = (settled: Settled): Wait | null => (settled.end === 'ambiguous' || settled.end === 'blocked' ? { wait: settled.op.id } : null);
+const WAIT_POLL_MS = 250;
+
 export class Acceptor {
   constructor(
     private readonly rt: Runtime,
@@ -70,6 +84,11 @@ export class Acceptor {
     for (let failures = 0; ; failures++) {
       try {
         const end = await this.step(run);
+        if (end !== null && isWait(end)) {
+          await this.awaitJournal(handle, end.wait);
+          failures = -1;
+          continue;
+        }
         if (end) this.rt.requestEnd(handle, { ...end, ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}) });
         return;
       } catch (err) {
@@ -86,9 +105,47 @@ export class Acceptor {
     }
   }
 
-  // One pass from durable state. Returns the run's end, or null when the run
-  // is no longer the pipeline's to end (a Stop or an Abandon took it).
-  private async step(run: string): Promise<RunEnd | null> {
+  // Wait until the journal has finalized or failed `operation` (D1 §§4.5
+  // step 4, 7.10; SEAM.md §§47, 110, 112). The tick's journal step probes and
+  // reconciles it (D1 §8.1 step 2). While the run is the pipeline's, its
+  // lease is renewed (D1 §8.3). Once its end is decided (a Stop or an
+  // Abandon confirmed, a deadline, an expiry: in memory, or recorded as the
+  // run leaving `validating`), nothing renews the lease (E27 item 5), but the
+  // wait goes on: the run is not ended while an operation it issued is
+  // unresolved, so that an integration git did make is integrated before the
+  // end takes its course, and one it did not make is failed first. Returns
+  // once the operation is settled; the next pass then sees the run as it is.
+  private async awaitJournal(handle: RunHandle, operation: string): Promise<boolean> {
+    const { run, generation } = handle.claim;
+    const renewEveryMs = (this.rt.setting('lease_ttl') * 1000) / 4;
+    let renewed = performance.now();
+    let renewing = true;
+    for (;;) {
+      const op = await this.rt.engine<{ state: string }>('journal.detail', { operation }).catch(() => null);
+      if (op && (op.state === 'finalized' || op.state === 'failed')) return true;
+      const decided = handle.ending || handle.intended !== null || handle.leaseLost;
+      if (decided) renewing = false;
+      if (renewing && performance.now() - renewed >= renewEveryMs) {
+        const state = await this.rt.read<string | null>('run.state', { run }).catch(() => null);
+        if (state !== 'validating' || handle.ending || handle.intended !== null) renewing = false;
+        else {
+          renewed = performance.now();
+          const at = await this.rt.engine<string | null>('run.renew', { run, generation }).catch((err) => {
+            log('lease renewal', err, { run });
+            return undefined;
+          });
+          if (at === null) renewing = false;
+          else if (typeof at === 'string') handle.renewedAtMs = Math.max(handle.renewedAtMs, Date.parse(at));
+        }
+      }
+      await sleep(WAIT_POLL_MS);
+    }
+  }
+
+  // One pass from durable state. Returns the run's end, null when the run is
+  // no longer the pipeline's to end (a Stop or an Abandon took it), or the
+  // operation it must wait for.
+  private async step(run: string): Promise<StepEnd> {
     let facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
     // A proposal already captured: the run's report is recorded with it.
     if (facts.run.state === 'proposal_captured') return { outcome: 'completed', reason: 'none' };
@@ -148,7 +205,7 @@ export class Acceptor {
       commit = made.commit;
     } else if (commit.state !== 'finalized') {
       const settled = await this.journal.drive(commit.id);
-      if (settled.end !== 'finalized') return this.commitFailed(settled);
+      if (settled.end !== 'finalized') return unresolved(settled) ?? this.commitFailed(settled);
     }
 
     // 5. A checkpoint is a working revision: the work is continued later.
@@ -211,6 +268,10 @@ export class Acceptor {
     if (integration.state !== 'finalized' && integration.state !== 'failed') {
       settled = await this.journal.withProject(facts.project.id, () => this.journal.drive(integration!.id));
     }
+    if (settled !== null) {
+      const wait = unresolved(settled);
+      if (wait) return wait;
+    }
     const state = settled?.op.state ?? integration.state;
     const detail = settled?.op.outcome_detail ?? integration.detail;
     if (state === 'failed') {
@@ -222,7 +283,7 @@ export class Acceptor {
       if (detail?.reason === 'closing') return null;
       return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict' });
     }
-    if (state !== 'finalized') return failed('infra_error', 'the integration could not be confirmed: its operation is ambiguous, and the journal will reconcile it');
+    if (state !== 'finalized') return { wait: integration.id };
 
     // 7. A nomination that is due.
     await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
@@ -313,14 +374,14 @@ export class Acceptor {
     return failed('infra_error', `the run's commit could not be made (${settled.end}: ${JSON.stringify(settled.op.outcome_detail ?? {})})`);
   }
 
-  private async driveCommit(id: string, c: AcceptFacts['commits'][number]): Promise<{ commit: AcceptFacts['commits'][number] } | { end: RunEnd }> {
+  private async driveCommit(id: string, c: AcceptFacts['commits'][number]): Promise<{ commit: AcceptFacts['commits'][number] } | { end: StepEnd }> {
     const settled = await this.journal.drive(id);
-    if (settled.end !== 'finalized') return { end: this.commitFailed(settled) };
+    if (settled.end !== 'finalized') return { end: unresolved(settled) ?? this.commitFailed(settled) };
     return { commit: { ...c, state: 'finalized' } };
   }
 
   // Intend and make the run's commit on `parent` (D1 §§7.3, 7.4).
-  private async commit(facts: AcceptFacts, tree: string, parent: string, rebased: boolean): Promise<{ commit: AcceptFacts['commits'][number] } | { end: RunEnd | null }> {
+  private async commit(facts: AcceptFacts, tree: string, parent: string, rebased: boolean): Promise<{ commit: AcceptFacts['commits'][number] } | { end: StepEnd }> {
     const repo = facts.project.repo;
     const checkpoint = facts.result?.checkpoint === true && !rebased;
     const title = `w-${facts.work.seq} ${facts.work.kind}: ${facts.work.goal ?? facts.result?.summary.split('\n')[0] ?? ''}`;
@@ -357,7 +418,7 @@ export class Acceptor {
     );
     if ('fenced' in intent) return { end: null };
     const settled = await this.journal.withProject(facts.project.id, () => this.journal.drive(intent.operation));
-    if (settled.end !== 'finalized') return { end: this.commitFailed(settled) };
+    if (settled.end !== 'finalized') return { end: unresolved(settled) ?? this.commitFailed(settled) };
     return { commit: { id: intent.operation, state: 'finalized', status: 'succeeded', sha, parent, tree } };
   }
 }

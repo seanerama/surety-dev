@@ -11,7 +11,8 @@ import type { Database } from 'better-sqlite3';
 import { nowIso, nowMs } from '../clock.js';
 import { Refusal } from '../refusal.js';
 import { notFound, parseJson } from './transitions/common.js';
-import { ledgerView } from './transitions/ledger.js';
+import { exhaustedLimits, ledgerView } from './transitions/ledger.js';
+import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
@@ -31,9 +32,9 @@ const mustProject = (db: Db, project: string): void => {
 
 // ---- NOW (D1 §12.3) -----------------------------------------------------------------
 
-// What a projection can say (D1 A.2). M1 computes no `unknown` NOW: a store
-// snapshot that fails fails the read.
-export const NOW_STATES = ['refused', 'waiting_on_you', 'running', 'ready', 'idle'] as const;
+// What a projection can say (D1 A.2). `unknown` is NOW whose inputs could
+// not be read; a store snapshot that fails as a whole fails the read.
+export const NOW_STATES = ['refused', 'waiting_on_you', 'running', 'ready', 'idle', 'unknown'] as const;
 type NowState = (typeof NOW_STATES)[number];
 export const FRESHNESS = ['fresh', 'stale', 'expired'] as const;
 export const PROVENANCE = ['observed', 'claimed', 'configured'] as const;
@@ -73,15 +74,80 @@ function dispatchable(db: Db, project: string, maxConcurrentRuns: number): numbe
   return n;
 }
 
+// Why the engine cannot act on the project, if it cannot (D1 §12.3): a
+// quarantined run; a repository it cannot read; an out-of-band change nobody
+// has settled; a journal operation whose effect git could not be made to tell.
+// Each names its cause. null: none of these holds.
+function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: string; reason: string; primary: string } | null {
+  const quarantined = runs.find((r) => r.quarantined);
+  if (quarantined) {
+    return { cause: 'quarantine', reason: `The engine cannot act on this project: run ${quarantined.id} is quarantined until its termination is observed.`, primary: 'inspect_quarantine' };
+  }
+  const observations = db
+    .prepare(
+      `SELECT o."id", o."subject_kind", o."decision", r."ref", r."kind", c."path" FROM "out_of_band_changes" o
+       LEFT JOIN "ref_registry" r ON r."id" = o."ref" LEFT JOIN "managed_checkouts" c ON c."id" = o."checkout"
+       WHERE o."project" = ? AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at", o."id"`,
+    )
+    .all(project) as { id: string; subject_kind: string; decision: string; ref: string | null; kind: string | null; path: string | null }[];
+  const unreadable = observations.find((o) => o.subject_kind === 'repository');
+  if (unreadable) {
+    return {
+      cause: 'repository_unreadable',
+      reason: "The engine cannot act on this project: its repository cannot be read, and nothing about it is known until it can.",
+      primary: 'restore_repository_access',
+    };
+  }
+  // An observation that holds the project (SEAM.md §§32, 107): the
+  // integration branch changed outside the engine. One of another subject
+  // (a checkout, another ref) leaves the engine able to act; its decision is
+  // waiting on a person.
+  const change = observations.find((o) => o.subject_kind === 'ref' && o.kind === 'integration');
+  if (change) {
+    return {
+      cause: 'out_of_band_change',
+      reason: `The engine cannot act on this project: its integration branch ${change.ref} was changed outside the engine (out-of-band change ${change.id}), and the change is not settled.`,
+      primary: 'answer_decision',
+    };
+  }
+  const blocked = db
+    .prepare(
+      `SELECT o."id" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."project" = ? AND s."state" = 'ambiguous' ORDER BY o."seq" LIMIT 1`,
+    )
+    .get(project) as { id: string } | undefined;
+  if (blocked) {
+    return {
+      cause: 'journal_blocked',
+      reason: `The engine cannot act on this project: what git did for operation ${blocked.id} is not established, and nothing is dispatched until it is.`,
+      primary: 'inspect_operation',
+    };
+  }
+  // The store fails for the project (D1 §§6.6, 12.3; SEAM.md §107): the read
+  // of its spend a budget check makes, made here with the check's own fault
+  // point. What would refuse a dispatch refuses the status.
+  try {
+    exhaustedLimits(db, project, { check: true });
+  } catch (err) {
+    return {
+      cause: 'store_error',
+      reason: `The engine cannot act on this project: the store could not read its budget (${err instanceof Error ? err.message : String(err)}), and nothing is dispatched until it can.`,
+      primary: 'inspect_store',
+    };
+  }
+  return null;
+}
+
 function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, maxConcurrentRuns: number) {
-  const quarantined = runs.filter((r) => r.quarantined);
+  const refusal = refusalOf(db, project, runs);
   let state: NowState;
   let reason: string;
   let primary: string | null;
-  if (quarantined.length > 0) {
+  let cause: string | null = null;
+  if (refusal) {
     state = 'refused';
-    reason = `The engine cannot act on this project: run ${quarantined[0]!.id} is quarantined until its termination is observed.`;
-    primary = 'inspect_quarantine';
+    reason = refusal.reason;
+    primary = refusal.primary;
+    cause = refusal.cause;
   } else if (decisions > 0) {
     state = 'waiting_on_you';
     reason = decisions === 1 ? 'One decision is waiting for your answer.' : `${decisions} decisions are waiting for your answer.`;
@@ -102,7 +168,14 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
       primary = null;
     }
   }
-  return { state, primary_action: primary, reason };
+  return { state, primary_action: primary, reason, cause };
+}
+
+// NOW when it cannot be computed (D1 §12.3): `unknown`, naming why, never a
+// state the engine did not establish.
+function unknownNow(err: unknown) {
+  const what = err instanceof Error ? err.message : String(err);
+  return { state: 'unknown' as const, primary_action: null, reason: `The project's state cannot be computed: the store could not be read (${what}).`, cause: 'store_error' };
 }
 
 // ---- spend today (D1 §13.1; SEAM.md §§54, 91) ----------------------------------------
@@ -159,9 +232,16 @@ function environmentsOf(db: Db, project: string) {
 function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
   const runs = executionRuns(db, project);
   const decisions = openDecisionCount(db, project);
+  let now;
+  try {
+    seamStatusRead(project);
+    now = nowOf(db, project, runs, decisions, maxConcurrentRuns);
+  } catch (err) {
+    now = unknownNow(err);
+  }
   return {
     id: project,
-    now: nowOf(db, project, runs, decisions, maxConcurrentRuns),
+    now,
     execution: { runs },
     open_decisions: { count: decisions },
     spend_today: spendToday(db, project),
@@ -219,6 +299,129 @@ export function openDecisions(db: Db, args: { project: string }) {
       escalated_at: d.escalated_at,
     })),
   };
+}
+
+// GET /v1/projects/:p/decisions/:d (D1 §11.3; brief B4): one decision of the
+// project by its identifier, whatever its status, in the list's form, with
+// its status, its generation, what its preview is bound to (the dependency
+// manifest) and its answer once given. A decision of another project is not
+// found here.
+export function readDecision(db: Db, args: { project: string; decision: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  const d = db
+    .prepare(
+      `SELECT "id", "project", "kind", "subject_type", "subject_id", "semantic_generation", "status", "question", "options", "dependency_manifest", "preview_hash",
+         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason"
+       FROM "decisions" WHERE "id" = ?`,
+    )
+    .get(args.decision) as Record<string, unknown> | undefined;
+  if (!d || d.project !== args.project) throw notFound('decision', args.decision);
+  return {
+    ...head,
+    decision: {
+      id: d.id,
+      kind: d.kind,
+      subject_type: d.subject_type,
+      subject_id: d.subject_id,
+      semantic_generation: d.semantic_generation,
+      status: d.status,
+      question: d.question,
+      options: JSON.parse(d.options as string) as unknown[],
+      dependency_manifest: JSON.parse(d.dependency_manifest as string) as Record<string, unknown>,
+      preview_hash: d.preview_hash,
+      raised_at: d.raised_at,
+      target_seconds: d.target_seconds,
+      escalated_at: d.escalated_at,
+      answer: parseJson<Record<string, unknown>>((d.answer as string | null) ?? null),
+      consumed_at: d.consumed_at,
+      invalidated_reason: d.invalidated_reason,
+    },
+  };
+}
+
+// ---- operations (D1 §§3.5, 11.3; brief B4) -----------------------------------------------
+
+interface OperationRow {
+  id: string;
+  seq: number;
+  kind: string;
+  status: string;
+  subject: string;
+  target: string;
+  finalizer_inputs: string;
+  outcome_detail: string | null;
+  remaining_scope: string | null;
+  linked_prior: string | null;
+  created_at: string;
+  finalized_at: string | null;
+  journal_kind: string | null;
+  state: string | null;
+}
+
+// GET /v1/projects/:p/operations: every operation of the project, in `seq`
+// order, whatever its state: pending and blocked ones included. Each with its
+// kind, the journal's state and the operation's status, its intent as the
+// journal's `intended` event froze it (what it was to do), its purpose, its
+// attempts with their reconciliation reads, and the id of the open blocker
+// decision that holds it, or null (SEAM.md §108). Nothing is probed: a state is as stored.
+export function readOperations(db: Db, args: { project: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  const rows = db
+    .prepare(
+      `SELECT o."id", o."seq", o."kind", o."status", o."subject", o."target", o."finalizer_inputs", o."outcome_detail", o."remaining_scope", o."linked_prior",
+         o."created_at", o."finalized_at", s."journal_kind", s."state"
+       FROM "operations" o LEFT JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."project" = ? ORDER BY o."seq"`,
+    )
+    .all(args.project) as OperationRow[];
+  const intended = db.prepare(`SELECT "payload" FROM "git_journal_events" WHERE "operation" = ? AND "event_kind" = 'intended' ORDER BY "seq" LIMIT 1`);
+  const attempts = db.prepare(
+    'SELECT "attempt_number", "status", "started_at", "finished_at", "reconciliation_reads" FROM "operation_attempts" WHERE "operation" = ? ORDER BY "attempt_number"',
+  );
+  const blocker = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`);
+  return {
+    ...head,
+    operations: rows.map((o) => {
+      const intent = intended.get(o.id) as { payload: string } | undefined;
+      const held = blocker.get(o.id) as { id: string } | undefined;
+      const inputs = parseJson<{ purpose?: string }>(o.finalizer_inputs);
+      return {
+        id: o.id,
+        seq: o.seq,
+        kind: o.kind,
+        journal_kind: o.journal_kind,
+        state: o.state,
+        status: o.status,
+        purpose: inputs?.purpose ?? null,
+        intent: intent ? (JSON.parse(intent.payload) as Record<string, unknown>) : null,
+        subject: parseJson<Record<string, unknown>>(o.subject),
+        attempts: (attempts.all(o.id) as { attempt_number: number; status: string; started_at: string; finished_at: string | null; reconciliation_reads: string }[]).map((a) => ({
+          attempt_number: a.attempt_number,
+          status: a.status,
+          started_at: a.started_at,
+          finished_at: a.finished_at,
+          reconciliation_reads: JSON.parse(a.reconciliation_reads) as unknown[],
+        })),
+        outcome_detail: parseJson<Record<string, unknown>>(o.outcome_detail),
+        remaining_scope: parseJson<Record<string, unknown>>(o.remaining_scope),
+        linked_prior: o.linked_prior,
+        created_at: o.created_at,
+        finalized_at: o.finalized_at,
+        blocker: held?.id ?? null,
+      };
+    }),
+  };
+}
+
+// GET /v1/projects/:p/environments (D1 §11.3; brief B4): the project's
+// environments with their current observation, as the project read shows
+// them. M1 keeps no observation history and runs no observation job, so
+// there is none to show.
+export function readEnvironments(db: Db, args: { project: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  return { ...head, environments: environmentsOf(db, args.project) };
 }
 
 // GET /v1/projects/:p/candidates/:c (D1 §11.3; SEAM.md §95): the candidate,
