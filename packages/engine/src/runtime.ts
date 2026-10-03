@@ -16,6 +16,7 @@ import type { Claim, Outcome, ReasonClass } from './store/transitions/runs.js';
 import type { StoreClient } from './store/client.js';
 import type { Scope } from './boundary/scope.js';
 import type { SandboxLaunch } from './invoke/sandboxed.js';
+import type { DomainProxy } from './invoke/proxy/proxy.js';
 import { seamBoundary } from './testing/seam.js';
 
 export interface RunEnd {
@@ -92,6 +93,16 @@ export interface RunHandle {
   backendStarted: boolean;
   // The project's approved `sandbox_read_paths`, validated for this launch.
   readPaths: string[];
+  // The project's approved `egress_allow_extra`, and the effective protected
+  // roots (D2 §§2.3, 2.4), read with the plan's validation.
+  egressExtra: string[];
+  protectedRoots: string[];
+  // The domain's egress proxy, from before the launcher until the domain is
+  // terminated (D2 §2.4).
+  egress: DomainProxy | null;
+  // What the role left in its workspace has been materialized into the
+  // checkout (D2 §2.3), once.
+  materialized: boolean;
   // While the engine has resumed from a pause that outlived the run lease:
   // what the role sent meanwhile, and its exit, held until the tick's fresh
   // challenge decides (D2 §3.5).
@@ -133,6 +144,10 @@ export function newHandle(claim: Claim): RunHandle {
     sandbox: null,
     backendStarted: false,
     readPaths: [],
+    egressExtra: [],
+    protectedRoots: [],
+    egress: null,
+    materialized: false,
     gate: null,
     expiryExempt: false,
   };
@@ -232,7 +247,15 @@ export class Runtime {
       | 'domain_tasks_max'
       | 'domain_writable_bytes'
       | 'domain_writable_inodes'
-      | 'pause_challenge_timeout',
+      | 'pause_challenge_timeout'
+      | 'result_max_bytes'
+      | 'collect_deadline'
+      | 'egress_resolve_timeout'
+      | 'egress_connect_timeout'
+      | 'egress_tunnel_max_seconds'
+      | 'egress_tunnels_max'
+      | 'egress_buffer_max_bytes'
+      | 'egress_log_max_bytes',
   ): number {
     return this.config.values[key];
   }

@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { processStartTime } from '../lock.js';
 import type { Plan } from './sandbox/mounts.js';
+import { VolatileHold } from './sandbox/volatile.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const LAUNCHER_SCRIPT = join(here, 'launcher.js');
@@ -29,6 +30,8 @@ export interface BackendLaunch {
   env: Record<string, string>;
   cwd: string;
   stdin: string | null;
+  // The egress forwarder the init starts before the backend (D2 §2.4).
+  forwarder?: { port: number; socket: string } | null;
 }
 
 export interface ExitReport {
@@ -106,6 +109,10 @@ export class SandboxLaunch {
   // What the setup stage reported of the start-up trial's overlay.
   overlay: { ok: boolean; detail: string } | null = null;
   setupFailure: string | null = null;
+  // The domain's volatile filesystem and the workspace's overlay, held from
+  // outside once the setup stage mounted them (plan.holdVolatile), until the
+  // engine releases them.
+  volatile: VolatileHold | null = null;
 
   constructor(
     spec: LaunchSpec,
@@ -205,6 +212,26 @@ export class SandboxLaunch {
           this.send({ t: 'backend', backend: this.hooks.backend() });
         }
         return;
+      case 'volatile': {
+        // The setup stage has mounted the volatile filesystem and the
+        // workspace's overlay: the engine takes hold of both from outside
+        // (invoke/sandbox/volatile.ts), with the plan's own paths, never the
+        // message's. A closed launch goes no further.
+        if (this.closed) {
+          this.send({ t: 'volatile_refused' });
+          return;
+        }
+        const plan = this.hooks.plan();
+        try {
+          this.volatile?.release();
+          this.volatile = VolatileHold.take(this.pid, plan.vol, plan.workspaceMount ? join(plan.stage, plan.workspaceMount) : null);
+          this.send({ t: 'volatile_held' });
+        } catch (err) {
+          this.volatile = null;
+          this.send({ t: 'volatile_refused', detail: (err as Error).message });
+        }
+        return;
+      }
       case 'setup_failed':
         this.setupFailure = String(m.detail ?? 'the sandbox could not be built');
         this.hooks.setupFailed(this.setupFailure);
@@ -316,6 +343,12 @@ export class SandboxLaunch {
     const exited = await Promise.race([this.launcherExited.then(() => true), new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), boundMs)))]);
     clearTimeout(timer);
     return exited;
+  }
+
+  // What the volatile filesystem held goes: after the engine has screened,
+  // materialized and collected what it needed of it.
+  releaseVolatile(): void {
+    this.volatile?.release();
   }
 
   closeChannel(): void {

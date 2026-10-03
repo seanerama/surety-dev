@@ -33,6 +33,8 @@ export interface DomainRow {
   terminated_at: string | null;
   exit_class: string | null;
   exit_evidence: string | null;
+  plan_fingerprint: string | null;
+  mount_plan: string | null;
 }
 
 export const getDomain = (db: Db, id: string): DomainRow | undefined => db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(id) as DomainRow | undefined;
@@ -59,6 +61,22 @@ export function cgroupCreated(tx: Tx, args: { domain: string; inode: number }): 
   const d = mustDomain(tx, args.domain);
   if (d.cgroup_inode !== null) return;
   tx.db.prepare('UPDATE "execution_domains" SET "cgroup_inode" = ? WHERE "id" = ?').run(args.inode, d.id);
+}
+
+// The validated mount plan the domain's sandbox is built from (D2 §2.3; A.6
+// P12), recorded before the launcher starts and never changed after.
+export function recordPlan(tx: Tx, args: { domain: string; fingerprint: string; mounts: unknown[] }): void {
+  const d = mustDomain(tx, args.domain);
+  if (d.plan_fingerprint !== null) return;
+  tx.db.prepare('UPDATE "execution_domains" SET "plan_fingerprint" = ?, "mount_plan" = ? WHERE "id" = ?').run(args.fingerprint, JSON.stringify(args.mounts), d.id);
+}
+
+// The egress proxy refused a connection of the domain's role (D2 §2.4):
+// `domain.egress_refused`, with the authority asked for, the reason and what
+// the proxy observed (the answer set, the address that made it forbidden).
+export function egressRefused(tx: Tx, args: { domain: string; authority: string; reason: string; detail?: Record<string, unknown> }): void {
+  const d = mustDomain(tx, args.domain);
+  tx.emit('domain.egress_refused', domainSubject(d), { authority: args.authority, reason: args.reason, ...(args.detail ?? {}) });
 }
 
 // The launcher has written its pid into the domain's cgroup and confirmed it

@@ -138,7 +138,10 @@ function refusalOf(run: Record<string, unknown>): Record<string, unknown> | null
 export function runRepresentation(db: Tx['db'], args: { project: string; run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
-  const domains = db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
+  // Each domain with the fingerprint of the validated mount plan its sandbox
+  // was built from (D2 §2.3; A.6 P12), null for a domain no sandbox was
+  // built for.
+  const domains = db.prepare('SELECT "id", "status", "profile", "plan_fingerprint" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
   const receipts = (db.prepare('SELECT "id", "trust_entry" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string; trust_entry: string | null }[]).map((r) => ({
     id: r.id,
     trust_entry: r.trust_entry,

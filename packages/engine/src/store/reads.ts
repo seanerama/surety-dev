@@ -67,13 +67,72 @@ export function quarantinedRuns(db: Database): { id: string; project: string }[]
   }[];
 }
 
+// What a run's context package binds (D2 §1.3; F §3.10.8): the work item and
+// its subject, the stage it builds with its requirements, phase plan and
+// module interfaces, for a Reviewer the candidate and the acceptance content
+// it reviews, for a resumed run what the records say of the run it resumes.
+// Never a raw user report (E5): the trigger's report is not read here.
+export function contextFacts(db: Database, args: { run: string }) {
+  const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
+  if (!run) return null;
+  const item = db.prepare('SELECT "id", "kind", "subject", "project" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { id: string; kind: string; subject: string; project: string };
+  const stage = db.prepare('SELECT * FROM "stages" WHERE "id" = ? OR "work_item" = ? ORDER BY "number" LIMIT 1').get(item.subject, item.id) as Record<string, unknown> | undefined;
+  const parse = <T>(text: unknown, fallback: T): T => {
+    try {
+      return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  let requirements: { key: string; text_ref: string; assigned_phase: number | null }[] = [];
+  let modules: { name: string; paths: unknown }[] = [];
+  let plan: Record<string, unknown> | null = null;
+  if (stage) {
+    const ids = parse<string[]>(stage.requirement_ids, []);
+    requirements = ids
+      .map((id) => db.prepare('SELECT "key", "text_ref", "assigned_phase" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, id, id) as { key: string; text_ref: string; assigned_phase: number | null } | undefined)
+      .filter((r): r is { key: string; text_ref: string; assigned_phase: number | null } => r !== undefined);
+    const names = parse<string[]>(stage.modules, []);
+    modules = names
+      .map((name) => db.prepare('SELECT "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { name: string; paths: string } | undefined)
+      .filter((m): m is { name: string; paths: string } => m !== undefined)
+      .map((m) => ({ name: m.name, paths: parse<unknown>(m.paths, []) }));
+    const p = db.prepare('SELECT "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
+    plan = p ?? null;
+  }
+  const candidate = db.prepare('SELECT "id", "revision" FROM "candidates" WHERE "id" = ?').get(item.subject) as { id: string; revision: string } | undefined;
+  let resumed: { run: string; outcome: unknown; summary: unknown } | null = null;
+  if (typeof run.parent_run === 'string') {
+    const parent = db.prepare('SELECT "id", "outcome", "result_value" FROM "runs" WHERE "id" = ?').get(run.parent_run) as { id: string; outcome: unknown; result_value: string | null } | undefined;
+    if (parent) resumed = { run: parent.id, outcome: parent.outcome, summary: parse<{ summary?: unknown } | null>(parent.result_value, null)?.summary ?? null };
+  }
+  return {
+    run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },
+    work_item: item,
+    stage: stage ? { number: stage.number, goal: stage.goal, modules: parse<unknown>(stage.modules, []), requirement_ids: parse<unknown>(stage.requirement_ids, []), implements: parse<unknown>(stage.implements, []) } : null,
+    requirements,
+    modules,
+    phase_plan: plan,
+    candidate: candidate ? { id: candidate.id, revision: candidate.revision, acceptance_content_hash: (run.content_hash as string | null) ?? null } : null,
+    resumed,
+  };
+}
+
 // What the mount plan's validation needs before a launch (D2 §2.3): the
 // project's widened read paths, and the locations no widening may reach that
 // the store knows of.
 export function mountContext(db: Database, args: { project: string }) {
   const col = (sql: string) => (db.prepare(sql).all() as { p: string }[]).map((r) => r.p);
+  const options = projectOptions(db, args.project);
+  // The protected roots of the project's effective version (D1 §7.3; D2
+  // §2.3): every role but the Verifier sees them read-only.
+  const effective = db
+    .prepare(`SELECT "roots", "fingerprint" FROM "protected_versions" WHERE "project" = ? AND "authorized" = 1 AND "effective_from" IS NOT NULL AND "superseded_by" IS NULL`)
+    .get(args.project) as { roots: string; fingerprint: string } | undefined;
   return {
-    paths: projectOptions(db, args.project).sandbox_read_paths,
+    paths: options.sandbox_read_paths,
+    egress_allow_extra: options.egress_allow_extra,
+    protected: { roots: effective ? (JSON.parse(effective.roots) as string[]) : ['.surety/checks/'], fingerprint: effective?.fingerprint ?? null },
     context: {
       repositories: col('SELECT DISTINCT "dev_repo_path" AS p FROM "projects"'),
       workspaces: col(`SELECT "path" AS p FROM "workspaces" WHERE "disposition" <> 'discarded'`),

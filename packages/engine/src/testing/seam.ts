@@ -654,6 +654,36 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       },
     };
   }
+  // M2 plan §2.3: the harness resolver the egress proxy consults instead of
+  // the system resolver, and what the engine's echo endpoint received.
+  if (s.length === 1 && s[0] === 'resolver' && get) {
+    return { restricted: true, handler: async () => ({ status: 200, body: resolverReport() }) };
+  }
+  if (s.length === 1 && s[0] === 'resolver' && post) {
+    return { restricted: true, handler: async () => ({ status: 200, body: configureResolver(await hooks.body()) }) };
+  }
+  if (s.length === 1 && s[0] === 'echo' && get) {
+    return {
+      restricted: true,
+      handler: async () => {
+        const { echoEndpoint } = await import('../invoke/proxy/echo.js');
+        return {
+          status: 200,
+          body: {
+            connections: echoEndpoint.connections.map((c) => ({
+              id: c.id,
+              domain: c.domain,
+              run: c.run,
+              opened_at: c.opened_at,
+              closed_at: c.closed_at,
+              bytes: c.bytes,
+              received_base64: c.received.toString('base64'),
+            })),
+          },
+        };
+      },
+    };
+  }
   if (s.length === 1 && s[0] === 'faults' && get) {
     // What is armed, and how often each main-thread fault fired.
     return {
@@ -842,6 +872,89 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     });
   }
   return null;
+}
+
+// ---- the harness resolver (main thread; M2 plan §2.3) -------------------------------
+
+// A name's answers in order: each resolution takes the next, the last
+// repeating; a counter per name; an optional delay before every answer.
+const resolver: { names: Map<string, string[][]>; delayMs: number; queries: Map<string, number>; log: { name: string; at: string; answer: string[] | null }[] } = {
+  names: new Map(),
+  delayMs: 0,
+  queries: new Map(),
+  log: [],
+};
+let resolverConfigured = false;
+
+function configureResolver(body: unknown): unknown {
+  const b = isObject(body) ? body : {};
+  const names = isObject(b.names) ? b.names : null;
+  const delay = b.delay_ms ?? 0;
+  const bad = () => new Refusal(400, 'invalid_value', 'The resolver takes {"names": {<name>: [<address>...] | [[<address>...], ...]}, "delay_ms"?: <ms>}.', 'Send names and their answers.', { field: 'names' });
+  if (names === null || typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || Object.keys(b).some((k) => k !== 'names' && k !== 'delay_ms')) throw bad();
+  const parsed = new Map<string, string[][]>();
+  for (const [name, value] of Object.entries(names)) {
+    if (!Array.isArray(value)) throw bad();
+    const answers = value.every((v) => typeof v === 'string') ? [value as string[]] : (value as unknown[]);
+    if (!answers.every((a) => Array.isArray(a) && a.every((x) => typeof x === 'string'))) throw bad();
+    parsed.set(name.toLowerCase().replace(/\.+$/, ''), answers as string[][]);
+  }
+  resolver.names = parsed;
+  resolver.delayMs = delay;
+  resolver.queries.clear();
+  resolver.log.length = 0;
+  resolverConfigured = true;
+  return resolverReport();
+}
+
+function resolverReport(): unknown {
+  return { configured: resolverConfigured, names: Object.fromEntries(resolver.names), delay_ms: resolver.delayMs, queries: Object.fromEntries(resolver.queries), log: resolver.log };
+}
+
+// The resolver the egress proxy consults: the harness's in harness mode, null
+// (the system's) otherwise. Before a test configures it, the harness's knows
+// no name: nothing a sandbox-lane role asks for is looked up on the host.
+export function seamResolver(): { resolve(name: string): Promise<string[]> } | null {
+  if (!init.harness) return null;
+  return {
+    async resolve(name: string): Promise<string[]> {
+      const key = name.toLowerCase().replace(/\.+$/, '');
+      const n = (resolver.queries.get(key) ?? 0) + 1;
+      resolver.queries.set(key, n);
+      if (resolver.delayMs > 0) await sleep(resolver.delayMs);
+      const answers = resolver.names.get(key);
+      const answer = answers ? answers[Math.min(n - 1, answers.length - 1)]! : null;
+      resolver.log.push({ name: key, at: new Date().toISOString(), answer });
+      if (answer === null) {
+        const err = new Error(`the harness resolver knows no name ${key}`) as NodeJS.ErrnoException;
+        err.code = 'ENOTFOUND';
+        throw err;
+      }
+      return [...answer];
+    },
+  };
+}
+
+// ---- the probe suite's overrides (main thread; M2 plan §2.3, row M124) -------------
+
+export type ProbeOverride = 'target_absent' | 'control_fails' | 'negative_unattempted' | 'cannot_run';
+export const PROBE_OVERRIDES: readonly ProbeOverride[] = ['target_absent', 'control_fails', 'negative_unattempted', 'cannot_run'];
+let probeOverrides: Record<string, ProbeOverride> = {};
+
+export function setProbeOverrides(values: string[]): string | null {
+  const out: Record<string, ProbeOverride> = {};
+  for (const value of values) {
+    const m = /^(P(?:[1-9]|1[0-9]|20))=([a-z_]+)$/.exec(value);
+    if (!m || !(PROBE_OVERRIDES as readonly string[]).includes(m[2]!)) return `--harness-probe-override takes <Pn>=<${PROBE_OVERRIDES.join('|')}>, not ${value}`;
+    out[m[1]!] = m[2] as ProbeOverride;
+  }
+  probeOverrides = out;
+  return null;
+}
+
+// A named probe's override, in harness mode only.
+export function seamProbeOverrides(): Record<string, ProbeOverride> {
+  return init.harness ? { ...probeOverrides } : {};
 }
 
 // GET /v1/engine reports whether the engine is in harness mode.

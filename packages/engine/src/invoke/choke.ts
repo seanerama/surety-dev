@@ -39,7 +39,9 @@ import { prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
-import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
+import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
+import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
+import { GOVERNED_FILE } from '../protected/set.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
 export interface DispatchTarget {
@@ -170,7 +172,7 @@ export class Launcher {
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
-    if (ready && runs) void this.launch(handle, runs);
+    if (ready && runs) void this.launch(handle, runs, target.repo);
     return true;
   }
 
@@ -225,9 +227,22 @@ export class Launcher {
     // The widening a project's policy may make to the mount plan, validated
     // before every launch, approved or not (D2 §2.3): a refusal names the
     // path and why, and no launcher starts.
-    const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
+    const plan = await this.rt.read<{ paths: string[]; egress_allow_extra: string[]; protected: { roots: string[] }; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
     handle.readPaths = plan.paths;
-    const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    handle.egressExtra = plan.egress_allow_extra;
+    handle.protectedRoots = [...plan.protected.roots, GOVERNED_FILE];
+    let refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    // The git view binds the repository's objects and refs; a repository
+    // with alternates is refused (D2 §2.3; E58 item 3), on the real boundary
+    // where the view is built.
+    if (refused === null && this.rt.boundary() === 'real') {
+      try {
+        repositoryCommonDir(repo);
+      } catch (err) {
+        if (!(err instanceof GitViewRefused)) throw err;
+        refused = { path: err.path, resolved: err.path, reason: err.reason as PlanReason, detail: err.message };
+      }
+    }
     if (refused !== null) {
       this.never(
         handle,
@@ -306,12 +321,12 @@ export class Launcher {
   // way out of it settles the handle, so a run-end protocol waiting on the
   // launch is never left waiting; a failure ends the run (failed /
   // infra_error) rather than leaving it to a lease nobody will renew.
-  private async launch(handle: RunHandle, backend: BackendSpec): Promise<void> {
+  private async launch(handle: RunHandle, backend: BackendSpec, repo: string): Promise<void> {
     try {
       // The real boundary: the launcher, the sandbox, the domain's cgroup
       // (D2 §§1.1, 2, 3). The kernel lane's scripted boundary keeps the
       // direct spawn of SEAM.md §13.
-      if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend);
+      if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend, repo);
       else if (this.rt.boundary() === 'scripted') await this.supervise(handle, backend);
       else {
         // No production path runs a backend outside the sandbox (D2 §5 C3):
@@ -458,7 +473,7 @@ export class Launcher {
   // the domain init, which starts the backend on the engine's word and
   // relays its output. Every way out of it leaves the domain to the run-end
   // protocol, which closes the launch and establishes termination.
-  private async superviseSandboxed(handle: RunHandle, backend: BackendSpec): Promise<void> {
+  private async superviseSandboxed(handle: RunHandle, backend: BackendSpec, repo: string): Promise<void> {
     const { claim } = handle;
     await pausePoint('launch.before_spawn');
     const active = await this.rt.engine<boolean>('run.lease_active', { run: claim.run, generation: claim.generation });
@@ -477,7 +492,7 @@ export class Launcher {
     }
     let prepared: Awaited<ReturnType<typeof prepareSandbox>>;
     try {
-      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'));
+      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'), repo);
     } catch (err) {
       log('sandbox', err, { run: claim.run });
       await transcript.abandon();

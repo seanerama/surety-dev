@@ -31,6 +31,7 @@ import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, mergeBase, treeOf } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
+import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal, Settled } from '../journal/driver.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { type RunEnd, type RunHandle, type Runtime, log } from '../runtime.js';
@@ -177,6 +178,21 @@ export class Acceptor {
       }
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
       if (facts.run.state !== 'validating') return null;
+    }
+
+    // 1b. On the real boundary what the role wrote is on its domain's
+    // volatile filesystem: it reaches the checkout only now that termination
+    // is established, through the secret screen (D2 §§2.3, 2.5).
+    const handle = this.rt.handles.get(run);
+    if (handle && handle.sandbox !== null && !handle.materialized && facts.workspace!.snapshot_tree === null) {
+      const hold = handle.sandbox.volatile;
+      if (hold === null || !hold.held) return failed('infra_error', 'what the role left in its workspace is no longer held, so nothing of it can be materialized');
+      const m = materialize({ hold, home: this.rt.home, workspace: ws.path });
+      if (m.state === 'refused') {
+        if (m.reason === 'secret') return failed('infra_error', `the secret screen refused the workspace's materialization: ${m.detail}; nothing of it reached the checkout`);
+        return failed('infra_error', `what the role left could not be materialized: ${m.detail}`);
+      }
+      handle.materialized = true;
     }
 
     // 2. The snapshot.
