@@ -14,6 +14,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [spec/templates/spec-assistant-prompt.md](spec/templates/spec-assistant-prompt.md) | A paste-ready prompt for an assistant that works an idea into that specification with the owner, in the manner of Spec-Driven-Devops's Vision Assistant. |
 | [acceptance/sdlc-M1-acceptance-plan-Astra.md](acceptance/sdlc-M1-acceptance-plan-Astra.md) | The 74 acceptance rows M1 must pass. |
 | [design/sdlc-design-D1-engine-core.md](design/sdlc-design-D1-engine-core.md) | The engine architecture, draft 3. |
+| [design/sdlc-design-D2-brief.md](design/sdlc-design-D2-brief.md) | The brief for D2 (backend adapters, control-plane isolation, the execution boundary, the trust table): what it must answer, what it inherits, how it is produced and judged. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
 | [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E48 amending the foundations. |
