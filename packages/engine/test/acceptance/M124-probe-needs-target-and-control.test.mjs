@@ -1,6 +1,6 @@
 // M124, a probe needs its seeded target and its control (M2 slice 12,
 // sandbox lane). M2 plan §3.4 M124; D2 §2.8, §6 H9, §7.1, A.3 (D2-I14,
-// D2-I14-OBS); AR §8.1, B05; E57; SEAM.md §§138, 139.
+// D2-I14-OBS); AR §8.1, B05; E57; SEAM.md §138.
 //
 // The engine's isolation probe suite runs at every start (H9). A probe
 // passes only when its target was seeded and verified, its negative was
@@ -8,12 +8,12 @@
 // absent, whose control fails, or whose negative was never attempted while
 // an unrelated control succeeded is `failed`; one that could not run is
 // `not_exercised` and fails qualification unless the host class excuses it
-// (SEAM.md §139). Any of these leaves no active host qualification, so a
+// (SEAM.md §138). Any of these leaves no active host qualification, so a
 // real dispatch is refused `isolation_unqualified`, and the engine read
 // names the probe. The observer case reports not_exercised on this host.
 //
 // The overrides are the harness's (`--harness-isolation-probe`, SEAM.md
-// §139); everything the probe suite runs is the engine's own, in its own
+// §138); everything the probe suite runs is the engine's own, in its own
 // probe domain; the tests here start engines and read what they report.
 //
 // Every case here is expected to fail on the engine these tests were
@@ -110,7 +110,7 @@ describe('M124 a probe needs its seeded target and its control', () => {
     await fx.engine.stop();
 
     if (!isWsl2()) {
-      t.diagnostic('[not_exercised] the WSL2 half: off WSL2, P11 is excused by the host class (SEAM.md §139)');
+      t.diagnostic('[not_exercised] the WSL2 half: off WSL2, P11 is excused by the host class (SEAM.md §138)');
       return;
     }
     const engine = await fx.start({ args: override('P11', 'cannot_run') });

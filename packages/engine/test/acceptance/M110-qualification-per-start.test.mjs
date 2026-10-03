@@ -60,7 +60,7 @@ function assertActiveRow(fx, info) {
     assert.ok(['passed', 'failed', 'not_exercised'].includes(p.result), `probe ${p.id} has a result`);
   }
   // Extended by the slice-12 Verifier, as this file's head provides (SEAM.md
-  // §§138, 139): a pass has every probe P1 to P19 passed against a seeded
+  // §138): a pass has every probe P1 to P19 passed against a seeded
   // target, its negative denied and its control run; P20 is row M133's
   // (slice 13) and is reported not_exercised in slice 12 with that reason.
   const wsl2 = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
