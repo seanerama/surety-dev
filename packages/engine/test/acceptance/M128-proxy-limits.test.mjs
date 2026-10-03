@@ -27,7 +27,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { addGitProject } from './harness/gitruns.mjs';
-import { waitForRunState } from './harness/runs.mjs';
+import { waitFor } from './harness/engine.mjs';
+import { run, waitForRunState } from './harness/runs.mjs';
 import { DOC, ECHO_AUTHORITY, PROXY_LIMITS, egressLogOf, egressRefusals, entryFor, resolverQueries, setResolver } from './harness/sandbox/egress.mjs';
 import { checkOf, hostSection, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { addProfiledWork, approveWidening, armedRole, probedRun } from './harness/sandbox/view.mjs';
@@ -126,7 +127,12 @@ describe('M128 the proxy\'s limits', () => {
     const item = await addProfiledWork(fx, project, 'verification', { profile: 'probe' });
     const role = await armedRole(fx, project, item, { acts: (act) => [act.proxyFlood('flood-%n.example:443', 3000, { max_ms: 90_000, timeout_ms: 2000 })], thenHold: true });
     role.release().catch(() => {});
-    const ended = await waitForRunState(fx.home, role.run.id, 'ended', { timeoutMs: 150_000 });
+    // The role's flood ends by the cancellation (its entry may then never be
+    // logged) or by itself; an entry that shows it had no proxy fails at once.
+    await waitFor(() => run(fx.home, role.run.id).state === 'ended' || role.probes('proxy_flood').length > 0 || undefined, { timeoutMs: 150_000, what: 'the run to end or the role\'s flood to finish' });
+    const [flood] = role.probes('proxy_flood');
+    if (flood !== undefined) assert.ok(!flood.statuses?.no_proxy && !flood.statuses?.proxy_unreachable, `the role had a proxy to flood (${JSON.stringify(flood)})`);
+    const ended = await waitForRunState(fx.home, role.run.id, 'ended', { timeoutMs: 60_000 });
     assert.notEqual(ended.outcome, 'completed', 'the run is never completed');
     assert.deepEqual([ended.outcome, ended.reason_class], ['failed', 'infra_error'], `the run is cancelled by the bound (${ended.reason_text})`);
     assert.match(ended.reason_text ?? '', /egress_log_max_bytes/, 'its reason names the bound');
