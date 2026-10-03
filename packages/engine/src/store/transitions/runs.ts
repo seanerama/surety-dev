@@ -691,6 +691,15 @@ export function finishRun(
     const seen = statuses(tx, receipt.id);
     if (seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) continue;
     let terminal = args.invocations[receipt.id];
+    // On the real boundary a launch is authorized, and recorded `launched`,
+    // in one transaction (SEAM.md §125): an invocation whose domain's launch
+    // was never authorized never ran, however its domain's termination was
+    // reached (directly, or through a quarantine and its clearance). It is
+    // `refused`, and charged nothing.
+    const neverAuthorized = tx.db
+      .prepare(`SELECT 1 FROM "execution_domains" WHERE "invocation" = ? AND "cgroup_path" IS NOT NULL AND "launch_binding" IS NULL`)
+      .get(receipt.id);
+    if (terminal === undefined && neverAuthorized && !seen.includes('launched')) terminal = 'refused';
     if (terminal === undefined) terminal = seen.includes('launched') ? 'ended' : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     if (seen.includes('launched') && terminal === 'refused') terminal = 'unknown';
     // How the backend ended, as the boundary established it (D2 §1.6, A.3).
