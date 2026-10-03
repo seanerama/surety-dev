@@ -59,13 +59,10 @@ import {
   installFixtureTrigger,
   installReuse,
   installScopeApproval,
-  installHostQualification,
   installAttempt,
   installTrustEntry,
-  parseHostQualification,
   parseAttemptFixture,
   parseEntryFixture,
-  type HostQualificationFixture,
   type AttemptFixture,
   type EntryFixture,
   parseAlphaException,
@@ -454,7 +451,6 @@ const OP = {
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
-  fixtureHostQualification: 'harness.fixture_host_qualification',
   fixtureAttempt: 'harness.fixture_attempt',
   fixtureTrustEntry: 'harness.fixture_trust_entry',
   listFaults: 'harness.list_faults',
@@ -700,15 +696,6 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         isObject(body) && body.point === 'tick_step' ? armTickFault(body) : isObject(body) && body.point === 'token_read' ? armMainFault(body) : await storeOp(OP.armFault, body),
     }));
   }
-  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'host-qualification') {
-    return route(201, async (body) => {
-      const parsed = parseHostQualification(body);
-      const rt = hooks.runtime();
-      const { writeWholeRecord } = await import('../records/files.js');
-      const evidence = await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(parsed.evidenceText) });
-      return storeOp(OP.fixtureHostQualification, { body: parsed, incarnation: rt.incarnation, evidence, actor: hooks.actor });
-    });
-  }
   // The "help" of a stand-in binary is its own file (SEAM.md §116).
   const helpOf = async (path: string): Promise<string> => {
     try {
@@ -777,8 +764,6 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installAlphaException(store(), a.actor, a.args as { finding: string; record: string; purpose: string });
     case OP.fixtureReuse:
       return installReuse(store(), a.actor, a.body);
-    case OP.fixtureHostQualification:
-      return installHostQualification(store(), a.actor, a as unknown as { body: HostQualificationFixture; incarnation: string; evidence: string });
     case OP.fixtureAttempt:
       return installAttempt(store(), a.actor, a as unknown as { body: AttemptFixture; helpSha256: string });
     case OP.fixtureTrustEntry:

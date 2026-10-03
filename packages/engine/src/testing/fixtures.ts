@@ -34,7 +34,7 @@ import type { DecisionRow } from '../store/transitions/decisions.js';
 import { answerQueued } from '../store/transitions/queue.js';
 import { TEMPLATES } from '../invoke/adapters/templates.js';
 import { proposeAttempt, proposeEntry } from '../store/transitions/qualification.js';
-import { type AttemptInput, type EntryInput, getEntry, recordHostQualification, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
+import { type AttemptInput, type EntryInput, getEntry, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from '../trust/host.js';
 
 // The label on every event a fixture causes (SEAM.md §10, §15).
@@ -328,57 +328,6 @@ export function installObservation(db: Database, actor: Actor, body: unknown) {
 
 const ATTEMPT_STATUSES = ['proposed', 'authorized', 'running', 'succeeded', 'failed', 'invalidated'];
 const REAL_BACKENDS = ['claude', 'codex'];
-
-export interface HostQualificationFixture {
-  mechanism_fingerprint: string;
-  kernel: string;
-  checks: unknown[];
-  probes: unknown[];
-  evidenceText: string;
-}
-
-export function parseHostQualification(body: unknown): HostQualificationFixture {
-  const b = objectBody(body ?? {}, ['mechanism_fingerprint', 'kernel', 'checks', 'probes', 'evidence']);
-  const opt = (field: string, fallback: string) => (b[field] === undefined ? fallback : str(b, field));
-  const list = (field: string) => {
-    if (b[field] === undefined) return [];
-    if (!Array.isArray(b[field])) throw invalid(field, 'must be an array');
-    return b[field] as unknown[];
-  };
-  return {
-    mechanism_fingerprint: opt('mechanism_fingerprint', 'fixture-mechanism-1'),
-    kernel: opt('kernel', 'fixture-kernel'),
-    checks: list('checks'),
-    probes: list('probes'),
-    evidenceText: opt('evidence', 'host qualification fixture'),
-  };
-}
-
-// POST /v1/harness/fixtures/host-qualification: this incarnation's host
-// qualification, as the checks of a start would write it (D2 §7.1). While
-// the bootstrap exception is in force it is written and never active.
-export function installHostQualification(db: Database, actor: Actor, args: { body: HostQualificationFixture; incarnation: string; evidence: string }) {
-  const host = hostIdentity();
-  if (host === null) throw new Refusal(409, 'host_unidentified', 'The host identity cannot be read.', 'Check /etc/machine-id.', {});
-  return transact(db, actor, (tx) => {
-    tx.stamp = FIXTURE_LABEL;
-    const row = recordHostQualification(
-      tx,
-      {
-        incarnation: args.incarnation,
-        host_id: host,
-        kernel: args.body.kernel,
-        tool_versions: { fixture: true },
-        mechanism_fingerprint: args.body.mechanism_fingerprint,
-        checks: args.body.checks,
-        probes: args.body.probes,
-        evidence: args.evidence,
-      },
-      FIXTURE_LABEL,
-    );
-    return { host_qualification: { id: row.id, status: row.status, bootstrap_exception: row.bootstrap_exception === 1 } };
-  });
-}
 
 interface Binary {
   path: string;
