@@ -630,8 +630,11 @@ export class Launcher {
     const usage = gate.lines.filter((l) => /"type"\s*:\s*"usage"/.test(l));
     gate.lines = gate.lines.filter((l) => !usage.includes(l));
     for (const line of usage) await this.callback(handle, line).catch((err) => log('callback', err, { run }));
+    // Without a re-grant, what the role sent during the pause is not acted
+    // on (its lease had expired), and its exit is left to the run's end.
     const dropGate = () => {
       gate.lines = [];
+      if (handle.gate === gate) handle.gate = null;
       gate.release();
     };
     if (facts.deadline_at !== null && nowMs() >= Date.parse(facts.deadline_at)) {

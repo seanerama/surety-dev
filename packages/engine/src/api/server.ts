@@ -724,6 +724,8 @@ async function engineInfo(state: EngineState) {
     // and where it comes from. The checks are not built in this engine
     // revision: each is not_exercised, never passed.
     host_qualification: trust?.host_qualification ?? null,
+    // D2 §3.1: the incarnation scope the engine runs in, null without one.
+    scope: state.scope,
     trust_entries: trust?.trust_entries ?? null,
     qualification_attempts: trust?.qualification_attempts ?? null,
   });

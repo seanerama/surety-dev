@@ -56,6 +56,9 @@ export interface EngineState {
   failed: StartupFailure | null;
   store: StoreClient | null;
   runtime: Runtime | null;
+  // The incarnation scope (D2 §3.1), or why there is none.
+  scope: { unit: string; path: string } | null;
+  scopeObserved: string | null;
 }
 
 export interface ServeOptions {
@@ -161,6 +164,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
     failed: null,
     store: null,
     runtime: null,
+    scope: scope.scope ? { unit: scope.scope.unit, path: scope.scope.path } : null,
+    scopeObserved: checksRun ? scope.observed : null,
   };
 
   let server: Server | null = null;
