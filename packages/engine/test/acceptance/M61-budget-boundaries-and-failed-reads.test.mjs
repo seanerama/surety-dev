@@ -164,6 +164,51 @@ describe('M61 budget boundaries', () => {
     assert.deepEqual({ invocations: totals.invocations, billable_in: totals.billable_in, out: totals.out, usage_incomplete: totals.usage_incomplete }, { invocations: 1, billable_in: 9000, out: 6000, usage_incomplete: 1 });
     assert.deepEqual(budget, { exhausted: [] });
   });
+
+  // M2 slice 2, B5 (E37 item 3, decided; SEAM.md §109): the write keeps failing.
+  test('a usage observation whose write keeps failing: the run is stopped as one whose budget cannot be read, its usage is marked incomplete and never shown as zero, and the work is parked behind a blocker that says so', async (t) => {
+    // The role sends one observation, well within every limit, and waits:
+    // what it used is unknowable to the engine while the write fails.
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const item = await addWork(fx.engine, project.id, 'verification');
+    fx.scripted.script(item, [script.hold('gate', { before: [step.usage({ input_tokens: 100, output_tokens: 50 })] })]);
+    await armFault(fx.engine, { point: 'before_event', event_type: 'invocation.usage', times: KEEPS_FAILING });
+    await tick(fx.engine, project.id);
+    await fx.scripted.waitForHolding({ work_item: item });
+
+    // The engine retries for the bounded time it retries a result's write
+    // (SEAM.md §61: within a minute it gives up), then stops the run. The
+    // wait is measured on the monotonic clock.
+    const deadline = performance.now() + 90_000;
+    let stopped = runsOf(fx.home, item)[0];
+    while (stopped.state !== 'ended' && performance.now() < deadline) {
+      await sleep(100);
+      stopped = runsOf(fx.home, item)[0];
+    }
+    assert.equal(stopped.state, 'ended', `the run is stopped although the observation could never be recorded (90 s after the role sent it the run is ${stopped.state})`);
+    assertRunEnded(fx.home, stopped.id, { outcome: 'stopped', reason_class: 'budget', workspace: 'retained', launched: true });
+    assert.equal((await fx.engine.get(`/v1/projects/${project.id}/runs/${stopped.id}`)).body?.run?.code, 'budget_exhausted', 'stopped as a run is when its budget cannot be read');
+    const [launch] = fx.scripted.launches({ run: stopped.id });
+    assert.equal(fx.scripted.isLive(launch), false, 'the role is gone: the run ended only after its termination was observed');
+
+    // What the role used is not known: nothing is in the ledger as zero.
+    assert.equal(countOf(fx.home, 'usage_observations', '"invocation" = ?', invocationOf(fx.home, stopped.id)), 0, 'no observation could be stored');
+    const charged = originalRowOf(fx.home, stopped.id);
+    assert.deepEqual({ billable_in: charged.billable_in, out: charged.out, usage_complete: charged.usage_complete, cost_status: charged.cost_status }, { billable_in: null, out: null, usage_complete: 0, cost_status: 'unknown' }, 'the usage is incomplete and unknown, not zero');
+    assert.equal(ledgerRows(fx.home, project.id).length, 1, 'one invocation, charged once');
+    const { totals } = await getLedger(fx.engine, project.id);
+    assert.deepEqual({ invocations: totals.invocations, billable_in: totals.billable_in, usage_incomplete: totals.usage_incomplete, unknown_cost_invocations: totals.unknown_cost_invocations }, { invocations: 1, billable_in: null, usage_incomplete: 1, unknown_cost_invocations: 1 });
+
+    // Parked behind a blocker whose reason says the budget could not be read; once the store answers, retry runs the work again.
+    const blocker = assertParkedFor(fx.home, item, 'budget_unreadable');
+    await clearFaults(fx.engine);
+    await answerDecision(fx.engine, project.id, blocker.id, 'retry');
+    fx.scripted.script(item, [script.hold('gate'), script.complete([step.usage({ input_tokens: 100, output_tokens: 50 })])]);
+    await tickUntil(fx.engine, project.id, () => workItem(fx.home, item).status === 'complete', { what: 'the retried work to complete once the store answers' });
+    assert.equal(runsOf(fx.home, item).length, 2, 'the stopped work ran once more, as a new invocation');
+    assert.deepEqual(originalRowOf(fx.home, stopped.id), charged, "the stopped run's charge is as it was");
+  });
 });
 
 describe('M61 a store that cannot be read or written fails closed', () => {
