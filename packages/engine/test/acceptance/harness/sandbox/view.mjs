@@ -76,10 +76,19 @@ export async function armedRole(fx, project, item, { before = [], acts = () => [
   const hostNs = hostNamespaces();
   const ending = thenHold ? [step.hold('done')] : result === false ? [] : [step.result({ ...VALID_RESULT, ...result })];
   const steps = [...before, step.hold('armed'), ...acts(acting(hostNs)), ...after, ...ending];
-  fx.scripted.script(item, [{ steps, on_term }]);
+  // The item's next launch follows this script, whichever launch of the item
+  // that is (a resumed item's second, say: objection 009); the holding role
+  // is that launch's, not an earlier one's.
+  const prior = fx.scripted.launches({ work_item: item }).length;
+  fx.scripted.script(item, Array.from({ length: prior + 1 }, () => ({ steps, on_term })));
   await tick(fx.engine, project);
+  await fx.scripted.waitForLaunch({ work_item: item }, { count: prior + 1 });
   const launch = await fx.scripted.waitForHolding({ work_item: item }, 'armed');
-  const run = await waitForRun(fx.home, item, { state: 'executing' });
+  assert.equal(launch.launch_index, prior, `the holding role is the item's launch ${prior + 1}`);
+  // The run of the launch that holds, not the item's first run: a resumed
+  // item's holding role is its latest run's (objection 009).
+  assert.ok(launch.run, `the holding launch names its run (${JSON.stringify(launch.request_keys)})`);
+  const run = await waitForRunState(fx.home, launch.run, 'executing');
   const domain = domainOf(fx.home, run.id);
   const member = await roleProcess(fx, domain, launch);
   assertContained(domain, member, `the role of ${item}`);

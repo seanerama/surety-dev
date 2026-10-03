@@ -7,7 +7,7 @@
 // what they read of the store is here.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { waitFor } from '../engine.mjs';
@@ -222,3 +222,28 @@ export function releaseScopeBarrier(home) {
 }
 
 export { runRow };
+
+// ---- the optional observer (D2 §3.9, A.3; E57; objection 006) ------------------------------
+
+// The observer's evidence envelopes in the store: `qualification_evidence`
+// records whose bytes are, or hold under `observer`, an object with D2 A.3's
+// `collector_version`. From slice 12 a qualified host and every validated
+// mount plan write `qualification_evidence` records that are not envelopes
+// (SEAM.md §§133, 138), so the kind alone says nothing. A record whose bytes
+// cannot be read or parsed is not shown to be no envelope: it fails the case.
+export function observerEnvelopes(home) {
+  const rows = withStore(home, (db) => db.prepare(`SELECT * FROM "records" WHERE "kind" = 'qualification_evidence' ORDER BY rowid`).all());
+  const found = [];
+  for (const row of rows) {
+    assert.ok(row.path !== null, `qualification_evidence record ${row.id} has its bytes (path null): what it holds is unknown`);
+    let doc;
+    try {
+      doc = JSON.parse(readFileSync(join(home, 'records', row.path), 'utf8'));
+    } catch (err) {
+      assert.fail(`qualification_evidence record ${row.id} cannot be read as JSON (${err.code ?? err.message}): what it holds is unknown`);
+    }
+    const isEnvelope = (v) => v !== null && typeof v === 'object' && 'collector_version' in v;
+    if (isEnvelope(doc) || isEnvelope(doc?.observer) || (Array.isArray(doc?.observer) && doc.observer.some(isEnvelope))) found.push(row.id);
+  }
+  return { records: rows.length, envelopes: found };
+}

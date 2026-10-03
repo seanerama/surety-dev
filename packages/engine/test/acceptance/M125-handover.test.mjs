@@ -37,7 +37,7 @@ import { readRun } from './harness/reads.mjs';
 import { holdSecret } from './harness/records.mjs';
 import { assertRunEnded, requestTick, resumeWork, runsOf, waitForRun, waitForRunState } from './harness/runs.mjs';
 import { domainOf, sandboxEngine } from './harness/sandbox/lane.mjs';
-import { members } from './harness/sandbox/procs.mjs';
+import { environFromMemory, members } from './harness/sandbox/procs.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -122,12 +122,34 @@ describe('M125 what is handed over', () => {
     // Host-read: every process of the domain that is not the backend.
     const engineSide = members(domain.cgroup_path).filter((p) => !p.cmdline.includes(standIn.path));
     assert.ok(engineSide.length >= 1, `the fixture is live: the init is a member of the domain (${members(domain.cgroup_path).map((p) => p.cmdline.join(' ')).join(' | ')})`);
+    // Objection 008: each environment is read from the host. Where
+    // /proc/<pid>/environ refuses the host (the domain init, non-dumpable so
+    // that the role cannot reach it through /proc: M117 (b)), the same bytes,
+    // the initial environment block, are read from the process's memory
+    // (environFromMemory: /proc/<pid>/stat's env_start and env_end, and
+    // process_vm_readv). Instrument control: for every member whose file the
+    // host can read, the two reads agree. A block read neither way fails the
+    // case: unknown is not absence.
+    let initRead = false;
     for (const p of engineSide) {
-      assert.ok(p.environ !== null, `host-read: /proc/${p.pid}/environ of ${p.cmdline.join(' ')} can be read (${p.environError}); unknown is not absence`);
-      const values = [...p.environ.values()];
-      for (const [name, value] of Object.entries(PARENT_ONLY)) assert.ok(!p.environ.has(name) && !values.includes(value), `${name} is not in the environment of ${p.cmdline.join(' ')}`);
-      assert.ok(!values.includes(KEY), `the secret is not in the environment of ${p.cmdline.join(' ')}`);
+      const what = p.cmdline.join(' ');
+      let env;
+      if (p.environ !== null) {
+        env = p.environ;
+        const viaMemory = environFromMemory(p.pid);
+        assert.deepEqual([...viaMemory.env.entries()], [...p.environ.entries()], `instrument control: ${what}'s environment read from its memory equals /proc/${p.pid}/environ`);
+      } else {
+        assert.equal(p.environError, 'EACCES', `host-read: /proc/${p.pid}/environ of ${what} is refused only by its mode (${p.environError})`);
+        env = environFromMemory(p.pid).env;
+        assert.ok(env.size > 0, `host-read from memory: ${what} has an environment block`);
+      }
+      if (what.includes('init.js init')) initRead = true;
+      const values = [...env.values()];
+      for (const [name, value] of Object.entries(PARENT_ONLY)) assert.ok(!env.has(name) && !values.some((v) => v.includes(value)), `${name} is not in the environment of ${what}`);
+      assert.ok(!values.some((v) => v.includes(KEY)), `the secret is not in the environment of ${what}`);
+      assert.ok(!values.some((v) => v.includes(fx.engine.token())), `the API token is not in the environment of ${what}`);
     }
+    assert.ok(initRead, `the domain init's environment was among those read (members: ${engineSide.map((p) => p.cmdline.join(' ')).join(' | ')})`);
     standIn.release();
     await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
   });

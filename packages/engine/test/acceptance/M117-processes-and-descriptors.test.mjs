@@ -20,20 +20,24 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { addProject, addWork, assertRunEnded, runsOf, tick, waitForWork } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
+import { fileAt } from './harness/repos.mjs';
+import { addProject, addWork, assertRunEnded, tick, waitForRun, waitForWork } from './harness/runs.mjs';
 import { cgroupOfPid } from './harness/sandbox/cgroup.mjs';
 import { domainOf, roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { hostSentinel } from './harness/sandbox/sentinel.mjs';
 import { hostPidNamespace, pidNamespaceOf, script, step } from './harness/scripted.mjs';
 
-// One scripted verification run through to completion, with the probe
-// actions given; returns the run and the probe entries by action.
-async function probedRun(fx, project, actions) {
-  const item = await addWork(fx.engine, project, 'verification');
+// One scripted run through to completion, with the probe actions given; a
+// verification by default, or (case (c), objection 010) a Builder's `fix`,
+// whose workspace write is committed; returns the run and the probe entries
+// by action.
+async function probedRun(fx, project, actions, { kind = 'verification' } = {}) {
+  const item = await addWork(fx.engine, project, kind);
   fx.scripted.script(item, [script.complete(actions)]);
   await tick(fx.engine, project);
-  await waitForWork(fx.home, item, 'complete');
-  const [run] = runsOf(fx.home, item);
+  if (kind === 'verification') await waitForWork(fx.home, item, 'complete');
+  const run = await waitForRun(fx.home, item, { state: 'ended' });
   assertRunEnded(fx.home, run.id, { outcome: 'completed', reason_class: 'none', launched: true, recovery: false });
   const [launch] = fx.scripted.launches({ run: run.id });
   const probes = Object.fromEntries(fx.scripted.probes(launch.invocation).map((p) => [p.action, p]));
@@ -93,14 +97,20 @@ describe("M117 the role's view of processes and descriptors", () => {
   });
 
   test('(c) P14: after exec the role has CapEff 0, NoNewPrivs 1, uid 1000, no descriptor of anyone else beyond 0 to 2, and mount is refused; control: it writes and reads its workspace', async (t) => {
+    // Objection 010: from slice 12 a role's workspace writes are
+    // materialized and snapshotted (SEAM.md §135), and a Verifier may change
+    // only the protected set, so the control's workspace write is a Builder's
+    // (a `fix`), on a project whose integration branch is checked out
+    // nowhere; the control is then also that the write was committed.
     const fx = await sandboxEngine(t);
-    const project = (await addProject(fx)).id;
-    const { probes } = await probedRun(fx, project, [
-      step.probe('self_status'),
-      step.write('p14.txt', 'written by the role'),
-      step.probe('read_back', { path: 'p14.txt' }),
-      step.probe('mount_attempt', { target: 'p14-mount' }),
-    ]);
+    const repoProject = await addGitProject(fx);
+    const project = repoProject.id;
+    const { probes } = await probedRun(
+      fx,
+      project,
+      [step.probe('self_status'), step.write('p14.txt', 'written by the role'), step.probe('read_back', { path: 'p14.txt' }), step.probe('mount_attempt', { target: 'p14-mount' })],
+      { kind: 'fix' },
+    );
     const s = probes.self_status;
     assert.match(s.cap_eff, /^0+$/, `CapEff is all zero (${s.cap_eff})`);
     assert.equal(s.no_new_privs, '1', 'NoNewPrivs is 1');
@@ -122,5 +132,6 @@ describe("M117 the role's view of processes and descriptors", () => {
     assert.equal(m.mounted, false, 'nothing was mounted');
     assert.equal(probes.read_back.outcome, 'read', 'control: the role writes its workspace');
     assert.equal(probes.read_back.content, 'written by the role');
+    assert.equal(fileAt(repoProject.repo.path, repoProject.repo.ref, 'p14.txt'), 'written by the role', 'control, host-read: the Builder\'s workspace write was committed to the integration branch');
   });
 });
