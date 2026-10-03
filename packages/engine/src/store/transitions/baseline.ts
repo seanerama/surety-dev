@@ -8,7 +8,7 @@
 // and no reuse assessment; nothing here qualifies one.
 
 import { Refusal } from '../../refusal.js';
-import { notFound } from './common.js';
+import { canonical, notFound, sha256 } from './common.js';
 import { getCandidate, markStale } from './evidence.js';
 import { getProposal, mustEffective } from './protected.js';
 import type { Tx } from './tx.js';
@@ -38,6 +38,19 @@ export function ensureRequirements(tx: Tx, args: { project: string; keys: string
     out.push({ id, key });
   }
   return out;
+}
+
+// The identity of a project's approved spec as M1 holds it (build spec §3:
+// the baseline is a fixture; there is no spec revision row): a hash over its
+// requirements, each by key with its text reference, phase and status. What
+// a protected correction's preview binds as `spec_revision` (D1 A.8; Review
+// B12 "approved spec"; row M53): a requirement added, removed or changed
+// between the preview and the answer is a changed dependency.
+export function specRevision(db: Tx['db'], projectId: string): string {
+  const rows = db
+    .prepare('SELECT "key", "text_ref", "assigned_phase", "status" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
+    .all(projectId) as { key: string; text_ref: string; assigned_phase: number | null; status: string }[];
+  return sha256(canonical(rows.map((r) => [r.key, r.text_ref, r.assigned_phase, r.status])));
 }
 
 export function requirementIds(tx: Tx, projectId: string, keys: string[], field: string): string[] {

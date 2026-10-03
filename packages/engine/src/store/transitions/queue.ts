@@ -12,6 +12,7 @@
 import { wideningKeys } from '../../config/project-policy.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
+import { specRevision } from './baseline.js';
 import { canonical, illegal, notFound, parseJson, sha256 } from './common.js';
 import type { CommandResult, Effect } from './control.js';
 import {
@@ -712,7 +713,9 @@ function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): Record<s
     // of a record that is still pending is not (SEAM.md §77).
     evidence: { rationale: p.rationale, quarantined: rationale?.post_scan === 'hit', missing: rationale ? rationale.missing_at !== null : null },
     effective_protected_version: effectiveVersion(tx.db, p.project)?.id ?? null,
-    spec_revision: null,
+    // The approved spec the correction is judged against (Review B12; row
+    // M53): a changed requirement is a changed dependency.
+    spec_revision: specRevision(tx.db, p.project),
     scope_approval: scopeApproval?.id ?? null,
     policy_revision: policyRevisionId(tx.db, p.project),
   };
