@@ -46,7 +46,7 @@ export async function startEgress(rt: Runtime, args: EgressArgs): Promise<Domain
     resolver: activeResolver(),
     echo: args.profile === 'probe' ? echoEndpoint : null,
     onRefused: (r) => {
-      void rt.engine('domain.egress_refused', { domain: args.domain, authority: r.authority, reason: r.reason, detail: r.detail }).catch((err) => log('egress refusal', err, { domain: args.domain }));
+      void rt.engine('domain.egress_refused', { domain: args.domain, authority: r.authority, reason: r.reason }).catch((err) => log('egress refusal', err, { domain: args.domain }));
     },
     ...(args.onLogBound ? { onLogBound: args.onLogBound } : {}),
   });
@@ -60,7 +60,7 @@ export async function startEgress(rt: Runtime, args: EgressArgs): Promise<Domain
 export async function finishEgress(rt: Runtime, proxy: DomainProxy, owner: { project: string | null; run: string | null }): Promise<string | null> {
   await proxy.close();
   try {
-    return await writeWholeRecord(rt, { project: owner.project, run: owner.run, kind: 'egress_log', content: Buffer.from(JSON.stringify(proxy.record(), null, 2)) });
+    return await writeWholeRecord(rt, { project: owner.project, run: owner.run, kind: 'egress_log', content: Buffer.from(proxy.recordText()) });
   } catch (err) {
     log('egress log', err, { domain: proxy.opts.domain });
     return null;

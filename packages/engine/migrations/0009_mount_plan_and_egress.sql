@@ -3,8 +3,10 @@
 -- domain before the launcher starts, so that the role's mount table can be
 -- compared with it entry by entry, and its fingerprint shown on the run read.
 
--- The plan's fingerprint (sandbox/mounts.ts: its structure with the domain's
--- own paths taken out) and the plan's mounts in order, JSON
--- `[{target, type, source, ro}]`.
+-- The plan's fingerprint (its entries with the domain's own paths taken
+-- out), its entries in mount order, JSON `[{target, kind, source, options}]`,
+-- and the `qualification_evidence` record it was published as (SEAM.md
+-- §133).
 ALTER TABLE execution_domains ADD COLUMN plan_fingerprint TEXT;
 ALTER TABLE execution_domains ADD COLUMN mount_plan TEXT;
+ALTER TABLE execution_domains ADD COLUMN mount_plan_record TEXT REFERENCES records(id);

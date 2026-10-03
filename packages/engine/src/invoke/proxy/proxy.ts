@@ -63,29 +63,26 @@ export interface ProxyOptions {
   resolver: Resolver;
   // The echo endpoint, under the `probe` profile only.
   echo: EchoEndpoint | null;
-  onRefused?: (r: { authority: string; reason: string; detail: Record<string, unknown> }) => void;
+  onRefused?: (r: { authority: string; reason: string }) => void;
   onLogBound?: () => void;
 }
 
-export type EgressOutcome = 'accepted' | 'refused';
-
+// One line of the domain's `egress_log` record (SEAM.md §140), one per
+// CONNECT in the order received.
 export interface EgressEntry {
-  seq: number;
-  opened_at: string;
   authority: string;
-  host: string | null;
-  port: number | null;
-  outcome: EgressOutcome;
-  status: number;
-  reason: string | null;
-  // The limit's value when a limit refused or closed the tunnel.
-  figure: number | null;
-  resolved: string[] | null;
+  // `refused` when no connection was attempted, `accepted` when the proxy
+  // attempted one.
+  decision: 'accepted' | 'refused';
+  reason: null | 'not_listed' | 'port' | 'address_policy' | 'resolve_failed' | 'resolve_timeout' | 'tunnels_max' | 'bad_request';
+  resolved: string[];
   address: string | null;
+  opened_at: string;
+  closed_at: string | null;
   bytes_up: number;
   bytes_down: number;
-  closed_at: string | null;
-  close_reason: string | null;
+  ended: 'refused' | 'closed' | 'resolve_timeout' | 'connect_timeout' | 'connect_failed' | 'tunnel_max_seconds' | 'buffer_max' | 'run_ended' | null;
+  limit: null | { key: string; value: number };
 }
 
 export const EGRESS_SOCKET_NAME = 'egress.sock';
@@ -112,7 +109,7 @@ export function parseAuthority(text: string): { host: string; port: number } | n
   return { host, port };
 }
 
-const STATUS_TEXT: Record<number, string> = { 200: 'Connection established', 400: 'Bad Request', 403: 'Forbidden', 405: 'Method Not Allowed', 502: 'Bad Gateway', 504: 'Gateway Timeout' };
+const STATUS_TEXT: Record<number, string> = { 200: 'Connection established', 400: 'Bad Request', 403: 'Forbidden', 405: 'Method Not Allowed', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout' };
 
 export class DomainProxy {
   readonly socketPath: string;
@@ -123,6 +120,8 @@ export class DomainProxy {
   private seq = 0;
   private server: net.Server | null = null;
   private readonly open = new Set<Duplex>();
+  // How to end each open tunnel when the domain's egress ends.
+  private readonly tunnels = new Set<() => void>();
   private closing = false;
   private readonly host = hostAddresses();
   private boundCalled = false;
@@ -154,6 +153,7 @@ export class DomainProxy {
   // No more connections; every tunnel closed; the socket removed.
   async close(): Promise<void> {
     this.closing = true;
+    for (const stop of [...this.tunnels]) stop();
     for (const s of this.open) s.destroy();
     const server = this.server;
     this.server = null;
@@ -161,26 +161,23 @@ export class DomainProxy {
     rmSync(this.socketPath, { force: true });
   }
 
-  // The `egress_log` record's content (D2 §2.4): within its bound.
-  record(): Record<string, unknown> {
-    return {
-      domain: this.opts.domain,
-      run: this.opts.run,
-      invocation: this.opts.invocation,
-      profile: this.opts.profile,
-      allow: this.opts.allow,
-      limits: {
-        egress_resolve_timeout: this.opts.limits.resolveTimeoutMs / 1000,
-        egress_connect_timeout: this.opts.limits.connectTimeoutMs / 1000,
-        egress_tunnel_max_seconds: this.opts.limits.tunnelMaxMs / 1000,
-        egress_tunnels_max: this.opts.limits.tunnelsMax,
-        egress_buffer_max_bytes: this.opts.limits.bufferMaxBytes,
-        egress_log_max_bytes: this.opts.limits.logMaxBytes,
-      },
-      truncated: this.truncated,
-      complete: !this.truncated,
-      connections: this.entries,
-    };
+  // The `egress_log` record's bytes (D2 §2.4; SEAM.md §140): JSON lines in
+  // the order received, at most `egress_log_max_bytes`, then the truncation
+  // marker if the log reached its bound.
+  recordText(): string {
+    const max = this.opts.limits.logMaxBytes;
+    let out = '';
+    let cut = this.truncated;
+    for (const e of this.entries) {
+      const line = `${JSON.stringify(e)}\n`;
+      if (Buffer.byteLength(out) + Buffer.byteLength(line) > max) {
+        cut = true;
+        break;
+      }
+      out += line;
+    }
+    if (cut) out += `${JSON.stringify({ truncated: true, limit: 'egress_log_max_bytes', value: max })}\n`;
+    return out;
   }
 
   // Room in the log for one more entry; false (and the log truncated, the
@@ -220,7 +217,7 @@ export class DomainProxy {
         if (head.length > HEADER_MAX) {
           clearTimeout(timer);
           client.off('data', onData);
-          this.refuse(client, this.entry('(unparsed)'), 400, 'bad_request', null, {});
+          this.refuse(client, this.entry('(unparsed)'), 400, 'bad_request');
         }
         return;
       }
@@ -233,34 +230,30 @@ export class DomainProxy {
   }
 
   private entry(authority: string): EgressEntry {
-    return {
-      seq: ++this.seq,
-      opened_at: new Date().toISOString(),
-      authority,
-      host: null,
-      port: null,
-      outcome: 'refused',
-      status: 0,
-      reason: null,
-      figure: null,
-      resolved: null,
-      address: null,
-      bytes_up: 0,
-      bytes_down: 0,
-      closed_at: null,
-      close_reason: null,
-    };
+    return { authority, decision: 'refused', reason: null, resolved: [], address: null, opened_at: new Date().toISOString(), closed_at: null, bytes_up: 0, bytes_down: 0, ended: null, limit: null };
   }
 
-  private refuse(client: net.Socket, e: EgressEntry, status: number, reason: string, figure: number | null, detail: Record<string, unknown>): void {
-    e.outcome = 'refused';
-    e.status = status;
+  private refuse(client: net.Socket, e: EgressEntry, status: number, reason: NonNullable<EgressEntry['reason']>, limit: EgressEntry['limit'] = null, ended: EgressEntry['ended'] = 'refused'): void {
+    e.decision = 'refused';
     e.reason = reason;
-    e.figure = figure;
+    e.limit = limit;
+    e.ended = ended;
     e.closed_at = new Date().toISOString();
-    e.close_reason = reason;
-    const logged = this.admit(e);
-    if (logged) this.opts.onRefused?.({ authority: e.authority, reason, detail: { status, ...(figure === null ? {} : { figure }), ...detail } });
+    if (this.admit(e)) this.opts.onRefused?.({ authority: e.authority, reason });
+    this.answer(client, status);
+  }
+
+  // The attempt was made and failed (a limit or the connection itself).
+  private failed(client: net.Socket, e: EgressEntry, status: number, ended: EgressEntry['ended'], limit: EgressEntry['limit'] = null): void {
+    e.decision = 'accepted';
+    e.ended = ended;
+    e.limit = limit;
+    e.closed_at = new Date().toISOString();
+    this.admit(e);
+    this.answer(client, status);
+  }
+
+  private answer(client: net.Socket, status: number): void {
     try {
       client.end(`HTTP/1.1 ${status} ${STATUS_TEXT[status] ?? 'Refused'}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
     } catch {
@@ -275,72 +268,73 @@ export class DomainProxy {
     const e = this.entry(authorityText);
     // The log's bound reached: nothing more is logged, so nothing more passes.
     if (this.truncated) {
-      this.refuse(client, e, 403, 'egress_log_max_bytes', this.opts.limits.logMaxBytes, {});
+      this.answer(client, 503);
       return;
     }
-    if (parts.length !== 3 || !/^HTTP\/1\.[01]$/.test(parts[2]!)) {
-      this.refuse(client, e, 400, 'bad_request', null, {});
-      return;
-    }
-    if (parts[0] !== 'CONNECT') {
-      this.refuse(client, e, 405, 'not_connect', null, { method: parts[0] });
+    if (parts.length !== 3 || !/^HTTP\/1\.[01]$/.test(parts[2]!) || parts[0] !== 'CONNECT') {
+      this.refuse(client, e, parts[0] !== 'CONNECT' && parts.length === 3 ? 405 : 400, 'bad_request');
       return;
     }
     const authority = parseAuthority(authorityText);
     if (authority === null) {
-      this.refuse(client, e, 400, 'bad_authority', null, {});
+      this.refuse(client, e, 400, 'bad_request');
       return;
     }
-    e.host = authority.host;
-    e.port = authority.port;
-    if (this.active >= this.opts.limits.tunnelsMax) {
-      this.refuse(client, e, 403, 'egress_tunnels_max', this.opts.limits.tunnelsMax, {});
-      return;
-    }
-    // The engine's echo endpoint: the `probe` profile alone.
-    if (authority.host === ECHO_HOST) {
-      if (this.opts.echo === null || authority.port !== ECHO_PORT) {
-        this.refuse(client, e, 403, 'echo_probe_only', null, { profile: this.opts.profile });
+    // The engine's echo endpoint: listed in the `probe` profile alone, never
+    // resolved.
+    const echo = authority.host === ECHO_HOST && authority.port === ECHO_PORT && this.opts.echo !== null;
+    if (!echo) {
+      if (!this.opts.allow.includes(authority.host)) {
+        this.refuse(client, e, 403, 'not_listed');
         return;
       }
+      if (authority.port !== 443) {
+        this.refuse(client, e, 403, 'port');
+        return;
+      }
+    }
+    if (this.active >= this.opts.limits.tunnelsMax) {
+      this.refuse(client, e, 503, 'tunnels_max', { key: 'egress_tunnels_max', value: this.opts.limits.tunnelsMax });
+      return;
+    }
+    if (echo) {
       const [near, far] = duplexPair();
-      this.opts.echo.serve(far, { domain: this.opts.domain, run: this.opts.run });
-      e.address = 'echo';
+      this.opts.echo!.serve(far, { domain: this.opts.domain, run: this.opts.run });
       this.tunnel(client, near, e, rest);
-      return;
-    }
-    if (authority.port !== 443) {
-      this.refuse(client, e, 403, 'port_not_443', null, {});
-      return;
-    }
-    if (!this.opts.allow.includes(authority.host)) {
-      this.refuse(client, e, 403, 'not_listed', null, {});
       return;
     }
     // One resolution for this attempt; the connection goes to an address of
     // this answer and the name is never resolved again for it.
-    const answer = await resolveOnce(this.opts.resolver, authority.host, this.opts.limits.resolveTimeoutMs);
+    this.active++;
+    let answer: Awaited<ReturnType<typeof resolveOnce>>;
+    try {
+      answer = await resolveOnce(this.opts.resolver, authority.host, this.opts.limits.resolveTimeoutMs);
+    } finally {
+      this.active--;
+    }
     if (answer.state === 'timeout') {
-      this.refuse(client, e, 504, 'egress_resolve_timeout', this.opts.limits.resolveTimeoutMs / 1000, {});
+      this.refuse(client, e, 504, 'resolve_timeout', { key: 'egress_resolve_timeout', value: this.opts.limits.resolveTimeoutMs / 1000 }, 'resolve_timeout');
       return;
     }
     if (answer.state === 'failed') {
-      this.refuse(client, e, 502, 'resolve_failed', null, { error: answer.detail });
+      this.refuse(client, e, 502, 'resolve_failed');
       return;
     }
     e.resolved = answer.addresses;
     const verdict = answerVerdict(answer.addresses, this.host);
     if (!verdict.ok) {
-      this.refuse(client, e, 403, `address_${verdict.reason}`, null, { resolved: answer.addresses, address: verdict.address });
+      this.refuse(client, e, 403, 'address_policy');
+      return;
+    }
+    if (this.closing) {
+      this.answer(client, 503);
       return;
     }
     const address = answer.addresses[0]!;
     e.address = address;
-    if (this.closing) {
-      this.refuse(client, e, 403, 'domain_ending', null, {});
-      return;
-    }
+    this.active++;
     const remote = net.connect({ host: address, port: authority.port });
+    this.open.add(remote);
     const outcome = await new Promise<'connected' | 'timeout' | string>((resolve) => {
       const t = setTimeout(() => resolve('timeout'), this.opts.limits.connectTimeoutMs);
       remote.once('connect', () => {
@@ -352,61 +346,63 @@ export class DomainProxy {
         resolve((err as NodeJS.ErrnoException).code ?? 'error');
       });
     });
+    this.active--;
     if (outcome !== 'connected') {
       remote.destroy();
-      if (outcome === 'timeout') this.refuse(client, e, 504, 'egress_connect_timeout', this.opts.limits.connectTimeoutMs / 1000, { address });
-      else this.refuse(client, e, 502, 'connect_failed', null, { address, error: outcome });
+      this.open.delete(remote);
+      if (outcome === 'timeout') this.failed(client, e, 504, 'connect_timeout', { key: 'egress_connect_timeout', value: this.opts.limits.connectTimeoutMs / 1000 });
+      else this.failed(client, e, 502, 'connect_failed');
       return;
     }
     this.tunnel(client, remote, e, rest);
   }
 
   // A tunnel: `200`, then bytes both ways, unchanged, within the per-tunnel
-  // limits.
+  // limits; a limit ends the tunnel, never the run.
   private tunnel(client: net.Socket, remote: Duplex, e: EgressEntry, rest: Buffer): void {
-    e.outcome = 'accepted';
-    e.status = 200;
+    e.decision = 'accepted';
     if (!this.admit(e)) {
       remote.destroy();
-      this.refuse(client, { ...e }, 403, 'egress_log_max_bytes', this.opts.limits.logMaxBytes, {});
+      this.answer(client, 503);
       return;
     }
     this.active++;
     this.open.add(remote);
-    const started = performance.now();
     let closed = false;
-    const close = (reason: string, figure: number | null = null) => {
+    const close = (ended: NonNullable<EgressEntry['ended']>, limit: EgressEntry['limit'] = null) => {
       if (closed) return;
       closed = true;
       this.active--;
       clearTimeout(lifetime);
       e.closed_at = new Date().toISOString();
-      e.close_reason = reason;
-      if (figure !== null) e.figure = figure;
-      if (reason === 'egress_tunnel_max_seconds' || reason === 'egress_buffer_max_bytes') e.reason = reason;
+      e.ended = this.closing && ended === 'closed' ? 'run_ended' : ended;
+      if (limit) e.limit = limit;
       client.destroy();
       remote.destroy();
       this.open.delete(remote);
-      void started;
+      this.tunnels.delete(stop);
     };
-    const lifetime = setTimeout(() => close('egress_tunnel_max_seconds', this.opts.limits.tunnelMaxMs / 1000), this.opts.limits.tunnelMaxMs);
+    const stop = () => close('run_ended');
+    this.tunnels.add(stop);
+    const lifetime = setTimeout(() => close('tunnel_max_seconds', { key: 'egress_tunnel_max_seconds', value: this.opts.limits.tunnelMaxMs / 1000 }), this.opts.limits.tunnelMaxMs);
     const max = this.opts.limits.bufferMaxBytes;
+    const buffer = { key: 'egress_buffer_max_bytes', value: max };
     client.on('data', (chunk: Buffer) => {
       e.bytes_up += chunk.length;
       remote.write(chunk);
-      if (remote.writableLength > max) close('egress_buffer_max_bytes', max);
+      if (remote.writableLength > max) close('buffer_max', buffer);
     });
     remote.on('data', (chunk: Buffer) => {
       e.bytes_down += chunk.length;
       client.write(chunk);
-      if (client.writableLength > max) close('egress_buffer_max_bytes', max);
+      if (client.writableLength > max) close('buffer_max', buffer);
     });
     client.on('end', () => remote.end());
     remote.on('end', () => client.end());
-    client.on('close', () => close('client_closed'));
-    remote.on('close', () => close('remote_closed'));
-    remote.on('error', () => close('remote_error'));
-    client.on('error', () => close('client_error'));
+    client.on('close', () => close('closed'));
+    remote.on('close', () => close('closed'));
+    remote.on('error', () => close('closed'));
+    client.on('error', () => close('closed'));
     client.write('HTTP/1.1 200 Connection established\r\n\r\n');
     if (rest.length > 0) {
       e.bytes_up += rest.length;

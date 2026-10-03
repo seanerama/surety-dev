@@ -7,8 +7,10 @@
 // backend's argument array, its constructed environment, its working
 // directory, its standard input and the egress forwarder.
 
-import { lstatSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+
+import { recordsDir, writeWholeRecord } from '../../records/files.js';
 
 import { createDomainCgroup } from '../../boundary/cgroup.js';
 import { workspaceLink } from '../../git/worktree.js';
@@ -21,8 +23,8 @@ import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
 import { type ContextFacts, writeContextPackage } from './context.js';
 import { seedGitView } from './gitview.js';
-import { EGRESS_SOCKET, type Plan, buildPlan, planFingerprint, plannedMounts } from './mounts.js';
-import { type ResolvedTools, engineNode, initNodeCopy, resolveSandboxTools } from './tools.js';
+import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
+import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
 
 let tools: ResolvedTools | null = null;
 
@@ -98,7 +100,19 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const area = domainArea(rt.home, claim.domain);
   for (const d of ['root', 'vol', 'context', 'git']) mkdirSync(join(area, d), { recursive: true, mode: 0o700 });
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
-  writeContextPackage(join(area, 'context'), claim, facts, { probe: claim.profile === 'probe' });
+  const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+  writeContextPackage(join(area, 'context'), claim, facts, {
+    probe: claim.profile === 'probe',
+    readRecord: (id) => {
+      const path = recordPaths.get(id);
+      if (!path) return null;
+      try {
+        return readFileSync(join(recordsDir(rt.home), basename(path)));
+      } catch {
+        return null;
+      }
+    },
+  });
 
   // The cgroup, only while the launch is not closed (D2 §3.2). The read and
   // the creation are one step of the main thread: nothing that could close
@@ -161,7 +175,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       shmBytes: Math.min(writable, 64 * 1024 * 1024),
       tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv },
       node: engineNode(),
-      initNodeCopy: copy,
+      initNodeCopy: await initNodeIn(area, copy),
       initScript: INIT_SCRIPT,
       git,
       // The Verifier writes the protected set, as proposals (D1 §7.3).
@@ -169,9 +183,18 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       egressSocket: egress.socketPath,
       holdVolatile: true,
     });
-    // The validated plan has the authority (D2 §2.3; A.6 P12): recorded on
-    // the domain before the launcher starts.
-    await rt.engine('domain.plan', { domain: claim.domain, fingerprint: planFingerprint(plan), mounts: plannedMounts(plan) });
+    // The validated plan has the authority (D2 §2.3; A.6 P12): published as
+    // a qualification_evidence record of the run and recorded on the domain
+    // before the launcher starts (SEAM.md §133).
+    const entries = planEntries(plan);
+    const fingerprint = entriesFingerprint(entries, { area, workspace });
+    const record = await writeWholeRecord(rt, {
+      project: claim.project,
+      run: claim.run,
+      kind: 'qualification_evidence',
+      content: Buffer.from(JSON.stringify({ profile: claim.profile, fingerprint, domain: claim.domain, entries }, null, 2)),
+    });
+    await rt.engine('domain.plan', { domain: claim.domain, fingerprint, mounts: entries, record });
   } catch (err) {
     handle.egress = null;
     await finishEgress(rt, egress, { project: claim.project, run: claim.run }).catch((e) => log('egress', e, { run: claim.run }));

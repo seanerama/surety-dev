@@ -59,7 +59,7 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-home-fstype' ||
     flag === '--harness-host-checks' ||
     flag === '--harness-host-check' ||
-    flag === '--harness-probe-override'
+    flag === '--harness-isolation-probe'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -79,7 +79,7 @@ for (let i = 0; i < args.length; i++) {
       hostChecksMode = value;
     } else if (flag === '--harness-host-check') {
       hostCheckValues.push(value);
-    } else if (flag === '--harness-probe-override') {
+    } else if (flag === '--harness-isolation-probe') {
       // A probe of the start-up suite made to miss its target, fail its
       // control, leave its negative unattempted or not run (M2 plan §2.3).
       probeOverrideValues.push(value);

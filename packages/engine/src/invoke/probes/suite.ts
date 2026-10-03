@@ -52,18 +52,24 @@ type Obj = Record<string, unknown>;
 
 export const PROBES = Array.from({ length: 20 }, (_, i) => `P${i + 1}`);
 
+// A probe's result (SEAM.md §138): the row's keys, and in the evidence its
+// detail and what its negative met, in words.
 export interface ProbeResult {
   id: string;
   target_seeded: boolean;
-  // What the negative attempt met, in words; null when it was not attempted.
-  negative: string | null;
+  negative: 'denied' | 'allowed' | 'not_attempted' | null;
   // Whether the control succeeded; null when it did not run.
   control: boolean | null;
   result: 'passed' | 'failed' | 'not_exercised';
+  reason: string | null;
   detail: string;
-  // A host class that excuses a probe that could not run (P11 off WSL2).
+  observed: string | null;
+  // A host class that excuses a probe that could not run (P11 off WSL2; P20
+  // in slice 12).
   excused?: string;
 }
+
+export const probeRow = (p: ProbeResult) => ({ id: p.id, target_seeded: p.target_seeded, negative: p.negative, control: p.control, result: p.result, reason: p.reason });
 
 export interface SuiteOutcome {
   probes: ProbeResult[];
@@ -119,7 +125,7 @@ function counters(path: string): { oom_kill: number | null; pids_max: number | n
 
 // From the host: process 1 of the sandbox is in a pid namespace other than
 // the engine's (its NSpid has two levels) before the program may start.
-function containedFromHost(launcherPid: number): string | null {
+function containedFromHost(launcherPid: number, cgroup: string): string | null {
   let kids: number[];
   try {
     kids = readFileSync(`/proc/${launcherPid}/task/${launcherPid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number);
@@ -134,6 +140,7 @@ function containedFromHost(launcherPid: number): string | null {
     const ids = line ? line.slice(6).trim().split(/\s+/) : [];
     if (ids.length < 2 || ids.at(-1) !== '1') return `the init's NSpid is ${ids.join(' ') || 'unreadable'}`;
     if (readlinkSync(`/proc/${kids[0]}/ns/pid`) === readlinkSync('/proc/self/ns/pid')) return "the init is in the engine's pid namespace";
+    if (!(readProcs(cgroup) ?? []).includes(kids[0]!)) return `the init is not a member of ${cgroup}`;
   } catch {
     return "the init's pid namespace cannot be read";
   }
@@ -198,7 +205,7 @@ async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy
       // The engine's half of the guard: nothing of the program starts unless
       // the host sees process 1 of the sandbox in a pid namespace of its own.
       barrier: async () => {
-        const why = containedFromHost(launch.pid);
+        const why = containedFromHost(launch.pid, cgroup);
         if (why !== null) {
           box.hostRefusal = why;
           launch.closed = true;
@@ -324,21 +331,16 @@ interface Ctx {
 function verdict(ctx: Ctx, id: string, r: { seeded: boolean; negative: string | null; held: boolean; control: boolean | null; detail: string }): ProbeResult {
   const o = ctx.overrides[id];
   const seeded = o === 'target_absent' ? false : r.seeded;
-  const control = o === 'control_fails' ? false : r.control;
-  const negative = o === 'negative_unattempted' ? null : r.negative;
-  const passed = seeded && negative !== null && r.held && control === true;
-  const why = !seeded ? 'its target was not seeded' : negative === null ? 'its negative was not attempted' : !r.held ? 'its negative was not denied as expected' : control !== true ? 'its control did not succeed' : null;
-  return {
-    id,
-    target_seeded: seeded,
-    negative,
-    control,
-    result: passed ? 'passed' : 'failed',
-    detail: `${r.detail}${why ? `; failed: ${why}` : ''}${o ? ` (harness override: ${o})` : ''}`,
-  };
+  const control = o === 'control_failing' ? false : r.control;
+  const observed = o === 'negative_unattempted' ? null : r.negative;
+  const negative = observed === null ? 'not_attempted' : r.held ? 'denied' : 'allowed';
+  const passed = seeded && negative === 'denied' && control === true;
+  const why = !seeded ? 'its target was not seeded or not verified from the host' : negative === 'not_attempted' ? 'its negative was not attempted' : negative === 'allowed' ? 'its negative was not denied as expected' : control !== true ? 'its control did not succeed' : null;
+  const note = o ? ` (harness override: ${o})` : '';
+  return { id, target_seeded: seeded, negative, control, result: passed ? 'passed' : 'failed', reason: why === null ? null : `${why}${note}`, detail: `${r.detail}${note}`, observed };
 }
 
-const notRun = (id: string, why: string, excused?: string): ProbeResult => ({ id, target_seeded: false, negative: null, control: null, result: 'not_exercised', detail: why, ...(excused ? { excused } : {}) });
+const notRun = (id: string, why: string, excused?: string): ProbeResult => ({ id, target_seeded: false, negative: null, control: null, result: 'not_exercised', reason: why, detail: why, observed: null, ...(excused ? { excused } : {}) });
 
 const DENIED_ABSENT = ['ENOENT', 'ENOTDIR'];
 
@@ -691,30 +693,8 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     : null;
   if (p16Box) opened.push(p16Box);
 
-  // ---- P20: each limit in its own small domain ----
-  const p20Pids = run('P20')
-    ? await openBox(rt, scope, tools, initCopy, { label: 'p20-pids', fixture: null, memoryMax: big, tasksMax: 64, volBytes: 1024 * 1024, volInodes: 256, egress: null, context: () => {}, actions: [{ id: 'p20fork', kind: 'exec', argv: ['/usr/bin/true'] }, ...(neg('P20') ? [{ id: 'p20pids', kind: 'pids', max_limit: 256 }] : [])] })
-    : null;
-  const p20Mem = run('P20')
-    ? await openBox(rt, scope, tools, initCopy, { label: 'p20-memory', fixture: null, memoryMax: 256 * 1024 * 1024, tasksMax: 64, volBytes: 1024 * 1024, volInodes: 256, egress: null, context: () => {}, actions: neg('P20') ? [{ id: 'p20mem', kind: 'memory', max_limit: 512 * 1024 * 1024 }] : [] })
-    : null;
-  const p20Store = run('P20')
-    ? await openBox(rt, scope, tools, initCopy, {
-        label: 'p20-storage',
-        fixture: null,
-        memoryMax: big,
-        tasksMax: 64,
-        volBytes: 1024 * 1024,
-        volInodes: 64,
-        egress: null,
-        context: () => {},
-        actions: neg('P20') ? [{ id: 'p20bytes', kind: 'bytes', dir: '/surety/out' }, { id: 'p20inodes', kind: 'inodes', dir: '/surety/out' }] : [],
-      })
-    : null;
-  for (const b of [p20Pids, p20Mem, p20Store]) if (b) opened.push(b);
-
   // P2's other domain's area: a sentinel in the P16 box's area.
-  const otherArea = p16Box ?? p20Store;
+  const otherArea = p16Box;
   if (otherArea) {
     const s = join(otherArea.area, 'sentinel');
     writeFileSync(s, tag);
@@ -785,7 +765,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   const mainProblem = boxFailure ?? (guard === null ? 'the probe program did not report' : guardReasons && guardReasons.length > 0 ? `the probe program refused: ${guardReasons.join('; ')}` : null);
   const judge = (id: string, f: () => ProbeResult): void => {
     if (!run(id)) results.push(notRun(id, 'the harness made this probe unable to run'));
-    else if (mainProblem !== null && !['P16', 'P20'].includes(id)) results.push({ ...verdict(ctx, id, { seeded: false, negative: null, held: false, control: null, detail: mainProblem }), result: 'failed' });
+    else if (mainProblem !== null && id !== 'P16') results.push({ ...verdict(ctx, id, { seeded: false, negative: null, held: false, control: null, detail: mainProblem }), result: 'failed' });
     else {
       try {
         results.push(f());
@@ -880,7 +860,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const q = resolver.queries;
     const once = q.get(names.private) === 1 && q.get(names.mixed) === 1 && q.get(names.rebind) === 2 && !q.has(names.unlisted);
     const logged = main.proxy?.entries ?? [];
-    const rebinds = logged.filter((e) => e.host === names.rebind).map((e) => e.resolved?.join(' '));
+    const rebinds = logged.filter((e) => e.authority === `${names.rebind}:443`).map((e) => e.resolved.join(' '));
     const tunnel = ((c?.results as { status: number | null; same?: boolean }[] | undefined) ?? [])[0];
     const echoed = echoEndpoint.of(main.id).some((e) => e.received.subarray(0, echoBytes.length).equals(echoBytes));
     return verdict(ctx, 'P8', {
@@ -1020,36 +1000,12 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
       detail: `the protected roots ${fixture.protectedRoots.join(', ')} for a role other than the Verifier`,
     });
   });
-  if (p20Pids && p20Mem && p20Store) {
-    const boxes = [p20Pids, p20Mem, p20Store];
-    const problem = boxes.map((b) => b.hostRefusal ?? (b.launch.setupFailure ? `the sandbox could not be built: ${b.launch.setupFailure}` : null)).find((x) => x !== null) ?? null;
-    judge('P20', () => {
-      const fork = line(p20Pids, 'p20fork');
-      const pids = line(p20Pids, 'p20pids');
-      const memControl = p20Mem.lines.find((l) => l.id === 'p20mem' && l.step === 'control');
-      const bytes = line(p20Store, 'p20bytes');
-      const inodes = line(p20Store, 'p20inodes');
-      const pidsHeld = pids !== null && typeof pids.failure === 'string' && (p20Pids.counters?.pids_max ?? 0) > 0;
-      const memHeld = (p20Mem.counters?.oom_kill ?? 0) > 0;
-      const bytesHeld = bytes !== null && bytes.stop === 'ENOSPC' && Number(bytes.written) <= 1024 * 1024 + 65536;
-      const inodesHeld = inodes !== null && inodes.stop === 'ENOSPC' && Number(inodes.made) < 64;
-      const control = fork?.status === 0 && memControl !== undefined && bytes?.control === 'written' && inodes?.control === 'created';
-      return verdict(ctx, 'P20', {
-        seeded: problem === null,
-        negative:
-          problem ??
-          (pids || bytes || inodes
-            ? `pids.max: ${String(pids?.forks)} forks then ${String(pids?.failure)}, pids.events max ${p20Pids.counters?.pids_max ?? '?'}; memory.max: oom_kill ${p20Mem.counters?.oom_kill ?? '?'}; bytes: ${String(bytes?.written)} written then ${String(bytes?.stop)}; inodes: ${String(inodes?.made)} made then ${String(inodes?.stop)}`
-            : null),
-        held: pidsHeld && memHeld && bytesHeld && inodesHeld,
-        control,
-        detail: 'pids.max 64, memory.max 256 MiB, a 1 MiB and 64-inode volatile filesystem, each in its own domain',
-      });
-    });
-  } else results.push(notRun('P20', 'the harness made this probe unable to run'));
+  // P20 (fork, memory, storage exhaustion) is row M133's, slice 13's: not
+  // exercised in this slice, excused by SEAM.md §138 until then.
+  results.push(notRun('P20', 'P20 is slice 13\'s (row M133): not exercised in slice 12', 'slice_12'));
 
   evidence.domains = opened.map((b) => ({ id: b.id, cgroup: b.cgroup, finished: b.finished, host_refusal: b.hostRefusal, setup_failure: b.launch.setupFailure, counters: b.counters, exit: b.launch.exitReport }));
-  evidence.egress = main.proxy?.record() ?? null;
+  evidence.egress = main.proxy?.entries ?? null;
   evidence.lines = Object.fromEntries(main.lines.filter((l) => l.id !== 'p12').map((l) => [String(l.id), l]));
 
   for (const b of opened) await closeBox(rt, b).catch((err) => log('probe suite', err, { box: b.id }));

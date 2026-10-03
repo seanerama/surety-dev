@@ -666,21 +666,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     return {
       restricted: true,
       handler: async () => {
-        const { echoEndpoint } = await import('../invoke/proxy/echo.js');
-        return {
-          status: 200,
-          body: {
-            connections: echoEndpoint.connections.map((c) => ({
-              id: c.id,
-              domain: c.domain,
-              run: c.run,
-              opened_at: c.opened_at,
-              closed_at: c.closed_at,
-              bytes: c.bytes,
-              received_base64: c.received.toString('base64'),
-            })),
-          },
-        };
+        const { echoEndpoint, echoView } = await import('../invoke/proxy/echo.js');
+        return { status: 200, body: { connections: echoEndpoint.connections.map(echoView) } };
       },
     };
   }
@@ -784,8 +771,24 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     return {
       restricted: false,
       handler: async () => {
-        const result = (await storeOp(OP.fixtureTrigger, { body: await hooks.body(), actor: hooks.actor })) as { created: boolean };
-        return { status: result.created ? 201 : 200, body: result };
+        let body = await hooks.body();
+        // SEAM.md §139: a raw user report on the trigger, published as a
+        // record of the project and bound to the work item through its
+        // subject; the answer names the record.
+        let report: string | null = null;
+        if (isObject(body) && body.raw_user_report !== undefined) {
+          const { raw_user_report: text, ...rest } = body;
+          if (typeof text !== 'string' || text.length === 0 || typeof rest.project !== 'string') {
+            throw new Refusal(400, 'invalid_value', 'raw_user_report must be a non-empty string, with the project.', 'Send the report as a string.', { field: 'raw_user_report' });
+          }
+          const rt = hooks.runtime();
+          const { writeWholeRecord } = await import('../records/files.js');
+          report = await writeWholeRecord(rt, { project: rest.project, run: null, kind: 'raw_user_report', content: Buffer.from(text) });
+          const subject = isObject(rest.subject) ? rest.subject : {};
+          body = { ...rest, subject: { ...subject, raw_user_report: report } };
+        }
+        const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean };
+        return { status: result.created ? 201 : 200, body: report === null ? result : { ...result, raw_user_report: report } };
       },
     };
   }
@@ -877,43 +880,37 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
 // ---- the harness resolver (main thread; M2 plan §2.3) -------------------------------
 
 // A name's answers in order: each resolution takes the next, the last
-// repeating; a counter per name; an optional delay before every answer.
-const resolver: { names: Map<string, string[][]>; delayMs: number; queries: Map<string, number>; log: { name: string; at: string; answer: string[] | null }[] } = {
-  names: new Map(),
-  delayMs: 0,
-  queries: new Map(),
-  log: [],
-};
-let resolverConfigured = false;
+// repeating; an optional delay per name; a counter per name (SEAM.md §140).
+const resolver: { names: Map<string, { answers: string[][]; delayMs: number }>; queries: Map<string, number> } = { names: new Map(), queries: new Map() };
 
 function configureResolver(body: unknown): unknown {
   const b = isObject(body) ? body : {};
   const names = isObject(b.names) ? b.names : null;
-  const delay = b.delay_ms ?? 0;
-  const bad = () => new Refusal(400, 'invalid_value', 'The resolver takes {"names": {<name>: [<address>...] | [[<address>...], ...]}, "delay_ms"?: <ms>}.', 'Send names and their answers.', { field: 'names' });
-  if (names === null || typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || Object.keys(b).some((k) => k !== 'names' && k !== 'delay_ms')) throw bad();
-  const parsed = new Map<string, string[][]>();
+  const bad = () => new Refusal(400, 'invalid_value', 'The resolver takes {"names": {<name>: {"answers": [[<address>, ...], ...], "delay_ms"?: <ms>}}}.', 'Send names and their answers.', { field: 'names' });
+  if (names === null || Object.keys(b).some((k) => k !== 'names')) throw bad();
+  const parsed = new Map<string, { answers: string[][]; delayMs: number }>();
   for (const [name, value] of Object.entries(names)) {
-    if (!Array.isArray(value)) throw bad();
-    const answers = value.every((v) => typeof v === 'string') ? [value as string[]] : (value as unknown[]);
-    if (!answers.every((a) => Array.isArray(a) && a.every((x) => typeof x === 'string'))) throw bad();
-    parsed.set(name.toLowerCase().replace(/\.+$/, ''), answers as string[][]);
+    if (!isObject(value) || !Array.isArray(value.answers)) throw bad();
+    const delay = value.delay_ms ?? 0;
+    if (typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || Object.keys(value).some((k) => k !== 'answers' && k !== 'delay_ms')) throw bad();
+    const answers = value.answers as unknown[];
+    if (answers.length === 0 || !answers.every((a) => Array.isArray(a) && a.every((x) => typeof x === 'string'))) throw bad();
+    parsed.set(name.toLowerCase().replace(/\.+$/, ''), { answers: answers as string[][], delayMs: delay });
   }
   resolver.names = parsed;
-  resolver.delayMs = delay;
   resolver.queries.clear();
-  resolver.log.length = 0;
-  resolverConfigured = true;
   return resolverReport();
 }
 
 function resolverReport(): unknown {
-  return { configured: resolverConfigured, names: Object.fromEntries(resolver.names), delay_ms: resolver.delayMs, queries: Object.fromEntries(resolver.queries), log: resolver.log };
+  const names: Record<string, { queries: number }> = {};
+  for (const name of new Set([...resolver.names.keys(), ...resolver.queries.keys()])) names[name] = { queries: resolver.queries.get(name) ?? 0 };
+  return { names };
 }
 
-// The resolver the egress proxy consults: the harness's in harness mode, null
-// (the system's) otherwise. Before a test configures it, the harness's knows
-// no name: nothing a sandbox-lane role asks for is looked up on the host.
+// The resolver the egress proxy consults: the harness's in harness mode (the
+// system's is never consulted there), null (the system's) otherwise. A name
+// the map does not hold does not resolve.
 export function seamResolver(): { resolve(name: string): Promise<string[]> } | null {
   if (!init.harness) return null;
   return {
@@ -921,31 +918,29 @@ export function seamResolver(): { resolve(name: string): Promise<string[]> } | n
       const key = name.toLowerCase().replace(/\.+$/, '');
       const n = (resolver.queries.get(key) ?? 0) + 1;
       resolver.queries.set(key, n);
-      if (resolver.delayMs > 0) await sleep(resolver.delayMs);
-      const answers = resolver.names.get(key);
-      const answer = answers ? answers[Math.min(n - 1, answers.length - 1)]! : null;
-      resolver.log.push({ name: key, at: new Date().toISOString(), answer });
-      if (answer === null) {
+      const entry = resolver.names.get(key);
+      if (entry && entry.delayMs > 0) await sleep(entry.delayMs);
+      if (!entry) {
         const err = new Error(`the harness resolver knows no name ${key}`) as NodeJS.ErrnoException;
         err.code = 'ENOTFOUND';
         throw err;
       }
-      return [...answer];
+      return [...entry.answers[Math.min(n - 1, entry.answers.length - 1)]!];
     },
   };
 }
 
 // ---- the probe suite's overrides (main thread; M2 plan §2.3, row M124) -------------
 
-export type ProbeOverride = 'target_absent' | 'control_fails' | 'negative_unattempted' | 'cannot_run';
-export const PROBE_OVERRIDES: readonly ProbeOverride[] = ['target_absent', 'control_fails', 'negative_unattempted', 'cannot_run'];
+export type ProbeOverride = 'target_absent' | 'control_failing' | 'negative_unattempted' | 'cannot_run';
+export const PROBE_OVERRIDES: readonly ProbeOverride[] = ['target_absent', 'control_failing', 'negative_unattempted', 'cannot_run'];
 let probeOverrides: Record<string, ProbeOverride> = {};
 
 export function setProbeOverrides(values: string[]): string | null {
   const out: Record<string, ProbeOverride> = {};
   for (const value of values) {
     const m = /^(P(?:[1-9]|1[0-9]|20))=([a-z_]+)$/.exec(value);
-    if (!m || !(PROBE_OVERRIDES as readonly string[]).includes(m[2]!)) return `--harness-probe-override takes <Pn>=<${PROBE_OVERRIDES.join('|')}>, not ${value}`;
+    if (!m || !(PROBE_OVERRIDES as readonly string[]).includes(m[2]!)) return `--harness-isolation-probe takes <Pn>=<${PROBE_OVERRIDES.join('|')}>, not ${value}`;
     out[m[1]!] = m[2] as ProbeOverride;
   }
   probeOverrides = out;

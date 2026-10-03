@@ -408,6 +408,60 @@ export function plannedMounts(plan: Plan): PlannedMount[] {
   return [{ target: '/', type: 'tmpfs', source: 'surety-root', ro: true }, ...[...plan.fstab, ...plan.lateFstab].map((l) => parseLine(plan.stage, l))];
 }
 
+// The published plan (SEAM.md §133): one entry per mount of the role's
+// root, in mount order, with its kind, its resolved host source where it has
+// one, and the flags it carries.
+export type EntryKind = 'root' | 'bind' | 'volatile' | 'proc' | 'devpts' | 'shm' | 'overlay' | 'cgroup';
+export interface PlanEntry {
+  target: string;
+  kind: EntryKind;
+  source: string | null;
+  options: string[];
+}
+
+const FLAGS = ['ro', 'nosuid', 'nodev', 'noexec'];
+
+export function planEntries(plan: Plan): PlanEntry[] {
+  const out: PlanEntry[] = [{ target: '/', kind: 'root', source: null, options: ['ro', 'nosuid'] }];
+  for (const l of [...plan.fstab, ...plan.lateFstab]) {
+    const [rawSource, rawTarget, type, options] = l.split(' ') as [string, string, string, string];
+    const opts = options.split(',');
+    const source = unescape(rawSource);
+    const rel = relative(plan.stage, unescape(rawTarget));
+    const target = `/${rel}`;
+    const flags = FLAGS.filter((f) => opts.includes(f));
+    let kind: EntryKind;
+    let src: string | null = null;
+    if (type === 'proc') kind = 'proc';
+    else if (type === 'devpts') kind = 'devpts';
+    else if (type === 'tmpfs') kind = 'shm';
+    else if (type === 'overlay') {
+      kind = 'overlay';
+      const lower = /(?:^|,)lowerdir=([^,]+)/.exec(options);
+      src = lower ? unescape(lower[1]!) : null;
+    } else if (source === plan.vol || source.startsWith(`${plan.vol}/`)) kind = 'volatile';
+    else if (target.startsWith('/surety/cgroup/')) {
+      kind = 'cgroup';
+      src = source;
+    } else {
+      kind = 'bind';
+      src = source;
+    }
+    out.push({ target, kind, source: src, options: flags });
+  }
+  return out;
+}
+
+// The plan's fingerprint over its entries with the domain's own paths taken
+// out (the domain's area, its volatile filesystem, the run's checkout): two
+// runs of one project under one profile and one policy have one fingerprint.
+export function entriesFingerprint(entries: PlanEntry[], own: { area: string; workspace: string }): string {
+  const strip = (p: string | null) =>
+    p === null ? null : p.split(`${own.area}/`).join('<area>/').split(own.workspace).join('<checkout>');
+  const shape = entries.map((e) => ({ ...e, source: strip(e.source) }));
+  return createHash('sha256').update(JSON.stringify(shape)).digest('hex');
+}
+
 // The fingerprint of what a plan makes visible (D2 §2.3: part of the profile
 // qualified), over its structure with the domain's own paths taken out.
 export function planFingerprint(plan: Plan): string {

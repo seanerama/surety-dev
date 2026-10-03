@@ -119,6 +119,8 @@ function realBackend(claim: Claim): BackendSpec | null {
     command: e.binary_path,
     args: template.render({ model: e.model, invocation: claim.invocation }),
     env: key === null ? {} : { [template.keyVariable]: key },
+    // The backend's installation, read-only at its pinned path (D2 §2.3).
+    binds: [{ path: e.binary_path, writable: false }],
   };
 }
 
@@ -240,7 +242,8 @@ export class Launcher {
         repositoryCommonDir(repo);
       } catch (err) {
         if (!(err instanceof GitViewRefused)) throw err;
-        refused = { path: err.path, resolved: err.path, reason: err.reason as PlanReason, detail: err.message };
+        // The refusal names the repository as registered (SEAM.md §134).
+        refused = { path: repo, resolved: err.path, reason: err.reason as PlanReason, detail: err.message };
       }
     }
     if (refused !== null) {
@@ -252,8 +255,12 @@ export class Launcher {
         'mount_plan_refused',
         refusalForm(
           'mount_plan_refused',
-          `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
-          'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
+          refused.reason === 'alternates'
+            ? `The repository ${refused.path} cannot be bound into the sandbox's git view: ${refused.detail}.`
+            : `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
+          refused.reason === 'alternates'
+            ? 'Repack the repository so that it holds its own objects (git repack -a -d, then remove objects/info/alternates).'
+            : 'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
           { path: refused.path, reason: refused.reason },
         ),
       );

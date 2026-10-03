@@ -84,27 +84,35 @@ export function contextFacts(db: Database, args: { run: string }) {
       return fallback;
     }
   };
-  let requirements: { key: string; text_ref: string; assigned_phase: number | null }[] = [];
-  let modules: { name: string; paths: unknown }[] = [];
+  type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null };
+  let requirements: Req[] = [];
+  let modules: { id: string; name: string; paths: unknown }[] = [];
   let plan: Record<string, unknown> | null = null;
   if (stage) {
-    const ids = parse<string[]>(stage.requirement_ids, []);
+    const ids = [...new Set([...parse<string[]>(stage.requirement_ids, []), ...parse<string[]>(stage.implements, [])])];
     requirements = ids
-      .map((id) => db.prepare('SELECT "key", "text_ref", "assigned_phase" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, id, id) as { key: string; text_ref: string; assigned_phase: number | null } | undefined)
-      .filter((r): r is { key: string; text_ref: string; assigned_phase: number | null } => r !== undefined);
+      .map((id) => db.prepare('SELECT "id", "key", "text_ref", "assigned_phase" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, id, id) as Req | undefined)
+      .filter((r): r is Req => r !== undefined);
     const names = parse<string[]>(stage.modules, []);
     modules = names
-      .map((name) => db.prepare('SELECT "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { name: string; paths: string } | undefined)
-      .filter((m): m is { name: string; paths: string } => m !== undefined)
-      .map((m) => ({ name: m.name, paths: parse<unknown>(m.paths, []) }));
-    const p = db.prepare('SELECT "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
+      .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { id: string; name: string; paths: string } | undefined)
+      .filter((m): m is { id: string; name: string; paths: string } => m !== undefined)
+      .map((m) => ({ id: m.id, name: m.name, paths: parse<unknown>(m.paths, []) }));
+    const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
   }
   const candidate = db.prepare('SELECT "id", "revision" FROM "candidates" WHERE "id" = ?').get(item.subject) as { id: string; revision: string } | undefined;
-  let resumed: { run: string; outcome: unknown; summary: unknown } | null = null;
+  // A resumed run's context is rebuilt from the records of the run it
+  // resumes (D1 §15.3): its published records other than a raw report.
+  let resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null = null;
   if (typeof run.parent_run === 'string') {
-    const parent = db.prepare('SELECT "id", "outcome", "result_value" FROM "runs" WHERE "id" = ?').get(run.parent_run) as { id: string; outcome: unknown; result_value: string | null } | undefined;
-    if (parent) resumed = { run: parent.id, outcome: parent.outcome, summary: parse<{ summary?: unknown } | null>(parent.result_value, null)?.summary ?? null };
+    const parent = db.prepare('SELECT "id", "outcome", "reason_class", "result_value" FROM "runs" WHERE "id" = ?').get(run.parent_run) as { id: string; outcome: unknown; reason_class: unknown; result_value: string | null } | undefined;
+    if (parent) {
+      const records = db
+        .prepare(`SELECT "id", "kind", "path" FROM "records" WHERE "run" = ? AND "published" = 1 AND "kind" <> 'raw_user_report' ORDER BY "created_at", "id"`)
+        .all(parent.id) as { id: string; kind: string; path: string | null }[];
+      resumed = { run: parent.id, outcome: parent.outcome, reason_class: parent.reason_class, summary: parse<{ summary?: unknown } | null>(parent.result_value, null)?.summary ?? null, records };
+    }
   }
   return {
     run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },

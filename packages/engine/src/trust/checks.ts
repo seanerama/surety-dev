@@ -24,7 +24,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type Scope, managerReachable } from '../boundary/scope.js';
 import { CGROUP_ROOT, createDomainCgroup, ownCgroup, readControllers, readPopulated, removeCgroup, writeKill } from '../boundary/cgroup.js';
-import { PROBES, type SuiteOutcome, runProbeSuite } from '../invoke/probes/suite.js';
+import { PROBES, type SuiteOutcome, probeRow, runProbeSuite } from '../invoke/probes/suite.js';
 import { filesystemOf } from '../home-fs.js';
 import { newId } from '../ids.js';
 import { INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
@@ -282,7 +282,8 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   // The isolation probe suite (D2 §2.8, A.6) runs beside the trial.
   const suiteRun = runProbeSuite(rt, { scope, tools, initCopy, deadline, wsl2 }).catch((err): SuiteOutcome => {
     log('host checks', err, { what: 'probe suite' });
-    return { probes: PROBES.map((id) => ({ id, target_seeded: false, negative: null, control: null, result: 'not_exercised' as const, detail: `the suite failed: ${(err as Error).message}` })), plan: null, evidence: {} };
+    const why = `the suite failed: ${(err as Error).message}`;
+    return { probes: PROBES.map((id) => ({ id, target_seeded: false, negative: null, control: null, result: 'not_exercised' as const, reason: why, detail: why, observed: null })), plan: null, evidence: {} };
   });
   if (initCopy !== null && tools.missing.length === 0) {
     try {
@@ -379,7 +380,8 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   }
 
   const ordered = HOST_CHECKS.map((id) => checks.get(id)!);
-  const probes = suite.probes;
+  // The row's probes in their six keys; the evidence holds each one's detail.
+  const probes = suite.probes.map(probeRow);
   const blocking = ordered.filter((c) => c.required && c.result !== 'passed');
   const qualifies = blocking.length === 0;
   const versions: Record<string, unknown> = {
@@ -408,13 +410,13 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     tool_versions: versions,
     tool_paths: tools.paths,
     checks: ordered,
-    probes,
     mechanism_fingerprint: fingerprint,
     scope: scope ? { unit: scope.unit, path: scope.path } : null,
     trial,
     // The validated plan the probe sandbox was built from, entry by entry,
     // with its fingerprint (D2 §2.3, A.6 P12), and the role profile's shape.
     plan: { probe: suite.plan, role: { fingerprint: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null } },
+    probes: suite.probes,
     suite: suite.evidence,
   };
   // What was observed is readable whatever the outcome; only a start whose
