@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { assertQuestionClosed, assertStaleAnswer, consume, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
-import { check, finding, findingState, installChecks, nominated, passAll, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
+import { acceptedRun, assessmentsOf, check, finding, findingState, installChecks, nominated, passAll, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -90,5 +90,51 @@ describe('M51 the severity_lower manifest', () => {
     assert.deepEqual(await checkStates(), states, 'no check state changed');
     await assertQuestionClosed(fx, project, previewed);
     assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'and the ticks changed nothing of it');
+  });
+
+  // M2 slice 2, B1 (SEAM.md §105): the finding's status.
+  test("the finding's status changes between preview and answer (a Reviewer dispositions it fix): the old preview is stale, the severity stays, and the next generation binds the status as it now is", async (t) => {
+    const { fx, ctx, project, found, lower } = await findingOf(t, 'high');
+    await lower('medium');
+    const previewed = await openDecision(fx, project, 'severity_lower', found.id);
+    assert.equal(previewed.manifest.finding_status, 'open', 'the fixture is live: the preview binds the finding as open');
+
+    // A Reviewer's fix is recorded at once, with its own authority (E43): the
+    // finding is dispositioned while the lowering is still being asked about.
+    await review(fx, project, ctx.candidate.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
+    assert.deepEqual([finding(fx.home, found.id).status, finding(fx.home, found.id).disposition], ['dispositioned', 'fix'], 'the fixture is live: the finding changed');
+
+    await assertStaleAnswer(fx, project, previewed, 'approve');
+    assert.equal(finding(fx.home, found.id).effective_severity, 'high', 'nothing was lowered on the earlier preview');
+    const next = await nextGeneration(fx, project, previewed, { changed: 'finding_status' });
+    assert.deepEqual([next.manifest.finding_status, next.manifest.to], ['dispositioned', 'medium'], 'the next preview binds the finding as dispositioned, and still asks the same lowering');
+    await consume(fx, project, next, 'approve');
+    assert.deepEqual([finding(fx.home, found.id).effective_severity, finding(fx.home, found.id).disposition], ['medium', 'fix'], 'the current preview can be answered: the severity is lowered, and the disposition stands');
+  });
+
+  // M2 slice 2, B1 (SEAM.md §105): the scope the finding applies to.
+  test("the finding stops applying to the candidate between preview and answer (an approved exclusion): the old preview is stale, the severity stays, and the next generation binds the applicability as it now is", async (t) => {
+    const { fx, ctx, project, found, lower } = await findingOf(t, 'high');
+    const candidate = ctx.candidate;
+    await lower('medium');
+    const previewed = await openDecision(fx, project, 'severity_lower', found.id);
+    assert.deepEqual([previewed.manifest.applicable, previewed.manifest.candidate_revision], [true, candidate.revision], 'the fixture is live: the preview binds the finding as applying to its candidate');
+
+    // The Verifier proposes that the finding does not apply to the candidate,
+    // an independent Reviewer agrees, and the human owner approves the
+    // exclusion (row M52): the finding then applies to the candidate no more.
+    await acceptedRun(fx, project, 'verification', {
+      subject: { candidate: candidate.id },
+      result: { applicability: [{ finding: found.id, candidate: candidate.id, reason: 'the totals path is not in this candidate', evidence: 'refund totals are computed elsewhere' }] },
+    });
+    const [proposed] = assessmentsOf(fx.home, project);
+    await review(fx, project, candidate.id, { assessments: [{ assessment: proposed.id, verdict: 'not_applicable' }] });
+    await consume(fx, project, await openDecision(fx, project, 'finding_applicability_exclusion', proposed.id), 'approve');
+    assert.equal(assessmentsOf(fx.home, project)[0].status, 'approved', 'the fixture is live: the exclusion is approved');
+
+    await assertStaleAnswer(fx, project, previewed, 'approve');
+    assert.equal(finding(fx.home, found.id).effective_severity, 'high', 'nothing was lowered on the earlier preview');
+    const next = await nextGeneration(fx, project, previewed, { changed: 'applicable' });
+    assert.deepEqual([next.manifest.applicable, next.manifest.effective_severity, next.manifest.to], [false, 'high', 'medium'], 'the next preview binds the finding as no longer applying, and still asks the same lowering');
   });
 });
