@@ -18,10 +18,10 @@ import { describe, test } from 'node:test';
 
 import { CODES, answer, assertStaleAnswer, consume, decision, decisionsOn, nextGeneration, openDecision } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { addGitProject } from './harness/gitruns.mjs';
-import { changePolicy } from './harness/journal.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
+import { changePolicy, revisionsOf } from './harness/journal.mjs';
 import { addProject, addWork, assertRunEnded, runsOf, scriptedEngine, tick, tickUntil, waitForQuarantine, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
-import { BOUNDARY, script } from './harness/scripted.mjs';
+import { BOUNDARY, script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
 // Work parked at its repair limit (no repair is allowed, and its one run
@@ -41,9 +41,12 @@ const launches = (fx, item) => fx.scripted.launches({ work_item: item }).length;
 describe('M45 the blocker manifest', () => {
   test('a valid answer resumes the bound continuation and nothing else: retry makes the work eligible, launches nothing by itself, and completes nothing', async (t) => {
     const { fx, project, item, blocker } = await parked(t);
+    // The continuation names the status a retry resumes to and the revision
+    // the next run starts from: null, the integration branch's head, for work
+    // that never checkpointed (M2 slice 2; SEAM.md §105 refines §77's string).
     assert.deepEqual(
       { subject: [blocker.subject_type, blocker.subject_id], status: blocker.manifest.subject_status, cause: blocker.manifest.cause, quarantined: blocker.manifest.quarantined, continuation: blocker.manifest.continuation },
-      { subject: ['work_item', item], status: 'parked', cause: 'repair_attempts_max', quarantined: false, continuation: 'eligible' },
+      { subject: ['work_item', item], status: 'parked', cause: 'repair_attempts_max', quarantined: false, continuation: { status: 'eligible', from: null } },
       'the preview binds the subject\'s status, the cause, the quarantine condition and the continuation',
     );
 
@@ -91,5 +94,41 @@ describe('M45 the blocker manifest', () => {
     await tick(fx.engine, project);
     assert.deepEqual(decisionsOn(fx.home, 'blocker', run.id).map((row) => row.status), ['invalidated'], 'the question no longer applies: it is closed, and not asked again');
     assertRunEnded(fx.home, run.id, { outcome: 'completed', reason_class: 'none' });
+  });
+
+  // M2 slice 2, B1 (SEAM.md §105): the stored continuation of a parked item.
+  test('the stored continuation changes while the subject stays parked: the old preview is stale, nothing is resumed, and the next generation binds the continuation as it now is', async (t) => {
+    // A fix whose first run checkpoints (row M21) and whose continuation run
+    // then crashes with no repair allowed: parked, with the checkpoint as the
+    // revision its next run would start from.
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([step.write('src/part-one.js', 'export const one = 1;\n')], { checkpoint: true }), script.crash(), roleThat([permittedEdit()])]);
+    await tickUntil(fx.engine, project.id, () => workItem(fx.home, item).status === 'parked', { what: 'the continuation run to fail and the work to be parked' });
+    const checkpoint = revisionsOf(fx.home, { project: project.id }).find((row) => row.kind === 'checkpoint');
+    assert.ok(checkpoint, 'the fixture is live: the first run checkpointed');
+    assert.deepEqual([workItem(fx.home, item).continue_from, runsOf(fx.home, item).length], [checkpoint.sha, 2], 'the fixture is live: the parked work would resume from the checkpoint, after two runs');
+    const blocker = await openDecision(fx, project.id, 'blocker', item);
+    assert.deepEqual(blocker.manifest.continuation, { status: 'eligible', from: checkpoint.sha }, 'the preview binds the continuation: the status a retry resumes to, and the revision the next run starts from');
+
+    // No engine path changes a parked item's stored continuation while it is
+    // parked; the store does, with the engine stopped, as the case above
+    // changes the cause (SEAM.md §65). Resuming from the integration branch
+    // instead of the checkpoint is another consequence of the same answer.
+    await fx.engine.stop();
+    withStore(fx.home, (db) => db.prepare('UPDATE "work_items" SET "continue_from" = NULL WHERE "id" = ?').run(item), { readonly: false });
+    await fx.start();
+
+    await assertStaleAnswer(fx, project.id, blocker, 'retry');
+    assert.deepEqual([workItem(fx.home, item).status, runsOf(fx.home, item).length], ['parked', 2], 'the work is still parked and was not run again');
+    const next = await nextGeneration(fx, project.id, blocker, { changed: 'continuation' });
+    assert.deepEqual([next.manifest.continuation, next.manifest.cause, next.manifest.subject_status], [{ status: 'eligible', from: null }, 'repair_attempts_max', 'parked'], 'the next preview says the work would resume from the integration branch, and binds the rest as before');
+
+    // The current preview can be answered, and what follows is what it showed.
+    await consume(fx, project.id, next, 'retry');
+    const resumed = await runToEnd(fx, project.id, item, { index: 2 });
+    assert.equal(resumed.base_revision, project.base, "the retried run starts from the integration branch's head, as the answered preview said, not from the checkpoint");
   });
 });

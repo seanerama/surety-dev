@@ -118,4 +118,28 @@ describe('M50 the finding_disposition manifest', () => {
     await assertQuestionClosed(fx, project, previewed);
     assert.deepEqual(findingState(finding(fx.home, found.id)), before, 'and the ticks changed nothing of it');
   });
+
+  // M2 slice 2, B1 (SEAM.md §105): the scope the disposition is judged in.
+  test("the candidate's acceptance content changes between preview and answer (a check is added to the scope): the old preview is stale, nothing is recorded, and the next generation binds the content as it now is", async (t) => {
+    const { fx, ctx, project, found, proposeDefer } = await mediumFinding(t);
+    await proposeDefer(inDays(3));
+    const previewed = await openDecision(fx, project, 'finding_disposition', found.id);
+    const scope = scopeOf(fx.home, await stageGate(fx, ctx));
+    assert.equal(previewed.manifest.acceptance_content_hash, scope.acceptance_content_hash, 'the fixture is live: the preview binds the acceptance content the gate computes');
+
+    // A second check covering the delivered requirement enters the required
+    // set: the acceptance content the deferral would be approved against is
+    // another one.
+    await installChecks(fx.engine, project, [check('import', { requirements: ['R1'] })]);
+    const widened = scopeOf(fx.home, await stageGate(fx, ctx));
+    assert.notEqual(widened.acceptance_content_hash, scope.acceptance_content_hash, 'the fixture is live: the acceptance content changed');
+
+    await assertStaleAnswer(fx, project, previewed, 'approve');
+    undisposed(fx, found);
+    const next = await nextGeneration(fx, project, previewed, { changed: 'acceptance_content_hash' });
+    assert.equal(next.manifest.acceptance_content_hash, widened.acceptance_content_hash, 'the next preview binds the acceptance content as it now is');
+    await consume(fx, project, next, 'approve');
+    assert.deepEqual(approvalsOf(fx.home, next.id).map((row) => row.acceptance_content_hash), [widened.acceptance_content_hash], 'the approval that is given is bound to the content that was shown');
+    assert.equal(finding(fx.home, found.id).disposition, 'defer');
+  });
 });

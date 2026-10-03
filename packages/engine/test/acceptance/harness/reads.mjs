@@ -77,6 +77,40 @@ export async function readGate(engine, project, candidate, kind) {
   return res.body;
 }
 
+// GET /v1/projects/:p/decisions/:d: {served_at, snapshot_seq, decision: {...}},
+// one decision by its identifier, whatever its status (SEAM.md §108; D1
+// §11.3; M2 slice 2). For the refusals (another project's decision, an
+// unknown id) a test calls the route itself.
+export async function readDecision(engine, project, decision) {
+  const path = `/v1/projects/${project}/decisions/${decision}`;
+  const res = await engine.get(path);
+  assert.equal(res.status, 200, `GET ${path} (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET ${path}`);
+  assert.equal(res.body.decision?.id, decision, `the answer is the decision in the path (body: ${res.text.slice(0, 300)})`);
+  return res.body;
+}
+
+// GET /v1/projects/:p/operations: {served_at, snapshot_seq, operations: [...]},
+// every journaled operation of the project (SEAM.md §108; D1 §11.3; M2 slice 2).
+export async function listOperations(engine, project) {
+  const res = await engine.get(`/v1/projects/${project}/operations`);
+  assert.equal(res.status, 200, `GET /v1/projects/${project}/operations (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET /v1/projects/${project}/operations`);
+  assert.ok(Array.isArray(res.body.operations), `the read lists operations (body: ${res.text.slice(0, 300)})`);
+  return res.body;
+}
+
+// GET /v1/projects/:p/environments: {served_at, snapshot_seq, environments: [...]},
+// the project's environments as a route of their own (SEAM.md §108; D1
+// §11.3; M2 slice 2).
+export async function listEnvironments(engine, project) {
+  const res = await engine.get(`/v1/projects/${project}/environments`);
+  assert.equal(res.status, 200, `GET /v1/projects/${project}/environments (body: ${res.text})`);
+  assertReadEnvelope(res.body, `GET /v1/projects/${project}/environments`);
+  assert.ok(Array.isArray(res.body.environments), `the read lists environments (body: ${res.text.slice(0, 300)})`);
+  return res.body;
+}
+
 // GET /v1/projects/:p/runs/:r: the run (SEAM.md §17).
 export async function readRun(engine, project, run) {
   const res = await engine.get(`/v1/projects/${project}/runs/${run}`);
