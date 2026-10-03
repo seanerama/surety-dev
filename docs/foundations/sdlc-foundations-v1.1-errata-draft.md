@@ -1265,6 +1265,8 @@ The one review of the slice (E31) found the trust table, the dispatch rule (no a
    - **The scripted directory is bound read-write inside the sandbox in harness mode**, labelled as an instrument's hole in the role's view, because a result collected only after termination cannot show what a killed role did.
 5. **Open, for Sean:** what a sandbox-lane engine with no scope does with a scripted dispatch (the Verifier recommends refusing `isolation_unqualified`; not pinned); whether `scripts/run-tests.mjs` should fail once with "sandbox lane: no user manager reachable" instead of fifty separate failures (recommended, an owner's change of a few lines; not made).
 
+6. **The user manager restored without a restart (added 12:15 CDT the same day).** Sean asked to continue without restarting WSL. Linger was already enabled for his user (`/var/lib/systemd/linger/smahoney` existed), so the driver ran `loginctl enable-linger smahoney`, which changes no setting and has logind start `user@1000.service` again; verified: `/run/user/1000/bus` present, `systemctl --user` `running`, a transient delegated scope creatable. Two differences from before the incident, to be reported as observed and never assumed away: the manager's delegated controllers are `cpu memory pids` (`cpuset` and `io` no longer listed; H4 needs `memory` and `pids`), and uid 1000 is `lingering` with no logind session object. Item 1's "cannot run until Sean restarts WSL" is superseded by this item.
+
 **Consequences elsewhere.** No change to D1 or D2. `docs/acceptance/reports/M2-not-claimed.md` gains "After slice 11". The M2 report lists the incident among what the build learned.
 
 ---

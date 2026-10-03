@@ -20,14 +20,16 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { armFault, clearFaults } from './harness/engine.mjs';
+import { armFault, clearFaults, waitFor } from './harness/engine.mjs';
 import { recordsOf } from './harness/records.mjs';
 import { addProject, addWork, answerDecision, assertRunEnded, assertRunQuarantined, requestTick, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
-import { cgroupExists, cgroupOfPid, daemonReexec, makeLeaf, makeUnreadable, moveIntoCgroup, populated, procsOf, removeCgroup, restoreReadable } from './harness/sandbox/cgroup.mjs';
+import { cgroupExists, cgroupOfPid, daemonReexec, makeLeaf, makeUnreadable, moveIntoCgroup, populated, procsOf, removeCgroup, restoreReadable, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, eventsOf, roleAlive, roleHolding, sandboxEngine, updateDomain, waitForEvent } from './harness/sandbox/lane.mjs';
+import { memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
 import { cgroupSentinel } from './harness/sandbox/sentinel.mjs';
 import { script, step } from './harness/scripted.mjs';
 
@@ -70,6 +72,18 @@ async function assertClearedOnce(fx, project, runId, outcome) {
   assert.ok(ended.leases.find((l) => l.resource_kind === 'quarantine').released_at, 'released');
   assert.equal(cgroupExists(ended.domains[0].cgroup_path), false, 'the directory is removed on clearance');
   return ended;
+}
+
+// A cgroup directory that reads populated 0 ('empty'), or that is gone
+// ('removed'); false while it is populated. Any other failure to read it is
+// a failure: only a missing directory is absence (objection 005).
+function emptyOrRemoved(dir) {
+  try {
+    return populated(dir) === 0 ? 'empty' : false;
+  } catch (err) {
+    if (err.code === 'ENOENT') return 'removed';
+    throw err;
+  }
 }
 
 // The tests' own privilege, read without asking for any: the effective uid
@@ -209,7 +223,14 @@ describe('M115 every unknown quarantines', () => {
     const fx = await sandboxEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
-    const { run, domain, launch } = await roleHolding(fx, project, item, ignoring);
+    const { run, domain, launch, member } = await roleHolding(fx, project, item, ignoring);
+    // The host pids of the role and of its descendant, read while both live:
+    // "gone" is later read from the process table, not from a directory.
+    const descendant = await fx.scripted.waitForDescendant({ invocation: launch.invocation });
+    const descendantPid = memberByInnerPid(domain.cgroup_path, descendant.pid)?.pid;
+    assert.ok(descendantPid, 'the fixture is live: the descendant is a member of the domain');
+    // The scope of the incarnation this case kills below: the domain's parent.
+    const firstScope = dirname(domain.cgroup_path);
     await stopRun(fx.engine, project, run.id);
     await waitForEvent(fx.home, 'domain', domain.id, 'domain.launch_closed');
     makeUnreadable(domain.cgroup_path, 'cgroup.kill');
@@ -234,10 +255,28 @@ describe('M115 every unknown quarantines', () => {
     assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped', blocker: 'any' });
     assert.equal(roleAlive(domain, launch), true, "a tick's re-observation signals nothing: populated 1 keeps the quarantine with the role alive");
     fx.scripted.release(item);
-    await waitForRun(fx.home, item);
-    await sleep(500);
-    for (let i = 0; i < 10 && populated(domain.cgroup_path) !== 0; i++) await sleep(500);
-    assert.equal(populated(domain.cgroup_path), 0, 'the fixture is live: the released role and its descendant are gone');
+    // The role exits by itself and its init with it (SEAM.md §126), which
+    // ends the namespace's last member, the descendant that ignored TERM.
+    // Host-read from the process table.
+    await waitHostGone(member.pid);
+    await waitHostGone(descendantPid);
+    // The domain is in the scope of the incarnation this case killed, whose
+    // supervisor leaf is empty: with the role gone that scope has no member,
+    // and the user manager removes an emptied scope with its empty children
+    // (SEAM.md §§124, 128; objection 005). So the domain now reads populated
+    // 0, or is gone together with its whole scope, and nothing else.
+    const left = await waitFor(() => emptyOrRemoved(domain.cgroup_path), { timeoutMs: 15_000, what: 'the domain to be empty, or removed with its emptied scope' });
+    t.diagnostic(`(f) after the release the domain's directory was ${left === 'removed' ? 'removed with the emptied scope of the dead incarnation' : 'present and empty (populated 0)'}`);
+    if (left === 'removed') {
+      await waitCgroupGone(firstScope, { timeoutMs: 10_000 });
+      assert.equal(cgroupExists(firstScope), false, "the domain's directory is absent because the manager removed the emptied scope of the dead incarnation with its children: the scope is absent too");
+    }
+    // None of it is the engine's doing: no tick has run since the release,
+    // so nothing is terminated yet and the run is still quarantined.
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated'), [], 'the engine has recorded no termination before the tick');
+    assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped', blocker: 'any' });
+    // The tick observes populated 0, or absence inside the verified
+    // hierarchy (D2 §3.3), with the launch closed: terminated, once.
     await tick(fx.engine, project);
     await assertClearedOnce(fx, project, run.id, 'stopped');
   });
