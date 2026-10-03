@@ -1122,3 +1122,11 @@ Astra's one cross-review of D2 draft 1 (`docs/reviews/D2/sdlc-review-D2-Astra.md
 **What follows (E48 item 2):** draft 2 applies the dispositions, the driver checks it against the brief and the dispositions, and Sean approves D2 to build. No draft 3 unless Sean asks. Then the M2 acceptance plan and build spec, and the D3 brief.
 
 ---
+
+## E57. An optional eBPF execution observer for qualification (decided by Sean, 2026-10-03)
+
+A companion note to D2, `docs/design/sdlc-design-D2-ebpf-note.md`, proposes an optional host observer that uses eBPF to record selected process, file-access and connection attempts of a role with the kernel's answer, attributed to the incarnation, invocation and domain through engine-established identity, as evidence at qualification; it never authorizes a launch, establishes termination, passes a check or measures tokens, and a missing event is never evidence of absence. It answers the "independently witnessed attempts" of Astra's B05 (E56) and strengthens the probes her review marked weak.
+
+**Sean approved an optional, qualification-only prototype as the initial scope**, recorded as an addition under E40. The engine's runtime-dependency rule is unchanged: any loader or tracing tool is a host or test requirement the engine checks for. On this host unprivileged BPF is disabled and there is no sudo, so the loader needs a privilege Sean grants (a root-run `bpftrace` for the feasibility check; later a capability-granted helper), which is a host-setup step of his, like the plan page's "set up the host". **Order:** a feasibility run by Sean with `bpftrace` against the scripted engine before any Verifier or Builder work; then the five assertions of the note join the sandbox-lane rows of D2 Appendix B as "with observer" variants, pinned by the Verifier before the Builder implements them (E31, E48). D2 draft 2 gains a short §3.9 stating the observer is optional and never authoritative and pointing to the note; D2 is otherwise unchanged by it. Production monitoring and BPF-based enforcement remain separate decisions.
+
+---
