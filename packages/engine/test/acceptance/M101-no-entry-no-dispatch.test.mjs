@@ -23,7 +23,9 @@ import { describe, test } from 'node:test';
 import { assertRefused } from './harness/fixtures.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { readRun } from './harness/reads.mjs';
-import { addProject, addWork, assertRunEnded, requestTick, waitForRun, waitForWork } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
+import { changePolicy } from './harness/journal.mjs';
+import { addWork, assertRunEnded, requestTick, waitForRun, waitForWork } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { BACKENDS, directUpdateRefused, eventsNamed, installAttempt, installTrustEntry, realBackendProject, refusedTrustEntry, standInProcesses, trustEntry, useBackend } from './harness/trust.mjs';
 
@@ -69,7 +71,7 @@ describe('M101 no entry, no dispatch', () => {
     const { fx, standIn, project } = await realBackendProject(t);
     const active = await installTrustEntry(fx.engine, standIn, { status: 'active' });
     assert.equal(trustEntry(fx.home, active.id)?.status, 'active', 'the fixture is live: an active one-shot entry exists');
-    await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['verifier'], mode: 'session_headless' });
+    await changePolicy(fx.engine, project, { backend_mode: 'session_headless' });
 
     await assertDispatchRefused(fx, standIn, project, '(d) session mode');
 
@@ -92,7 +94,7 @@ describe('M101 no entry, no dispatch', () => {
 
   test('(e) an authorized qualification attempt dispatches nothing but its canaries: an ordinary item of its fixture project and one of another project are both refused backend_refused', async (t) => {
     const { fx, standIn, project } = await realBackendProject(t);
-    const other = (await addProject(fx)).id;
+    const other = (await addGitProject(fx)).id;
     await useBackend(fx.engine, other, BACKENDS.claude, { roles: ['verifier'] });
     fx.scripted.defaultScript(script.complete());
     const attempt = await installAttempt(fx.engine, standIn, { status: 'authorized', fixture_project: project });

@@ -226,7 +226,7 @@ The row is introduced in slice 6. The owner's decision after the slice-1 review 
 | A checkpoint a running role has asked for is pending, and is no checkpoint, until the role is gone and its snapshot is committed | `M74-fixture-semantics.test.mjs` | 6 | written |
 | An accepted one-shot checkpoint is linked to its ended run, and the continued work shows the successor run once there is one | same | 6 | written |
 | No dispatch differs from a measured zero | same | 6 | written |
-| An applied protected correction leaves the old candidate under its own version with no current satisfied gate, and names the successor candidate; no candidate is shown as deployed | same | 6 | written |
+| An applied protected correction leaves the old candidate under its own version with no current satisfied gate, and names the successor candidate; no candidate is shown as deployed (the correction is applied by the human after a Reviewer recommended it: the K8 change, M2 slice 10) | same | 6 | written; changed in M2 slice 10 |
 | The engine's source starts a process only in the choke point, in the git runner and in the seam folder | `M74-invocation-boundary.test.mjs` | 6 | written |
 | The mutation fixture: a launch path inserted anywhere else fails the inspection, in seven forms; the same code in the choke point and a types-only import do not | same | 6 | written |
 | The package graph offers a client nothing but the API | same | 6 | written |
@@ -740,7 +740,7 @@ One file per row. A row's cases are the Plan's own: its named case set where it 
 
 | Case | File | Slice | Status |
 |---|---|---|---|
-| Authorized by a Reviewer: one protected commit, one new effective version, the old evidence invalidated and stale under the new version, the old candidate unchanged, the next nomination under the new version; an unapproved proposal is not applied; the classification is labelled a fixture | `M37-apply-approved-protected-proposal.test.mjs` | 5 | written |
+| Recommended by a Reviewer and authorized by the human (the K8 change, M2 slice 10, row M106 (b): the case had the Reviewer's approval apply it; see "M2 slice 10"): one protected commit, one new effective version, the old evidence invalidated and stale under the new version, the old candidate unchanged, the next nomination under the new version; an unapproved proposal is not applied; a Reviewer's approval applies nothing; the classification is labelled a fixture | `M37-apply-approved-protected-proposal.test.mjs` | 5 | written; changed in M2 slice 10 |
 | Killed before the application: the intended version is recorded, unauthorized, with no git effect; recovery applies once | same | 5 | written |
 | Git has applied and the finalizer has not run: gates are blocked (`GIT_JOURNAL_PENDING`); killed there, recovery finalizes once and invalidates the old evidence | same | 5 | written |
 | The human-approved tightening, loosening and unclassifiable paths through a normal application | `M53-…`, `M54-…`, `M55-…` (their positive cases) | 5 | written there, with the same judgement (`assertApplied`); not repeated here |
@@ -840,7 +840,7 @@ One file per row. A row's cases are the Plan's own: its named case set where it 
 | M50 `finding_disposition` | the human approves a Medium finding's deferral | the deferral is proposed again with another target | not an effect-producing option | `M50-finding-disposition-manifest.test.mjs` (3 cases; the third: an expired deferral cannot be approved) |
 | M51 `severity_lower` | High to Medium on the human's approval; no check state changes | the finding's sensitivity changes | not an effect-producing option | `M51-severity-lower-manifest.test.mjs` (3 cases; the first: a Reviewer lowers Medium to Low alone) |
 | M52 `finding_applicability_exclusion` | the human's approval excludes the finding for the assessed candidate and no other | the finding is raised to Critical | not an effect-producing option | `M52-finding-applicability-exclusion-manifest.test.mjs` (2 cases) |
-| M53 `check_correction_tightening` | the human approves; separately, a Reviewer approves | the integration branch moves | the policy changes | `M53-check-correction-tightening-manifest.test.mjs` (5 cases; the fifth: a Verifier approves nothing, and an unclassifiable correction cannot take this path) |
+| M53 `check_correction_tightening` | the human approves; separately, a Reviewer approves, which since the K8 change (M2 slice 10, row M106 (b)) is a recommendation that applies nothing until the human approves | the integration branch moves | the policy changes | `M53-check-correction-tightening-manifest.test.mjs` (5 cases; the fifth: a Verifier approves nothing, and an unclassifiable correction cannot take this path) |
 | M54 `check_correction_loosening` | only the human approves | the source moves | the integration branch is moved by hand | `M54-check-correction-loosening-manifest.test.mjs` (4 cases; the fourth: a required-set change also needs the scope authority) |
 | M55 `check_correction_unclassifiable` | routed to the human; the approval waives no check and applies no later diff | the classification is replaced | the evidence is replaced | `M55-check-correction-unclassifiable-manifest.test.mjs` (3 cases) |
 
@@ -962,7 +962,7 @@ Row closes in slice 6.
 | Firefox: the same | same | 6 | written |
 | Over plain HTTP, the bootstrap yields the token only on positive same-origin evidence: thirteen missing, foreign and contradictory forms, a foreign Host and a foreign absolute-form authority are refused without it | same | 6 | written |
 
-Row closes in slice 6.
+Row closes in slice 6. **K3 change (M2 slice 10, row M107):** the file's fixture engine opts in with `ui_bootstrap: true` and the file is the labelled compatibility test; no assertion changed. See "M2 slice 10" below.
 
 ### M70. Scoped reads, NOW and source ages
 
@@ -1187,6 +1187,66 @@ Files and counts, as `node --test` reported them on `main` at `d3b57b2`: M46 4 o
 | A staged file after `stash` follows `git stash` semantics: the `oob` ref holds it and the checkout returns to its baseline, so the file leaves the work tree. Alternative for Sean: left on disk untracked beside the stash. | Pinned by the S2 case (§111: `git status --porcelain --untracked-files=all` empty after the stash). A different decision changes that case. | E54, "Added after the Verifier's pass" |
 | Integrity now hashes every tracked file of each managed checkout at every tick; to revisit if it shows in load (row M71's limits were qualified before this change and are not re-measured). | Pinned by no case. Row M71's file passed on the final run above (its load case in 54 s), which is a pass within the bounds the cases assert, not a re-measurement of the limits. | E55 item 1 |
 | A Stop confirmed while the run's operation is blocked (its probe finds `unknown`) waits until the repository answers; a Stop cannot finish while the repository cannot be read. | Pinned by no case (§112 pins the ambiguous write that landed; E54 question 2 (a) is the driver's default). | E55 item 2; E54 question 2 |
+
+## M2 slice 10: the kernel lane of the trust table (M2 build spec §9; E59)
+
+2026-10-03, by the Verifier of slice 10 on `verify/m2-s10` from `main` at `412bde4`. Rows M101 to M109 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §3.1, the nine kernel-lane rows, each with every named case the plan lists; the seam's §§113 to 121 fix what the plan's §2.6 leaves to the tests for them. Nine new files, listed under slice 10 of the manifest. Four accepted tests are changed and say so (below): one for K3 (M68), three for K8 (M37, M53, M74-fixture-semantics); two more follow the contract files (M07, M73). New harness: `harness/trust.mjs` (the fixture routes, the stand-in, the engine-scoped decisions), `harness/standin/backend.mjs` (the stand-in binary); `harness/launch-lint.mjs` gains `D2_HELPERS`; `harness/records.mjs`'s `holdSecret` takes `provider_cap_usd`; `contract/config.json` gains D2 A.7's keys and `contract/decisions.json` the two trust kinds and the `alpha_exception` option.
+
+**Rows and cases.** The plan's letters are the cases; where several letters share one `test()`, each is separately asserted with its letter in the message.
+
+| Row | File | Cases (plan letters) |
+|---|---|---|
+| M101 | `M101-no-entry-no-dispatch.test.mjs` | (a) (b) (c) in one test, three dispatches; (d); (e) |
+| M102 | `M102-activation-only-by-the-human.test.mjs` | (a); (b); (c) (two changes); (d); (e) |
+| M103 | `M103-budget-boundary-and-hard-maximum.test.mjs` | (a); (b); (c); (d); (e) |
+| M104 | `M104-estimated-cost-and-unknown-allowance.test.mjs` | (a) (b) in one test; (c) (f) (e) in one test; (d). The concurrent variant of C05 (two running invocations of one project) is **class A** for M2 (E18, E59 item 7) and has no case. |
+| M105 | `M105-alpha-exception-proposal.test.mjs` | (a); (b); (c); (d); (e) (three changes); (f) |
+| M106 | `M106-reviewer-powers.test.mjs` | (a); (b); (c) (five dependencies); (d) |
+| M107 | `M107-bootstrap-off-by-default.test.mjs` and the changed `M68-browser-bootstrap.test.mjs` | (a); (b) (the engine read and the HTTP opt-in in M107; M68's cases under the opt-in are the compatibility test); (c) |
+| M108 | `M108-widening-settings.test.mjs` | (a) (b) in one test; (c) (twelve paths); (d) |
+| M109 | `M109-no-unsandboxed-entry.test.mjs` | (a); (b); (c) |
+
+**The K3 change** (D2 K3, E56 item 3, E58 item 11; row M107 (b); SEAM §115). `M68-browser-bootstrap.test.mjs` is the accepted M1 bootstrap case. Its fixture engine now starts with `{"ui_bootstrap": true}` in `config.json`, and the file's header says it is the labelled compatibility test; no assertion of it changed. The default-off case, with the token never read, is M107 (a). This is a change of the case's setup to opt in to a route D2 turns off by default, not a weakening: everything M68 pinned is still pinned, under the exception the engine read reports. On the accepted engine the opt-in makes M68's six bootstrap cases fail at start (the key is unknown: exit 4) until the Builder adds the key; its two browser-lane cases pass as before.
+
+**The K8 change** (D2 §5 C2, K8 as Astra proposed and Sean accepted: "until D3 qualifies the classifier, the real Reviewer recommends and the human approves"; E44 item 2: an overturned provisional decision becomes a changed test; row M106 (b); SEAM §121). Three accepted cases had a Reviewer's `proposal_approval` apply a tightening: M37's first case ("authorized by a Reviewer"), M53's second ("a Reviewer approves a tightening: the proposal is applied with the Reviewer as its approver, and the human decision about it is closed") and the candidate-read case of `M74-fixture-semantics.test.mjs`. Each now has the human approve through `check_correction_tightening` after the Reviewer recommended, with the application's mechanics and every other assertion unchanged, and M53's second case also pins that the Reviewer's approval applied nothing and left the human's decision open with its preview. The plan's M106 row says "M51, M53 unchanged"; M53's second case contradicts K8 as decided and could not stay, so this is reported to Sean as the first question of the Verifier's report, with the change made so that the slice can pass as one.
+
+**The contract changes.** `contract/config.json` lists every D2 A.7 engine key (21) and project key (5: `budget_run_boundary`, `budget_hard_maximum`, `egress_allow_extra`, `sandbox_read_paths`) and the backend keys the Verifier fixed (`backend_builder`, `backend_verifier`, `backend_reviewer`, `backend_architect`, `backend_mode`), and the two D2 decision targets; M07's "defaults are inspectable" and M73's "the closed configuration" pin them from the file, and M07's project-defaults case compares with `deepEqual` (two keys default to a list). `contract/decisions.json` lists `trust_activation` and `qualification_approval` with their manifests and gives `finding_disposition` the option `alpha_exception`; M73's "no other decision kind is enabled" reads the file.
+
+**What was run.** Each file alone with `node --test` after `npm run build`, on `main` at `412bde4`, never two at once; no run was repeated. Every case of the nine new files is expected to fail on that engine, which has no trust table, and does, except M106 (c) and M109 (c), which pass and are kept (a case that passes turns unclaimed behaviour into claimed, as the slice-1 pass did). Per file, as `node --test` reported it, with the failing assertion and what the engine did:
+
+| File | Cases | Result on `main` at `412bde4` |
+|---|---|---|
+| M101 | 0 of 3 | All three **fail** at the first M2 step of the fixture: `POST /v1/projects/:p/policy` with `{"backend_verifier": "claude"}` is 400 `unknown_field` ("not a writable project policy key"; `harness/journal.mjs:160` from `realBackendProject`). Live up to there: the scripted engine, the stand-in binary written and hashed, the project on a detached repository, the provider key held. Nothing of the refusals, the entries or the attempt could run. |
+| M102 | 0 of 5 | All five **fail** at the same step, the policy key. Live up to there as M101. The fixture route, the decision, the engine read and the store constraints ran against no engine. |
+| M103 | 0 of 5 | All five **fail** at the same step. |
+| M104 | 0 of 3 | (a)(b) **fails** at "the next dispatch is held: the estimate counts toward the verified day" (`M104-…:70`): with 5.5 USD reported and 4.85 USD estimated against a limit of 10, the third item was dispatched (1 run, 0 expected). Live up to there: both invocations completed, the estimated row `estimated` 4.85 with `scripted-prices-1` in its normalization version. (c)(f)(e) **fails** at the cancelled run's original row: `unknown_allowance_tokens` is `undefined` (no such column) where 5000 is expected (`M104-…:93`); live up to there: the role held after one observation, the Stop ended the run `stopped` / `human_stop` with `billable_in` 4000, `out` 1000, `usage_complete` 0, `cost_status` `unknown`. (d) **fails** the same way after the `ledger.row` fault and the retry (`M104-…:135`): one original row with the observed tokens, no allowance column. |
+| M105 | 0 of 6 | (a) **fails** at "one containment_evidence record was published" (`M105-…:85`): none was; live up to there: the T1 candidate with a passed check (its output record), a failed check, four findings on two candidates, the Reviewer's run with the field completed. (b) **fails** at the run read: no `alpha_exception_proposals` (`{}` where three refusals are expected). (c) **fails**: a Builder's result carrying the field ended `completed` / `none` where `failed` / `invalid_result` is expected (the accepted engine ignores a result key it does not know, SEAM §26). (d), (e), (f) **fail** at `openDecision`: no `finding_disposition` decision about the finding after 4 ticks. |
+| M106 | 1 of 4 | (a) **fails** at "a Reviewer lowers nothing from Critical" (`M106-…:83`): the finding is `high` after the Reviewer's lowering (the E41 observation D2's K7 overturns). (b) **fails** at `assertNotApplied` (`harness/gates.mjs:375`): the integration branch moved, the Reviewer's approval applied the tightening (the E41 observation K8 overturns). (c) **passes**: each of the five dependencies (tree, base, specification, classification, effective version) changed between the human's approval and the effect invalidated the intent `EFFECT_PRECONDITION_CHANGED` with no git write. (d) **fails** at `openDecision` for the Critical lowering (no `severity_lower` decision: the engine applied it). |
+| M107 | 0 of 3 | (a) **fails** at arming the fault: `{"point": "token_read"}` is 400 `invalid_value` "Unknown fault." (`harness/engine.mjs:469`), before the bootstrap request; what the accepted engine answers the route is M68's (200 with the token). (b) **fails** at start: the fixture engine with `{"ui_bootstrap": true}` exits 4, `unknown_field` `ui_bootstrap`. (c) **fails** at the first value: `{"ui_bootstrap": "yes"}` is refused `unknown_field` where `invalid_value` is expected (the key is unknown, so no value is judged). |
+| M108 | 0 of 3 | All three **fail** at the first submission: `egress_allow_extra` (a, d) and `sandbox_read_paths` (c) are 400 `unknown_field` where 409 `confirm_required` is expected (`harness/decisions.mjs:85`). Live up to there: in (c), the operator home with a seeded `.ssh`, the engine started with that `HOME`, the first run's retained workspace, the alias, the listening socket and the FIFO. |
+| M109 | 1 of 3 | (a), (b) **fail** at the policy key as M101. (c) **passes**: the engine's source keeps to the allowed list with `D2_HELPERS` added, a spawn of `claude` in `boundary/launch.ts`, `boundary/domains.ts`, `trust/qualify.ts` and `invoke-helpers/spawn.ts` is reported, the same under `invoke/adapters/claude.ts` is not; `boundary/scope.ts` is one file naming `systemd-run`. |
+
+The changed accepted tests, run the same way: M07 13 of 17 (the four that read the contract's keys fail: "exactly the closed key set"; `decision_targets.trust_activation` undefined; `config.ui_bootstrap` undefined; `budget_run_boundary` undefined); M73 10 of 11 ("qualification_approval is a DecisionKind"); M74-invocation-boundary 3 of 3; M37 2 of 3 (the K8 case: the Reviewer's approval moved the branch); M53 7 of 8 (the K8 case: the branch moved); M74-fixture-semantics 3 of 4 (the K8 case: no `check_correction_tightening` decision open after the Reviewer applied it); M68 2 of 8 (the K3 opt-in: exit 4 at start, as above). No other accepted file was run by this pass; the driver's rerun is the whole run.
+
+**Recorded, not pinned** (each in the seam section named):
+
+| Not pinned | Why |
+|---|---|
+| The dispatch's refusal `isolation_unqualified` when a forced check fails in the kernel lane; anything the host checks do under `run` | Row M110's (SEAM §114). |
+| Which entry is used when two are active for one backend name and mode; the launch's working directory and standard input in the kernel lane; what a run ends as after the stand-in exits (not `refused` only) | SEAM §116: the sandbox lane runs the real launch. |
+| Where a Reviewer's recommendation of a tightening is recorded | SEAM §121: only that it is not an approval. |
+| The `backend_refused` refusal's `subject` on the run read; the ranges of the sandbox and proxy keys; `qualification_approval`'s raising and answering | SEAM §§115 to 117: M135 and the sandbox rows. |
+| A reference the Alpha exception cannot resolve (`reference_unresolved`); a proposal for a finding that is `resolved`; whether the exception survives a change of the acceptance content after it is written | SEAM §119. |
+| A later correction without `usage_complete` and the allowance; an allowance under `max_concurrent_runs` above 1 (class A) | SEAM §120. |
+| The engine's `backends` list outside harness mode once a host is qualified | SEAM §118: the sandbox lane. |
+
+**Not written** (recorded by this pass):
+
+| Case | Where it would go | Why not written |
+|---|---|---|
+| The concurrent clause of C05: two running invocations of one project each counting the other's remaining allowance at dispatch | `M104-…` | Unreachable while `max_concurrent_runs` is 1 through M3 (E18); class A for M2 (E59 item 7, plan question 8). |
+| `budget_boundary_unenforceable` for `user_turn` | `M103-…` | The same rule as `model_turn`, one case (E31). |
+| A hash mismatch of the entry's binary at launch (`backend_refused` before the launcher starts) | `M125-…` (sandbox lane; D2-A04) | The plan puts it in the sandbox lane. |
 
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 

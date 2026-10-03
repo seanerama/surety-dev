@@ -26,7 +26,8 @@ import { describe, test } from 'node:test';
 import { CODES, answer, answerAndHoldEffect, assertEffectInvalidated, consume, decision, decisionsOn, intentsOf, openDecision, untilKilled } from './harness/decisions.mjs';
 import { CHECK_FILE, PROTECTED_FILES, assertApplied, assertNotApplied, capturedProposal, check, correction, effectiveVersion, finding, installChecks, installGatedPlan, nominated, passAll, postResult, proposalsOf, raiseFindings, reasonSubjects, review, reviewerApproves, stageGate, waitApplied } from './harness/gates.mjs';
 import { armBarrier } from './harness/journal.mjs';
-import { commitOnRef, treeOf } from './harness/repos.mjs';
+import { isoNow, newId } from './harness/ids.mjs';
+import { commitOnRef, refOid, treeOf } from './harness/repos.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -148,21 +149,42 @@ describe('M106 the Reviewer\'s powers', () => {
       const row = assertNotApplied(ctx.fx, ctx, ctx.headBefore);
       assert.notEqual(row.status, 'applied', 'no git write');
     }
-    // 5. The effective version: another tightening is applied while the first's effect is held.
+    // 5. The effective version. No engine path can apply a second proposal
+    // while the first's effect is paused (the effects step is the tick's, and
+    // one tick runs at a time), so the version in force is changed in the
+    // store with the engine stopped at the intent, as rows M45, M51 and M53
+    // change a dependency no path changes while the question stands
+    // (SEAM.md §65): the effective version is superseded by a copy of itself,
+    // a version with the same set. The intent bound the old version's id.
     {
       const ctx = await correction(t, 'tightening');
       const { fx, project, decision: previewed, previous } = ctx;
-      const other = await capturedProposal(fx, project, { changeKind: 'tightening', content: '{"expect": 200, "body": "ok", "headers": true}\n' });
-      const otherDecision = await openDecision(fx, project.id, KIND, other.id);
-      const held = await answerAndHoldEffect(fx, project.id, previewed, 'approve');
-      await consume(fx, project.id, otherDecision, 'approve');
-      await waitApplied(fx, project, other);
-      const version = effectiveVersion(fx.home, project.id);
-      assert.notEqual(version.id, previous.id, 'the fixture is live: the other tightening is in effect');
-      await assertEffectInvalidated(fx, previewed, held);
+      assert.equal(previewed.manifest.effective_protected_version, previous.id, 'the fixture is live: the preview bound the effective version');
+      await approvedAndKilled(ctx);
+      const successorId = newId('pv_');
+      withStore(
+        fx.home,
+        (db) => {
+          const row = db.prepare('SELECT * FROM "protected_versions" WHERE "id" = ?').get(previous.id);
+          const columns = Object.keys(row);
+          const copy = { ...row, id: successorId, created_at: isoNow(), seq: row.seq + 1, change_kind: 'tightening', proposal: null, approved_by: 'fixture: the same set, authorized again', approver_authority: 'human', approved_at: isoNow(), applied_by_operation: null, authorized: 1, effective_from: isoNow(), superseded_by: null };
+          // One effective version at a time: the old one is superseded before the copy is in, with the reference deferred.
+          db.exec('BEGIN');
+          db.pragma('defer_foreign_keys = ON');
+          db.prepare('UPDATE "protected_versions" SET "superseded_by" = ? WHERE "id" = ?').run(successorId, previous.id);
+          db.prepare(`INSERT INTO "protected_versions" (${columns.map((column) => `"${column}"`).join(', ')}) VALUES (${columns.map((column) => `@${column}`).join(', ')})`).run(copy);
+          db.exec('COMMIT');
+        },
+        { readonly: false },
+      );
+      await fx.start();
+      assert.equal(effectiveVersion(fx.home, project.id).id, successorId, 'the fixture is live: another version is in force');
+      const intent = await tickUntil(fx.engine, project.id, () => intentsOf(fx.home, previewed.id).find((row) => !['pending', 'executing'].includes(row.status)), { what: 'the pending effect to be revalidated (the effective version)' });
+      assert.deepEqual([intent.status, intent.invalidated_reason], ['invalidated', CODES.intent_invalidated], 'the effective version: the effect is invalidated, not made');
       const row = proposalsOf(fx.home, project.id).find((found) => found.id === ctx.proposal.id);
-      assert.deepEqual([row.status !== 'applied', row.resulting_version, effectiveVersion(fx.home, project.id).id], [true, null, version.id], 'the effective version: the first proposal is not applied and the version in force is the other\'s');
-      assertApplied(fx, project, { proposal: other, previous, headBefore: ctx.headBefore, authority: 'human', changeKind: 'tightening' });
+      assert.deepEqual([row.status, row.resulting_version, refOid(project.repo.path, project.repo.ref)], ['classified', null, ctx.headBefore], 'no git write; the proposal awaits an approval again');
+      const next = await openDecision(fx, project.id, KIND, ctx.proposal.id);
+      assert.equal(next.manifest.effective_protected_version, successorId, 'the next generation binds the version now in force');
     }
   });
 

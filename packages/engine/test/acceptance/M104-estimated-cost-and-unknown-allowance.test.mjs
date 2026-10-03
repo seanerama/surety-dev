@@ -25,7 +25,8 @@ import { describe, test } from 'node:test';
 import { armFault } from './harness/engine.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { PRICES, awayFromMidnight, correct, getLedger, invocationOf, ledgerRows, originalRowOf } from './harness/ledger.mjs';
-import { addProject, addWork, assertRunEnded, runsOf, scriptedEngine, stopRun, tick, tickOnce, tickUntil, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
+import { addWork, assertRunEnded, runsOf, scriptedEngine, stopRun, tick, tickOnce, tickUntil, waitForRun, waitForRunState, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 
 // The estimate the price table gives 400,000 billable input, 100,000 cached
@@ -51,7 +52,7 @@ describe('M104 estimated cost and the unknown allowance', () => {
   test('(a) a reported and an estimated invocation together reach the verified day limit: the next dispatch is held, and the ledger shows reported and estimated apart, the estimate with its price-table version and nothing estimated under a verified key; (b) a correction reporting the estimated cost keeps both rows with their provenance', async (t) => {
     await awayFromMidnight();
     const fx = await scriptedEngine(t);
-    const project = (await addProject(fx)).id;
+    const project = (await addGitProject(fx)).id;
     await changePolicy(fx.engine, project, { budget_day_verified_usd: 10 });
     const reported = await addWork(fx.engine, project, 'verification');
     const estimated = await addWork(fx.engine, project, 'verification');
@@ -89,7 +90,7 @@ describe('M104 estimated cost and the unknown allowance', () => {
   test('(c) a run cancelled after one observation keeps the observed tokens with the allowance of the unobserved remainder, not below zero; (f) at dispatch the day counts the known usage plus the remaining allowance; (e) a later correction with the terminal usage reconciles the allowance and leaves the original row unchanged', async (t) => {
     await awayFromMidnight();
     const fx = await scriptedEngine(t);
-    const project = (await addProject(fx)).id;
+    const project = (await addGitProject(fx)).id;
     await changePolicy(fx.engine, project, { budget_run_billable_tokens: 10_000 });
 
     // (c) 5,000 billable tokens observed of a 10,000 limit: an allowance of 5,000.
@@ -131,7 +132,7 @@ describe('M104 estimated cost and the unknown allowance', () => {
   test('(d) a fault once on the ledger write, the retry and a restart: one original row, the allowance charged once', async (t) => {
     await awayFromMidnight();
     const fx = await scriptedEngine(t);
-    const project = (await addProject(fx)).id;
+    const project = (await addGitProject(fx)).id;
     await changePolicy(fx.engine, project, { budget_run_billable_tokens: 10_000 });
     const item = await addWork(fx.engine, project, 'verification');
     await armFault(fx.engine, { point: 'before_event', event_type: 'ledger.row' });

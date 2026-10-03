@@ -19,7 +19,8 @@ import { sha256Hex, waitFor } from './engine.mjs';
 import { assertRefused } from './fixtures.mjs';
 import { changePolicy } from './journal.mjs';
 import { hasIdForm } from './ids.mjs';
-import { addProject, scriptedEngine, tick, tickUntil } from './runs.mjs';
+import { addGitProject } from './gitruns.mjs';
+import { scriptedEngine, tick, tickUntil } from './runs.mjs';
 import { holdSecret } from './records.mjs';
 import { withStore } from './store.mjs';
 
@@ -164,7 +165,9 @@ export async function useBackend(engine, project, backend, { roles = ['builder',
 export async function realBackendProject(t, { backend = BACKENDS.claude, roles = ['verifier'], config, key = 'sk-test-key-for-the-stand-in-0001' } = {}) {
   const fx = await scriptedEngine(t, { config });
   const standIn = new StandIn(join(fx.root, 'standin'));
-  const project = (await addProject(fx)).id;
+  // A repository whose integration branch is checked out nowhere, so that a
+  // policy change can be committed (SEAM.md §§25, 30).
+  const project = (await addGitProject(fx)).id;
   await holdSecret(fx.engine, apiKeyRef(backend), key);
   await useBackend(fx.engine, project, backend, { roles });
   return { fx, standIn, project, key };
