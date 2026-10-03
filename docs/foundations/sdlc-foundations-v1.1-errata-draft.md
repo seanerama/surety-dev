@@ -947,3 +947,13 @@ Sean ran the hands-on walkthrough (`docs/acceptance/reports/M1-hands-on.sh`, bot
 **Carried into M2 planning:** the decisions marked "to revisit" or "before M2" in E32, E36 to E39, E41 to E44; the extra reads (E44 item 3); the fix-loop details still provisional (E43: a fix's integration nominates at T2 and T3; a Reviewer raises a finding and dispositions it in separate reports); the observation that the engine evaluates a stage gate by itself at a check's execution rather than at a verification's completion (the seam's section 70 wording).
 
 ---
+
+## E46. Astra's milestone assessment of M1 (relayed by Sean, 2026-10-03)
+
+Astra assessed the accepted M1 from the final report, the repository changes and spot-checks of source and tests, without rerunning the suite. Her conclusion: "M1 is a credible kernel milestone, and the core engineering effort has paid off." What changed her assessment since E40: the complete workflow exists (the engine creates verification, review and fix work itself, and the journey covers a finding blocking progress, a fix producing a successor candidate and evidence resolving the finding); there is measurable evidence (801 acceptance and 79 unit tests, the walkthrough, the latency figures); and the project corrected overengineering (the stand-in engine and the custom git-object reader removed). She still holds that the early verification process was heavier than necessary, and that the kernel's main mechanisms have earned their place: the reviews found real failures (lost accounting, leaked secrets, incorrect acceptance, interference between engines) that recovery, ownership and evidence checks address directly.
+
+**Her remaining concern is the transition to real agents:** the 18 real-behaviour cases no test establishes (rejection answers, some stale-decision dependencies), the missing operational reads, and the accepted isolation limitations deserve deliberate prioritisation before real-agent use.
+
+**Her priorities for the next milestone, in order:** qualified isolation; trustworthy real check execution; enough visibility to explain blocked work; then one backend on one small project before expanding capabilities.
+
+---
