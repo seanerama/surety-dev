@@ -957,3 +957,9 @@ Astra assessed the accepted M1 from the final report, the repository changes and
 **Her priorities for the next milestone, in order:** qualified isolation; trustworthy real check execution; enough visibility to explain blocked work; then one backend on one small project before expanding capabilities.
 
 ---
+
+## E47. The reads for work items and gate reasons (decided by Sean, 2026-10-03)
+
+Settles E44 item 3 after the hands-on run and Astra's third priority (E46). Two reads D1 section 11.3 lists and no acceptance row named are built now, with one case each: a project's work items (each with its kind, status, subject, and when blocked the blocker's reason and the decision it waits on) and a candidate's gate evaluation with its reasons, as a read that evaluates nothing. The other reads D1 lists (operations, one decision by id) stay on the not-claimed list.
+
+---
