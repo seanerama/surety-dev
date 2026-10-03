@@ -513,7 +513,8 @@
       "waiting_on_you",
       "running",
       "ready",
-      "idle"
+      "idle",
+      "unknown"
     ],
     "ObservedCondition": [
       "healthy",

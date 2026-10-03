@@ -31,9 +31,9 @@ const mustProject = (db: Db, project: string): void => {
 
 // ---- NOW (D1 §12.3) -----------------------------------------------------------------
 
-// What a projection can say (D1 A.2). M1 computes no `unknown` NOW: a store
-// snapshot that fails fails the read.
-export const NOW_STATES = ['refused', 'waiting_on_you', 'running', 'ready', 'idle'] as const;
+// What a projection can say (D1 A.2). `unknown` is NOW whose inputs could
+// not be read; a store snapshot that fails as a whole fails the read.
+export const NOW_STATES = ['refused', 'waiting_on_you', 'running', 'ready', 'idle', 'unknown'] as const;
 type NowState = (typeof NOW_STATES)[number];
 export const FRESHNESS = ['fresh', 'stale', 'expired'] as const;
 export const PROVENANCE = ['observed', 'claimed', 'configured'] as const;
@@ -73,15 +73,65 @@ function dispatchable(db: Db, project: string, maxConcurrentRuns: number): numbe
   return n;
 }
 
+// Why the engine cannot act on the project, if it cannot (D1 §12.3): a
+// quarantined run; a repository it cannot read; an out-of-band change nobody
+// has settled; a journal operation whose effect git could not be made to tell.
+// Each names its cause. null: none of these holds.
+function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: string; reason: string; primary: string } | null {
+  const quarantined = runs.find((r) => r.quarantined);
+  if (quarantined) {
+    return { cause: 'quarantine', reason: `The engine cannot act on this project: run ${quarantined.id} is quarantined until its termination is observed.`, primary: 'inspect_quarantine' };
+  }
+  const observations = db
+    .prepare(
+      `SELECT o."id", o."subject_kind", o."decision", r."ref", c."path" FROM "out_of_band_changes" o
+       LEFT JOIN "ref_registry" r ON r."id" = o."ref" LEFT JOIN "managed_checkouts" c ON c."id" = o."checkout"
+       WHERE o."project" = ? AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at", o."id"`,
+    )
+    .all(project) as { id: string; subject_kind: string; decision: string; ref: string | null; path: string | null }[];
+  const unreadable = observations.find((o) => o.subject_kind === 'repository');
+  if (unreadable) {
+    return {
+      cause: 'repository_unreadable',
+      reason: "The engine cannot act on this project: its repository cannot be read, and nothing about it is known until it can.",
+      primary: 'restore_repository_access',
+    };
+  }
+  const change = observations[0];
+  if (change) {
+    const what = change.subject_kind === 'ref' ? `the registered ref ${change.ref}` : `the checkout ${change.path}`;
+    return {
+      cause: 'out_of_band_change',
+      reason: `The engine cannot act on this project: ${what} was changed outside the engine (${change.id}), and the change is not settled.`,
+      primary: 'answer_decision',
+    };
+  }
+  const blocked = db
+    .prepare(
+      `SELECT o."id" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."project" = ? AND s."state" = 'ambiguous' ORDER BY o."seq" LIMIT 1`,
+    )
+    .get(project) as { id: string } | undefined;
+  if (blocked) {
+    return {
+      cause: 'journal_blocked',
+      reason: `The engine cannot act on this project: what git did for operation ${blocked.id} is not established, and nothing is dispatched until it is.`,
+      primary: 'inspect_operation',
+    };
+  }
+  return null;
+}
+
 function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, maxConcurrentRuns: number) {
-  const quarantined = runs.filter((r) => r.quarantined);
+  const refusal = refusalOf(db, project, runs);
   let state: NowState;
   let reason: string;
   let primary: string | null;
-  if (quarantined.length > 0) {
+  let cause: string | null = null;
+  if (refusal) {
     state = 'refused';
-    reason = `The engine cannot act on this project: run ${quarantined[0]!.id} is quarantined until its termination is observed.`;
-    primary = 'inspect_quarantine';
+    reason = refusal.reason;
+    primary = refusal.primary;
+    cause = refusal.cause;
   } else if (decisions > 0) {
     state = 'waiting_on_you';
     reason = decisions === 1 ? 'One decision is waiting for your answer.' : `${decisions} decisions are waiting for your answer.`;
@@ -102,7 +152,14 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
       primary = null;
     }
   }
-  return { state, primary_action: primary, reason };
+  return { state, primary_action: primary, reason, cause };
+}
+
+// NOW when it cannot be computed (D1 §12.3): `unknown`, naming why, never a
+// state the engine did not establish.
+function unknownNow(err: unknown) {
+  const what = err instanceof Error ? err.message : String(err);
+  return { state: 'unknown' as const, primary_action: null, reason: `The project's state cannot be computed: the store could not be read (${what}).`, cause: 'store_error' };
 }
 
 // ---- spend today (D1 §13.1; SEAM.md §§54, 91) ----------------------------------------
@@ -159,9 +216,15 @@ function environmentsOf(db: Db, project: string) {
 function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
   const runs = executionRuns(db, project);
   const decisions = openDecisionCount(db, project);
+  let now;
+  try {
+    now = nowOf(db, project, runs, decisions, maxConcurrentRuns);
+  } catch (err) {
+    now = unknownNow(err);
+  }
   return {
     id: project,
-    now: nowOf(db, project, runs, decisions, maxConcurrentRuns),
+    now,
     execution: { runs },
     open_decisions: { count: decisions },
     spend_today: spendToday(db, project),
