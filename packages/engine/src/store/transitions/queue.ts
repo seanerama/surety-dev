@@ -675,8 +675,12 @@ function alphaManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     applicable: candidate ? findingApplies(tx.db, f, candidate) : false,
     candidate: p?.candidate ?? null,
     candidate_revision: candidate?.revision ?? null,
-    acceptance_content_hash: candidate ? contentHash(tx.db, f.project, candidate) : null,
-    reviewed_content_hash: p?.acceptance_content_hash ?? null,
+    // The content the Reviewer reviewed, which the exception is bound to
+    // (SEAM.md §119), and the content in force now: they are one while the
+    // question stands, and a change of the second stales an answer and
+    // invalidates an effect.
+    acceptance_content_hash: p?.acceptance_content_hash ?? null,
+    content_in_force: candidate ? contentHash(tx.db, f.project, candidate) : null,
     proposed_by_run: p?.run ?? null,
     policy_revision: policyRevisionId(tx.db, f.project),
   };
@@ -691,6 +695,9 @@ const ALPHA_EXCEPTION: KindSpec = {
     // The question stands only while the exception could be made: a High
     // finding in no sensitive area, open against that candidate (C1).
     if (f.effective_severity !== 'high' || f.sensitive_area !== null || (f.status !== 'open' && f.status !== 'dispositioned') || !candidate || !findingApplies(tx.db, f, candidate)) return null;
+    // The question is about the content the Reviewer reviewed: once that is
+    // no longer in force it is withdrawn, not asked again (SEAM.md §119).
+    if (contentHash(tx.db, f.project, candidate) !== p.acceptance_content_hash) return null;
     const manifest = alphaManifest(tx, f);
     return {
       manifest,

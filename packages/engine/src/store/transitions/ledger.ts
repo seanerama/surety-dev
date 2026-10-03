@@ -111,7 +111,7 @@ export function chargeInvocation(
   const raw = foldObservations(obs);
   const n = obs.length === 0 ? NOTHING_OBSERVED : normalize(raw);
   const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') ? 1 : 0;
-  const allowance = complete === 1 || !ENGINE_ENDED.includes(run.outcome ?? '') ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length);
+  const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
   const id = tx.newId('led_');
   tx.db
     .prepare(
@@ -156,17 +156,19 @@ function runLimit(db: Db, invocation: string, project: string): number {
   return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
 }
 
-// C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9; SEAM.md §120): an
-// invocation the engine ended, or recovered, is charged, once, on its
-// original row, the run's budget_run_billable_tokens less the billable tokens
-// observed, not below zero. It is charged where the backend is known to
-// report usage: an invocation of a trust entry's backend, and one of the
-// scripted provider that reported some (an M1 scripted role that reports
-// none is a provider that said nothing, as M1 accepted, and is charged
-// nothing more).
-function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number): number | null {
+// C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9; SEAM.md §120 as
+// amended by the slice-10 review's S2): an invocation whose usage is
+// incomplete is charged, once, on its original row, the run's
+// budget_run_billable_tokens less the billable tokens observed, not below
+// zero. Every incomplete invocation of a trust entry's backend is charged,
+// however it ended (a failure on its own with no usage event as much as a
+// cancellation). One of the scripted provider is charged when the engine
+// ended it after at least one observation: an M1 scripted role that reports
+// none is a provider that said nothing, as M1 accepted.
+function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number, engineEnded: boolean): number | null {
   const receipt = db.prepare('SELECT "trust_entry" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { trust_entry: string | null } | undefined;
-  if (observations === 0 && (receipt?.trust_entry ?? null) === null) return null;
+  const real = (receipt?.trust_entry ?? null) !== null;
+  if (!real && (observations === 0 || !engineEnded)) return null;
   return Math.max(0, runLimit(db, invocation, project) - (billable(n) ?? 0));
 }
 
