@@ -900,7 +900,9 @@ function configureResolver(body: unknown): unknown {
     if (!isObject(value) || !Array.isArray(value.answers)) throw bad();
     const delay = value.delay_ms ?? 0;
     if (typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || Object.keys(value).some((k) => k !== 'answers' && k !== 'delay_ms')) throw bad();
-    const answers = value.answers as unknown[];
+    // One answer (a list of addresses) or one per resolution (a list of them).
+    const given = value.answers as unknown[];
+    const answers = given.length > 0 && given.every((x) => typeof x === 'string') ? [given] : given;
     if (answers.length === 0 || !answers.every((a) => Array.isArray(a) && a.every((x) => typeof x === 'string'))) throw bad();
     parsed.set(name.toLowerCase().replace(/\.+$/, ''), { answers: answers as string[][], delayMs: delay });
   }
