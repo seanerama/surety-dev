@@ -251,7 +251,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
         ui_bootstrap: config.values.ui_bootstrap,
       },
       // The resource envelope's admission (D2 §3.7), on the real boundary.
-      envelope: checksRun
+      envelope: checksRun && scope.scope !== null
         ? {
             max_concurrent_domains: config.values.max_concurrent_domains,
             host_reserve_memory: config.values.host_reserve_memory,

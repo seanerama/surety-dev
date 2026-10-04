@@ -4,13 +4,20 @@
 // trust_activation. The same functions serve the harness fixtures, which
 // stand for what a real attempt would have established (M2 plan §2.3).
 
+import { Refusal } from '../../refusal.js';
+import { notFound } from './common.js';
+import type { CommandResult } from './control.js';
 import { raiseQuestion } from './queue.js';
+import { projectPolicy } from './settings.js';
 import {
   type AttemptInput,
   type AttemptRow,
   type EntryInput,
   type EntryRow,
+  currentHostQualification,
+  currentProfileFingerprint,
   finishAttempt,
+  hostEligibility,
   getAttempt,
   writeAttempt,
   writeEntry,
@@ -50,4 +57,68 @@ export function concludeAttempt(
   const { entry, decision } = proposeEntry(tx, { ...args.entry, qualification_attempt: a.id }, label);
   finishAttempt(tx, a, { outcome: 'succeeded', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [], trust_entry: entry.id });
   return { status: 'succeeded', entry: entry.id, decision };
+}
+
+// POST /v1/trust/qualify (D2 §7.2, K10, Q7, A.3, A.7): the attempt written
+// `proposed`, binding before any launch the binary and help hashes, the
+// template and its version, the model, the authentication mode, the current
+// host qualification, the fixture project, the candidate egress list, a
+// deadline per canary and the spend, an estimate labelled as one with the
+// invocation overshoot stated (no M2 mechanism enforces a cap; a provider-side
+// cap on the key is shown as configured). Its qualification_approval is
+// raised. Nothing is launched.
+export function qualify(
+  tx: Tx,
+  a: {
+    backend: string;
+    mode: string;
+    model: string;
+    binary_path: string;
+    binary_sha256: string;
+    help_sha256: string;
+    version: string;
+    template: string;
+    template_version: string;
+    candidate_egress: string[];
+    fixture_project: string;
+    canary_deadlines: Record<string, number>;
+    provider_cap_usd?: number | null;
+  },
+): CommandResult {
+  const project = tx.db.prepare('SELECT "id", "registration_state" FROM "projects" WHERE "id" = ?').get(a.fixture_project) as { id: string; registration_state: string } | undefined;
+  if (!project) throw notFound('project', a.fixture_project);
+  const hq = currentHostQualification(tx.db);
+  const host = hostEligibility(tx.db);
+  if (!hq || !host.eligible) {
+    throw new Refusal(409, 'isolation_unqualified', 'No current host qualification makes this host eligible: a qualification attempt binds one.', 'Start the engine where the host checks pass.', {
+      host_eligibility: host,
+    });
+  }
+  const profile = currentProfileFingerprint();
+  if (profile === null) throw new Refusal(409, 'isolation_unqualified', "This start's checks did not establish the role profile an attempt binds.", 'Start the engine where the host checks pass.', {});
+  const limit = projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens ?? null;
+  const spend = {
+    cap: a.provider_cap_usd === undefined || a.provider_cap_usd === null ? null : { status: 'configured', usd: a.provider_cap_usd, enforced_by: 'provider' },
+    estimate: { tokens: limit === null ? null : limit * 3, usd: null, basis: 'three canaries at the fixture project\'s budget_run_billable_tokens; the cost is unknown until reported' },
+    label: 'estimate',
+    overshoot: 'within each canary, bounded only by its deadline (D2 §4.2)',
+  };
+  const { attempt, decision } = proposeAttempt(tx, {
+    backend: a.backend,
+    version: a.version,
+    binary_path: a.binary_path,
+    binary_sha256: a.binary_sha256,
+    help_sha256: a.help_sha256,
+    template: a.template,
+    template_version: a.template_version,
+    model: a.model,
+    auth_mode: 'api_key',
+    host_qualification: hq.id,
+    profile_fingerprint: profile,
+    fixture_project: a.fixture_project,
+    candidate_egress: a.candidate_egress,
+    canary_deadlines: a.canary_deadlines,
+    spend,
+  });
+  return { status: 201, body: { qualification_attempt: { id: attempt.id, status: attempt.status }, decision } };
 }

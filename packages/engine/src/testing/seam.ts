@@ -20,7 +20,8 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -1184,4 +1185,71 @@ export function beforeEventWrite(eventType: string): void {
     (f) => (f.point === 'before_event' && f.event_type === eventType) || (f.point === 'audit_write' && eventType === 'api.act'),
     eventType === 'api.act' ? 'audit write' : `before event ${eventType}`,
   );
+}
+
+// ---- qualification in harness mode (M2 plan §2.3; SEAM.md §116) ------------
+
+// Is `path` a real backend's binary, which harness mode never runs? An
+// executable image (ELF), or the file the backend's own name resolves to on
+// the engine's PATH or under the user's local installation. The harness's
+// stand-in is a script the test wrote. null when it may be run.
+export function realBinaryReason(path: string, backend: string): string | null {
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch {
+    return null;
+  }
+  try {
+    const head = Buffer.alloc(4);
+    const fd = openSync(real, 'r');
+    try {
+      readSync(fd, head, 0, 4, 0);
+    } finally {
+      closeSync(fd);
+    }
+    if (head.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) return `${real} is an executable image, not the harness's stand-in`;
+  } catch {
+    return null;
+  }
+  const dirs = [...(process.env.PATH ?? '').split(':'), join(homedir(), '.local', 'bin')].filter((d) => d.startsWith('/'));
+  for (const d of dirs) {
+    try {
+      if (realpathSync(join(d, backend)) === real) return `${real} is the ${backend} the engine's PATH names`;
+    } catch {
+      // not there
+    }
+  }
+  return null;
+}
+
+// In harness mode: a launch of a real backend's binary is refused (the
+// sandbox and kernel lanes run only the stand-in); null otherwise.
+export function seamRefuseBinary(path: string, backend: string): string | null {
+  if (!init.harness) return null;
+  return realBinaryReason(path, backend);
+}
+
+// The static checks of a qualification attempt in harness mode: the
+// stand-in's path, its hash, the version the request names, and a help hash
+// over its own file, as the trust-entry fixture computes it; a real
+// backend's binary refused. null outside harness mode.
+export async function seamQualifyStatic(backend: string, body: Record<string, unknown>): Promise<{ path: string; sha256: string; help: string; version: string } | null> {
+  if (!init.harness) return null;
+  if (typeof body.binary !== 'string' || !body.binary.startsWith('/')) {
+    throw new Refusal(400, 'invalid_value', 'binary must be the absolute path of the stand-in binary.', 'Name the stand-in the test wrote.', { field: 'binary' });
+  }
+  let path: string;
+  try {
+    path = realpathSync(body.binary);
+  } catch {
+    throw new Refusal(400, 'invalid_value', `The binary ${body.binary} cannot be resolved.`, 'Name the stand-in the test wrote.', { field: 'binary' });
+  }
+  const real = realBinaryReason(path, backend);
+  if (real !== null) throw new Refusal(409, 'backend_refused', `Harness mode never runs a real backend's binary: ${real}.`, 'Name the stand-in binary.', { field: 'binary' });
+  const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
+  if (body.version !== undefined && (typeof body.version !== 'string' || body.version === '')) {
+    throw new Refusal(400, 'invalid_value', 'version must be a string.', 'Name the version the stand-in stands for.', { field: 'version' });
+  }
+  return { path, sha256, help: sha256, version: (body.version as string | undefined) ?? '0.0.0-standin' };
 }

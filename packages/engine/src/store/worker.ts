@@ -91,6 +91,7 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext } from './reads.js';
+import { qualify } from './transitions/qualification.js';
 import { type HostObserved, recordHostQualification, revokeDrifted, setHostObserved, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
@@ -148,6 +149,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
+  'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
   'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
   'authorization.propose': (tx, a) => proposeAuthorization(tx, a),

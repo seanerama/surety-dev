@@ -195,8 +195,10 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
     )
     .get(args.run) as { exit_class: string; exit_evidence: string | null } | undefined;
   const latestDomain = (domains as Record<string, unknown>[]).at(-1);
-  const exitClass = terminal?.exit_class ?? (latestDomain?.exit_class as string | null | undefined) ?? null;
-  const exitEvidence = terminal ? parseJson<unknown>(terminal.exit_evidence) : (latestDomain?.exit_evidence ?? null);
+  // The terminal observation's class; null while there is none (SEAM.md §145).
+  const exitClass = terminal?.exit_class ?? null;
+  const exitEvidence = terminal ? parseJson<unknown>(terminal.exit_evidence) : null;
+  const collection = parseJson<Record<string, unknown>>((run.collection as string | null) ?? null);
   return {
     run: {
       id: run.id,
@@ -218,10 +220,11 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       // §1.4); what collection from the volatile filesystem found; and how
       // the backend ended, apart from the domain's observation (§1.6).
       result: run.result ?? null,
-      collection: parseJson<unknown>((run.collection as string | null) ?? null),
+      result_collection: (collection?.result_collection as unknown) ?? { outcome: 'not_collected', reason: null, bytes_read: null },
+      collection,
       exit_class: exitClass,
       exit_evidence: exitEvidence,
-      observation: (latestDomain?.observation as string | null | undefined) ?? null,
+      domain_observation: (latestDomain?.observation as string | null | undefined) ?? null,
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

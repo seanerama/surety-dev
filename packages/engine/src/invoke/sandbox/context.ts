@@ -28,7 +28,9 @@ export type ContextFacts = {
   run: { id: string; role: string; base_revision: string; content_hash: string | null };
   work_item: { id: string; kind: string; subject: string; project: string };
   stage: Record<string, unknown> | null;
-  requirements: { id: string; key: string; text_ref: string; assigned_phase: number | null }[];
+  requirements: { id: string; key: string; text_ref: string; assigned_phase: number | null; text?: string | null }[];
+  adrs?: { id: string; key: string; text: string }[];
+  constraints?: { id: string; key: string; text: string }[];
   modules: { id: string; name: string; paths: unknown }[];
   phase_plan: Record<string, unknown> | null;
   candidate: { id: string; revision: string; acceptance_content_hash: string | null } | null;
@@ -93,7 +95,14 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
   put('prompt.md', 'prompt', null, prompt);
   put('instructions.md', 'instructions', null, ['# Instructions', '', ...PROHIBITIONS.map((p) => `- ${p}`), '', 'The result must follow /surety/context/result-schema.json.', ''].join('\n'));
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(RESULT_SCHEMA, null, 2)}\n`);
-  for (const r of facts?.requirements ?? []) put(`requirements/${safeName(r.key)}.json`, 'requirement', r.id, `${JSON.stringify({ key: r.key, text_ref: r.text_ref, assigned_phase: r.assigned_phase }, null, 2)}\n`);
+  // The approved texts, verbatim (E67 item 7; SEAM.md §139): a role inside
+  // the sandbox has no other way to read them.
+  for (const r of facts?.requirements ?? []) {
+    if (typeof r.text === 'string') put(`requirements/${safeName(r.key)}.md`, 'requirement', r.id, `# ${r.key}\n\n${r.text}\n`);
+    else put(`requirements/${safeName(r.key)}.json`, 'requirement', r.id, `${JSON.stringify({ key: r.key, text_ref: r.text_ref, assigned_phase: r.assigned_phase }, null, 2)}\n`);
+  }
+  for (const a of facts?.adrs ?? []) put(`adrs/${safeName(a.key)}.md`, 'adr', a.id, `# ${a.key}\n\n${a.text}\n`);
+  for (const c of facts?.constraints ?? []) put(`constraints/${safeName(c.key)}.md`, 'constraint', c.id, `# ${c.key}\n\n${c.text}\n`);
   if (facts?.phase_plan) put('phase-plan.json', 'phase_plan', String(facts.phase_plan.id ?? '') || null, `${JSON.stringify(facts.phase_plan, null, 2)}\n`);
   for (const m of facts?.modules ?? []) put(`interfaces/${safeName(m.name)}.json`, 'interface', m.id, `${JSON.stringify({ module: m.name, paths: m.paths }, null, 2)}\n`);
   if (facts?.candidate && facts.candidate.acceptance_content_hash) put('acceptance-content-hash.txt', 'acceptance_content_hash', facts.candidate.id, `${facts.candidate.acceptance_content_hash}\n`);

@@ -31,7 +31,7 @@ import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } 
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamRefuseBinary } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
@@ -45,9 +45,14 @@ import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
+// The collector's reasons for a path that is not a result (SEAM.md §143).
+const REFUSAL_REASON: Record<string, string> = { link: 'link', fifo: 'fifo', device: 'device', oversize: 'oversize', socket: 'not_regular', directory: 'not_regular', path: 'not_regular', unreadable: 'not_regular' };
+
 // What collection found, once per run.
 interface Collected {
   result: ResultCollection;
+  verdict: { outcome: 'accepted' | 'invalid' | 'missing' | 'not_collected'; reason: string | null; bytes_read: number | null };
+  value: RunResult | null;
   providerFiles: string;
   boundText: string | null;
   unacceptedDone: boolean;
@@ -218,6 +223,14 @@ export class Launcher {
     // D2 §1.2: the binary is the one the entry names, by path and SHA-256;
     // a mismatch is refused before anything is launched.
     if (claim.entry !== null) {
+      // The engine's test mode never launches a real backend's binary: only
+      // the stand-in a test wrote (M2 plan §2.3).
+      const real = seamRefuseBinary(claim.entry.binary_path, claim.entry.backend);
+      if (real !== null) {
+        const refusal = refusalForm('backend_refused', `This engine does not launch ${claim.entry.backend}'s own binary here: ${real}.`, 'Bind the backend to a stand-in.', { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path });
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
       let found: string | null;
       try {
         found = createHash('sha256').update(await readFile(claim.entry.binary_path)).digest('hex');
@@ -745,8 +758,8 @@ export class Launcher {
     this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
   }
 
-  // What the result and the exit class give (D2 §1.6), the result recorded
-  // first where it is the run's.
+  // What the result and the exit class give (D2 §1.6; SEAM.md §143's
+  // table), the result recorded first where it is the run's.
   private async decideAfterExit(handle: RunHandle, cls: string, c: Collected): Promise<RunEnd | 'accept'> {
     const { claim } = handle;
     if (handle.streamBound !== null) {
@@ -759,56 +772,38 @@ export class Launcher {
     }
     const r = c.result;
     if (r.state === 'secret') return { outcome: 'failed', reason: 'infra_error', reasonText: `the secret screen refused the result: it holds a registered secret (${r.by ?? 'secret'}); nothing of it was published` };
+    const accepted = c.verdict.outcome === 'accepted' && r.state === 'read';
     if (cls === 'clean') {
-      if (r.state === 'refused') {
-        await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
-        handle.result = { valid: false };
-        await this.recordCollection(handle, { result: 'invalid', result_detail: r.detail });
-        return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result could not be read as a regular file: ${r.detail}` };
-      }
-      if (r.state !== 'read') {
-        await this.recordCollection(handle, { result: r.state === 'not_held' ? 'missing' : 'absent' });
-        return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with a terminal success event and left no result' };
-      }
-      // The result is the run's to accept or refuse: never also unaccepted.
+      // The result is the run's to take or refuse: never also unaccepted.
       c.unacceptedDone = true;
-      let value: unknown;
-      try {
-        value = JSON.parse(r.bytes.toString('utf8'));
-      } catch {
-        value = undefined;
+      if (!accepted) {
+        if (c.verdict.outcome === 'invalid') {
+          await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
+          handle.result = { valid: false };
+          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason})` };
+        }
+        return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with its terminal success event and left no result file' };
       }
-      const result = value === undefined ? null : parseResult(redactValue(value), claim.role);
-      const valid = result !== null;
-      if (valid) await pausePoint('run.result_received');
+      await pausePoint('run.result_received');
       let record: string | null = null;
       try {
         record = await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'result', content: r.bytes });
       } catch (err) {
         log('result record', err, { run: claim.run });
       }
-      const accepted = await this.recordResult(handle, valid, result, valid ? record : null).catch((err) => {
+      const recorded = await this.recordResult(handle, true, c.value, record).catch((err) => {
         log('result', err, { run: claim.run });
         return false;
       });
-      await this.recordCollection(handle, { result: valid ? 'collected' : 'invalid', result_record: record });
-      if (!accepted) return earnedEnd(handle);
-      handle.result = { valid };
-      if (!valid) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'the result is not a well-formed result for the role' };
+      if (!recorded) return earnedEnd(handle);
+      handle.result = { valid: true };
       if (handle.exit?.code !== 0) return earnedEnd(handle);
       return 'accept';
     }
-    // Any other class: the result, if any, is never accepted (D2 §1.4).
-    const wellFormed = r.state === 'read' && (() => {
-      try {
-        return parseResult(redactValue(JSON.parse(r.bytes.toString('utf8'))), claim.role) !== null;
-      } catch {
-        return false;
-      }
-    })();
+    // Any other class: the file, if accepted by the collector, is never the
+    // run's result (D2 §1.4).
     if (cls === 'error_exit') {
-      await this.publishUnaccepted(handle, c);
-      if (wellFormed) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result with a failed exit contradicts it' };
+      if (accepted) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result contradicts the failed exit' };
       return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class error_exit: the backend failed without a result' };
     }
     await this.publishUnaccepted(handle, c);
@@ -821,11 +816,11 @@ export class Launcher {
   // unaccepted_result record (D2 §1.4), once.
   private async publishUnaccepted(handle: RunHandle, c: Collected): Promise<void> {
     const r = c.result;
-    if (r.state !== 'read' || c.unacceptedDone) return;
+    if (r.state !== 'read' || c.verdict.outcome !== 'accepted' || c.unacceptedDone) return;
     c.unacceptedDone = true;
     try {
       const record = await writeWholeRecord(this.rt, { project: handle.claim.project, run: handle.claim.run, kind: 'unaccepted_result', content: r.bytes });
-      await this.recordCollection(handle, { result: 'unaccepted', result_record: record });
+      await this.recordCollection(handle, { unaccepted_result: record });
     } catch (err) {
       log('unaccepted result', err, { run: handle.claim.run });
     }
@@ -856,15 +851,28 @@ export class Launcher {
       filesMaxBytes: this.rt.setting('provider_files_max_bytes'),
       deadlineMs: this.rt.setting('collect_deadline') * 1000,
     };
-    let result = collectResult(hold, bounds);
-    // The scripted adapter's held line stands in for a result file the role
-    // did not write; never for a real backend.
-    if (result.state === 'absent' && claim.entry === null && handle.streamResult !== null) {
-      result = { state: 'read', bytes: Buffer.from(JSON.stringify(handle.streamResult.value)) };
+    const began = performance.now();
+    const result = collectResult(hold, bounds);
+    // The collector's verdict on the file (SEAM.md §143), apart from what the
+    // exit class makes of it.
+    let verdict: Collected['verdict'];
+    let value: RunResult | null = null;
+    if (result.state === 'not_held') verdict = { outcome: 'not_collected', reason: null, bytes_read: null };
+    else if (result.state === 'absent') verdict = { outcome: 'missing', reason: null, bytes_read: 0 };
+    else if (result.state === 'refused') verdict = { outcome: 'invalid', reason: REFUSAL_REASON[result.reason] ?? 'not_regular', bytes_read: 0 };
+    else if (result.state === 'secret') verdict = { outcome: 'invalid', reason: 'secret_refused', bytes_read: null };
+    else {
+      try {
+        value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
+      } catch {
+        value = null;
+      }
+      verdict = value === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     }
+    if (performance.now() - began > bounds.deadlineMs) verdict = { outcome: 'invalid', reason: 'deadline', bytes_read: verdict.bytes_read };
+    await this.recordCollection(handle, { result_collection: verdict });
     if (result.state === 'secret') {
       await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
-      await this.recordCollection(handle, { result: 'refused_secret' });
     }
     const template = claim.entry ? TEMPLATES[claim.entry.backend] : undefined;
     const inv = inventory(hold, bounds, template?.persistenceFlags ?? []);
@@ -900,7 +908,7 @@ export class Launcher {
     const boundText = inv.truncated
       ? `collection reached ${inv.truncated.limit} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete`
       : null;
-    return { result, providerFiles, boundText, unacceptedDone: false };
+    return { result, verdict, value, providerFiles, boundText, unacceptedDone: false };
   }
 
   // On a run's end decided by the engine (a Stop, a deadline, a bound) or by
@@ -911,7 +919,8 @@ export class Launcher {
   async collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void> {
     if (handle.sandbox === null || !handle.backendStarted) return;
     if (quarantined && handle.collection === null) {
-      await this.recordCollection(handle, { result: 'missing', provider_files: 'missing', reason: "the domain's termination was not established when the run ended; nothing was collected" });
+      // A domain whose termination was unknown is not collected (D2 §3.4).
+      await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files: 'not_collected' });
       return;
     }
     const c = await this.collectOnce(handle);
@@ -1089,7 +1098,6 @@ export class Launcher {
       // file; a real backend's line is never a result.
       if (handle.sandbox !== null) {
         handle.terminal = m.is_error === true || (m.subtype !== undefined && m.subtype !== 'success') ? 'failure' : 'success';
-        if (handle.claim.entry === null && handle.streamResult === null && 'result' in m) handle.streamResult = { value: redactValue(m.result) };
         return;
       }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.

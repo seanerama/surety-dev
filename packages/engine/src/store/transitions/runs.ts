@@ -425,6 +425,7 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null, opts.qualificationAttempt ?? null, session);
+  if (session !== null) tx.db.prepare('UPDATE "runs" SET "provider_session_id" = ? WHERE "id" = ?').run(session, runId);
   tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend, ...(session ? { provider_session_id: session } : {}) });
   return id;
 }
@@ -741,10 +742,17 @@ export function finishRun(
   // empty success (D2 §1.4, AR B08).
   const ranReal = tx.db.prepare(`SELECT 1 FROM "execution_domains" WHERE "run" = ? AND "cgroup_path" IS NOT NULL AND "launch_binding" IS NOT NULL`).get(run.id);
   const collection = (tx.db.prepare('SELECT "collection" FROM "runs" WHERE "id" = ?').get(run.id) as { collection: string | null }).collection;
-  if (ranReal && collection === null) {
+  if (ranReal && collection === null && args.recovery !== null) {
     tx.db
       .prepare('UPDATE "runs" SET "collection" = ? WHERE "id" = ?')
-      .run(JSON.stringify({ result: 'missing', provider_files: 'missing', reason: args.recovery !== null ? "the engine restarted before collection: the domain's volatile filesystem was lost with it" : 'nothing was collected before the run ended' }), run.id);
+      .run(
+        JSON.stringify({
+          result_collection: { outcome: 'missing', reason: null, bytes_read: null },
+          provider_files: 'missing',
+          why: "the engine restarted before collection: the domain's volatile filesystem was lost with it",
+        }),
+        run.id,
+      );
   }
   tx.db
     .prepare(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`)

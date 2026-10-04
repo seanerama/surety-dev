@@ -21,3 +21,19 @@ ALTER TABLE invocation_receipts ADD COLUMN provider_session_id TEXT;
 CREATE TRIGGER invocation_receipts_session_id_fixed BEFORE UPDATE OF provider_session_id ON invocation_receipts
 WHEN OLD.provider_session_id IS NOT NULL AND (NEW.provider_session_id IS NULL OR NEW.provider_session_id <> OLD.provider_session_id)
 BEGIN SELECT RAISE(ABORT, 'invocation_receipts: a provider session id, once bound, never changes'); END;
+
+-- The approved texts a context package carries (D2 §1.3; F §3.10.8; E67 item
+-- 7, Sean): a requirement's approved text; the approved baseline's ADRs and
+-- project-wide constraints, each by key with its text; the ADRs a stage
+-- cites (JSON list of keys). Engine-owned.
+ALTER TABLE requirements ADD COLUMN text TEXT;
+ALTER TABLE stages ADD COLUMN adrs TEXT NOT NULL DEFAULT '[]';
+CREATE TABLE baseline_texts (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  project TEXT NOT NULL REFERENCES projects(id),
+  kind TEXT NOT NULL CHECK (kind IN ('adr', 'constraint')),
+  key TEXT NOT NULL,
+  text TEXT NOT NULL,
+  UNIQUE (project, kind, key)
+);

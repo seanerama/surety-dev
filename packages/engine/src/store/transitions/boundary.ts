@@ -169,7 +169,7 @@ export function recordExit(tx: Tx, args: { domain: string; exit_class: string; e
   // A.3 `resource_events`): kept apart from the class, which a counter that
   // rose without ending the backend does not decide (§1.6).
   const res = args.exit_evidence.resource_events as { oom_kill?: number | null; pids_max?: number | null } | undefined;
-  const events = res && (typeof res.oom_kill === 'number' || typeof res.pids_max === 'number') ? JSON.stringify({ oom_kill: res.oom_kill ?? 0, pids_max: res.pids_max ?? 0 }) : null;
+  const events = res ? JSON.stringify({ oom_kill: res.oom_kill ?? null, pids_max: res.pids_max ?? null }) : null;
   tx.db
     .prepare('UPDATE "execution_domains" SET "exit_class" = ?, "exit_evidence" = ?, "resource_events" = ? WHERE "id" = ?')
     .run(args.exit_class, JSON.stringify(args.exit_evidence), events, d.id);

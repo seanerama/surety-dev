@@ -20,6 +20,7 @@ import {
   configureEnvironment,
   declareChecks,
   ensureModules,
+  ensureBaselineTexts,
   ensureRequirements,
   recordAlphaException,
   recordCheckResult,
@@ -122,10 +123,24 @@ export function installFixtureTrigger(db: Database, actor: Actor, body: unknown)
 
 export interface PlanBody {
   project: string;
-  stages: { number: number; goal: string; implements: string[] }[];
+  stages: { number: number; goal: string; implements: string[]; adrs: string[] }[];
   requirements: string[];
+  // E67 item 7 (SEAM.md §139): approved texts.
+  requirementTexts: Record<string, string>;
+  adrs: { key: string; text: string }[];
+  constraints: { key: string; text: string }[];
   modules: { name: string; paths: string[]; sensitive_areas?: string[] }[];
 }
+
+const keyed = (v: unknown, field: string): { key: string; text: string }[] => {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw invalid(field, 'must be an array');
+  return v.map((x, i) => {
+    const o = objectBody(x, ['key', 'text']);
+    if (typeof o.text !== 'string') throw invalid(`${field}[${i}].text`, 'must be a string');
+    return { key: str(o, 'key'), text: o.text };
+  });
+};
 
 const strings = (v: unknown, field: string): string[] => {
   if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw invalid(field, 'must be an array of strings');
@@ -133,34 +148,55 @@ const strings = (v: unknown, field: string): string[] => {
 };
 
 export function parsePlanBody(body: unknown): PlanBody {
-  const b = objectBody(body, ['project', 'stages', 'requirements', 'modules']);
+  const b = objectBody(body, ['project', 'stages', 'requirements', 'modules', 'adrs', 'constraints']);
   const project = str(b, 'project');
   if (!Array.isArray(b.stages) || b.stages.length === 0) throw invalid('stages', 'must be a non-empty array');
   const stages = b.stages.map((s: unknown, i: number) => {
-    const st = objectBody(s, ['number', 'goal', 'implements']);
+    const st = objectBody(s, ['number', 'goal', 'implements', 'adrs']);
     if (typeof st.goal !== 'string' || st.goal.length === 0) throw invalid(`stages[${i}].goal`, 'must be a non-empty string');
-    return { number: positiveInt(st, 'number'), goal: st.goal, implements: st.implements === undefined ? [] : strings(st.implements, `stages[${i}].implements`) };
+    return {
+      number: positiveInt(st, 'number'),
+      goal: st.goal,
+      implements: st.implements === undefined ? [] : strings(st.implements, `stages[${i}].implements`),
+      adrs: st.adrs === undefined ? [] : strings(st.adrs, `stages[${i}].adrs`),
+    };
   });
   if (b.requirements !== undefined && !Array.isArray(b.requirements)) throw invalid('requirements', 'must be an array');
   if (b.modules !== undefined && !Array.isArray(b.modules)) throw invalid('modules', 'must be an array');
-  const requirements = ((b.requirements ?? []) as unknown[]).map((r) => str(objectBody(r, ['key']), 'key'));
+  const requirementTexts: Record<string, string> = {};
+  const requirements = ((b.requirements ?? []) as unknown[]).map((r, i) => {
+    const o = objectBody(r, ['key', 'text']);
+    const key = str(o, 'key');
+    if (o.text !== undefined) {
+      if (typeof o.text !== 'string') throw invalid(`requirements[${i}].text`, 'must be a string');
+      requirementTexts[key] = o.text;
+    }
+    return key;
+  });
+  const adrs = keyed(b.adrs, 'adrs');
+  const constraints = keyed(b.constraints, 'constraints');
+  for (const [i, st] of stages.entries()) for (const k of st.adrs) if (!adrs.some((a) => a.key === k)) throw invalid(`stages[${i}].adrs`, `names ${k}, which is not among the plan's adrs`);
   const modules = ((b.modules ?? []) as unknown[]).map((m, i) => {
     const mo = objectBody(m, ['name', 'paths', 'sensitive_areas']);
     return { name: str(mo, 'name'), paths: strings(mo.paths, `modules[${i}].paths`), ...(mo.sensitive_areas !== undefined ? { sensitive_areas: strings(mo.sensitive_areas, `modules[${i}].sensitive_areas`) } : {}) };
   });
-  return { project, stages, requirements, modules };
+  return { project, stages, requirements, requirementTexts, adrs, constraints, modules };
 }
 
-// POST /v1/harness/fixtures/plan: an approved baseline's requirements and
-// modules, and an approved phase plan with its stages and their stage_build
-// work, registered by the engine's own plan transition (SEAM.md §67).
 export function installFixturePlan(db: Database, actor: Actor, args: PlanBody & { baseRevision: string }) {
   return transact(db, actor, (tx) => {
-    const requirements = ensureRequirements(tx, { project: args.project, keys: args.requirements });
+    const requirements = ensureRequirements(tx, { project: args.project, keys: args.requirements, texts: args.requirementTexts });
+    const adrs = ensureBaselineTexts(tx, { project: args.project, kind: 'adr', items: args.adrs });
+    const constraints = ensureBaselineTexts(tx, { project: args.project, kind: 'constraint', items: args.constraints });
     ensureModules(tx, { project: args.project, modules: args.modules });
     const stages = args.stages.map((st, i) => ({ number: st.number, goal: st.goal, implements: requirementIds(tx, args.project, st.implements, `stages[${i}].implements`) }));
     const plan = registerPlan(tx, { project: args.project, baseRevision: args.baseRevision, approvedBy: 'test fixture', stages }, FIXTURE_LABEL);
-    return { ...plan, requirements };
+    // The ADRs each stage cites (SEAM.md §139).
+    for (const st of plan.stages) {
+      const cites = args.stages.find((x) => x.number === st.number)?.adrs ?? [];
+      tx.db.prepare('UPDATE "stages" SET "adrs" = ? WHERE "id" = ?').run(JSON.stringify(cites), st.id);
+    }
+    return { ...plan, requirements, adrs, constraints };
   });
 }
 

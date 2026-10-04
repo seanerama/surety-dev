@@ -584,7 +584,10 @@ export function entryDrift(e: EntryRow, now: { host: string | null; profile: str
   if (now.host === null || e.host_id !== now.host) return `host_changed: the entry was qualified on host ${e.host_id}, and this host is ${now.host ?? 'unidentified'}`;
   const template = TEMPLATES[e.backend];
   if (!template || template.version !== e.template_version) return `template_changed: the entry was qualified with template ${e.template_version}, and the engine's is ${template?.version ?? 'none'}`;
-  if (now.profile !== null && e.profile_fingerprint !== now.profile) return `profile_changed: the entry was qualified with profile ${e.profile_fingerprint}, and this host's is ${now.profile}`;
+  // The profile is judged against an entry qualified under a host
+  // qualification of record; one with none (written in the kernel lane) has
+  // no qualified profile on this host to differ from.
+  if (now.profile !== null && e.host_qualification !== null && e.profile_fingerprint !== now.profile) return `profile_changed: the entry was qualified with profile ${e.profile_fingerprint}, and this host's is ${now.profile}`;
   if (now.binary === null) return `binary_missing: ${e.binary_path} cannot be read`;
   if (now.binary !== undefined && now.binary !== e.binary_sha256) return `binary_changed: ${e.binary_path} is no longer the binary the entry names (SHA-256 ${now.binary}, not ${e.binary_sha256})`;
   return null;

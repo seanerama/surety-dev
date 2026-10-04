@@ -22,22 +22,40 @@ const project = (tx: Tx, id: string) => {
 };
 
 // Requirements of the approved spec, by key: created once, returned after.
-export function ensureRequirements(tx: Tx, args: { project: string; keys: string[] }): { id: string; key: string }[] {
+// A requirement's approved text, when one is given, is kept with it: the
+// context package carries it (E67 item 7).
+export function ensureRequirements(tx: Tx, args: { project: string; keys: string[]; texts?: Record<string, string> }): { id: string; key: string }[] {
   project(tx, args.project);
   const out: { id: string; key: string }[] = [];
   for (const key of args.keys) {
-    const row = tx.db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(args.project, key) as { id: string } | undefined;
+    const text = args.texts?.[key] ?? null;
+    const row = tx.db.prepare('SELECT "id", "text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(args.project, key) as { id: string; text: string | null } | undefined;
     if (row) {
+      if (text !== null && row.text === null) tx.db.prepare('UPDATE "requirements" SET "text" = ? WHERE "id" = ?').run(text, row.id);
       out.push({ id: row.id, key });
       continue;
     }
     const id = tx.newId('req_');
     tx.db
-      .prepare(`INSERT INTO "requirements" ("id", "created_at", "project", "key", "text_ref", "status") VALUES (?, ?, ?, ?, ?, 'approved')`)
-      .run(id, tx.at, args.project, key, `spec#${key}`);
+      .prepare(`INSERT INTO "requirements" ("id", "created_at", "project", "key", "text_ref", "status", "text") VALUES (?, ?, ?, ?, ?, 'approved', ?)`)
+      .run(id, tx.at, args.project, key, `spec#${key}`, text);
     out.push({ id, key });
   }
   return out;
+}
+
+// The approved baseline's ADRs and project-wide constraints (F §3.10.8), by
+// key with their texts: created once; the id is what the engine names each
+// by (the manifest's `source`).
+export function ensureBaselineTexts(tx: Tx, args: { project: string; kind: 'adr' | 'constraint'; items: { key: string; text: string }[] }): { key: string; source: string }[] {
+  project(tx, args.project);
+  return args.items.map((item) => {
+    const row = tx.db.prepare('SELECT "id" FROM "baseline_texts" WHERE "project" = ? AND "kind" = ? AND "key" = ?').get(args.project, args.kind, item.key) as { id: string } | undefined;
+    if (row) return { key: item.key, source: row.id };
+    const id = tx.newId(args.kind === 'adr' ? 'adr_' : 'con_');
+    tx.db.prepare('INSERT INTO "baseline_texts" ("id", "created_at", "project", "kind", "key", "text") VALUES (?, ?, ?, ?, ?, ?)').run(id, tx.at, args.project, args.kind, item.key, item.text);
+    return { key: item.key, source: id };
+  });
 }
 
 // The identity of a project's approved spec as M1 holds it (build spec §3:
