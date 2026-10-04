@@ -44,7 +44,7 @@ import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
-import { materialize } from './sandbox/materialize.js';
+import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
@@ -843,9 +843,28 @@ export class Launcher {
       return { outcome: 'failed', reason: 'infra_error', reasonText: c.boundText };
     }
     const r = c.result;
-    if (r.state === 'secret') return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused the result (${r.by ?? 'secret'}); nothing of it was published` };
-    if (c.providerFiles === 'refused_secret') return { outcome: 'failed', reason: 'infra_error', reasonText: 'secret_refused: the secret screen refused the provider files; nothing of them was published' };
     const accepted = c.verdict.outcome === 'accepted' && r.state === 'read';
+    // A screen hit (D2 §2.5; SEAM.md §152): what holds the secret is refused
+    // and the run cannot complete. What does not hold it is still kept: an
+    // accepted result is published as the run's record; and the workspace's
+    // changes are screened too, so a refusal there is reported as well.
+    const hits = [...(r.state === 'secret' ? ['the result'] : []), ...(c.providerFiles === 'refused_secret' ? ['the provider files'] : [])];
+    if (hits.length > 0) {
+      c.unacceptedDone = true;
+      if (accepted && r.state === 'read') {
+        await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'result', content: r.bytes }).catch((err) => log('result record', err, { run: claim.run }));
+      }
+      const hold = handle.sandbox?.volatile ?? null;
+      if (hold !== null && hold.held && hold.merged !== null && handle.workspacePath) {
+        const m = screenWorkspace({ hold, home: this.rt.home, workspace: handle.workspacePath, caps: { files: 100_000, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER } });
+        if (m.state === 'refused' && m.reason === 'secret') {
+          hits.push("the workspace's changes");
+          await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
+        }
+      }
+      if (claim.attempt !== null) recordCanary(handle, cls, c, null);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused ${hits.join(', ')}; nothing of it was published` };
+    }
     if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
     if (cls === 'clean') {
       // The result is the run's to take or refuse: never also unaccepted.

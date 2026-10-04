@@ -206,7 +206,13 @@ function copyInto(source: string, target: string, mode: number): void {
   }
 }
 
-export function materialize(args: { hold: VolatileHold; home: string; workspace: string; caps: MaterializeCaps }): MaterializeResult {
+// The screen alone, writing nothing (D2 §2.5): what a materialization would
+// be refused for, for a run that will not complete anyway.
+export function screenWorkspace(args: { hold: VolatileHold; home: string; workspace: string; caps: MaterializeCaps }): MaterializeResult {
+  return materialize({ ...args, screenOnly: true });
+}
+
+export function materialize(args: { hold: VolatileHold; home: string; workspace: string; caps: MaterializeCaps; screenOnly?: boolean }): MaterializeResult {
   const { hold, workspace } = args;
   const bad = verifyWorkspace(args.home, workspace);
   if (bad !== null) return { state: 'refused', reason: 'workspace', path: workspace, detail: bad };
@@ -230,6 +236,7 @@ export function materialize(args: { hold: VolatileHold; home: string; workspace:
   }
   const written: string[] = [];
   const removed: string[] = [];
+  if (args.screenOnly) return { state: 'materialized', written, removed, skipped: planned.skipped };
   for (const a of planned.actions) {
     const target = join(workspace, a.path);
     if (a.kind === 'delete') {

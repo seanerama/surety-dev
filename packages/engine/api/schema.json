@@ -3286,6 +3286,13 @@
         },
         "profile": {
           "required": false
+        },
+        "qualification_attempt": {
+          "required": false,
+          "references": "qualification_attempts"
+        },
+        "canary_kind": {
+          "required": false
         }
       }
     },
