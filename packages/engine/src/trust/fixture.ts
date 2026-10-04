@@ -21,7 +21,7 @@ import { delimiter, isAbsolute, join } from 'node:path';
 
 import { git, repoContext } from '../git/exec.js';
 import { prepareBootstrap } from '../projects/commands.js';
-import type { Runtime } from '../runtime.js';
+import { type Runtime, log } from '../runtime.js';
 import type { StoreClient } from '../store/client.js';
 import { ENGINE_ACTOR } from '../store/transitions/tx.js';
 
@@ -87,8 +87,12 @@ export function ensureFixtureProject(rt: Runtime, store: StoreClient): Promise<s
     const repo = await ensureFixtureRepo(rt.home);
     const args = await prepareBootstrap(rt, { name: FIXTURE_NAME, tier: 'T1', dev_repo_path: repo, integration_branch: FIXTURE_BRANCH });
     const result = await store.call<{ status: number; effects?: { kind: string }[] }>('mutate', { name: 'project.create', args, actor: ENGINE_ACTOR, method: 'POST', path: '/v1/projects' });
-    if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
-    return String(args.id);
+    // The bootstrap commit is integrated now, before the caller goes on (at
+    // start, before the engine is in full mode), not left to a later tick.
+    const id = String(args.id);
+    if (rt.services) await rt.services.journal(id).catch((err) => log('qualification fixture', err, { project: id }));
+    else if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
+    return id;
   })().finally(() => {
     making = null;
   });

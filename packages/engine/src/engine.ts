@@ -342,6 +342,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
     log('trust revocation', err);
   }
 
+  // 5c. The engine's own qualification fixture project (SEAM.md §164), made
+  // at the first start outside the test mode, before full mode, so that its
+  // policy can be set before any attempt is proposed and nothing it does
+  // runs beside the first requests. A failure is logged; an attempt asks
+  // again.
+  if (!seamQualifyMode()) {
+    await ensureFixtureProject(runtime, store).catch((err) => log('qualification fixture', err));
+  }
+
   // 6. lift to full
   state.step = 'full';
   try {
@@ -364,11 +373,4 @@ export async function serve(opts: ServeOptions): Promise<void> {
   scheduler.start();
   state.completed.push('scheduler');
 
-  // The engine's own qualification fixture project (SEAM.md §164), made at
-  // the first start outside the test mode so that its policy can be set
-  // before any attempt is proposed. A failure is logged; an attempt asks
-  // again.
-  if (!seamQualifyMode()) {
-    await ensureFixtureProject(runtime, store).catch((err) => log('qualification fixture', err));
-  }
 }
