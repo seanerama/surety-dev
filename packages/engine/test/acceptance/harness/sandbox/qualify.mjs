@@ -101,9 +101,13 @@ export async function approveAttempt(fx, fixtureProject, attemptId) {
 export async function armedCanary(fx, kind, { timeoutMs = 120_000 } = {}) {
   const launch = await waitFor(
     () => {
-      const l = fx.scripted.launches().filter((e) => e.canary_kind === kind).at(-1);
-      if (!l) return undefined;
-      return fx.scripted.eventsOfInvocation(l.invocation, 'holding').some((e) => e.hold === 'armed') ? l : undefined;
+      // The canary of this kind that holds at "armed" now: one an earlier
+      // attempt of the same engine released is never taken (several
+      // attempts in one case, as the slice-13 review's S1 makes).
+      return fx.scripted
+        .launches()
+        .filter((e) => e.canary_kind === kind)
+        .find((l) => fx.scripted.eventsOfInvocation(l.invocation, 'holding').some((e) => e.hold === 'armed') && !fx.scripted.eventsOfInvocation(l.invocation, 'released').some((e) => e.hold === 'armed'));
     },
     { timeoutMs, what: `the ${kind} canary's role to hold at "armed"` },
   );

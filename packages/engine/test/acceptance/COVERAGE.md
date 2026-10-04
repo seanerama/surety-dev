@@ -1749,6 +1749,24 @@ Each loop stops itself at 96 `sleep` forks, 128 MiB, twice the storage bound, 12
 
 The six original M132 cases and the ten original M135 cases pass on `790fbec`. Before and after every file the user manager was `running`; the one `surety-*` scope seen during the M135 run was the concurrent `build-m2-s13` engine's, not this run's; no `/tmp/surety-fifo-*` or `-sock-*` was left. S1's instrument is the Reviewer's forger (`harness/sandbox/instruments/forger.mjs`, verbatim), run only inside the containment canary's sandbox through the guarded `exec_probe` path. S3 and S4 use the new guarded `canary_link_edit` and `workspace_chmod` actions, each verified to refuse on the host before any engine ran.
 
+**After the Builder's fixes** (objections 013, 014; S1's host-side witnesses; 2026-10-04, on `verify/m2-s13` from `main` at `53c9bec`). Each changed file was run alone on `build/m2-s13` at `f43f703`, in a detached scratch worktree removed afterwards (not an acceptance run), with the user manager `running` before each file and no `surety-*` scope left after:
+
+| File | Result |
+|---|---|
+| M132 | 9 of 9 (S2, S4, S5 among them) |
+| M135 | 12 of 12 (S1 and S3 among them), on its second run |
+
+Changes to the cases:
+
+| What | Change |
+|---|---|
+| 013, M135 S3, **upheld** | S3 releases only its positive canary. The canary fails, so no later canary is dispatched (SEAM §148). Its guarded `canaryLinkEdit` now runs behind an `armed` hold, which restores the test's half of the guard that the first form skipped (the Verifier's own second fault). |
+| 014, M132 S2, S4, **upheld** | The file imports `withStore`. On `790fbec` both cases had failed earlier, at their defects, so they never reached the missing import. |
+| S1, the driver's requirement | The containment run's `egress_log` record is required. A control attempt whose backend runs the probe program must succeed, with `token_read`, `git_config` and `unlisted_connect` corroborated host-side in the evidence. The test reads independently that the egress log has a refused `not_listed` CONNECT and that `api.token` and the fixture repository's `.git/config` are unchanged. |
+| `armedCanary` (`harness/sandbox/qualify.mjs`) | Takes only a canary that holds at `armed` and has not been released. S1's first run on `f43f703` timed out because the second attempt's call took the first attempt's released containment launch, the same kind of fault as objection 009. The helper is fixed; no assertion changed. |
+
+The S1 design's three residuals are in `docs/acceptance/reports/M2-not-claimed.md`: a co-descendant standing in for a stopped probe program, the backend killing the init's child (fails closed), and `engine_port` without host-side corroboration.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
