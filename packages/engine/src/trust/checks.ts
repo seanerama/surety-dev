@@ -447,6 +447,8 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     plan: { probe: suite.plan, role: { fingerprint: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null } },
     probes: suite.probes,
     suite: suite.evidence,
+    // P20's parts, each box's verdict (SEAM.md §157), at the top level too.
+    p20: (suite.evidence as { p20?: unknown }).p20 ?? null,
   };
   // What was observed is readable whatever the outcome; only a start whose
   // every required check passed writes a row, with its evidence record

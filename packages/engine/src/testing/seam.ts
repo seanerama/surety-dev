@@ -703,6 +703,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         tickFaults.length = 0;
         mainFaults.length = 0;
         collectSlowMs = 0;
+        streamSlow = null;
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
@@ -904,7 +905,13 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
       armed:
-        isObject(body) && body.point === 'collect_slow'
+        isObject(body) && body.point === 'stream_slow'
+          ? (() => {
+              const f = parseStreamSlow(body);
+              setStreamSlow(f);
+              return { point: 'stream_slow', delay_ms: f.delayMs, times: f.remaining };
+            })()
+          : isObject(body) && body.point === 'collect_slow'
           ? (() => {
               const ms = Number(body.delay_ms);
               if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'collect_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
@@ -1300,4 +1307,29 @@ export function seamCollectDelay(): number {
 }
 export function setCollectSlow(ms: number): void {
   collectSlowMs = ms;
+}
+
+// The fault `stream_slow` (SEAM.md §157): standing, or for `times` lines,
+// it delays acting on each line of a backend's output by `delay_ms`, so that
+// `stream_queue_max_bytes` can be exceeded by a modest stream. 0 outside
+// harness mode or when not armed.
+let streamSlow: { delayMs: number; remaining: number | null } | null = null;
+
+export function parseStreamSlow(body: unknown): { delayMs: number; remaining: number | null } {
+  const b = (isObject(body) ? body : {}) as Record<string, unknown>;
+  const ms = Number(b.delay_ms);
+  if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'stream_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
+  if (b.times !== undefined && (!Number.isSafeInteger(b.times) || (b.times as number) < 1)) throw new Refusal(400, 'invalid_value', 'times must be a positive integer.', 'Send times, or leave it out for a standing fault.', { field: 'times' });
+  return { delayMs: ms, remaining: b.times === undefined ? null : (b.times as number) };
+}
+
+export function setStreamSlow(value: { delayMs: number; remaining: number | null } | null): void {
+  streamSlow = value;
+}
+
+export function seamStreamDelay(): number {
+  if (!init.harness || streamSlow === null) return 0;
+  const ms = streamSlow.delayMs;
+  if (streamSlow.remaining !== null && --streamSlow.remaining <= 0) streamSlow = null;
+  return ms;
 }

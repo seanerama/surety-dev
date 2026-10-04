@@ -31,7 +31,7 @@ import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } 
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamTemplateVersions } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
@@ -756,6 +756,9 @@ export class Launcher {
           this.gate(handle).lines.push(line);
           continue;
         }
+        // The harness's slow consumer (SEAM.md §157); 0 outside it.
+        const slow = seamStreamDelay();
+        if (slow > 0) await new Promise((r) => setTimeout(r, slow));
         await this.callback(handle, line).catch((err) => log('callback', err, { run: claim.run }));
       }
     } finally {
@@ -1363,7 +1366,7 @@ const RESULT_RETRY_MS = [100, 300, 1000, 2000, 4000];
 // The role's standard output, as protocol lines. When the engine stops
 // reading, at the end of the stream or after the role's exit, whatever it has
 // read after the last line ending is a line like any other (E27 item 1).
-class RoleOutput {
+export class RoleOutput {
   private readonly lines: string[] = [];
   private readonly decoder = new StringDecoder('utf8');
   // The text read after the last line ending, as the pieces it arrived in:
