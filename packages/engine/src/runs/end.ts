@@ -44,6 +44,7 @@ import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 import { terminateDomain } from '../boundary/terminate.js';
 import { finishEgress } from '../invoke/proxy/egress.js';
+import { redactText, redactValue } from '../records/redact.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 
 type Domain = EndFacts['domains'][number];
@@ -83,7 +84,16 @@ export class RunEnder {
 
   async endRun(run: string, end: RunEnd, opts: EndOptions = {}): Promise<void> {
     try {
-      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, reasonText: end.reasonText, decidedAt: end.decidedAt, detail: end.detail });
+      // Every reason and detail is redacted before it is stored or emitted:
+      // some are built from names a role chose (the review's S4).
+      await this.rt.engine('run.begin_end', {
+        run,
+        outcome: end.outcome,
+        reason: end.reason,
+        reasonText: end.reasonText === undefined ? undefined : redactText(end.reasonText),
+        decidedAt: end.decidedAt,
+        detail: end.detail === undefined ? undefined : redactValue(end.detail),
+      });
     } catch (err) {
       this.failed(run, end, opts);
       throw err;

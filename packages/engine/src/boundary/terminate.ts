@@ -76,7 +76,10 @@ export function classifyExit(args: {
     status: report?.code ?? null,
     signal,
     signal_by_engine: byEngine,
-    terminal_event: args.terminal === 'success' ? 'result' : args.terminal === 'failure' ? 'failure' : null,
+    // SEAM.md §145: "result" when the terminal success event was read, null
+    // otherwise (a terminal failure event included; it makes the class
+    // error_exit, which says so).
+    terminal_event: args.terminal === 'success' ? 'result' : null,
     resource_events: args.resources,
     report: report === null ? 'none' : 'received',
     term_sent: args.termSent,

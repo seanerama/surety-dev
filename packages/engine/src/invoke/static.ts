@@ -28,7 +28,9 @@ export function runStatic(path: string, backend: string, arg: '--version' | '--h
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(path, [arg], { cwd: tmpdir(), env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'ignore'] });
+      // In a process group of its own, so that on the time limit the whole
+      // group (whatever it started) is killed, not the binary alone.
+      child = spawn(path, [arg], { cwd: tmpdir(), env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     } catch {
       resolve(null);
       return;
@@ -36,10 +38,16 @@ export function runStatic(path: string, backend: string, arg: '--version' | '--h
     const chunks: Buffer[] = [];
     let size = 0;
     const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // gone
+      // The group this call's own child leads, while that child is alive
+      // (so its id is still that group's): never 0, 1, a negative or the
+      // engine's own.
+      const pid = child.pid;
+      if (pid !== undefined && Number.isInteger(pid) && pid > 1 && pid !== process.pid && child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          // gone
+        }
       }
       resolve(null);
     }, TIMEOUT_MS);

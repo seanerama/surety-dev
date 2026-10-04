@@ -264,7 +264,15 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       cwd: '/surety/workspace',
       stdin,
       forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET },
-      ...(canary ? { canary: { barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null, witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null } } : {}),
+      ...(canary
+        ? {
+            canary: {
+              barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null,
+              witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null,
+              actions: canary.kind === 'containment' ? ((canary.actions as { name: string; argv: string[] }[] | undefined) ?? []) : [],
+            },
+          }
+        : {}),
     },
     unshare: t.unshare,
     egress,

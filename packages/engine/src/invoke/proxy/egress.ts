@@ -5,6 +5,7 @@
 // terminated and the proxy closed.
 
 import { writeWholeRecord } from '../../records/files.js';
+import { redactText } from '../../records/redact.js';
 import { type Runtime, log } from '../../runtime.js';
 import { echoEndpoint } from './echo.js';
 import { DomainProxy, canonicalHost } from './proxy.js';
@@ -46,7 +47,9 @@ export async function startEgress(rt: Runtime, args: EgressArgs): Promise<Domain
     resolver: activeResolver(),
     echo: args.profile === 'probe' ? echoEndpoint : null,
     onRefused: (r) => {
-      void rt.engine('domain.egress_refused', { domain: args.domain, authority: r.authority, reason: r.reason }).catch((err) => log('egress refusal', err, { domain: args.domain }));
+      // The authority is the role's text: redacted through the same screen
+      // as the egress_log record before it is stored (the review's S2).
+      void rt.engine('domain.egress_refused', { domain: args.domain, authority: redactText(r.authority), reason: r.reason }).catch((err) => log('egress refusal', err, { domain: args.domain }));
     },
     ...(args.onLogBound ? { onLogBound: args.onLogBound } : {}),
   });

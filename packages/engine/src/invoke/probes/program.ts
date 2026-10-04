@@ -712,7 +712,7 @@ function report(socket: string, line: Obj): Promise<string> {
     const timer = setTimeout(() => {
       sock.destroy();
       resolve('timeout');
-    }, 3000);
+    }, 30_000);
     sock.once('connect', () => sock.write(`${JSON.stringify(line)}\n`));
     sock.on('data', (d: Buffer) => {
       answer += d.toString('utf8');
@@ -729,22 +729,32 @@ function report(socket: string, line: Obj): Promise<string> {
   });
 }
 
-async function canaryMain(name: string): Promise<void> {
+// `--canary <name>`: the backend's run of the probe program for one action.
+// It performs nothing itself: after its own containment check it asks the
+// domain init to perform the action (the init checks this process's
+// argument array and ancestry from /proc and runs the action in a child of
+// its own), and prints what the init answers. `--canary-run <name>`: that
+// child, the action itself.
+async function canaryMain(name: string, perform: boolean): Promise<void> {
   const guard = containment(argOf('--host-pid-ns') ?? undefined);
-  const result = guard.reasons.length > 0 ? { outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') } : await canaryAction(name);
-  const line = { type: 'canary_action', action: name, pid: process.pid, ...result };
-  process.stdout.write(`${JSON.stringify(line)}\n`);
-  const socket = argOf('--witness');
-  if (socket) {
-    const answer = await report(socket, line);
-    process.stdout.write(`${JSON.stringify({ type: 'canary_report', action: name, answer })}\n`);
+  if (guard.reasons.length > 0) {
+    process.stdout.write(`${JSON.stringify({ type: perform ? 'canary_action' : 'canary_request', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') })}\n`);
+    return;
   }
+  if (perform) {
+    const r = await canaryAction(name);
+    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
+    return;
+  }
+  const socket = argOf('--witness');
+  const answer = socket ? await report(socket, { type: 'canary_request', action: name, pid: process.pid }) : 'no witness socket';
+  process.stdout.write(`${JSON.stringify({ type: 'canary_report', action: name, answer })}\n`);
 }
 
 // Only as a program of its own, inside a sandbox: never imported for its
 // actions.
-if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--canary') {
-  void canaryMain(process.argv[3] ?? '').then(
+if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && (process.argv[2] === '--canary' || process.argv[2] === '--canary-run')) {
+  void canaryMain(process.argv[3] ?? '', process.argv[2] === '--canary-run').then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),
   );

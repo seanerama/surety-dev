@@ -102,7 +102,6 @@ import {
   qualify,
   recordCanary,
   startAttemptRun,
-  usedEgress,
 } from './transitions/qualification.js';
 import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
@@ -232,7 +231,6 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.canary_run': (d, a: { item: string }) => (d.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(a.item) as { id: string } | undefined)?.id ?? null,
   'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
   'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
-  'qualification.used_egress': (d, a: { attempt: string }) => usedEgress(d, a),
   'qualification.provider_files': (d, a: { run: string }) =>
     d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),

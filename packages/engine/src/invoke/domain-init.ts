@@ -29,7 +29,7 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -308,23 +308,36 @@ interface BackendSpec {
   // the domain's unix socket bound into the sandbox.
   forwarder?: { port: number; socket: string } | null;
   // A qualification canary (D2 §7.2): the barrier file whose appearance the
-  // init reports while the backend runs, and the abstract socket on which it
-  // takes reports from the engine's probe program alone.
-  canary?: { barrier?: string | null; witness?: string | null } | null;
+  // init reports while the backend runs; for the containment canary, the
+  // abstract socket on which the probe program asks for its actions, and the
+  // exact argument array of each action as canary.json gives it.
+  canary?: { barrier?: string | null; witness?: string | null; actions?: { name: string; argv: string[] }[] } | null;
 }
 
-// Is `pid` the engine's probe program running a canary action, as a
-// descendant of the backend? Its command line is read, and its ancestry
-// walked through /proc up to the backend (D2 §7.2: "witnessed as a
-// descendant of the backend"). Nothing the backend prints is consulted.
-function witnessedProbe(pid: number, action: string): boolean {
-  if (backendPid === null || !Number.isInteger(pid) || pid <= 1) return false;
+// The containment canary's witnessing (D2 §7.2; the slice-13 review's S1).
+// Nothing a process inside the sandbox says about an action's outcome is
+// taken: the probe program, run by the backend with an action's exact
+// argument array, only asks the init to perform that action; the init
+// checks, from /proc, that a live process with exactly that argument array
+// is a descendant of the backend, and then performs the action itself, in a
+// child of its own started from the init's execute-only copy of node (not
+// dumpable: the backend can neither trace it nor take its descriptors), with
+// an environment the init constructs. The outcome the engine records is
+// what that child observed. Each asking process is taken once.
+const askedBy = new Set<number>();
+
+function cmdlineOf(pid: number): string[] | null {
   try {
-    const argv = readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0');
-    if (argv[1] !== '/surety/context/probe' || argv[2] !== '--canary' || argv[3] !== action) return false;
+    const parts = readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0');
+    if (parts.at(-1) === '') parts.pop();
+    return parts;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function descendantOfBackend(pid: number): boolean {
+  if (backendPid === null || !Number.isInteger(pid) || pid <= 1) return false;
   let at = pid;
   for (let i = 0; i < 64; i++) {
     let ppid: number;
@@ -341,14 +354,69 @@ function witnessedProbe(pid: number, action: string): boolean {
   return false;
 }
 
-function startWitness(name: string): void {
+// The probe program's own run of one action, as the init's child.
+function performAction(argv: string[]): Promise<{ outcome: string; detail: string }> {
+  const args = argv.slice(1);
+  const i = args.indexOf('--canary');
+  if (i < 0) return Promise.resolve({ outcome: 'not_run', detail: 'not a canary action' });
+  args[i] = '--canary-run';
+  const w = args.indexOf('--witness');
+  if (w >= 0) args.splice(w, 2);
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn(process.execPath, args, {
+        cwd: '/surety/workspace',
+        env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', HTTPS_PROXY: backendEnv.HTTPS_PROXY ?? '' },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch (err) {
+      resolve({ outcome: 'not_run', detail: (err as Error).message });
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // gone
+      }
+    }, 20_000);
+    child.stdout!.on('data', (d: Buffer) => {
+      if (out.length < 65536) out += d.toString('utf8');
+    });
+    child.once('close', () => {
+      clearTimeout(timer);
+      for (const line of out.split('\n').reverse()) {
+        try {
+          const m = JSON.parse(line) as Msg;
+          if (m.type === 'canary_action') return void resolve({ outcome: String(m.outcome ?? ''), detail: String(m.detail ?? '').slice(0, 500) });
+        } catch {
+          // not a report line
+        }
+      }
+      resolve({ outcome: 'not_run', detail: 'the action reported nothing' });
+    });
+    child.once('error', () => {
+      clearTimeout(timer);
+      resolve({ outcome: 'not_run', detail: 'the action could not be started' });
+    });
+  });
+}
+
+let backendEnv: Record<string, string> = {};
+
+function startWitness(name: string, actions: { name: string; argv: string[] }[]): void {
   const server = net.createServer((sock) => {
     let buf = '';
+    let taken = false;
     sock.on('data', (d: Buffer) => {
+      if (taken) return;
       buf += d.toString('utf8');
       if (buf.length > 4096) return void sock.destroy();
       const nl = buf.indexOf('\n');
       if (nl < 0) return;
+      taken = true;
       let m: Msg;
       try {
         m = JSON.parse(buf.slice(0, nl)) as Msg;
@@ -356,10 +424,15 @@ function startWitness(name: string): void {
         return void sock.end('refused\n');
       }
       const pid = Number(m.pid);
-      const action = String(m.action ?? '');
-      if (!witnessedProbe(pid, action)) return void sock.end('refused\n');
-      send({ t: 'witness', action, outcome: String(m.outcome ?? ''), pid });
-      sock.end('ok\n');
+      const action = actions.find((a) => a.name === String(m.action ?? ''));
+      const argv = Number.isInteger(pid) ? cmdlineOf(pid) : null;
+      const exact = action !== undefined && argv !== null && argv.length === action.argv.length && argv.every((x, k) => x === action.argv[k]);
+      if (!exact || askedBy.has(pid) || !descendantOfBackend(pid)) return void sock.end('refused\n');
+      askedBy.add(pid);
+      void performAction(action.argv).then((r) => {
+        send({ t: 'witness', action: action.name, outcome: r.outcome, pid, detail: r.detail });
+        sock.end(`${JSON.stringify({ outcome: r.outcome, detail: r.detail })}\n`);
+      });
     });
     sock.on('error', () => {});
   });
@@ -441,7 +514,7 @@ function reportExit(): void {
   if (exit === null || acked) return;
   // The time from the engine's TERM to the backend's exit, as the init saw
   // them (the cancellation canary's term_to_exit_ms; D2 §3.6).
-  const termToExit = termAt !== null && exitAt !== null && exitAt >= termAt ? exitAt - termAt : null;
+  const termToExit = termAt !== null && exitAt !== null && exitAt >= termAt ? Math.round(exitAt - termAt) : null;
   send({ t: 'exit', code: exit.code, signal: exit.signal, term_to_exit_ms: termToExit });
 }
 
@@ -469,7 +542,7 @@ function onMessage(m: Msg): void {
   } else if (m.t === 'term') {
     if (terminating) return;
     terminating = true;
-    termAt = Date.now();
+    termAt = performance.now();
     // Every process of the pid namespace but the init (kill(2), pid -1):
     // only as process 1 of a pid namespace the launcher created, never
     // anywhere else, where -1 would mean every process of the uid.
@@ -518,7 +591,8 @@ async function init(): Promise<void> {
       return;
     }
   }
-  if (spec.canary?.witness) startWitness(spec.canary.witness);
+  backendEnv = spec.env;
+  if (spec.canary?.witness) startWitness(spec.canary.witness, spec.canary.actions ?? []);
   send({ t: 'ready' });
   const go = await next();
   if (!go || go.t !== 'start') process.exit(0);
@@ -572,8 +646,10 @@ async function init(): Promise<void> {
     const barrier = spec.canary.barrier;
     const watch = setInterval(() => {
       if (exit !== null) return void clearInterval(watch);
+      // Seen by lstat only: never followed, never opened (a FIFO or a link
+      // there is not the barrier).
       try {
-        readFileSync(barrier);
+        if (!lstatSync(barrier).isFile()) return;
       } catch {
         return;
       }
@@ -582,7 +658,7 @@ async function init(): Promise<void> {
     }, 50);
   }
   child.on('exit', (code, signal) => {
-    exitAt = Date.now();
+    exitAt = performance.now();
     exit = { code, signal: signalNumber(signal) };
     const started = Date.now();
     const leave = setInterval(() => {

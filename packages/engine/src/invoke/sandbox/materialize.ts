@@ -13,10 +13,10 @@
 // writes nothing. The snapshot of D1 §7.3 then admits it as before (M19's
 // validation unchanged).
 
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
-import { scanBytes } from '../../records/redact.js';
+import { redactText, scanBytes } from '../../records/redact.js';
 import type { VolatileHold } from './volatile.js';
 
 type Action =
@@ -68,9 +68,12 @@ const OVERLAP = 64 * 1024;
 // Does the file at `path` (read without following a link) hold a registered
 // secret? Large files are scanned in overlapping windows.
 function fileHasSecret(path: string): boolean {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const size = lstatSync(path).size;
+    const st = fstatSync(fd);
+    // A regular file only, as the plan listed it: anything else is never read.
+    if (!st.isFile()) throw new Error(`${path} is not a regular file`);
+    const size = st.size;
     if (size <= SCAN_WHOLE) {
       const buf = Buffer.alloc(size);
       let got = 0;
@@ -185,8 +188,9 @@ function removeInside(workspace: string, path: string): void {
 }
 
 function copyInto(source: string, target: string, mode: number): void {
-  const src = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const src = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
+    if (!fstatSync(src).isFile()) throw new Error(`${source} is not a regular file`);
     const dst = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode);
     try {
       const buf = Buffer.alloc(1024 * 1024);
@@ -221,8 +225,13 @@ export function materialize(args: { hold: VolatileHold; home: string; workspace:
   try {
     planned = plan(hold, workspace, args.caps);
   } catch (err) {
-    if (err instanceof OverCaps) return { state: 'refused', reason: 'caps', path: null, detail: err.message };
-    return { state: 'refused', reason: 'unreadable', path: null, detail: `what the role left could not be read: ${(err as Error).message}` };
+    // Role-controlled names reach these texts: redacted before anything
+    // stores or emits them (the review's S4).
+    // A walk that failed on a name holding a registered secret is the
+    // screen's refusal, not a read error.
+    if (scanBytes(Buffer.from((err as Error).message ?? '')).hit) return { state: 'refused', reason: 'secret', path: null, detail: 'a path the role left names a registered secret' };
+    if (err instanceof OverCaps) return { state: 'refused', reason: 'caps', path: null, detail: redactText(err.message) };
+    return { state: 'refused', reason: 'unreadable', path: null, detail: redactText(`what the role left could not be read: ${(err as Error).message}`) };
   }
   // The secret screen (D2 §2.5): before anything is written, every name the
   // materialization would write or remove (each component of its path) and

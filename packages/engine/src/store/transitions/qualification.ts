@@ -189,10 +189,3 @@ export function attemptUsage(db: Tx['db'], a: { attempt: string }) {
   return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd"\s*:/.test(r.raw)) };
 }
 
-// The hosts the attempt's canaries were let through to (an accepted
-// CONNECT in a canary domain's egress log).
-export function usedEgress(db: Tx['db'], a: { attempt: string }): string[] {
-  void a;
-  void db;
-  return [];
-}

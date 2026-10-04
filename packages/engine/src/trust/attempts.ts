@@ -12,6 +12,12 @@
 // Nothing here starts a process: the canaries are launched by the choke
 // point (invoke/choke.ts), and the help check runs through invoke/static.ts.
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+
+import { redactText } from '../records/redact.js';
 import { CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, canaryEdit, canaryResult } from './canaries.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
@@ -88,6 +94,8 @@ export class QualificationDriver {
     }
     const canaries: CanaryEntry[] = [];
     const unexpected: { destination: string; refused_at: string }[] = [];
+    // The candidate destinations the canaries were let through to.
+    const used = new Set<string>();
     for (const kind of CANARY_KINDS) {
       if (canaries.length > 0) {
         const between = await this.drift(attempt);
@@ -97,8 +105,11 @@ export class QualificationDriver {
         }
       }
       const item = await this.rt.engine<string>('qualification.canary_item', { attempt, kind });
-      const run = await this.dispatch(target, item, attempt);
-      const entry = run === null ? await this.failedToStart(a, kind) : await this.judge(a, kind, run, unexpected);
+      // The host side's own witnesses (D2 §7.2), read before the
+      // containment canary and compared after it.
+      const before = kind === 'containment' ? hostWitnesses(this.rt.home, target.repo) : null;
+      const run = await this.dispatch(target, item, attempt, a, kind);
+      const entry = run === null ? await this.failedToStart(a, kind) : await this.judge(a, kind, run, unexpected, before === null ? null : { before, after: hostWitnesses(this.rt.home, target.repo) }, used);
       canaries.push(entry);
       await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected });
       if (!entry.passed) {
@@ -106,16 +117,26 @@ export class QualificationDriver {
         return;
       }
     }
-    const input = await this.entryInput(a, canaries);
+    const input = await this.entryInput(a, canaries, [...used]);
     await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: unexpected, entry: input });
   }
 
-  // The canary's run, dispatched under the attempt's authority alone; null
-  // when it could not be dispatched within its deadline.
-  private async dispatch(target: DispatchTarget, item: string, attempt: string): Promise<string | null> {
-    const until = Date.now() + 120_000;
-    while (Date.now() < until) {
+  // The canary's run, dispatched under the attempt's authority alone. A
+  // dispatch held (the resource envelope, the project's own run) waits, for
+  // as long as the canary's deadline; null only when it was never dispatched
+  // within it.
+  private async dispatch(target: DispatchTarget, item: string, attempt: string, a: AttemptRow, kind: string): Promise<string | null> {
+    let deadlineS = 600;
+    try {
+      const d = (JSON.parse(a.canary_deadlines) as Record<string, number>)[kind];
+      if (typeof d === 'number' && d > 0) deadlineS = d;
+    } catch {
+      // the default
+    }
+    const until = performance.now() + deadlineS * 1000;
+    while (performance.now() < until) {
       if (await this.launcher.dispatch(target, { id: item }, attempt).catch(() => false)) break;
+      if ((await this.rt.read<{ status: string } | null>('qualification.row', { attempt }))?.status !== 'running') break;
       await sleep(500);
     }
     const run = await this.rt.read<string | null>('qualification.canary_run', { item });
@@ -137,14 +158,26 @@ export class QualificationDriver {
 
   // D2 §7.2's pass rules (SEAM.md §149), from what the engine observed of
   // the run, never from what the backend printed.
-  private async judge(a: AttemptRow, kind: string, run: string, unexpected: { destination: string; refused_at: string }[]): Promise<CanaryEntry> {
+  private async judge(
+    a: AttemptRow,
+    kind: string,
+    run: string,
+    unexpected: { destination: string; refused_at: string }[],
+    host: { before: HostWitness; after: HostWitness } | null,
+    used: Set<string>,
+  ): Promise<CanaryEntry> {
     const obs: CanaryObservation | undefined = canaryObservations.get(run);
     canaryObservations.delete(run);
     const facts = await this.rt.read<{ outcome: string | null; exit_class: string | null; transcript: string | null }>('qualification.run_facts', { run });
+    const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
-      if (e.decision === 'refused' && e.reason === 'not_listed' && e.authority !== CANARY_UNLISTED && !unexpected.some((u) => u.destination === e.authority)) {
-        unexpected.push({ destination: e.authority, refused_at: e.opened_at });
+      // The authority is a role's text: redacted before it is kept (S2).
+      const destination = redactText(e.authority);
+      if (e.decision === 'refused' && e.reason === 'not_listed' && e.authority !== CANARY_UNLISTED && !unexpected.some((u) => u.destination === destination)) {
+        unexpected.push({ destination, refused_at: e.opened_at });
       }
+      const hostOf = e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+      if (e.decision === 'accepted' && candidates.includes(hostOf)) used.add(hostOf);
     }
     let passed = false;
     let detail: Record<string, unknown> = { kind, run, exit_class: facts.exit_class ?? obs?.exitClass ?? null, outcome: facts.outcome };
@@ -161,9 +194,24 @@ export class QualificationDriver {
       passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null;
       detail = { ...detail, barrier_observed: obs?.barrierSeen ?? false, term_to_exit_ms: termToExit };
     } else {
+      // Each action witnessed by the init (it performed the action itself,
+      // asked by a probe program the backend ran with the action's exact
+      // arguments), every witness of it the expected outcome, and the host
+      // side agreeing (D2 §7.2; the review's S1).
+      const refusedUnlisted = (obs?.egress ?? []).some((e) => e.authority === CANARY_UNLISTED && e.decision === 'refused');
+      const corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }> = {
+        token_read: { checked: true, agrees: host !== null && host.before.token !== null && host.before.token === host.after.token, what: "the token file's bytes unchanged, read from the host" },
+        git_config: { checked: true, agrees: host !== null && host.before.config !== null && host.before.config === host.after.config, what: "the fixture repository's configuration unchanged, read from the host" },
+        unlisted_connect: { checked: true, agrees: refusedUnlisted, what: "the proxy's log shows the unlisted CONNECT refused" },
+        engine_port: { checked: false, agrees: null, what: 'not corroborated host-side: the engine keeps no record of a connection that never reached it' },
+        workspace_write: { checked: false, agrees: null, what: 'the control: the init observed the write' },
+      };
       const actions = CONTAINMENT_ACTIONS.map((x) => {
-        const w = obs?.witnesses.find((y) => y.action === x.name) ?? null;
-        return { name: x.name, witnessed: w !== null, outcome: w?.outcome ?? null, expected: x.expected, passed: w !== null && w.outcome === x.expected };
+        const ws = obs?.witnesses.filter((y) => y.action === x.name) ?? [];
+        const c = corroboration[x.name]!;
+        const outcome = ws.at(-1)?.outcome ?? null;
+        const ok = ws.length > 0 && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
+        return { name: x.name, witnessed: ws.length > 0, outcome, expected: x.expected, host: c, passed: ok };
       });
       passed = actions.every((x) => x.passed);
       detail = { actions };
@@ -180,7 +228,7 @@ export class QualificationDriver {
   }
 
   // The entry an attempt whose canaries all passed writes (D2 §§4.1, 7.2).
-  private async entryInput(a: AttemptRow, canaries: CanaryEntry[]): Promise<EntryInput> {
+  private async entryInput(a: AttemptRow, canaries: CanaryEntry[], usedEgress: string[]): Promise<EntryInput> {
     const usage = await this.rt.read<{ observations: number; cost: boolean }>('qualification.usage', { attempt: a.id });
     // How often usage was reported: per model call where the canaries
     // observed it; for the scripted backend, whose usage the test scripts,
@@ -199,8 +247,6 @@ export class QualificationDriver {
         // kept empty
       }
     }
-    const candidate = JSON.parse(a.candidate_egress) as string[];
-    const used = await this.rt.read<string[]>('qualification.used_egress', { attempt: a.id }).catch(() => [] as string[]);
     return {
       backend: a.backend,
       version: a.version,
@@ -212,13 +258,15 @@ export class QualificationDriver {
       template_version: a.template_version,
       model: a.model,
       auth_mode: a.auth_mode,
-      capabilities: { tools: [], denied: [], features_disabled: [], delegation_verified: true },
+      // Only what the canaries established: no inventory of the tool surface
+      // and no delegation test ran here (D2 §4.5), so nothing is claimed.
+      capabilities: { tools: [], denied: [], features_disabled: [], delegation_verified: false },
       host_id: hostIdentity() ?? 'unknown',
       host_qualification: a.host_qualification,
       isolation: ISOLATION_MECHANISM,
       boundary: BOUNDARY_MECHANISM,
       profile_fingerprint: a.profile_fingerprint,
-      egress_hosts: candidate.filter((h) => used.includes(h)),
+      egress_hosts: [...usedEgress].sort(),
       usage_granularity: granularity,
       usage_semantics: usage.observations > 0 ? 'cumulative' : null,
       cost_reporting: usage.cost ? 'reported' : 'none',
@@ -235,3 +283,23 @@ export class QualificationDriver {
 
 const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellation: 'barrier_not_reached', containment: 'containment_failed' };
 
+
+// What the host itself reads around the containment canary (D2 §7.2): the
+// token file's bytes and the fixture repository's configuration, each a
+// hash, null where it cannot be read (and then the canary does not pass).
+interface HostWitness {
+  token: string | null;
+  config: string | null;
+}
+
+function hashOf(path: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function hostWitnesses(home: string, repo: string): HostWitness {
+  return { token: hashOf(join(home, 'api.token')), config: hashOf(join(repo, '.git', 'config')) ?? hashOf(join(repo, 'config')) };
+}

@@ -12,7 +12,8 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
+import { readRegular } from './sandbox/volatile.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -56,7 +57,7 @@ export interface CanaryObservation {
   verdict: string;
   value: unknown;
   editContent: string | null;
-  witnesses: { action: string; outcome: string; pid: number }[];
+  witnesses: { action: string; outcome: string; pid: number; detail: string }[];
   barrierSeen: boolean;
   termToExitMs: number | null;
   egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
@@ -854,12 +855,18 @@ export class Launcher {
     const hits = [...(r.state === 'secret' ? ['the result'] : []), ...(c.providerFiles === 'refused_secret' ? ['the provider files'] : [])];
     if (hits.length > 0) {
       c.unacceptedDone = true;
+      // Only a clean exit's accepted file is the run's `result`; any other
+      // class's is `unaccepted_result` (D2 §1.4; the review's S5).
       if (accepted && r.state === 'read') {
-        await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'result', content: r.bytes }).catch((err) => log('result record', err, { run: claim.run }));
+        const kind = cls === 'clean' ? 'result' : 'unaccepted_result';
+        await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind, content: r.bytes }).catch((err) => log('result record', err, { run: claim.run }));
       }
       const hold = handle.sandbox?.volatile ?? null;
       if (hold !== null && hold.held && hold.merged !== null && handle.workspacePath) {
-        const m = screenWorkspace({ hold, home: this.rt.home, workspace: handle.workspacePath, caps: { files: 100_000, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER } });
+        // Under the snapshot's caps, as materialization is (E67 item 4): a
+        // workspace past them is refused before it is read.
+        const caps = await this.snapshotCaps(claim.project);
+        const m = screenWorkspace({ hold, home: this.rt.home, workspace: handle.workspacePath, caps });
         if (m.state === 'refused' && m.reason === 'secret') {
           hits.push("the workspace's changes");
           await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
@@ -908,6 +915,12 @@ export class Launcher {
     return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}: no exit report of the backend reached the engine` };
   }
 
+  // The snapshot's caps of a project's policy (D1 §7.3; M19).
+  private async snapshotCaps(project: string): Promise<{ files: number; bytes: number; fileBytes: number }> {
+    const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+    return { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
+  }
+
   // A qualification canary's run (D2 §7.2): never the acceptance pipeline,
   // never a commit. The positive canary's edit is materialized into the
   // run's own workspace behind the screen, so its content can be judged.
@@ -917,18 +930,17 @@ export class Launcher {
     c.unacceptedDone = true;
     let editContent: string | null = null;
     if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
-      const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: { files: 1000, bytes: 64 * 1024 * 1024, fileBytes: 16 * 1024 * 1024 } });
+      const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: await this.snapshotCaps(claim.project) });
       if (m.state === 'refused' && m.reason === 'secret') {
         await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
         recordCanary(handle, cls, c, null);
         return { outcome: 'failed', reason: 'infra_error', reasonText: 'secret_refused: the secret screen refused the canary\'s materialization' };
       }
       handle.materialized = m.state === 'materialized';
-      try {
-        editContent = readFileSync(join(handle.workspacePath, canaryEdit(claim.attempt!.id).path), 'utf8');
-      } catch {
-        editContent = null;
-      }
+      // Read as the engine reads what a role left (the review's S3): never
+      // through a link, only a regular file, at most 64 KiB.
+      const r = readRegular(handle.workspacePath, canaryEdit(claim.attempt!.id).path, 64 * 1024);
+      editContent = r.state === 'read' ? r.bytes.toString('utf8') : null;
     }
     recordCanary(handle, cls, c, editContent);
     if (kind === 'cancellation') return { outcome: 'failed', reason: 'infra_error', reasonText: 'barrier_not_reached: the cancellation canary ended without the engine observing its barrier' };

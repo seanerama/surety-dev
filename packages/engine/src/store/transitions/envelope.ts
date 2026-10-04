@@ -1,17 +1,21 @@
 // Admission by the resource envelope (D2 §3.7; B09): the scheduler admits a
 // domain only if, after admission, the domains running stay within
 // `max_concurrent_domains` and the host keeps `host_reserve_memory` of memory
-// and `host_reserve_disk` free on the engine home's filesystem beyond what the
-// admitted domains may use. Otherwise the work stays eligible and its read
-// shows the hold as `resource_envelope`.
+// and `host_reserve_disk` free on the engine home's filesystem. Otherwise the
+// work stays eligible and its read shows the hold as `resource_envelope`.
 //
-// What the admitted domains may use: each running domain up to its
-// `memory.max` (less what it already holds, which the host's available
-// memory has counted), and the new one up to `domain_memory_max`; on disk,
-// each up to `domain_writable_bytes` of materialized changes. A value that
-// cannot be read is taken at its bound, never at zero. Only the real
-// boundary has domains to admit; the kernel lane's scripted boundary does
-// not hold its runs here.
+// What this code does, and how it differs from D2's words: D2 says the
+// reserves are kept "beyond what the admitted domains may use". For memory
+// this code counts only the new domain's `domain_memory_max` beyond the
+// reserve, against the memory the host has available now (`MemAvailable`),
+// which already leaves out what the running domains hold; it does not hold
+// back what each running domain may still grow to (that stricter reading
+// admits one domain at a time at the default `domain_memory_max` on a 16 GB
+// host). Which reading stands is Sean's decision. For disk it counts
+// `domain_writable_bytes` for every running domain and the new one, beyond
+// `host_reserve_disk`. A value that cannot be read holds the dispatch, never
+// counts as zero. Only the real boundary has domains to admit; the kernel
+// lane's scripted boundary does not hold its runs here.
 
 import { readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,10 +76,7 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
     return hold(`${running.length} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
   }
   // Memory: the new domain's bound beyond the reserve, against what the host
-  // has available now, which the running domains' use is already out of.
-  // (The stricter reading, which also holds back what each running domain
-  // may still grow to, admits one domain at a time at the default
-  // domain_memory_max on a 16 GB host; a question for the owner.)
+  // has available now (see the head of this file).
   const mayTake = s.domain_memory_max;
   void readNumber;
   const available = memAvailable();

@@ -34,7 +34,7 @@ export interface BackendLaunch {
   // The egress forwarder the init starts before the backend (D2 §2.4).
   forwarder?: { port: number; socket: string } | null;
   // A qualification canary's barrier and witness socket (D2 §7.2).
-  canary?: { barrier?: string | null; witness?: string | null } | null;
+  canary?: { barrier?: string | null; witness?: string | null; actions?: { name: string; argv: string[] }[] } | null;
 }
 
 export interface ExitReport {
@@ -119,7 +119,7 @@ export class SandboxLaunch {
   volatile: VolatileHold | null = null;
   // What the init witnessed of a qualification canary (D2 §7.2): each
   // probe-program report it accepted, and the barrier file's appearance.
-  readonly witnesses: { action: string; outcome: string; pid: number }[] = [];
+  readonly witnesses: { action: string; outcome: string; pid: number; detail: string }[] = [];
   barrierSeen = false;
   onBarrier: (() => void) | null = null;
   // The engine's TERM and the backend's end, on the monotonic clock: the
@@ -296,7 +296,7 @@ export class SandboxLaunch {
         this.resolveBackend();
         return;
       case 'witness':
-        this.witnesses.push({ action: String(m.action ?? ''), outcome: String(m.outcome ?? ''), pid: Number(m.pid) });
+        this.witnesses.push({ action: String(m.action ?? ''), outcome: String(m.outcome ?? ''), pid: Number(m.pid), detail: String(m.detail ?? '').slice(0, 500) });
         return;
       case 'barrier':
         if (!this.barrierSeen) {

@@ -18,6 +18,7 @@ import type { Scope } from './boundary/scope.js';
 import type { SandboxLaunch } from './invoke/sandboxed.js';
 import type { DomainProxy } from './invoke/proxy/proxy.js';
 import { seamBoundary } from './testing/seam.js';
+import { redactText, redactValue } from './records/redact.js';
 
 export interface RunEnd {
   outcome: Outcome;
@@ -459,12 +460,12 @@ export class Runtime {
 // swallowed error can be diagnosed from the log alone.
 export function log(what: string, err: unknown, context: Record<string, unknown> = {}): void {
   const e = err instanceof Error ? err : null;
-  const line: Record<string, unknown> = { log: 'error', at: new Date().toISOString(), what, ...context, detail: e ? e.message : String(err) };
+  const line: Record<string, unknown> = { log: 'error', at: new Date().toISOString(), what, ...redactValue(context), detail: redactText(e ? e.message : String(err)) };
   // Not `code`: a startup refusal is the last stderr line with a string
   // `code` (SEAM.md §1), and a log line must never be taken for one.
   const code = (err as { code?: unknown } | null)?.code;
   if (code !== undefined) line.error_code = code;
-  if (e?.stack) line.stack = e.stack;
+  if (e?.stack) line.stack = redactText(e.stack);
   try {
     process.stderr.write(`${JSON.stringify(line)}\n`);
   } catch {
