@@ -184,7 +184,8 @@
       "M129-result-after-termination.test.mjs",
       "M130-exit-classes.test.mjs",
       "M131-usage-resume-session-id.test.mjs",
-      "M132-secrets-volatile-provider-files.test.mjs"
+      "M132-secrets-volatile-provider-files.test.mjs",
+      "M134-revocation-and-host-qualification.test.mjs"
     ]
   },
   "sandbox": [
@@ -211,6 +212,7 @@
     "M129-result-after-termination.test.mjs",
     "M130-exit-classes.test.mjs",
     "M131-usage-resume-session-id.test.mjs",
-    "M132-secrets-volatile-provider-files.test.mjs"
+    "M132-secrets-volatile-provider-files.test.mjs",
+    "M134-revocation-and-host-qualification.test.mjs"
   ]
 }
