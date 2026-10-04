@@ -46,6 +46,7 @@ import { runRecords } from './harness/sandbox/result.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
 import { git } from './harness/git.mjs';
+import { withStore } from './harness/store.mjs';
 
 const COLLECT_DEADLINE = CONTRACT.engine.collect_deadline.min;
 const escaped = (s) => JSON.stringify(s).slice(1, -1);

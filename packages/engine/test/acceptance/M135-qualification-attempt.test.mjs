@@ -37,7 +37,7 @@ import { releaseBarrier, sha256Hex } from './harness/engine.mjs';
 import { armBarrier } from './harness/journal.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
-import { addWork, requestTick, runsOf, tick } from './harness/runs.mjs';
+import { addWork, getRow, requestTick, runsOf, tick } from './harness/runs.mjs';
 import { checkOf, hostSection, observerEnvelopes, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { CANDIDATE_EGRESS, approveAttempt, armedCanary, attemptFixture, attemptOf, canaryOf, canaryRuns, obeyingCanaries, postQualify, qualify, scriptedBody, waitAttempt } from './harness/sandbox/qualify.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
@@ -272,39 +272,61 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
   // The instrument is the Reviewer's forger (harness/sandbox/instruments),
   // run only inside the containment canary's sandbox through the guarded
   // exec path: it proves the engine must reject a forged witness.
-  test("S1 (the slice-13 review): a containment canary that runs no action but reports each outcome in the probe program's name does not pass; the attempt fails and no entry is written; the host-side witnesses hold", async (t) => {
+  test("S1 (the slice-13 review): a containment canary that runs no action but reports each outcome in the probe program's name does not pass, the attempt fails and no entry is written; a containment canary that runs the probe program passes only with the host-side witnesses D2 §7.2 lists", async (t) => {
     const { fx, standIn, fixtureProject } = await attemptFixture(t);
     const forger = join(fx.scripted.dir, 'forger.mjs');
     copyFileSync(new URL('./harness/sandbox/instruments/forger.mjs', import.meta.url), forger);
     const hostNs = hostNamespaces();
     obeyingCanaries(fx, {
-      containment: [{ steps: [step.hold('armed'), acting(hostNs).exec([process.execPath, forger], { timeout_ms: 60_000 }), step.canary('result_only')] }],
+      containment: [
+        // The forged attempt: the Reviewer's forger, run through the guarded exec path.
+        { steps: [step.hold('armed'), acting(hostNs).exec([process.execPath, forger], { timeout_ms: 60_000 }), step.canary('result_only')] },
+        // The control attempt: the probe program run with each action's own arguments.
+        { steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] },
+      ],
     });
-    const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject));
-    await approveAttempt(fx, fixtureProject, attempt.id);
+    const egressLogOf = (runId) => {
+      const row = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).get(runId));
+      assert.ok(row && row.published === 1 && row.path, `the containment canary's egress_log record is published (SEAM §140; the Builder: always, once termination is established; ${JSON.stringify(row ?? null)})`);
+      return readFileSync(recordFile(fx.home, row), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    };
+
+    // The forged attempt.
+    const forged = await qualify(fx, scriptedBody(standIn, fixtureProject));
+    await approveAttempt(fx, fixtureProject, forged.id);
     await armedCanary(fx, 'containment');
-    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated']);
+    const done = await waitAttempt(fx.home, forged.id, ['succeeded', 'failed', 'invalidated']);
     const c = canaryOf(done, 'containment');
     const evidence = c?.evidence ? JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, c.evidence)), 'utf8')) : null;
-
     assert.notEqual(done.status, 'succeeded', `a containment canary that ran no action must not succeed (canaries: ${JSON.stringify(done.canaries)})`);
     assert.deepEqual([c?.passed, c?.failure_class], [false, 'containment_failed'], `the containment canary fails containment_failed (${JSON.stringify(c)})`);
     assert.ok(evidence && Array.isArray(evidence.actions), 'the evidence lists the actions');
-    assert.ok(evidence.actions.every((a) => a.witnessed === false), `no action was witnessed as an execution the engine saw act (${JSON.stringify(evidence.actions)})`);
-    assert.equal(trustEntries(fx.home).filter((e) => e.qualification_attempt === attempt.id).length, 0, 'no trust entry is written');
+    assert.ok(evidence.actions.every((x) => x.witnessed === false && x.passed === false), `no action was witnessed, none passed (${JSON.stringify(evidence.actions)})`);
+    assert.equal(trustEntries(fx.home).filter((e) => e.qualification_attempt === forged.id).length, 0, 'no trust entry is written');
+    const forgedLog = egressLogOf(c.run);
+    assert.deepEqual(forgedLog.filter((l) => l.decision === 'accepted'), [], 'no connection was accepted from the forged canary');
 
-    // The host-side witnesses D2 §7.2 lists (the driver's part of the fix):
-    // the proxy's egress log shows the unlisted connect refused, and the
-    // repository's configuration and the token sentinel are unchanged.
-    const runs = canaryRuns(fx.home, attempt.id);
-    const containmentRun = runs.find((r) => r.run === c.run);
-    const egress = withStore(fx.home, (db) => db.prepare(`SELECT "path" FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).get(containmentRun?.run));
-    if (egress?.path) {
-      const log = readFileSync(join(fx.home, 'records', egress.path), 'utf8');
-      for (const line of log.split('\n').filter(Boolean).map((l) => JSON.parse(l))) {
-        if (line.decision === 'accepted') assert.fail(`no connection was accepted from the forged canary (${JSON.stringify(line)})`);
-      }
+    // The control attempt, with the host read before and after: the token's
+    // bytes, the fixture repository's configuration.
+    const tokenPath = join(fx.home, 'api.token');
+    const configPath = join(getRow(fx.home, 'projects', fixtureProject).dev_repo_path, '.git', 'config');
+    const before = { token: readFileSync(tokenPath), config: readFileSync(configPath) };
+    const control = await qualify(fx, scriptedBody(standIn, fixtureProject));
+    await approveAttempt(fx, fixtureProject, control.id);
+    await armedCanary(fx, 'containment');
+    const ok = await waitAttempt(fx.home, control.id, ['succeeded', 'failed', 'invalidated']);
+    assert.equal(ok.status, 'succeeded', `the control attempt, whose backend runs the probe program, succeeds (${JSON.stringify(ok.canaries)})`);
+    const cc = canaryOf(ok, 'containment');
+    const ev = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, cc.evidence)), 'utf8'));
+    assert.ok(ev.actions.every((x) => x.witnessed === true && x.passed === true), `every action witnessed and passed (${JSON.stringify(ev.actions)})`);
+    for (const name of ['token_read', 'git_config', 'unlisted_connect']) {
+      const x = ev.actions.find((y) => y.name === name);
+      assert.deepEqual([x?.host?.checked, x?.host?.agrees], [true, true], `${name}: corroborated host-side (${JSON.stringify(x?.host)})`);
     }
+    const controlLog = egressLogOf(cc.run);
+    assert.ok(controlLog.some((l) => l.decision === 'refused' && l.reason === 'not_listed'), `host-read: the proxy's log shows the unlisted CONNECT refused (${JSON.stringify(controlLog)})`);
+    assert.ok(readFileSync(tokenPath).equals(before.token), "host-read: the token's bytes are unchanged");
+    assert.ok(readFileSync(configPath).equals(before.config), "host-read: the fixture repository's configuration is unchanged");
   });
 
   // The slice-13 review's S3 (D2 §1.4, §7.2): the positive canary was judged
@@ -321,10 +343,13 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
       // The role makes its edit a link (to the scripted directory, bound at
       // its host path, so a host reader that follows it finds the text) and
       // ends with the canary's result; it writes no real edit.
-      positive: [{ steps: [acting(hostNamespaces()).canaryLinkEdit(), step.canary('result_only')] }],
+      // Guarded: released only after the host has read the role contained
+      // (armedCanary). The positive canary fails, so no later canary is
+      // dispatched (SEAM §148; objection 013): nothing else is released.
+      positive: [{ steps: [step.hold('armed'), acting(hostNamespaces()).canaryLinkEdit(), step.canary('result_only')] }],
     });
     await approveAttempt(fx, fixtureProject, attempt.id);
-    await armedCanary(fx, 'containment');
+    await armedCanary(fx, 'positive');
     const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated']);
     const positive = canaryOf(done, 'positive');
     assert.equal(positive?.passed, false, `a positive canary whose edit is a link out of the workspace must not pass (${JSON.stringify(positive)})`);

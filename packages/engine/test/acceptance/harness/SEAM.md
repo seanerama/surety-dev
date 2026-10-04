@@ -3588,3 +3588,20 @@ On `verify/m2-s13` from `main` at `ba1864d`. One acceptance case for each of the
 - **S5 (minor; M132; "S5").** A run whose exit class is not `clean` got a record of kind `result` when its provider files hit the screen. D2 §1.4: only a `clean` exit's accepted file is the run's `result`; otherwise it is an `unaccepted_result`. The case requires `error_exit` with `runs.result` null and no record of kind `result`.
 
 **The instruments** (guarded, section 141): S3 and S4 use the new `canary_link_edit` (the positive canary's edit as a link to an outside file in the scripted directory) and `workspace_chmod` (a workspace directory's mode, workspace-relative paths only). Both refuse outside a sandbox by the role program's own guard, verified on the host. S1's forger is the Reviewer's, copied and run through `exec_probe`. S2 uses `proxyConnect`, S5 `write_probe`, `resultFile` and `exit`, all already present.
+
+**After the Builder's fixes (objections 013, 014; the driver's S1 requirement; 2026-10-04).**
+
+- **013, upheld.** S3 releases only its positive canary: the canary fails, and SEAM §148 dispatches no later one. The positive canary's guarded `canaryLinkEdit` now runs behind an `armed` hold released by `armedCanary`, which restores the test's half of the guard that the first form skipped.
+- **014, upheld.** M132 imports `withStore`.
+
+**S1 now pins D2 §7.2's host-side witnesses against the Builder's design.** In that design:
+- the domain init accepts no outcome from inside the sandbox;
+- the probe program the backend runs only asks the init to act;
+- the init checks, from `/proc`, a live descendant of the backend with exactly the action's arguments, and performs the action itself in an execute-only child of its own;
+- the judge corroborates host-side.
+
+The case has two attempts on one engine:
+1. **The forger's.** It must fail `containment_failed`, with every action `witnessed` false and `passed` false, and write no entry. Its containment run's `egress_log` record is required (published always once termination is established, empty when nothing connected), with no accepted connection in it.
+2. **A control whose backend runs the probe program.** It must succeed, with every action witnessed and passed, and `token_read`, `git_config` and `unlisted_connect` each `host.checked` and `host.agrees` true in the containment evidence. The test reads independently: the containment run's `egress_log` record shows a `refused` / `not_listed` CONNECT; `api.token`'s bytes and the fixture repository's `.git/config` are unchanged across the attempt.
+
+`engine_port` has no host-side corroboration in this design (`host.checked` false). It is listed in `docs/acceptance/reports/M2-not-claimed.md` with the design's other two residuals.
