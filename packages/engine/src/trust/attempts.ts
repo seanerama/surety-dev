@@ -17,7 +17,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import { redactText } from '../records/redact.js';
+import { redactText, redactValue } from '../records/redact.js';
+import { type BackendSampling, type ClaudeCapabilities, type ClaudeStreamSummary, claudeAnswered, claudeAuthFailure, claudeCapabilities, claudeKeyDelivery, claudeProviderError } from '../invoke/adapters/claude.js';
 import { CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, canaryEdit, canaryResult } from './canaries.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
@@ -93,6 +94,10 @@ export class QualificationDriver {
       return;
     }
     const canaries: CanaryEntry[] = [];
+    // A real backend's streams and the host's samples, canary by canary:
+    // the tool surface and delegation are judged over all of them (D2 §4.5).
+    const history: { stream: ClaudeStreamSummary | null; sampling: BackendSampling | null }[] = [];
+    let capabilities: ClaudeCapabilities | null = null;
     const unexpected: { destination: string; refused_at: string }[] = [];
     // The candidate destinations the canaries were let through to.
     const used = new Set<string>();
@@ -109,7 +114,9 @@ export class QualificationDriver {
       // containment canary and compared after it.
       const before = kind === 'containment' ? hostWitnesses(this.rt.home, target.repo) : null;
       const run = await this.dispatch(target, item, attempt, a, kind);
-      const entry = run === null ? await this.failedToStart(a, kind) : await this.judge(a, kind, run, unexpected, before === null ? null : { before, after: hostWitnesses(this.rt.home, target.repo) }, used);
+      const judged = run === null ? { entry: await this.failedToStart(a, kind), capabilities: null } : await this.judge(a, kind, run, unexpected, before === null ? null : { before, after: hostWitnesses(this.rt.home, target.repo) }, used, history);
+      const entry = judged.entry;
+      if (judged.capabilities !== null) capabilities = judged.capabilities;
       canaries.push(entry);
       await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected });
       if (!entry.passed) {
@@ -117,7 +124,7 @@ export class QualificationDriver {
         return;
       }
     }
-    const input = await this.entryInput(a, canaries, [...used]);
+    const input = await this.entryInput(a, canaries, [...used], history, capabilities);
     await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: unexpected, entry: input });
   }
 
@@ -165,10 +172,18 @@ export class QualificationDriver {
     unexpected: { destination: string; refused_at: string }[],
     host: { before: HostWitness; after: HostWitness } | null,
     used: Set<string>,
-  ): Promise<CanaryEntry> {
+    history: { stream: ClaudeStreamSummary | null; sampling: BackendSampling | null }[],
+  ): Promise<{ entry: CanaryEntry; capabilities: ClaudeCapabilities | null }> {
     const obs: CanaryObservation | undefined = canaryObservations.get(run);
     canaryObservations.delete(run);
-    const facts = await this.rt.read<{ outcome: string | null; exit_class: string | null; transcript: string | null }>('qualification.run_facts', { run });
+    const facts = await this.rt.read<{ outcome: string | null; exit_class: string | null; transcript: string | null; provider_session_id: string | null }>('qualification.run_facts', { run });
+    // A real backend's stream, read by its adapter (D2 §7.2); null for the
+    // scripted backend, whose canaries are the test's instruments.
+    const real = a.backend === 'claude';
+    const stream = real ? (obs?.stream ?? null) : null;
+    if (real) history.push({ stream, sampling: obs?.sampling ?? null });
+    const authFailure = stream !== null ? claudeAuthFailure(stream) : null;
+    let capabilities: ClaudeCapabilities | null = null;
     const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
       // The authority is a role's text: redacted before it is kept (S2).
@@ -187,12 +202,16 @@ export class QualificationDriver {
       const got = obs?.value as { summary?: unknown } | null | undefined;
       const resultOk = obs?.verdict === 'accepted' && got?.summary === want.summary;
       const editOk = obs?.editContent === canaryEdit(a.id).content;
-      passed = obs?.exitClass === 'clean' && resultOk && editOk;
+      passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (stream !== null && authFailure === null));
       detail = { ...detail, result_collection: obs?.verdict ?? null, result_matches: resultOk, edit_matches: editOk };
     } else if (kind === 'cancellation') {
       termToExit = obs?.termToExitMs ?? null;
-      passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null;
-      detail = { ...detail, barrier_observed: obs?.barrierSeen ?? false, term_to_exit_ms: termToExit };
+      // A real backend must have been authenticated and answering when it
+      // reached the barrier (D2 §7.2): a model answer with no
+      // authentication failure in its stream.
+      const answered = !real || (stream !== null && claudeAnswered(stream));
+      passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null && answered;
+      detail = { ...detail, barrier_observed: obs?.barrierSeen ?? false, term_to_exit_ms: termToExit, ...(real ? { authenticated: answered } : {}) };
     } else {
       // Each action witnessed by the init (it performed the action itself,
       // asked by a probe program the backend ran with the action's exact
@@ -215,25 +234,98 @@ export class QualificationDriver {
       });
       passed = actions.every((x) => x.passed);
       detail = { actions };
+      if (real) {
+        // The tool surface and the absence of delegation, scheduling and
+        // background work (D2 §§4.5, 7.2; T13): over every canary's stream
+        // and the host's samples of every canary's domain.
+        const samplings = history.map((h) => h.sampling).filter((x): x is BackendSampling => x !== null);
+        const merged: BackendSampling | null =
+          samplings.length === 0
+            ? null
+            : {
+                samples: samplings.reduce((n, x) => n + x.samples, 0),
+                max_backend: Math.max(...samplings.map((x) => x.max_backend)),
+                max_members: Math.max(...samplings.map((x) => x.max_members)),
+                unclassified: Math.max(...samplings.map((x) => x.unclassified)),
+                backend_cmdlines: [...new Set(samplings.flatMap((x) => x.backend_cmdlines))].slice(0, 16),
+              };
+        capabilities = claudeCapabilities(
+          history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
+          merged,
+        );
+        detail = { ...detail, capabilities };
+        if (!capabilities.delegation_verified || authFailure !== null) passed = false;
+      }
     }
-    const evidence = await this.record(a, run, detail);
+    if (real) {
+      // What the stream established, kept with the canary's evidence (D2
+      // §§4.5, 7.2): the backend as it described itself, key delivery, usage,
+      // the terminal event, the session id the engine assigned.
+      detail = {
+        ...detail,
+        stream:
+          stream === null
+            ? null
+            : {
+                init: stream.init,
+                key_delivery: claudeKeyDelivery(stream),
+                session_id_accepted: stream.init?.session_id == null || facts.provider_session_id === null ? null : stream.init.session_id === facts.provider_session_id,
+                usage_steps: stream.usage_steps,
+                results: stream.results,
+                result: stream.result === null ? null : { subtype: stream.result.subtype, is_error: stream.result.is_error, total_cost_usd: stream.result.total_cost_usd, usage_present: stream.result.usage_present, models: stream.result.models, terminal_reason: stream.result.terminal_reason },
+                types: stream.types,
+                tool_uses: stream.tool_uses.map((u) => u.name),
+                denials: stream.denials,
+                auth_failure: authFailure,
+              },
+        sampling: obs?.sampling ?? null,
+        exit_status: obs?.exitStatus ?? null,
+      };
+    }
+    const evidence = await this.record(a, run, redactValue(detail));
+    let failureClass: string | null = null;
+    if (!passed) {
+      failureClass = kind === 'cancellation' && obs?.barrierSeen === true ? 'cancellation_failed' : FAILURE[kind]!;
+      if (real) failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, actionsPassed: kind === 'containment' && (detail.actions as { passed: boolean }[]).every((x) => x.passed) });
+    }
     let providerError: string | null = null;
     if (!passed) {
-      // The run's redacted output (for the scripted backend; a real
-      // backend's is its structured provider error, slice 14).
-      providerError = facts.transcript ?? (await this.record(a, run, { kind, failure: FAILURE[kind], detail }));
+      // The scripted backend's: the run's redacted output. A real backend's:
+      // its structured provider error, redacted (D2 §7.2, N04).
+      providerError = real
+        ? await this.record(a, run, redactValue({ kind, failure_class: failureClass, provider_error: stream === null ? null : claudeProviderError(stream), exit_class: facts.exit_class ?? obs?.exitClass ?? null, exit_status: obs?.exitStatus ?? null, transcript: facts.transcript }))
+        : (facts.transcript ?? (await this.record(a, run, { kind, failure: FAILURE[kind], detail })));
     }
-    const failureClass = passed ? null : kind === 'cancellation' && obs?.barrierSeen === true ? 'cancellation_failed' : FAILURE[kind]!;
-    return { kind, run, passed, failure_class: failureClass, provider_error: providerError, evidence, term_to_exit_ms: kind === 'cancellation' ? termToExit : null };
+    return { entry: { kind, run, passed, failure_class: failureClass, provider_error: providerError, evidence, term_to_exit_ms: kind === 'cancellation' ? termToExit : null }, capabilities };
   }
 
   // The entry an attempt whose canaries all passed writes (D2 §§4.1, 7.2).
-  private async entryInput(a: AttemptRow, canaries: CanaryEntry[], usedEgress: string[]): Promise<EntryInput> {
+  private async entryInput(
+    a: AttemptRow,
+    canaries: CanaryEntry[],
+    usedEgress: string[],
+    history: { stream: ClaudeStreamSummary | null }[],
+    capabilities: ClaudeCapabilities | null,
+  ): Promise<EntryInput> {
     const usage = await this.rt.read<{ observations: number; cost: boolean }>('qualification.usage', { attempt: a.id });
     // How often usage was reported: per model call where the canaries
     // observed it; for the scripted backend, whose usage the test scripts,
     // per invocation (the engine's reading for a stand-in; SEAM.md §148).
-    const granularity = usage.observations > 0 ? 'model_call' : a.backend === 'scripted' ? 'invocation' : 'none';
+    // A real backend's from its streams: per call where an assistant message
+    // carried usage, per invocation where only the result did.
+    const streams = history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null);
+    const granularity =
+      a.backend === 'claude'
+        ? streams.some((x) => x.usage_steps > 0)
+          ? 'model_call'
+          : streams.some((x) => x.result?.usage_present === true)
+            ? 'invocation'
+            : 'none'
+        : usage.observations > 0
+          ? 'model_call'
+          : a.backend === 'scripted'
+            ? 'invocation'
+            : 'none';
     const evidence = canaries.map((c) => c.evidence).filter((x): x is string => x !== null);
     let providerFiles = { locations: [] as string[], persistence_flags: [] as string[], excluded: [] as string[] };
     const positive = canaries.find((c) => c.kind === 'positive');
@@ -258,9 +350,14 @@ export class QualificationDriver {
       template_version: a.template_version,
       model: a.model,
       auth_mode: a.auth_mode,
-      // Only what the canaries established: no inventory of the tool surface
-      // and no delegation test ran here (D2 §4.5), so nothing is claimed.
-      capabilities: { tools: [], denied: [], features_disabled: [], delegation_verified: false },
+      // Only what the canaries established (D2 §4.5): a real backend's tool
+      // surface from its streams and its capability test; for the scripted
+      // backend no inventory and no delegation test ran, so nothing is
+      // claimed.
+      capabilities:
+        capabilities === null
+          ? { tools: [], denied: [], features_disabled: [], delegation_verified: false }
+          : { tools: capabilities.tools, denied: capabilities.denied, features_disabled: capabilities.features_disabled, delegation_verified: capabilities.delegation_verified },
       host_id: hostIdentity() ?? 'unknown',
       host_qualification: a.host_qualification,
       isolation: ISOLATION_MECHANISM,
@@ -268,7 +365,9 @@ export class QualificationDriver {
       profile_fingerprint: a.profile_fingerprint,
       egress_hosts: [...usedEgress].sort(),
       usage_granularity: granularity,
-      usage_semantics: usage.observations > 0 ? 'cumulative' : null,
+      // A real backend's per-call observations are increments, its terminal
+      // one the cumulative total that replaces them (adapters/claude.ts).
+      usage_semantics: a.backend === 'claude' ? (granularity === 'model_call' ? 'delta' : granularity === 'invocation' ? 'cumulative' : null) : usage.observations > 0 ? 'cumulative' : null,
       cost_reporting: usage.cost ? 'reported' : 'none',
       enforceable_boundaries: granularity === 'none' || evidence.length === 0 ? [] : [{ boundary: 'invocation', mechanism: 'dispatch_check', evidence: evidence[0]!, overshoot: 'deadline' }],
       result_channel: 'file',
@@ -282,6 +381,28 @@ export class QualificationDriver {
 }
 
 const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellation: 'barrier_not_reached', containment: 'containment_failed' };
+
+// A real backend's failure class (D2 §7.2, A.2), from what the engine saw:
+// an authentication failure first, whatever else failed; a containment
+// canary whose actions held but whose delegation was not shown absent; a
+// backend that wrote nothing at all and exited nonzero (as Claude Code does
+// for a flag it does not know, which it reports on standard error before
+// the run; the class is inferred and the evidence says so); a candidate
+// destination the proxy refused; a positive canary whose agent used no
+// tool. Otherwise the kind's own class.
+function realFailureClass(
+  kind: string,
+  fallback: string,
+  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; actionsPassed: boolean },
+): string {
+  if (f.authFailure !== null) return 'auth_failed';
+  if (kind === 'containment' && f.actionsPassed && f.capabilities !== null && !f.capabilities.delegation_verified) return 'delegation_unverified';
+  if (f.stream !== null && f.stream.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
+  const refusedCandidate = (f.obs?.egress ?? []).some((e) => e.decision === 'refused' && f.candidates.includes(e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()));
+  if (refusedCandidate) return 'proxy_refused';
+  if (kind === 'positive' && f.stream !== null && f.stream.tool_uses.length === 0 && f.obs?.exitClass === 'clean') return 'tool_action_missing';
+  return fallback;
+}
 
 
 // What the host itself reads around the containment canary (D2 §7.2): the

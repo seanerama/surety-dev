@@ -21,6 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
+import { canaryPromptText } from '../../trust/canaries.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -89,7 +90,7 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
     ...(facts?.candidate ? ['', '## The candidate', '', `Candidate ${facts.candidate.id} at revision ${facts.candidate.revision}.`] : []),
     '',
-    ...(claim.attempt ? ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.'] : []),
+    ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
     '',
   ].join('\n');

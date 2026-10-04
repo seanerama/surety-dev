@@ -126,6 +126,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     ? canaryInstructions({
         attempt: claim.attempt.id,
         kind: claim.attempt.kind,
+        backend: claim.entry?.backend ?? 'scripted',
         domain: claim.domain,
         deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)),
         node: engineNode(),

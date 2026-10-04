@@ -174,11 +174,13 @@ export function attemptTarget(db: Tx['db'], a: { project: string | null }) {
 }
 
 export function canaryRunFacts(db: Tx['db'], a: { run: string }) {
-  const run = db.prepare('SELECT "outcome", "transcript" FROM "runs" WHERE "id" = ?').get(a.run) as { outcome: string | null; transcript: string | null } | undefined;
+  const run = db.prepare('SELECT "outcome", "transcript", "provider_session_id" FROM "runs" WHERE "id" = ?').get(a.run) as
+    | { outcome: string | null; transcript: string | null; provider_session_id: string | null }
+    | undefined;
   const exit = db
     .prepare(`SELECT o."exit_class" FROM "invocation_status_observations" o JOIN "invocation_receipts" r ON r."id" = o."invocation" WHERE r."run" = ? AND o."exit_class" IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`)
     .get(a.run) as { exit_class: string } | undefined;
-  return { outcome: run?.outcome ?? null, exit_class: exit?.exit_class ?? null, transcript: run?.transcript ?? null };
+  return { outcome: run?.outcome ?? null, exit_class: exit?.exit_class ?? null, transcript: run?.transcript ?? null, provider_session_id: run?.provider_session_id ?? null };
 }
 
 // Whether the attempt's canaries observed usage, and a cost (D2 §4.2).
