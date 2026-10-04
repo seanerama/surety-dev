@@ -40,6 +40,7 @@ import { canonical, sha256 } from '../store/transitions/common.js';
 import { governedText } from '../protected/set.js';
 import { diffHashOf } from '../projects/commands.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
+import { redactText } from '../records/redact.js';
 import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
@@ -189,7 +190,12 @@ export class Acceptor {
       if (hold === null || !hold.held) return failed('infra_error', 'what the role left in its workspace is no longer held, so nothing of it can be materialized');
       const m = materialize({ hold, home: this.rt.home, workspace: ws.path, caps: facts.caps });
       if (m.state === 'refused') {
-        if (m.reason === 'secret') return failed('infra_error', `the secret screen refused the workspace's materialization: ${m.detail}; nothing of it reached the checkout`);
+        if (m.reason === 'secret') {
+          // D2 §2.5: the refusal raises the Critical security finding and
+          // evidence.secret_refused; the run cannot complete.
+          await this.rt.engine('evidence.secret_refused', { run, domain: handle.claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null });
+          return failed('infra_error', `the secret screen refused the workspace's materialization: ${redactText(m.detail)}; nothing of it reached the checkout`);
+        }
         // What the snapshot would refuse is never copied into the checkout.
         if (m.reason === 'caps') return failed('diff_violation', `the workspace's materialization was refused: ${m.detail}; nothing of it reached the checkout`);
         return failed('infra_error', `what the role left could not be materialized: ${m.detail}`);

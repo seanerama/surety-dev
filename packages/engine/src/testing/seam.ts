@@ -101,6 +101,10 @@ const MAIN_BARRIERS: readonly string[] = [
   // (before the lock and the listener, so only `kill` can be released there).
   'init.before_backend',
   'boundary.before_terminated',
+  // M2 plan §2.3: before collection reads the volatile filesystem (I18), and
+  // before a qualification attempt dispatches a canary.
+  'collect.before_read',
+  'qualification.before_dispatch',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release

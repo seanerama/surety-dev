@@ -7,6 +7,7 @@
 // transitions; none of them waits on a process.
 
 import { illegal, notFound } from './common.js';
+import { raiseFinding } from './findings.js';
 import { recordLaunch } from './runs.js';
 import { assertEdge } from './lifecycle.js';
 import { engineSettings } from './settings.js';
@@ -164,7 +165,14 @@ export function recordObservation(tx: Tx, args: { domain: string; observation: '
 // run's end copies it onto the invocation's terminal observation.
 export function recordExit(tx: Tx, args: { domain: string; exit_class: string; exit_evidence: Record<string, unknown> }): void {
   const d = mustDomain(tx, args.domain);
-  tx.db.prepare('UPDATE "execution_domains" SET "exit_class" = ?, "exit_evidence" = ? WHERE "id" = ?').run(args.exit_class, JSON.stringify(args.exit_evidence), d.id);
+  // The domain's resource counters, as read before its directory went (D2
+  // A.3 `resource_events`): kept apart from the class, which a counter that
+  // rose without ending the backend does not decide (§1.6).
+  const res = args.exit_evidence.resource_events as { oom_kill?: number | null; pids_max?: number | null } | undefined;
+  const events = res && (typeof res.oom_kill === 'number' || typeof res.pids_max === 'number') ? JSON.stringify({ oom_kill: res.oom_kill ?? 0, pids_max: res.pids_max ?? 0 }) : null;
+  tx.db
+    .prepare('UPDATE "execution_domains" SET "exit_class" = ?, "exit_evidence" = ?, "resource_events" = ? WHERE "id" = ?')
+    .run(args.exit_class, JSON.stringify(args.exit_evidence), events, d.id);
 }
 
 // The domains a restart must account for (D2 §3.3): every one not terminated
@@ -240,4 +248,42 @@ export function regrantLease(
 
 export function assertLaunchClosed(d: DomainRow): void {
   if (d.launch_state !== 'closed') throw illegal('Terminating a domain whose launch is not closed', { domain: d.id, launch_state: d.launch_state });
+}
+
+// ---- collection (D2 §§1.4, 2.5, 4.3) ----------------------------------------------------------
+
+// The secret screen refused a publication or a materialization of what a
+// role left (D2 §2.5): the existing `security` finding of severity critical,
+// raised by the engine on the run's project (D1 §14.2), and
+// `evidence.secret_refused`. Nothing of what was refused is written; the
+// event names what it was and where, never the secret (the path is
+// redacted). Returns the finding.
+export function secretRefused(tx: Tx, args: { run: string; domain: string | null; what: string; path: string | null; by: string | null }): string {
+  const run = tx.db.prepare('SELECT "id", "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { id: string; project: string; work_item: string } | undefined;
+  if (!run) throw notFound('run', args.run);
+  const finding = raiseFinding(tx, {
+    project: run.project,
+    scope: 'project',
+    candidate: null,
+    run: run.id,
+    role: null,
+    category: 'security',
+    severity: 'critical',
+    message: `The secret screen found a registered secret${args.by ? ` (${args.by})` : ''} in what run ${run.id} left (${args.what}${args.path ? `, ${args.path}` : ''}); its publication was refused.`,
+  });
+  tx.emit(
+    'evidence.secret_refused',
+    { project: run.project, run: run.id, work_item: run.work_item, ...(args.domain ? { domain: args.domain } : {}), finding },
+    { what: args.what, path: args.path, by: args.by },
+  );
+  return finding;
+}
+
+// What collection found (SEAM.md: the run read's `collection`), merged into
+// what an earlier step of the same run recorded.
+export function recordCollection(tx: Tx, args: { run: string; collection: Record<string, unknown> }): void {
+  const row = tx.db.prepare('SELECT "collection" FROM "runs" WHERE "id" = ?').get(args.run) as { collection: string | null } | undefined;
+  if (!row) throw notFound('run', args.run);
+  const prior = row.collection ? (JSON.parse(row.collection) as Record<string, unknown>) : {};
+  tx.db.prepare('UPDATE "runs" SET "collection" = ? WHERE "id" = ?').run(JSON.stringify({ ...prior, ...args.collection }), args.run);
 }

@@ -17,7 +17,7 @@ import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { resolveBackend } from './trust.js';
 import { closeLaunch } from './boundary.js';
-import { keyVariable } from '../../invoke/adapters/templates.js';
+import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -395,7 +395,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
 
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null } = {}): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -408,13 +408,17 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
   };
+  // The provider session id, derived from this receipt's own id and bound to
+  // it here, in the dispatch transaction, before any domain is placed (D2
+  // §1.7): a resumed run is a new receipt with its own.
+  const session = TEMPLATES[run.backend]?.sessionIdOf?.(id) ?? null;
   tx.db
     .prepare(
-      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry")
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id")
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null);
-  tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend });
+    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null, opts.qualificationAttempt ?? null, session);
+  tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend, ...(session ? { provider_session_id: session } : {}) });
   return id;
 }
 
@@ -724,6 +728,17 @@ export function finishRun(
     if (terminal !== 'refused') chargeInvocation(tx, run, receipt);
   }
 
+  // A run whose role ran on the real boundary and whose end recorded no
+  // collection lost its volatile filesystem before collection (an engine
+  // crash): its result and provider files are recorded missing, never as an
+  // empty success (D2 §1.4, AR B08).
+  const ranReal = tx.db.prepare(`SELECT 1 FROM "execution_domains" WHERE "run" = ? AND "cgroup_path" IS NOT NULL AND "launch_binding" IS NOT NULL`).get(run.id);
+  const collection = (tx.db.prepare('SELECT "collection" FROM "runs" WHERE "id" = ?').get(run.id) as { collection: string | null }).collection;
+  if (ranReal && collection === null) {
+    tx.db
+      .prepare('UPDATE "runs" SET "collection" = ? WHERE "id" = ?')
+      .run(JSON.stringify({ result: 'missing', provider_files: 'missing', reason: args.recovery !== null ? "the engine restarted before collection: the domain's volatile filesystem was lost with it" : 'nothing was collected before the run ended' }), run.id);
+  }
   tx.db
     .prepare(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`)
     .run(run.id);

@@ -141,15 +141,30 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
   // Each domain with the fingerprint of the validated mount plan its sandbox
   // was built from (D2 §2.3; A.6 P12), null for a domain no sandbox was
   // built for.
-  const domains = db.prepare('SELECT "id", "status", "profile", "plan_fingerprint" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
+  // With the domain's observation and its backend's exit class, two separate
+  // facts (D2 §1.6, N02), and the resource counters the boundary read.
+  const domains = (
+    db
+      .prepare('SELECT "id", "status", "profile", "plan_fingerprint", "observation", "observed_at", "exit_class", "exit_evidence", "resource_events" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"')
+      .all(args.run) as Record<string, unknown>[]
+  ).map((d) => ({ ...d, exit_evidence: parseJson<unknown>((d.exit_evidence as string | null) ?? null), resource_events: parseJson<unknown>((d.resource_events as string | null) ?? null) }));
   // The validated mount plan the run's sandbox was built from (SEAM.md
   // §133): null before validation and for a launch refused before it.
   const planned = db
     .prepare('SELECT "profile", "plan_fingerprint", "mount_plan_record" FROM "execution_domains" WHERE "run" = ? AND "mount_plan_record" IS NOT NULL ORDER BY "id" DESC LIMIT 1')
     .get(args.run) as { profile: string; plan_fingerprint: string; mount_plan_record: string } | undefined;
-  const receipts = (db.prepare('SELECT "id", "trust_entry" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string; trust_entry: string | null }[]).map((r) => ({
+  const receipts = (
+    db.prepare('SELECT "id", "trust_entry", "qualification_attempt", "provider_session_id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as {
+      id: string;
+      trust_entry: string | null;
+      qualification_attempt: string | null;
+      provider_session_id: string | null;
+    }[]
+  ).map((r) => ({
     id: r.id,
     trust_entry: r.trust_entry,
+    qualification_attempt: r.qualification_attempt,
+    provider_session_id: r.provider_session_id,
     statuses: (db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(r.id) as { status: string }[]).map(
       (o) => o.status,
     ),
@@ -171,6 +186,17 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       ? { status: run.state === 'ended' ? 'not_taken' : 'pending', revision: null }
       : null;
   const successor = db.prepare('SELECT "id" FROM "runs" WHERE "parent_run" = ? ORDER BY "seq" LIMIT 1').get(args.run) as { id: string } | undefined;
+  // The invocation's exit class, from its terminal observation once the run
+  // has ended, else as the boundary recorded it on the domain.
+  const terminal = db
+    .prepare(
+      `SELECT o."exit_class", o."exit_evidence" FROM "invocation_status_observations" o JOIN "invocation_receipts" r ON r."id" = o."invocation"
+       WHERE r."run" = ? AND o."exit_class" IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(args.run) as { exit_class: string; exit_evidence: string | null } | undefined;
+  const latestDomain = (domains as Record<string, unknown>[]).at(-1);
+  const exitClass = terminal?.exit_class ?? (latestDomain?.exit_class as string | null | undefined) ?? null;
+  const exitEvidence = terminal ? parseJson<unknown>(terminal.exit_evidence) : (latestDomain?.exit_evidence ?? null);
   return {
     run: {
       id: run.id,
@@ -188,6 +214,14 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       // (SEAM.md §119).
       alpha_exception_proposals: parseJson<unknown[]>((run.alpha_exception_outcomes as string | null) ?? null) ?? [],
       mount_plan: planned ? { profile: planned.profile, fingerprint: planned.plan_fingerprint, record: planned.mount_plan_record } : null,
+      // The run's accepted result record, null when none was accepted (D2
+      // §1.4); what collection from the volatile filesystem found; and how
+      // the backend ended, apart from the domain's observation (§1.6).
+      result: run.result ?? null,
+      collection: parseJson<unknown>((run.collection as string | null) ?? null),
+      exit_class: exitClass,
+      exit_evidence: exitEvidence,
+      observation: (latestDomain?.observation as string | null | undefined) ?? null,
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

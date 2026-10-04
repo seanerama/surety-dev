@@ -12,6 +12,12 @@ export interface Template {
   text: string;
   // The environment variable the provider key is delivered in.
   keyVariable: string;
+  // The flags by which the backend is asked to keep nothing between runs
+  // (D2 §4.3); what it writes despite them is recorded by the canaries.
+  persistenceFlags: string[];
+  // The provider session id the engine assigns before launch (D2 §1.7),
+  // when the template passes one; recorded on the receipt.
+  sessionIdOf?: (invocation: string) => string;
   render(args: { model: string; invocation: string }): string[];
 }
 
@@ -38,6 +44,8 @@ export const TEMPLATES: Readonly<Record<string, Template>> = {
       'claude --bare -p --output-format stream-json --verbose --model <m> --tools <role tools> --disallowed-tools Agent Task ScheduleWakeup Workflow ' +
       '--permission-mode bypassPermissions --no-session-persistence --session-id <uuid> <prompt>',
     keyVariable: 'ANTHROPIC_API_KEY',
+    persistenceFlags: ['--no-session-persistence'],
+    sessionIdOf: sessionId,
     render: ({ model, invocation }) => [
       '--bare',
       '-p',
@@ -68,6 +76,7 @@ export const TEMPLATES: Readonly<Record<string, Template>> = {
       'codex exec --json --ephemeral --ignore-user-config --ignore-rules --strict-config --disable multi_agent --dangerously-bypass-approvals-and-sandbox ' +
       '-C /surety/workspace -m <m> -o /surety/out/last-message.txt -',
     keyVariable: 'OPENAI_API_KEY',
+    persistenceFlags: ['--ephemeral'],
     render: ({ model }) => [
       'exec',
       '--json',

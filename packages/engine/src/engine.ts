@@ -260,6 +260,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
     journal: (project) => reconcileProject(runtime, journal, project),
     effect: (intent) => effects.run(intent),
     regrant: (run) => launcher.regrant(run),
+    terminateDomains: (run) => ender.terminateDomains(run),
+    collectAtEnd: (handle, quarantined) => launcher.collectAtEnd(handle, quarantined),
   };
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation

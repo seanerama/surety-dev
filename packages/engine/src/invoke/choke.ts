@@ -27,10 +27,10 @@ import { fieldAllowed, parseReport } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
-import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
+import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
-import { redactValue } from '../records/redact.js';
+import { redactText, redactValue } from '../records/redact.js';
 import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
@@ -38,11 +38,20 @@ import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
 import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES } from './adapters/templates.js';
+import { type ResultCollection, collectResult, inventory, inventoryRecord } from './collect.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
+
+// What collection found, once per run.
+interface Collected {
+  result: ResultCollection;
+  providerFiles: string;
+  boundText: string | null;
+  unacceptedDone: boolean;
+}
 
 export interface DispatchTarget {
   project: string;
@@ -660,7 +669,228 @@ export class Launcher {
     }
     await backendStarted;
     if (handle.gate) await handle.gate.released;
-    this.childDone(handle);
+    await this.collectAfterExit(handle);
+  }
+
+  // ---- after the backend's exit, on the real boundary (D2 §§1.4, 1.6, 2.5, 4.3) ----
+
+  // The backend has exited and its output is read. Nothing it left is read
+  // before the domain's termination is established, with closure (K4): the
+  // engine terminates the domain first (a descendant still writing is ended
+  // by the boundary), then reads the exit class the boundary recorded and
+  // collects. Only then is the run's end decided: only `clean` with a
+  // well-formed result completes; every other class gives its outcome, and
+  // a result present for one of them is published as an unaccepted_result.
+  private async collectAfterExit(handle: RunHandle): Promise<void> {
+    const { claim } = handle;
+    // An end already decided (a Stop, a deadline, a stream bound) is the
+    // run-end protocol's, which collects what is unaccepted.
+    if (handle.ending || !this.rt.services) return;
+    handle.collecting = true;
+    let terminated = false;
+    try {
+      terminated = await this.rt.services.terminateDomains(claim.run);
+    } catch (err) {
+      log('termination after exit', err, { run: claim.run });
+      terminated = false;
+    }
+    if (handle.ending) return;
+    if (!terminated) {
+      // Unknown termination: nothing is collected at all (D2 §3.4); the
+      // run-end protocol quarantines it.
+      handle.collecting = false;
+      this.rt.requestEnd(handle, {
+        outcome: 'failed',
+        reason: 'infra_error',
+        reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
+        ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
+      });
+      return;
+    }
+    const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
+    const cls = exit?.exit_class ?? 'unknown';
+    const collected = await this.collectOnce(handle);
+    handle.collecting = false;
+    if (handle.ending) return;
+    const end = await this.decideAfterExit(handle, cls, collected);
+    if (end === 'accept') {
+      this.childDone(handle);
+      return;
+    }
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+  }
+
+  // What the result and the exit class give (D2 §1.6), the result recorded
+  // first where it is the run's.
+  private async decideAfterExit(handle: RunHandle, cls: string, c: Collected): Promise<RunEnd | 'accept'> {
+    const { claim } = handle;
+    if (handle.streamBound !== null) {
+      await this.publishUnaccepted(handle, c);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: handle.streamBound };
+    }
+    if (c.boundText !== null) {
+      await this.publishUnaccepted(handle, c);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: c.boundText };
+    }
+    const r = c.result;
+    if (r.state === 'secret') return { outcome: 'failed', reason: 'infra_error', reasonText: `the secret screen refused the result: it holds a registered secret (${r.by ?? 'secret'}); nothing of it was published` };
+    if (cls === 'clean') {
+      if (r.state === 'refused') {
+        await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
+        handle.result = { valid: false };
+        await this.recordCollection(handle, { result: 'invalid', result_detail: r.detail });
+        return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result could not be read as a regular file: ${r.detail}` };
+      }
+      if (r.state !== 'read') {
+        await this.recordCollection(handle, { result: r.state === 'not_held' ? 'missing' : 'absent' });
+        return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with a terminal success event and left no result' };
+      }
+      // The result is the run's to accept or refuse: never also unaccepted.
+      c.unacceptedDone = true;
+      let value: unknown;
+      try {
+        value = JSON.parse(r.bytes.toString('utf8'));
+      } catch {
+        value = undefined;
+      }
+      const result = value === undefined ? null : parseResult(redactValue(value), claim.role);
+      const valid = result !== null;
+      if (valid) await pausePoint('run.result_received');
+      let record: string | null = null;
+      try {
+        record = await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'result', content: r.bytes });
+      } catch (err) {
+        log('result record', err, { run: claim.run });
+      }
+      const accepted = await this.recordResult(handle, valid, result, valid ? record : null).catch((err) => {
+        log('result', err, { run: claim.run });
+        return false;
+      });
+      await this.recordCollection(handle, { result: valid ? 'collected' : 'invalid', result_record: record });
+      if (!accepted) return earnedEnd(handle);
+      handle.result = { valid };
+      if (!valid) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'the result is not a well-formed result for the role' };
+      if (handle.exit?.code !== 0) return earnedEnd(handle);
+      return 'accept';
+    }
+    // Any other class: the result, if any, is never accepted (D2 §1.4).
+    const wellFormed = r.state === 'read' && (() => {
+      try {
+        return parseResult(redactValue(JSON.parse(r.bytes.toString('utf8'))), claim.role) !== null;
+      } catch {
+        return false;
+      }
+    })();
+    if (cls === 'error_exit') {
+      await this.publishUnaccepted(handle, c);
+      if (wellFormed) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result with a failed exit contradicts it' };
+      return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class error_exit: the backend failed without a result' };
+    }
+    await this.publishUnaccepted(handle, c);
+    if (cls === 'resource_limit') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class resource_limit: the backend was ended by a resource limit of its domain (memory.events oom_kill rose)' };
+    if (cls === 'foreign_signal') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class foreign_signal: the backend was ended by a signal the engine did not send' };
+    return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}: no exit report of the backend reached the engine` };
+  }
+
+  // A result the run does not accept, published after the screen as an
+  // unaccepted_result record (D2 §1.4), once.
+  private async publishUnaccepted(handle: RunHandle, c: Collected): Promise<void> {
+    const r = c.result;
+    if (r.state !== 'read' || c.unacceptedDone) return;
+    c.unacceptedDone = true;
+    try {
+      const record = await writeWholeRecord(this.rt, { project: handle.claim.project, run: handle.claim.run, kind: 'unaccepted_result', content: r.bytes });
+      await this.recordCollection(handle, { result: 'unaccepted', result_record: record });
+    } catch (err) {
+      log('unaccepted result', err, { run: handle.claim.run });
+    }
+  }
+
+  private recordCollection(handle: RunHandle, collection: Record<string, unknown>): Promise<unknown> {
+    return this.rt.engine('run.collection', { run: handle.claim.run, collection }).catch((err) => log('collection', err, { run: handle.claim.run }));
+  }
+
+  // Collection from the volatile filesystem (invoke/collect.ts), once per
+  // run, after termination is established: the result read, the provider
+  // files inventoried, screened and published. A screen hit refuses the
+  // publication, raises the Critical security finding and
+  // evidence.secret_refused (D2 §2.5). A bound reached marks the evidence
+  // incomplete and the run cannot complete (§3.7).
+  collectOnce(handle: RunHandle): Promise<Collected> {
+    handle.collection ??= this.collect(handle);
+    return handle.collection as Promise<Collected>;
+  }
+
+  private async collect(handle: RunHandle): Promise<Collected> {
+    const { claim } = handle;
+    const hold = handle.sandbox?.volatile ?? null;
+    await pausePoint('collect.before_read');
+    const bounds = {
+      resultMaxBytes: this.rt.setting('result_max_bytes'),
+      entriesMax: this.rt.setting('collect_entries_max'),
+      filesMaxBytes: this.rt.setting('provider_files_max_bytes'),
+      deadlineMs: this.rt.setting('collect_deadline') * 1000,
+    };
+    let result = collectResult(hold, bounds);
+    // The scripted adapter's held line stands in for a result file the role
+    // did not write; never for a real backend.
+    if (result.state === 'absent' && claim.entry === null && handle.streamResult !== null) {
+      result = { state: 'read', bytes: Buffer.from(JSON.stringify(handle.streamResult.value)) };
+    }
+    if (result.state === 'secret') {
+      await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
+      await this.recordCollection(handle, { result: 'refused_secret' });
+    }
+    const template = claim.entry ? TEMPLATES[claim.entry.backend] : undefined;
+    const inv = inventory(hold, bounds, template?.persistenceFlags ?? []);
+    let providerFiles: string = hold === null || !hold.held ? 'missing' : 'collected';
+    let providerRecord: string | null = null;
+    if (hold !== null && hold.held) {
+      if (inv.secret !== null) {
+        providerFiles = 'refused_secret';
+        await this.rt
+          .engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'provider_files', path: redactText(inv.secret.path), by: inv.secret.by })
+          .catch((err) => log('secret screen', err, { run: claim.run }));
+      } else {
+        try {
+          providerRecord = await writeWholeRecord(this.rt, {
+            project: claim.project,
+            run: claim.run,
+            kind: 'provider_files',
+            content: inventoryRecord(inv, { domain: claim.domain, run: claim.run, invocation: claim.invocation }),
+          });
+          if (inv.truncated) providerFiles = 'truncated';
+        } catch (err) {
+          log('provider files', err, { run: claim.run });
+          providerFiles = 'unwritten';
+        }
+      }
+    }
+    await this.recordCollection(handle, {
+      provider_files: providerFiles,
+      provider_files_record: providerRecord,
+      excluded: inv.excluded.map((e) => redactText(e.path)),
+      ...(inv.truncated ? { truncated: inv.truncated } : {}),
+    });
+    const boundText = inv.truncated
+      ? `collection reached ${inv.truncated.limit} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete`
+      : null;
+    return { result, providerFiles, boundText, unacceptedDone: false };
+  }
+
+  // On a run's end decided by the engine (a Stop, a deadline, a bound) or by
+  // its exit: once its domains are terminated, what the volatile filesystem
+  // held is collected, and a result is published only as unaccepted (D2
+  // §1.4). A run whose termination was not established when it ended (it was
+  // quarantined) is not collected: what it left is recorded missing.
+  async collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void> {
+    if (handle.sandbox === null || !handle.backendStarted) return;
+    if (quarantined && handle.collection === null) {
+      await this.recordCollection(handle, { result: 'missing', provider_files: 'missing', reason: "the domain's termination was not established when the run ended; nothing was collected" });
+      return;
+    }
+    const c = await this.collectOnce(handle);
+    await this.publishUnaccepted(handle, c);
   }
 
   // Has the engine just resumed from a pause that outlived the run lease?
@@ -826,6 +1056,17 @@ export class Launcher {
       const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: m.semantics, raw: redactValue(m.raw) });
       if (recorded) await this.checkBudget(handle);
     } else if (m.type === 'result') {
+      // On the real boundary the result is the file the role leaves in
+      // /surety/out, read only after the domain's termination is established
+      // (D2 §1.4, K4): a result line read while the role runs is its
+      // terminal event (§1.6), never recorded now. The scripted adapter's
+      // line is held, unrecorded, as its stand-in for a role that wrote no
+      // file; a real backend's line is never a result.
+      if (handle.sandbox !== null) {
+        handle.terminal = m.is_error === true || (m.subtype !== undefined && m.subtype !== 'success') ? 'failure' : 'success';
+        if (handle.claim.entry === null && handle.streamResult === null && 'result' in m) handle.streamResult = { value: redactValue(m.result) };
+        return;
+      }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
       if (handle.result !== null) return;
       // A run the engine has decided to end takes no late result, as a

@@ -102,7 +102,9 @@ import {
   domainMayCreate,
   getDomain,
   priorScopes,
+  recordCollection,
   recordExit,
+  secretRefused,
   recordObservation,
   recordPlacement,
   regrantFacts,
@@ -203,6 +205,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
+  'domain.exit_of': (d, a: { domain: string }) => d.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "id" = ?').get(a.domain) ?? null,
   'decisions.engine': (d) => engineDecisions(d),
 };
 
@@ -282,6 +285,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'domain.close': (tx, a) => closeLaunch(tx, a),
   'domain.observed': (tx, a) => recordObservation(tx, a),
   'domain.exit': (tx, a) => recordExit(tx, a),
+  'evidence.secret_refused': (tx, a) => secretRefused(tx, a),
+  'run.collection': (tx, a) => recordCollection(tx, a),
   'run.regrant': (tx, a) => regrantLease(tx, a),
   'host.qualification': (tx, a) => recordHostQualification(tx, a),
 };

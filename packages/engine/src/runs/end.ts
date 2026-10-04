@@ -192,6 +192,12 @@ export class RunEnder {
   private async finish(run: string, invocations: Record<string, string>, opts: EndOptions): Promise<void> {
     const facts = await this.rt.engine<EndFacts>('run.end_facts', { run });
     if (facts.run.state === 'ended') return;
+    // What the domain's volatile filesystem held, collected now that every
+    // domain's termination is established (D2 §§1.4, 4.3): a result the run
+    // does not accept is published only as unaccepted. A run that was
+    // quarantined collects nothing (§3.4).
+    const own = this.rt.handles.get(run);
+    if (own && this.rt.services) await this.rt.services.collectAtEnd(own, facts.run.quarantined === 1);
     // Step 6 for Abandon: the workspace is discarded only now that
     // termination is established, never while a writer may survive.
     if (facts.run.outcome === 'abandoned' && facts.workspace && facts.workspace.disposition !== 'discarded') {
