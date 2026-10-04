@@ -280,11 +280,18 @@ async function qualifyCommand(argv: string[]): Promise<never> {
   if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
   try {
     const { status, text } = await sendQualify(home, parsed.body);
+    const oneLine = (t: string): string => {
+      try {
+        return JSON.stringify(JSON.parse(t));
+      } catch {
+        return t.trim().replace(/\n/g, ' ');
+      }
+    };
     if (status === 201) {
-      process.stdout.write(`${text.trim()}\n`);
+      process.stdout.write(`${oneLine(text)}\n`);
       process.exit(0);
     }
-    process.stderr.write(`${text.trim()}\n`);
+    process.stderr.write(`${oneLine(text)}\n`);
     process.exit(1);
   } catch (err) {
     process.stderr.write(
