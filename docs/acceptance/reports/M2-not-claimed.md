@@ -101,3 +101,21 @@ Written by the Verifier of slice 12, 2026-10-03, with the cases. Slice 12 is to 
 | **The observer cases** M112 (g), M116 (d), M124 (e), M128 (g) report `not_exercised`: H13 not exercised, with its reason, and no observer envelope. Never counted as passed. | M112, M116, M124, M128 | B | where H13 passes | E57 |
 
 Settled since the table above was written: the `--slice 11` consequence of the M110 change (slice 12 is built, and M110 (a), (f) pass); H6's tool versions (E65 item 7: H6 now fails an unreadable version).
+
+## After slice 13 (the result, the exit classes, the trust table without a model; rows M129 to M135; started)
+
+**Written by:** the Verifier of slice 13 part 1, 2026-10-03, on `verify/m2-s13`, with the cases for M129 and M130 ((f) and (g) excepted) and the E67 item 7 extension of M125 (c).
+
+**Status: started.** Parts 2 and 3 of the slice add their entries. At the time of writing, none of these cases has run against an engine that builds them. On today's engine every M129 and M130 case fails (`packages/engine/test/acceptance/COVERAGE.md`, "M2 slice 13 (part 1)").
+
+When the slice is built and merged, part 1 will not claim:
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **No resource limit is exhausted on this host.** M130 (f), (g) (OOM), P20 and M133 run only on the exhaustion host (`mini-hp01`). Here their two M130 tests fail by design. `resource_limit` is pinned by no case on this host. M130 (h) reaches `pids.max` only through a limit the test lowers on one domain, against at most eight `sleep`s. | M130 (f), (g), (h); M133; P20 | B on this host | slice 13 part 3, on `mini-hp01`; the report cites that host's records | E69 items 1 to 3 |
+| **Whether a descendant outlives the role's exit is not pinned.** On today's engine the domain init leaves with the backend, and the pid namespace goes with it. M129 (a) pins what is collected, and that termination precedes the result's record; it does not pin how long a descendant may still write. | M129 (a); M116 (b) | B | none planned | SEAM §143; COVERAGE, "M2 slice 13 (part 1)" |
+| **A device or a non-regular file at the result path is not exercised.** A role cannot make a device node in its namespace. The `device` and `not_regular` reasons are named in the seam and pinned by no case; a link to `/dev/zero` is a `link`. | M129 (c) | B | none planned | SEAM §143 |
+| **What the engine does when the result line and the result file disagree** is not pinned. | M129, M130 | B | none planned | SEAM §143 |
+| **`unaccepted_result` is pinned only for `engine_signaled` and `unknown`** (M130 (d), (i)). Not pinned: `foreign_signal` and `resource_limit`, which publish one by D2 §1.4; and `clean`, `error_exit` or an invalid file, which D2 does not list. | M130 | B | `resource_limit`: part 3 | SEAM §143 |
+| **The phase plan's and the dependency interfaces' texts in the context package** follow E67 item 7. M125 (c) pins only the texts of the requirement, ADR and constraint. | M125 (c) | B | none planned; the real-backend journey (M140) reads them in use | SEAM §139 (amended); E67 item 7 |
+| **The session id's derivation is fixed in the seam and not yet pinned by a case.** Nor is it established that Claude Code accepts a version-4-shaped id derived by hash. | M131 (c); M136 | B | M131 (c), part 2; M136, the positive canary | SEAM §146 |
