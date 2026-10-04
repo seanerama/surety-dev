@@ -586,12 +586,16 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string }): 
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
   const policy = projectPolicy(db, run.project);
-  // An unknown count is never read as zero (E74 item 3): where nothing
-  // billable is known after an observation, the budget cannot be judged and
-  // the run does not go on without it (D1 §6.6).
+  // An unknown count is never read as zero (E74 item 3): where usage has
+  // been observed and nothing billable in it is known, the run's budget
+  // cannot be judged and the run does not go on without it (D1 §6.6). With
+  // nothing observed yet (a check at a pause's re-grant, before any usage)
+  // there is nothing to judge the run's limit on, and only the day's limits
+  // are checked.
+  const observed = observationsOf(db, args.invocation).length > 0;
   const spent = billable(observedSoFar(db, args.invocation));
-  if (spent === null) return 'budget_usage_unknown';
-  if (spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
+  if (observed && spent === null) return 'budget_usage_unknown';
+  if (spent !== null && spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
 }
