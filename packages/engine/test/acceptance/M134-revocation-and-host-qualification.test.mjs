@@ -19,6 +19,7 @@
 
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -26,7 +27,7 @@ import { waitFor, writeEngineConfig } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { holdSecret } from './harness/records.mjs';
 import { addWork, requestTick, run as runRow, runsOf, waitForRun, waitForRunState } from './harness/runs.mjs';
-import { SANDBOX_CONFIG, domainOf, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
+import { domainOf, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { refusedBeforeLaunch } from './harness/sandbox/view.mjs';
 import { withStore } from './harness/store.mjs';
 import { BACKENDS, PARK_ON_REFUSAL, StandIn, apiKeyRef, installTrustEntry, trustEntry, trustEvents, useBackend } from './harness/trust.mjs';
@@ -103,7 +104,8 @@ async function changeWhileInFlight(t, change, reason) {
 // (c) to (e): the change is found at a start.
 async function changeAtStart(t, { args = [], config }, reason) {
   const { fx, projects, entry } = await revocationFixture(t);
-  if (config !== undefined) writeEngineConfig(fx.home, { ...SANDBOX_CONFIG, ...config });
+  // Merged into the fixture's own configuration, its port included.
+  if (config !== undefined) writeEngineConfig(fx.home, { ...JSON.parse(readFileSync(join(fx.home, 'config.json'), 'utf8')), ...config });
   await restart(fx, args);
   assertRevoked(fx, entry, reason);
   await refusedBeforeLaunch(fx, projects[0], await addWork(fx.engine, projects[0], 'verification'), 'backend_refused', `after the ${reason}`);
