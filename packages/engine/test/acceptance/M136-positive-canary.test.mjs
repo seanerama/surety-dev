@@ -27,7 +27,7 @@ import { basename } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { canaryOfKind, collectAttempt, homeOf, qualificationAttempt } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, sha256 } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, sha256, terminalOutput } from './harness/real/lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { BOUNDARY, ISOLATION, hostId } from './harness/trust.mjs';
 
@@ -183,7 +183,11 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       if (typeof t?.total_cost_usd === 'number') {
         assert.equal(row.cost_status, 'reported', 'the backend reported its cost: cost_status reported (D2 §4.5)');
         assert.ok(Math.abs(row.cost_usd - t.total_cost_usd) < 1e-6, `the ledger's cost is the reported one (${row.cost_usd} against ${t.total_cost_usd})`);
-        if (Number.isInteger(t.usage?.output_tokens)) assert.equal(row.out, t.usage.output_tokens, 'the output tokens are the terminal event\'s');
+        // Every model call's output tokens, as total_cost_usd covers them
+        // (`modelUsage` where present, else the main loop's `usage`; objection 015).
+        const reported = terminalOutput(t);
+        observe(ctx, 'M136', 'terminal_output_scope', reported.scope);
+        if (reported.tokens !== null) assert.equal(row.out, reported.tokens, `the output tokens are the terminal event's (${reported.scope})`);
       } else {
         assert.notEqual(row.cost_status, 'reported', 'no cost in the stream: the ledger does not claim one was reported');
         assert.ok(row.cost_usd === null || row.cost_status === 'estimated', `an unreported cost is estimated with its price version or unknown, never zero (${JSON.stringify(row)})`);
