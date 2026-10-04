@@ -1405,6 +1405,21 @@ export class RoleOutput {
     this.stream = stream;
     this.stream.on('data', (chunk: Buffer) => {
       if (this.closed) return;
+      // The line bound is judged on the bytes as they arrive, before any of
+      // them reaches the transcript: a line that would pass
+      // stream_line_max_bytes is kept up to the bound and no further, so the
+      // transcript ends at the bound itself (SEAM.md §157: kept, holding
+      // fewer bytes than the role wrote).
+      const cut = this.bounds ? this.lineCut(chunk, this.bounds.lineMax) : -1;
+      if (cut >= 0) {
+        this.onBytes(chunk.subarray(0, cut));
+        this.partial = [];
+        this.lines.length = 0;
+        this.queuedBytes = 0;
+        this.bounds!.onBound(`a line of the backend's output exceeded stream_line_max_bytes (${this.bounds!.lineMax} bytes): the run was cancelled and its transcript is truncated`);
+        this.close();
+        return;
+      }
       this.onBytes(chunk);
       this.take(this.decoder.write(chunk));
       this.lastDataAt = performance.now();
@@ -1432,6 +1447,24 @@ export class RoleOutput {
     this.stream.once('end', ended);
     this.stream.once('close', ended);
     this.stream.on('error', ended);
+  }
+
+  // The bytes of the line in progress, counted as they arrive.
+  private lineBytes = 0;
+
+  // Where in `chunk` the line in progress first passes `max` bytes (its line
+  // ending not counted), or -1 when no line does; advances the count.
+  private lineCut(chunk: Buffer, max: number): number {
+    let at = this.lineBytes;
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] === 0x0a) {
+        at = 0;
+        continue;
+      }
+      if (++at > max) return i;
+    }
+    this.lineBytes = at;
+    return -1;
   }
 
   private take(text: string): void {
