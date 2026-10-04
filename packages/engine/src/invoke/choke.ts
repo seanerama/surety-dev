@@ -48,6 +48,8 @@ import { GOVERNED_FILE } from '../protected/set.js';
 import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
+import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream } from './adapters/claude.js';
+import { startBackendSampler } from './sampler.js';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
 // the attempt's judgement (trust/attempts.ts) once the run has ended.
@@ -62,6 +64,11 @@ export interface CanaryObservation {
   termToExitMs: number | null;
   egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
   providerFilesRecord: string | null;
+  // A real backend's: its stream as the adapter read it, and the host's
+  // samples of its domain's processes; null for the scripted backend.
+  stream: ClaudeStreamSummary | null;
+  sampling: BackendSampling | null;
+  exitStatus: number | null;
 }
 export const canaryObservations = new Map<string, CanaryObservation>();
 
@@ -78,7 +85,21 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     termToExitMs: launch?.termToExitMs() ?? null,
     egress: handle.egressEntries ?? [],
     providerFilesRecord: c.providerRecord,
+    stream: handle.adapterStream?.summary() ?? null,
+    sampling: stopSampler(handle),
+    exitStatus: typeof handle.exit?.code === 'number' ? handle.exit.code : null,
   });
+}
+
+// The canary's host samples, ended once; null where none were taken.
+export function stopSampler(handle: RunHandle): BackendSampling | null {
+  const s = handle.sampler;
+  if (s === null) return handle.samplingReport;
+  s.sample();
+  handle.sampler = null;
+  const report = s.stop();
+  handle.samplingReport = report;
+  return report;
 }
 
 // The collector's reasons for a path that is not a result (SEAM.md §143).
@@ -207,6 +228,9 @@ export class Launcher {
     });
     if (!claim) return false;
     const handle = newHandle(claim);
+    // The adapter that reads a real backend's stream (D2 §1.1): Claude
+    // Code's for `claude`; the scripted protocol otherwise.
+    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream();
     this.rt.handles.set(claim.run, handle);
     // The baseline of a fresh checkout of the base, read now: it is fixed
     // with the workspace's intent.
@@ -678,6 +702,12 @@ export class Launcher {
         // The launch was recorded with the grant (SEAM.md §125).
         started: async () => {
           handle.backendStarted = true;
+          // A real backend's canary: the host samples the domain's members
+          // from the backend's start (D2 §7.2; M136 (c)).
+          if (claim.attempt !== null && handle.adapterStream !== null && claim.entry !== null && claim.cgroup_path !== null) {
+            handle.sampler = startBackendSampler(claim.cgroup_path, claim.entry.binary_path);
+            handle.sampler.sample();
+          }
           started();
         },
         // D2 §7.1: a sandbox the launcher fails to build refuses the run
@@ -753,7 +783,8 @@ export class Launcher {
         // While an expired lease is pending its challenge (SEAM.md §130), a
         // usage line is recorded and checked against the budget at once; a
         // result and a heartbeat wait for the challenge's outcome.
-        if ((handle.gate || this.pausedPastLease(handle)) && !isUsageLine(line)) {
+        const usageOnly = handle.adapterStream !== null ? ClaudeStream.usageOnly(line) : isUsageLine(line);
+        if ((handle.gate || this.pausedPastLease(handle)) && !usageOnly) {
           this.gate(handle).lines.push(line);
           continue;
         }
@@ -1051,6 +1082,7 @@ export class Launcher {
   async collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void> {
     if (handle.sandbox === null || !handle.backendStarted) return;
     if (quarantined && handle.collection === null) {
+      stopSampler(handle);
       // A domain whose termination was unknown is not collected (D2 §3.4).
       await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files_collection: { outcome: 'not_collected', record: null } });
       return;
@@ -1209,7 +1241,23 @@ export class Launcher {
     return true;
   }
 
+  // A real backend's line, read by its adapter (D2 §§1.1, 1.5, 1.6): each
+  // usage observation recorded (redacted) and checked against the budget as
+  // the scripted protocol's are; the terminal event noted for the exit
+  // class. Its result is the file, read after termination (D2 §1.4), never
+  // a line; and nothing else in the stream is a command to the engine.
+  private async adapterCallback(handle: RunHandle, stream: ClaudeStream, line: string): Promise<void> {
+    const r = stream.feed(line);
+    const { run, generation, invocation } = handle.claim;
+    for (const u of r.usage) {
+      const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: u.semantics, raw: redactValue(u.raw) });
+      if (recorded) await this.checkBudget(handle);
+    }
+    if (r.terminal !== null) handle.terminal = r.terminal;
+  }
+
   private async callback(handle: RunHandle, line: string): Promise<void> {
+    if (handle.adapterStream !== null) return this.adapterCallback(handle, handle.adapterStream, line);
     let message: unknown;
     try {
       message = JSON.parse(line);

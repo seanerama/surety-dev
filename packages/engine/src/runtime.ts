@@ -17,6 +17,8 @@ import type { StoreClient } from './store/client.js';
 import type { Scope } from './boundary/scope.js';
 import type { SandboxLaunch } from './invoke/sandboxed.js';
 import type { DomainProxy } from './invoke/proxy/proxy.js';
+import type { BackendSampling, ClaudeStream } from './invoke/adapters/claude.js';
+import type { Sampler } from './invoke/sampler.js';
 import { seamBoundary } from './testing/seam.js';
 import { redactText, redactValue } from './records/redact.js';
 
@@ -127,6 +129,13 @@ export interface RunHandle {
   // The domain's egress log entries, kept when its proxy closed (a
   // qualification canary's contacts, D2 §7.2).
   egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string }[] | null;
+  // A real backend's stream, as its adapter reads it (invoke/adapters/
+  // claude.ts); null for the scripted protocol.
+  adapterStream: ClaudeStream | null;
+  // A real backend's canary: the host's samples of its domain's processes
+  // (D2 §7.2), from the backend's start to its exit.
+  sampler: Sampler | null;
+  samplingReport: BackendSampling | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -173,6 +182,9 @@ export function newHandle(claim: Claim): RunHandle {
     collecting: false,
     streamBound: null,
     egressEntries: null,
+    adapterStream: null,
+    sampler: null,
+    samplingReport: null,
   };
 }
 
