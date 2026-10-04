@@ -1328,3 +1328,15 @@ After this slice the engine runs in its incarnation scope, checks the host at ev
 **Consequences elsewhere.** No change to D1 or D2.
 
 ---
+
+## E68. M2 slice 12 merged: a host qualification is active for the first time (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's record under Sean's delegation.
+
+`build/m2-s12` merged to `main` at `fa2b3f8` after the fix round of E67. **The driver's first rerun** on `f739459` was not clean, 969 of 974: M120 (a) to (d) failed because the probe suite's seeding of P2 created an empty `engine.log`, so the case's own seed was skipped (fixed on the engine side: a target the suite seeds has content); and M118 (b) failed once by timeout, which the Builder traced to **a real defect**: while one pause challenge was outstanding a later tick sent a second, and its answer re-granted a lease that D2 §3.5 forbids replacing while a challenge is outstanding (it failed 2 of 6 alone; fixed: one challenge at a time per run, none again on the same lease generation after an unanswered one; 8 of 8 after). **The driver's second rerun** on `4999c70`: `--slice 12` 974 of 974 cases in 156 files, none skipped; unit 156 tests in 31 files; builder boundary check 44 paths, clean; the user manager `running` and no scope, `/dev/shm` or `/tmp` probe leftovers after.
+
+After this slice the engine builds, validates and publishes the mount plan, presents the repository through its own git view, materializes a role's changes after termination behind the secret screen, hands over exactly the bound context, runs P1 to P19 at every start with seeded targets and controls, and holds an **active host qualification** on this host; egress goes only through its proxy to validated addresses. No real backend runs yet: no trust entry is active (slice 13 writes and activates entries; slice 14 qualifies Claude Code under Sean's approvals).
+
+**Open, carried:** E67 items 5 and 6 (defaults; recorded items); P20 and the context package's texts (Sean's decision, E67 item 7) in slice 13; the closing pass re-runs the Reviewer's crash-during-suite and symlinked-home scripts and adds `header_timeout` to SEAM §140's reasons.
+
+---
