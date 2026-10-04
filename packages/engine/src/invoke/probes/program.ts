@@ -94,11 +94,22 @@ function smallLimit(file: string, max: number): string | null {
 // The exhaustion actions' fixed ceilings beyond the limit each reads (P20):
 // enough to cross the limit, never enough to matter to the host if the
 // limit were not enforced.
-const MIB = 1024 * 1024;
-const PIDS_MARGIN = 8;
-const MEMORY_MARGIN = 32 * MIB;
+// E69 (Sean): the instruments stop themselves at 96 tasks or 128 MiB, and
+// refuse unless the limit they read is at most 64 tasks or 64 MiB.
+export const MIB = 1024 * 1024;
+export const PIDS_LIMIT_MAX = 64;
+export const PIDS_CEILING = 96;
+export const MEMORY_LIMIT_MAX = 64 * MIB;
+export const MEMORY_CEILING = 128 * MIB;
+export const FS_BYTES_MAX = 4 * MIB;
+export const FS_INODES_MAX = 256;
 const BYTES_MARGIN = 256 * 1024;
 const INODES_MARGIN = 16;
+
+// The ceilings an exhaustion action runs to: a little past the limit it
+// read, never past the fixed caps.
+export const forkCeiling = (limit: number): number => Math.min(PIDS_CEILING, limit + 32);
+export const allocationCeiling = (limit: number): number => Math.min(MEMORY_CEILING, limit + 64 * MIB);
 
 // The filesystem `dir` is on, by statfs: refused unless it is small (a
 // volatile filesystem with tight bounds), so a fill never meets a host disk.
@@ -111,8 +122,8 @@ function smallFs(dir: string, maxBytes: number, maxInodes: number): { bytes: num
   }
   const bytes = st.blocks * st.bsize;
   if (st.type !== 0x01021994) return { refused: `${dir} is not on a tmpfs` };
-  if (bytes > Math.min(maxBytes, 64 * MIB)) return { refused: `${dir} holds ${bytes} bytes, more than ${Math.min(maxBytes, 64 * MIB)}` };
-  if (st.files > Math.min(maxInodes, 16384)) return { refused: `${dir} holds ${st.files} inodes, more than ${Math.min(maxInodes, 16384)}` };
+  if (bytes > Math.min(maxBytes, FS_BYTES_MAX)) return { refused: `${dir} holds ${bytes} bytes, more than ${Math.min(maxBytes, FS_BYTES_MAX)}` };
+  if (st.files > Math.min(maxInodes, FS_INODES_MAX)) return { refused: `${dir} holds ${st.files} inodes, more than ${Math.min(maxInodes, FS_INODES_MAX)}` };
   return { bytes, inodes: st.files };
 }
 
@@ -476,10 +487,10 @@ async function act(a: Obj): Promise<Obj> {
       // little above that limit whatever the kernel does, and every child
       // sleeps and forks nothing, so an unenforced limit costs the host a
       // handful of sleeping processes, never a fork storm (E64 item 2).
-      const why = smallLimit('/surety/cgroup/domain/pids.max', Math.min(Number(a.max_limit ?? 256), 256));
+      const why = smallLimit('/surety/cgroup/domain/pids.max', Math.min(Number(a.max_limit ?? PIDS_LIMIT_MAX), PIDS_LIMIT_MAX));
       if (why) return { refused: why };
       const limit = Number(readFileSync('/surety/cgroup/domain/pids.max', 'utf8').trim());
-      const ceiling = limit + PIDS_MARGIN;
+      const ceiling = forkCeiling(limit);
       // The control first: one fork that succeeds.
       const control = await forkOne();
       if (control.child) control.child.kill('SIGKILL');
@@ -499,10 +510,10 @@ async function act(a: Obj): Promise<Obj> {
       // P20: allocate to memory.max, in steps, to a fixed ceiling a little
       // above the domain's own limit, which the program reads and refuses
       // unless it is small.
-      const why = smallLimit('/surety/cgroup/domain/memory.max', Math.min(Number(a.max_limit ?? 512 * MIB), 512 * MIB));
+      const why = smallLimit('/surety/cgroup/domain/memory.max', Math.min(Number(a.max_limit ?? MEMORY_LIMIT_MAX), MEMORY_LIMIT_MAX));
       if (why) return { refused: why };
       const limit = Number(readFileSync('/surety/cgroup/domain/memory.max', 'utf8').trim());
-      const ceiling = limit + MEMORY_MARGIN;
+      const ceiling = allocationCeiling(limit);
       // The control first, reported before the exhaustion, which ends this
       // process by the kernel's OOM kill.
       const one = Buffer.alloc(MIB, 1);

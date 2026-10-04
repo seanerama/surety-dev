@@ -428,6 +428,36 @@ export function seamBackends(): BackendSpec[] {
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')], binds: [{ path: init.scripted, writable: true }] }];
 }
 
+// ---- the test caps (E69) -----------------------------------------------------
+
+// A harness-only override of a work item's domains' limits, set on the
+// trigger fixture (`domain_limits`), so that the exhaustion cases can run at
+// caps below the engine's configured minimums. Outside harness mode there is
+// none, and every domain has the configured limits.
+export interface DomainLimitOverride {
+  pids_max?: number;
+  memory_max?: number;
+  writable_bytes?: number;
+  writable_inodes?: number;
+}
+const domainLimitOverrides = new Map<string, DomainLimitOverride>();
+
+function parseDomainLimits(v: unknown): DomainLimitOverride {
+  const bad = () => new Refusal(400, 'invalid_value', 'domain_limits must be an object of positive integers: pids_max, memory_max, writable_bytes, writable_inodes.', 'Send the caps the case needs.', { field: 'domain_limits' });
+  if (!isObject(v)) throw bad();
+  const out: DomainLimitOverride = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!['pids_max', 'memory_max', 'writable_bytes', 'writable_inodes'].includes(k) || !Number.isSafeInteger(x) || (x as number) <= 0) throw bad();
+    (out as Record<string, number>)[k] = x as number;
+  }
+  return out;
+}
+
+export function seamDomainLimits(workItem: string): DomainLimitOverride | null {
+  if (!init.harness) return null;
+  return domainLimitOverrides.get(workItem) ?? null;
+}
+
 // SEAM.md §127: the scripted directory is bound read-write at its own path
 // inside every sandbox of a sandbox-lane engine, a real backend's (the
 // stand-in's log, SEAM.md §139) included. Nothing outside harness mode.
@@ -788,6 +818,14 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         // record of the project; the answer names the record. Nothing of it
         // reaches a context package.
         let report: string | null = null;
+        // E69: a harness-only override of the item's domains' limits, below
+        // the engine's configured minimums (the test caps).
+        let limits: DomainLimitOverride | null = null;
+        if (isObject(body) && body.domain_limits !== undefined) {
+          const { domain_limits: given, ...rest } = body;
+          limits = parseDomainLimits(given);
+          body = rest;
+        }
         if (isObject(body) && body.raw_user_report !== undefined) {
           const { raw_user_report: text, ...rest } = body;
           if (typeof text !== 'string' || text.length === 0 || typeof rest.project !== 'string') {
@@ -798,7 +836,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           report = await writeWholeRecord(rt, { project: rest.project, run: null, kind: 'raw_user_report', content: Buffer.from(text) });
           body = rest;
         }
-        const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean };
+        const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean; work_item: { id: string } };
+        if (limits !== null) domainLimitOverrides.set(result.work_item.id, limits);
         return { status: result.created ? 201 : 200, body: report === null ? result : { ...result, raw_user_report: report } };
       },
     };

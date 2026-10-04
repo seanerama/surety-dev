@@ -167,13 +167,17 @@ function limitsFromHost(cgroup: string, limits: DomainLimits): string | null {
 type P20Kind = 'pids' | 'memory' | 'bytes' | 'inodes';
 const P20_KINDS: readonly P20Kind[] = ['pids', 'memory', 'bytes', 'inodes'];
 const MIB = 1024 * 1024;
+// E69 (Sean): `pids.max` 64 and `memory.max` 64 MiB, `memory.swap.max` 0;
+// the program stops itself at 96 tasks and 128 MiB whatever the cgroup does.
 const P20_CAPS: Record<P20Kind, { memoryMax: number; tasksMax: number; volBytes: number; volInodes: number }> = {
-  pids: { memoryMax: 512 * MIB, tasksMax: 48, volBytes: MIB, volInodes: 256 },
-  memory: { memoryMax: 192 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
-  bytes: { memoryMax: 512 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
-  inodes: { memoryMax: 512 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 64 },
+  pids: { memoryMax: 64 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
+  memory: { memoryMax: 64 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
+  bytes: { memoryMax: 64 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
+  inodes: { memoryMax: 64 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 64 },
 };
-const P20_MAX = { tasksMax: 64, memoryMax: 512 * MIB };
+const P20_MAX = { tasksMax: 64, memoryMax: 64 * MIB };
+// Why P20 does not run on a host not designated for it (E69).
+export const P20_NOT_DESIGNATED = 'host not designated for exhaustion probes (isolation_probe_exhaustion is false); excused, not claimed';
 
 async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy: string, o: BoxOptions): Promise<Box> {
   const t = tools.paths;
@@ -859,7 +863,10 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   // `pids.max`, `memory.max` and `memory.swap.max` read as the suite wrote
   // them (verifyLimits); a box that fails either never starts its program.
   const p20: Record<P20Kind, Box | null> = { pids: null, memory: null, bytes: null, inodes: null };
-  if (run('P20')) {
+  // Only on a host designated for exhaustion probes (E69): elsewhere no box
+  // is opened and nothing is forked, allocated or filled to a limit.
+  const designated = rt.config.values.isolation_probe_exhaustion === true;
+  if (designated && run('P20')) {
     for (const kind of P20_KINDS) {
       const caps = P20_CAPS[kind];
       try {
@@ -1253,6 +1260,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   // keeps one, and the control (one fork, one allocation, one write, one
   // file) succeeded first.
   if (!run('P20')) results.push(notRun('P20', 'this probe was made unable to run at start'));
+  else if (!designated) results.push(notRun('P20', P20_NOT_DESIGNATED, 'not_designated'));
   else {
     const parts: { kind: P20Kind; seeded: boolean; held: boolean; control: boolean; negative: string | null; detail: string }[] = [];
     for (const kind of P20_KINDS) {

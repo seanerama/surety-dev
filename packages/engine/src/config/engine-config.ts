@@ -23,7 +23,7 @@ export type ConfigSource = 'file' | 'default';
 
 export interface EngineConfig {
   values: {
-    [K in EngineKey]: K extends 'api_authority' ? string : K extends 'decision_targets' ? Record<string, number | null> : K extends 'ui_bootstrap' ? boolean : number;
+    [K in EngineKey]: K extends 'api_authority' ? string : K extends 'decision_targets' ? Record<string, number | null> : K extends 'ui_bootstrap' | 'isolation_probe_exhaustion' ? boolean : number;
   };
   sources: Record<EngineKey, ConfigSource>;
 }
