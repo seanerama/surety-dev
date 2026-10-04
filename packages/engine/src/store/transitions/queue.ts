@@ -1119,7 +1119,8 @@ const QUALIFICATION_APPROVAL: KindSpec = {
     if (option !== 'approve') return consumed(d);
     recordApproval(tx, d, { consequence: `qualification attempt ${a.id} authorized`, subjectType: 'qualification_attempt', subjectId: a.id });
     authorizeAttempt(tx, a, d.id);
-    return consumed(d);
+    // The next tick takes the attempt on its way (SEAM.md §148).
+    return consumed(d, [{ kind: 'tick' }]);
   },
 };
 

@@ -32,7 +32,9 @@ import type { Tx } from './tx.js';
 export function proposeAttempt(tx: Tx, input: AttemptInput, label: Record<string, unknown> = {}): { attempt: AttemptRow; decision: string | null } {
   const attempt = writeAttempt(tx, input, label);
   const d = raiseQuestion(tx, { project: null, kind: 'qualification_approval', subjectType: 'qualification_attempt', subjectId: attempt.id });
-  return { attempt, decision: d?.id ?? null };
+  // The row names its approval (SEAM.md §148).
+  if (d) tx.db.prepare('UPDATE "qualification_attempts" SET "decision" = ? WHERE "id" = ?').run(d.id, attempt.id);
+  return { attempt: { ...attempt, decision: d?.id ?? null }, decision: d?.id ?? null };
 }
 
 // A trust entry is written proposed and its activation asked for (D2 §4.1).
