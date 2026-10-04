@@ -15,7 +15,8 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { changePolicy } from '../journal.mjs';
@@ -46,6 +47,22 @@ import {
 
 const json = (text) => (text === null || text === undefined ? text : JSON.parse(text));
 const sha = (path) => (existsSync(path) ? sha256(readFileSync(path)) : null);
+
+// The operator's source binary as the TEST reads it at qualification time
+// (objection 016; E75 item 1: "an independently calculated hash"): its
+// path, the SHA-256 of its bytes computed here, and the first word of its
+// own `--version` (run once, with exactly that argument, an empty HOME and
+// no credential: it reaches no model). The engine's pinned copy is judged
+// against these, never against a value read from the engine.
+function sourceBinary(ctx) {
+  const home = mkdtempSync(join(tmpdir(), 'surety-real-version-'));
+  try {
+    const out = execFileSync(ctx.binary, ['--version'], { env: { HOME: home, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 30_000 });
+    return { at: new Date().toISOString(), path: ctx.binary, sha256: sha256(readFileSync(ctx.binary)), version_output: out.split('\n')[0].trim(), version: out.trim().split(/\s+/)[0] };
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
 
 // The host-side witnesses of the containment canary the test reads itself
 // (D2 §7.2; M138 (a)): the token's bytes and the fixture repository's
@@ -190,6 +207,7 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
     await changePolicy(fx.engine, fixtureProject, realPolicy(REAL.dayVerifiedUsd.qualification));
 
     const witnessBefore = hostWitness(fx.home, fixtureProject);
+    observe(ctx, row, 'source_binary', sourceBinary(ctx));
     const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
     assert.equal(res.status, 201, `POST /v1/trust/qualify proposes the attempt (body: ${res.text})`);
     const id = res.body.qualification_attempt.id;

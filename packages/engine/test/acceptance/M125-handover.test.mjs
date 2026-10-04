@@ -52,10 +52,24 @@ const PARENT_ONLY = Object.freeze({
   AWS_SECRET_ACCESS_KEY: `parent-only-aws-${randomBytes(8).toString('hex')}`,
   GITHUB_TOKEN: `parent-only-gh-${randomBytes(8).toString('hex')}`,
   SURETY_TEST_PARENT_SENTINEL: `parent-only-${randomBytes(8).toString('hex')}`,
+  // Credentials of the other auth modes, as an operator's shell may hold
+  // them (E74 item 1): never inherited by a backend whatever its entry's mode.
+  CLAUDE_CODE_OAUTH_TOKEN: `parent-only-oauth-${randomBytes(8).toString('hex')}`,
+  ANTHROPIC_AUTH_TOKEN: `parent-only-auth-${randomBytes(8).toString('hex')}`,
 });
+// The updater and telemetry switches the `claude` templates set (E74 item 3;
+// E75 item 1; objection 016), each with the value the TEST expects, from
+// Claude Code's documentation (code.claude.com/docs, read 2026-10-04):
+// DISABLE_AUTOUPDATER "1" ("Set DISABLE_AUTOUPDATER to "1"", Advanced
+// setup, "Disable auto-updates"); CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+// "1" ("Set to any non-empty value, such as `1`", Environment variables);
+// DISABLE_UPDATES "1" (named on the Advanced setup page without a value;
+// "1" by the same convention as its sibling; SEAM.md §139 says so).
+const QUIET_ENV = Object.freeze({ DISABLE_AUTOUPDATER: '1', DISABLE_UPDATES: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
 // SEAM.md §139: the names a backend's environment holds. REQUIRED for the
-// `claude` adapter; ALLOWED beside them; nothing else.
-const REQUIRED_ENV = ['PATH', 'HOME', 'HTTPS_PROXY', 'SURETY_DOMAIN', 'SURETY_INVOCATION', 'ANTHROPIC_API_KEY'];
+// `claude` adapter in this fixture's mode (`api_key`); ALLOWED beside them;
+// nothing else.
+const REQUIRED_ENV = ['PATH', 'HOME', 'HTTPS_PROXY', 'SURETY_DOMAIN', 'SURETY_INVOCATION', 'ANTHROPIC_API_KEY', ...Object.keys(QUIET_ENV)];
 const ALLOWED_ENV = [...REQUIRED_ENV, 'LANG', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'CLAUDE_CONFIG_DIR'];
 const SHELLS = ['sh', 'bash', 'dash', 'zsh', 'ash', 'busybox'];
 const CONTEXT_KINDS = ['prompt', 'instructions', 'result_schema', 'requirement', 'adr', 'constraint', 'phase_plan', 'interface', 'diff', 'acceptance_content_hash', 'prior_run'];
@@ -111,6 +125,7 @@ describe('M125 what is handed over', () => {
     const keys = launch.env_keys;
     for (const k of REQUIRED_ENV) assert.ok(keys.includes(k), `the environment holds ${k} (it holds ${keys.join(', ')})`);
     assert.deepEqual(keys.filter((k) => !ALLOWED_ENV.includes(k)), [], 'and nothing beyond the template\'s variables, the markers and the secret');
+    for (const [name, value] of Object.entries(QUIET_ENV)) assert.equal(launch.env_hashes[name], hashOf(value), `${name} holds "${value}", the value the test expects (E74 item 3; SEAM.md §139)`);
     assert.equal(launch.env_hashes.ANTHROPIC_API_KEY, hashOf(KEY), 'the grant\'s secret arrives in the variable the template names');
     assert.equal(launch.env_hashes.HOME, hashOf('/surety/home'), 'HOME is the volatile home');
     assert.deepEqual([launch.domain, launch.invocation], [domain.id, domain.invocation], 'the markers name the domain and the invocation');
