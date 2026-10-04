@@ -1818,6 +1818,67 @@ Both are written and checked by `node --check`, by the role program's guards run
 - no process of this worktree;
 - `free -m` showed 13,235 MB available: unchanged.
 
+## M2 slice 14 (written, not run): the real lane, the report and the hands-on run (M2 build spec §9; E59)
+
+Written 2026-10-04 by the Verifier of slice 14, on `verify/m2-s14` from `main` at `872afe9`. It covers rows M136 to M142 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §§3.8 and 3.9, every named case. The seam's §§159 to 166 fix what the plan's §2.6, D2 and E59 leave to the tests for these rows.
+
+**Nothing in the real lane was run.** No `claude` ran with a prompt or in any mode that could reach a model; `claude --version` was run once on a copy of the binary (section "Checks"); no key exists for the engine and none was created or read; `--lane real` was never invoked and no real-lane file was run with `node --test`. The real-lane files were checked with `node --check` only.
+
+**Rows and cases**
+
+| Row | File | Lane (manifest) | Cases (plan letters) |
+|---|---|---|---|
+| M136 | `M136-positive-canary.test.mjs` | real | (a); (b); (c); (d) |
+| M137 | `M137-cancellation-canary.test.mjs` | real | (a); (c) |
+| M137 | `M137-cancellation-canary-negatives.test.mjs` | sandbox, slice 14 | (b) finishing early; (b) never reaching the barrier |
+| M138 | `M138-containment-canary.test.mjs` | real | (a); (b); (c) |
+| M139 | `M139-unauthenticated-canary.test.mjs` | real | (a); (b) |
+| M140 | `M140-real-backend-journey.test.mjs` | real | (a); (e); (b); (c); (d), in that order |
+| M141 | `M141-report-qualified-facts.test.mjs` | slice 14, no engine | (a) the sections M141 lists; (b) honesty in the report's state |
+| M142 | `M142-hands-on-script.test.mjs` | slice 14, no engine | (a) `bash -n`; (b) checks (1) to (9) printed with commands; (c) every paid step gated; (d) the refusals. The row's checks (1) to (9) are Sean's, made by hand with the script. |
+
+The plan's 17 real-lane cases are all written: 16 in the real lane and M137 (b) in the sandbox lane, where it needs no model (the plan cites M135 (i) for it, which is the containment canary's; no merged case made a cancellation canary miss its barrier). The manifest's `real` list is ordered M139, M136, M137, M138, M140 (SEAM §159).
+
+**What each real-lane case asserts before the first paid run, and what it can only record.**
+
+| Case | Asserts (D2 and the seam) | Records only (the canaries establish it; D2 §4.5) |
+|---|---|---|
+| M139 (a) | `auth_failed`; the provider error kept, published, JSON, without the key; the attempt `failed` / `qualification_failed`; no later canary; no entry; one ledger row, `cost_usd` null and `cost_status` `unknown`; neither key in the engine home | the provider error's content. If Claude Code reports `total_cost_usd: 0` on a refused key and the engine records it as measured zero, (a) fails: a finding for Sean, not a defect of the case |
+| M139 (b) | the old approval `decision_consumed`; a replay is a new attempt with a new approval and runs nothing; the old row unchanged | — |
+| M136 (a) | the positive canary passed, `clean`, status 0, no engine signal; the expected edit's SHA-256 equals the observed one, read no-follow, a regular file; the collected result equals the expected one; the run completed; the receipt's derived session id | whether the stream's first event names the same session id (SEAM §146: acceptance shown by the clean run) |
+| M136 (b) | every A.3 field of the entry, bound to what was qualified; `usage_granularity` not `none`; the invocation boundary only; key delivery established through `ANTHROPIC_API_KEY`; the egress hosts within the candidate list and each contacted; every refused destination reported, none added; provider files with `--no-session-persistence`; each evidence record published | which hosts beyond the provider it tried; what it wrote; the granularity and semantics observed |
+| M136 (c) | `delegation_verified`; `Agent`, `Task`, `ScheduleWakeup`, `Workflow` absent or denied; if the stream lists tools, none of the four offered; never two backend processes in one host sample of a domain, the backend seen at least once | what else Claude Code starts in its domain (shells, search programs) |
+| M136 (d) | one original row, `usage_complete` 1, output tokens, billable input; with `total_cost_usd` in the terminal event, `reported` and equal; without it, never `reported`, never zero | the terminal event's fields |
+| M137 (a) | passed; the barrier witnessed by the init; `engine_signaled` by the engine; closure, termination, the run's end in order; the domain terminated and its directory gone; `term_to_exit_ms`; one original row, `usage_complete` 0, observed usage kept (or null when none), the allowance the run limit less what was observed | how Claude Code ends on TERM, the signal that ended it, how much usage it reported by the barrier |
+| M137 (c) | M139's attempt: `auth_failed` and no cancellation canary | — |
+| M138 (a) | the four probe actions asked, each witnessed, each the expected denial; three corroborated host-side by the engine; the test's own reads: the token's bytes and the fixture repository's configuration unchanged across the attempt, an unlisted `CONNECT` refused in the egress log; delegation as M136 (c) | whether the agent ran the probe program at all (if not, `containment_failed`: the canary working); `engine_port`'s outcome (no host-side corroboration: the slice-13 residual) |
+| M138 (b) | the canary passed exactly when every action was witnessed and passed and every control ran; each action's pass the init's | — (the forged and marker negatives are M135 (i) and S1) |
+| M138 (c) | `workspace_write` and `provider_tunnel` ran; the egress log shows the tunnel carrying bytes both ways | — |
+| M140 (a) | both gates satisfied, the authorization issued; three real runs completed, dispatched to the active entry (not an attempt); the API agrees with the store | the agents' behaviour; a miss is "path one not established", which halts |
+| M140 (e) | at `boundary.before_terminated` the test reads `populated 0` and the run read not `ended`; closure, termination, end in order; `stopped` / `human_stop`; `engine_signaled`; one row, incomplete; the key in no file of the run directory and no git object | the run's partial usage |
+| M140 (b) | path two real (or mixed, labelled, by Sean's choice): the finding naming the check, the fix work, both gates satisfied on the fix's candidate, the finding resolved, the fix complete, the first candidate blocked; each real run dispatched to the entry; the API agrees | whether the real Verifier finds the seeded defect and names the check, and whether the Reviewer chooses `fix` (each a miss "not established", E59 item 3) |
+| M140 (c) | every commit of `base..main` of each path's repository carries the five trailers once, names a run of the project with its role, and is the engine's recorded revision; one identity throughout | the identity |
+| M140 (d) | per real run: with `total_cost_usd` in the transcript's terminal event, `reported`, equal, output tokens equal, complete; without it, never `reported`, never zero; each project's day `reported_usd` (its ledger read while the engine ran) the sum of its reported rows | the transcripts' usage fields |
+
+**New harness** (`harness/real/`, the Verifier's): `lane.mjs` (the preflight and its guards, the run directory, steps, the halt, `judged`, `observe`, the production and journey engines, `waitForSean`, the domain sampler, `secretHits`, the wrong key, `tickWhile`); `attempt.mjs` (the two attempts and the activation, `collectAttempt`, `hostFacts`, the spend guard, the host witness); `journey.mjs` (the two projects, the seeded defect, the paths, the Stop, the API reads). BS §7's `harness/real/` names "the attempt stand-in": that is M135's `harness/sandbox/qualify.mjs` with the stand-in binary, already merged; no new stand-in was needed.
+
+**What the slice-14 Builder must build for these cases** (SEAM §§160, 161, 164, 165): `--secret-file` and `--provider-cap-usd`; `POST /v1/trust/qualify` outside harness mode, the binary resolved on the engine's `PATH`, the static checks with an empty temporary `HOME`; the engine's own qualification fixture project and `qualification_fixture_project` on `GET /v1/engine`; `surety qualify`; `--harness-real-lane`; the Claude adapter's stream parsing and normalization; `claude-sonnet-5-5` in the price table and a numeric estimate; the canaries' evidence fields (`expected`/`observed`, `key_delivery`, `barrier`, `controls`).
+
+**Checks** (2026-10-04, on this branch):
+
+- `node --check` on every new `.mjs` file: all passed.
+- `bash -n docs/acceptance/reports/M2-hands-on.sh`: passed; `shellcheck -S warning`: two warnings, both an unused loop variable; the script's four refusals run by hand with `env -i`: each refused with "Nothing was started".
+- `M137-cancellation-canary-negatives.test.mjs` alone (`node --test`, after `npm run build`), on `main`'s engine at `872afe9`: **2 of 2 passed** (31.6 s). The engine already fails a cancellation canary `barrier_not_reached` in both ways.
+- `M141-report-qualified-facts.test.mjs` alone: **2 of 2 passed** on the skeleton report.
+- `M142-hands-on-script.test.mjs` alone: **4 of 4 passed**.
+- A sandbox-lane engine started once on `main` at `872afe9`, only to read the host checks and probes for the report's section 5 (no dispatch): H1 to H12 passed, H13 not exercised, P1 to P19 passed, P20 not exercised (excused); no scope left after it.
+- `cp ~/.local/share/claude/versions/2.1.289` to a scratch path, then that copy with `--version` and an empty `HOME`: `2.1.289 (Claude Code)`, nothing written (the pinning question's evidence; no prompt, no model).
+- `node scripts/run-tests.mjs acceptance --slice 13` after the manifest change: **1 018 of 1 018 cases passed in 162 files**, 253 suites, none failed, cancelled, skipped or to-do; `acceptance: 162 file(s) passed.`, exit 0; duration 2 587.6 s (the report: `test-results/acceptance-slice13-2026-10-04T08-31-53-519Z.log` in this worktree, not tracked). Run on this branch at `f3deecb` (the manifest with the `real` list and slice 14), alone, after `free -m` showed 13 156 MB available and the user manager `running`. The same files and the same figures as slice 13's closing run: the manifest change listed and passed what it listed before. The runner's listing checks (every file named for a row, listed once, present) passed with the five real-lane files and slice 14 listed. After the run: the user manager `running`; no `/dev/shm/surety-*`, `/tmp/surety-probe-*`, `-sock-*` or `-fifo-*`; 13 143 MB available; one `surety-*` scope present, the Builder's (`build-m2-s14` worktree's test engine, running at the time), none of this run's.
+
+**Recorded, not pinned:** the attempt's estimate formula (the Verifier's reading: three canaries at the run limit at the output rate); which hosts beyond the provider Claude Code contacts; whether `--verbose` is still needed; the shape of Claude Code's events beyond `system`/`init` and `result`; the static checks' environment beyond `HOME`; how the journey's engine behaves if a held item of path one is resumed (none is).
+
+**Questions for Sean** (with the report's section 21): pinning Claude Code against its self-updater (recommended: a copy outside the updater's directory, qualified by its hash); whether the real lane's chain boundary waits for him; whether M141 should fail on a skeleton once slice 14's engine side is merged; the key flags rather than a configuration key; the 10 / 6 / 9 split of his 25 USD; the price of `claude-sonnet-5-5`.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
