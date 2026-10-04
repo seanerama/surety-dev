@@ -1403,3 +1403,18 @@ The slice-13 cases are written in three parts (E69 item 4). **Part 1**, merged a
 After this slice every sandbox-lane row M110 to M135 has its cases on `main` and passes on this host, except the exhaustion cases, which wait for `mini-hp01`. Open for Sean: E71 item 6 (memory admission). Next: the closing pass, the exhaustion run on `mini-hp01`, then slice 14 (the real lane), which needs Sean's API key with its $50 cap and his two approvals.
 
 ---
+
+## E73. The exhaustion lane on mini-hp01: the limits hold on a second host (provisional, 2026-10-04)
+
+**Status: provisional.** The driver's record of runs Sean authorized (E69).
+
+On `mini-hp01` (bare-metal, Arch-based, kernel 7.1.9; Node 22.22.0 installed in `~/surety-exhaust` from the official tarball, checksum-verified; the repository copied as a git bundle of `main`; `TMPDIR` on disk because `/tmp` there is tmpfs, which the engine correctly refuses for its home; the session variables of the user manager set explicitly because a non-interactive Tailscale SSH session lacks them), each file run alone:
+
+1. **Before any exhaustion file:** `M110-host-checks-and-scope` 4 of 4 (the host qualifies, now that inherited descriptors are closed: the P14 failure there had exposed the leak), `M112` 6 of 6, `M116` 4 of 4 (the role contained in its own pid namespace on that host).
+2. **`M130-exit-classes-limits`** 2 of 2: an allocation at `memory.max` 64 MiB OOM-killed inside its domain; a Stop's `engine_signaled` kept over a later OOM.
+3. **`M133-resource-limits`** 8 of 9 on `main` at `36f1539`, then 9 of 9 against the fix: `pids.max` 64, `memory.max` 64 MiB, 1 MiB of writable storage and 64 inodes each stopping the role with its control passing; admission by configuration; two domains at their limits with a third held and the API answering; H11 forced; **P20 passed** with `isolation_probe_exhaustion` true, each box's limits read back. **The one failure was an engine defect** (M133 (g)): a run cancelled at `stream_line_max_bytes` stored the whole over-bound line, because each chunk reached the transcript before the bound was checked; fixed (`5cc1e62`; unit test with a 32-byte bound; the driver's regression `--slice 13` 1,018 of 1,018 here, unit 173).
+4. **What the host saw:** every kernel OOM kill carried `constraint=CONSTRAINT_MEMCG` with the memory cgroup of a test domain (`…/surety-<hash>-inc_<ULID>.scope/dom_<ULID>`) or a P20 box (`…/probe_<ULID>`), none outside; the five staging containers stayed up and healthy throughout; available memory and the user's process count returned to their baseline after each file.
+
+**Not claimed:** the exhaustion proof is for these two hosts' kernels (WSL2 6.6.87.2 for everything else, 7.1.9 for the exhaustion lane); the probe P20 stays excused on the development workstation (E69 item 3).
+
+---
