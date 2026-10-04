@@ -191,7 +191,9 @@
     "14": [
       "M137-cancellation-canary-negatives.test.mjs",
       "M141-report-qualified-facts.test.mjs",
-      "M142-hands-on-script.test.mjs"
+      "M142-hands-on-script.test.mjs",
+      "M136-adapter-with-a-fake-backend.test.mjs",
+      "M140-credential-never-echoed.test.mjs"
     ]
   },
   "sandbox": [
@@ -221,7 +223,8 @@
     "M132-secrets-volatile-provider-files.test.mjs",
     "M134-revocation-and-host-qualification.test.mjs",
     "M135-qualification-attempt.test.mjs",
-    "M137-cancellation-canary-negatives.test.mjs"
+    "M137-cancellation-canary-negatives.test.mjs",
+    "M136-adapter-with-a-fake-backend.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
