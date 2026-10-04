@@ -59,16 +59,43 @@ export class StandIn {
   // sandbox-lane test names the scripted directory, which the engine binds
   // read-write. The directory is written into the file's first line, so the
   // SHA-256 the entry records covers it.
-  constructor(dir, { logDir } = {}) {
+  // `runsChild` (M2 slice 13 part 2; SEAM.md §148): the stand-in runs the
+  // scripted role program of `logDir` after recording, as a `scripted`
+  // qualification attempt's binary.
+  constructor(dir, { logDir, runsChild = false } = {}) {
     mkdirSync(dir, { recursive: true });
     this.dir = dir;
     this.logDir = logDir ?? dir;
     this.path = join(dir, 'backend');
     const body = readFileSync(PROGRAM, 'utf8');
     const override = logDir === undefined ? '' : `const LOG_DIR_OVERRIDE = ${JSON.stringify(logDir)};\n`;
-    writeFileSync(this.path, `#!${process.execPath}\n${override}${body}`);
+    const child = runsChild ? 'const RUN_CHILD = true;\n' : '';
+    writeFileSync(this.path, `#!${process.execPath}\n${override}${child}${body}`);
     chmodSync(this.path, 0o755);
     this.sha256 = sha256Hex(readFileSync(this.path));
+  }
+
+  // M2 slice 13 part 2 (SEAM.md §150): the binary's bytes changed (one
+  // comment line appended; it still runs) or its help text changed (a
+  // help.txt beside it; the bytes unchanged). Returns the new SHA-256.
+  changeBytes(label = 'changed') {
+    writeFileSync(this.path, `${readFileSync(this.path, 'utf8')}\n// ${label} ${Date.now()}\n`);
+    return sha256Hex(readFileSync(this.path));
+  }
+
+  changeHelp(text) {
+    writeFileSync(join(this.dir, 'help.txt'), text);
+  }
+
+  // A result file the stand-in copies into /surety/out (row M131 (b)).
+  leaveResult(value) {
+    writeFileSync(join(this.logDir, 'standin-result.json'), JSON.stringify(value));
+  }
+
+  // The static checks run of it (`--version`, `--help`), as logged.
+  statics() {
+    if (!existsSync(this.logFile)) return [];
+    return readFileSync(this.logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.event === 'static');
   }
 
   get binary() {
