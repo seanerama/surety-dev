@@ -611,7 +611,17 @@ export class Launcher {
     handle.startTime = launch.startTime;
     handle.settle();
 
-    const output = new RoleOutput(launch.output, (bytes) => transcript.write(bytes));
+    const output = new RoleOutput(launch.output, (bytes) => transcript.write(bytes), {
+      lineMax: this.rt.setting('stream_line_max_bytes'),
+      queueMax: this.rt.setting('stream_queue_max_bytes'),
+      onBound: (why) => {
+        // A supervisor bound reached cancels the run through the boundary
+        // and records the evidence incomplete, never complete (D2 §3.7).
+        transcript.truncate();
+        handle.streamBound = why;
+        this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: why });
+      },
+    });
     let outputDone: () => void = () => {};
     handle.output = { done: new Promise<void>((resolve) => (outputDone = resolve)), stop: () => output.close() };
     // The backend's exit, as the init reports it. Taken now, unless the
@@ -1222,9 +1232,16 @@ class RoleOutput {
   private wake: (() => void) | null = null;
   private readonly stream: Readable;
 
+  // The supervisor's bounds on the stream (D2 §3.7), on the real boundary:
+  // a line longer than `lineMax` bytes, or more than `queueMax` bytes of
+  // lines read and not yet acted on, stops the reading and is reported.
+  private partialBytes = 0;
+  private queuedBytes = 0;
+
   constructor(
     stream: Readable,
     private readonly onBytes: (bytes: Buffer) => void,
+    private readonly bounds: { lineMax: number; queueMax: number; onBound: (why: string) => void } | null = null,
   ) {
     this.stream = stream;
     this.stream.on('data', (chunk: Buffer) => {
@@ -1232,6 +1249,24 @@ class RoleOutput {
       this.onBytes(chunk);
       this.take(this.decoder.write(chunk));
       this.lastDataAt = performance.now();
+      if (this.bounds && !this.closed) {
+        const why =
+          this.partialBytes > this.bounds.lineMax
+            ? `a line of the backend's output exceeded stream_line_max_bytes (${this.bounds.lineMax} bytes): the run was cancelled and its transcript is truncated`
+            : this.queuedBytes > this.bounds.queueMax
+              ? `the backend's output queued beyond stream_queue_max_bytes (${this.bounds.queueMax} bytes): the run was cancelled and its transcript is truncated`
+              : null;
+        if (why !== null) {
+          // Nothing past the bound is acted on: the line in progress and the
+          // lines queued are dropped with the reading.
+          this.partial = [];
+          this.lines.length = 0;
+          this.queuedBytes = 0;
+          this.bounds.onBound(why);
+          this.close();
+          return;
+        }
+      }
       this.wake?.();
     });
     const ended = () => this.stop();
@@ -1245,13 +1280,24 @@ class RoleOutput {
     const parts = text.split('\n');
     if (parts.length === 1) {
       this.partial.push(text);
+      this.partialBytes += text.length;
       return;
     }
     const last = parts.pop()!;
     this.partial.push(parts[0]!);
+    this.partialBytes += parts[0]!.length;
+    if (this.bounds && this.partialBytes > this.bounds.lineMax) return;
     parts[0] = this.partial.join('');
     this.partial = last === '' ? [] : [last];
-    for (const part of parts) this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
+    this.partialBytes = last.length;
+    for (const part of parts) {
+      if (this.bounds && part.length > this.bounds.lineMax) {
+        this.partialBytes = part.length;
+        return;
+      }
+      this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
+      this.queuedBytes += part.length;
+    }
   }
 
   // No more is read. The text after the last line ending, if any, is the
@@ -1276,7 +1322,10 @@ class RoleOutput {
   async next(): Promise<string | null> {
     for (;;) {
       const line = this.lines.shift();
-      if (line !== undefined) return line;
+      if (line !== undefined) {
+        this.queuedBytes -= line.length;
+        return line;
+      }
       if (this.closed) return null;
       let waitMs: number | null = null;
       if (this.exitAt !== null) {

@@ -241,6 +241,13 @@ export class RecordStream {
     announce();
   }
 
+  // The engine stopped reading at a bound before the role's output ended:
+  // the stream is not a record of all the role wrote, and is never
+  // published as one (as beyond the cap).
+  truncate(): void {
+    this.overflow = true;
+  }
+
   // What the role wrote, as it was read.
   write(data: Buffer): void {
     if (this.ended || data.length === 0) return;
