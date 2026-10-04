@@ -1923,6 +1923,21 @@ Each was run alone with `node --test` on `a2c091e`, in a detached scratch worktr
 
 No `surety-*` scope was left after them.
 
+**After E75: objection 016 and memory admission option B** (2026-10-04, on `verify/m2-s14-016` from `main` at `83cf03c`; `docs/acceptance/objections/016-M125-M136-E74-environment-and-pinned-copy.answer.md`)
+
+| Change | Where |
+|---|---|
+| `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` are required, each with the value the test expects (`1`, from Claude Code's documentation, or for `DISABLE_UPDATES` by convention). `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` are added to the parent-only sentinels the backend must not inherit. | M125 (b); SEAM §139 |
+| The test reads the source binary itself at qualification time: path, SHA-256, `--version`'s first word. | `harness/real/attempt.mjs` |
+| The entry binds the engine's pinned copy at `<home>/backends/claude-<version>-<sha16>`, built from the test's values, mode 0500, its bytes hashing to the test's hash. `CLAUDE_CODE_OAUTH_TOKEN` is the subscription's delivery. The subscription template has no `--bare`, and every template names the three switches. | M136 (b); SEAM §§164, 165 |
+| Memory admission option B: every admitted domain reserves its `domain_memory_max` plus `host_reserve_memory`. The condition is made by configuration only. | `M133-memory-admission-reserves-the-limit.test.mjs` (sandbox lane, slice 14); SEAM §168 |
+
+Run alone with `node --test` on the Builder's `228cf5e`, in a detached scratch worktree after `npm ci` and `npm run build`; its acceptance harness equals `main`'s:
+- `M125-handover`: **3 of 3 passed**.
+- `M133-memory-admission-reserves-the-limit`: **0 of 1**, failing at the option-B assertion. The second item had a run and was `claimed`, where `[0, 'eligible', 'resource_envelope', 'host_reserve_memory']` was expected. The figures: 2 x 9 213 837 312 + 536 870 912 = 18 964 545 536 bytes > 13 582 368 768 available.
+
+The real-lane files were checked with `node --check` only. Afterwards, one `surety-*` scope was present: the Builder's, from its own `build-m2-s14` worktree, running at the time. None was this run's.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
