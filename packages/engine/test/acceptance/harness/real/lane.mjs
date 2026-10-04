@@ -436,6 +436,21 @@ export function streamEvents(home, run) {
 export const initEvent = (events) => events.find((e) => e?.type === 'system' && e?.subtype === 'init') ?? null;
 export const terminalEvent = (events) => [...events].reverse().find((e) => e?.type === 'result') ?? null;
 
+// The output tokens the terminal event reports for every model call of the
+// invocation (objection 015; SEAM.md §161): the sum of `modelUsage[*].outputTokens`
+// where the event carries `modelUsage` (every call, the same calls as
+// `total_cost_usd`), else `usage.output_tokens` (the main loop's only), else
+// null. Recorded with the scope it came from.
+export function terminalOutput(t) {
+  const models = t?.modelUsage;
+  if (models && typeof models === 'object' && !Array.isArray(models)) {
+    const each = Object.values(models).map((m) => m?.outputTokens);
+    if (each.length > 0 && each.every(Number.isInteger)) return { tokens: each.reduce((a, n) => a + n, 0), scope: 'all_models' };
+  }
+  if (Number.isInteger(t?.usage?.output_tokens)) return { tokens: t.usage.output_tokens, scope: 'main_loop' };
+  return { tokens: null, scope: null };
+}
+
 export const ledgerOriginal = (home, run) => withStore(home, (db) => db.prepare('SELECT * FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL').all(run));
 
 export const eventsAboutRun = (home, run) =>
