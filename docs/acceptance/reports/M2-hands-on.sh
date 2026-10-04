@@ -210,6 +210,11 @@ let_through() { # project, work item
   S -X POST "$API/v1/projects/$1/decisions/$d/answer" -d "{\"option\": \"continue\", \"preview_hash\": \"$h\"}" | jq -c '{decision: .decision.id?, status: .decision.status?}'
 }
 run_of() { dbq "SELECT id FROM runs WHERE work_item = '$1' ORDER BY seq DESC LIMIT 1"; }
+wait_registered() { # project
+  local i
+  for i in $(seq 1 100); do [ "$(dbq "SELECT registration_state FROM projects WHERE id = '$1'")" = registered ] && return 0; sleep 0.3; done
+  die "project $1 was not registered"
+}
 wait_run_end() { # project, work item, seconds
   local i r
   for i in $(seq 1 $(( $3 / 10 ))); do
@@ -255,11 +260,12 @@ git -C "$NOENTRY_REPO" -c user.name=Sean -c user.email=sean@surety.invalid add -
 git -C "$NOENTRY_REPO" -c user.name=Sean -c user.email=sean@surety.invalid commit -q -m 'hands-on: initial commit'
 git -C "$NOENTRY_REPO" checkout -q --detach
 P0=$(S -X POST "$API/v1/projects" -d "{\"name\": \"no-entry\", \"tier\": \"T2\", \"dev_repo_path\": \"$NOENTRY_REPO\", \"integration_branch\": \"main\"}" | jq -r '.project.id')
-sleep 3
+[[ $P0 == proj_* ]] || die "no project"
+wait_registered "$P0"
 S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P0\", \"requirements\": [{\"key\": \"R1\"}], \"stages\": [{\"number\": 1, \"goal\": \"anything\", \"implements\": [\"R1\"]}]}" > "$WORK/plan0.json"
 W0=$(jq -r '.stages[0].work_item' "$WORK/plan0.json")
 S -X POST "$API/v1/projects/$P0/policy" -d '{"backend_builder": "claude", "preflight_refusals_max": 1}' | jq -c '{revision: .revision?}'
-tick "$P0"; sleep 5; tick "$P0"; sleep 5
+wait_run_end "$P0" "$W0" 120
 R0=$(run_of "$W0")
 S "$API/v1/projects/$P0/runs/$R0" | jq '.run | {id, state, outcome, reason_class, code, refusal}'
 check 2 "with no entry the dispatch is backend_refused, and no Claude Code process exists" \
@@ -347,7 +353,7 @@ git -C "$PROJ_REPO" checkout -q --detach
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 P=$(S -X POST "$API/v1/projects" -d "{\"name\": \"hands-on\", \"tier\": \"T2\", \"dev_repo_path\": \"$PROJ_REPO\", \"integration_branch\": \"main\"}" | jq -r '.project.id')
 [[ $P == proj_* ]] || die "no project"
-sleep 3
+wait_registered "$P"
 S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P\", \"requirements\": [{\"key\": \"R1\", \"text\": \"src/greeting.js exports greeting(name), returning \\\"Hello, \\\" followed by name and \\\"!\\\".\"}], \"constraints\": [{\"key\": \"C1\", \"text\": \"Plain JavaScript modules with no dependencies.\"}], \"stages\": [{\"number\": 1, \"goal\": \"Implement R1: create src/greeting.js as R1 describes.\", \"implements\": [\"R1\"]}]}" > "$WORK/plan.json"
 STAGE=$(jq -r '.stages[0].id' "$WORK/plan.json"); BUILD=$(jq -r '.stages[0].work_item' "$WORK/plan.json")
 CHK=$(S -X POST "$API/v1/harness/fixtures/checks" -d "{\"project\": \"$P\", \"checks\": [{\"key\": \"login\", \"kind\": \"acceptance\", \"gate_kinds\": [\"stage\", \"alpha_authorize\"], \"requirements\": [\"R1\"]}]}" | jq -r '.checks[0].id')
@@ -359,13 +365,15 @@ wait_run_end "$P" "$BUILD" 1500
 for i in $(seq 1 30); do C=$(dbq "SELECT id FROM candidates WHERE project = '$P' ORDER BY seq LIMIT 1"); [ -n "$C" ] && break; tick "$P"; sleep 5; done
 [[ $C == cand_* ]] || die "nothing was nominated"
 echo "candidate: $C"
-VER=$(dbq "SELECT id FROM work_items WHERE project = '$P' AND kind = 'verification' ORDER BY seq LIMIT 1")
+for i in $(seq 1 30); do VER=$(dbq "SELECT id FROM work_items WHERE project = '$P' AND kind = 'verification' ORDER BY seq LIMIT 1"); [ -n "$VER" ] && break; tick "$P"; sleep 5; done
+[[ $VER == wi_* ]] || die "no verification work was registered for $C"
 paid "the Verifier's run on the candidate" 1
 let_through "$P" "$VER"
 wait_run_end "$P" "$VER" 1000
 note "The check's execution is recorded as a fixture (D3's runner is not built): it is evidence of nothing about the code."
 S -X POST "$API/v1/harness/fixtures/check-result" -d "{\"project\": \"$P\", \"check\": \"$CHK\", \"candidate\": \"$C\", \"exit_status\": 0}" | jq -c .
 for i in $(seq 1 30); do REV=$(dbq "SELECT id FROM work_items WHERE project = '$P' AND kind = 'review' ORDER BY seq LIMIT 1"); [ -n "$REV" ] && break; tick "$P"; sleep 5; done
+[[ $REV == wi_* ]] || die "the engine queued no review of $C"
 paid "the Reviewer's run on the candidate" 1
 let_through "$P" "$REV"
 wait_run_end "$P" "$REV" 1000
