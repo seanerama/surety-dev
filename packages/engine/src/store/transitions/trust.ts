@@ -14,6 +14,7 @@ import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } fr
 import { canonical, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
 import { engineSettings, projectOptions } from './settings.js';
+import { TEMPLATES } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -216,6 +217,9 @@ export interface HostObserved {
   duration_ms: number | null;
   scope_cgroup: string | null;
   wsl2: boolean;
+  // The role profile's fingerprint this start qualified (its mount plan and
+  // volatile bounds without the domain's own paths; D2 §§2.3, 4.1).
+  profile_fingerprint?: string | null;
 }
 
 let observed: HostObserved | null = null;
@@ -223,6 +227,10 @@ let observed: HostObserved | null = null;
 export function setHostObserved(value: HostObserved): void {
   observed = value;
 }
+
+// The role profile's fingerprint this start's checks observed, or null when
+// they did not run (the kernel lane) or could not build it.
+export const currentProfileFingerprint = (): string | null => observed?.profile_fingerprint ?? null;
 
 // The checks that decide eligibility: H1 to H12, H10 only on WSL2 (D2 §6).
 export const isRequired = (id: string, wsl2: boolean): boolean => id !== 'H13' && (id !== 'H10' || wsl2);
@@ -566,6 +574,42 @@ export function revokeEntry(tx: Tx, entry: EntryRow, reason: string, label: Reco
   tx.emit('trust.revoked', { trust_entry: entry.id }, { ...label, reason });
 }
 
+// ---- revocation on change (D2 §7.3) -----------------------------------------------------------
+
+// What has changed of what an entry was qualified with, or null: its host's
+// identity, its adapter's template version, the role profile this host now
+// qualifies, its binary's bytes (when the caller hashed them: `binary`
+// undefined means not read here, null that the file cannot be read).
+export function entryDrift(e: EntryRow, now: { host: string | null; profile: string | null; binary?: string | null | undefined }): string | null {
+  if (now.host === null || e.host_id !== now.host) return `host_changed: the entry was qualified on host ${e.host_id}, and this host is ${now.host ?? 'unidentified'}`;
+  const template = TEMPLATES[e.backend];
+  if (!template || template.version !== e.template_version) return `template_changed: the entry was qualified with template ${e.template_version}, and the engine's is ${template?.version ?? 'none'}`;
+  if (now.profile !== null && e.profile_fingerprint !== now.profile) return `profile_changed: the entry was qualified with profile ${e.profile_fingerprint}, and this host's is ${now.profile}`;
+  if (now.binary === null) return `binary_missing: ${e.binary_path} cannot be read`;
+  if (now.binary !== undefined && now.binary !== e.binary_sha256) return `binary_changed: ${e.binary_path} is no longer the binary the entry names (SHA-256 ${now.binary}, not ${e.binary_sha256})`;
+  return null;
+}
+
+// Every entry not already revoked whose qualification no longer holds is
+// revoked (`trust.revoked`), refusing new dispatch and touching no running
+// domain. `binaries` gives the SHA-256 the main thread read of each binary
+// path (null: unreadable); a path not given is not judged on its bytes.
+export function revokeDrifted(tx: Tx, args: { binaries?: Record<string, string | null>; entry?: string } = {}): string[] {
+  const rows = (
+    args.entry ? tx.db.prepare(`SELECT * FROM "trust_entries" WHERE "id" = ? AND "status" <> 'revoked'`).all(args.entry) : tx.db.prepare(`SELECT * FROM "trust_entries" WHERE "status" <> 'revoked'`).all()
+  ) as EntryRow[];
+  const revoked: string[] = [];
+  const now = { host: hostIdentity(), profile: currentProfileFingerprint() };
+  for (const e of rows) {
+    const binary = args.binaries && e.binary_path in args.binaries ? args.binaries[e.binary_path] : undefined;
+    const drift = entryDrift(e, { ...now, binary });
+    if (drift === null) continue;
+    revokeEntry(tx, e, drift);
+    revoked.push(e.id);
+  }
+  return revoked;
+}
+
 // The state of an evidence record as a decision binds it (SEAM.md §§77, 117).
 function evidenceState(db: Db, id: string): { record: string; quarantined: boolean | null; missing: boolean } {
   const row = db.prepare('SELECT "missing_at", "post_scan" FROM "records" WHERE "id" = ?').get(id) as { missing_at: string | null; post_scan: string } | undefined;
@@ -662,6 +706,18 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
   }
   const report = hostReport(db);
   const host = hostEligibility(db);
+  if (host.eligible && report.source === 'qualification' && entry.host_qualification !== null && host.host_qualification !== null) {
+    // D2 §4.1 (E62): the current qualification must be compatible with the
+    // one the entry was qualified under: the same mechanism fingerprint. The
+    // entry's own row is historical and normally lapsed.
+    const then = getHostRow(db, entry.host_qualification);
+    if (!then || then.mechanism_fingerprint !== host.mechanism_fingerprint) {
+      return backendRefused(
+        `${backend}'s entry was qualified under a host qualification whose mechanism fingerprint (${then?.mechanism_fingerprint ?? 'unknown'}) is not the current one's (${host.mechanism_fingerprint}): it needs requalification.`,
+        { trust_entry: entry.id, requalification: true, entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null, current_mechanism_fingerprint: host.mechanism_fingerprint },
+      );
+    }
+  }
   if (!host.eligible) {
     return refuse(
       'isolation_unqualified',

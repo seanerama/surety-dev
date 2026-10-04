@@ -91,7 +91,7 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext } from './reads.js';
-import { type HostObserved, recordHostQualification, setHostObserved, trustView } from './transitions/trust.js';
+import { type HostObserved, recordHostQualification, revokeDrifted, setHostObserved, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
   boundaryDomains,
@@ -208,6 +208,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
   'domain.exit_of': (d, a: { domain: string }) => d.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "id" = ?').get(a.domain) ?? null,
   'decisions.engine': (d) => engineDecisions(d),
+  'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -290,6 +291,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'run.collection': (tx, a) => recordCollection(tx, a),
   'run.regrant': (tx, a) => regrantLease(tx, a),
   'host.qualification': (tx, a) => recordHostQualification(tx, a),
+  'trust.revoke_drifted': (tx, a) => revokeDrifted(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

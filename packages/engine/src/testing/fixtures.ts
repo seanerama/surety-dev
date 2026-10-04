@@ -34,7 +34,7 @@ import type { DecisionRow } from '../store/transitions/decisions.js';
 import { answerQueued } from '../store/transitions/queue.js';
 import { TEMPLATES } from '../invoke/adapters/templates.js';
 import { proposeAttempt, proposeEntry } from '../store/transitions/qualification.js';
-import { type AttemptInput, type EntryInput, getEntry, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
+import { type AttemptInput, type EntryInput, currentProfileFingerprint, getEntry, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from '../trust/host.js';
 
 // The label on every event a fixture causes (SEAM.md §10, §15).
@@ -391,7 +391,7 @@ function attemptInput(f: { backend: string; version: string; model: string; temp
     model: f.model,
     auth_mode: 'api_key',
     host_qualification: hq,
-    profile_fingerprint: 'fixture-profile-1',
+    profile_fingerprint: currentProfileFingerprint() ?? 'fixture-profile-1',
     fixture_project: f.fixture_project,
     candidate_egress: [],
     canary_deadlines: { positive: 600, cancellation: 600, containment: 600 },
@@ -477,7 +477,9 @@ export function parseEntryFixture(body: unknown): EntryFixture {
       capabilities: (b.capabilities as EntryInput['capabilities'] | undefined) ?? { tools: [], denied: [], features_disabled: [], delegation_verified: true },
       isolation,
       boundary,
-      profile_fingerprint: opt('profile_fingerprint', 'fixture-profile-1'),
+      // The profile this host's checks qualified, when they ran (filled in
+      // where the entry is written); a placeholder in the kernel lane.
+      profile_fingerprint: opt('profile_fingerprint', ''),
       egress_hosts: b.egress_hosts === undefined ? [] : strings(b.egress_hosts, 'egress_hosts'),
       usage_granularity: opt('usage_granularity', 'model_call'),
       usage_semantics: b.usage_semantics === undefined ? 'cumulative' : b.usage_semantics === null ? null : str(b, 'usage_semantics'),
@@ -514,6 +516,7 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
     );
     const input: EntryInput = {
       ...f.entry,
+      profile_fingerprint: f.entry.profile_fingerprint !== '' ? f.entry.profile_fingerprint : (currentProfileFingerprint() ?? 'fixture-profile-1'),
       binary_path: f.binary.path,
       binary_sha256: f.binary.sha256,
       help_sha256: args.helpSha256,

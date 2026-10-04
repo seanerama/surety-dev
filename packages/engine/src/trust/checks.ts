@@ -402,6 +402,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     systemd: (await managerReachable()).observed,
     node: process.version,
   };
+  const profileFingerprint = initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null;
   const fingerprint = createHash('sha256')
     .update(
       canonical({
@@ -409,7 +410,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
         boundary: BOUNDARY_MECHANISM,
         kernel: release(),
         tools: versions,
-        profile: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null,
+        profile: profileFingerprint,
       }),
     )
     .digest('hex');
@@ -438,6 +439,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     duration_ms: Math.round(performance.now() - began),
     scope_cgroup: scope?.path ?? null,
     wsl2,
+    profile_fingerprint: profileFingerprint,
   });
   let row: string | null = null;
   if (qualifies) {

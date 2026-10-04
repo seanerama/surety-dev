@@ -7,6 +7,8 @@
 // restricted with the failure readable and the scheduler not started.
 
 import type { Server } from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { relative } from 'node:path';
 
 import { createApiServer } from './api/server.js';
@@ -90,6 +92,21 @@ function startFailure(home: string, err: unknown): { status: number; refusal: Re
   const e = err as NodeJS.ErrnoException;
   const at = typeof e?.path === 'string' ? relative(home, e.path) || '.' : '.';
   return { status: EXIT.notStarted, refusal: homeUnusable(at.startsWith('..') ? '.' : at, e?.message ?? String(err)) };
+}
+
+// The SHA-256 of each binary a live trust entry names, read here (null when
+// it cannot be read), and the store's revocation of what changed.
+async function revokeChangedEntries(rt: Runtime): Promise<void> {
+  const paths = await rt.read<string[]>('trust.binaries');
+  const binaries: Record<string, string | null> = {};
+  for (const p of paths) {
+    try {
+      binaries[p] = createHash('sha256').update(await readFile(p)).digest('hex');
+    } catch {
+      binaries[p] = null;
+    }
+  }
+  await rt.engine('trust.revoke_drifted', { binaries });
 }
 
 export async function serve(opts: ServeOptions): Promise<void> {
@@ -308,6 +325,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
       log('host checks', err);
     }
     state.completed.push('host_qualification');
+  }
+
+  // 5b. Revocation on change (D2 §7.3): every entry whose binary's bytes,
+  // template version, qualified profile or host identity no longer hold is
+  // revoked before anything is dispatched; no running domain is touched.
+  try {
+    await revokeChangedEntries(runtime);
+  } catch (err) {
+    log('trust revocation', err);
   }
 
   // 6. lift to full

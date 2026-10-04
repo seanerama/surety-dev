@@ -15,7 +15,7 @@ import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
-import { resolveBackend } from './trust.js';
+import { resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
 import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
@@ -263,6 +263,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
   // process started.
+  // An entry whose qualification no longer holds is revoked first (D2 §7.3).
+  revokeDrifted(tx);
   const backend = resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
   const leaseTtl = engineSettings().lease_ttl;
 

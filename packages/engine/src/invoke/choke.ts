@@ -225,6 +225,8 @@ export class Launcher {
         found = null;
       }
       if (found !== claim.entry.binary_sha256) {
+        // The entry no longer holds (D2 §7.3): revoked, then refused.
+        await this.rt.engine('trust.revoke_drifted', { entry: claim.trust_entry, binaries: { [claim.entry.binary_path]: found } }).catch((err) => log('trust revocation', err, { run: claim.run }));
         const refusal = refusalForm(
           'backend_refused',
           `The binary at ${claim.entry.binary_path} ${found === null ? 'cannot be read' : 'is not the one the trust entry names'}.`,
@@ -234,6 +236,19 @@ export class Launcher {
         this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
         return false;
       }
+    }
+    // D2 §§1.2, 2.5: a real backend runs only with the provider key its
+    // grant names; a reference that cannot be resolved refuses the launch,
+    // never a launch without the key (E62).
+    if (claim.entry !== null && heldSecret(claim.entry.key_ref) === null) {
+      const refusal = refusalForm(
+        'backend_refused',
+        `The provider key ${claim.entry.key_ref} that ${claim.entry.backend}'s grant names cannot be resolved, so the backend is not launched without it.`,
+        'Make the key available to the engine under that reference.',
+        { trust_entry: claim.trust_entry, reference: claim.entry.key_ref },
+      );
+      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+      return false;
     }
     // The widening a project's policy may make to the mount plan, validated
     // before every launch, approved or not (D2 §2.3): a refusal names the
