@@ -138,7 +138,15 @@ function refusalOf(run: Record<string, unknown>): Record<string, unknown> | null
 export function runRepresentation(db: Tx['db'], args: { project: string; run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
-  const domains = db.prepare('SELECT "id", "status" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
+  // Each domain with the fingerprint of the validated mount plan its sandbox
+  // was built from (D2 §2.3; A.6 P12), null for a domain no sandbox was
+  // built for.
+  const domains = db.prepare('SELECT "id", "status", "profile", "plan_fingerprint" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(args.run);
+  // The validated mount plan the run's sandbox was built from (SEAM.md
+  // §133): null before validation and for a launch refused before it.
+  const planned = db
+    .prepare('SELECT "profile", "plan_fingerprint", "mount_plan_record" FROM "execution_domains" WHERE "run" = ? AND "mount_plan_record" IS NOT NULL ORDER BY "id" DESC LIMIT 1')
+    .get(args.run) as { profile: string; plan_fingerprint: string; mount_plan_record: string } | undefined;
   const receipts = (db.prepare('SELECT "id", "trust_entry" FROM "invocation_receipts" WHERE "run" = ? ORDER BY "id"').all(args.run) as { id: string; trust_entry: string | null }[]).map((r) => ({
     id: r.id,
     trust_entry: r.trust_entry,
@@ -179,6 +187,7 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       // What became of each Alpha exception proposal the run's Reviewer made
       // (SEAM.md §119).
       alpha_exception_proposals: parseJson<unknown[]>((run.alpha_exception_outcomes as string | null) ?? null) ?? [],
+      mount_plan: planned ? { profile: planned.profile, fingerprint: planned.plan_fingerprint, record: planned.mount_plan_record } : null,
       quarantined: run.quarantined === 1,
       backend: run.backend,
       base_revision: run.base_revision,

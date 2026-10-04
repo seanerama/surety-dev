@@ -4,13 +4,13 @@
 // invoke/domain-init.ts). Nothing here runs a backend.
 
 import { execFile } from 'node:child_process';
-import { chmod, copyFile, mkdir, rename, stat } from 'node:fs/promises';
+import { chmod, copyFile, link, mkdir, rename, stat } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SYSTEM_DIRS = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'];
 
-export const SANDBOX_TOOLS = ['unshare', 'setpriv', 'ip', 'mount', 'umount', 'pivot_root'] as const;
+export const SANDBOX_TOOLS = ['unshare', 'setpriv', 'ip', 'mount', 'umount', 'pivot_root', 'mknod'] as const;
 export type ToolName = (typeof SANDBOX_TOOLS)[number];
 
 export function resolveTool(name: string): string | null {
@@ -90,5 +90,20 @@ export async function initNodeCopy(home: string): Promise<string> {
   await copyFile(node, tmp);
   await chmod(tmp, 0o111);
   await rename(tmp, path);
+  return path;
+}
+
+// The init's node in a domain's own area: a hard link of the execute-only
+// copy (the same file, so the plan's source is inside the domain's area,
+// SEAM.md §133), or a copy where a link cannot be made.
+export async function initNodeIn(area: string, copy: string): Promise<string> {
+  const path = join(area, 'init-node');
+  try {
+    await link(copy, path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return path;
+    await copyFile(copy, path);
+    await chmod(path, 0o111);
+  }
   return path;
 }

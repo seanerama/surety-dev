@@ -586,7 +586,8 @@
       "domain.placed",
       "domain.launch_authorized",
       "domain.launch_closed",
-      "run.lease_regranted"
+      "run.lease_regranted",
+      "domain.egress_refused"
     ],
     "EngineMode": [
       "restricted",
@@ -1419,6 +1420,16 @@
         },
         "exit_evidence": {
           "required": false
+        },
+        "plan_fingerprint": {
+          "required": false
+        },
+        "mount_plan": {
+          "required": false
+        },
+        "mount_plan_record": {
+          "required": false,
+          "references": "records"
         }
       }
     },
@@ -4291,6 +4302,9 @@
       "owner": "store/transitions/boundary.ts"
     },
     "run.lease_regranted": {
+      "owner": "store/transitions/boundary.ts"
+    },
+    "domain.egress_refused": {
       "owner": "store/transitions/boundary.ts"
     }
   },

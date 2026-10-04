@@ -111,6 +111,8 @@ export const EVENT_OWNERS = {
   'domain.launch_authorized': 'store/transitions/boundary.ts',
   'domain.launch_closed': 'store/transitions/boundary.ts',
   'run.lease_regranted': 'store/transitions/boundary.ts',
+  // D2 A.5, the sandbox's part (M2 slice 12).
+  'domain.egress_refused': 'store/transitions/boundary.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

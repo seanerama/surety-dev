@@ -43,6 +43,7 @@ import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../ru
 import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 import { terminateDomain } from '../boundary/terminate.js';
+import { finishEgress } from '../invoke/proxy/egress.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 
 type Domain = EndFacts['domains'][number];
@@ -151,6 +152,7 @@ export class RunEnder {
     }
     const facts = await this.rt.engine<EndFacts>('run.end_facts', { run });
     if (facts.run.state === 'ended') {
+      handle?.sandbox?.releaseVolatile();
       this.rt.handles.delete(run);
       return;
     }
@@ -223,6 +225,8 @@ export class RunEnder {
     }
     await pausePoint('run_end.before_ended');
     await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null, baseline });
+    // What the domain's volatile filesystem held goes with the run.
+    handle?.sandbox?.releaseVolatile();
     this.rt.handles.delete(run);
   }
 
@@ -275,6 +279,13 @@ export class RunEnder {
       ...(opts.observeOnly ? { observeOnly: true } : {}),
     });
     if (!verdict.terminated) return { terminated: false, refused: false };
+    // The domain's egress ends with it: the proxy closed and its log
+    // published as the domain's egress_log record (D2 §2.4).
+    if (own?.egress) {
+      const egress = own.egress;
+      own.egress = null;
+      await finishEgress(this.rt, egress, { project: own.claim.project, run: own.claim.run });
+    }
     const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);
     return { terminated: true, refused: neverRan };
   }

@@ -12,7 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -39,7 +39,9 @@ import { prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
-import { type ForbiddenContext, validateReadPaths } from './sandbox/plan.js';
+import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
+import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
+import { GOVERNED_FILE } from '../protected/set.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 
 export interface DispatchTarget {
@@ -117,6 +119,8 @@ function realBackend(claim: Claim): BackendSpec | null {
     command: e.binary_path,
     args: template.render({ model: e.model, invocation: claim.invocation }),
     env: key === null ? {} : { [template.keyVariable]: key },
+    // The backend's installation, read-only at its pinned path (D2 §2.3).
+    binds: [{ path: e.binary_path, writable: false }],
   };
 }
 
@@ -170,7 +174,7 @@ export class Launcher {
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
-    if (ready && runs) void this.launch(handle, runs);
+    if (ready && runs) void this.launch(handle, runs, target.repo);
     return true;
   }
 
@@ -225,9 +229,23 @@ export class Launcher {
     // The widening a project's policy may make to the mount plan, validated
     // before every launch, approved or not (D2 §2.3): a refusal names the
     // path and why, and no launcher starts.
-    const plan = await this.rt.read<{ paths: string[]; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
+    const plan = await this.rt.read<{ paths: string[]; egress_allow_extra: string[]; protected: { roots: string[] }; context: Omit<ForbiddenContext, 'home'> }>('mount.context', { project: claim.project });
     handle.readPaths = plan.paths;
-    const refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    handle.egressExtra = plan.egress_allow_extra;
+    handle.protectedRoots = [...plan.protected.roots, GOVERNED_FILE];
+    let refused = await validateReadPaths(plan.paths, { ...plan.context, home: this.rt.home });
+    // The git view binds the repository's objects and refs; a repository
+    // with alternates is refused (D2 §2.3; E58 item 3), on the real boundary
+    // where the view is built.
+    if (refused === null && this.rt.boundary() === 'real') {
+      try {
+        repositoryCommonDir(repo);
+      } catch (err) {
+        if (!(err instanceof GitViewRefused)) throw err;
+        // The refusal names the repository as registered (SEAM.md §134).
+        refused = { path: repo, resolved: err.path, reason: err.reason as PlanReason, detail: err.message };
+      }
+    }
     if (refused !== null) {
       this.never(
         handle,
@@ -237,11 +255,24 @@ export class Launcher {
         'mount_plan_refused',
         refusalForm(
           'mount_plan_refused',
-          `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
-          'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
+          refused.reason === 'alternates'
+            ? `The repository ${refused.path} cannot be bound into the sandbox's git view: ${refused.detail}.`
+            : `The project's sandbox_read_paths entry ${refused.path} cannot be bound: ${refused.detail}.`,
+          refused.reason === 'alternates'
+            ? 'Repack the repository so that it holds its own objects (git repack -a -d, then remove objects/info/alternates).'
+            : 'Remove the path from sandbox_read_paths, or name a directory that reaches no forbidden authority.',
           { path: refused.path, reason: refused.reason },
         ),
       );
+      return false;
+    }
+    // A widening is bound at what it resolves to, never at the link's own
+    // path (D2 §2.3; SEAM.md §133).
+    try {
+      handle.readPaths = plan.paths.map((p) => realpathSync(p));
+    } catch (err) {
+      log('dispatch', err, { run: claim.run, what: 'sandbox_read_paths' });
+      this.never(handle, 'failed', 'infra_error');
       return false;
     }
     if (handle.abort) {
@@ -306,12 +337,12 @@ export class Launcher {
   // way out of it settles the handle, so a run-end protocol waiting on the
   // launch is never left waiting; a failure ends the run (failed /
   // infra_error) rather than leaving it to a lease nobody will renew.
-  private async launch(handle: RunHandle, backend: BackendSpec): Promise<void> {
+  private async launch(handle: RunHandle, backend: BackendSpec, repo: string): Promise<void> {
     try {
       // The real boundary: the launcher, the sandbox, the domain's cgroup
       // (D2 §§1.1, 2, 3). The kernel lane's scripted boundary keeps the
       // direct spawn of SEAM.md §13.
-      if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend);
+      if (handle.claim.cgroup_path !== null) await this.superviseSandboxed(handle, backend, repo);
       else if (this.rt.boundary() === 'scripted') await this.supervise(handle, backend);
       else {
         // No production path runs a backend outside the sandbox (D2 §5 C3):
@@ -458,7 +489,7 @@ export class Launcher {
   // the domain init, which starts the backend on the engine's word and
   // relays its output. Every way out of it leaves the domain to the run-end
   // protocol, which closes the launch and establishes termination.
-  private async superviseSandboxed(handle: RunHandle, backend: BackendSpec): Promise<void> {
+  private async superviseSandboxed(handle: RunHandle, backend: BackendSpec, repo: string): Promise<void> {
     const { claim } = handle;
     await pausePoint('launch.before_spawn');
     const active = await this.rt.engine<boolean>('run.lease_active', { run: claim.run, generation: claim.generation });
@@ -477,7 +508,7 @@ export class Launcher {
     }
     let prepared: Awaited<ReturnType<typeof prepareSandbox>>;
     try {
-      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'));
+      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'), repo);
     } catch (err) {
       log('sandbox', err, { run: claim.run });
       await transcript.abandon();
@@ -648,8 +679,26 @@ export class Launcher {
   // it would have, and no re-grant is made. Returns true when it decided the
   // run (re-granted, or ended for its deadline or budget); false leaves the
   // run to the lease's ordinary reconciliation (E27 item 3).
-  async regrant(run: string): Promise<boolean> {
+  // One challenge at a time per run (D2 §3.5: "While the challenge is
+  // outstanding nothing replaces the run"): a tick that comes while one is
+  // outstanding waits for its outcome instead of sending another, and a
+  // challenge that went unanswered is not sent again on the same lease
+  // generation, so a later tick cannot re-grant what the unanswered one
+  // left to the lease's reconciliation.
+  private readonly challenges = new Map<string, Promise<boolean>>();
+  private readonly unanswered = new Map<string, number>();
+
+  regrant(run: string): Promise<boolean> {
+    const outstanding = this.challenges.get(run);
+    if (outstanding) return outstanding;
+    const p = this.regrantOnce(run).finally(() => this.challenges.delete(run));
+    this.challenges.set(run, p);
+    return p;
+  }
+
+  private async regrantOnce(run: string): Promise<boolean> {
     const handle = this.rt.handles.get(run);
+    if (!handle) this.unanswered.delete(run);
     if (!handle || handle.ending || handle.sandbox === null || handle.claim.cgroup_path === null) return false;
     const launch = handle.sandbox;
     const facts = await this.rt.read<{ eligible: boolean; reason: string | null; generation: number | null; domain: string | null; invocation: string | null; deadline_at: string | null }>(
@@ -657,6 +706,7 @@ export class Launcher {
       { run, incarnation: this.rt.incarnation },
     );
     if (!facts.eligible || facts.generation === null) return false;
+    if (this.unanswered.get(run) === facts.generation) return false;
     const gate = this.gate(handle);
     // Without a re-grant or an exit, what the role sent during the pause is
     // not acted on (its lease had expired), and its exit is the run's end's.
@@ -702,6 +752,7 @@ export class Launcher {
     const sentAt = isoAt(nowMs());
     const response = await launch.challenge(handle.claim.invocation, facts.generation, this.rt.setting('pause_challenge_timeout') * 1000, seamMainFault('challenge_response_dropped'));
     if (response === null || handle.ending) {
+      if (response === null) this.unanswered.set(run, facts.generation);
       dropGate();
       return false;
     }

@@ -90,12 +90,14 @@ import { notificationOutcome, notificationSending, notificationsDue } from './tr
 import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
-import { mountContext } from './reads.js';
+import { contextFacts, mountContext } from './reads.js';
 import { type HostObserved, recordHostQualification, setHostObserved, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
   boundaryDomains,
   cgroupCreated,
+  egressRefused,
+  recordPlan,
   closeLaunch,
   domainMayCreate,
   getDomain,
@@ -190,10 +192,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'oob.stash_kept': (d, a: { intent: string }) => stashKept(d, a),
   'notify.due': (d, a: { project: string }) => notificationsDue(d, a),
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
+  'context.facts': (d, a: { run: string }) => contextFacts(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
   'boundary.domains': (d) => boundaryDomains(d),
+  'boundary.terminated_ids': (d, a: { ids: string[] }) =>
+    a.ids.filter((id) => (d.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status === 'terminated'),
   'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY "created_at", "id"`).all(),
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
@@ -270,6 +275,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'notify.sending': (tx, a) => notificationSending(tx, a),
   'notify.outcome': (tx, a) => notificationOutcome(tx, a),
   'domain.cgroup_created': (tx, a) => cgroupCreated(tx, a),
+  'domain.plan': (tx, a) => recordPlan(tx, a),
+  'domain.egress_refused': (tx, a) => egressRefused(tx, a),
   'domain.placed': (tx, a) => recordPlacement(tx, a),
   'domain.authorize': (tx, a) => authorizeLaunch(tx, a),
   'domain.close': (tx, a) => closeLaunch(tx, a),

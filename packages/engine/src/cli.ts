@@ -9,7 +9,7 @@ import { EXIT, serve } from './engine.js';
 import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
-import { configureHarness } from './testing/seam.js';
+import { configureHarness, setProbeOverrides } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -43,6 +43,7 @@ let homeFsType: string | null = null;
 const barrierValues: string[] = [];
 const probeValues: string[] = [];
 const hostCheckValues: string[] = [];
+const probeOverrideValues: string[] = [];
 let hostChecksMode: string | null = null;
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
@@ -57,7 +58,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-shell' ||
     flag === '--harness-home-fstype' ||
     flag === '--harness-host-checks' ||
-    flag === '--harness-host-check'
+    flag === '--harness-host-check' ||
+    flag === '--harness-isolation-probe'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -77,6 +79,10 @@ for (let i = 0; i < args.length; i++) {
       hostChecksMode = value;
     } else if (flag === '--harness-host-check') {
       hostCheckValues.push(value);
+    } else if (flag === '--harness-isolation-probe') {
+      // A probe of the start-up suite made to miss its target, fail its
+      // control, leave its negative unattempted or not run (M2 plan §2.3).
+      probeOverrideValues.push(value);
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -91,6 +97,8 @@ for (let i = 0; i < args.length; i++) {
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
 const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, probeValues, hostChecksMode, hostCheckValues);
 if (harnessProblem !== null) usage(harnessProblem);
+const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
+if (overrideProblem !== null) usage(overrideProblem);
 
 const home = process.env.SURETY_HOME;
 if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');

@@ -190,7 +190,7 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; binary_path: string; binary_sha256: string; model: string; key_ref: string } | null;
+  entry: { backend: string; binary_path: string; binary_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
   // with the run's end (SEAM.md §116).
   refusal: { code: string; reason: string; what_to_do: string; subject: Record<string, unknown> } | null;
@@ -365,7 +365,21 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     trust_entry: trustEntry,
     entry:
       backend.kind === 'entry'
-        ? { backend: backend.backend, binary_path: backend.entry.binary_path, binary_sha256: backend.entry.binary_sha256, model: backend.entry.model, key_ref: keyRef }
+        ? {
+            backend: backend.backend,
+            binary_path: backend.entry.binary_path,
+            binary_sha256: backend.entry.binary_sha256,
+            model: backend.entry.model,
+            key_ref: keyRef,
+            // The destinations the entry's egress list allows (D2 §2.4).
+            egress_hosts: (() => {
+              try {
+                return JSON.parse(backend.entry.egress_hosts) as string[];
+              } catch {
+                return [];
+              }
+            })(),
+          }
         : null,
     refusal:
       backend.kind === 'refused'

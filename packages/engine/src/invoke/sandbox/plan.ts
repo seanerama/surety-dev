@@ -22,7 +22,7 @@ export interface ForbiddenContext {
 }
 
 // SEAM.md §120's reasons.
-export type PlanReason = 'engine_home' | 'repository' | 'workspace' | 'credential_location' | 'forbidden_root' | 'wsl_path' | 'special_file';
+export type PlanReason = 'engine_home' | 'repository' | 'workspace' | 'credential_location' | 'forbidden_root' | 'wsl_path' | 'special_file' | 'alternates';
 
 export interface PlanRefusal {
   path: string;

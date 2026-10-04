@@ -29,7 +29,8 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -97,10 +98,13 @@ function next(): Promise<Msg | null> {
 // ---- setup -------------------------------------------------------------------------------------
 
 interface Entry {
-  path: string; // relative to the new root
-  kind: 'dir' | 'file' | 'symlink';
+  path: string; // relative to the new root, or to the volatile filesystem for `vol` entries
+  kind: 'dir' | 'file' | 'symlink' | 'copy' | 'chardev';
   target?: string;
   content?: string;
+  // `copy`: a host file the engine wrote into the domain's area, copied in
+  // (the git view's index).
+  source?: string;
   mode?: number;
 }
 
@@ -118,7 +122,7 @@ interface Plan {
   // second table's mounts on them.
   late: Entry[];
   lateFstab: string[];
-  tools: { mount: string; umount: string; pivot_root: string; ip: string; unshare: string; setpriv: string };
+  tools: { mount: string; umount: string; pivot_root: string; ip: string; unshare: string; setpriv: string; mknod?: string };
   uid: number;
   gid: number;
   initNode: string; // in the new root
@@ -126,6 +130,16 @@ interface Plan {
   // The start-up trial (D2 §6 H11): mount an overlay whose upper layer is on
   // the volatile filesystem, write through it, and report.
   overlayTrial?: boolean;
+  // Entries made on the volatile filesystem before the first table (the git
+  // view's directory and index), relative to it.
+  volEntries?: Entry[];
+  // Tell the engine once the volatile filesystem and the workspace's overlay
+  // are mounted, and wait for its word: the engine takes hold of both from
+  // outside, so that what the role leaves there outlives the sandbox until
+  // the engine has screened and materialized it (D2 §§2.3, 2.5).
+  holdVolatile?: boolean;
+  // The workspace's mount point under `stage`, for the hold.
+  workspaceMount?: string;
 }
 
 function overlayTrial(plan: Plan): { ok: boolean; detail: string } {
@@ -162,12 +176,26 @@ function run(cmd: string, args: string[]): void {
   }
 }
 
+let mknod: string | null = null;
+
 function make(root: string, e: Entry): void {
   const at = join(root, e.path);
   mkdirSync(dirname(at), { recursive: true });
-  if (e.kind === 'dir') mkdirSync(at, { recursive: true, mode: e.mode ?? 0o755 });
-  else if (e.kind === 'symlink') symlinkSync(e.target!, at);
-  else {
+  if (e.kind === 'chardev') {
+    // A 0:0 character device, the only one an unprivileged namespace may
+    // make: a mount point that lists as a device.
+    if (mknod === null) throw new Error('mknod is not among the tools');
+    run(mknod, [at, 'c', '0', '0']);
+    return;
+  }
+  if (e.kind === 'dir') {
+    mkdirSync(at, { recursive: true, mode: e.mode ?? 0o755 });
+    if (e.mode !== undefined) chmodSync(at, e.mode);
+  } else if (e.kind === 'symlink') symlinkSync(e.target!, at);
+  else if (e.kind === 'copy') {
+    copyFileSync(e.source!, at);
+    chmodSync(at, e.mode ?? 0o644);
+  } else {
     writeFileSync(at, e.content ?? '');
     if (e.mode !== undefined) chmodSync(at, e.mode);
   }
@@ -180,14 +208,24 @@ async function setup(): Promise<void> {
   const plan = msg.plan as Plan;
   try {
     const { tools } = plan;
+    mknod = tools.mknod ?? null;
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.rootBytes},mode=0755,nosuid`, 'surety-root', plan.stage]);
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.volBytes},nr_inodes=${plan.volInodes},mode=0755,nosuid,nodev`, 'surety-volatile', plan.vol]);
     for (const d of plan.volDirs) mkdirSync(join(plan.vol, d), { recursive: true, mode: 0o755 });
+    for (const e of plan.volEntries ?? []) make(plan.vol, e);
     for (const e of plan.skeleton) make(plan.stage, e);
     const fstab = join(plan.vol, '.fstab');
     writeFileSync(fstab, `${plan.fstab.join('\n')}\n`);
     run(tools.mount, ['--all', '--fstab', fstab]);
     unlinkSync(fstab);
+    if (plan.holdVolatile) {
+      // The engine opens the volatile filesystem and the workspace's overlay
+      // from outside (through /proc/<this process>/root) while both are
+      // still reachable by path, and answers.
+      send({ t: 'volatile' });
+      const held = await next();
+      if (!held || held.t !== 'volatile_held') throw new Error('the engine did not take hold of the volatile filesystem');
+    }
     for (const e of plan.late) make(plan.stage, e);
     if (plan.lateFstab.length > 0) {
       writeFileSync(fstab, `${plan.lateFstab.join('\n')}\n`);
@@ -240,6 +278,30 @@ interface BackendSpec {
   env: Record<string, string>;
   cwd: string;
   stdin: string | null;
+  // The egress forwarder (D2 §2.4): a listener on the sandbox's own loopback
+  // that carries each connection, unchanged, to the engine's proxy through
+  // the domain's unix socket bound into the sandbox.
+  forwarder?: { port: number; socket: string } | null;
+}
+
+// The forwarder: bytes pass both ways unchanged; it reads nothing of them.
+// It holds no secret and no engine setting: it is part of the init.
+function startForwarder(f: { port: number; socket: string }): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer((client) => {
+      const upstream = net.connect(f.socket);
+      const drop = () => {
+        client.destroy();
+        upstream.destroy();
+      };
+      client.on('error', drop);
+      upstream.on('error', drop);
+      client.pipe(upstream);
+      upstream.pipe(client);
+    });
+    server.once('error', reject);
+    server.listen(f.port, '127.0.0.1', () => resolve());
+  });
 }
 
 let exit: { code: number | null; signal: number | null } | null = null;
@@ -356,6 +418,15 @@ async function init(): Promise<void> {
   const msg = await next();
   if (!msg || msg.t !== 'backend') process.exit(0);
   const spec = msg.backend as BackendSpec;
+  if (spec.forwarder) {
+    try {
+      await startForwarder(spec.forwarder);
+    } catch (err) {
+      send({ t: 'setup_failed', detail: `the egress forwarder could not listen: ${(err as Error).message}` });
+      setTimeout(() => process.exit(70), 50);
+      return;
+    }
+  }
   send({ t: 'ready' });
   const go = await next();
   if (!go || go.t !== 'start') process.exit(0);
@@ -364,7 +435,12 @@ async function init(): Promise<void> {
 
   let child;
   try {
-    child = spawn(spec.argv[0]!, spec.argv.slice(1), { cwd: spec.cwd, env: spec.env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+    child = spawn(spec.argv[0]!, spec.argv.slice(1), {
+      cwd: spec.cwd,
+      env: spec.env,
+      stdio: ['pipe', 'pipe', 'ignore'],
+      detached: true,
+    });
   } catch (err) {
     send({ t: 'start_failed', detail: (err as Error).message });
     exit = { code: null, signal: null };

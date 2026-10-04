@@ -5,6 +5,8 @@
 // mutating request past the Host check is audited, refusals included, once
 // the store is open. Every response carries the defensive headers.
 
+import { ECHO_HOST } from '../invoke/proxy/echo.js';
+import { canonicalHost } from '../invoke/proxy/proxy.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import { inspectEngineConfig } from '../config/engine-config.js';
@@ -187,6 +189,27 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         prepare: async (b) => {
           const body = onlyFields(b, ['option', 'preview_hash', 'note']);
           return { project: null, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts: {} };
+        },
+      };
+    }
+    // POST /v1/trust/qualify (D2 §7.2): the candidate egress list is
+    // validated here; the attempt itself is slice 13's (row M135). The echo
+    // endpoint is the probe suite's alone and no attempt may list it
+    // (D2 §2.4; SEAM.md §140).
+    if (s.length === 3 && s[1] === 'trust' && s[2] === 'qualify' && post) {
+      return {
+        kind: 'prepared',
+        name: 'trust.qualify',
+        prepare: async (b) => {
+          const body = (typeof b === 'object' && b !== null && !Array.isArray(b) ? b : {}) as Record<string, unknown>;
+          const list = body.candidate_egress;
+          if (list !== undefined && (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0))) {
+            throw new Refusal(400, 'invalid_value', 'candidate_egress must be a list of host names.', 'Send the host names the canaries may contact.', { field: 'candidate_egress' });
+          }
+          if (Array.isArray(list) && list.some((h) => canonicalHost(String(h)) === ECHO_HOST)) {
+            throw new Refusal(400, 'invalid_value', `candidate_egress names ${ECHO_HOST}, the engine's own echo endpoint, which only the probe suite may reach.`, 'Remove the echo endpoint from the list.', { field: 'candidate_egress' });
+          }
+          throw unsupported('A qualification attempt');
         },
       };
     }
