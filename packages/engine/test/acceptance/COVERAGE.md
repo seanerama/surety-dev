@@ -1767,6 +1767,57 @@ Changes to the cases:
 
 The S1 design's three residuals are in `docs/acceptance/reports/M2-not-claimed.md`: a co-descendant standing in for a stopped probe program, the backend killing the init's child (fails closed), and `engine_port` without host-side corroboration.
 
+**The closing run** (the Verifier's closing pass of slice 13, 2026-10-04, on `verify/m2-s13` from `main` at `36f1539`; slice 13 merged at `11564f8`, E72; nothing changed in the working copy before or during the run). Before the run, `systemctl --user is-system-running` printed `running` and `free -m` showed 13,238 MB available. `npm run build`, then `npm run test:unit`: **172 tests in 35 files, all passed** ("unit: 35 file(s) passed."). Then `node scripts/run-tests.mjs acceptance --slice 13`, in the background, alone:
+
+```
+ℹ tests 1018
+ℹ suites 253
+ℹ pass 1018
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2536544.835249
+acceptance: 162 file(s) passed.
+```
+
+No case failed, so none was rerun alone. The report is `test-results/acceptance-slice13-2026-10-04T06-35-26-291Z.log` in that working copy (not tracked).
+
+**Slice 13's own cases, as reported:**
+
+| File | Result | Notes |
+|---|---|---|
+| M129 | 4 of 4 | |
+| M130 (`M130-exit-classes`) | 9 of 9 | (a) to (e), (h) to (k) |
+| M131 | 3 of 3 | (c) after objection 011 |
+| M132 | 9 of 9 | (a) to (f); **S2, S4, S5 of the review passed** |
+| M134 | 7 of 7 | |
+| M135 | 12 of 12 | (a) to (i); **S1 and S3 passed**; (j) `[not_exercised]` |
+| M125 | 3 of 3 | (c) with E67 item 7's approved texts |
+| M110-qualification-per-start | passed | P20's designation excuse |
+
+The slice's earlier rows all passed as well.
+
+**`[not_exercised]` cases**, each passing by asserting the host fact and its reason, and **never counted as passed**:
+- the observer cases M112 (g), M116 (d), M124 (e), M128 (g), M135 (j): H13 not exercised with its reason, and no observer envelope;
+- M115 (f), a member the kill cannot end;
+- M115 (h), a real stop of the user manager.
+
+On this WSL2 host the exercised branches of M119 (d) (host submounts exist) and M122 (d) (P11) ran in full. **P20 was `not_exercised` with its designation excuse**: `isolation_probe_exhaustion` is false here (E69 item 3).
+
+**Not run here:** the exhaustion lane, manifest `exhaust` (E69, E70):
+- `M133-resource-limits.test.mjs`: (a) to (h), and P20 with `isolation_probe_exhaustion` true;
+- `M130-exit-classes-limits.test.mjs`: M130 (f), (g).
+
+Both are written and checked by `node --check`, by the role program's guards run by hand, and by the runner's refusal on this host. They are to be run on `mini-hp01` by `--lane exhaust`, where `SURETY_EXHAUSTION_HOST` names the host.
+
+**After the run:**
+- the user manager was `running`;
+- no `surety-*` scope;
+- no `/dev/shm/surety-*`, and no `/tmp/surety-probe-*`, `-sock-*` or `-fifo-*`;
+- no process of this worktree;
+- `free -m` showed 13,235 MB available: unchanged.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
