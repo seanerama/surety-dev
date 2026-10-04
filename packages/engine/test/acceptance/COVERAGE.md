@@ -1879,6 +1879,20 @@ The plan's 17 real-lane cases are all written: 16 in the real lane and M137 (b) 
 
 **Questions for Sean** (with the report's section 21): pinning Claude Code against its self-updater (recommended: a copy outside the updater's directory, qualified by its hash); whether the real lane's chain boundary waits for him; whether M141 should fail on a skeleton (decided by the driver, provisionally: it does); the key flags rather than a configuration key; the 10 / 6 / 9 split of his 25 USD; the price of `claude-sonnet-5-5`.
 
+**After objection 015** (the Builder, `build/m2-s14` at `a2c091e`; answered 2026-10-04 on `verify/m2-s14-obj` from `main` at `8a9c105`; `docs/acceptance/objections/015-M136-M140-M138-terminal-usage-and-delegation-class.answer.md`). **Both parts upheld; only the cases and the seam changed.**
+
+| Change | Where |
+|---|---|
+| The ledger's output tokens are compared with the terminal event's `modelUsage`, summed over models (every call, as `total_cost_usd`), and with `usage.output_tokens` (the main loop's) only where `modelUsage` is absent; the scope compared is recorded | `harness/real/lane.mjs` `terminalOutput`; M136 (d); M140 (d); SEAM §161 |
+| The containment canary passes only with its actions and controls holding **and** `capabilities.delegation_verified` in its evidence; actions and controls holding without it is `delegation_unverified`, otherwise `containment_failed` | M138 (b); SEAM §165 |
+
+The real-lane files were checked with `node --check` only (no money). Run alone with `node --test` on `a2c091e`, in a detached scratch worktree after `npm ci` and `npm run build` (its acceptance tests and reports equal `main`'s at `8a9c105`):
+- `M137-cancellation-canary-negatives`: 2 of 2.
+- `M141-report-qualified-facts`: 1 of 2. (a) passed; (b) failed with `the real lane has not run: the M2 report is a skeleton (50 pending facts)`, as decided.
+- `M142-hands-on-script`: 4 of 4.
+
+No `surety-*` scope was left after them.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
