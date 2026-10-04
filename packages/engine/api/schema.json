@@ -17,6 +17,10 @@
       "approved",
       "rejected"
     ],
+    "BaselineTextsKind": [
+      "adr",
+      "constraint"
+    ],
     "NominatedBy": [
       "engine_cadence",
       "builder_request"
@@ -587,7 +591,8 @@
       "domain.launch_authorized",
       "domain.launch_closed",
       "run.lease_regranted",
-      "domain.egress_refused"
+      "domain.egress_refused",
+      "evidence.secret_refused"
     ],
     "EngineMode": [
       "restricted",
@@ -796,6 +801,30 @@
           "required": false
         },
         "consumed_at": {
+          "required": true
+        }
+      }
+    },
+    "baseline_texts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "kind": {
+          "required": true,
+          "enum": "BaselineTextsKind"
+        },
+        "key": {
+          "required": true
+        },
+        "text": {
           "required": true
         }
       }
@@ -1748,6 +1777,9 @@
         "qualification_attempt": {
           "required": false,
           "references": "qualification_attempts"
+        },
+        "provider_session_id": {
+          "required": false
         }
       }
     },
@@ -2656,6 +2688,9 @@
         },
         "confirmed_by": {
           "required": false
+        },
+        "text": {
+          "required": false
         }
       }
     },
@@ -2830,6 +2865,9 @@
         },
         "alpha_exception_outcomes": {
           "required": false
+        },
+        "collection": {
+          "required": false
         }
       }
     },
@@ -2953,6 +2991,9 @@
         "work_item": {
           "required": false,
           "references": "work_items"
+        },
+        "adrs": {
+          "required": true
         }
       }
     },
@@ -4306,6 +4347,9 @@
     },
     "domain.egress_refused": {
       "owner": "store/transitions/boundary.ts"
+    },
+    "evidence.secret_refused": {
+      "owner": "store/transitions/boundary.ts"
     }
   },
   "config": {
@@ -4556,6 +4600,10 @@
         "min": 1,
         "max": 30,
         "integer": true
+      },
+      "isolation_probe_exhaustion": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "project": {
