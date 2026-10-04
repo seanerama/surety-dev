@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { describe, test } from 'node:test';
 
 import { activation, homeOf } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent, terminalOutput } from './harness/real/lane.mjs';
 import { pathOne, pathTwo, stopCase } from './harness/real/journey.mjs';
 import { authorizationsOf } from './harness/gates.mjs';
 import { trailersOf, identityOf } from './harness/repos.mjs';
@@ -168,11 +168,13 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
           const [row] = r.ledger;
           assert.ok(row, `${r.id}: an original ledger row`);
           const t = terminalEvent(streamEvents(home, r.id));
-          compared.push({ run: r.id, role: r.role, row, terminal: t ? { total_cost_usd: t.total_cost_usd ?? null, usage: t.usage ?? null } : null });
+          compared.push({ run: r.id, role: r.role, row, terminal: t ? { total_cost_usd: t.total_cost_usd ?? null, usage: t.usage ?? null, modelUsage: t.modelUsage ?? null } : null });
           if (typeof t?.total_cost_usd === 'number') {
             assert.equal(row.cost_status, 'reported', `${r.id}: the provider's reported cost is the ledger's`);
             assert.ok(Math.abs(row.cost_usd - t.total_cost_usd) < 1e-6, `${r.id}: ${row.cost_usd} against the transcript's ${t.total_cost_usd}`);
-            if (Number.isInteger(t.usage?.output_tokens)) assert.equal(row.out, t.usage.output_tokens, `${r.id}: output tokens as reported`);
+            // Every model call's output tokens (`modelUsage` where present; objection 015).
+            const reported = terminalOutput(t);
+            if (reported.tokens !== null) assert.equal(row.out, reported.tokens, `${r.id}: output tokens as reported (${reported.scope})`);
             assert.equal(row.usage_complete, 1, `${r.id}: complete`);
           } else {
             assert.notEqual(row.cost_status, 'reported', `${r.id}: no cost in the transcript, none claimed as reported`);
