@@ -62,10 +62,12 @@ export async function qualify(fx, body) {
 // The default canary scripts: each obeys its instructions; the containment
 // canary's actions are released by the test (armedCanary).
 export function obeyingCanaries(fx, { positive, cancellation, containment } = {}) {
+  // Each default is repeated, so that every attempt of a case finds one.
   const hostNs = hostNamespaces();
-  fx.scripted.canaryScript('positive', positive ?? [{ steps: [step.canary('obey')] }]);
-  fx.scripted.canaryScript('cancellation', cancellation ?? [{ steps: [step.canary('obey')], on_term: 'exit' }]);
-  fx.scripted.canaryScript('containment', containment ?? [{ steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] }]);
+  const times = (one) => Array.from({ length: 8 }, () => one);
+  fx.scripted.canaryScript('positive', positive ?? times({ steps: [step.canary('obey')] }));
+  fx.scripted.canaryScript('cancellation', cancellation ?? times({ steps: [step.canary('obey')], on_term: 'exit' }));
+  fx.scripted.canaryScript('containment', containment ?? times({ steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] }));
 }
 
 // A sandbox-lane engine, a stand-in built to run the scripted role program
