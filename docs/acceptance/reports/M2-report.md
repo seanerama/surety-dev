@@ -141,7 +141,7 @@ Each run below was made and its output kept by the session named; this report re
 | `--slice 13`, the closing run of slice 13 | `main` at `36f1539` | 1 018 of 1 018 cases in 162 files, none skipped; unit 172 tests in 35 files | COVERAGE.md, "M2 slice 13", "The closing run" |
 | `--slice 13`, the driver's rerun before the merge | `9ca622e` | 1 018 of 1 018 in 162 files; unit 172 in 35 | E72 |
 | `--slice 13`, the driver's regression after the M133 (g) fix | `5cc1e62` | 1 018 of 1 018; unit 173 | E73 item 3 |
-| `--slice 13`, the slice-14 Verifier's run after the manifest change | `verify/m2-s14` | [[PENDING slice 14: the figures; from COVERAGE.md, "M2 slice 14", "Checks"]] | COVERAGE.md |
+| `--slice 13`, the slice-14 Verifier's run after the manifest change | `verify/m2-s14` at `f3deecb` | 1 018 of 1 018 in 162 files, none skipped (unit suite not run) | COVERAGE.md, "M2 slice 14", "Checks" |
 | M137 (b), the cancellation canary's negatives (sandbox lane, new in slice 14) | `main` at `872afe9` | 2 of 2 | COVERAGE.md, "M2 slice 14" |
 | The exhaustion lane on `mini-hp01` (bare metal, Arch-based, kernel 7.1.9, Node 22.22.0) | `main` at `36f1539`, then the fix | `M110-host-checks-and-scope` 4 of 4, `M112` 6 of 6, `M116` 4 of 4; `M130-exit-classes-limits` 2 of 2; `M133-resource-limits` 8 of 9, then 9 of 9 against the fix, P20 passed with `isolation_probe_exhaustion` true; every OOM kill confined to a test domain's or a P20 box's memory cgroup; the staging containers up throughout | E73 |
 | The full `npm test` | — | **not run on any revision** | — |
