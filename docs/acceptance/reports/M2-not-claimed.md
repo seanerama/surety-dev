@@ -141,3 +141,11 @@ When the slice is built and merged, part 1 will not claim:
 | **A held dispatch is shown on the work read only**; a held item has no run, so the plan's "run read" is not pinned. | M133 (e) | C (recommended) | Sean decides | SEAM §156 |
 | **The memory reserve counts only the new domain's bound** against the memory available now, not what the running domains may still grow to (the Builder's reading). No case pins either reading. | M133 (e) | B | Sean decides | SEAM §156 |
 | **A queue over `stream_queue_max_bytes` is made only with a harness fault** (`stream_slow`); the fault is named and not yet built. | M133 (g) | B | the Builder adds the fault; the next exhaust run | SEAM §157 |
+
+**From the slice-13 review's S1 fix** (the containment canary's witness redesigned; the Builder's report, 2026-10-04). The containment canary's outcomes are now the domain init's own: it performs each action itself, when asked by a live descendant of the backend with exactly the action's arguments. Three residuals remain:
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **A co-descendant can stand in for a stopped probe program** that has the action's exact arguments. The init checks for a live descendant with that argument array, not that this is the very process the backend asked to act. The action itself is still the init's own, so its outcome cannot be forged; only who asked for it can. | M135 (i), S1; M138 | B | none planned | the Builder's S1 report; SEAM, "After the Builder's fixes" |
+| **The backend can kill the init's child** that performs an action. The canary then fails, never passes: the residual is a denial of qualification, not a forged pass. | M135 (i), S1; M138 | C (fails closed) | none | the Builder's S1 report |
+| **`engine_port` has no host-side corroboration.** The engine keeps no record of a connection that never reached it. The action is the init's own, and its outcome the kernel's answer, but nothing on the host witnesses the refusal. | M135 (i), S1; M138 | B | none planned; the observer (H13), where present, could witness it | the Builder's S1 report |
