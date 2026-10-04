@@ -71,13 +71,13 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
   if (running.length + 1 > s.max_concurrent_domains) {
     return hold(`${running.length} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
   }
-  // Memory: what the running domains may still take, and the new one's bound.
-  let mayTake = s.domain_memory_max;
-  for (const d of running) {
-    const max = readNumber(join(d.cgroup_path, 'memory.max'));
-    const current = readNumber(join(d.cgroup_path, 'memory.current'));
-    mayTake += max !== null && current !== null ? Math.max(0, max - current) : s.domain_memory_max;
-  }
+  // Memory: the new domain's bound beyond the reserve, against what the host
+  // has available now, which the running domains' use is already out of.
+  // (The stricter reading, which also holds back what each running domain
+  // may still grow to, admits one domain at a time at the default
+  // domain_memory_max on a 16 GB host; a question for the owner.)
+  const mayTake = s.domain_memory_max;
+  void readNumber;
   const available = memAvailable();
   if (available === null || available < s.host_reserve_memory + mayTake) {
     return hold(

@@ -226,9 +226,6 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
-  // The resource envelope (D2 §3.7): a domain is admitted only within
-  // max_concurrent_domains and the host's reserves.
-  if (envelopeHold(db) !== null) return RESOURCE_ENVELOPE;
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -291,6 +288,11 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
     ? { kind: 'attempt', backend: attempt.backend, version: attempt.version, model: attempt.model, attempt }
     : resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  // The resource envelope (D2 §3.7): a domain is admitted only within
+  // max_concurrent_domains and the host's reserves; otherwise the work stays
+  // eligible, nothing is written, and its read shows the hold. A dispatch
+  // refused before launch admits no domain and is not held.
+  if (backend.kind !== 'refused' && envelopeHold(tx.db) !== null) return null;
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
