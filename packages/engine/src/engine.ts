@@ -34,6 +34,7 @@ import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
 import { seamHostChecks, seamScopeBarrier } from './testing/seam.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
+import { QualificationDriver } from './trust/attempts.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
@@ -275,6 +276,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const ender = new RunEnder(runtime);
   const acceptor = new Acceptor(runtime, ender, journal);
   const launcher = new Launcher(runtime);
+  const qualification = new QualificationDriver(runtime, launcher);
   const effects = new Effects(runtime, journal);
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
@@ -290,6 +292,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
     regrant: (run) => launcher.regrant(run),
     terminateDomains: (run) => ender.terminateDomains(run),
     collectAtEnd: (handle, quarantined) => launcher.collectAtEnd(handle, quarantined),
+    qualificationStep: () => qualification.step(),
   };
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation

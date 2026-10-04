@@ -4,6 +4,8 @@
 
 import { readFileSync } from 'node:fs';
 
+import { seamHostId } from '../testing/seam.js';
+
 // D2 §2.2 and §3.1: the only isolation and boundary an entry can name in M2.
 // The store refuses any other value and any change of either
 // (migrations/0007), so no entry, and no production setting, can select the
@@ -20,6 +22,9 @@ export const HOST_CHECKS = Array.from({ length: 13 }, (_, i) => `H${i + 1}`);
 // an unknown host is never taken for the one an entry names.
 let cached: string | null | undefined;
 export function hostIdentity(): string | null {
+  // The engine's test mode may name another identity (SEAM.md §150).
+  const forced = seamHostId();
+  if (forced !== null) return forced;
   if (cached !== undefined) return cached;
   try {
     const id = readFileSync('/etc/machine-id', 'utf8').trim();

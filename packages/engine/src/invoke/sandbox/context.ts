@@ -70,7 +70,7 @@ const safeName = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '_').slice
 
 // `readRecord` gives a record's bytes by its id (for a resumed run's prior
 // context); null if they cannot be read.
-export function writeContextPackage(dir: string, claim: Claim, facts: ContextFacts | null, opts: { probe: boolean; readRecord?: (id: string) => Buffer | null }): void {
+export function writeContextPackage(dir: string, claim: Claim, facts: ContextFacts | null, opts: { probe: boolean; readRecord?: (id: string) => Buffer | null; canary?: Record<string, unknown> | null }): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: ContextKind; source: string | null; sha256: string }[] = [];
   const put = (path: string, kind: ContextKind, source: string | null, content: string | Buffer) => {
@@ -89,6 +89,7 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
     ...(facts?.candidate ? ['', '## The candidate', '', `Candidate ${facts.candidate.id} at revision ${facts.candidate.revision}.`] : []),
     '',
+    ...(claim.attempt ? ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.'] : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
     '',
   ].join('\n');
@@ -120,7 +121,10 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
     }
     if (r.records.length === 0) put('prior-run/run.json', 'prior_run', null, `${JSON.stringify({ run: r.run, outcome: r.outcome, reason_class: r.reason_class, summary: r.summary }, null, 2)}\n`);
   }
-  if (opts.probe) {
+  // A qualification canary's instructions (D2 §7.2; SEAM.md §149), and for
+  // the containment canary the engine's probe program it is to run.
+  if (opts.canary) put('canary.json', 'instructions', String(opts.canary.attempt ?? '') || null, `${JSON.stringify(opts.canary, null, 2)}\n`);
+  if (opts.probe || opts.canary?.kind === 'containment') {
     copyFileSync(PROBE_PROGRAM, join(dir, 'probe'));
     chmodSync(join(dir, 'probe'), 0o555);
     files.push({ path: 'probe', kind: 'instructions', source: null, sha256: createHash('sha256').update(readFileSync(join(dir, 'probe'))).digest('hex') });

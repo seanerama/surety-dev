@@ -23,6 +23,7 @@ import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
 import { type ContextFacts, writeContextPackage } from './context.js';
+import { CANARY_BARRIER, canaryInstructions, witnessSocket } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
 import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
@@ -121,7 +122,25 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+  const canary = claim.attempt
+    ? canaryInstructions({
+        attempt: claim.attempt.id,
+        kind: claim.attempt.kind,
+        domain: claim.domain,
+        deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)),
+        node: engineNode(),
+        tokenPath: (() => {
+          try {
+            return realpathSync(join(rt.home, 'api.token'));
+          } catch {
+            return join(rt.home, 'api.token');
+          }
+        })(),
+        apiPort: rt.config.values.api_port,
+      })
+    : null;
   writeContextPackage(join(area, 'context'), claim, facts, {
+    canary,
     probe: claim.profile === 'probe',
     readRecord: (id) => {
       const path = recordPaths.get(id);
@@ -239,7 +258,14 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   };
   return {
     plan,
-    backend: { argv: [backend.command, ...backend.args], env, cwd: '/surety/workspace', stdin, forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET } },
+    backend: {
+      argv: [backend.command, ...backend.args],
+      env,
+      cwd: '/surety/workspace',
+      stdin,
+      forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET },
+      ...(canary ? { canary: { barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null, witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null } } : {}),
+    },
     unshare: t.unshare,
     egress,
   };

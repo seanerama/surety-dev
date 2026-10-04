@@ -31,37 +31,28 @@ import { performance } from 'node:perf_hooks';
 import { redactText, scanBytes } from '../records/redact.js';
 import { type RegularRead, readRegular, type VolatileHold } from './sandbox/volatile.js';
 
-// The writable locations of the role profile (D2 §2.3), as the role sees them,
-// and where each is on the volatile filesystem.
-export const WRITABLE_LOCATIONS: readonly { location: string; at: string; content: boolean }[] = [
-  { location: '/surety/home', at: 'home', content: true },
-  { location: '/surety/out', at: 'out', content: true },
-  { location: '/tmp', at: 'tmp', content: true },
-  // The workspace's changes reach the checkout only through materialization
-  // behind the screen (sandbox/materialize.ts): listed here, not retained.
-  { location: '/surety/workspace', at: 'upper', content: false },
-  { location: '/surety/git/objects', at: 'gitobj/upper', content: false },
+// The writable locations a role sees (D2 §2.3; SEAM.md §152), and where
+// each is on the volatile filesystem. The workspace's upper layer is
+// materialized behind the screen (sandbox/materialize.ts), not inventoried.
+export const WRITABLE_LOCATIONS: readonly { location: string; at: string }[] = [
+  { location: '/surety/home', at: 'home' },
+  { location: '/surety/out', at: 'out' },
+  { location: '/tmp', at: 'tmp' },
 ];
 
 // The result's path on the volatile filesystem.
 export const RESULT_PATH = 'out/result.json';
 
-// A file whose name says it holds a credential is listed and never retained
-// (D2 §2.5, §4.3).
-const CREDENTIAL_NAMES = [
-  /credential/i,
-  /secret/i,
-  /token/i,
-  /api[-_]?key/i,
-  /^auth\.json$/i,
-  /^\.netrc$/i,
-  /^\.git-credentials$/i,
-  /^\.npmrc$/i,
-  /^\.pypirc$/i,
-  /^id_(rsa|dsa|ecdsa|ed25519)/i,
-  /\.(pem|key|p12|pfx)$/i,
-];
-export const isCredentialName = (name: string): boolean => CREDENTIAL_NAMES.some((re) => re.test(name));
+// A credential file is listed and never retained (D2 §2.5, §4.3): any path
+// whose part under the private home is one of the operator credential
+// locations of D2 §2.3 (SEAM.md §§120, 152).
+const CREDENTIAL_DIRS = ['.ssh', '.gnupg', '.aws', '.config/gh', '.claude', '.codex', '.docker', '.kube'];
+const CREDENTIAL_FILES = ['.netrc', '.git-credentials', '.npmrc'];
+export function isCredentialPath(path: string): boolean {
+  if (!path.startsWith('/surety/home/')) return false;
+  const rel = path.slice('/surety/home/'.length);
+  return CREDENTIAL_FILES.includes(rel) || CREDENTIAL_DIRS.some((d) => rel === d || rel.startsWith(`${d}/`));
+}
 
 export interface Bounds {
   resultMaxBytes: number;
@@ -79,22 +70,19 @@ export type ResultCollection =
 
 export interface InventoryEntry {
   path: string;
-  kind: 'file' | 'dir' | 'link' | 'fifo' | 'socket' | 'device' | 'other';
-  size: number;
+  type: 'file' | 'dir' | 'symlink' | 'fifo' | 'other';
+  size?: number;
   target?: string;
-  sha256?: string;
-  content?: string;
-  encoding?: 'utf8' | 'base64';
-  retained?: boolean;
+  retained: boolean;
+  content_base64?: string;
 }
 
 export interface Inventory {
-  locations: { location: string; entries: number; bytes: number }[];
-  entries: InventoryEntry[];
-  excluded: { path: string; reason: 'credential_name' }[];
+  locations: InventoryEntry[];
+  excluded: { path: string; reason: 'credential' }[];
   persistence_flags: string[];
   // Which bound stopped the walk, if any: the record is then incomplete.
-  truncated: { limit: 'collect_entries_max' | 'provider_files_max_bytes' | 'collect_deadline'; value: number } | null;
+  truncated: { key: 'collect_entries_max' | 'provider_files_max_bytes' | 'collect_deadline'; value: number } | null;
   // The screen's hit, if any: the record is then not published.
   secret: { path: string; by: string | null } | null;
 }
@@ -110,14 +98,6 @@ export function collectResult(hold: VolatileHold | null, bounds: Bounds): Result
   return { state: 'read', bytes: r.bytes };
 }
 
-const isUtf8 = (b: Buffer): boolean => {
-  try {
-    new TextDecoder('utf-8', { fatal: true }).decode(b);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 // Read a regular file reached without a link, at most `max` bytes; null if
 // it is not one by the time it is opened.
@@ -143,21 +123,25 @@ function readFileBounded(path: string, max: number): Buffer | null {
   }
 }
 
-// The inventory of every writable location (D2 §4.3).
-export function inventory(hold: VolatileHold | null, bounds: Bounds, persistenceFlags: string[]): Inventory {
-  const out: Inventory = { locations: [], entries: [], excluded: [], persistence_flags: persistenceFlags, truncated: null, secret: null };
+// The inventory of every writable location (D2 §4.3; SEAM.md §152), made
+// after termination and after the result's collection. `delayMs` slows the
+// handling of each entry (the engine's test mode only).
+export async function inventory(hold: VolatileHold | null, bounds: Bounds, persistenceFlags: string[], delayMs = 0): Promise<Inventory> {
+  const out: Inventory = { locations: [], excluded: [], persistence_flags: persistenceFlags, truncated: null, secret: null };
   if (hold === null || !hold.held) return out;
   const started = performance.now();
   let count = 0;
   let retainedBytes = 0;
-  const stop = (limit: NonNullable<Inventory['truncated']>['limit'], value: number) => {
-    out.truncated ??= { limit, value };
+  const stop = (key: NonNullable<Inventory['truncated']>['key'], value: number) => {
+    out.truncated ??= { key, value };
+  };
+  const screen = (bytes: Buffer, path: string) => {
+    const hit = scanBytes(bytes);
+    if (hit.hit) out.secret ??= { path, by: hit.by };
   };
   for (const loc of WRITABLE_LOCATIONS) {
-    const summary = { location: loc.location, entries: 0, bytes: 0 };
-    out.locations.push(summary);
     const base = join(hold.vol, loc.at);
-    const walk = (rel: string): void => {
+    const walk = async (rel: string): Promise<void> => {
       if (out.truncated) return;
       let names: string[];
       try {
@@ -168,7 +152,8 @@ export function inventory(hold: VolatileHold | null, bounds: Bounds, persistence
       }
       for (const name of names) {
         if (out.truncated) return;
-        if (performance.now() - started > bounds.deadlineMs) return stop('collect_deadline', bounds.deadlineMs / 1000);
+        if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        if (performance.now() - started > bounds.deadlineMs) return stop('collect_deadline', Math.round(bounds.deadlineMs / 1000));
         if (++count > bounds.entriesMax) return stop('collect_entries_max', bounds.entriesMax);
         const relPath = rel === '' ? name : `${rel}/${name}`;
         const path = `${loc.location}/${relPath}`;
@@ -178,8 +163,12 @@ export function inventory(hold: VolatileHold | null, bounds: Bounds, persistence
         } catch {
           continue;
         }
-        summary.entries++;
-        summary.bytes += st.isFile() ? st.size : 0;
+        screen(Buffer.from(name), path);
+        if (isCredentialPath(path)) {
+          out.excluded.push({ path, reason: 'credential' });
+          out.locations.push({ path, type: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : st.isSymbolicLink() ? 'symlink' : st.isFIFO() ? 'fifo' : 'other', retained: false });
+          continue;
+        }
         if (st.isSymbolicLink()) {
           let target = '';
           try {
@@ -187,80 +176,54 @@ export function inventory(hold: VolatileHold | null, bounds: Bounds, persistence
           } catch {
             target = '';
           }
-          // A link is recorded with its target, never followed.
-          out.entries.push({ path, kind: 'link', size: st.size, target: redactText(target) });
-          if (scanBytes(Buffer.from(target)).hit) out.secret ??= { path, by: scanBytes(Buffer.from(target)).by };
+          // A link is listed with its target as read, never followed.
+          screen(Buffer.from(target), path);
+          out.locations.push({ path, type: 'symlink', target: redactText(target), retained: false });
           continue;
         }
-        if (scanBytes(Buffer.from(name)).hit) out.secret ??= { path, by: scanBytes(Buffer.from(name)).by };
         if (st.isDirectory()) {
-          out.entries.push({ path, kind: 'dir', size: 0 });
-          walk(relPath);
+          out.locations.push({ path, type: 'dir', retained: false });
+          await walk(relPath);
           continue;
         }
-        if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) {
-          // Listed, never opened.
-          out.entries.push({ path, kind: st.isFIFO() ? 'fifo' : st.isSocket() ? 'socket' : 'device', size: 0 });
+        if (st.isFIFO()) {
+          out.locations.push({ path, type: 'fifo', retained: false });
           continue;
         }
         if (!st.isFile()) {
-          out.entries.push({ path, kind: 'other', size: 0 });
-          continue;
-        }
-        if (isCredentialName(name)) {
-          out.excluded.push({ path, reason: 'credential_name' });
-          out.entries.push({ path, kind: 'file', size: st.size, retained: false });
-          continue;
-        }
-        if (!loc.content) {
-          out.entries.push({ path, kind: 'file', size: st.size, retained: false });
+          out.locations.push({ path, type: 'other', retained: false });
           continue;
         }
         if (retainedBytes + st.size > bounds.filesMaxBytes) {
-          out.entries.push({ path, kind: 'file', size: st.size, retained: false });
+          out.locations.push({ path, type: 'file', size: st.size, retained: false });
           return stop('provider_files_max_bytes', bounds.filesMaxBytes);
         }
         const bytes = readFileBounded(join(base, relPath), st.size);
         if (bytes === null) {
-          out.entries.push({ path, kind: 'other', size: st.size, retained: false });
+          out.locations.push({ path, type: 'other', size: st.size, retained: false });
           continue;
         }
         retainedBytes += bytes.length;
-        const hit = scanBytes(bytes);
-        if (hit.hit) out.secret ??= { path, by: hit.by };
-        const utf8 = isUtf8(bytes);
-        out.entries.push({
-          path,
-          kind: 'file',
-          size: st.size,
-          retained: true,
-          encoding: utf8 ? 'utf8' : 'base64',
-          content: utf8 ? redactText(bytes.toString('utf8')) : bytes.toString('base64'),
-        });
+        screen(bytes, path);
+        out.locations.push({ path, type: 'file', size: st.size, retained: true, content_base64: Buffer.from(redactText(bytes.toString('latin1')), 'latin1').toString('base64') });
       }
     };
-    walk('');
+    await walk('');
   }
   return out;
 }
 
-// The bytes of the `provider_files` record (D2 §4.3; the shape the canaries
-// fill on an entry: locations, persistence flags, exclusions).
-export function inventoryRecord(inv: Inventory, about: { domain: string; run: string; invocation: string }): Buffer {
+// The bytes of the `provider_files` record (SEAM.md §152; the shape the
+// canaries fill on an entry: locations, persistence flags, exclusions).
+export function inventoryRecord(inv: Inventory): Buffer {
   return Buffer.from(
-    JSON.stringify(
-      {
-        ...about,
-        locations: inv.locations,
-        persistence_flags: inv.persistence_flags,
-        excluded: inv.excluded,
-        entries: inv.entries,
-        truncated: inv.truncated !== null,
-        limit: inv.truncated,
-        complete: inv.truncated === null,
-      },
-      null,
-      1,
-    ),
+    JSON.stringify({
+      locations: inv.locations,
+      persistence_flags: inv.persistence_flags,
+      excluded: inv.excluded,
+      truncated: inv.truncated !== null,
+      limit: inv.truncated,
+      complete: inv.truncated === null,
+    }),
   );
 }

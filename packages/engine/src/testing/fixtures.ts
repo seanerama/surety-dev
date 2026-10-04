@@ -35,7 +35,7 @@ import type { DecisionRow } from '../store/transitions/decisions.js';
 import { answerQueued } from '../store/transitions/queue.js';
 import { TEMPLATES } from '../invoke/adapters/templates.js';
 import { proposeAttempt, proposeEntry } from '../store/transitions/qualification.js';
-import { type AttemptInput, type EntryInput, currentProfileFingerprint, getEntry, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
+import { type AttemptInput, type EntryInput, currentProfileFingerprint, getEntry, profileWithEgress, revokeEntry, writeAttempt } from '../store/transitions/trust.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from '../trust/host.js';
 
 // The label on every event a fixture causes (SEAM.md §10, §15).
@@ -552,7 +552,13 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
     );
     const input: EntryInput = {
       ...f.entry,
-      profile_fingerprint: f.entry.profile_fingerprint !== '' ? f.entry.profile_fingerprint : (currentProfileFingerprint() ?? 'fixture-profile-1'),
+      profile_fingerprint:
+        f.entry.profile_fingerprint !== ''
+          ? f.entry.profile_fingerprint
+          : (() => {
+              const current = currentProfileFingerprint();
+              return current === null ? 'fixture-profile-1' : profileWithEgress(current, f.entry.egress_hosts);
+            })(),
       binary_path: f.binary.path,
       binary_sha256: f.binary.sha256,
       help_sha256: args.helpSha256,

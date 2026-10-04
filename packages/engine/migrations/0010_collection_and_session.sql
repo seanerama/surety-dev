@@ -37,3 +37,10 @@ CREATE TABLE baseline_texts (
   text TEXT NOT NULL,
   UNIQUE (project, kind, key)
 );
+
+-- A qualification attempt's canaries (D2 §7.2, K10): work items of the
+-- attempt's fixture project that only the attempt's own dispatch may run,
+-- each naming the attempt and its canary kind; no policy and no other
+-- dispatch selects them.
+ALTER TABLE work_items ADD COLUMN qualification_attempt TEXT REFERENCES qualification_attempts(id);
+ALTER TABLE work_items ADD COLUMN canary_kind TEXT CHECK (canary_kind IS NULL OR canary_kind IN ('positive', 'cancellation', 'containment'));

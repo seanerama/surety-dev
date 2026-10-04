@@ -12,7 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -31,19 +31,54 @@ import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } 
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamRefuseBinary } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamTemplateVersions } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
 import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
-import { TEMPLATES } from './adapters/templates.js';
+import { TEMPLATES, templateOf } from './adapters/templates.js';
+import { helpHash } from './static.js';
 import { type ResultCollection, collectResult, inventory, inventoryRecord } from './collect.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
+import { materialize } from './sandbox/materialize.js';
+import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
+
+// What a qualification canary's run showed the engine (D2 §7.2), kept for
+// the attempt's judgement (trust/attempts.ts) once the run has ended.
+export interface CanaryObservation {
+  kind: string;
+  exitClass: string;
+  verdict: string;
+  value: unknown;
+  editContent: string | null;
+  witnesses: { action: string; outcome: string; pid: number }[];
+  barrierSeen: boolean;
+  termToExitMs: number | null;
+  egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
+  providerFilesRecord: string | null;
+}
+export const canaryObservations = new Map<string, CanaryObservation>();
+
+function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null): void {
+  const launch = handle.sandbox;
+  canaryObservations.set(handle.claim.run, {
+    kind: handle.claim.attempt!.kind,
+    exitClass,
+    verdict: c.verdict.outcome,
+    value: c.value,
+    editContent,
+    witnesses: launch ? [...launch.witnesses] : [],
+    barrierSeen: launch?.barrierSeen ?? false,
+    termToExitMs: launch?.termToExitMs() ?? null,
+    egress: handle.egressEntries ?? [],
+    providerFilesRecord: c.providerRecord,
+  });
+}
 
 // The collector's reasons for a path that is not a result (SEAM.md §143).
 const REFUSAL_REASON: Record<string, string> = { link: 'link', fifo: 'fifo', device: 'device', oversize: 'oversize', socket: 'not_regular', directory: 'not_regular', path: 'not_regular', unreadable: 'not_regular' };
@@ -54,6 +89,7 @@ interface Collected {
   verdict: { outcome: 'accepted' | 'invalid' | 'missing' | 'not_collected'; reason: string | null; bytes_read: number | null };
   value: RunResult | null;
   providerFiles: string;
+  providerRecord: string | null;
   boundText: string | null;
   unacceptedDone: boolean;
 }
@@ -124,9 +160,11 @@ function requestLine(handle: RunHandle, workspace: string): string {
 // engine has no adapter for the backend.
 function realBackend(claim: Claim): BackendSpec | null {
   const e = claim.entry!;
-  const template = TEMPLATES[e.backend];
+  // A canary of a harness-mode attempt for `scripted` runs the attempt's
+  // binary under the scripted protocol (SEAM.md §148).
+  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions() });
   if (!template) return null;
-  const key = heldSecret(e.key_ref);
+  const key = template.keyVariable === '' ? null : heldSecret(e.key_ref);
   return {
     id: e.backend,
     version: template.version,
@@ -144,7 +182,9 @@ export class Launcher {
   // One dispatch, as far as the tick waits for it: everything the run needs
   // before its spawn is durable when this returns true. The launch goes on
   // asynchronously (D1 §8.1 step 9).
-  async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
+  // `attempt`: a qualification attempt's own dispatch of one of its canaries
+  // (D2 §7.2, K10; trust/attempts.ts), the only way such an item is run.
+  async dispatch(target: DispatchTarget, item: { id: string }, attempt: string | null = null): Promise<boolean> {
     // The scripted backend, which only harness mode has. Every other backend
     // is chosen by the claim from the project's policy and the trust table
     // (D2 §4.1).
@@ -162,6 +202,7 @@ export class Launcher {
       // The domain is a cgroup of the incarnation's scope on the real
       // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
       scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
+      attempt,
     });
     if (!claim) return false;
     const handle = newHandle(claim);
@@ -249,11 +290,33 @@ export class Launcher {
         this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
         return false;
       }
+      // Its help, the static check of D2 §7.2, unchanged since it was
+      // qualified (D2 §7.3; SEAM.md §150): a different help revokes an entry.
+      let help: string | null = null;
+      try {
+        help = await helpHash(claim.entry.binary_path, claim.entry.backend);
+      } catch {
+        help = null;
+      }
+      if (help !== null && help !== claim.entry.help_sha256) {
+        if (claim.trust_entry !== null) {
+          await this.rt.engine('trust.revoke_drifted', { entry: claim.trust_entry, helps: { [claim.entry.binary_path]: help } }).catch((err) => log('trust revocation', err, { run: claim.run }));
+        }
+        const refusal = refusalForm('backend_refused', `The help of ${claim.entry.binary_path} is not the one the qualification recorded.`, 'Qualify the binary that is installed.', {
+          trust_entry: claim.trust_entry,
+          binary_path: claim.entry.binary_path,
+          expected_help_sha256: claim.entry.help_sha256,
+          found_help_sha256: help,
+        });
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
     }
     // D2 §§1.2, 2.5: a real backend runs only with the provider key its
     // grant names; a reference that cannot be resolved refuses the launch,
     // never a launch without the key (E62).
-    if (claim.entry !== null && heldSecret(claim.entry.key_ref) === null) {
+    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null })?.keyVariable ?? '') !== '';
+    if (claim.entry !== null && keyed && heldSecret(claim.entry.key_ref) === null) {
       const refusal = refusalForm(
         'backend_refused',
         `The provider key ${claim.entry.key_ref} that ${claim.entry.backend}'s grant names cannot be resolved, so the backend is not launched without it.`,
@@ -633,6 +696,15 @@ export class Launcher {
       },
     );
     launch.dropExitReport = seamMainFault('init_report_lost');
+    // The cancellation canary (D2 §7.2): the init observed the barrier while
+    // the backend ran; the engine cancels through the boundary.
+    if (claim.attempt?.kind === 'cancellation') {
+      launch.onBarrier = () => {
+        if (handle.backendStarted && launch.exitReport === null) {
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'human_stop', reasonText: 'canary_barrier: the cancellation canary reached its barrier and the engine cancelled it' });
+        }
+      };
+    }
     handle.sandbox = launch;
     handle.child = launch.child;
     handle.pid = launch.pid;
@@ -771,8 +843,10 @@ export class Launcher {
       return { outcome: 'failed', reason: 'infra_error', reasonText: c.boundText };
     }
     const r = c.result;
-    if (r.state === 'secret') return { outcome: 'failed', reason: 'infra_error', reasonText: `the secret screen refused the result: it holds a registered secret (${r.by ?? 'secret'}); nothing of it was published` };
+    if (r.state === 'secret') return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused the result (${r.by ?? 'secret'}); nothing of it was published` };
+    if (c.providerFiles === 'refused_secret') return { outcome: 'failed', reason: 'infra_error', reasonText: 'secret_refused: the secret screen refused the provider files; nothing of them was published' };
     const accepted = c.verdict.outcome === 'accepted' && r.state === 'read';
+    if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
     if (cls === 'clean') {
       // The result is the run's to take or refuse: never also unaccepted.
       c.unacceptedDone = true;
@@ -812,6 +886,35 @@ export class Launcher {
     return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}: no exit report of the backend reached the engine` };
   }
 
+  // A qualification canary's run (D2 §7.2): never the acceptance pipeline,
+  // never a commit. The positive canary's edit is materialized into the
+  // run's own workspace behind the screen, so its content can be judged.
+  private async decideCanary(handle: RunHandle, cls: string, c: Collected, accepted: boolean): Promise<RunEnd> {
+    const { claim } = handle;
+    const kind = claim.attempt!.kind;
+    c.unacceptedDone = true;
+    let editContent: string | null = null;
+    if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
+      const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: { files: 1000, bytes: 64 * 1024 * 1024, fileBytes: 16 * 1024 * 1024 } });
+      if (m.state === 'refused' && m.reason === 'secret') {
+        await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
+        recordCanary(handle, cls, c, null);
+        return { outcome: 'failed', reason: 'infra_error', reasonText: 'secret_refused: the secret screen refused the canary\'s materialization' };
+      }
+      handle.materialized = m.state === 'materialized';
+      try {
+        editContent = readFileSync(join(handle.workspacePath, canaryEdit(claim.attempt!.id).path), 'utf8');
+      } catch {
+        editContent = null;
+      }
+    }
+    recordCanary(handle, cls, c, editContent);
+    if (kind === 'cancellation') return { outcome: 'failed', reason: 'infra_error', reasonText: 'barrier_not_reached: the cancellation canary ended without the engine observing its barrier' };
+    if (cls === 'clean' && accepted) return { outcome: 'completed', reason: 'none' };
+    if (cls === 'clean' || (cls === 'error_exit' && accepted)) return { outcome: 'failed', reason: 'invalid_result', reasonText: `exit class ${cls}: the canary's result is not one the engine may take` };
+    return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}` };
+  }
+
   // A result the run does not accept, published after the screen as an
   // unaccepted_result record (D2 §1.4), once.
   private async publishUnaccepted(handle: RunHandle, c: Collected): Promise<void> {
@@ -845,10 +948,13 @@ export class Launcher {
     const { claim } = handle;
     const hold = handle.sandbox?.volatile ?? null;
     await pausePoint('collect.before_read');
+    // The engine's test mode may set the inventory's bounds below their
+    // ranges (SEAM.md §152); the configuration keeps its ranges.
+    const below = seamCollectBounds();
     const bounds = {
       resultMaxBytes: this.rt.setting('result_max_bytes'),
-      entriesMax: this.rt.setting('collect_entries_max'),
-      filesMaxBytes: this.rt.setting('provider_files_max_bytes'),
+      entriesMax: below?.entries ?? this.rt.setting('collect_entries_max'),
+      filesMaxBytes: below?.bytes ?? this.rt.setting('provider_files_max_bytes'),
       deadlineMs: this.rt.setting('collect_deadline') * 1000,
     };
     const began = performance.now();
@@ -874,9 +980,10 @@ export class Launcher {
     if (result.state === 'secret') {
       await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
     }
-    const template = claim.entry ? TEMPLATES[claim.entry.backend] : undefined;
-    const inv = inventory(hold, bounds, template?.persistenceFlags ?? []);
-    let providerFiles: string = hold === null || !hold.held ? 'missing' : 'collected';
+    // The provider files (D2 §4.3; SEAM.md §152), after the result.
+    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null }) : undefined;
+    const inv = await inventory(hold, bounds, template?.persistenceFlags ?? [], seamCollectDelay());
+    let providerFiles: string = hold === null || !hold.held ? 'not_collected' : 'published';
     let providerRecord: string | null = null;
     if (hold !== null && hold.held) {
       if (inv.secret !== null) {
@@ -886,12 +993,7 @@ export class Launcher {
           .catch((err) => log('secret screen', err, { run: claim.run }));
       } else {
         try {
-          providerRecord = await writeWholeRecord(this.rt, {
-            project: claim.project,
-            run: claim.run,
-            kind: 'provider_files',
-            content: inventoryRecord(inv, { domain: claim.domain, run: claim.run, invocation: claim.invocation }),
-          });
+          providerRecord = await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'provider_files', content: inventoryRecord(inv) });
           if (inv.truncated) providerFiles = 'truncated';
         } catch (err) {
           log('provider files', err, { run: claim.run });
@@ -900,15 +1002,11 @@ export class Launcher {
       }
     }
     await this.recordCollection(handle, {
-      provider_files: providerFiles,
-      provider_files_record: providerRecord,
+      provider_files_collection: { outcome: providerFiles === 'refused_secret' ? 'refused' : providerFiles === 'unwritten' ? 'missing' : providerFiles, record: providerRecord },
       excluded: inv.excluded.map((e) => redactText(e.path)),
-      ...(inv.truncated ? { truncated: inv.truncated } : {}),
     });
-    const boundText = inv.truncated
-      ? `collection reached ${inv.truncated.limit} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete`
-      : null;
-    return { result, verdict, value, providerFiles, boundText, unacceptedDone: false };
+    const boundText = inv.truncated ? `collection reached ${inv.truncated.key} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete` : null;
+    return { result, verdict, value, providerFiles, providerRecord, boundText, unacceptedDone: false };
   }
 
   // On a run's end decided by the engine (a Stop, a deadline, a bound) or by
@@ -920,11 +1018,15 @@ export class Launcher {
     if (handle.sandbox === null || !handle.backendStarted) return;
     if (quarantined && handle.collection === null) {
       // A domain whose termination was unknown is not collected (D2 §3.4).
-      await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files: 'not_collected' });
+      await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files_collection: { outcome: 'not_collected', record: null } });
       return;
     }
     const c = await this.collectOnce(handle);
     await this.publishUnaccepted(handle, c);
+    if (handle.claim.attempt !== null && !canaryObservations.has(handle.claim.run)) {
+      const exit = await this.rt.read<{ exit_class: string | null } | null>('domain.exit_of', { domain: handle.claim.domain }).catch(() => null);
+      recordCanary(handle, exit?.exit_class ?? 'unknown', c, null);
+    }
   }
 
   // Has the engine just resumed from a pause that outlived the run lease?

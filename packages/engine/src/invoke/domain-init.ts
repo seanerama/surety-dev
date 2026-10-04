@@ -282,7 +282,67 @@ interface BackendSpec {
   // that carries each connection, unchanged, to the engine's proxy through
   // the domain's unix socket bound into the sandbox.
   forwarder?: { port: number; socket: string } | null;
+  // A qualification canary (D2 §7.2): the barrier file whose appearance the
+  // init reports while the backend runs, and the abstract socket on which it
+  // takes reports from the engine's probe program alone.
+  canary?: { barrier?: string | null; witness?: string | null } | null;
 }
+
+// Is `pid` the engine's probe program running a canary action, as a
+// descendant of the backend? Its command line is read, and its ancestry
+// walked through /proc up to the backend (D2 §7.2: "witnessed as a
+// descendant of the backend"). Nothing the backend prints is consulted.
+function witnessedProbe(pid: number, action: string): boolean {
+  if (backendPid === null || !Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    const argv = readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0');
+    if (argv[1] !== '/surety/context/probe' || argv[2] !== '--canary' || argv[3] !== action) return false;
+  } catch {
+    return false;
+  }
+  let at = pid;
+  for (let i = 0; i < 64; i++) {
+    let ppid: number;
+    try {
+      const line = readFileSync(`/proc/${at}/status`, 'utf8').split('\n').find((l) => l.startsWith('PPid:'));
+      ppid = Number(line?.slice(5).trim());
+    } catch {
+      return false;
+    }
+    if (ppid === backendPid) return true;
+    if (!Number.isInteger(ppid) || ppid <= 1) return false;
+    at = ppid;
+  }
+  return false;
+}
+
+function startWitness(name: string): void {
+  const server = net.createServer((sock) => {
+    let buf = '';
+    sock.on('data', (d: Buffer) => {
+      buf += d.toString('utf8');
+      if (buf.length > 4096) return void sock.destroy();
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      let m: Msg;
+      try {
+        m = JSON.parse(buf.slice(0, nl)) as Msg;
+      } catch {
+        return void sock.end('refused\n');
+      }
+      const pid = Number(m.pid);
+      const action = String(m.action ?? '');
+      if (!witnessedProbe(pid, action)) return void sock.end('refused\n');
+      send({ t: 'witness', action, outcome: String(m.outcome ?? ''), pid });
+      sock.end('ok\n');
+    });
+    sock.on('error', () => {});
+  });
+  server.on('error', () => {});
+  server.listen(`\0${name}`);
+}
+
+let termAt: number | null = null;
 
 // The forwarder: bytes pass both ways unchanged; it reads nothing of them.
 // It holds no secret and no engine setting: it is part of the init.
@@ -350,9 +410,14 @@ function leaveWhenAlone(): void {
   }, 100);
 }
 
+let exitAt: number | null = null;
+
 function reportExit(): void {
   if (exit === null || acked) return;
-  send({ t: 'exit', code: exit.code, signal: exit.signal });
+  // The time from the engine's TERM to the backend's exit, as the init saw
+  // them (the cancellation canary's term_to_exit_ms; D2 §3.6).
+  const termToExit = termAt !== null && exitAt !== null && exitAt >= termAt ? exitAt - termAt : null;
+  send({ t: 'exit', code: exit.code, signal: exit.signal, term_to_exit_ms: termToExit });
 }
 
 // A sandbox whose backend has exited, whose report the engine has, and in
@@ -379,6 +444,7 @@ function onMessage(m: Msg): void {
   } else if (m.t === 'term') {
     if (terminating) return;
     terminating = true;
+    termAt = Date.now();
     // Every process of the pid namespace but the init (kill(2), pid -1):
     // only as process 1 of a pid namespace the launcher created, never
     // anywhere else, where -1 would mean every process of the uid.
@@ -427,6 +493,7 @@ async function init(): Promise<void> {
       return;
     }
   }
+  if (spec.canary?.witness) startWitness(spec.canary.witness);
   send({ t: 'ready' });
   const go = await next();
   if (!go || go.t !== 'start') process.exit(0);
@@ -473,7 +540,22 @@ async function init(): Promise<void> {
   child.stdout!.on('end', () => {
     outputEnded = true;
   });
+  // The cancellation canary's barrier, observed by the init, not the stream.
+  if (spec.canary?.barrier) {
+    const barrier = spec.canary.barrier;
+    const watch = setInterval(() => {
+      if (exit !== null) return void clearInterval(watch);
+      try {
+        readFileSync(barrier);
+      } catch {
+        return;
+      }
+      clearInterval(watch);
+      send({ t: 'barrier', path: barrier });
+    }, 50);
+  }
   child.on('exit', (code, signal) => {
+    exitAt = Date.now();
     exit = { code, signal: signalNumber(signal) };
     const started = Date.now();
     const leave = setInterval(() => {

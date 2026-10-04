@@ -13,6 +13,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -32,12 +33,15 @@ export interface BackendLaunch {
   stdin: string | null;
   // The egress forwarder the init starts before the backend (D2 §2.4).
   forwarder?: { port: number; socket: string } | null;
+  // A qualification canary's barrier and witness socket (D2 §7.2).
+  canary?: { barrier?: string | null; witness?: string | null } | null;
 }
 
 export interface ExitReport {
   code: number | null;
   signal: number | null;
   startFailed?: boolean;
+  termToExitMs?: number | null;
 }
 
 export interface ChallengeResponse {
@@ -113,6 +117,21 @@ export class SandboxLaunch {
   // outside once the setup stage mounted them (plan.holdVolatile), until the
   // engine releases them.
   volatile: VolatileHold | null = null;
+  // What the init witnessed of a qualification canary (D2 §7.2): each
+  // probe-program report it accepted, and the barrier file's appearance.
+  readonly witnesses: { action: string; outcome: string; pid: number }[] = [];
+  barrierSeen = false;
+  onBarrier: (() => void) | null = null;
+  // The engine's TERM and the backend's end, on the monotonic clock: the
+  // TERM-to-exit time where the init's own count did not reach the engine.
+  termSentAt: number | null = null;
+  backendEndedAt: number | null = null;
+
+  termToExitMs(): number | null {
+    if (this.exitReport?.termToExitMs !== undefined && this.exitReport.termToExitMs !== null) return this.exitReport.termToExitMs;
+    if (this.termSentAt === null || this.backendEndedAt === null || this.backendEndedAt < this.termSentAt) return null;
+    return Math.round(this.backendEndedAt - this.termSentAt);
+  }
 
   constructor(
     spec: LaunchSpec,
@@ -139,6 +158,7 @@ export class SandboxLaunch {
     this.launcherExited = new Promise((resolve) => {
       this.child.once('exit', (code, signal) => {
         this.launcherExit = { code, signal };
+        this.backendEndedAt ??= performance.now();
         this.channelOpen = false;
         // A launch refused keeps saying so after its launcher has gone.
         if (this.stage !== 'refused') this.stage = 'gone';
@@ -266,12 +286,23 @@ export class SandboxLaunch {
           return;
         }
         if (this.exitReport !== null) return;
+        this.backendEndedAt ??= performance.now();
         this.exitReport = {
           code: typeof m.code === 'number' ? m.code : null,
           signal: typeof m.signal === 'number' ? m.signal : null,
           ...(m.start_failed === true ? { startFailed: true } : {}),
+          termToExitMs: typeof m.term_to_exit_ms === 'number' ? m.term_to_exit_ms : null,
         };
         this.resolveBackend();
+        return;
+      case 'witness':
+        this.witnesses.push({ action: String(m.action ?? ''), outcome: String(m.outcome ?? ''), pid: Number(m.pid) });
+        return;
+      case 'barrier':
+        if (!this.barrierSeen) {
+          this.barrierSeen = true;
+          this.onBarrier?.();
+        }
         return;
       case 'challenge_response': {
         const nonce = String(m.nonce ?? '');
@@ -300,6 +331,7 @@ export class SandboxLaunch {
   // TERM through the init, which relays it to every process of the sandbox
   // (D2 §1.6). False if the channel is gone.
   term(): boolean {
+    this.termSentAt ??= performance.now();
     return this.send({ t: 'term' });
   }
 

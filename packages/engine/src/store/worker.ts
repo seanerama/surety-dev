@@ -91,8 +91,20 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext } from './reads.js';
-import { qualify } from './transitions/qualification.js';
-import { type HostObserved, recordHostQualification, revokeDrifted, setHostObserved, trustView } from './transitions/trust.js';
+import {
+  attemptTarget,
+  attemptUsage,
+  attemptsDue,
+  canaryItem,
+  canaryRunFacts,
+  concludeAttempt,
+  invalidateAttemptBy,
+  qualify,
+  recordCanary,
+  startAttemptRun,
+  usedEgress,
+} from './transitions/qualification.js';
+import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
   boundaryDomains,
@@ -210,6 +222,19 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
   'domain.exit_of': (d, a: { domain: string }) => d.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "id" = ?').get(a.domain) ?? null,
   'decisions.engine': (d) => engineDecisions(d),
+  'qualification.due': (d) => attemptsDue(d),
+  'qualification.row': (d, a: { attempt: string }) => getAttempt(d, a.attempt) ?? null,
+  'qualification.drift': (d, a: { attempt: string }) => {
+    const row = getAttempt(d, a.attempt);
+    return row ? attemptDrift(d, row) : 'missing';
+  },
+  'qualification.target': (d, a: { project: string | null }) => attemptTarget(d, a),
+  'qualification.canary_run': (d, a: { item: string }) => (d.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(a.item) as { id: string } | undefined)?.id ?? null,
+  'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
+  'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
+  'qualification.used_egress': (d, a: { attempt: string }) => usedEgress(d, a),
+  'qualification.provider_files': (d, a: { run: string }) =>
+    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
 };
 
@@ -294,6 +319,12 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'run.regrant': (tx, a) => regrantLease(tx, a),
   'host.qualification': (tx, a) => recordHostQualification(tx, a),
   'trust.revoke_drifted': (tx, a) => revokeDrifted(tx, a),
+  'qualification.sweep': (tx) => sweepAttempts(tx),
+  'qualification.start': (tx, a) => startAttemptRun(tx, a),
+  'qualification.invalidate': (tx, a) => invalidateAttemptBy(tx, a),
+  'qualification.canary_item': (tx, a) => canaryItem(tx, a),
+  'qualification.canary': (tx, a) => recordCanary(tx, a),
+  'qualification.conclude': (tx, a) => concludeAttempt(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

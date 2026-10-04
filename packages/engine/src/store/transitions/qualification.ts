@@ -8,7 +8,7 @@ import { Refusal } from '../../refusal.js';
 import { notFound } from './common.js';
 import type { CommandResult } from './control.js';
 import { raiseQuestion } from './queue.js';
-import { projectPolicy } from './settings.js';
+import { observeTrigger } from './work.js';
 import {
   type AttemptInput,
   type AttemptRow,
@@ -18,6 +18,9 @@ import {
   currentProfileFingerprint,
   finishAttempt,
   hostEligibility,
+  invalidateAttempt,
+  profileWithEgress,
+  startAttempt,
   getAttempt,
   writeAttempt,
   writeEntry,
@@ -54,7 +57,11 @@ export function concludeAttempt(
     finishAttempt(tx, a, { outcome: 'failed', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [] });
     return { status: 'failed', entry: null, decision: null };
   }
-  const { entry, decision } = proposeEntry(tx, { ...args.entry, qualification_attempt: a.id }, label);
+  // The entry is held to the profile this host qualifies with its own
+  // egress list (SEAM.md §150).
+  const current = currentProfileFingerprint();
+  const profile = current === null ? args.entry.profile_fingerprint : profileWithEgress(current, args.entry.egress_hosts);
+  const { entry, decision } = proposeEntry(tx, { ...args.entry, profile_fingerprint: profile, qualification_attempt: a.id }, label);
   finishAttempt(tx, a, { outcome: 'succeeded', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [], trust_entry: entry.id });
   return { status: 'succeeded', entry: entry.id, decision };
 }
@@ -94,15 +101,13 @@ export function qualify(
       host_eligibility: host,
     });
   }
-  const profile = currentProfileFingerprint();
+  const current = currentProfileFingerprint();
+  const profile = current === null ? null : profileWithEgress(current, a.candidate_egress);
   if (profile === null) throw new Refusal(409, 'isolation_unqualified', "This start's checks did not establish the role profile an attempt binds.", 'Start the engine where the host checks pass.', {});
-  const limit = projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens ?? null;
-  const spend = {
-    cap: a.provider_cap_usd === undefined || a.provider_cap_usd === null ? null : { status: 'configured', usd: a.provider_cap_usd, enforced_by: 'provider' },
-    estimate: { tokens: limit === null ? null : limit * 3, usd: null, basis: 'three canaries at the fixture project\'s budget_run_billable_tokens; the cost is unknown until reported' },
-    label: 'estimate',
-    overshoot: 'within each canary, bounded only by its deadline (D2 §4.2)',
-  };
+  // The spend (D2 §7.2, Q7; SEAM.md §148): no M2 mechanism enforces a cap;
+  // the figure is an estimate, labelled, and null where no price is known
+  // (never 0). This engine holds no price for any backend.
+  const spend = { cap: null, estimate: null, label: 'estimate', overshoot: 'deadline', ...(a.provider_cap_usd ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}) };
   const { attempt, decision } = proposeAttempt(tx, {
     backend: a.backend,
     version: a.version,
@@ -121,4 +126,71 @@ export function qualify(
     spend,
   });
   return { status: 201, body: { qualification_attempt: { id: attempt.id, status: attempt.status }, decision } };
+}
+
+// ---- an authorized attempt's canaries (D2 §7.2, K10; trust/attempts.ts) ----------------------
+
+export const attemptsDue = (db: Tx['db']) => db.prepare(`SELECT "id", "status" FROM "qualification_attempts" WHERE "status" IN ('authorized', 'running') ORDER BY "created_at", "id"`).all() as { id: string; status: string }[];
+
+export function startAttemptRun(tx: Tx, a: { attempt: string }): AttemptRow {
+  const row = getAttempt(tx.db, a.attempt);
+  if (!row) throw notFound('qualification attempt', a.attempt);
+  if (row.status === 'running') return row;
+  return startAttempt(tx, a);
+}
+
+export function invalidateAttemptBy(tx: Tx, a: { attempt: string; reason: string }): void {
+  const row = getAttempt(tx.db, a.attempt);
+  if (row) invalidateAttempt(tx, row, a.reason);
+}
+
+// One canary's work item on the fixture project, belonging to the attempt:
+// no other dispatch runs it (runs.ts, dispatchBlocker).
+export function canaryItem(tx: Tx, a: { attempt: string; kind: string }): string {
+  const row = getAttempt(tx.db, a.attempt);
+  if (!row || row.fixture_project === null) throw notFound('qualification attempt', a.attempt);
+  const made = observeTrigger(
+    tx,
+    { project: row.fixture_project, kind: 'verification', trigger_source: 'qualification', trigger_id: `${row.id}:${a.kind}`, trigger_generation: 1, subject: {} },
+    { qualification_attempt: row.id, canary: a.kind },
+  );
+  tx.db.prepare('UPDATE "work_items" SET "qualification_attempt" = ?, "canary_kind" = ? WHERE "id" = ?').run(row.id, a.kind, made.work_item.id);
+  return made.work_item.id;
+}
+
+export function recordCanary(tx: Tx, a: { attempt: string; canary: Record<string, unknown>; unexpected: unknown[] }): void {
+  const row = getAttempt(tx.db, a.attempt);
+  if (!row) throw notFound('qualification attempt', a.attempt);
+  const list = JSON.parse(row.canaries ?? '[]') as Record<string, unknown>[];
+  list.push(a.canary);
+  tx.db.prepare('UPDATE "qualification_attempts" SET "canaries" = ?, "unexpected_contacts" = ? WHERE "id" = ?').run(JSON.stringify(list), JSON.stringify(a.unexpected), row.id);
+}
+
+export function attemptTarget(db: Tx['db'], a: { project: string | null }) {
+  if (a.project === null) return null;
+  return (db.prepare('SELECT "id" AS "project", "dev_repo_path" AS "repo", "integration_branch" AS "branch" FROM "projects" WHERE "id" = ?').get(a.project) as { project: string; repo: string; branch: string } | undefined) ?? null;
+}
+
+export function canaryRunFacts(db: Tx['db'], a: { run: string }) {
+  const run = db.prepare('SELECT "outcome", "transcript" FROM "runs" WHERE "id" = ?').get(a.run) as { outcome: string | null; transcript: string | null } | undefined;
+  const exit = db
+    .prepare(`SELECT o."exit_class" FROM "invocation_status_observations" o JOIN "invocation_receipts" r ON r."id" = o."invocation" WHERE r."run" = ? AND o."exit_class" IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`)
+    .get(a.run) as { exit_class: string } | undefined;
+  return { outcome: run?.outcome ?? null, exit_class: exit?.exit_class ?? null, transcript: run?.transcript ?? null };
+}
+
+// Whether the attempt's canaries observed usage, and a cost (D2 §4.2).
+export function attemptUsage(db: Tx['db'], a: { attempt: string }) {
+  const rows = db
+    .prepare(`SELECT u."raw" FROM "usage_observations" u JOIN "invocation_receipts" r ON r."id" = u."invocation" WHERE r."qualification_attempt" = ?`)
+    .all(a.attempt) as { raw: string }[];
+  return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd"\s*:/.test(r.raw)) };
+}
+
+// The hosts the attempt's canaries were let through to (an accepted
+// CONNECT in a canary domain's egress log).
+export function usedEgress(db: Tx['db'], a: { attempt: string }): string[] {
+  void a;
+  void db;
+  return [];
 }

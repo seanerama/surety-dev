@@ -141,6 +141,16 @@ export interface SeamInit {
   probes: Record<string, string>;
   // --harness-host-checks and --harness-host-check (SEAM.md §114).
   hostChecks: { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'> };
+  // SEAM.md §§150, 152: a template version per backend, the host identity,
+  // a mechanism variant, collection bounds below their ranges.
+  switches?: HarnessSwitches;
+}
+
+export interface HarnessSwitches {
+  templateVersions: Record<string, string>;
+  hostId: string | null;
+  mechanismVariant: string | null;
+  collectBounds: { entries: number; bytes: number } | null;
 }
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
@@ -692,6 +702,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       handler: async () => {
         tickFaults.length = 0;
         mainFaults.length = 0;
+        collectSlowMs = 0;
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
@@ -893,7 +904,14 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
       armed:
-        isObject(body) && body.point === 'tick_step'
+        isObject(body) && body.point === 'collect_slow'
+          ? (() => {
+              const ms = Number(body.delay_ms);
+              if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'collect_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
+              setCollectSlow(ms);
+              return { point: 'collect_slow', delay_ms: ms };
+            })()
+          : isObject(body) && body.point === 'tick_step'
           ? armTickFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
             ? armMainFault(body)
@@ -901,8 +919,13 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     }));
   }
   // The "help" of a stand-in binary is its own file (SEAM.md §116).
-  const helpOf = async (path: string): Promise<string> => {
+  // The help hash the engine's own check computes (the stand-in's `--help`
+  // output; SEAM.md §150), else the file's own hash.
+  const helpOf = async (path: string, backend = 'claude'): Promise<string> => {
     try {
+      const { helpHash } = await import('../invoke/static.js');
+      const h = await helpHash(path, backend).catch(() => null);
+      if (h !== null) return h;
       return createHash('sha256').update(await readFile(path)).digest('hex');
     } catch {
       throw new Refusal(400, 'invalid_value', `The binary ${path} cannot be read.`, 'Name the stand-in binary the test wrote.', { field: 'binary' });
@@ -1230,26 +1253,51 @@ export function seamRefuseBinary(path: string, backend: string): string | null {
   return realBinaryReason(path, backend);
 }
 
-// The static checks of a qualification attempt in harness mode: the
-// stand-in's path, its hash, the version the request names, and a help hash
-// over its own file, as the trust-entry fixture computes it; a real
-// backend's binary refused. null outside harness mode.
-export async function seamQualifyStatic(backend: string, body: Record<string, unknown>): Promise<{ path: string; sha256: string; help: string; version: string } | null> {
+// Is the engine in its test mode, where a qualification request may name a
+// stand-in binary, a fixture project of the test's and the scripted
+// backend (SEAM.md §148)?
+export function seamQualifyMode(): boolean {
+  return init.harness;
+}
+
+// ---- the slice-13 switches (SEAM.md §§150, 152) -----------------------------
+
+// `--harness-template-version <backend>=<version>`, `--harness-host-id <id>`,
+// `--harness-mechanism-variant <label>`, `--harness-collect-bounds
+// entries=<n>,bytes=<n>`. Called once, after configureHarness, before the
+// store worker starts. Returns a usage problem, or null.
+export function setHarnessSwitches(values: { templateVersions: string[]; hostId: string | null; mechanismVariant: string | null; collectBounds: string | null }): string | null {
+  const templateVersions: Record<string, string> = {};
+  for (const v of values.templateVersions) {
+    const m = /^([a-z]+)=([A-Za-z0-9._-]+)$/.exec(v);
+    if (!m) return `--harness-template-version takes <backend>=<version>, not ${v}`;
+    templateVersions[m[1]!] = m[2]!;
+  }
+  if (values.hostId !== null && !/^[A-Za-z0-9._-]{1,128}$/.test(values.hostId)) return `--harness-host-id takes an identity, not ${values.hostId}`;
+  if (values.mechanismVariant !== null && !/^[A-Za-z0-9._-]{1,64}$/.test(values.mechanismVariant)) return `--harness-mechanism-variant takes a label, not ${values.mechanismVariant}`;
+  let collectBounds: HarnessSwitches['collectBounds'] = null;
+  if (values.collectBounds !== null) {
+    const m = /^entries=(\d+),bytes=(\d+)$/.exec(values.collectBounds);
+    if (!m || Number(m[1]) < 1 || Number(m[2]) < 1) return `--harness-collect-bounds takes entries=<n>,bytes=<n>, not ${values.collectBounds}`;
+    collectBounds = { entries: Number(m[1]), bytes: Number(m[2]) };
+  }
   if (!init.harness) return null;
-  if (typeof body.binary !== 'string' || !body.binary.startsWith('/')) {
-    throw new Refusal(400, 'invalid_value', 'binary must be the absolute path of the stand-in binary.', 'Name the stand-in the test wrote.', { field: 'binary' });
-  }
-  let path: string;
-  try {
-    path = realpathSync(body.binary);
-  } catch {
-    throw new Refusal(400, 'invalid_value', `The binary ${body.binary} cannot be resolved.`, 'Name the stand-in the test wrote.', { field: 'binary' });
-  }
-  const real = realBinaryReason(path, backend);
-  if (real !== null) throw new Refusal(409, 'backend_refused', `Harness mode never runs a real backend's binary: ${real}.`, 'Name the stand-in binary.', { field: 'binary' });
-  const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
-  if (body.version !== undefined && (typeof body.version !== 'string' || body.version === '')) {
-    throw new Refusal(400, 'invalid_value', 'version must be a string.', 'Name the version the stand-in stands for.', { field: 'version' });
-  }
-  return { path, sha256, help: sha256, version: (body.version as string | undefined) ?? '0.0.0-standin' };
+  init = { ...init, switches: { templateVersions, hostId: values.hostId, mechanismVariant: values.mechanismVariant, collectBounds } };
+  return null;
+}
+
+// In harness mode only (either thread: the worker has the same init).
+export const seamTemplateVersions = (): Record<string, string> | null => (init.harness ? (init.switches?.templateVersions ?? null) : null);
+export const seamHostId = (): string | null => (init.harness ? (init.switches?.hostId ?? null) : null);
+export const seamMechanismVariant = (): string | null => (init.harness ? (init.switches?.mechanismVariant ?? null) : null);
+export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
+
+// The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays
+// the inventory's handling of each entry by `delay_ms`. 0 when not armed.
+let collectSlowMs = 0;
+export function seamCollectDelay(): number {
+  return init.harness ? collectSlowMs : 0;
+}
+export function setCollectSlow(ms: number): void {
+  collectSlowMs = ms;
 }

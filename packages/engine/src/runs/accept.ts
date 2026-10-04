@@ -194,7 +194,7 @@ export class Acceptor {
           // D2 §2.5: the refusal raises the Critical security finding and
           // evidence.secret_refused; the run cannot complete.
           await this.rt.engine('evidence.secret_refused', { run, domain: handle.claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null });
-          return failed('infra_error', `the secret screen refused the workspace's materialization: ${redactText(m.detail)}; nothing of it reached the checkout`);
+          return failed('infra_error', `secret_refused: the secret screen refused the workspace's materialization: ${redactText(m.detail)}; nothing of it reached the checkout`);
         }
         // What the snapshot would refuse is never copied into the checkout.
         if (m.reason === 'caps') return failed('diff_violation', `the workspace's materialization was refused: ${m.detail}; nothing of it reached the checkout`);

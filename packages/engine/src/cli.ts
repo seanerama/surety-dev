@@ -9,7 +9,7 @@ import { EXIT, serve } from './engine.js';
 import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
-import { configureHarness, setProbeOverrides } from './testing/seam.js';
+import { configureHarness, setHarnessSwitches, setProbeOverrides } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -44,6 +44,10 @@ const barrierValues: string[] = [];
 const probeValues: string[] = [];
 const hostCheckValues: string[] = [];
 const probeOverrideValues: string[] = [];
+const templateVersionValues: string[] = [];
+let hostIdValue: string | null = null;
+let mechanismVariantValue: string | null = null;
+let collectBoundsValue: string | null = null;
 let hostChecksMode: string | null = null;
 const harnessOnly: string[] = [];
 for (let i = 0; i < args.length; i++) {
@@ -59,7 +63,11 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-home-fstype' ||
     flag === '--harness-host-checks' ||
     flag === '--harness-host-check' ||
-    flag === '--harness-isolation-probe'
+    flag === '--harness-isolation-probe' ||
+    flag === '--harness-template-version' ||
+    flag === '--harness-host-id' ||
+    flag === '--harness-mechanism-variant' ||
+    flag === '--harness-collect-bounds'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -83,6 +91,14 @@ for (let i = 0; i < args.length; i++) {
       // A probe of the start-up suite made to miss its target, fail its
       // control, leave its negative unattempted or not run (M2 plan §2.3).
       probeOverrideValues.push(value);
+    } else if (flag === '--harness-template-version') {
+      templateVersionValues.push(value);
+    } else if (flag === '--harness-host-id') {
+      hostIdValue = value;
+    } else if (flag === '--harness-mechanism-variant') {
+      mechanismVariantValue = value;
+    } else if (flag === '--harness-collect-bounds') {
+      collectBoundsValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -99,6 +115,8 @@ const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, pro
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
 if (overrideProblem !== null) usage(overrideProblem);
+const switchProblem = setHarnessSwitches({ templateVersions: templateVersionValues, hostId: hostIdValue, mechanismVariant: mechanismVariantValue, collectBounds: collectBoundsValue });
+if (switchProblem !== null) usage(switchProblem);
 
 const home = process.env.SURETY_HOME;
 if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');

@@ -221,6 +221,7 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       // the backend ended, apart from the domain's observation (§1.6).
       result: run.result ?? null,
       result_collection: (collection?.result_collection as unknown) ?? { outcome: 'not_collected', reason: null, bytes_read: null },
+      provider_files_collection: (collection?.provider_files_collection as unknown) ?? { outcome: 'not_collected', record: null },
       collection,
       exit_class: exitClass,
       exit_evidence: exitEvidence,

@@ -123,6 +123,9 @@ export interface RunHandle {
   collecting: boolean;
   // The stream's own bounds were exceeded (D2 §3.7): why.
   streamBound: string | null;
+  // The domain's egress log entries, kept when its proxy closed (a
+  // qualification canary's contacts, D2 §7.2).
+  egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string }[] | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -168,6 +171,7 @@ export function newHandle(claim: Claim): RunHandle {
     collection: null,
     collecting: false,
     streamBound: null,
+    egressEntries: null,
   };
 }
 
@@ -231,6 +235,8 @@ export interface Services {
   // 3.2); and collection, after it, on a run's end (invoke/collect.ts).
   terminateDomains(run: string): Promise<boolean>;
   collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void>;
+  // Authorized qualification attempts taken on their way (trust/attempts.ts).
+  qualificationStep(): Promise<void>;
 }
 
 export class Runtime {

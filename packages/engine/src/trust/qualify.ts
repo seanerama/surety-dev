@@ -13,11 +13,12 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
-import { TEMPLATES } from '../invoke/adapters/templates.js';
+import { TEMPLATES, templateOf } from '../invoke/adapters/templates.js';
 import { canonicalHost } from '../invoke/proxy/proxy.js';
 import { ECHO_HOST } from '../invoke/proxy/echo.js';
 import { Refusal } from '../refusal.js';
-import { seamQualifyStatic } from '../testing/seam.js';
+import { seamQualifyMode, seamRefuseBinary } from '../testing/seam.js';
+import { helpHash, versionOf } from '../invoke/static.js';
 
 const FIELDS = ['backend', 'mode', 'model', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines'];
 
@@ -44,19 +45,27 @@ export interface QualifyRequest {
 export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
   if (typeof b !== 'object' || b === null || Array.isArray(b)) throw invalid('the body', 'must be an object');
   const body = b as Record<string, unknown>;
-  for (const k of Object.keys(body)) if (!FIELDS.includes(k)) throw new Refusal(400, 'unknown_field', `${k} is not a field of a qualification request.`, 'Remove it.', { field: k });
+  // In the engine's test mode only: a stand-in binary, a fixture project of
+  // the test's, and the scripted backend (SEAM.md §148).
+  const testMode = seamQualifyMode();
+  const allowed = testMode ? FIELDS : FIELDS.filter((f) => f !== 'binary' && f !== 'fixture_project' && f !== 'version');
+  for (const k of Object.keys(body)) if (!allowed.includes(k)) throw new Refusal(400, 'unknown_field', `${k} is not a field of a qualification request.`, 'Remove it.', { field: k });
   const backend = body.backend;
-  if (typeof backend !== 'string' || !TEMPLATES[backend]) throw invalid('backend', `must be one of ${Object.keys(TEMPLATES).join(', ')}`);
+  const template = typeof backend === 'string' ? templateOf(backend, { scripted: testMode }) : undefined;
+  if (typeof backend !== 'string' || !template) throw invalid('backend', `must be one of ${Object.keys(TEMPLATES).join(', ')}`);
   const mode = body.mode ?? 'one_shot_headless';
-  if (mode !== 'one_shot_headless') {
-    throw new Refusal(409, 'backend_refused', `Only one_shot_headless can be qualified in M2; ${String(mode)} is refused (D2 §1.8).`, 'Qualify the one-shot headless mode.', { field: 'mode' });
-  }
+  if (mode !== 'one_shot_headless') throw invalid('mode', 'must be one_shot_headless: only it can be qualified in M2 (D2 §1.8)');
   if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
   const list = body.candidate_egress ?? [];
   if (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0)) throw invalid('candidate_egress', 'must be a list of host names');
   // The echo endpoint is the probe suite's alone (D2 §2.4; SEAM.md §140).
   if (list.some((h) => canonicalHost(String(h)) === ECHO_HOST)) {
     throw new Refusal(400, 'invalid_value', `candidate_egress names ${ECHO_HOST}, the engine's own echo endpoint, which only the probe suite may reach.`, 'Remove the echo endpoint from the list.', { field: 'candidate_egress' });
+  }
+  if (!testMode) {
+    // The engine's own fixture project and the backend's resolved
+    // installation are the paid lane's (slice 14).
+    throw new Refusal(501, 'not_implemented', "A qualification attempt of a real backend's installation on the engine's own fixture project is not made by this engine revision.", 'Wait for the real lane (M2 slice 14).', { backend });
   }
   if (typeof body.fixture_project !== 'string' || body.fixture_project === '') throw invalid('fixture_project', 'must name the project the canaries run on');
   const deadlines = { ...CANARY_DEADLINES };
@@ -68,8 +77,10 @@ export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
       deadlines[k as keyof typeof deadlines] = v as number;
     }
   }
-  const template = TEMPLATES[backend]!;
-  const statics = await staticChecks(backend, body);
+  const binary = body.binary;
+  const path = typeof binary === 'object' && binary !== null && typeof (binary as Record<string, unknown>).path === 'string' ? String((binary as Record<string, unknown>).path) : typeof binary === 'string' ? binary : null;
+  if (path === null) throw invalid('binary', 'must be {"path": <the stand-in binary>}');
+  const statics = await staticChecks(backend, path);
   return {
     backend,
     mode,
@@ -86,29 +97,22 @@ export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
   };
 }
 
-// The static checks. In harness mode the seam gives the stand-in's (its
-// path, its file's hash, the version the test names, a help hash over its
-// own file) and refuses a real backend's binary; outside it the binary named
-// is resolved and hashed, and its version and help are part of a real
-// attempt, the paid lane's (slice 14), which this engine revision does not
-// yet make: refused rather than guessed.
-async function staticChecks(backend: string, body: Record<string, unknown>): Promise<{ path: string; sha256: string; help: string; version: string }> {
-  const seam = await seamQualifyStatic(backend, body);
-  if (seam !== null) return seam;
-  if (typeof body.binary !== 'string' || !body.binary.startsWith('/')) throw invalid('binary', 'must be the absolute path of the backend binary');
+// The static checks (D2 §7.2; SEAM.md §148): the binary's real path and its
+// file's SHA-256, and `--version` and `--help`, each run once, exactly so,
+// outside any domain. A real backend's binary is refused in the test mode.
+async function staticChecks(backend: string, given: string): Promise<{ path: string; sha256: string; help: string; version: string }> {
+  if (!given.startsWith('/')) throw invalid('binary', 'must be an absolute path');
   let path: string;
   try {
-    path = realpathSync(body.binary);
+    path = realpathSync(given);
   } catch {
-    throw invalid('binary', `${body.binary} cannot be resolved`);
+    throw invalid('binary', `${given} cannot be resolved`);
   }
+  const real = seamRefuseBinary(path, backend);
+  if (real !== null) throw new Refusal(409, 'backend_refused', `The engine's test mode never runs a real backend's binary: ${real}.`, 'Name the stand-in binary.', { field: 'binary' });
   const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
-  void sha256;
-  throw new Refusal(
-    501,
-    'not_implemented',
-    'A qualification attempt of a real backend binary reads its version and help, which this engine revision does not yet do outside its test mode.',
-    'Wait for the real lane (M2 slice 14).',
-    { backend, binary: path },
-  );
+  const version = await versionOf(path, backend).catch(() => null);
+  const help = await helpHash(path, backend).catch(() => null);
+  if (version === null || help === null) throw new Refusal(409, 'backend_refused', `${path} did not answer --version and --help.`, 'Name a binary that answers both.', { field: 'binary' });
+  return { path, sha256, help, version };
 }

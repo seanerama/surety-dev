@@ -290,6 +290,7 @@ export class RunEnder {
     if (own?.egress) {
       const egress = own.egress;
       own.egress = null;
+      own.egressEntries = egress.entries.map((e) => ({ authority: e.authority, decision: e.decision, reason: e.reason, opened_at: e.opened_at }));
       await finishEgress(this.rt, egress, { project: own.claim.project, run: own.claim.run });
     }
     const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);

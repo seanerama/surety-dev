@@ -15,7 +15,7 @@ import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
-import { resolveBackend, revokeDrifted } from './trust.js';
+import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
 import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
@@ -164,6 +164,9 @@ export interface ClaimArgs {
   // The incarnation's scope, when the run's domain is a cgroup of the real
   // boundary (D2 §§3.1, 3.2): the domain is allocated with its path under it.
   scope?: string | null;
+  // A qualification attempt's own dispatch of one of its canaries (D2 §7.2,
+  // K10): the only way a canary's item is run.
+  attempt?: string | null;
 }
 
 export interface Claim {
@@ -191,7 +194,9 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; binary_path: string; binary_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  entry: { backend: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  // A canary run: the attempt whose authority dispatched it and its kind.
+  attempt: { id: string; kind: string } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
   // with the run's end (SEAM.md §116).
   refusal: { code: string; reason: string; what_to_do: string; subject: Record<string, unknown> } | null;
@@ -200,7 +205,9 @@ export interface Claim {
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 // `check`: false for a projection, which reads the budget without being a
 // budget check (D1 §6.6 governs the check, not the read).
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean } = {}): string | null {
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean; canary?: boolean } = {}): string | null {
+  // A canary's item is run only by its attempt's own dispatch (K10).
+  if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
   if (project.paused === 1) return 'project paused';
@@ -250,7 +257,10 @@ export const RESOURCE_ENVELOPE = 'resource_envelope';
 export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.project !== args.project) return null;
-  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns) !== null) return null;
+  const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
+  const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
+  if (args.attempt && !canary) return null;
+  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns, { canary }) !== null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -259,13 +269,28 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   if (baseRevision === null) return null;
   const role = ROLE_OF[item.kind]!;
   const policy = projectPolicy(tx.db, item.project);
-  const deadlineSeconds = policy[`deadline_${role}`]!;
+  // A canary's deadline is its attempt's, per kind (D2 §7.2).
+  const canaryDeadline = (() => {
+    if (!canary) return undefined;
+    const a = getAttempt(tx.db, args.attempt!);
+    try {
+      const d = (JSON.parse(a?.canary_deadlines ?? '{}') as Record<string, number>)[canaryOf.canary_kind ?? ''];
+      return d !== undefined && Number.isSafeInteger(d) && d > 0 ? d : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`]!;
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
   // process started.
   // An entry whose qualification no longer holds is revoked first (D2 §7.3).
   revokeDrifted(tx);
-  const backend = resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  const attempt = canary ? getAttempt(tx.db, args.attempt!) : undefined;
+  if (canary && (!attempt || attempt.status !== 'running')) return null;
+  const backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
+    ? { kind: 'attempt', backend: attempt.backend, version: attempt.version, model: attempt.model, attempt }
+    : resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
@@ -315,7 +340,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // cap, if one is held with it, is recorded as configured evidence, never
   // as the engine's enforcement (D2 §§2.5, 4.2; SEAM.md §§116, 120).
   const keyRef = `backend/${backend.backend}/api_key`;
-  const real = backend.kind === 'entry';
+  const real = backend.kind === 'entry' || (backend.kind === 'attempt' && backend.backend !== 'scripted');
   const cap = real ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
   tx.db
@@ -338,7 +363,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
 
   const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
-  const invocation = allocateReceipt(tx, run, { trustEntry });
+  const invocation = allocateReceipt(tx, run, { trustEntry, qualificationAttempt: backend.kind === 'attempt' ? backend.attempt.id : null });
   const domain = tx.newId('dom_');
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
   // with its cgroup path when the real boundary will hold it.
@@ -370,12 +395,26 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     profile,
     backend: backend.backend,
     trust_entry: trustEntry,
+    attempt: backend.kind === 'attempt' ? { id: backend.attempt.id, kind: canaryOf.canary_kind ?? 'positive' } : null,
     entry:
-      backend.kind === 'entry'
+      backend.kind === 'attempt'
+        ? {
+            backend: backend.attempt.backend,
+            binary_path: backend.attempt.binary_path,
+            binary_sha256: backend.attempt.binary_sha256,
+            help_sha256: backend.attempt.help_sha256,
+            model: backend.attempt.model,
+            key_ref: keyRef,
+            // The attempt's candidate list (D2 §2.4): the canaries' only
+            // destinations; an off-list one is refused and reported.
+            egress_hosts: JSON.parse(backend.attempt.candidate_egress) as string[],
+          }
+        : backend.kind === 'entry'
         ? {
             backend: backend.backend,
             binary_path: backend.entry.binary_path,
             binary_sha256: backend.entry.binary_sha256,
+            help_sha256: backend.entry.help_sha256,
             model: backend.entry.model,
             key_ref: keyRef,
             // The destinations the entry's egress list allows (D2 §2.4).
@@ -748,7 +787,7 @@ export function finishRun(
       .run(
         JSON.stringify({
           result_collection: { outcome: 'missing', reason: null, bytes_read: null },
-          provider_files: 'missing',
+          provider_files_collection: { outcome: 'missing', record: null },
           why: "the engine restarted before collection: the domain's volatile filesystem was lost with it",
         }),
         run.id,

@@ -634,9 +634,103 @@ async function main(): Promise<void> {
   emit({ id: 'done' });
 }
 
+// ---- a containment canary's action (D2 §7.2; SEAM.md §149) ---------------------------------
+
+// `probe --canary <name> --host-pid-ns <ns> --witness <socket> --token <path>
+// --port <n> --unlisted <authority>`: one action of the containment canary,
+// attempted only after this program's own containment check, its outcome
+// printed and reported to the domain init on the witness socket, which the
+// init accepts only from this program's own process (it reads the reporting
+// pid's command line and ancestry). The outcome is `denied` when the
+// sandbox refused the action, `allowed` when it did not.
+function argOf(name: string): string | null {
+  const i = process.argv.indexOf(name);
+  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1]! : null;
+}
+
+async function canaryAction(name: string): Promise<{ outcome: string; detail: string }> {
+  switch (name) {
+    case 'token_read': {
+      const r = tryOpen(argOf('--token') ?? '/nonexistent');
+      return { outcome: r === 'opened' ? 'allowed' : 'denied', detail: r };
+    }
+    case 'git_config': {
+      const r = run(['/usr/bin/git', 'config', 'surety.canary', 'written'], { cwd: '/surety/workspace', env: { PATH: '/usr/bin:/bin', HOME: '/surety/home', GIT_CONFIG_NOSYSTEM: '1', LANG: 'C.UTF-8' } });
+      return { outcome: r.status === 0 ? 'allowed' : 'denied', detail: `status ${String(r.status)} ${String(r.stderr).slice(0, 200)}` };
+    }
+    case 'engine_port': {
+      const r = await connectOnce({ host: '127.0.0.1', port: Number(argOf('--port') ?? 0) });
+      return { outcome: r === 'connected' ? 'allowed' : 'denied', detail: r };
+    }
+    case 'unlisted_connect': {
+      const proxy = /:(\d+)\/?$/.exec(process.env.HTTPS_PROXY ?? '');
+      if (!proxy) return { outcome: 'denied', detail: 'no proxy in the environment' };
+      const r = await tunnel(Number(proxy[1]), argOf('--unlisted') ?? 'canary-unlisted.surety.invalid:443', null);
+      return { outcome: r.status === 200 ? 'allowed' : 'denied', detail: `status ${String(r.status)}` };
+    }
+    case 'workspace_write': {
+      try {
+        writeFileSync('/surety/workspace/.surety-canary-control', 'control\n');
+        return { outcome: 'allowed', detail: 'written' };
+      } catch (err) {
+        return { outcome: 'denied', detail: errorOf(err) };
+      }
+    }
+    default:
+      return { outcome: 'unknown_action', detail: name };
+  }
+}
+
+function report(socket: string, line: Obj): Promise<string> {
+  return new Promise((resolve) => {
+    let sock: net.Socket;
+    try {
+      sock = net.connect(`\0${socket}`);
+    } catch (err) {
+      resolve(errorOf(err));
+      return;
+    }
+    let answer = '';
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve('timeout');
+    }, 3000);
+    sock.once('connect', () => sock.write(`${JSON.stringify(line)}\n`));
+    sock.on('data', (d: Buffer) => {
+      answer += d.toString('utf8');
+      if (answer.includes('\n')) {
+        clearTimeout(timer);
+        sock.destroy();
+        resolve(answer.trim());
+      }
+    });
+    sock.once('error', (err) => {
+      clearTimeout(timer);
+      resolve(errorOf(err));
+    });
+  });
+}
+
+async function canaryMain(name: string): Promise<void> {
+  const guard = containment(argOf('--host-pid-ns') ?? undefined);
+  const result = guard.reasons.length > 0 ? { outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') } : await canaryAction(name);
+  const line = { type: 'canary_action', action: name, pid: process.pid, ...result };
+  process.stdout.write(`${JSON.stringify(line)}\n`);
+  const socket = argOf('--witness');
+  if (socket) {
+    const answer = await report(socket, line);
+    process.stdout.write(`${JSON.stringify({ type: 'canary_report', action: name, answer })}\n`);
+  }
+}
+
 // Only as a program of its own, inside a sandbox: never imported for its
 // actions.
-if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1])) {
+if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--canary') {
+  void canaryMain(process.argv[3] ?? '').then(
+    () => setTimeout(() => process.exit(0), 20),
+    () => process.exit(70),
+  );
+} else if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1])) {
   void main().then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),

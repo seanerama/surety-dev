@@ -99,3 +99,24 @@ export const TEMPLATES: Readonly<Record<string, Template>> = {
 };
 
 export const keyVariable = (backend: string): string => TEMPLATES[backend]?.keyVariable ?? `${backend.toUpperCase()}_API_KEY`;
+
+// The scripted backend as a qualifiable one, in the engine's test mode only
+// (SEAM.md §148): its binary is started with no arguments and reads the
+// scripted protocol's request on its standard input; no key; nothing kept.
+export const SCRIPTED_TEMPLATE: Template = {
+  version: 'scripted-1',
+  text: '<binary> (the scripted protocol on standard input)',
+  keyVariable: '',
+  persistenceFlags: [],
+  render: () => [],
+};
+
+// The template of a backend this engine has an adapter for, with its
+// version as this start has it (the test mode may set another; SEAM.md
+// §150). `scripted` only where the caller allows it.
+export function templateOf(backend: string, opts: { scripted?: boolean; versions?: Record<string, string> | null } = {}): Template | undefined {
+  const t = TEMPLATES[backend] ?? (opts.scripted && backend === 'scripted' ? SCRIPTED_TEMPLATE : undefined);
+  if (!t) return undefined;
+  const v = opts.versions?.[backend];
+  return v === undefined ? t : { ...t, version: v };
+}

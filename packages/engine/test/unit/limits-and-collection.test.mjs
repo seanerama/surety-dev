@@ -118,46 +118,47 @@ test('the result is read only as a regular file within its bound; a link, a FIFO
   }
 });
 
-test('the inventory lists every writable location without following links or opening special files, excludes credential files, and stops at its bounds', () => {
+test('the inventory lists every writable location without following links or opening special files, excludes credential files, and stops at its bounds', async () => {
   const h = fakeHold();
   try {
     writeFileSync(join(h.vol, 'home', 'settings.json'), '{"a":1}');
-    writeFileSync(join(h.vol, 'home', '.credentials.json'), 'never read');
+    mkdirSync(join(h.vol, 'home', '.ssh'));
+    writeFileSync(join(h.vol, 'home', '.ssh', 'id_ed25519'), 'never read');
+    writeFileSync(join(h.vol, 'home', '.netrc'), 'never read');
     symlinkSync('/etc/passwd', join(h.vol, 'home', 'link'));
     assert.equal(spawnSync('mkfifo', [join(h.vol, 'tmp', 'pipe')]).status, 0);
     writeFileSync(join(h.vol, 'upper', 'src.txt'), 'workspace');
-    const inv = collect.inventory(h, BOUNDS, ['--no-session-persistence']);
-    const by = Object.fromEntries(inv.entries.map((e) => [e.path, e]));
-    assert.equal(by['/surety/home/settings.json'].content, '{"a":1}');
-    assert.equal(by['/surety/home/link'].kind, 'link');
+    const inv = await collect.inventory(h, BOUNDS, ['--no-session-persistence']);
+    const by = Object.fromEntries(inv.locations.map((e) => [e.path, e]));
+    assert.equal(Buffer.from(by['/surety/home/settings.json'].content_base64, 'base64').toString(), '{"a":1}');
+    assert.equal(by['/surety/home/link'].type, 'symlink');
     assert.equal(by['/surety/home/link'].target, '/etc/passwd');
-    assert.equal(by['/surety/home/link'].content, undefined, "a link's target is never duplicated");
-    assert.equal(by['/tmp/pipe'].kind, 'fifo');
-    assert.equal(by['/surety/home/.credentials.json'].retained, false);
-    assert.equal(by['/surety/home/.credentials.json'].content, undefined);
-    assert.deepEqual(inv.excluded, [{ path: '/surety/home/.credentials.json', reason: 'credential_name' }]);
-    assert.equal(by['/surety/workspace/src.txt'].retained, false, "the workspace's changes are materialized, not retained here");
+    assert.equal(by['/surety/home/link'].content_base64, undefined, "a link's target is never read");
+    assert.equal(by['/tmp/pipe'].type, 'fifo');
+    assert.equal(by['/surety/home/.netrc'].retained, false);
+    assert.deepEqual(inv.excluded.map((e) => e.path).sort(), ['/surety/home/.netrc', '/surety/home/.ssh'].sort());
+    assert.equal(by['/surety/workspace/src.txt'], undefined, "the workspace's changes are materialized, not inventoried");
     assert.equal(inv.truncated, null);
     assert.equal(inv.secret, null);
-    assert.deepEqual(collect.inventory(h, { ...BOUNDS, entriesMax: 2 }, []).truncated, { limit: 'collect_entries_max', value: 2 });
-    assert.deepEqual(collect.inventory(h, { ...BOUNDS, filesMaxBytes: 3 }, []).truncated, { limit: 'provider_files_max_bytes', value: 3 });
-    const record = JSON.parse(collect.inventoryRecord(inv, { domain: 'd', run: 'r', invocation: 'i' }).toString());
-    assert.deepEqual(Object.keys(record).filter((k) => ['locations', 'persistence_flags', 'excluded'].includes(k)).sort(), ['excluded', 'locations', 'persistence_flags']);
+    assert.deepEqual((await collect.inventory(h, { ...BOUNDS, entriesMax: 2 }, [])).truncated, { key: 'collect_entries_max', value: 2 });
+    assert.deepEqual((await collect.inventory(h, { ...BOUNDS, filesMaxBytes: 3 }, [])).truncated, { key: 'provider_files_max_bytes', value: 3 });
+    const record = JSON.parse(collect.inventoryRecord(inv).toString());
+    assert.deepEqual(Object.keys(record).sort(), ['complete', 'excluded', 'limit', 'locations', 'persistence_flags', 'truncated']);
     assert.equal(record.complete, true);
   } finally {
     rmSync(h.vol, { recursive: true, force: true });
   }
 });
 
-test('the screen finds a held secret in a collected file, in a name, and in a result', () => {
+test('the screen finds a held secret in a collected file, in a name, and in a result', async () => {
   const h = fakeHold();
   try {
     redact.holdSecret('test/unit/key', 'sk-unit-secret-0123456789');
     writeFileSync(join(h.vol, 'home', 'notes.txt'), 'the key is sk-unit-secret-0123456789');
-    assert.equal(collect.inventory(h, BOUNDS, []).secret.path, '/surety/home/notes.txt');
+    assert.equal((await collect.inventory(h, BOUNDS, [])).secret.path, '/surety/home/notes.txt');
     rmSync(join(h.vol, 'home', 'notes.txt'));
     writeFileSync(join(h.vol, 'tmp', 'sk-unit-secret-0123456789'), '');
-    assert.ok(collect.inventory(h, BOUNDS, []).secret !== null, 'a name is screened');
+    assert.ok((await collect.inventory(h, BOUNDS, [])).secret !== null, 'a name is screened');
     writeFileSync(join(h.vol, 'out', 'result.json'), '{"k":"sk-unit-secret-0123456789"}');
     assert.equal(collect.collectResult(h, { ...BOUNDS, resultMaxBytes: 1024 }).state, 'secret');
   } finally {
@@ -165,7 +166,7 @@ test('the screen finds a held secret in a collected file, in a name, and in a re
   }
 });
 
-test('credential names', () => {
-  for (const n of ['.credentials.json', 'auth.json', '.netrc', 'id_ed25519', 'server.pem', 'api_key.txt', 'oauth_token']) assert.ok(collect.isCredentialName(n), n);
-  for (const n of ['settings.json', 'notes.txt', 'result.json']) assert.ok(!collect.isCredentialName(n), n);
+test('credential paths', () => {
+  for (const p of ['/surety/home/.ssh', '/surety/home/.ssh/id_rsa', '/surety/home/.netrc', '/surety/home/.config/gh/hosts.yml', '/surety/home/.claude/x']) assert.ok(collect.isCredentialPath(p), p);
+  for (const p of ['/surety/home/settings.json', '/tmp/.netrc', '/surety/home/.config/other']) assert.ok(!collect.isCredentialPath(p), p);
 });
