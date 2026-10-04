@@ -122,6 +122,12 @@ export interface ClaudeStreamSummary {
   api_retries: { error: string | null; status: number | null }[];
   result: ClaudeResult | null;
   results: number;
+  // Lines that broke the stream's protocol (a second terminal event): each
+  // is ignored, and the run cannot be clean (E74 item 3).
+  protocol_errors: string[];
+  // The per-call usage counted until the bound on message ids was reached;
+  // beyond it only the terminal totals count.
+  usage_ids_truncated: boolean;
 }
 
 export interface ClaudeLine {
@@ -129,7 +135,13 @@ export interface ClaudeLine {
   // The terminal event this line is, if it is one: `success` only for a
   // `result` whose subtype is "success" and whose is_error is false.
   terminal: 'success' | 'failure' | null;
+  // A protocol error this line made, if it made one.
+  protocolError: string | null;
 }
+
+// The most message ids the adapter remembers (E74 item 3): a stream with
+// more stops reporting per-call usage, which the terminal totals replace.
+const MAX_MESSAGE_IDS = 10_000;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
@@ -153,8 +165,15 @@ export class ClaudeStream {
     api_retries: [],
     result: null,
     results: 0,
+    protocol_errors: [],
+    usage_ids_truncated: false,
   };
   private readonly seen = new Set<string>();
+
+  // How the cost the stream reports is recorded (E74 item 1): `reported` for
+  // the API-key mode (D2 §4.5); for the subscription mode an estimate, the
+  // figure being Claude Code's own client-side reckoning, never a bill.
+  constructor(private readonly opts: { costAs?: 'reported' | 'estimated' } = {}) {}
 
   // Whether a line only reports usage, so that it may be acted on while an
   // expired lease waits for its challenge (D2 §3.5; choke.ts): an assistant
@@ -169,7 +188,7 @@ export class ClaudeStream {
   }
 
   feed(line: string): ClaudeLine {
-    const out: ClaudeLine = { usage: [], terminal: null };
+    const out: ClaudeLine = { usage: [], terminal: null, protocolError: null };
     if (line.trim() === '') return out;
     this.s.lines++;
     let m: unknown;
@@ -247,9 +266,16 @@ export class ClaudeStream {
     // and cache tokens only, the output count being a placeholder here. A
     // message with no id cannot be told from another of its response, so it
     // is not counted at all (its tokens reach the terminal totals).
+    // A message carrying an API error is Claude Code's own, made without a
+    // model response: its usage is no measurement and is not counted.
+    if (error !== null) return;
     const id = str(msg.id);
     const usage = isObject(msg.usage) ? msg.usage : null;
     if (id === null || usage === null || this.seen.has(id)) return;
+    if (this.seen.size >= MAX_MESSAGE_IDS) {
+      this.s.usage_ids_truncated = true;
+      return;
+    }
     this.seen.add(id);
     const raw: Record<string, unknown> = {};
     for (const k of ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'] as const) {
@@ -276,6 +302,13 @@ export class ClaudeStream {
 
   private result(m: Record<string, unknown>, out: ClaudeLine): void {
     this.s.results++;
+    // The first terminal event wins; a second is a protocol error, ignored
+    // with its usage, and the run cannot be clean (E74 item 3).
+    if (this.s.results > 1) {
+      out.protocolError = `a second terminal result event (number ${this.s.results}) after the first`;
+      if (this.s.protocol_errors.length < MAX_LIST) this.s.protocol_errors.push(out.protocolError);
+      return;
+    }
     const subtype = str(m.subtype, 64);
     const isError = typeof m.is_error === 'boolean' ? m.is_error : null;
     const success = subtype === 'success' && isError === false;
@@ -303,17 +336,22 @@ export class ClaudeStream {
       models: totals?.models ?? [],
     };
     // The invocation's usage as the backend totals it (D2 §1.5): cumulative,
-    // so that it replaces the per-call increments in the fold. A failure
-    // whose totals are all zero is a result written before or without any
-    // model call (a startup failure's zeroed totals): those zeros are not a
-    // measurement, so its usage stays unknown and its cost is not reported.
+    // so that it replaces the per-call increments in the fold, count by
+    // count; only the counts it gives are written, so an unknown one never
+    // replaces a count observed per call (the slice-14 review's S1). The
+    // usage is final only when every count is known. A failure whose totals
+    // are all zero is a result written before or without any model call (a
+    // startup failure's zeroed totals): those zeros are not a measurement,
+    // so nothing of it is recorded as usage and its cost is not reported.
     const zeroed = totals !== null && TOKEN_KEYS.every((k) => totals.tokens[k] === 0) && (cost === null || cost === 0);
     if (totals === null || (!success && zeroed)) {
-      out.usage.push({ semantics: 'cumulative', raw: { ...Object.fromEntries(TOKEN_KEYS.map((k) => [k, null])), usage_final: false, usage_scope: totals === null ? 'absent' : 'zeroed_failure' } });
+      out.usage.push({ semantics: 'cumulative', raw: { usage_final: false, usage_scope: totals === null ? 'absent' : 'zeroed_failure' } });
       return;
     }
-    const raw: Record<string, unknown> = { ...totals.tokens, usage_final: true, usage_scope: totals.scope };
-    if (cost !== null) raw.total_cost_usd = cost;
+    const known = Object.fromEntries(TOKEN_KEYS.filter((k) => totals.tokens[k] !== null).map((k) => [k, totals.tokens[k]]));
+    const complete = TOKEN_KEYS.every((k) => totals.tokens[k] !== null);
+    const raw: Record<string, unknown> = { ...known, usage_final: complete, usage_scope: totals.scope };
+    if (cost !== null) raw[this.opts.costAs === 'estimated' ? 'total_cost_usd_estimate' : 'total_cost_usd'] = cost;
     if (totals.models.length > 0) raw.model = totals.models.join(',');
     out.usage.push({ semantics: 'cumulative', raw });
   }
@@ -356,26 +394,48 @@ function resultTotals(m: Record<string, unknown>): { tokens: Record<TokenKey, nu
 // backend ran with no key at all (`apiKeySource` "none" under `--bare`,
 // which takes Anthropic authentication only from ANTHROPIC_API_KEY or an
 // apiKeyHelper, and the template passes no helper).
-export function claudeAuthFailure(s: ClaudeStreamSummary): string | null {
+export function claudeAuthFailure(s: ClaudeStreamSummary, authMode: string = 'api_key'): string | null {
   if (s.assistant_errors.includes('authentication_failed')) return 'an assistant message carried error authentication_failed';
   if (s.api_retries.some((r) => r.error === 'authentication_failed')) return 'an api_retry event carried error authentication_failed';
   if (s.result?.api_error_status === 401) return 'the result carried api_error_status 401';
-  if (s.init?.api_key_source === 'none') return 'the init event reported apiKeySource "none": no API key reached the backend';
+  // `apiKeySource` "none" means the session authenticates other than by an
+  // API key (code.claude.com/docs, ApiKeySource): no key under the API-key
+  // mode; the expected value under the subscription token.
+  if (authMode === 'api_key' && s.init?.api_key_source === 'none') return 'the init event reported apiKeySource "none": no API key reached the backend';
+  if (authMode === 'subscription_token' && s.init !== null && s.init.api_key_source !== null && s.init.api_key_source !== 'none') {
+    return `the init event reported apiKeySource "${s.init.api_key_source}": a key, not the subscription token, was in use`;
+  }
   return null;
 }
 
 // Whether the backend was authenticated and answered: an assistant message
 // carrying no API error, and no sign of an authentication failure.
-export function claudeAnswered(s: ClaudeStreamSummary): boolean {
-  return claudeAuthFailure(s) === null && s.assistant_messages > s.assistant_errors.length;
+export function claudeAnswered(s: ClaudeStreamSummary, authMode: string = 'api_key'): boolean {
+  return claudeAuthFailure(s, authMode) === null && s.assistant_messages > s.assistant_errors.length;
 }
 
-// What the canaries established about key delivery (D2 §2.5, §4.5): the
-// variable the template names, and whether the stream showed the key in it
-// in use. Null where the stream did not say.
-export function claudeKeyDelivery(s: ClaudeStreamSummary): { variable: string; api_key_source: string | null; established: boolean | null; basis: string } {
+// What the canaries established about the credential's delivery (D2 §2.5,
+// §4.5; E74 item 1), in the mode's variable:
+//   - `api_key`: init.apiKeySource is "ANTHROPIC_API_KEY" and the model
+//     answered;
+//   - `subscription_token`: the model answered while init.apiKeySource was
+//     "none" (no API key in use) and CLAUDE_CODE_OAUTH_TOKEN was the only
+//     credential the backend was given (the engine passes no other; the
+//     volatile home holds no login; `--setting-sources user` reads no
+//     workspace apiKeyHelper): by elimination, the token. The stream names no
+//     OAuth source of its own, so `basis` says it is an elimination.
+// null where the stream did not say.
+export function claudeKeyDelivery(s: ClaudeStreamSummary, authMode: string = 'api_key'): { variable: string; api_key_source: string | null; established: boolean | null; basis: string } {
   const source = s.init?.api_key_source ?? null;
-  if (source === 'ANTHROPIC_API_KEY' && claudeAnswered(s)) return { variable: 'ANTHROPIC_API_KEY', api_key_source: source, established: true, basis: 'init.apiKeySource is ANTHROPIC_API_KEY and the model answered' };
+  if (authMode === 'subscription_token') {
+    const variable = 'CLAUDE_CODE_OAUTH_TOKEN';
+    if (source === 'none' && claudeAnswered(s, authMode)) {
+      return { variable, api_key_source: source, established: true, basis: 'the model answered with init.apiKeySource "none", and CLAUDE_CODE_OAUTH_TOKEN was the only credential the engine gave the backend (by elimination)' };
+    }
+    if (source !== null && source !== 'none') return { variable, api_key_source: source, established: false, basis: `init.apiKeySource is ${source}: a key was in use, not the token` };
+    return { variable, api_key_source: source, established: null, basis: source === null ? 'the stream carried no init.apiKeySource' : 'the model did not answer' };
+  }
+  if (source === 'ANTHROPIC_API_KEY' && claudeAnswered(s, authMode)) return { variable: 'ANTHROPIC_API_KEY', api_key_source: source, established: true, basis: 'init.apiKeySource is ANTHROPIC_API_KEY and the model answered' };
   if (source !== null && source !== 'ANTHROPIC_API_KEY') return { variable: 'ANTHROPIC_API_KEY', api_key_source: source, established: false, basis: `init.apiKeySource is ${source}` };
   return { variable: 'ANTHROPIC_API_KEY', api_key_source: source, established: null, basis: source === null ? 'the stream carried no init.apiKeySource' : 'the model did not answer' };
 }
@@ -383,9 +443,11 @@ export function claudeKeyDelivery(s: ClaudeStreamSummary): { variable: string; a
 // The structured provider error a failed canary keeps (D2 §7.2, N04): what
 // the stream said of the failure, bounded. The caller redacts it before it
 // is recorded.
-export function claudeProviderError(s: ClaudeStreamSummary): Record<string, unknown> {
+export function claudeProviderError(s: ClaudeStreamSummary, authMode: string = 'api_key'): Record<string, unknown> {
   return {
-    auth_failure: claudeAuthFailure(s),
+    auth_mode: authMode,
+    auth_failure: claudeAuthFailure(s, authMode),
+    protocol_errors: s.protocol_errors,
     assistant_errors: s.assistant_errors,
     api_retries: s.api_retries,
     init: s.init === null ? null : { api_key_source: s.init.api_key_source, model: s.init.model, version: s.init.version, permission_mode: s.init.permission_mode },
@@ -417,7 +479,13 @@ export interface ClaudeCapabilities {
   basis: 'inventory' | 'test' | null;
   present: string[];
   attempts: { name: string; tool_use_id: string | null; outcome: 'denied' | 'error' | 'ran' | 'unknown' }[];
-  background_bash: number;
+  // Bash asked to run in the background (`run_in_background`): recorded,
+  // not a failure; it stays inside the domain and dies with it (D2 §4.4),
+  // and is listed as not claimed, class C (E74 item 3).
+  background_bash: { count: number; class: 'C'; note: string };
+  // Names in the inventory beyond the template's `--tools` (the slice-14
+  // review's S2): any one makes the surface unverified.
+  beyond_template: string[];
   sampling: BackendSampling | null;
   reasons: string[];
 }
@@ -429,7 +497,13 @@ export interface ClaudeCapabilities {
 // such tool), and in either case no such tool use that ran, and no second
 // backend process in the domain on any host sample. No inventory and no
 // test is never a pass.
-export function claudeCapabilities(summaries: ClaudeStreamSummary[], sampling: BackendSampling | null): ClaudeCapabilities {
+// The inventory must be a subset of what the template's `--tools` gives
+// (`allowed`), so a tool nobody asked for (Skill, TaskCreate, WebFetch, ...)
+// is never passed because it is not on a list of known delegation names
+// (the slice-14 review's S2). The host's samples must have seen the backend
+// itself at least once: a sampler that never identified it establishes
+// nothing.
+export function claudeCapabilities(summaries: ClaudeStreamSummary[], sampling: BackendSampling | null, allowed: readonly string[]): ClaudeCapabilities {
   const reasons: string[] = [];
   const inits = summaries.map((s) => s.init).filter((i): i is ClaudeInit => i !== null);
   const inventories = inits.map((i) => i.tools).filter((t): t is string[] => t !== null);
@@ -461,8 +535,13 @@ export function claudeCapabilities(summaries: ClaudeStreamSummary[], sampling: B
     }
   }
   let basis: ClaudeCapabilities['basis'] = null;
+  const beyond = tools.filter((t) => !allowed.includes(t));
   if (inventory) {
     basis = 'inventory';
+    if (beyond.length > 0) {
+      verified = false;
+      reasons.push(`the tool inventory offers ${beyond.join(', ')}, beyond the template's --tools (${allowed.join(', ')})`);
+    }
     for (const p of present) {
       // Listed, so available, unless every use of it was seen refused.
       const uses = attempts.filter((a) => a.name === p);
@@ -479,10 +558,12 @@ export function claudeCapabilities(summaries: ClaudeStreamSummary[], sampling: B
       reasons.push('no tool inventory, and no executable test both delegated and scheduled (delegation_unverified)');
     }
   }
-  if (backgroundBash > 0) reasons.push(`Bash was asked to run in the background ${backgroundBash} time(s); recorded, judged by the host samples`);
   if (sampling === null || sampling.samples === 0) {
     verified = false;
     reasons.push('no host sample of the domain was read');
+  } else if (sampling.max_backend < 1) {
+    verified = false;
+    reasons.push(`the host's ${sampling.samples} sample(s) never identified the backend in its domain, so they establish nothing`);
   } else if (sampling.max_backend > 1) {
     verified = false;
     reasons.push(`a second backend process appeared in the domain (at most ${sampling.max_backend} at once)`);
@@ -496,7 +577,8 @@ export function claudeCapabilities(summaries: ClaudeStreamSummary[], sampling: B
     basis,
     present,
     attempts,
-    background_bash: backgroundBash,
+    background_bash: { count: backgroundBash, class: 'C', note: 'Bash run in the background under --tools Bash is recorded, not refused: it stays in the domain and ends with it' },
+    beyond_template: beyond,
     sampling,
     reasons,
   };

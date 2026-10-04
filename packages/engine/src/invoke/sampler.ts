@@ -6,7 +6,7 @@
 // where that is refused (a non-dumpable process, such as the domain init),
 // the first word of its command line. It signals, moves and writes nothing.
 
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, openSync, readSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 
 import { readProcs } from '../boundary/cgroup.js';
@@ -26,9 +26,20 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
     target = null;
   }
   const report: BackendSampling = { samples: 0, max_backend: 0, max_members: 0, unclassified: 0, backend_cmdlines: [] };
+  let gone = 0;
+  let timer: NodeJS.Timeout | null = null;
   const sample = () => {
     const pids = readProcs(cgroupPath);
-    if (pids === null || target === null) return;
+    if (pids === null || target === null) {
+      // The domain's directory is gone (terminated and removed): nothing is
+      // left to sample, and the timer stops by itself (E74 item 3).
+      if (pids === null && ++gone >= 3 && timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+      return;
+    }
+    gone = 0;
     report.samples++;
     report.max_members = Math.max(report.max_members, pids.length);
     let backends = 0;
@@ -45,12 +56,13 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
     report.max_backend = Math.max(report.max_backend, backends);
     report.unclassified = Math.max(report.unclassified, unclassified);
   };
-  const timer = setInterval(sample, everyMs);
+  timer = setInterval(sample, everyMs);
   timer.unref();
   return {
     sample,
     stop: () => {
-      clearInterval(timer);
+      if (timer !== null) clearInterval(timer);
+      timer = null;
       return { ...report, backend_cmdlines: [...report.backend_cmdlines] };
     },
   };
@@ -66,7 +78,7 @@ function isBackend(pid: number, target: { dev: number; ino: number }, binaryPath
     // refused or gone: the command line, which the kernel lets the owner read
   }
   try {
-    const argv0 = readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0')[0] ?? '';
+    const argv0 = (readBounded(`/proc/${pid}/cmdline`) ?? '').split('\0')[0] ?? '';
     if (argv0 === '') return null;
     return argv0 === binaryPath || basename(argv0) === basename(binaryPath);
   } catch {
@@ -75,9 +87,27 @@ function isBackend(pid: number, target: { dev: number; ino: number }, binaryPath
 }
 
 function cmdline(pid: number): string | null {
+  const text = readBounded(`/proc/${pid}/cmdline`);
+  return text === null ? null : text.split('\0').filter((x) => x !== '').join(' ').slice(0, 256);
+}
+
+// At most CMDLINE_MAX bytes of a /proc file, never more (E74 item 3): a
+// member's command line is the role's to make as long as it likes.
+const CMDLINE_MAX = 4096;
+function readBounded(path: string): string | null {
+  let fd: number;
   try {
-    return readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter((x) => x !== '').join(' ').slice(0, 256);
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return null;
+  }
+  try {
+    const buf = Buffer.alloc(CMDLINE_MAX);
+    const n = readSync(fd, buf, 0, CMDLINE_MAX, null);
+    return buf.subarray(0, n).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
   }
 }

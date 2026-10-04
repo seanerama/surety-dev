@@ -109,7 +109,8 @@ test('--secret-file: the key held from a mode-600 file of the user, outside the 
 });
 
 test("Claude's price table and the attempt's estimate: labelled, under the run limit, null without a price", () => {
-  assert.deepEqual(CLAUDE_PRICE_TABLE.models['claude-sonnet-5-5'], { billable_in: 2, cached_in: 0.2, out: 10 });
+  assert.deepEqual(CLAUDE_PRICE_TABLE.models['claude-sonnet-5-5'], { input: 2, cache_write: 2.5, cached_in: 0.2, out: 10 });
+  assert.match(CLAUDE_PRICE_TABLE.version, /cache-write-1.25x-input-derived/, 'the derived cache-write rate is labelled');
   assert.deepEqual(attemptSpendEstimate('claude', 'claude-sonnet-5-5', 300_000), { usd: 9, price_version: CLAUDE_PRICE_TABLE.version });
   assert.equal(attemptSpendEstimate('claude', 'some-other-model', 300_000), null);
   assert.equal(attemptSpendEstimate('scripted', 'claude-sonnet-5-5', 300_000), null);

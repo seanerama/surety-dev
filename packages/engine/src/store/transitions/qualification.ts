@@ -84,6 +84,7 @@ export function qualify(
     backend: string;
     mode: string;
     model: string;
+    auth_mode?: string;
     binary_path: string;
     binary_sha256: string;
     help_sha256: string;
@@ -129,7 +130,7 @@ export function qualify(
     template: a.template,
     template_version: a.template_version,
     model: a.model,
-    auth_mode: 'api_key',
+    auth_mode: a.auth_mode ?? 'api_key',
     host_qualification: hq.id,
     profile_fingerprint: profile,
     fixture_project: a.fixture_project,
@@ -198,6 +199,6 @@ export function attemptUsage(db: Tx['db'], a: { attempt: string }) {
   const rows = db
     .prepare(`SELECT u."raw" FROM "usage_observations" u JOIN "invocation_receipts" r ON r."id" = u."invocation" WHERE r."qualification_attempt" = ?`)
     .all(a.attempt) as { raw: string }[];
-  return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd"\s*:/.test(r.raw)) };
+  return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd(_estimate)?"\s*:/.test(r.raw)) };
 }
 

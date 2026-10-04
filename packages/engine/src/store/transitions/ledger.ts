@@ -84,9 +84,12 @@ export const CLAUDE_NORMALIZATION = 'claude-stream-json-1';
 // Claude API reference gave them on 2026-09-25, pinned by the Verifier and
 // pending Sean's confirmation on his console; billable input (input plus
 // cache creation) at the input rate. An estimate is never a maximum.
+// Cache writes at their own rate: 1.25 times the input rate (Anthropic's
+// list multiplier for five-minute cache writes), labelled as derived, where
+// the table gives none of its own (E74 item 3).
 export const CLAUDE_PRICE_TABLE = {
-  version: 'anthropic-list-2026-09-25-unconfirmed',
-  models: { 'claude-sonnet-5-5': { billable_in: 2, cached_in: 0.2, out: 10 } } as Record<string, { billable_in: number; cached_in: number; out: number }>,
+  version: 'anthropic-list-2026-09-25-unconfirmed+cache-write-1.25x-input-derived',
+  models: { 'claude-sonnet-5-5': { input: 2, cache_write: 2.5, cached_in: 0.2, out: 10 } } as Record<string, { input: number; cache_write?: number; cached_in: number; out: number }>,
 };
 
 function normalizeClaude(raw: Record<string, unknown>): Normalized {
@@ -101,11 +104,17 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
   };
   const cost = raw.total_cost_usd;
   if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) return cost > 0 ? { ...base, cost_status: 'reported', cost_usd: cost } : { ...base, cost_status: 'measured_zero', cost_usd: 0 };
+  // Under the subscription token (E74 item 1) the figure Claude Code
+  // reports is its own client-side estimate: recorded `estimated`, labelled.
+  const estimate = raw.total_cost_usd_estimate;
+  if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate >= 0) {
+    return { ...base, cost_status: 'estimated', cost_usd: estimate, normalization_version: `${CLAUDE_NORMALIZATION}+claude-code-total_cost_usd` };
+  }
   // The price of the one model the invocation used, where the table has it
-  // and every amount is known.
+  // and every amount is known; cache writes at their own rate.
   const prices = base.model_observed === null ? undefined : CLAUDE_PRICE_TABLE.models[base.model_observed];
-  if (prices && base.billable_in !== null && base.cached_in !== null && base.out !== null) {
-    const usd = (base.billable_in * prices.billable_in + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
+  if (prices && input !== null && creation !== null && base.cached_in !== null && base.out !== null) {
+    const usd = (input * prices.input + creation * (prices.cache_write ?? prices.input * 1.25) + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
     return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CLAUDE_NORMALIZATION}+${CLAUDE_PRICE_TABLE.version}` };
   }
   return { ...base, cost_status: 'unknown', cost_usd: null };
@@ -145,10 +154,13 @@ const NOTHING_OBSERVED: Normalized = { billable_in: null, cached_in: null, out: 
 // An invocation's observations folded key by key: for cumulative ones the
 // value of the latest observation that carries the key; for delta ones the
 // sum of the numbers over those that carry it (SEAM.md §53).
+// A null never replaces a count already known (the slice-14 review's S1):
+// an observation that does not know a count says nothing of it.
 export function foldObservations(observations: { semantics: string; raw: Record<string, unknown> }[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const o of observations) {
     for (const [key, value] of Object.entries(o.raw)) {
+      if ((value === null || value === undefined) && typeof out[key] === 'number') continue;
       if (o.semantics === 'delta' && typeof value === 'number' && typeof out[key] === 'number') out[key] = (out[key] as number) + value;
       else out[key] = value;
     }
@@ -572,7 +584,11 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string }): 
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
   const policy = projectPolicy(db, run.project);
-  const spent = billable(observedSoFar(db, args.invocation)) ?? 0;
+  // An unknown count is never read as zero (E74 item 3): where nothing
+  // billable is known after an observation, the budget cannot be judged and
+  // the run does not go on without it (D1 §6.6).
+  const spent = billable(observedSoFar(db, args.invocation));
+  if (spent === null) return 'budget_usage_unknown';
   if (spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;

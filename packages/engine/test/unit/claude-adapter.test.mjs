@@ -142,7 +142,7 @@ test('no reported cost: estimated from the price table with its version, never z
   assert.equal(raw.usage_scope, 'main_loop');
   assert.equal(final, true);
   assert.equal(n.cost_status, 'estimated');
-  assert.equal(n.cost_usd, (105 * 2 + 0 * 0.2 + 7 * 10) / 1e6);
+  assert.equal(n.cost_usd, (5 * 2 + 100 * 2.5 + 0 * 0.2 + 7 * 10) / 1e6, 'cache writes at their own rate');
   assert.match(n.normalization_version, /^claude-stream-json-1\+anthropic-list-/);
   const other = normalizeFor('claude', { ...raw, model: 'a-model-without-a-price' });
   assert.equal(other.cost_status, 'unknown');
@@ -162,9 +162,10 @@ test('a stream cut before its result (a cancelled canary): known input kept, out
 });
 
 const ONE = { samples: 4, max_backend: 1, max_members: 3, unclassified: 1, backend_cmdlines: [] };
+const TOOLS = TEMPLATES.claude.tools;
 
 test('capabilities: an inventory without delegation tools and one backend process verifies', () => {
-  const c = claude.claudeCapabilities([read('success.jsonl').summary], ONE);
+  const c = claude.claudeCapabilities([read('success.jsonl').summary], ONE, TOOLS);
   assert.equal(c.delegation_verified, true, c.reasons.join('; '));
   assert.equal(c.basis, 'inventory');
   assert.deepEqual(c.tools, ['Bash', 'Edit', 'Read', 'Write']);
@@ -174,16 +175,21 @@ test('capabilities: an inventory without delegation tools and one backend proces
 
 test('capabilities: no host sample, or a second backend process, is not verified', () => {
   const s = [read('success.jsonl').summary];
-  assert.equal(claude.claudeCapabilities(s, null).delegation_verified, false);
-  assert.equal(claude.claudeCapabilities(s, { ...ONE, samples: 0 }).delegation_verified, false);
-  const two = claude.claudeCapabilities(s, { ...ONE, max_backend: 2 });
+  assert.equal(claude.claudeCapabilities(s, null, TOOLS).delegation_verified, false);
+  assert.equal(claude.claudeCapabilities(s, { ...ONE, samples: 0 }, TOOLS).delegation_verified, false);
+  const two = claude.claudeCapabilities(s, { ...ONE, max_backend: 2 }, TOOLS);
   assert.equal(two.delegation_verified, false);
   assert.match(two.reasons.join(';'), /second backend process/);
+  const never = claude.claudeCapabilities(s, { ...ONE, max_backend: 0 }, TOOLS);
+  assert.equal(never.delegation_verified, false, 'a sampler that never saw the backend establishes nothing (S2)');
+  assert.match(never.reasons.join(';'), /never identified the backend/);
 });
 
-test('capabilities: a listed delegation tool shown denied verifies; a background Bash is recorded', () => {
-  const c = claude.claudeCapabilities([read('denial.jsonl').summary], ONE);
-  assert.equal(c.delegation_verified, true, c.reasons.join('; '));
+test('capabilities (S2): a tool in the inventory beyond the template\'s --tools fails, even shown denied; the refusals and a background Bash are recorded', () => {
+  const c = claude.claudeCapabilities([read('denial.jsonl').summary], ONE, TOOLS);
+  assert.equal(c.delegation_verified, false);
+  assert.deepEqual(c.beyond_template, ['Agent']);
+  assert.match(c.reasons.join(';'), /beyond the template's --tools/);
   assert.deepEqual(c.present, ['Agent']);
   assert.deepEqual(
     c.attempts.map((a) => [a.name, a.outcome]),
@@ -192,20 +198,26 @@ test('capabilities: a listed delegation tool shown denied verifies; a background
       ['ScheduleWakeup', 'error'],
     ],
   );
-  assert.equal(c.background_bash, 1);
+  assert.deepEqual([c.background_bash.count, c.background_bash.class], [1, 'C']);
+  for (const extra of ['Skill', 'TaskCreate', 'WebFetch']) {
+    const s = new claude.ClaudeStream();
+    s.feed(JSON.stringify({ type: 'system', subtype: 'init', tools: [...TOOLS, extra] }));
+    const x = claude.claudeCapabilities([s.summary()], ONE, TOOLS);
+    assert.equal(x.delegation_verified, false, `${extra} beyond --tools is not verified (S2)`);
+  }
 });
 
 test('capabilities: a delegation that ran, no inventory and no test, an unexercised listed tool: never verified', () => {
-  const ran = claude.claudeCapabilities([read('ran.jsonl').summary], ONE);
+  const ran = claude.claudeCapabilities([read('ran.jsonl').summary], ONE, TOOLS);
   assert.equal(ran.delegation_verified, false);
   assert.match(ran.reasons.join(';'), /Agent was used and ran/);
-  const nothing = claude.claudeCapabilities([], ONE);
+  const nothing = claude.claudeCapabilities([], ONE, TOOLS);
   assert.equal(nothing.delegation_verified, false);
   assert.equal(nothing.basis, null);
   assert.match(nothing.reasons.join(';'), /delegation_unverified/);
   const listed = new claude.ClaudeStream();
   listed.feed(JSON.stringify({ type: 'system', subtype: 'init', tools: ['Bash', 'Monitor'] }));
-  const m = claude.claudeCapabilities([listed.summary()], ONE);
+  const m = claude.claudeCapabilities([listed.summary()], ONE, TOOLS);
   assert.equal(m.delegation_verified, false);
   assert.match(m.reasons.join(';'), /Monitor is in the tool inventory/);
 });
@@ -219,7 +231,7 @@ test('capabilities: without an inventory, an executable test that delegated and 
     { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', is_error: true }] } },
   ])
     s.feed(JSON.stringify(e));
-  const c = claude.claudeCapabilities([s.summary()], ONE);
+  const c = claude.claudeCapabilities([s.summary()], ONE, TOOLS);
   assert.equal(c.basis, 'test');
   assert.equal(c.delegation_verified, true, c.reasons.join('; '));
 });

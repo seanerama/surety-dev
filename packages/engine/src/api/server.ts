@@ -6,6 +6,7 @@
 // the store is open. Every response carries the defensive headers.
 
 import { prepareQualify } from '../trust/qualify.js';
+import { credentialRef } from '../invoke/adapters/templates.js';
 import { ensureFixtureProject, findFixtureProject } from '../trust/fixture.js';
 import { heldProviderCaps } from '../records/redact.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -206,10 +207,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'prepared',
         name: 'trust.qualify',
         prepare: async (b) => {
-          const request = await prepareQualify(b, { fixtureProject: engineFixtureProject });
+          const request = await prepareQualify(b, { fixtureProject: engineFixtureProject, home: runtime().home });
           // The provider-side cap held with the key's reference, shown on
           // the attempt as configured, never as engine enforcement (Q2).
-          const cap = heldProviderCaps()[`backend/${request.backend}/api_key`];
+          const cap = heldProviderCaps()[credentialRef(request.backend, request.auth_mode)];
           return { ...request, provider_cap_usd: cap ?? null };
         },
       };

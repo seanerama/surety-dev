@@ -171,9 +171,9 @@ try {
   process.stderr.write(
     `${JSON.stringify({
       code: 'secret_file_refused',
-      reason: `The secret file ${err.path} for ${err.ref} cannot be used: ${err.why}.`,
-      what_to_do: 'Name a regular file of your own, mode 600 or 400, outside the engine home, holding the key on one line, and start again.',
-      subject: { ref: err.ref, path: err.path },
+      reason: `The secret file ${err.shownPath} for ${err.ref} cannot be used: ${err.why}.`,
+      what_to_do: 'Name a regular file of your own, mode 600 or 400, outside the engine home, holding the credential on one line, and start again.',
+      subject: { ref: err.ref, path: err.shownPath },
     })}\n`,
   );
   process.exit(EXIT.config);

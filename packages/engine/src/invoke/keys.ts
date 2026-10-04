@@ -17,7 +17,7 @@ import { isAbsolute, sep } from 'node:path';
 
 import { holdSecret } from '../records/redact.js';
 
-export const KEY_REFERENCES = ['backend/claude/api_key', 'backend/codex/api_key'] as const;
+export const KEY_REFERENCES = ['backend/claude/api_key', 'backend/claude/subscription_token', 'backend/codex/api_key'] as const;
 export const keyReference = (backend: string): string => `backend/${backend}/api_key`;
 
 // A key file is small: one line. Anything longer is not a key.
@@ -30,6 +30,18 @@ export class SecretFileRefused extends Error {
     readonly why: string,
   ) {
     super(why);
+  }
+  // The path as it may be shown (the slice-14 review's S3): only an absolute
+  // path that names something on the filesystem; anything else may be the
+  // secret itself, given in place of its path, and is never echoed.
+  get shownPath(): string {
+    if (!isAbsolute(this.path)) return '<not shown: not an absolute path>';
+    try {
+      lstatSync(this.path);
+      return this.path;
+    } catch {
+      return '<not shown: names nothing on the filesystem>';
+    }
   }
 }
 
@@ -75,7 +87,8 @@ export function readSecretFile(ref: string, path: string, home: string): string 
   if (realFile === realHome || realFile.startsWith(realHome + sep)) refuse('it is under the engine home');
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // Non-blocking: a FIFO swapped in after the check never holds the start.
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (err) {
     return refuse(`it cannot be opened (${(err as NodeJS.ErrnoException).code ?? 'error'})`);
   }

@@ -31,23 +31,30 @@ export const fixtureRepoPath = (home: string): string => join(home, 'qualificati
 
 const IDENTITY = { GIT_AUTHOR_NAME: 'Surety Engine', GIT_AUTHOR_EMAIL: 'engine@surety.invalid', GIT_COMMITTER_NAME: 'Surety Engine', GIT_COMMITTER_EMAIL: 'engine@surety.invalid' };
 
-// The fixture repository, made if it is not there: one commit on `main`
-// holding a README, HEAD detached. Idempotent: an existing repository is
-// left as it is.
+// The fixture repository, made if it is not there and repaired if a start
+// stopped half way (E74 item 3): one commit on `main` holding a README,
+// HEAD detached. A repository already whole is left as it is. Returned by
+// its resolved path, which is the path the project is registered under.
 export async function ensureFixtureRepo(home: string): Promise<string> {
-  const repo = fixtureRepoPath(home);
+  mkdirSync(fixtureRepoPath(home), { recursive: true, mode: 0o700 });
+  const repo = realpathSync(fixtureRepoPath(home));
   const ctx = repoContext(repo);
-  if (existsSync(join(repo, '.git'))) return repo;
-  mkdirSync(repo, { recursive: true, mode: 0o700 });
+  const run = (args: string[], env: Record<string, string> = {}) => git(ctx, args, { env });
   const step = async (args: string[], env: Record<string, string> = {}) => {
-    const r = await git(ctx, args, { env });
+    const r = await run(args, env);
     if (r.code !== 0) throw new Error(`git ${args[0]} in the fixture repository failed: ${r.stderr.trim().slice(0, 200)}`);
   };
-  await step(['init', '-q', '-b', FIXTURE_BRANCH]);
-  writeFileSync(join(repo, 'README.md'), '# Surety qualification fixture\n\nThe engine qualifies backends here: each canary of a qualification attempt runs on this project.\n');
-  await step(['add', 'README.md']);
-  await step(['commit', '-q', '-m', 'surety: the qualification fixture'], { ...IDENTITY, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
-  await step(['checkout', '-q', '--detach']);
+  if (!existsSync(join(repo, '.git'))) await step(['init', '-q', '-b', FIXTURE_BRANCH]);
+  if ((await run(['rev-parse', '-q', '--verify', `refs/heads/${FIXTURE_BRANCH}`])).code !== 0) {
+    // No commit on main yet: the README committed there (HEAD is main's,
+    // unborn, after the init).
+    if ((await run(['symbolic-ref', '-q', 'HEAD'])).code !== 0) await step(['symbolic-ref', 'HEAD', `refs/heads/${FIXTURE_BRANCH}`]);
+    writeFileSync(join(repo, 'README.md'), '# Surety qualification fixture\n\nThe engine qualifies backends here: each canary of a qualification attempt runs on this project.\n');
+    await step(['add', 'README.md']);
+    await step(['commit', '-q', '-m', 'surety: the qualification fixture'], { ...IDENTITY, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+  }
+  // HEAD detached, so that the engine can integrate onto main.
+  if ((await run(['symbolic-ref', '-q', 'HEAD'])).code === 0) await step(['checkout', '-q', '--detach']);
   return repo;
 }
 
@@ -72,8 +79,21 @@ export function resolveInstallation(backend: string, path = process.env.PATH ?? 
 // The engine's own fixture project's id, or null where none is registered
 // (a home that has none: before the first start outside the test mode, and
 // in a test-mode home).
-export function findFixtureProject(store: StoreClient, home: string): Promise<string | null> {
-  return store.call<string | null>('read', { name: 'qualification.engine_fixture', args: { repo: fixtureRepoPath(home) } });
+// Found by its repository's path as given and as resolved (a home reached
+// through a link registers the resolved one).
+export async function findFixtureProject(store: StoreClient, home: string): Promise<string | null> {
+  const given = fixtureRepoPath(home);
+  let resolved = given;
+  try {
+    resolved = realpathSync(given);
+  } catch {
+    // not made yet
+  }
+  for (const repo of new Set([resolved, given])) {
+    const id = await store.call<string | null>('read', { name: 'qualification.engine_fixture', args: { repo } });
+    if (id !== null) return id;
+  }
+  return null;
 }
 
 // Found, or made and registered by the engine through the bootstrap of

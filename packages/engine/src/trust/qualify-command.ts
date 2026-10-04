@@ -1,4 +1,4 @@
-// `surety qualify <backend> --mode one_shot_headless --model <m>
+// `surety qualify <backend> --mode one_shot_headless --model <m> [--auth-mode api_key|subscription_token]
 // [--egress <host>]... [--canary-deadline <kind>=<seconds>]...` (D2 §7.2; the M2
 // plan's M136 setup): a client of the running engine's
 // `POST /v1/trust/qualify`, with the token of $SURETY_HOME/api.token and the
@@ -27,6 +27,7 @@ export function parseQualify(argv: string[]): QualifyCommand | string {
   const [backend, ...rest] = argv;
   if (backend === undefined || backend.startsWith('-')) return 'qualify needs a backend: surety qualify <backend> --mode one_shot_headless --model <model>';
   let mode: string | null = null;
+  let authMode: string | null = null;
   let model: string | null = null;
   const egress: string[] = [];
   const deadlines: Record<string, number> = {};
@@ -36,6 +37,10 @@ export function parseQualify(argv: string[]): QualifyCommand | string {
     if (value === undefined) return `${flag} needs a value`;
     if (flag === '--mode') mode = value;
     else if (flag === '--model') model = value;
+    else if (flag === '--auth-mode') {
+      if (value !== 'api_key' && value !== 'subscription_token') return '--auth-mode takes api_key or subscription_token';
+      authMode = value;
+    }
     else if (flag === '--egress') egress.push(value);
     else if (flag === '--canary-deadline') {
       const m = /^(positive|cancellation|containment)=([1-9]\d*)$/.exec(value);
@@ -46,6 +51,7 @@ export function parseQualify(argv: string[]): QualifyCommand | string {
   if (mode === null) return 'qualify needs --mode one_shot_headless';
   if (model === null) return 'qualify needs --model <model>';
   const body: Record<string, unknown> = { backend, mode, model, candidate_egress: egress.length > 0 ? egress : (DEFAULT_EGRESS[backend] ?? []) };
+  if (authMode !== null) body.auth_mode = authMode;
   if (Object.keys(deadlines).length > 0) body.canary_deadlines = deadlines;
   return { body };
 }

@@ -203,7 +203,7 @@ function realBackend(claim: Claim): BackendSpec | null {
   const e = claim.entry!;
   // A canary of a harness-mode attempt for `scripted` runs the attempt's
   // binary under the scripted protocol (SEAM.md §148).
-  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions() });
+  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions(), authMode: e.auth_mode });
   if (!template) return null;
   const key = template.keyVariable === '' ? null : heldSecret(e.key_ref);
   return {
@@ -211,7 +211,9 @@ function realBackend(claim: Claim): BackendSpec | null {
     version: template.version,
     command: e.binary_path,
     args: template.render({ model: e.model, invocation: claim.invocation }),
-    env: key === null ? {} : { [template.keyVariable]: key },
+    // The template's fixed variables and the credential of the entry's mode
+    // in the variable that mode's template names (E74 items 1 and 3).
+    env: { ...template.env, ...(key === null ? {} : { [template.keyVariable]: key }) },
     // The backend's installation, read-only at its pinned path (D2 §2.3).
     binds: [{ path: e.binary_path, writable: false }],
   };
@@ -249,7 +251,9 @@ export class Launcher {
     const handle = newHandle(claim);
     // The adapter that reads a real backend's stream (D2 §1.1): Claude
     // Code's for `claude`; the scripted protocol otherwise.
-    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream();
+    // Under the subscription token the reported cost is Claude Code's own
+    // estimate, recorded `estimated` (E74 item 1).
+    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream({ costAs: claim.entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
     this.rt.handles.set(claim.run, handle);
     // The baseline of a fresh checkout of the base, read now: it is fixed
     // with the workspace's intent.
@@ -359,7 +363,7 @@ export class Launcher {
     // D2 §§1.2, 2.5: a real backend runs only with the provider key its
     // grant names; a reference that cannot be resolved refuses the launch,
     // never a launch without the key (E62).
-    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null })?.keyVariable ?? '') !== '';
+    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode })?.keyVariable ?? '') !== '';
     if (claim.entry !== null && keyed && heldSecret(claim.entry.key_ref) === null) {
       const refusal = refusalForm(
         'backend_refused',
@@ -1072,7 +1076,7 @@ export class Launcher {
       await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
     }
     // The provider files (D2 §4.3; SEAM.md §152), after the result.
-    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null }) : undefined;
+    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode }) : undefined;
     const inv = await inventory(hold, bounds, template?.persistenceFlags ?? [], seamCollectDelay());
     let providerFiles: string = hold === null || !hold.held ? 'not_collected' : 'published';
     let providerRecord: string | null = null;
@@ -1280,6 +1284,12 @@ export class Launcher {
       if (recorded) await this.checkBudget(handle);
     }
     if (r.terminal !== null) handle.terminal = r.terminal;
+    // A protocol error (a second terminal event) is ignored with what it
+    // carried, and the run cannot be clean (E74 item 3).
+    if (r.protocolError !== null) {
+      handle.terminal = 'failure';
+      log('backend stream', new Error(r.protocolError), { run });
+    }
   }
 
   private async callback(handle: RunHandle, line: string): Promise<void> {

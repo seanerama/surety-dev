@@ -18,7 +18,7 @@ import { type Baseline, blockingObservation, integrationRef, projectRepoRow, reb
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
-import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
+import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -194,7 +194,7 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  entry: { backend: string; auth_mode: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
   // A canary run: the attempt whose authority dispatched it and its kind.
   attempt: { id: string; kind: string } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
@@ -341,7 +341,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // variable the adapter's template delivers it in; the key's provider-side
   // cap, if one is held with it, is recorded as configured evidence, never
   // as the engine's enforcement (D2 §§2.5, 4.2; SEAM.md §§116, 120).
-  const keyRef = `backend/${backend.backend}/api_key`;
+  // The credential is the one of the entry's (or the attempt's) mode, never
+  // the other's (E74 item 1).
+  const authMode = backend.kind === 'entry' ? backend.entry.auth_mode : backend.kind === 'attempt' ? backend.attempt.auth_mode : 'api_key';
+  const keyRef = credentialRef(backend.backend, authMode);
   const real = backend.kind === 'entry' || (backend.kind === 'attempt' && backend.backend !== 'scripted');
   const cap = real ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
@@ -356,7 +359,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       item.project,
       run,
       JSON.stringify(['workspace_write']),
-      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend)] : [])]),
+      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend, authMode), ...Object.keys(templateOf(backend.backend, { authMode })?.env ?? {})] : [])]),
       JSON.stringify(real ? [keyRef] : []),
       tx.at,
       deadlineAt,
@@ -402,6 +405,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       backend.kind === 'attempt'
         ? {
             backend: backend.attempt.backend,
+            auth_mode: backend.attempt.auth_mode,
             binary_path: backend.attempt.binary_path,
             binary_sha256: backend.attempt.binary_sha256,
             help_sha256: backend.attempt.help_sha256,
@@ -414,6 +418,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
         : backend.kind === 'entry'
         ? {
             backend: backend.backend,
+            auth_mode: backend.entry.auth_mode,
             binary_path: backend.entry.binary_path,
             binary_sha256: backend.entry.binary_sha256,
             help_sha256: backend.entry.help_sha256,

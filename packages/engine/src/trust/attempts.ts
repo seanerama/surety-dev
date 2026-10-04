@@ -23,6 +23,7 @@ import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, can
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
+import { templateOf } from '../invoke/adapters/templates.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AttemptRow, EntryInput } from '../store/transitions/trust.js';
@@ -182,7 +183,8 @@ export class QualificationDriver {
     const real = a.backend === 'claude';
     const stream = real ? (obs?.stream ?? null) : null;
     if (real) history.push({ stream, sampling: obs?.sampling ?? null });
-    const authFailure = stream !== null ? claudeAuthFailure(stream) : null;
+    const authMode = a.auth_mode;
+    const authFailure = stream !== null ? claudeAuthFailure(stream, authMode) : null;
     let capabilities: ClaudeCapabilities | null = null;
     const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
@@ -202,12 +204,13 @@ export class QualificationDriver {
       const got = obs?.value as { summary?: unknown } | null | undefined;
       const resultOk = obs?.verdict === 'accepted' && got?.summary === want.summary;
       const editOk = obs?.editContent === canaryEdit(a.id).content;
-      passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (stream !== null && authFailure === null));
       const edit = canaryEdit(a.id);
       // What was asked and what was seen (SEAM.md §165): the edit read after
       // materialization without following a link, the result as collected,
-      // and the key's delivery as the stream established it.
-      const delivery = real && stream !== null ? claudeKeyDelivery(stream) : null;
+      // and the credential's delivery as the stream established it, which a
+      // real backend's positive canary requires (E74 item 3).
+      const delivery = real && stream !== null ? claudeKeyDelivery(stream, authMode) : null;
+      passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (stream !== null && authFailure === null && delivery?.established === true));
       detail = {
         ...detail,
         result_collection: obs?.verdict ?? null,
@@ -216,7 +219,12 @@ export class QualificationDriver {
         expected: { edit, result: want },
         observed: { edit: { path: edit.path, ...(obs?.editObserved ?? { type: 'missing' }) }, result: obs?.resultValue ?? null },
         key_delivery: real
-          ? { variable: 'ANTHROPIC_API_KEY', established: delivery?.established === true, how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the engine wrote no credential file, the key reached the backend only in ANTHROPIC_API_KEY` }
+          ? {
+              variable: delivery?.variable ?? null,
+              auth_mode: authMode,
+              established: delivery?.established === true,
+              how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the engine wrote no credential file, the credential reached the backend only in ${delivery.variable}`,
+            }
           : { variable: null, established: false, how: 'the scripted backend takes no key' },
       };
     } else if (kind === 'cancellation') {
@@ -224,7 +232,7 @@ export class QualificationDriver {
       // A real backend must have been authenticated and answering when it
       // reached the barrier (D2 §7.2): a model answer with no
       // authentication failure in its stream.
-      const answered = !real || (stream !== null && claudeAnswered(stream));
+      const answered = !real || (stream !== null && claudeAnswered(stream, authMode));
       passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null && answered;
       detail = {
         ...detail,
@@ -287,6 +295,7 @@ export class QualificationDriver {
         capabilities = claudeCapabilities(
           history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
           merged,
+          templateOf(a.backend, { authMode })?.tools ?? [],
         );
         detail = { ...detail, capabilities };
         if (!capabilities.delegation_verified || authFailure !== null) passed = false;
@@ -303,7 +312,8 @@ export class QualificationDriver {
             ? null
             : {
                 init: stream.init,
-                key_delivery: claudeKeyDelivery(stream),
+                key_delivery: claudeKeyDelivery(stream, authMode),
+                protocol_errors: stream.protocol_errors,
                 session_id_accepted: stream.init?.session_id == null || facts.provider_session_id === null ? null : stream.init.session_id === facts.provider_session_id,
                 usage_steps: stream.usage_steps,
                 results: stream.results,
@@ -328,7 +338,7 @@ export class QualificationDriver {
       // The scripted backend's: the run's redacted output. A real backend's:
       // its structured provider error, redacted (D2 §7.2, N04).
       providerError = real
-        ? await this.record(a, run, redactValue({ kind, failure_class: failureClass, provider_error: stream === null ? null : claudeProviderError(stream), exit_class: facts.exit_class ?? obs?.exitClass ?? null, exit_status: obs?.exitStatus ?? null, transcript: facts.transcript }))
+        ? await this.record(a, run, redactValue({ kind, failure_class: failureClass, provider_error: stream === null ? null : claudeProviderError(stream, authMode), exit_class: facts.exit_class ?? obs?.exitClass ?? null, exit_status: obs?.exitStatus ?? null, transcript: facts.transcript }))
         : (facts.transcript ?? (await this.record(a, run, { kind, failure: FAILURE[kind], detail })));
     }
     return { entry: { kind, run, passed, failure_class: failureClass, provider_error: providerError, evidence, term_to_exit_ms: kind === 'cancellation' ? termToExit : null }, capabilities };
