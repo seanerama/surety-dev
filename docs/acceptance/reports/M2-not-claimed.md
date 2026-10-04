@@ -131,3 +131,13 @@ When the slice is built and merged, part 1 will not claim:
 | **Revocation is checked at starts and dispatches, not continuously.** A binary changed while no dispatch or start happens is found at the next one. | M134 | C (D2 §7.3 needs nothing more) | none | SEAM §150 |
 | **Requalification after a mechanism change is not a revocation.** The entry stays `active` and refused until an attempt. Whether a restart without the change restores it is not pinned. | M134 (g) | B | none planned | SEAM §150 |
 | **The context package's phase-plan and dependency-interface texts** have no case (part 1's question 6: not cheap). | M125 (c) | B | the real-backend journey, M140 | SEAM §153 |
+
+**Part 3's entries** (the Verifier of slice 13 part 3, 2026-10-04; M133 and M130 (f), (g) in the exhaustion lane). They are written, not yet run: the lane runs only on `mini-hp01`.
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **The resource limits are proven on the exhaustion host, not on this workstation.** This host's qualification excuses P20 (`isolation_probe_exhaustion` false), and its domains run at the engine's configured limits. What M133 and P20 establish holds on `mini-hp01`'s kernel (7.1.9, bare metal), at the test caps. | M133, P20, M130 (f), (g) | B on this host | the exhaust lane's records on `mini-hp01`, cited by the report | E69 items 2, 3 |
+| **The limits are proven at the test caps** (`pids.max` 64, `memory.max` 64 MiB, 1 MiB, 64 inodes), set by a harness-only override below the engine's configured minimums. The engine's defaults (8 GiB, 1024 tasks, 4 GiB) are not exercised to exhaustion. | M133 | C (an instrument's limit) | none | E69 item 1 |
+| **A held dispatch is shown on the work read only**; a held item has no run, so the plan's "run read" is not pinned. | M133 (e) | C (recommended) | Sean decides | SEAM §156 |
+| **The memory reserve counts only the new domain's bound** against the memory available now, not what the running domains may still grow to (the Builder's reading). No case pins either reading. | M133 (e) | B | Sean decides | SEAM §156 |
+| **A queue over `stream_queue_max_bytes` is made only with a harness fault** (`stream_slow`); the fault is named and not yet built. | M133 (g) | B | the Builder adds the fault; the next exhaust run | SEAM §157 |
