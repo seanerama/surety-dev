@@ -104,7 +104,7 @@ export const step = {
 // role is contained (harness/sandbox/view.mjs, assertContained).
 // M2 slice 13 (SEAM.md §144) adds `result_shape`, `kill_parent` and
 // `spawn_until_refused`, each bounded and behind the same guard.
-export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes', 'fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes', 'fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood', 'canary_link_edit', 'workspace_chmod']);
 const NS_KINDS = ['pid', 'net', 'mnt'];
 const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
 
@@ -178,6 +178,11 @@ export function acting(hostNs) {
     writeToLimit: (caps, args = {}) => one('write_to_limit', { caps, ...args }),
     createToLimit: (caps, args = {}) => one('create_to_limit', { caps, ...args }),
     stdoutFlood: (caps, args = {}) => one('stdout_flood', { caps, ...args }),
+    // The slice-13 review (SEAM.md, "Amended after the slice-13 review"):
+    // the positive canary's edit as a link to an outside file holding the
+    // expected text (S3); a workspace directory's mode changed (S4).
+    canaryLinkEdit: (args = {}) => one('canary_link_edit', args),
+    workspaceChmod: (path, mode, args = {}) => one('workspace_chmod', { path, mode, ...args }),
   };
 }
 
