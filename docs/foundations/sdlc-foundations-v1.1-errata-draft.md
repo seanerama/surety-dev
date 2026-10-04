@@ -1389,3 +1389,17 @@ The slice-13 cases are written in three parts (E69 item 4). **Part 1**, merged a
 6. **For Sean: memory admission (`host_reserve_memory`).** (a) The Builder's: only the new domain's `memory.max` against memory available now (a second 8 GiB domain is admitted on this 16 GB host while the two could use 16 GiB plus the reserve); (b) D2 §3.7's text: also hold back each running domain's remaining headroom, which at the defaults admits one domain at a time here; (c) (b) with a lower default `domain_memory_max`. The Reviewer recommends (b) or (c); the driver's default until Sean decides: (a) as built, harmless while `max_concurrent_runs` is 1 (E18), with the code's comment corrected to say so.
 
 ---
+
+## E72. M2 slice 13 merged: the sandbox lane is complete on this host (provisional, 2026-10-04)
+
+**Status: provisional.** The driver's record under Sean's delegation.
+
+`build/m2-s13` merged to `main` at `11564f8` after the fix round of E71. The Builder's S1 fix redesigned the containment canary: the domain init accepts no outcome from inside the sandbox; the probe program the backend runs only asks the init to act; the init checks for a live descendant of the backend with exactly the action's argv, performs the action itself in its own execute-only child, and the judge adds host-side checks (the token's bytes and the fixture repository's configuration unchanged, the unlisted CONNECT refused in the always-published egress log). Residuals recorded as not claimed: a co-descendant can stand in for a stopped probe with the exact argv (the action is still the init's), the backend can kill the init's child (the canary fails), `engine_port` has no host-side corroboration. Objections 013 and 014 upheld (`1c17af4`). The qualified binary's `--help` still runs at every dispatch, as SEAM §150 and M134 (b) pin; `runStatic` now runs in its own process group, killed whole at its limit.
+
+**The driver's rerun** on `9ca622e`: `--slice 13` 1,018 of 1,018 cases in 162 files, none skipped; unit 172 tests in 35 files; builder boundary check 56 paths, clean; the user manager `running`, no scope, `/dev/shm` or `/tmp` probe leftovers, available memory unchanged. **Not run here:** the exhaustion lane's files (`M133-resource-limits`, `M130-exit-classes-limits`, P20; manifest `exhaust`, E69), which run on `mini-hp01`.
+
+**A process slip, recorded:** to confirm objection 014, the Builder briefly wrote a copy of an acceptance file inside `packages/engine/test/acceptance/`, outside its paths; it deleted it, never committed it, and reported it itself. Copies go under a scratch directory from now on.
+
+After this slice every sandbox-lane row M110 to M135 has its cases on `main` and passes on this host, except the exhaustion cases, which wait for `mini-hp01`. Open for Sean: E71 item 6 (memory admission). Next: the closing pass, the exhaustion run on `mini-hp01`, then slice 14 (the real lane), which needs Sean's API key with its $50 cap and his two approvals.
+
+---
