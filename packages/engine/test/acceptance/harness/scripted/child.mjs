@@ -115,11 +115,13 @@ import {
   readSync,
   renameSync,
   rmSync,
+  statfsSync,
   statSync,
   symlinkSync,
   truncateSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import net from 'node:net';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -571,7 +573,7 @@ function signalAllRefusal(spec) {
 // `spawn_until_refused` (at most eight `sleep` children, one at a time,
 // until a spawn is refused). None of them exhausts anything: each is
 // bounded by its own count, and each runs only behind this guard.
-const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes']);
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes', 'fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -606,6 +608,50 @@ function containmentRefusal(spec) {
   if (visible === null) reasons.push('/proc cannot be listed');
   else if (visible > SIGNAL_ALL_MAX_VISIBLE) reasons.push(`${visible} processes are visible, more than a sandbox holds`);
   return { reasons, own, init, visible };
+}
+
+// THE EXHAUSTION INSTRUMENTS (M2 slice 13 part 3; SEAM.md §155; E64 item 2,
+// E69). They run only on the exhaustion host's lane, and only behind three
+// independent stops:
+//   1. section 141's guard (containmentRefusal): the role's own pid, net and
+//      mnt namespaces are not the host's, pid 1 is no system init, at most
+//      16 processes are visible;
+//   2. the case's caps, carried in the step, must be at or below Sean's
+//      (E69 item 1: pids.max 64, memory.max 64 MiB, 1 MiB and 64 inodes of
+//      volatile storage), and a limit the role can read from inside (the
+//      volatile filesystem's size and inodes, by statfs) must not exceed the
+//      case's; anything else is a refusal;
+//   3. each loop stops by itself, whatever the kernel does, at the ceilings
+//      below. The test releases a role into them only after it has read
+//      from the host the role contained and the domain's limits equal to
+//      the case's (harness/sandbox/limits.mjs, assertDomainCaps).
+// THE SELF-BOUNDS (E69 item 1; do not raise them):
+const SEAN_CAPS = Object.freeze({ pids_max: 64, memory_max: 64 * 1024 * 1024, writable_bytes: 1024 * 1024, writable_inodes: 64 });
+const FORK_CEILING = 96; // at most 96 `sleep` children, which never fork
+const ALLOC_CEILING = 128 * 1024 * 1024; // at most 128 MiB allocated
+const WRITE_CEILING_FACTOR = 2; // at most twice the storage bound written
+const INODE_CEILING = 128; // at most 128 files created
+const FLOOD_CEILING = 4 * 1024 * 1024; // at most 4 MiB written to stdout
+const EXHAUSTING = new Set(['fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
+
+function capsRefusal(spec) {
+  const reasons = [];
+  const caps = spec.caps;
+  if (caps === null || typeof caps !== 'object') return ['the step carries no caps'];
+  for (const [k, max] of Object.entries(SEAN_CAPS)) {
+    if (!Number.isSafeInteger(caps[k]) || caps[k] <= 0) reasons.push(`the step's ${k} is not a positive integer (${JSON.stringify(caps[k])})`);
+    else if (caps[k] > max) reasons.push(`the step's ${k} ${caps[k]} is above the cap ${max}`);
+  }
+  // What the role can read of its own limits: the volatile filesystem.
+  try {
+    const st = statfsSync('/surety/home');
+    const bytes = Number(st.blocks) * Number(st.bsize);
+    if (bytes > caps.writable_bytes) reasons.push(`the volatile filesystem holds ${bytes} bytes, more than the case's ${caps.writable_bytes}`);
+    if (Number(st.files) > caps.writable_inodes) reasons.push(`the volatile filesystem has ${st.files} inodes, more than the case's ${caps.writable_inodes}`);
+  } catch (err) {
+    reasons.push(`the volatile filesystem cannot be read (${err?.code ?? String(err)})`);
+  }
+  return reasons;
 }
 
 const sha256Of = (data) => createHash('sha256').update(data).digest('hex');
@@ -815,6 +861,15 @@ async function runProbe(spec) {
       entry.outcome = 'refused_unsandboxed';
       log('probe', entry);
       return;
+    }
+    if (EXHAUSTING.has(spec.action)) {
+      const caps = capsRefusal(spec);
+      entry.caps_guard = caps;
+      if (caps.length > 0) {
+        entry.outcome = 'refused_caps';
+        log('probe', entry);
+        return;
+      }
     }
   }
   try {
@@ -1476,6 +1531,153 @@ async function runProbe(spec) {
           entry.made.push({ path: f, type: 'fifo', status: done.status });
         }
         entry.outcome = 'made';
+        break;
+      }
+      case 'fork_to_limit': {
+        // M133 (a): one control fork, then `sleep` children one at a time
+        // until a spawn is refused or FORK_CEILING; all killed and awaited.
+        const children = [];
+        entry.ceiling = FORK_CEILING;
+        entry.forks = 0;
+        entry.failure = null;
+        const one = () => {
+          const child = spawn('sleep', ['300'], { stdio: 'ignore', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          return new Promise((done) => {
+            child.once('spawn', () => done({ ok: true, child }));
+            child.once('error', (err) => done({ ok: false, error: errorOf(err) }));
+          });
+        };
+        const control = await one();
+        entry.control = control.ok ? 'spawned' : `failed:${control.error}`;
+        if (control.ok) children.push(control.child);
+        while (control.ok && children.length < FORK_CEILING) {
+          const r = await one();
+          if (!r.ok) {
+            entry.failure = r.error;
+            break;
+          }
+          children.push(r.child);
+        }
+        entry.forks = children.length;
+        log('probe', { ...entry, step: 'at_limit' });
+        if (spec.hold_ms) await sleep(Math.min(30_000, spec.hold_ms));
+        await Promise.all(children.map((c) => new Promise((done) => (c.exitCode !== null || c.signalCode !== null ? done() : (c.once('exit', done), c.kill('SIGKILL'))))));
+        entry.outcome = entry.failure === null ? 'ceiling_reached' : 'refused';
+        break;
+      }
+      case 'allocate_to_limit': {
+        // M133 (b), M130 (f), (g): a control allocation of 1 MiB, then 1 MiB
+        // at a time, every page touched, until `hold_bytes` (then held) or
+        // ALLOC_CEILING; progress logged every 4 MiB, so the log says how far
+        // it got before the kernel ended it.
+        const MIB = 1024 * 1024;
+        const kept = [];
+        const target = Math.min(ALLOC_CEILING, spec.hold_bytes ?? ALLOC_CEILING);
+        entry.ceiling = ALLOC_CEILING;
+        kept.push(Buffer.alloc(MIB, 1));
+        entry.control = { allocated: MIB };
+        log('probe', { action: spec.action, step: 'control', control: { allocated: MIB } });
+        let allocated = MIB;
+        while (allocated + MIB <= target) {
+          kept.push(Buffer.alloc(MIB, 1));
+          allocated += MIB;
+          if (allocated % (4 * MIB) === 0) log('probe', { action: spec.action, step: 'progress', allocated, ceiling: ALLOC_CEILING });
+        }
+        entry.allocated = allocated;
+        entry.outcome = spec.hold_bytes ? 'holding' : 'ceiling_reached';
+        log('probe', { ...entry, step: 'done' });
+        if (spec.hold_bytes) {
+          globalThis.__suretyKept = kept;
+          return;
+        }
+        return;
+      }
+      case 'write_to_limit': {
+        // M133 (c): a control write of 4 KiB, then 64 KiB at a time to one
+        // file under the volatile home until ENOSPC or twice the bound;
+        // the fill is removed afterwards unless `keep`.
+        const file = '/surety/home/fill.bin';
+        const control = '/surety/home/control.bin';
+        const ceiling = WRITE_CEILING_FACTOR * spec.caps.writable_bytes;
+        entry.ceiling = ceiling;
+        entry.size = spec.caps.writable_bytes;
+        try {
+          writeFileSync(control, Buffer.alloc(4096, 'c'));
+          entry.control = 'written';
+        } catch (err) {
+          entry.control = `failed:${errorOf(err)}`;
+        }
+        const chunk = Buffer.alloc(64 * 1024, 'f');
+        let written = 0;
+        entry.stop = 'ceiling';
+        const fd = openSync(file, 'w');
+        try {
+          while (written + chunk.length <= ceiling) {
+            try {
+              written += writeSync(fd, chunk);
+            } catch (err) {
+              entry.stop = errorOf(err);
+              break;
+            }
+          }
+        } finally {
+          closeSync(fd);
+        }
+        entry.written = written;
+        log('probe', { ...entry, step: 'at_limit' });
+        if (spec.hold_ms) await sleep(Math.min(30_000, spec.hold_ms));
+        if (!spec.keep) rmSync(file, { force: true });
+        rmSync(control, { force: true });
+        entry.outcome = 'ran';
+        break;
+      }
+      case 'create_to_limit': {
+        // M133 (d): one control file, then empty files until ENOSPC or
+        // INODE_CEILING; removed afterwards.
+        const dir = '/surety/home/inodes';
+        mkdirSync(dir, { recursive: true });
+        try {
+          writeFileSync(join(dir, 'control'), '');
+          entry.control = 'created';
+        } catch (err) {
+          entry.control = `failed:${errorOf(err)}`;
+        }
+        let made = 0;
+        entry.stop = 'ceiling';
+        entry.ceiling = INODE_CEILING;
+        entry.inodes = spec.caps.writable_inodes;
+        for (let i = 0; i < INODE_CEILING; i++) {
+          try {
+            writeFileSync(join(dir, `f${i}`), '');
+            made++;
+          } catch (err) {
+            entry.stop = errorOf(err);
+            break;
+          }
+        }
+        entry.made = made;
+        log('probe', { ...entry, step: 'at_limit' });
+        rmSync(dir, { recursive: true, force: true });
+        entry.outcome = 'ran';
+        break;
+      }
+      case 'stdout_flood': {
+        // M133 (f), (g): `lines` lines of `line_bytes` bytes on stdout (the
+        // last byte of each a line ending), at most FLOOD_CEILING in all.
+        const lines = Math.max(1, Number(spec.lines ?? 1));
+        const each = Math.max(2, Number(spec.line_bytes ?? 1024));
+        if (lines * each > FLOOD_CEILING) {
+          entry.outcome = 'refused_ceiling';
+          break;
+        }
+        const line = `${'z'.repeat(each - 1)}\n`;
+        let sent = 0;
+        for (let i = 0; i < lines; i++) {
+          if (!process.stdout.write(line)) await new Promise((done) => process.stdout.once('drain', done));
+          sent += each;
+        }
+        entry.sent = sent;
+        entry.outcome = 'flooded';
         break;
       }
       case 'canary_actions': {
