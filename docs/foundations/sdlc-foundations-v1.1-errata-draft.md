@@ -1353,3 +1353,26 @@ The slice-13 Verifier stopped before writing the fork, allocation and storage-fi
 4. **Mechanism (the driver's, provisional):** P20 runs only when the engine is told the host is designated for exhaustion probes (one closed configuration key, default off, its name fixed by the Verifier and Builder in the seam; on a host without it P20 is `not_exercised` with the reason and excused); the exhaustion acceptance files form their own manifest list run by an owner-added runner lane (`--lane exhaust`), never in `npm test` on this host, like the paid real lane; the slice-13 cases are written in smaller sessions, the exhaustion files last.
 
 ---
+
+## E70. M2 slice 13 cases, parts 1 and 2; the exhaustion lane in the runner (provisional, 2026-10-03)
+
+**Status: provisional.** The driver's defaults under Sean's delegation, except where marked.
+
+The slice-13 cases are written in three parts (E69 item 4). **Part 1**, merged at `e1f6e73`: M129 (the result read after termination, P18), M130 (exit classes; (f) and (g) failing placeholders for the exhaustion host), M125 (c) extended for the approved texts (Sean's decision, E67 item 7); SEAM §§143 to 147. **Part 2**, merged at `149a604`: M131 (usage, resume, the session id), M132 (secrets, volatile storage, provider files), M134 (revocation, the host qualification), M135 (the qualification attempt without a model); SEAM §§148 to 154. Every new instrument that writes, connects, spawns or signals is behind SEAM §141's guard; the driver read each before merging; no exhausting code exists in either part (M132 (e)'s collection bounds are reached through a harness override and a slow-collection fault with a handful of small files; M130 (h) lowers one test domain's `pids.max` to its current count plus two and tries at most eight `sleep`s).
+
+**Readings taken as the driver's defaults (the Verifier's recommendations):**
+1. `result_collection.outcome` `accepted` is the collector's verdict on the file; the exit class decides whether it becomes the run's result.
+2. M130 (h) on this host as written (bounded, exhausts nothing).
+3. `exit_evidence.resource_events` holds both keys, each a count or null when unread, never `{}` or 0.
+4. The session id: the engine's v4-shaped SHA-256 of `surety-session:<invocation id>`; M136's canary establishes whether Claude Code accepts it.
+5. The domain init's lifetime after its backend exits stays unpinned.
+6. The phase-plan and dependency-interface texts (E67 item 7) are left to the M140 journey: no module fixture binds an interface text cheaply.
+7. M135's attempt "for `scripted` with the stand-in binary" is a harness-mode attempt whose binary runs the scripted role, which writes a trust entry for `scripted` in harness mode only (SEAM §113 amended by §148); a `claude` attempt goes as far as its proposal.
+8. A secret-screen hit: the materialization or publication refused, the run `failed` / `infra_error` with `reason_text` naming `secret_refused` (E67 item 5's interim class kept), one Critical `security` finding, one `evidence.secret_refused` event; the transcript redacted, not refused. Alternative for Sean: a reason class of its own.
+9. A mechanism change requires requalification (`requalification_required`), the entry not revoked.
+10. Collection bounds below the configured ranges only through harness overrides.
+11. A forged probe report is the backend printing lines in the probe program's report form.
+
+**The exhaustion lane (owner's change, E69 item 4).** `scripts/run-tests.mjs` gains `--lane exhaust`: files listed under the manifest's `exhaust` run only there, never in the full run or a slice (whose rows must still have files), and only when the environment variable `SURETY_EXHAUSTION_HOST` equals the machine's hostname, so the lane refuses on a host nobody designated by name; checked here: it refuses on this workstation (`MSI`). `CLAUDE.md` lists the command.
+
+---
