@@ -181,7 +181,8 @@
       "M128-proxy-limits.test.mjs"
     ],
     "13": [
-      "M129-result-after-termination.test.mjs"
+      "M129-result-after-termination.test.mjs",
+      "M130-exit-classes.test.mjs"
     ]
   },
   "sandbox": [
@@ -205,6 +206,7 @@
     "M126-api-unreachable.test.mjs",
     "M127-egress-address-bound.test.mjs",
     "M128-proxy-limits.test.mjs",
-    "M129-result-after-termination.test.mjs"
+    "M129-result-after-termination.test.mjs",
+    "M130-exit-classes.test.mjs"
   ]
 }
