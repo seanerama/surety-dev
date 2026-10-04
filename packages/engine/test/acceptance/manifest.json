@@ -216,5 +216,9 @@
     "M132-secrets-volatile-provider-files.test.mjs",
     "M134-revocation-and-host-qualification.test.mjs",
     "M135-qualification-attempt.test.mjs"
+  ],
+  "exhaust": [
+    "M133-resource-limits.test.mjs",
+    "M130-exit-classes-limits.test.mjs"
   ]
 }

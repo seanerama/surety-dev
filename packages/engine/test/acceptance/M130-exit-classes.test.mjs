@@ -15,8 +15,9 @@
 // is unknown and never completes; an unknown termination collects nothing.
 // The run read shows the exit class and the domain observation, apart.
 //
-// Cases (f) and (g), the OOM cases, run on the exhaustion host only (E69);
-// here they fail with that message, never skip.
+// Cases (f) and (g), the OOM cases, are `M130-exit-classes-limits.test.mjs`,
+// in the exhaustion lane, run on the designated host only (E69; slice 13
+// part 3, which moved them out of this file).
 //
 // SAFETY (E64 item 2; SEAM.md §§141, 144): the descendant's SIGKILL of the
 // role and the spawns until refused are guarded actions, released only
@@ -43,7 +44,6 @@ import { VALID_RESULT, resultFileOf, script, step } from './harness/scripted.mjs
 
 const GRACE = { terminate_grace: 3, kill_grace: 2 };
 const COLLECTED = ['result', 'unaccepted_result', 'provider_files'];
-const EXHAUSTION_HOST_ONLY = 'M130 (f)/(g) run on the exhaustion host only (E69); written in slice 13 part 3';
 
 // A git project whose failed item parks at once (SEAM.md §15), so that a
 // failed run's item is not dispatched again behind the case's back.
@@ -165,14 +165,6 @@ describe('M130 exit class and domain observation are separate, total facts', () 
     const e = evidenceOf(terminal);
     assert.deepEqual([e.status, e.signal, e.signal_by_engine], [null, 9, false], `exit_evidence: no status, signal 9, not the engine's (${JSON.stringify(e)})`);
     assert.match(ended.reason_text ?? '', /foreign_signal/, `the run's reason names the class (${ended.reason_text})`);
-  });
-
-  test(`(f) OOM at memory.max: resource_limit, oom_kill recorded, failed / infra_error [${EXHAUSTION_HOST_ONLY}]`, () => {
-    assert.fail(EXHAUSTION_HOST_ONLY);
-  });
-
-  test(`(g) a Stop confirmed, then the role allocates to OOM before TERM lands: engine_signaled keeps stopped, oom_kill recorded [${EXHAUSTION_HOST_ONLY}]`, () => {
-    assert.fail(EXHAUSTION_HOST_ONLY);
   });
 
   test('(h) pids.max hit, then exit 0 with a result: clean, completed, pids_max recorded; not failed', async (t) => {

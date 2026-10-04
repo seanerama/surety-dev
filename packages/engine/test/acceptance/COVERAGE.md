@@ -1694,6 +1694,49 @@ Accepted files that use the harness this pass changed (the stand-in, `child.mjs`
 | `contract/config.json` | The engine key `isolation_probe_exhaustion` (boolean, default false; E69 item 4), so M07 and M73 pin it. |
 | SEAM §138; `M110-qualification-per-start.test.mjs` | P20's excuse is the designation, no longer "slice 12 only". While `isolation_probe_exhaustion` is false, P20 is `not_exercised` with a reason naming the key, and it is excused. The M110 check now requires that reason, where it had accepted any `not_exercised`. |
 
+## M2 slice 13 (part 3): the resource limits, in the exhaustion lane (E69, E70)
+
+Written 2026-10-04 by the Verifier of slice 13 part 3, on `verify/m2-s13` reset to `main` at `de8b1a3`. **Written and checked here; never run here.** These files are run only by `--lane exhaust` on `mini-hp01`, where `SURETY_EXHAUSTION_HOST` names the host (E69 item 2; E70).
+
+| Row | File (manifest `exhaust`) | Cases |
+|---|---|---|
+| M133 | `M133-resource-limits.test.mjs` | (a) to (h); and P20 at start on a designated host |
+| M130 | `M130-exit-classes-limits.test.mjs` | (f); (g), moved out of `M130-exit-classes.test.mjs`, whose two failing placeholders are removed |
+
+**The caps** are Sean's (E69 item 1): `pids.max` 64, `memory.max` 64 MiB (raising M130 (f)'s 32 MiB), 1 MiB and 64 inodes of volatile storage. They reach each domain through the trigger fixture's harness-only `domain_limits`, which the slice-13 Builder built. Admission (M133 (e)) is made by configuration values only: `max_concurrent_domains` 1, and `host_reserve_memory` and `host_reserve_disk` at their maxima, each read to exceed what is free. H11 (M133 (h)) is harness-forced.
+
+**Three stops for every instrument** (SEAM §155):
+1. The role program's containment guard.
+2. Its caps guard: the caps carried in the step are at or below Sean's, and the readable volatile filesystem is no larger than the case's.
+3. The test's half: `limitedRole` reads, from the host, the role contained and the domain's `pids.max`, `memory.max`, `memory.swap.max` 0 and the tmpfs's `size` and `nr_inodes` equal to the case's, before the release.
+
+Each loop stops itself at 96 `sleep` forks, 128 MiB, twice the storage bound, 128 files, or 4 MiB of output.
+
+**What was checked here** (nothing exhausting ran):
+- `node --check` passes on every file touched.
+- `node scripts/run-tests.mjs acceptance --lane exhaust` on this host **refuses** (exit 1: "SURETY_EXHAUSTION_HOST must equal this host's name (MSI)").
+- The role program run by hand on the host refused every instrument `refused_unsandboxed`. Inside a throwaway `unshare -Urpfmn --mount-proc` it refused every instrument `refused_caps`: no volatile filesystem, caps above Sean's, no caps.
+- `M130-exit-classes.test.mjs`, with its placeholders removed, run alone:
+  - on `main`'s engine at `de8b1a3` (which does not yet hold the slice-13 build): 0 of 9, at part 1's points;
+  - on `build/m2-s13` at `ecadf6b`, in a detached scratch worktree removed afterwards: 9 of 9.
+
+**For the run on mini-hp01** (the driver's checklist; SEAM §§155 to 157):
+- The engine must be the slice-13 build or later: `domain_limits`, the envelope's `dispatch_hold`, P20's designation.
+- **`stream_slow` does not exist on `build/m2-s13`.** M133 (g)'s queue case needs it; the Builder adds it (SEAM §157). Until then that part of (g) fails at the fault's arming. The line-bound part runs.
+- Run each file alone: `SURETY_EXHAUSTION_HOST=$(hostname) node scripts/run-tests.mjs acceptance --lane exhaust` runs both. A first pass with `node --test` on one file at a time lets you stop at the first anomaly.
+- The host needs the sandbox lane's requirements: the user manager running, `memory` and `pids` delegated, `nsdelegate`, unprivileged user namespaces; and `/proc/meminfo` and the engine home's filesystem readable. M133 (e) requires the host to have less than 64 GiB available and less than 1 TiB free: true on a 16 GB host whose disk is under 1 TiB. If either were not, the case fails at "the fixture is live", never at the engine.
+- Each case's domain is capped; the host's own processes are untouched. M133 (a) checks this with a host sentinel and a host fork during the hold.
+
+**Readings** (each in the seam; † marks a question in the report):
+
+| Plan | Reading | Where |
+|---|---|---|
+| M133 (e): "the hold shown as `resource_envelope` on the run and work reads" | On the work read (`dispatch_hold`); a held item has no run † | SEAM §156 |
+| M133 (f): "two domains at their memory, storage and output limits" | Storage to ENOSPC and kept; 24 MiB held (below `memory.max` with the role's own, so the role lives); 1 MiB of output in lines | SEAM §155 |
+| M133 (g): "a queue over the bound" | Needs a slow consumer: the fault `stream_slow` † | SEAM §157 |
+| M130 (g): "the role allocates to OOM before TERM lands" | The role allocates in its SIGTERM handler: the engine's cancellation began first, so `engine_signaled` | SEAM §145 |
+| P20 pinned | `p20` parts in the host qualification's evidence, each `seeded`, `held` and `control` | SEAM §157 |
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

@@ -3494,3 +3494,85 @@ Section 139's amendment covers them; this part does not add the case (the plan f
 | A screen hit's outcome † | `failed` / `infra_error`, `reason_text` `secret_refused`, the Critical finding, `evidence.secret_refused` with `payload.what` | E67 item 5's interim reason kept; the finding is D1 §14.2's. |
 | The provider-files record † | Section 152's shape; credential names from section 120 | D2 §4.3 in words; A.3's `provider_files {locations, persistence_flags, excluded}` is the entry's, which the canaries fill with the same shape. |
 | Bounds below range for the tests † | `--harness-collect-bounds`, `collect_slow` | The driver: a handful of small files, never a filling loop; the configured minimums (100 entries, 1 MiB) would need one. |
+
+---
+
+# M2 slice 13 (part 3): the resource limits, on the exhaustion host only
+
+Sections 155 to 158 were written with the third part of the slice-13 acceptance tests (2026-10-04; `verify/m2-s13` reset to `main` at `de8b1a3`): row M133 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §3.6, M130 (f) and (g), and P20 pinned at start. They follow D2 §§1.6, 3.7, 6 (H11, H12), A.6 P20, A.7; E64 item 2; E69 items 1 to 4; and E70 (the runner's exhaustion lane). **These files were written and checked on the development workstation and never run there.**
+
+## 155. The exhaustion lane and its instruments
+
+(E69, E70; E64 item 2; sections 127, 141; `scripts/run-tests.mjs` `--lane exhaust`; `harness/scripted/child.mjs`; `harness/sandbox/limits.mjs`.)
+
+**The lane.** A file that forks, allocates, writes or creates to a limit is listed under the manifest's top-level key **`exhaust`**, under no slice and not in the `sandbox` list. `node scripts/run-tests.mjs acceptance --lane exhaust` runs those files, and only when `SURETY_EXHAUSTION_HOST` equals the host's name. That host is `mini-hp01` (E69 item 2), where the files are run one at a time, by Sean or the driver. The full run requires each row to have a file and does not run them. Part 3 lists `M133-resource-limits.test.mjs` and `M130-exit-classes-limits.test.mjs`. **Sean's caps** (E69 item 1): `pids.max` 64, `memory.max` 64 MiB (`memory.swap.max` 0), `domain_writable_bytes` 1 MiB, `domain_writable_inodes` 64.
+
+**The caps reach a domain** through the trigger fixture's harness-only **`domain_limits`** (section 15's fixture, as the slice-13 Builder built it): `{"pids_max", "memory_max", "writable_bytes", "writable_inodes"}`, each a positive integer in tasks or bytes. Every domain of that work item gets them, below the engine's configured minimums. Any other key or value is **400** `invalid_value` (`subject.field` `domain_limits`). Outside harness mode there is none. The override is held by the running engine, not the store, so a restart forgets it (no case restarts).
+
+**Every instrument fails closed in three independent stops** (E64 item 2's two halves, and E69's self-bounds):
+
+1. **The role program's guard** (section 141's `containmentRefusal`). The role's pid, network and mount namespaces are not the host's (the step carries the host's, as the test read its own). Pid 1 is no system init. At most 16 processes are visible.
+2. **The role program's caps guard** (`capsRefusal`):
+   - the step must carry the case's caps, each a positive integer at or below Sean's (`SEAN_CAPS`);
+   - the volatile filesystem the role can read (by `statfs` of `/surety/home`) must be no larger, in bytes and in inodes, than the case's;
+   - an unreadable filesystem refuses. A refusal logs `outcome` `refused_caps` with the reasons.
+   - `memory.max` and `pids.max` cannot be read inside the `role` profile (no cgroupfs), so for those the test's half is the reading.
+3. **The test's half** (`limitedRole`, `assertDomainCaps`). The role holds at `armed`. The host reads it contained (`assertContained`, section 141). Then from the domain's cgroup the host reads `pids.max`, `memory.max` and `memory.swap.max`, and from the role's own `/proc/<pid>/mountinfo` the volatile tmpfs's `size` and `nr_inodes`; each must equal the case's (`memory.swap.max` must be `0`). Anything else, `max` included, and anything unreadable, fails the case before the release.
+
+**The instruments and their self-bounds** (constants in `child.mjs`, under a comment naming this rule; never raised):
+
+| Step (`acting(...)`) | What the role does | Stops itself at |
+|---|---|---|
+| `forkToLimit(caps, {hold_ms})` | One control `sleep` (`control` `spawned`), then `sleep 300` children one at a time until a spawn is refused (`failure` the error); logs `step` `at_limit` with `forks` and `ceiling`; holds them `hold_ms` (at most 30 s); kills and awaits every one | `FORK_CEILING` 96 children, none of which forks |
+| `allocateToLimit(caps, {hold_bytes})` | A control allocation of 1 MiB (`step` `control`), then 1 MiB at a time, every page touched, logging `step` `progress` every 4 MiB; with `hold_bytes`, stops there and keeps it (`step` `done`, `outcome` `holding`) | `ALLOC_CEILING` 128 MiB |
+| `writeToLimit(caps, {keep, hold_ms})` | A control write of 4 KiB (`control` `written`), then 64 KiB at a time to `/surety/home/fill.bin` until an error (`stop`, `ENOSPC` expected); logs `at_limit` with `written`, `size`, `ceiling`; removes the fill unless `keep` | `WRITE_CEILING_FACTOR` × the case's `writable_bytes` (2 MiB) |
+| `createToLimit(caps)` | One control file (`control` `created`), then empty files until an error (`stop`); logs `at_limit` with `made`, `inodes`; removes them | `INODE_CEILING` 128 files |
+| `stdoutFlood(caps, {lines, line_bytes})` | `lines` lines of `line_bytes` bytes (the last a line ending) on standard output | `FLOOD_CEILING` 4 MiB in all; above it, refused |
+
+**Verified on the workstation without an engine** (2026-10-04; nothing exhausting ran):
+- on the host, every instrument was refused `refused_unsandboxed` (five reasons each);
+- inside a throwaway `unshare -Urpfmn --mount-proc`, told the host's namespaces, every instrument was refused `refused_caps`: no volatile filesystem to read; caps above Sean's (a `memory_max` of 1 GiB); no caps at all;
+- the user's process count was unchanged (24 before and after).
+
+## 156. Admission by the resource envelope
+
+(D2 §3.7, A.7 `resource_envelope`; row M133 (e), (f); `src/store/transitions/envelope.ts` on the Builder's branch.)
+
+A dispatch the envelope does not admit creates **no run**: the work item stays `eligible`. The work read (`GET /v1/projects/:p/work`, section 98) shows it on that item as **`dispatch_hold`**: `{"code": "resource_envelope", "reason", "subject": {"limit": "max_concurrent_domains" | "host_reserve_memory" | "host_reserve_disk", "value", "running_domains", …}}`. `dispatch_hold` is null when nothing holds the item.
+
+The plan's "on the run and work reads" is read as the work read alone, since a held item has no run. The cases reach each limit **by configuration only**: `max_concurrent_domains` 1 with a role holding a domain; `host_reserve_memory` at its maximum (64 GiB) and `host_reserve_disk` at its maximum (1 TiB), each first read to be above what the host has free (`MemAvailable`; `statfs` of the engine home). Nothing consumes host memory or disk.
+
+The Builder's reading of the memory reserve counts the new domain's `domain_memory_max` beyond the reserve against `MemAvailable`, and not what the running domains may still grow to. It is recorded in that file as a question for the owner, and no case pins either reading.
+
+## 157. The stream bounds, and P20 pinned
+
+(D2 §3.7, A.6 P20, A.7; rows M133 (g), M110; sections 138, 140.)
+
+**A line or a queue over its bound** (`stream_line_max_bytes`, `stream_queue_max_bytes`, each at its minimum in the case: 64 KiB and 1 MiB) cancels the run as section 140's evidence bound does:
+- the run ends `failed` / `infra_error`, with `reason_text` naming the key;
+- exit class `engine_signaled`;
+- the transcript is kept and truncated: its record holds fewer bytes than the role wrote.
+
+The queue grows only if the engine acts on lines more slowly than they arrive. The fault **`{"point": "stream_slow", "delay_ms": <n>}`** (standing, `times`; harness only) delays acting on each line by `<n>` ms. With it, 2 MiB of 1 KiB lines exceed a 1 MiB queue. The fault is named here; the Builder adds it where it is absent.
+
+**P20 pinned** (the case in M133's file): a start with `isolation_probe_exhaustion` true writes an active host qualification whose P20 is `passed`, with `target_seeded` true, `negative` a non-empty string and `control` true. The row's evidence record holds **`p20`**: `[{"kind": "pids" | "memory" | "bytes" | "inodes", "seeded", "held", "control", "negative", "detail"}]` in that order. Each part has `seeded` true (its box was built and its limits were read back from the host before the program was released, section 138), `held` true and `control` true, and its `detail` names `pids.max 64, memory.max 67108864`.
+
+## 158. Names the Verifier fixed in this pass, and what it changes in earlier sections
+
+**What this pass changes in earlier sections:**
+- Section 15's trigger fixture takes `domain_limits` (section 155).
+- Section 98's work read gains `dispatch_hold` (section 156).
+- Section 7's faults gain `stream_slow` (section 157).
+- Section 141's guarded actions gain the five instruments of section 155, behind a second guard of their own.
+- Section 145: M130 (f), (g) are `M130-exit-classes-limits.test.mjs` in the exhaustion lane; the two failing placeholders of `M130-exit-classes.test.mjs` are removed.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The exhaustion files | Manifest `exhaust`; run only by `--lane exhaust` on a host named by `SURETY_EXHAUSTION_HOST` (section 155) | E69 item 4; E70. |
+| The caps guard † | The caps in the step, each at or below Sean's; the readable volatile filesystem no larger than the case's; unreadable refuses (section 155) | E69 item 1 and the driver's brief: "a limit it can read from inside does not exceed the case's (where readable)". The volatile filesystem is the one limit a `role` sandbox can read. |
+| The test's reading of the volatile bounds | The tmpfs superblock options in the role's own `/proc/<pid>/mountinfo` (section 155) | The tmpfs is in the sandbox's mount namespace; the host reads it through the role's process. |
+| The self-bounds | 96 forks, 128 MiB, twice the storage bound, 128 files, 4 MiB of output (section 155) | E69 item 1 and the driver's brief, named as constants. |
+| A held dispatch's read † | `dispatch_hold` on the work read; no run (section 156) | As the Builder built it; a held item has no run to read. |
+| The stream bounds' outcome | `failed` / `infra_error`, the key in `reason_text`, `engine_signaled`, the transcript truncated (section 157) | Section 140's rule for a bound on evidence. |
+| `stream_slow` † | A standing fault delaying each line (section 157) | A queue over its bound cannot be made without a slow consumer; the other way would be to flood far past the bound. |
+| P20's evidence | The `p20` parts as the Builder writes them (section 157) | `seeded` is the read-back of the box's limits. |
