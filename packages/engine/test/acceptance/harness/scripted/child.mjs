@@ -573,7 +573,7 @@ function signalAllRefusal(spec) {
 // `spawn_until_refused` (at most eight `sleep` children, one at a time,
 // until a spawn is refused). None of them exhausts anything: each is
 // bounded by its own count, and each runs only behind this guard.
-const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes', 'fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes', 'fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood', 'canary_link_edit', 'workspace_chmod']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -1678,6 +1678,43 @@ async function runProbe(spec) {
         }
         entry.sent = sent;
         entry.outcome = 'flooded';
+        break;
+      }
+      case 'canary_link_edit': {
+        // The slice-13 review's S3 (SEAM.md, "Amended after the slice-13
+        // review"): the positive canary's edit made a symbolic link to a file
+        // outside the workspace that holds the expected text. The target is
+        // in the scripted directory (bound at its host path), so a reader on
+        // the host that follows the link finds the expected text there.
+        const c = readCanary();
+        if (c === null || c.kind !== 'positive' || !c.edit?.path || isAbsolute(c.edit.path) || c.edit.path.split('/').includes('..')) {
+          entry.outcome = 'no_positive_canary';
+          break;
+        }
+        const target = join(dir, `canary-link-target-${process.pid}.txt`);
+        writeFileSync(target, c.edit.content);
+        mkdirSync(dirname(at(c.edit.path)), { recursive: true });
+        rmSync(at(c.edit.path), { force: true });
+        symlinkSync(target, at(c.edit.path));
+        entry.path = c.edit.path;
+        entry.target = target;
+        entry.outcome = 'linked';
+        break;
+      }
+      case 'workspace_chmod': {
+        // The slice-13 review's S4: a directory of the workspace made
+        // unreadable (workspace-relative paths only, never "..").
+        if (typeof spec.path !== 'string' || isAbsolute(spec.path) || spec.path.split('/').includes('..')) {
+          entry.outcome = 'refused_path';
+          break;
+        }
+        try {
+          chmodSync(at(spec.path), Number(spec.mode ?? 0));
+          entry.outcome = 'changed';
+        } catch (err) {
+          entry.outcome = 'failed';
+          entry.error = errorOf(err);
+        }
         break;
       }
       case 'canary_actions': {

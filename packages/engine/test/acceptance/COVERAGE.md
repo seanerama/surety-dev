@@ -1737,6 +1737,18 @@ Each loop stops itself at 96 `sleep` forks, 128 MiB, twice the storage bound, 12
 | M130 (g): "the role allocates to OOM before TERM lands" | The role allocates in its SIGTERM handler: the engine's cancellation began first, so `engine_signaled` | SEAM §145 |
 | P20 pinned | `p20` parts in the host qualification's evidence, each `seeded`, `held` and `control` | SEAM §157 |
 
+**After the slice-13 review** (S1 to S5; E31: one Verifier case per confirmed finding; written 2026-10-04 on `verify/m2-s13` from `main` at `ba1864d`). Each case was run alone on `build/m2-s13` at `790fbec`, in a detached scratch worktree with the changed files copied in (removed afterwards; not an acceptance run), and failed at the assertion that states the defect.
+
+| What | File, case | On `790fbec`, the first failing assertion |
+|---|---|---|
+| **S1**, the containment witness can be forged (M135 (i)) | `M135-qualification-attempt.test.mjs`, "S1" | `a containment canary that ran no action must not succeed (canaries: [{"kind":"positive",…"passed":true}…])`: the forged attempt `succeeded`. The other ten M135 cases pass. |
+| **S2**, a secret in `domain.egress_refused`'s payload (M132) | `M132-…`, "S2" | `GET /v1/events holds neither the secret nor its JSON-escaped form`: the events API served the raw CONNECT authority. |
+| **S3**, the positive canary judged through a link (M135) | `M135-…`, "S3" | `a positive canary whose edit is a link out of the workspace must not pass`: it passed. |
+| **S4**, a secret in a materialization error's `reason_text` (M132) | `M132-…`, "S4" | `the run reason holds neither the secret nor its JSON-escaped form (what the role left could not be materialized: … EACCES: …/<secret>/locked …)`. |
+| **S5**, a `result` record on a non-clean exit (M132) | `M132-…`, "S5" | `no record of kind result for a run whose exit class is not clean (D2 §1.4); it has transcript, qualification_evidence, egress_log, result`. |
+
+The six original M132 cases and the ten original M135 cases pass on `790fbec`. Before and after every file the user manager was `running`; the one `surety-*` scope seen during the M135 run was the concurrent `build-m2-s13` engine's, not this run's; no `/tmp/surety-fifo-*` or `-sock-*` was left. S1's instrument is the Reviewer's forger (`harness/sandbox/instruments/forger.mjs`, verbatim), run only inside the containment canary's sandbox through the guarded `exec_probe` path. S3 and S4 use the new guarded `canary_link_edit` and `workspace_chmod` actions, each verified to refuse on the host before any engine ran.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
