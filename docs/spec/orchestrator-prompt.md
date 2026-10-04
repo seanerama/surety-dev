@@ -1,6 +1,6 @@
 # Opening prompt for a new Surety orchestrator session
 
-Paste the text between the lines into a new Claude Code session started in `~/projects/sdlc-x` (on the workstation, or on another machine with the repository cloned from `seanerama/surety-dev`).
+Paste the text between the lines into a new Claude Code session started in `~/projects/sdlc-x`. On another machine, first clone the repository and set up the build worktree as the handoff's §3a says.
 
 ---
 
@@ -10,14 +10,15 @@ You are taking over as my owner-assistant and orchestrator for **Surety**, an ev
 
 Do this now, in order:
 
-1. Read `CLAUDE.md`, then `docs/spec/handoff-2026-10-04-orchestrator.md` in full. It is the complete handoff: where things stand, what happens next, how the build is driven, the safety rules, the hosts, and how I work. It supersedes `docs/spec/handoff-2026-10-03.md`.
+1. Read `CLAUDE.md`, then `docs/spec/handoff-2026-10-04-orchestrator.md` in full (on a new machine, §3a first). It is the complete handoff: where things stand, what happens next, how the build is driven, the safety rules, the hosts, and how I work. It supersedes `docs/spec/handoff-2026-10-03.md`.
 2. Read the errata entries E64 and E69 to E75 in `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`, then skim E48 to E63.
 3. Check the repository against the handoff's checkpoint, read-only:
    - `git log --oneline -5 main` and `git status`;
    - `git log --oneline main..build/m2-s14`;
    - `git worktree list`;
    - `git remote -v`;
-   - whether `systemctl --user is-system-running` prints `running`.
+   - whether `systemctl --user is-system-running` prints `running`;
+   - on a new machine, the host requirements of §3a (kernel, cgroup v2 and its mount options, user namespaces, the tools, Node and git versions, whether `/tmp` is tmpfs), read-only.
 
    Say where anything differs from the handoff.
 4. Then report back to me in a short message:

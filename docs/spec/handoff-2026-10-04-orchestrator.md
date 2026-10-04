@@ -16,7 +16,7 @@
 
 ## 2. Where things stand (checkpoint)
 
-- **`main` at `ebc8cc4`** (plus this document's commit), pushed to `origin`, a private GitHub repository `seanerama/surety-dev` (Sean's backup, created 2026-10-03). Push `main` after every merge (`git push origin main`; tags too).
+- **`main` at `ebc8cc4`** (plus this document's commits), pushed to `origin`, a private GitHub repository `seanerama/surety-dev` (Sean's backup, created 2026-10-03). Push `main` after every merge (`git push origin main`; tags too).
 - **M1 is accepted** (E45; tag `m1-accepted`).
 - **M2** (a real agent, safely contained) is the milestone in progress:
   - Slices 1 and 2 (hardening, a first real project) merged (E50 to E55).
@@ -35,7 +35,7 @@
     - `docs/acceptance/reports/M2-report.md` (a skeleton with about 53 pending facts);
     - the review's cases S1 to S3 with a fake `claude`;
     - SEAM §§159 to 167.
-  - **The engine side** is on branch **`build/m2-s14` at `228cf5e`** (worktree `.claude/worktrees/build-m2-s14`, clean). It contains:
+  - **The engine side** is on branch **`build/m2-s14` at `228cf5e`** (pushed to `origin`; on the old workstation also the worktree `.claude/worktrees/build-m2-s14`, clean). It contains:
     - the Claude Code adapter (stream-json usage, the terminal event, `auth_failed`);
     - the real canaries;
     - `--secret-file`, `surety qualify` and `--harness-real-lane`;
@@ -81,6 +81,38 @@
 - the eBPF feasibility run (E57);
 - `.surety/spec/spec.md` approval;
 - whether to scrub commit `49bd9bf` from history.
+
+## 3a. Starting on another machine
+
+The orchestrator and its agents run their tools on the machine where the session runs, so the code, the tests and the sandbox all live there. Everything needed is on `origin` (`seanerama/surety-dev`, private): `main`, the unmerged **`build/m2-s14`** (`228cf5e`), and the tag `m1-accepted`. Nothing else is needed from the old workstation. (One untracked file there, `docs/architecture/m1.html`, is not part of the repository by Sean's choice.)
+
+1. **GitHub access:** the machine needs credentials that can read and push `seanerama/surety-dev` (e.g. `gh auth login` as seanerama, or an SSH key on his account).
+2. **Clone and set up:**
+   ```
+   git clone https://github.com/seanerama/surety-dev.git ~/projects/sdlc-x
+   cd ~/projects/sdlc-x && npm ci
+   git worktree add .claude/worktrees/build-m2-s14 build/m2-s14
+   ```
+   Then `npm ci` inside that worktree. Start the Claude Code session in `~/projects/sdlc-x`.
+3. **What the machine must provide** for the sandbox lane (D2 §6; the engine checks it at every start and reports H1 to H13):
+   - Linux with cgroup v2 mounted with `nsdelegate`;
+   - the user's systemd manager running, with `memory` and `pids` delegated;
+   - unprivileged user namespaces;
+   - `unshare`, `setpriv`, `mount` (util-linux) and `ip` (iproute2);
+   - git and Node 22.22.0 (other versions are not qualified);
+   - the engine home on a local disk filesystem: `/tmp` must not be tmpfs for the tests, or set `TMPDIR` to a disk directory.
+
+   macOS or Windows without WSL2 cannot run the sandbox lane; the kernel lane runs anywhere Node does.
+4. **The first runs will qualify a new host.**
+   - Run `M110-host-checks-and-scope`, `M112` and `M116` alone first and read the host section of `GET /v1/engine`.
+   - A different kernel or distribution can expose real findings: `mini-hp01` exposed a descriptor leak (E72).
+   - WSL-only cases (P11, M122 (d)) report `not_exercised` off WSL2, by design.
+   - Then establish the full baseline: `node scripts/run-tests.mjs acceptance --slice 13` on `main` (about an hour) **before** judging any branch, and record it as an errata entry: it is the first M2 run on that host.
+5. **Host facts in §7 are the old workstation's.** The clock step, the `loginctl enable-linger` recovery and the WSL details may not apply. Establish the new machine's facts the same way and add them here.
+6. **`mini-hp01`** is reached from the new machine as before (`ssh smahoney@mini-hp01` over Tailscale; Sean approves the Tailscale check). Update its copy from the new machine with a bundle, or clone from GitHub there if it has credentials.
+7. **What does not move:**
+   - the previous session's memory and agents: not needed; this document replaces them;
+   - the plan page's write access, which belongs to Sean's main Claude account.
 
 ## 4. Read these first
 
