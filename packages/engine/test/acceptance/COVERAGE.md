@@ -1521,6 +1521,90 @@ After the run there was no process of this worktree, no scope holding one, no `/
   The next start of the same home reached full mode. By then the old scope was gone, the only member was the new engine in its supervisor leaf, `domains/` and both probe directories were empty, and the host was eligible. **Swept, as E67 item 4 says.**
 - **r4, a home reached through a symbolic link** (`TMPDIR` a link to a directory of the scratch, so the home's path goes through the link). The host was eligible on an active row (only H13 not passed, `not_exercised`). A Builder's run on that home completed and its write was committed (`fix: ok`, `src/a.txt`). **Qualifies.**
 
+## M2 slice 13 (part 1): the result, its collection and the exit classes (M2 build spec §9; E59, E67 item 7, E69)
+
+2026-10-03, by the Verifier of slice 13 part 1 on `verify/m2-s13`, cut from `main` at `6641172` and rebased onto `3a9d87e` (whose engine is the same: only documents changed in between). Rows M129 and M130 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §3.6, M130 without (f) and (g); and Sean's decision **E67 item 7** on the context package. The seam's §§143 to 147 fix what the plan's §2.6 and D2 leave to the tests for these rows; §139 and §126 are amended in place. Two new files are listed under manifest slice 13 and in the `sandbox` list. Parts 2 and 3 of the slice (M131 to M135; the exhaustion cases on `mini-hp01`, E69) are not in this pass.
+
+**Rows and cases.** The plan's letters are the cases.
+
+| Row | File | Cases (plan letters) |
+|---|---|---|
+| M129 | `M129-result-after-termination.test.mjs` | (a); (b); (c), the four P18 shapes in one test; (d) |
+| M130 | `M130-exit-classes.test.mjs` | (a); (b); (c), with and without a result in one test; (d); (e); **(f) and (g) fail by design** with "M130 (f)/(g) run on the exhaustion host only (E69); written in slice 13 part 3" (failing, never skipped: SEAM §145); (h); (i); (j); (k) |
+
+**E67 item 7** (Sean's decision of 2026-10-03: the context package carries the approved texts). `M125-handover.test.mjs` case (c) is extended, not weakened. Its plan fixture now binds requirement R1 with a text, an ADR the stage cites (ADR-1) and a project-wide constraint (C1). Beside them are a requirement the stage does not implement (R2) and an ADR it does not cite (ADR-2). The case requires:
+- exactly one `requirement`, one `adr` and one `constraint` entry in `manifest.json`, each by the source the fixture's answer names;
+- each such file holding that item's approved text verbatim;
+- no file holding R2's or ADR-2's text, and no entry naming either.
+
+Every other assertion of (c) is unchanged. The fixture's new fields are SEAM §139's amendment: a requirement's `text`, `adrs`, `constraints`, a stage's `adrs`, and `source` in the answer. The phase plan's and dependency interfaces' texts follow the same rule, but no case pins them (the fixture binds no dependency module).
+
+**New and changed harness.**
+- `harness/scripted/child.mjs`:
+  - `result` writes `/surety/out/result.json` before it sends the line, but only where `/surety/out` is a directory;
+  - new steps `result_file` and `result_event`;
+  - three new guarded actions behind section 141's guard: `result_shape` (shapes `host_fifo_link`, `device_link`, `fifo`, `oversize`, `rewriter`), `kill_parent` and `spawn_until_refused`;
+  - two modes for descendants, `rewriter` and `killer`.
+- `harness/scripted.mjs`: `step.resultFile`, `step.resultEvent`, and `acting(...)` gains `resultShape`, `killParent` and `spawnUntilRefused`; `GUARDED_ACTIONS` gains the three; new helper `resultFileOf`.
+- `harness/sandbox/cgroup.mjs`: `counterOf`, `pidsCurrent`, and the confined `setPidsMax`.
+- `harness/sandbox/result.mjs`, new: `collectionOf`, `runRecords`, `recordJson`, `unacceptedOf`, `assertReadShowsExit`, and `fifoWatch`, P18's ENXIO watch.
+- `harness/gates.mjs`: `installGatedPlan` takes `{key, text}` requirements, `adrs` and `constraints`.
+
+**The guard, and what ran on the host.** Before any engine ran them, the role program ran by hand.
+- **On the host:** each new guarded action was refused (`refused_unsandboxed`, five reasons each). `result` and `result_file` wrote nothing (`no_out_dir`: the host has no `/surety`).
+- **Inside a throwaway `unshare -Urpfmn --mount-proc`, told the host's namespaces:**
+  - `spawn_until_refused` started three `sleep`s and killed them.
+  - `result_shape` found no `/surety/out` and wrote nothing.
+  - `kill_parent`'s killer **refused** when the role was pid 1 of that namespace (target not greater than 1). With the role as pid 2 it sent SIGKILL to exactly its parent.
+- **In the engine runs below:** every guarded role was released only after `assertContained`.
+
+No case on this host forks, allocates or writes to a limit. M130 (h)'s two `sleep`s run against a `pids.max` the test lowered on that one domain (SEAM §144).
+
+**What was run.** `npm run build` ran on `3a9d87e` (`main`'s engine at the rebase; `src/` is unchanged since `6641172`). Then each file ran alone with `node --test`, never two at once. Before every file, `systemctl --user is-system-running` printed `running`. After every file, `systemctl --user list-units 'surety-*'` listed nothing, and no `/tmp/surety-fifo-*` and no process of this worktree remained. Results per file:
+
+| File | Cases | Result on today's engine (first failing assertion) |
+|---|---|---|
+| M129 | 0 of 4 | **(a)** fails at the E65 item 7 defect: `run.validating` (seq 31) precedes `domain.terminated` (seq 34), so the result is recorded before termination. Live up to there: the role wrote its own result and the descendant rewrote the file. **(b)** fails at "the run read has result_collection". Live up to there: at `boundary.before_terminated` the launcher paused before placement was gone (host-read), and the run ended `timed_out` with nothing launched. **(c)** fails at "outcome": the run with a link to the host FIFO ends `completed`, its result taken from the stdout line. **(d)** fails at its own premise, for the same reason: the refused run `completed`. |
+| M130 | 0 of 11 | **(a), (d), (j), (k)** fail at "the run read has result_collection"; before that, (a) completed `clean` and (d) was `engine_signaled`. **(b), (c)** fail at the reason class: `infra_error` where `invalid_result` is expected (the file is not read). **(e)** fails at "the run's reason names the class" (`reason_text` null). Before that it passed: `foreign_signal` with `exit_evidence` `[status null, signal 9, signal_by_engine false]` already holds. **(f), (g)** fail by design. **(h)** fails at "execution_domains.resource_events records it too" (null). Before that it passed: the spawn was refused at the lowered limit; the host read `pids.events max` at 1 or more; the run was `clean`/`completed`; `exit_evidence.resource_events.pids_max` recorded the rise. **(i)** fails at "the run's result is null" (a `result` record exists). |
+| M125 | 2 of 3 | (a)+(b) and (d) **pass**. (c) **fails** at its first new step: the plan fixture refuses `adrs` (`unknown_field`). |
+
+**Accepted files that use the harness this pass changed** (`step.result` now writes the file in the sandbox lane; `installGatedPlan`), each run alone on the same engine: M44 6 of 6 and M106 4 of 4 (kernel lane, `installGatedPlan`); M116 4 of 4, M113 7 of 7, M121 6 of 6, M123 5 of 5, M127 3 of 3, M118 7 of 7 (sandbox lane). After M118 the user manager listed one `surety-*` scope. It was not this pass's: its engine is the slice-13 Builder's (`build-m2-s13/packages/engine/dist/cli.js`), running at the same time. M117 was not run.
+
+**One correction made during this pass, before any Builder had the file.** M129 (a)'s first form required the descendant to go on rewriting after the role's exit. On today's engine it died within about 100 ms of the exit: the domain init leaves with the backend, and its pid namespace goes with it. D2 does not pin that window, and M116 (b) does not require it. The case now has the role write its own result first, start the descendant, wait half a second, then send the event and exit. It pins what is collected, and that `domain.terminated` precedes `run.validating`. It does not pin a window after the exit.
+
+**Readings where the plan's words met the mechanism** (each fixed in the seam section named; † marks a question for Sean in the Verifier's report):
+
+| Plan | Reading | Where |
+|---|---|---|
+| M129 (a): "the last marker before the kill" | The record holds the last marker the descendant logged, or the next one (it logs after the rename), never an earlier one | SEAM §144 |
+| M129 (b): "nothing collected; `result` null" | `result_collection` `not_collected`, `bytes_read` null; no `result`, `unaccepted_result` or `provider_files` record | SEAM §143 |
+| M129 (c): "the FIFO never had a reader (ENXIO on every non-blocking open by the test)" | A FIFO in `/tmp/surety-fifo-XXXXXX/`, polled `O_WRONLY \| O_NONBLOCK` every 20 ms from before the dispatch to a second after the end | SEAM §144 |
+| M129 (c): "within `collect_deadline`" | The run ends within `collect_deadline` (5 s, the minimum) of the test seeing `domain.terminated`, with a reason that is not `deadline` | SEAM §143 |
+| M129 (c): "zero bytes read from the device" | A link to `/dev/zero` is `link`, `bytes_read` 0 | SEAM §143 |
+| M130 (b), (c): "well-formed result" | `result_collection` `accepted` is the collector's verdict on the file; the run's result needs `clean` † | SEAM §143 |
+| M130 (d): "published as an `unaccepted_result` record after the screen" | One record of the run whose value is what the role wrote; the screen itself is M132's | SEAM §143 |
+| M130 (e): "naming the class" | `reason_text` holds `foreign_signal` | SEAM §145 |
+| M130 (h): "`pids.max` hit" | The test lowers that domain's `pids.max` to `pids.current + 2`, and the role spawns at most eight `sleep`s until one is refused † | SEAM §144 |
+| M130 (k): "both shown" | `exit_class` and `domain_observation` on the run read, each equal to the store's | SEAM §145 |
+| D2 §1.7, plan §2.6: "the UUID derivation" | The engine's existing SHA-256 derivation laid out as a version-4 UUID, recorded on the receipt at dispatch † | SEAM §146 |
+
+**Recorded, not pinned:**
+
+| Not pinned | Why |
+|---|---|
+| Whether a descendant outlives the role's exit (the init leaving with the backend) | D2 does not say; M116 (b) does not need it. |
+| What the engine does when the result line and the file disagree | Neither the plan nor D2 asks. |
+| The `device` and `not_regular` reasons | A role cannot make a device node in its namespace, and no row names a directory or a socket at the path. |
+| An `unaccepted_result` under `clean` or `error_exit`, or for an invalid file | D2 §1.4 lists the classes that publish one; the others are not stated. |
+| The event without a file on a `clean` exit (`infra_error`) | Section 13's rule carried; the row names no such case. |
+| `resource_limit` | M130 (f), (g), part 3, on the exhaustion host. |
+| A quarantine's later collection after clearance | D2 §3.4 says only "neither collected nor ended" while unknown. |
+| The phase plan's and dependency interfaces' texts in the package | E67 item 7 covers them; the fixture binds no dependency module, and the case pins requirements, ADRs and constraints. |
+
+**Not written:** M130 (f), (g) (part 3, E69); the session-id case (M131 (c), part 2: SEAM §146 fixes only the derivation and where it is recorded).
+
+**Accepted tests changed:** M125 (c), extended for E67 item 7 as above. Nothing else.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
