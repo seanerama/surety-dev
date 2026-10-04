@@ -218,6 +218,29 @@ export function moveIntoCgroup(pid, dir) {
   if (done.status !== 0) throw new Error(`writing pid ${pid} into ${dir}/cgroup.procs failed: ${done.stderr.trim()}`);
 }
 
+// One key of a flat-keyed cgroup file (`memory.events` `oom_kill`,
+// `pids.events` `max`), as a number; throws when it cannot be read.
+export function counterOf(dir, file, key) {
+  const line = readFileSync(join(dir, file), 'utf8').split('\n').find((l) => l.trim().split(/\s+/)[0] === key);
+  if (line === undefined) throw new Error(`${dir}/${file} has no ${key}`);
+  return Number(line.trim().split(/\s+/)[1]);
+}
+
+// `pids.current` of a cgroup, as a number.
+export const pidsCurrent = (dir) => Number(readFileSync(join(dir, 'pids.current'), 'utf8').trim());
+
+// Lower a domain's `pids.max` from the test's side (M2 slice 13, row M130
+// (h); SEAM.md §145). Confined as every change here is, and more narrowly:
+// only a domain's own directory (`dom_<ULID>`) inside a test engine's
+// scope, only `pids.max`, only a small positive integer. Lowering the limit
+// ends no process; it only makes a later fork in the domain fail.
+export function setPidsMax(dir, value) {
+  assertInsideTestScope(dir, 'set pids.max of');
+  if (!/\/dom_[0-9A-HJKMNP-TV-Z]{26}$/.test(dir)) throw new Error(`refusing to set pids.max of ${JSON.stringify(dir)}: only a domain's own directory`);
+  if (!Number.isInteger(value) || value < 1 || value > 64) throw new Error(`refusing pids.max ${JSON.stringify(value)}: a small positive integer only`);
+  writeFileSync(join(dir, 'pids.max'), String(value));
+}
+
 // Create a leaf cgroup under a test scope, or under a directory inside one
 // (a scope the engine owns is writable by the same uid).
 export function makeLeaf(parent, name) {

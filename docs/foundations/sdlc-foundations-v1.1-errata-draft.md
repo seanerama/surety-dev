@@ -1340,3 +1340,16 @@ After this slice the engine builds, validates and publishes the mount plan, pres
 **Open, carried:** E67 items 5 and 6 (defaults; recorded items); P20 and the context package's texts (Sean's decision, E67 item 7) in slice 13; the closing pass re-runs the Reviewer's crash-during-suite and symlinked-home scripts and adds `header_timeout` to SEAM §140's reasons.
 
 ---
+
+## E69. Exhaustion tests run on a second host; P20 excused on this one; the test caps (decided, 2026-10-03)
+
+**Status: decided by Sean**, one item at a time; the mechanism details marked as the driver's are provisional.
+
+The slice-13 Verifier stopped before writing the fork, allocation and storage-filling instruments (P20, M130 (f) and (g), M133), after a safety check interrupted it and in view of E64, and found the plan's caps too tight for this engine (`pids.max` counts threads: a bare Node process holds about 7; Node's own memory is about 6 MiB plus file pages; the engine's configured minimums are 64 tasks and 512 MiB).
+
+1. **The test caps (Sean):** process-limit cases at `pids.max` 64 with `sleep` children that never fork; every memory case at 64 MiB (M130 (f)'s 32 MiB raised); each instrument also stops itself at 96 tasks or 128 MiB whatever the cgroup does. Test-only values set through a harness override of the domain's limits; the engine's defaults and ranges unchanged.
+2. **Where they run (Sean):** not on this WSL workstation. After asking for a throwaway VM, Sean offered `mini-hp01` (on his Tailscale network; bare-metal Arch-based, kernel 7.1.9, 12 cores, 16 GB; cgroup v2 with `nsdelegate`, `memory` and `pids` delegated, unprivileged user namespaces, the user manager running; no Node; it also runs staging Docker containers under root) and chose to run there, guarded: Node installed in the user's home directory, only the exhaustion files run, one at a time, under uid 1000, each reading the limits in force from the host before release and capping itself, stopping at the first anomaly. The staging containers are the only exposure, reachable only if both guards failed.
+3. **P20 on this host (Sean):** the engine's start-up probe P20 reports `not_exercised` here and the host qualification accepts that excuse, listed as not claimed; the engine still reads back every domain's limits before authorizing a launch (the slice-13 Builder's brief); the exhaustion proof comes from the run on `mini-hp01`. Slice 14 can proceed on this host.
+4. **Mechanism (the driver's, provisional):** P20 runs only when the engine is told the host is designated for exhaustion probes (one closed configuration key, default off, its name fixed by the Verifier and Builder in the seam; on a host without it P20 is `not_exercised` with the reason and excused); the exhaustion acceptance files form their own manifest list run by an owner-added runner lane (`--lane exhaust`), never in `npm test` on this host, like the paid real lane; the slice-13 cases are written in smaller sessions, the exhaustion files last.
+
+---
