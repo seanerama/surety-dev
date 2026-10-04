@@ -19,11 +19,16 @@
 // without starting anything. Only Sean clears a step, by naming it in
 // SURETY_REAL_RERUN.
 //
-// THE KEY. The dedicated provider key is never in this source, an argument,
-// an environment variable, a log or a file this module writes. The test is
-// given a reference (SURETY_REAL_KEY_REF, the path of a file that holds the
-// key) and hands the engine the same path (`--secret-file`). It reads the
-// value only to search for it afterwards, in-process (M139 (a), M140 (e)).
+// THE CREDENTIAL. M2's real lane authenticates with Sean's Claude
+// subscription: a long-lived token he makes himself with `claude setup-token`
+// (E74 item 1, Sean's decision). The `api_key` mode is kept and can be
+// selected (SURETY_REAL_AUTH_MODE), but M2 claims only the subscription
+// mode. Either credential is never in this source, an argument, an
+// environment variable, a log or a file this module writes. The test is
+// given a reference (SURETY_REAL_CREDENTIAL_REF, the path of a file that
+// holds it) and hands the engine the same path (`--secret-file`). It reads
+// the value only to search for it afterwards, in-process (M139 (a), M140 (e)).
+// Below, "key" names the credential of either mode.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -49,7 +54,11 @@ export const REAL = Object.freeze({
   // The one destination the attempt proposes. Anything else a canary
   // contacts is refused by the proxy and reported, never added (D2 §2.4).
   candidateEgress: Object.freeze(['api.anthropic.com']),
-  keyRef: 'backend/claude/api_key',
+  // The credential's reference, per auth mode (E74 item 1; SEAM.md §160).
+  authModes: Object.freeze({
+    subscription_token: Object.freeze({ ref: 'backend/claude/subscription_token', invalid: 'sk-ant-oat01-surety-invalid-' }),
+    api_key: Object.freeze({ ref: 'backend/claude/api_key', invalid: 'sk-ant-api03-surety-wrong-' }),
+  }),
   // E59: 300 000 billable tokens per run; 25 USD verified per day; the
   // provider-side cap on the dedicated key is 50 USD. The day's 25 USD is
   // split between the three projects the lane charges, so their day limits
@@ -59,6 +68,9 @@ export const REAL = Object.freeze({
   runBillableTokens: 300_000,
   dayVerifiedUsd: Object.freeze({ qualification: 10, pathOne: 6, pathTwo: 9 }),
   dayUnknownTokens: 900_000,
+  // The provider-side cap on a dedicated API key (api_key mode only). In
+  // the subscription mode the hard limit is the subscription's own usage
+  // limits, which Sean's own Claude use shares (E74 item 1).
   providerCapUsd: 50,
   // Seconds. The attempt's canaries; the journey's roles (the minimum is 300).
   canaryDeadlines: Object.freeze({ positive: 600, cancellation: 300, containment: 600 }),
@@ -76,11 +88,12 @@ export const REAL = Object.freeze({
 export const RUN_BILLABLE_MAX_USD = (REAL.runBillableTokens * REAL.usdPerMillion.output) / 1_000_000;
 
 // SURETY_REAL_CONFIRM_SPEND must be exactly this.
-export const CONFIRM_PHRASE = 'I accept up to 25 USD a day and 50 USD in all';
+export const CONFIRM_PHRASE = 'I accept the M2 real lane on my Claude subscription, up to 25 USD a day as estimated';
 
 const ENV = Object.freeze({
   runDir: 'SURETY_REAL_RUN_DIR',
-  keyRef: 'SURETY_REAL_KEY_REF',
+  keyRef: 'SURETY_REAL_CREDENTIAL_REF',
+  authMode: 'SURETY_REAL_AUTH_MODE',
   binary: 'SURETY_REAL_CLAUDE_BINARY',
   confirm: 'SURETY_REAL_CONFIRM_SPEND',
   wait: 'SURETY_REAL_WAIT_MINUTES',
@@ -117,7 +130,7 @@ export function realPreflight() {
 
   // The key reference: a path, never a key.
   const keyRef = env[ENV.keyRef];
-  if (!keyRef.startsWith('/')) fail(`${ENV.keyRef} must be the absolute path of a file that holds the key, never the key itself (its value is not shown)`);
+  if (!keyRef.startsWith('/')) fail(`${ENV.keyRef} must be the absolute path of a file that holds the credential, never the credential itself (its value is not shown)`);
   let st;
   try {
     st = lstatSync(keyRef);
@@ -158,6 +171,8 @@ export function realPreflight() {
 
   const waitMinutes = Number(env[ENV.wait] ?? 120);
   if (!Number.isFinite(waitMinutes) || waitMinutes < 1 || waitMinutes > 600) fail(`${ENV.wait} must be a number of minutes from 1 to 600`);
+  const authMode = env[ENV.authMode] ?? 'subscription_token';
+  if (!(authMode in REAL.authModes)) fail(`${ENV.authMode} must be "subscription_token" (M2's) or "api_key"`);
   const pathTwo = env[ENV.pathTwo] ?? 'real';
   if (!['real', 'mixed'].includes(pathTwo)) fail(`${ENV.pathTwo} must be "real" or "mixed"`);
 
@@ -172,7 +187,7 @@ export function realPreflight() {
   }
   if (!isLink(link)) symlinkSync(binary, link);
 
-  const ctx = { runDir, keyRef, keyValue, binary, binarySha256, binDir, waitMinutes: waitMinutes, pathTwo };
+  const ctx = { runDir, keyRef, keyValue, authMode, credentialRef: REAL.authModes[authMode].ref, binary, binarySha256, binDir, waitMinutes: waitMinutes, pathTwo };
   Object.defineProperty(ctx, 'keyValue', { enumerable: false }); // never serialized
   applyRerun(ctx);
   return ctx;
@@ -302,9 +317,13 @@ function assertNoKey(ctx, text, where) {
 
 // ---- engines (SEAM.md §164) -----------------------------------------------------------
 
-// The secret flags of every real-lane engine: the key's file by reference
-// and the provider-side cap recorded beside it (D2 Q1, Q2; SEAM.md §160).
-export const secretArgs = (keyFile) => ['--secret-file', `${REAL.keyRef}=${keyFile}`, '--provider-cap-usd', `${REAL.keyRef}=${REAL.providerCapUsd}`];
+// The secret flags of every real-lane engine: the credential's file by
+// reference under the mode's reference name, and, for an API key only, the
+// provider-side cap recorded beside it (D2 Q2; E74 item 1; SEAM.md §160).
+export const secretArgs = (ctx, keyFile) => {
+  const ref = REAL.authModes[ctx.authMode].ref;
+  return ['--secret-file', `${ref}=${keyFile}`, ...(ctx.authMode === 'api_key' ? ['--provider-cap-usd', `${ref}=${REAL.providerCapUsd}`] : [])];
+};
 
 const engineEnvFor = (ctx) => ({ ...sandboxEnv(), PATH: `${ctx.binDir}:${process.env.PATH ?? '/usr/bin:/bin'}` });
 
@@ -315,7 +334,7 @@ export async function productionEngine(ctx, name, { keyFile = ctx.keyRef, config
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, tick_interval: 30, ...config });
-  const engine = await startEngine({ home, port, harness: false, args: secretArgs(keyFile), env: engineEnvFor(ctx), timeoutMs: 180_000 });
+  const engine = await startEngine({ home, port, harness: false, args: secretArgs(ctx, keyFile), env: engineEnvFor(ctx), timeoutMs: 180_000 });
   return { engine, home, port, root: ctx.runDir };
 }
 
@@ -329,7 +348,7 @@ export async function journeyEngine(ctx, name, { scriptedDir = null, config = {}
   const home = join(ctx.runDir, name);
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, tick_interval: 600, ...config });
-  const args = ['--harness-real-lane', ...(scriptedDir ? ['--harness-scripted', scriptedDir] : []), ...secretArgs(ctx.keyRef)];
+  const args = ['--harness-real-lane', ...(scriptedDir ? ['--harness-scripted', scriptedDir] : []), ...secretArgs(ctx, ctx.keyRef)];
   const engine = await startEngine({ home, port, harness: true, args, env: engineEnvFor(ctx), timeoutMs: 180_000 });
   return { engine, home, port, root: ctx.runDir };
 }
@@ -451,6 +470,12 @@ export function terminalOutput(t) {
   return { tokens: null, scope: null };
 }
 
+// What the ledger calls Claude Code's `total_cost_usd` in each auth mode
+// (E74 item 1; SEAM.md §161): with an API key, the provider's reported cost;
+// with a subscription token, Claude Code's client-side estimate.
+export const costStatusFor = (ctx) => (ctx.authMode === 'api_key' ? 'reported' : 'estimated');
+export const dayTotalFor = (ctx) => (ctx.authMode === 'api_key' ? 'reported_usd' : 'estimated_usd');
+
 export const ledgerOriginal = (home, run) => withStore(home, (db) => db.prepare('SELECT * FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL').all(run));
 
 export const eventsAboutRun = (home, run) =>
@@ -532,14 +557,15 @@ export function secretHits(value, { roots = [], repos = [] } = {}) {
   return hits;
 }
 
-// A wrong key for M139: shaped like a dedicated key, random, held in a
-// 0600 file in the run directory. It authenticates nothing.
+// An invalid credential for M139, of the lane's auth mode: a subscription
+// token or an API key in form, random, held in a 0600 file in the run
+// directory. It authenticates nothing.
 export function wrongKeyFile(ctx) {
   const dir = join(ctx.runDir, 'keys');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = join(dir, 'wrong.key');
+  const file = join(dir, `invalid-${ctx.authMode}`);
   if (!existsSync(file)) {
-    writeFileSync(file, `sk-ant-api03-surety-wrong-${randomBytes(48).toString('base64url')}\n`, { mode: 0o600 });
+    writeFileSync(file, `${REAL.authModes[ctx.authMode].invalid}${randomBytes(48).toString('base64url')}\n`, { mode: 0o600 });
     chmodSync(file, 0o600);
   }
   return { file, value: readFileSync(file, 'utf8').trim() };
