@@ -3605,3 +3605,170 @@ The case has two attempts on one engine:
 2. **A control whose backend runs the probe program.** It must succeed, with every action witnessed and passed, and `token_read`, `git_config` and `unlisted_connect` each `host.checked` and `host.agrees` true in the containment evidence. The test reads independently: the containment run's `egress_log` record shows a `refused` / `not_listed` CONNECT; `api.token`'s bytes and the fixture repository's `.git/config` are unchanged across the attempt.
 
 `engine_port` has no host-side corroboration in this design (`host.checked` false). It is listed in `docs/acceptance/reports/M2-not-claimed.md` with the design's other two residuals.
+
+---
+
+# M2 slice 14: the real lane, the report and the hands-on run
+
+Sections 159 to 166 were written with the slice-14 acceptance tests (2026-10-04; `verify/m2-s14` from `main` at `872afe9`): rows M136 to M142 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §§3.8 and 3.9. They follow D2 §§1.2, 1.5 to 1.7, 2.4, 2.5, 4.1 to 4.5, 7.2, A.2, A.3, A.7, Appendix B (T08 to T11, T13); Q1, Q2, Q7; E59 (Sean's model and spend; the plan's questions 2 and 4 settled); E61 to E73. **Nothing in the real lane was run when they were written.** No `claude` ran with a prompt, no key existed or was read, and `--lane real` was never invoked; the files were checked with `node --check` only. One file of the slice is in the sandbox lane and was run (section 163, "M137 (b)").
+
+## 159. What the real-lane tests assume throughout
+
+(M2 plan §2.1, §3.8; BS §§4, 8, 9; E59 items 1 and 2; `harness/real/lane.mjs`.)
+
+**The lane.** The files of rows M136 to M140 are listed under the manifest's top-level key **`real`**, under no slice, in this order: `M139-unauthenticated-canary`, `M136-positive-canary`, `M137-cancellation-canary`, `M138-containment-canary`, `M140-real-backend-journey`. Only `node scripts/run-tests.mjs acceptance --lane real` runs them, and only Sean runs that (E59 item 1; CLAUDE.md). The full run requires their rows to have files and does not run them. M139 is first because its attempt's key is wrong on purpose: the real binary, the sandbox around it, the proxy's tunnel to the provider and the attempt's failure path run once at no token cost before anything paid starts.
+
+**What Sean sets** (each read by `realPreflight()` before any engine or binary starts; a missing or malformed one fails the file with "Nothing was started", never a skip):
+
+| Variable | Value |
+|---|---|
+| `SURETY_REAL_RUN_DIR` | An absolute directory outside the repository, made 0700 if absent: the run directory (section 163). One per real run; reusing it re-judges what it recorded and starts nothing already done. |
+| `SURETY_REAL_KEY_REF` | The key's reference: the absolute path of a regular file, not a link, mode 0600 or 0400, owned by the user, holding the dedicated key on one line and nothing else, outside the repository, the run directory, `~/.claude` and `~/.codex` (section 160). Never the key itself: a value that is not an absolute path is refused and not echoed. |
+| `SURETY_REAL_CLAUDE_BINARY` | The Claude Code binary to qualify, by its own regular file (not `~/.local/bin/claude`, a link that moves when Claude Code updates itself). The test hashes it and puts a link named `claude` to it in `<run dir>/bin`, first on the engine's `PATH` (section 164). |
+| `SURETY_REAL_CONFIRM_SPEND` | Exactly `I accept up to 25 USD a day and 50 USD in all`. |
+| `SURETY_REAL_WAIT_MINUTES` | Optional, 1 to 600, default 120: how long a test waits for one of Sean's answers (section 162). |
+| `SURETY_REAL_RERUN` | Optional: step names, comma-separated, to clear before this run (section 163). Only Sean sets it. |
+| `SURETY_REAL_PATH_TWO` | Optional, `real` (default) or `mixed`: path two of the journey with real roles, or E59 item 3's recorded fallback. |
+
+The user manager must be reachable (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, section 122). Each real-lane test sets its own timeout of eight hours (`node:test`'s per-test option), so that the runner's ten-minute default does not end a wait for Sean; Sean may also set `SURETY_TEST_TIMEOUT_MS=28800000`.
+
+**Stop, never retry.** A retry costs money. Every step that starts an engine, a binary or a run is a named **step** of the run directory (`realStep`): it runs at most once; a later file or a later run of the lane that needs it reads its recorded value. A step that throws is recorded `failed` with its reason and **halts** the run directory; so does a failed judgement over recorded values (`judged`). While the run directory is halted every step not yet run fails at once without starting anything; done steps can still be re-judged. Only Sean clears a step or a halt, by naming it in `SURETY_REAL_RERUN` (a judgement's halt is named `judge:<case>`). The steps: `wrong_key_attempt` and `wrong_key_replay` (M139), `attempt` (M136 to M138), `activation`, `path_one`, `stop_case`, `path_two` or `path_two_mixed` (M140).
+
+**Sean's two decisions are his** (E59 item 2; BS §9, "never by a fixture"). No real-lane test answers `qualification_approval` or `trust_activation`, for any option (section 162). Every paid run passes through one of them: an attempt's canaries through its approval, a journey run through the entry's activation, under the journey projects' limits.
+
+## 160. The key's reference, the engine's secret flags, and the key's absence
+
+(D2 §2.5, Q1, Q2; SEAM §§57, 116, 120; rows M139 (a), M140 (e), M142 (9).)
+
+**The test never holds the key in an argument, an environment, a log or a file it writes.** It reads the file named by `SURETY_REAL_KEY_REF` into memory only to search for the value afterwards, and it checks every file it writes (`state.json`, `observed/*.json`) for the value before writing (a hit writes nothing and fails). The engine is given the path.
+
+**The engine's flags** (the slice-14 engine side; production code, accepted with or without `--harness`):
+
+| Flag | Meaning |
+|---|---|
+| `--secret-file <ref>=<path>` | Repeatable. At start the engine reads the file at `<path>` and holds its content (without a trailing line end) as the resolved secret `<ref>`, as `POST /v1/harness/secrets` holds one (section 57): in memory only, registered with the redactor and the secret screen, written nowhere. `<ref>` is `backend/claude/api_key` or `backend/codex/api_key` (section 116). **Refused at start**, exit status 4, the refusal's `code` `secret_file_refused`, nothing written: a path that is not absolute, not a regular file (a link included), readable or writable by group or others, not owned by the engine's uid, empty, holding more than one line, or under the engine home. The path may appear in the engine's log and records; the value never. |
+| `--provider-cap-usd <ref>=<usd>` | The provider-side cap the operator configured on that key, recorded as `configured` evidence (section 120): on the grant (`capability_grants.provider_cap`) and on a qualification attempt's `spend.provider_cap` (`{"status": "configured", "usd"}`). Never engine enforcement. |
+
+**The key's absence** (`secretHits`): every file under the given roots and every git object of the given repositories (read with `git cat-file --batch-all-objects --batch`, compared in-process) is searched for the value and its JSON-escaped form. M139 (a) searches `home-auth/` for the wrong key and the dedicated one; M140 (e) searches the whole run directory and the git objects of every repository the lane used, the qualification fixture's included. A file that cannot be read is a hit ("not shown to hold nothing").
+
+**The wrong key** (M139): `sk-ant-api03-surety-wrong-` followed by 64 random base64url characters, in `<run dir>/keys/wrong.key`, mode 0600, made once. It authenticates nothing; the provider refuses it before any token is billed.
+
+## 161. The bounds a real-lane run sets
+
+(E59; D2 §4.2, §7.2, Q2, Q7, C4; SEAM §§115, 120; `REAL` in `harness/real/lane.mjs`.)
+
+| What | Value | Where it is set |
+|---|---|---|
+| Model, every canary and every role | `claude-sonnet-5-5` (E59) | the attempt's body; the entry's model |
+| `budget_run_billable_tokens` | 300 000 (E59) | each project the lane charges |
+| `budget_day_verified_usd` | 10 (the engine's qualification fixture project), 6 (path one's project), 9 (path two's): 25 in all, Sean's day (E59) | each project |
+| `budget_day_unknown_tokens` | 900 000 | each project |
+| `deadline_builder`, `deadline_verifier`, `deadline_reviewer` | 900, 600, 600 s | each journey project and the fixture project |
+| `canary_deadlines` | positive 600, cancellation 300, containment 600 s | the attempt's body |
+| The provider-side cap | 50 USD, recorded with `--provider-cap-usd` (section 160) | the engine's flags |
+
+Every value is a lowering of the default, so `POST /v1/projects/:p/policy` applies it at once and raises no decision (section 115). The fixture project's policy is lowered **before** the attempt is proposed, so the attempt's estimate is made under it.
+
+**Before Sean is asked** (`spendGuard`; a failure halts the run directory and the question is never put to him): the attempt is `proposed`, binds `claude-sonnet-5-5`, the pinned binary's SHA-256 and `["api.anthropic.com"]` as its only candidate destination; its `spend` has `label` `estimate`, `overshoot` `deadline`, an `estimate` that is a number greater than zero and no greater than the fixture project's day limit (10 USD), and `provider_cap` `{"status": "configured", "usd": 50}`. M135's "null where no price is known" stands for a model with no price; for the real lane the engine's price table must know `claude-sonnet-5-5`.
+
+**The price table** (the slice-14 engine side; D1 §13.2, C4): `claude-sonnet-5-5` at 2 USD per million input tokens, 10 USD per million output tokens and 0.20 USD per million cache-read tokens (Anthropic's first-party rates as cached in the Claude API reference on 2026-09-25; Sean confirms them on his console), its version recorded on every estimated row. How the attempt's estimate is computed is not pinned; the Verifier's reading is the worst case of billable tokens, three canaries at the run limit at the output rate (9.00 USD at these settings), labelled an estimate and never a maximum.
+
+**Claude Code's usage, normalized** (the Verifier's reading of D2 §1.5 for the adapter; the Builder may object): `out` is the stream's `usage.output_tokens`; `cached_in` its `usage.cache_read_input_tokens`; `billable_in` its `usage.input_tokens` plus `usage.cache_creation_input_tokens`; the cost is `reported` with `total_cost_usd` where the stream gives it. Each is null where the stream does not carry it. Which events carry usage, and whether the terminal event's figures are cumulative, are the positive canary's to establish (D2 §4.5); M136 (d) and M140 (d) compare the ledger with the terminal event only where it carries the figure.
+
+**What a step can cost at most**, as the tests and the hands-on script state it before a paid step: runs × 300 000 billable tokens × 10 USD per million = 3.00 USD a run in billable tokens, plus cache reads (not counted by the run limit) and any overshoot until the run's deadline (D2 §4.2, §8 class C); the project's day limit stops new runs; the 50 USD cap is the only hard maximum.
+
+## 162. How a test waits for Sean
+
+(E59 item 2; plan question 2 (a); D2 §4.1, §7.2, Q7; section 117; `waitForSean`.)
+
+The test finds the open engine-scoped decision of the kind about the subject in the store, and writes, to its standard error, to its terminal when it has one (`/dev/tty`) and to `<run dir>/WAITING.txt`: what is asked; the decision's id, kind and preview hash; the facts that matter for money (for `qualification_approval`: the binary's path, SHA-256 and version, the model, the engine's spend estimate as labelled, the most the canaries' billable tokens can cost, the fixture project's day limit, the 50 USD cap, the candidate egress, the deadlines, the host qualification; for `trust_activation`: the entry, the binary's hash, the version, the model, the capabilities, the egress hosts, the journey's limits); and the two commands Sean can send, `approve` and `reject`, each `POST /v1/decisions/:d/answer` with the token read from the engine home at the time. Then it polls the decision every 5 s:
+
+- consumed with `approve`: the step goes on;
+- consumed with any other option: the step fails with "Sean answered … as he chose", which halts the run directory;
+- invalidated with a next generation open (the question still standing after a change, section 117): the new one is printed and waited for;
+- no answer within `SURETY_REAL_WAIT_MINUTES`: the step fails, the decision is left open, the engine is stopped, nothing further is started.
+
+**Decisions the tests do answer.** The chain boundary's `continue` on the journey's verification, review and fix work, and the `stop_confirm` of M140 (e)'s Stop, are answered by the test as row M01's journey and row M13 answer them. They are not the two money decisions: the journey's runs are bounded by their projects' limits, and Sean's activation is what allows any of them. Whether Sean wants to answer the chain boundary himself in the real lane is a question for him (the hands-on script lets him: it asks before each paid run).
+
+## 163. What is recorded for the report, and the report's and the hands-on script's own checks
+
+(BS §10; M2 plan §3.9 M141, M142; E40; rows M141, M142.)
+
+**The run directory** (`SURETY_REAL_RUN_DIR`), kept after the run:
+
+| Path | What |
+|---|---|
+| `state.json` | The steps with their status, time and recorded value or failure reason; the halt, if any. |
+| `observed/<row>.json` | What each case saw, verbatim, written only by the tests: `wrong_key` (M139's attempt: host facts, the proposed row, the collected attempt, the domain samples, the host witness), `M139` (the provider error as kept, the ledger row, the replay), `attempt` (the paid attempt, as for `wrong_key`), `M136` (the session id, egress, provider files, the stream's inventory, the most backend processes per sample, the ledger row, the terminal event), `M137` (TERM behaviour, the ledger row, the usage observations), `M138` (the containment evidence, `engine_port`), `activation` (the active entry and `backends`), `M140` (each path, the domain samples, the Stop, the commits, the ledger against the transcripts, the key search). |
+| `home/` | The engine home that qualified Claude Code and ran the journey: store, records, logs. Holds `api.token`: it stays with Sean. |
+| `home-auth/` | M139's engine home. |
+| `repos/` | The journey's repositories. |
+| `bin/claude` | The pin (a link to `SURETY_REAL_CLAUDE_BINARY`). |
+| `keys/wrong.key` | M139's wrong key. |
+| `WAITING.txt` | The last question put to Sean, or its answer. |
+
+The collected attempt (`collectAttempt`) holds, per canary: the canary entry, the run's state and outcome, the receipt, the exit class and evidence, the domain, the original ledger rows, the record list, the evidence record's JSON, the provider error as kept, the collected result, the stream's event count and kinds with its first `system`/`init` event and its last `result` event, the egress log and the run's events; and the entry with its evidence records' content, and every `qualification.*` and `trust.*` event. After Sean's run the Verifier copies `state.json` and `observed/` into `docs/acceptance/reports/M2-real-lane/<date>/` and fills the report's placeholders from them and from the engine homes' records; the homes stay with Sean.
+
+**M141's file** (`M141-report-qualified-facts.test.mjs`, manifest slice 14, no engine): the report `docs/acceptance/reports/M2-report.md` has every section M141 lists, each under a heading the test names; its status line says `skeleton` or `final`. While it is a skeleton: every real-lane fact is a placeholder of the form `[[PENDING real lane: <what>; from <source>]]`, the report says that M2 is not accepted, and no line claims a real-lane row passed. When final: no placeholder remains, M2's acceptance conditions are each stated with their evidence, and the real-lane records it cites exist under `docs/acceptance/reports/M2-real-lane/`. The file passes on an honest skeleton by design: the row is met only when the report is final, which the same file then enforces (a question for Sean in the report: whether `npm test` should fail until it is).
+
+**M142's file** (`M142-hands-on-script.test.mjs`, manifest slice 14, no engine, no binary): `bash -n` on `docs/acceptance/reports/M2-hands-on.sh`; the script prints `CHECK (1)` to `CHECK (9)`, each with a command Sean can run; every paid call in it is preceded by the `paid` gate that states the most it can cost; and run with a scrubbed environment, with fake `node`, `curl`, `claude` and `git` that only record that they were started, it refuses and starts none of them: without `SURETY_REAL_KEY_REF`; with a reference that is not a path; with a group-readable key file; and without the spend confirmation.
+
+**M137 (b)** (`M137-cancellation-canary-negatives.test.mjs`, manifest slice 14, the sandbox lane): the cancellation canary's negatives without a model, with section 148's scripted attempt: a canary that reports usage and ends with its result without the barrier, and one that reports usage and holds without writing it until the canary's deadline (20 s in the case), each `barrier_not_reached`, no later canary, no entry. Run on `main` at `872afe9` (2026-10-04): 2 of 2 passed.
+
+## 164. The engines of the real lane
+
+(D2 §1.1, §1.2, §4.1, §7.2, C3; BS §§8, 9; sections 113, 118, 148, 150; `productionEngine`, `journeyEngine`.)
+
+**The qualification engine is a production engine** (no `--harness`): `serve` with the secret flags (section 160), from the constructed environment of section 1 plus the user manager's two variables (section 122) and `PATH` with `<run dir>/bin` first; `config.json` `{"api_port", "tick_interval": 30}`. So the entry the journey uses is written and activated exactly as D2 §7.2 says. M136 to M139 and the `activation` step use it; `ui_bootstrap` is false (M141).
+
+**`POST /v1/trust/qualify` outside harness mode** (the slice-14 engine side; section 148's 501 is replaced): the body is `{"backend", "mode", "model", "candidate_egress", "canary_deadlines"?}`; `binary`, `fixture_project` and `version` stay `unknown_field`. The binary is `claude` (or `codex`) **resolved on the engine's own `PATH`** to its real path, so the pin decides which file is qualified (D2 §7.2, "the resolved path"); the static checks run it with exactly `--version` and `--help`, once each, outside any domain, **with a constructed environment whose `HOME` is an empty temporary directory removed afterwards**, never the operator's home or the engine home. The fixture project is the engine's own.
+
+**`GET /v1/engine` gains `qualification_fixture_project`**: the id of the engine's own qualification fixture project, a project the engine registers at its first start outside harness mode with a repository it makes under its home; null until then and in a harness-mode home that has none. It is an ordinary project: its policy is changed through `POST /v1/projects/:p/policy`, its runs are charged to the ledger, and its integration branch is the engine's.
+
+**`surety qualify`** (D2 §7.2's command; the hands-on script uses it): `surety qualify <backend> --mode one_shot_headless --model <m> [--egress <host>]... [--canary-deadline <kind>=<seconds>]...` sends `POST /v1/trust/qualify` to the engine running on `$SURETY_HOME` (its port from `config.json`, its token from `api.token`), prints the 201 body as one JSON line and exits 0; a refusal is printed in its form and exits 1; no engine running exits 1.
+
+**The journey engine** is the same home restarted in the test mode for the real lane: `serve --harness --harness-real-lane` with the secret flags (and `--harness-scripted <dir>` only for path two's mixed run). `--harness-real-lane` is accepted only with `--harness`; it implies `--harness-host-checks run`, and with `--harness-host-checks unrun` it is a usage error (exit 2). Under it:
+
+1. a dispatch to an **active** entry of a real backend launches that entry's binary: the test mode's refusal of a real backend's binary (`backend_refused` for an executable image, section 148) does not apply to such a dispatch;
+2. that refusal stays for `POST /v1/trust/qualify` and both fixture routes: no test-mode engine can propose, qualify or install an entry for a real binary, so a real entry exists only by a production attempt and Sean's activation;
+3. a real backend's domain has the production mount plan and the production `role` profile: the scripted directory's read-write bind (section 127) is the scripted backend's alone; so the profile fingerprint and the host qualification's mechanism fingerprint equal a production start's, and the entry stays dispatchable (section 150's suspension and requalification rules apply unchanged: a difference is `requalification_required`, never a silent dispatch);
+4. everything else of the test mode is present; the real lane uses the plan, checks, check-result and environment fixtures (D3's planning flow and check runner do not exist in M2), the barrier `boundary.before_terminated` (M140 (e)), and nothing else of it: no fault, no clock advance, no harness secret.
+
+**One home across the modes.** `home/` is qualified by a production engine, then started in the real-lane test mode for the journey; the trust table, the ledger and the records carry over. A start's mode changes no entry. The report states, as a limit of the instruments, that the journey's engine ran in test mode for its fixtures.
+
+## 165. What the canaries' records hold, for the real-lane cases
+
+(D2 §4.5, §7.2, A.3; sections 149, 152; rows M136 to M138.)
+
+These complete section 149's evidence for a real backend; the scripted canaries may carry them too.
+
+- **The positive canary's `qualification_evidence` record**: `{"kind": "positive", "expected": {"edit": {"path", "content"}, "result": <value>}, "observed": {"edit": {"path", "type": "file" | "symlink" | "fifo" | "other" | "missing", "sha256"?, "bytes"?}, "result": <the collected value or null>}, "key_delivery": {"variable": "ANTHROPIC_API_KEY", "established": <bool>, "how": <text>}}`. `observed.edit` is read after materialization from the workspace, without following a link, regular files only (the slice-13 review's S3). `key_delivery.established` is true when the canary authenticated with the key in that variable and nowhere else (no credential file written by the engine in the volatile home).
+- **The cancellation canary's record**: `{"kind": "cancellation", "barrier": {"path", "witnessed": <bool>, "witnessed_at"}}`, the witness being the domain init's report on its channel, never the stream; `term_to_exit_ms` stays on the canary entry (section 148).
+- **The containment canary's record**: section 149's `actions` (with `host` as amended after the slice-13 review), plus `"controls": [{"name": "workspace_write" | "provider_tunnel", "ran": <bool>, "detail"}]`. `provider_tunnel` is corroborated by the run's egress log (an accepted `CONNECT` to `api.anthropic.com:443` with bytes both ways).
+- **The run's `transcript` record** holds the backend's standard output lines as written, redacted (sections 56, 57): for Claude Code, its `stream-json` events, one per line.
+- **The entry's `capabilities.delegation_verified`** is true only by an inventory (the stream's first event lists the tools and none of `Agent`, `Task`, `ScheduleWakeup`, `Workflow` is offered) or by the executable capability test of D2 §4.5; neither is `delegation_unverified` and fails the attempt.
+- **The Claude adapter's normalization**: section 161.
+
+What the cases do not assume, and record instead: the names and shapes of Claude Code's events beyond `system`/`init` and `result`; whether `--verbose` is needed; the hosts it contacts beyond the provider; what it writes despite `--no-session-persistence`; its exit status and TERM behaviour.
+
+## 166. Names the Verifier fixed in this pass, and what it changes in earlier sections
+
+**What this pass changes in earlier sections.** Section 1's flags gain `--harness-real-lane`, `--secret-file`, `--provider-cap-usd`, and the CLI gains `qualify` (section 164). Section 117: the real lane answers the two engine-scoped kinds through the same routes, and only Sean answers them. Section 118's `GET /v1/engine` gains `qualification_fixture_project`. Section 148: `POST /v1/trust/qualify` outside harness mode (section 164); the attempt's `spend.provider_cap`. Section 149's evidence gains section 165's fields. Section 120's provider cap is also set by `--provider-cap-usd`. `manifest.json` gains the `real` list and slice 14.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The real lane's variables † | Section 159's seven | E59 item 2 and the brief: a reference, never a literal; a pin by file; a typed confirmation; a bounded wait. |
+| Stop, never retry † | Named steps, recorded once; the halt; `SURETY_REAL_RERUN` by Sean only (section 159) | A retry costs money; E59 item 3's "run once more" is then Sean's explicit act. |
+| The engine's key flags † | `--secret-file`, `--provider-cap-usd` (section 160) | D2 §2.5 names references, not how a production engine resolves one; M1's resolver is harness-only. A flag keeps the reference out of the closed configuration, whose change would break M07 and M73 on today's engine. |
+| The bounds † | Section 161's table; 25 USD split 10 / 6 / 9 | E59's 25 USD is a day; the engine's day limits are per project. |
+| The price of `claude-sonnet-5-5` † | 2 / 10 / 0.20 USD per million | A labelled estimate needs a price; null would leave Sean nothing to read before he approves. Sean confirms the figures. |
+| Claude's normalization † | Section 161 | Cache writes are billed input; cache reads are not billable tokens (section 53's rule). |
+| How a test waits | Section 162 | Plan question 2 (a); E59 item 2. |
+| Which decisions a test answers † | The chain boundary and `stop_confirm`, as M01 and M13 do (section 162) | They are not the money decisions; Sean may prefer to answer them himself. |
+| The run directory and the observations | Section 163 | BS §10 lists what the report records; the homes hold `api.token` and stay with Sean. |
+| The engines † | Production for qualification; `--harness-real-lane` on the same home for the journey (section 164) | The entry must be a production one; the journey needs the plan and check fixtures M2 has no other way to make. |
+| `qualification_fixture_project` | On `GET /v1/engine` (section 164) | The test must lower the fixture project's limits before the estimate is made. |
+| The static checks' `HOME` | An empty temporary directory (section 164) | The operator's `~/.claude` must neither influence nor receive anything. |
+| The canaries' evidence fields † | Section 165 | M136 (a), (b), M137 (a), M138 (c) need the expected edit, the key's delivery, the barrier's witness and the controls in the record. |
+| M137 (b) in the sandbox lane | A file of its own in slice 14 (section 163) | No merged case made a cancellation canary miss its barrier; a model is not needed for it. |
+| M141 and M142 as files † | Slice 14, no engine (section 163) | The full run needs every row's file; both checks spend nothing. |
