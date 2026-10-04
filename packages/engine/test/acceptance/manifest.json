@@ -187,6 +187,11 @@
       "M132-secrets-volatile-provider-files.test.mjs",
       "M134-revocation-and-host-qualification.test.mjs",
       "M135-qualification-attempt.test.mjs"
+    ],
+    "14": [
+      "M137-cancellation-canary-negatives.test.mjs",
+      "M141-report-qualified-facts.test.mjs",
+      "M142-hands-on-script.test.mjs"
     ]
   },
   "sandbox": [
@@ -215,10 +220,18 @@
     "M131-usage-resume-session-id.test.mjs",
     "M132-secrets-volatile-provider-files.test.mjs",
     "M134-revocation-and-host-qualification.test.mjs",
-    "M135-qualification-attempt.test.mjs"
+    "M135-qualification-attempt.test.mjs",
+    "M137-cancellation-canary-negatives.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
     "M130-exit-classes-limits.test.mjs"
+  ],
+  "real": [
+    "M139-unauthenticated-canary.test.mjs",
+    "M136-positive-canary.test.mjs",
+    "M137-cancellation-canary.test.mjs",
+    "M138-containment-canary.test.mjs",
+    "M140-real-backend-journey.test.mjs"
   ]
 }

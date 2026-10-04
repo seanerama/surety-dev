@@ -167,3 +167,21 @@ Settled since the entries above were written:
 - the context package's approved texts (E67 item 7: requirement, ADR, constraint pinned; the phase plan's and interfaces' texts stay listed above under part 2);
 - the slice-11 entry "a role's result line is recorded while the role runs" (E65 item 7: fixed, M129 (a) pins it);
 - "A failed real run with observations is marked complete under M1's rule" (slice 10; M130, M131 pin the exit classes and `usage_complete`).
+
+## After slice 14 (the real lane, the report, the hands-on run; rows M136 to M142; written, not run)
+
+**Written by:** the Verifier of slice 14, 2026-10-04, on `verify/m2-s14`, with the cases. **Nothing in the real lane has run**: no real backend against a model, no attempt approved, no entry. Until Sean runs it, every item D2 §4.5 lists as "established by the canaries" stays class B, as D2 §8 says. When the slice is built and the real lane has run, it will still not claim:
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **The real journey's engine runs in the test mode for the real lane** (`--harness-real-lane`), because the plan, the protected check's declaration and execution, and the Alpha target are fixtures in M2. The entry it dispatches to is written and activated by a production engine; a test-mode engine cannot propose or install an entry for a real binary. | M140 | C (an instrument's limit) | none in M2 | SEAM §164 |
+| **A check's execution in the real journey is a fixture**, recorded passed by the test as row M01 records it; it is evidence of nothing about the code the real Builder wrote. | M140 | C (D3 not built) | D3 (M3) | SEAM §164; BS §3 |
+| **The chain boundary's `continue` in the real journey is answered by the test**, as M01's journey answers it; each answer starts a paid run within its project's limits. Sean's money decisions (the attempt's approval, the entry's activation) are never answered by a test. | M140 | C (recommended) or a changed test | Sean decides (report question 2) | SEAM §162 |
+| **M141's file fails while the report is a skeleton** ("the real lane has not run: the M2 report is a skeleton (N pending facts)"), so `--slice 14` and `npm test` fail until the real lane has run and the report is final. | M141 | — (a record) | the driver's provisional decision on report question 3; Sean confirms | SEAM §163 |
+| **Path two may be the mixed run** (real Builders, scripted Verifier and Reviewer), labelled, if a real Verifier does not find the seeded defect twice (E59 item 3). | M140 (b) | B if mixed | the report states which | E59 item 3 |
+| **The qualified version is whatever Sean pins**, not D2's 2.1.288: Claude Code updated itself to 2.1.289 on 2026-10-03. An entry bound to a version file the updater later removes is revoked by design. | M136; D2 §7.3 | B until the entry is active; then C | the pinning question (report question 1) | the report §4 |
+| **The cancellation canary's negatives are shown without a model** (M137 (b), sandbox lane, 2 of 2 on `872afe9`); the real backend's own early finish or missed barrier is not provoked (it would cost money). | M137 (b) | C (by the engine's rule) | none | SEAM §163 |
+| **`auth_failed` is shown only in the real lane** (M139), with a wrong key: the scripted backend has no authentication. | M139 | B until run | M139 | the slice-13 entry above |
+| **Codex** is designed and not qualified (E59 item 6). | M136 to M139 | B | M3 | E59 item 6 |
+
+Settled by slice 14's cases, once they pass: the slice-13 part-2 entry "`auth_failed` and the cancellation canary's negatives have no sandbox-lane case" is half settled now (M137 (b) passes on `872afe9`); `auth_failed` waits for M139.
