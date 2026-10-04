@@ -262,10 +262,13 @@ export class ClaudeStream {
         this.s.tool_uses.push({ id: str(block.id), name, subagent, background: input.run_in_background === true });
       }
     }
-    // The per-call usage (D2 §1.5): once per API response, by its id; input
-    // and cache tokens only, the output count being a placeholder here. A
-    // message with no id cannot be told from another of its response, so it
-    // is not counted at all (its tokens reach the terminal totals).
+    // The per-call usage (D2 §1.5): once per API response, by its id. Its
+    // output count is the one Claude Code had at the response's start (the
+    // documentation calls it a placeholder): kept as observed, a lower bound
+    // the terminal totals replace, so that a run's output is never read as
+    // nothing while it runs (E74 item 3; SEAM.md §167 S1 (b)). A message
+    // with no id cannot be told from another of its response, so it is not
+    // counted at all (its tokens reach the terminal totals).
     // A message carrying an API error is Claude Code's own, made without a
     // model response: its usage is no measurement and is not counted.
     if (error !== null) return;
@@ -278,7 +281,7 @@ export class ClaudeStream {
     }
     this.seen.add(id);
     const raw: Record<string, unknown> = {};
-    for (const k of ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'] as const) {
+    for (const k of ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'] as const) {
       const v = count(usage[k]);
       if (v !== null) raw[k] = v;
     }

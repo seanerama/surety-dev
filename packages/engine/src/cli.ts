@@ -82,6 +82,7 @@ for (let i = 0; i < args.length; i++) {
       if (secretFiles.some((f) => f.ref === parsed.ref)) usage(`--secret-file names ${parsed.ref} twice`);
       secretFiles.push({ ref: parsed.ref, path: parsed.value });
     } else {
+      if (!parsed.ref.endsWith('/api_key')) usage('--provider-cap-usd is for an API key only: a subscription token has no dollar cap');
       const usd = Number(parsed.value);
       if (!/^\d+(\.\d+)?$/.test(parsed.value) || !Number.isFinite(usd) || usd <= 0) usage('--provider-cap-usd takes <ref>=<a positive number of US dollars>');
       if (providerCaps.some((c) => c.ref === parsed.ref)) usage(`--provider-cap-usd names ${parsed.ref} twice`);

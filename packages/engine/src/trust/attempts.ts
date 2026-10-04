@@ -218,14 +218,14 @@ export class QualificationDriver {
         edit_matches: editOk,
         expected: { edit, result: want },
         observed: { edit: { path: edit.path, ...(obs?.editObserved ?? { type: 'missing' }) }, result: obs?.resultValue ?? null },
-        key_delivery: real
+        credential_delivery: real
           ? {
-              variable: delivery?.variable ?? null,
               auth_mode: authMode,
+              variable: delivery?.variable ?? null,
               established: delivery?.established === true,
               how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the engine wrote no credential file, the credential reached the backend only in ${delivery.variable}`,
             }
-          : { variable: null, established: false, how: 'the scripted backend takes no key' },
+          : { auth_mode: authMode, variable: null, established: false, how: 'the scripted backend takes no credential' },
       };
     } else if (kind === 'cancellation') {
       termToExit = obs?.termToExitMs ?? null;
@@ -312,7 +312,7 @@ export class QualificationDriver {
             ? null
             : {
                 init: stream.init,
-                key_delivery: claudeKeyDelivery(stream, authMode),
+                credential_delivery: claudeKeyDelivery(stream, authMode),
                 protocol_errors: stream.protocol_errors,
                 session_id_accepted: stream.init?.session_id == null || facts.provider_session_id === null ? null : stream.init.session_id === facts.provider_session_id,
                 usage_steps: stream.usage_steps,

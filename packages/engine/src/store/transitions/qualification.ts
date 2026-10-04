@@ -119,7 +119,10 @@ export function qualify(
     label: 'estimate',
     overshoot: 'deadline',
     ...(estimate ? { basis: 'three canaries at the fixture project\'s budget_run_billable_tokens, at the model\'s output rate', price_version: estimate.price_version } : {}),
-    ...(a.provider_cap_usd ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}),
+    auth_mode: a.auth_mode ?? 'api_key',
+    // A provider-side cap is an API key's only (SEAM.md §160): a subscription
+    // has none on its token, its hard limit being its usage limits.
+    ...(a.provider_cap_usd && (a.auth_mode ?? 'api_key') === 'api_key' ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}),
   };
   const { attempt, decision } = proposeAttempt(tx, {
     backend: a.backend,

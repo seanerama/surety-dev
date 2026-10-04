@@ -346,7 +346,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const authMode = backend.kind === 'entry' ? backend.entry.auth_mode : backend.kind === 'attempt' ? backend.attempt.auth_mode : 'api_key';
   const keyRef = credentialRef(backend.backend, authMode);
   const real = backend.kind === 'entry' || (backend.kind === 'attempt' && backend.backend !== 'scripted');
-  const cap = real ? args.providerCaps?.[keyRef] : undefined;
+  const cap = real && authMode === 'api_key' ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
   tx.db
     .prepare(

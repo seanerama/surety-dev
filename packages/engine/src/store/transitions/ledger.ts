@@ -111,9 +111,11 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
     return { ...base, cost_status: 'estimated', cost_usd: estimate, normalization_version: `${CLAUDE_NORMALIZATION}+claude-code-total_cost_usd` };
   }
   // The price of the one model the invocation used, where the table has it
-  // and every amount is known; cache writes at their own rate.
+  // and the usage is final (a partial count, a per-call output count among
+  // them, is a lower bound and never priced as the whole); cache writes at
+  // their own rate.
   const prices = base.model_observed === null ? undefined : CLAUDE_PRICE_TABLE.models[base.model_observed];
-  if (prices && input !== null && creation !== null && base.cached_in !== null && base.out !== null) {
+  if (prices && raw.usage_final === true && input !== null && creation !== null && base.cached_in !== null && base.out !== null) {
     const usd = (input * prices.input + creation * (prices.cache_write ?? prices.input * 1.25) + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
     return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CLAUDE_NORMALIZATION}+${CLAUDE_PRICE_TABLE.version}` };
   }

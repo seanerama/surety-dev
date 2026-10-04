@@ -68,8 +68,7 @@ test('success: per-call usage once per API response, the totals replace it, cost
   assert.deepEqual(terminals, ['success']);
   const deltas = usage.filter((u) => u.semantics === 'delta');
   assert.equal(deltas.length, 3, 'msg_1 appears twice and is counted once');
-  assert.deepEqual(deltas[0].raw, { input_tokens: 10, cache_creation_input_tokens: 1200, cache_read_input_tokens: 0, model: 'claude-sonnet-5-5' });
-  assert.ok(deltas.every((d) => !('output_tokens' in d.raw)), 'the per-call output count is a placeholder and is not observed');
+  assert.deepEqual(deltas[0].raw, { input_tokens: 10, cache_creation_input_tokens: 1200, cache_read_input_tokens: 0, output_tokens: 1, model: 'claude-sonnet-5-5' }, 'the per-call output count kept as observed, a lower bound the totals replace');
   assert.equal(summary.usage_steps, 3);
   const { n, final } = ledgerOf(usage);
   assert.equal(final, true);
@@ -157,7 +156,7 @@ test('a stream cut before its result (a cancelled canary): known input kept, out
   const { n, final } = ledgerOf(usage);
   assert.equal(final, false);
   assert.equal(n.billable_in, 1520);
-  assert.equal(n.out, null, 'null only where nothing was observed');
+  assert.equal(n.out, 1, 'the per-call output observed is kept, a lower bound; null only where nothing was observed');
   assert.equal(n.cost_status, 'unknown');
 });
 
