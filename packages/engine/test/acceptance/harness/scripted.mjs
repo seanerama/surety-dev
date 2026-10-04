@@ -44,7 +44,15 @@ export const step = {
   git: (...args) => ({ git: args }),
   sleep: (ms) => ({ sleep_ms: ms }),
   hold: (name = 'gate', opts = {}) => ({ hold: name, ...opts }),
+  // The role's result (SEAM.md §143). In the kernel lane, the `result` line
+  // on stdout, as in M1. In the sandbox lane, the value is written to
+  // /surety/out/result.json and then the line is sent: the line is the
+  // terminal success event, the file is the result.
   result: (value = VALID_RESULT) => ({ result: value }),
+  // M2 slice 13 (SEAM.md §143): the result file without the event, and the
+  // event without the file.
+  resultFile: (value = VALID_RESULT) => ({ result_file: value }),
+  resultEvent: (value = VALID_RESULT) => ({ result_event: value }),
   exit: (code) => ({ exit: code }),
   // Raw text on the role's stdout, exactly as given: no line ending is added.
   stdout: (text) => ({ stdout: text }),
@@ -90,7 +98,9 @@ export const step = {
 // refuses to script one, and `acting(hostNamespaces())` scripts them. A test
 // releases a role into one only after it has read, from the host, that the
 // role is contained (harness/sandbox/view.mjs, assertContained).
-export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+// M2 slice 13 (SEAM.md §144) adds `result_shape`, `kill_parent` and
+// `spawn_until_refused`, each bounded and behind the same guard.
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused']);
 const NS_KINDS = ['pid', 'net', 'mnt'];
 const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
 
@@ -139,6 +149,18 @@ export function acting(hostNs) {
     proxyConcurrent: (authority, count, args = {}) => one('proxy_concurrent', { authority, count, ...args }),
     // One program as an argument array, no shell.
     exec: (argv, args = {}) => one('exec_probe', { argv, ...args }),
+    // M2 slice 13 (SEAM.md §144). What is at /surety/out/result.json:
+    // 'host_fifo_link' ({target}: a FIFO in a short directory of the
+    // test's own under /tmp), 'device_link' (to /dev/zero), 'fifo',
+    // 'oversize' ({bytes}: a well-formed result of exactly that size), or
+    // 'rewriter' ({every_ms, on_term}: a descendant that rewrites the file
+    // by write-then-rename with `marker <n>` and logs each n after the rename).
+    resultShape: (shape, args = {}) => one('result_shape', { shape, ...args }),
+    // A descendant that sends the role SIGKILL after delay_ms (row M130 (e)).
+    killParent: (args = {}) => one('kill_parent', args),
+    // At most `max` (≤ 8) `sleep` children, one at a time, until a spawn is
+    // refused; all killed and awaited afterwards (row M130 (h)).
+    spawnUntilRefused: (args = {}) => one('spawn_until_refused', args),
   };
 }
 
@@ -153,6 +175,10 @@ export function pidNamespaceOf(pid) {
     return null;
   }
 }
+
+// What the role program logged of its result file (SEAM.md §143): the last
+// `result_file` entry of an invocation, {outcome, bytes, sha256}, or undefined.
+export const resultFileOf = (scripted, invocation) => scripted.eventsOfInvocation(invocation, 'result_file').at(-1);
 
 // Whole scripts for the common cases.
 export const script = {

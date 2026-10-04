@@ -33,7 +33,13 @@
 //           {"git": ["<argument>", ...]}                    git, run in the workspace
 //           {"sleep_ms": <n>}
 //           {"hold": "<name>", "heartbeat_ms": <n, default 1000; 0 = silent>}
-//           {"result": <any JSON value>}
+//           {"result": <any JSON value>}                    M2 slice 13 (SEAM.md §143): in a sandbox (where
+//                                                           /surety/out is a directory) the value is first
+//                                                           written to /surety/out/result.json, then the
+//                                                           `result` line goes to stdout, which is the terminal
+//                                                           success event; outside one, the line only
+//           {"result_file": <any JSON value>}               M2 slice 13: the file only, no line (no event)
+//           {"result_event": <any JSON value>}              M2 slice 13: the line only (the event), no file
 //           {"stdout": "<raw text written as is>"}
 //           {"stdout_fill": {"bytes": <n>}}                 n bytes of filler, no line ending
 //           {"stdout_b64": "<base64>"}                      those bytes written as is: a write can end inside a multibyte character
@@ -230,6 +236,75 @@ if (process.argv[2] === 'daemon-fork' || process.argv[2] === 'daemon') {
     }
   }, opts.ping_ms ?? 100);
   await new Promise(() => {});
+}
+
+// M2 slice 13 (SEAM.md §143; D2 §1.4): the role's result file. It exists
+// only inside a sandbox, where /surety/out is a directory of the domain's
+// volatile filesystem; on a host there is no /surety and uid 1000 cannot
+// make one, so nothing outside a sandbox is ever written by these.
+const OUT_DIR = '/surety/out';
+const RESULT_FILE = '/surety/out/result.json';
+function outDirPresent() {
+  try {
+    return lstatSync(OUT_DIR).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Rewriter mode (M2 slice 13, SEAM.md §144; row M129 (a)): `child.mjs
+// rewriter <json>`, started by the guarded `result_shape` action with shape
+// `rewriter`. Every every_ms it writes a result whose summary is
+// `marker <n>` to result.json.tmp, renames it over result.json, and only
+// then logs a `rewrite` entry with n. So the file never holds a marker
+// earlier than the last one logged, and at most the one after it. SIGTERM
+// is ignored unless on_term is 'exit'. It inherits the role's environment,
+// so it carries the role's markers.
+if (process.argv[2] === 'rewriter') {
+  const opts = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'));
+  if (!outDirPresent()) {
+    log('rewriter_refused', { reason: 'no /surety/out: not in a sandbox' });
+    process.exit(1);
+  }
+  process.on('SIGTERM', () => {
+    log('signal', { signal: 'SIGTERM', rewriter: true });
+    if (opts.on_term === 'exit') process.exit(143);
+  });
+  let n = 0;
+  setInterval(() => {
+    n += 1;
+    try {
+      writeFileSync(`${RESULT_FILE}.tmp`, JSON.stringify({ status: 'completed', summary: `marker ${n}` }));
+      renameSync(`${RESULT_FILE}.tmp`, RESULT_FILE);
+      log('rewrite', { n });
+    } catch (err) {
+      log('rewrite_error', { n, error: err?.code ?? String(err) });
+    }
+  }, Math.max(20, Number(opts.every_ms ?? 100)));
+  await new Promise(() => {});
+}
+
+// Killer mode (M2 slice 13, SEAM.md §144; row M130 (e)): `child.mjs killer
+// <json>`, started by the guarded `kill_parent` action. After delay_ms it
+// sends SIGKILL to the role that started it, and to nothing else: only when
+// its own parent is still exactly that process (the pid the role passed),
+// greater than 1. It logs what it did and exits.
+if (process.argv[2] === 'killer') {
+  const opts = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'));
+  await sleep(Math.min(5000, Math.max(0, Number(opts.delay_ms ?? 200))));
+  const target = opts.target;
+  const parent = process.ppid;
+  if (!Number.isInteger(target) || target <= 1 || parent !== target) {
+    log('killer', { target, parent, sent: false, reason: 'the parent is not the role that started this process' });
+    process.exit(1);
+  }
+  try {
+    process.kill(target, 'SIGKILL');
+    log('killer', { target, parent, sent: true });
+  } catch (err) {
+    log('killer', { target, parent, sent: false, reason: err?.code ?? String(err) });
+  }
+  process.exit(0);
 }
 
 // The engine may be dead (a crash test kills it); a role that outlives its
@@ -464,7 +539,13 @@ function signalAllRefusal(spec) {
 //   - this process sees at most SIGNAL_ALL_MAX_VISIBLE processes.
 // Returns the reasons to refuse; an empty list means it may run. It writes
 // nothing, connects to nothing and starts no process.
-const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe']);
+// M2 slice 13 (SEAM.md §144) adds `result_shape` (a link, a FIFO or an
+// oversize file at /surety/out/result.json, or a descendant that rewrites
+// it), `kill_parent` (a descendant that SIGKILLs the role) and
+// `spawn_until_refused` (at most eight `sleep` children, one at a time,
+// until a spawn is refused). None of them exhausts anything: each is
+// bounded by its own count, and each runs only behind this guard.
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -1212,6 +1293,124 @@ async function runProbe(spec) {
         entry.outcome = 'ran';
         break;
       }
+      // ---- M2 slice 13: the result file's shapes and the exit classes (GUARDED) -------
+      case 'result_shape': {
+        // P18 (D2 A.6) and row M129: what is at /surety/out/result.json.
+        // Only that one path (and its .tmp sibling, for the rewriter) is
+        // ever touched, and only where /surety/out is a directory.
+        entry.shape = spec.shape;
+        if (!outDirPresent()) {
+          entry.outcome = 'no_out_dir';
+          break;
+        }
+        rmSync(RESULT_FILE, { force: true });
+        if (spec.shape === 'host_fifo_link') {
+          // A link to a FIFO the test holds on the host: only a path in a
+          // short directory of the test's own under /tmp.
+          if (typeof spec.target !== 'string' || !/^\/tmp\/surety-fifo-[A-Za-z0-9]{6}\/[a-z]{1,16}$/.test(spec.target)) {
+            entry.outcome = 'refused_target';
+            break;
+          }
+          symlinkSync(spec.target, RESULT_FILE);
+          entry.target = spec.target;
+        } else if (spec.shape === 'device_link') {
+          symlinkSync('/dev/zero', RESULT_FILE);
+          entry.target = '/dev/zero';
+        } else if (spec.shape === 'fifo') {
+          const done = spawnSync('mkfifo', ['-m', '600', RESULT_FILE], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          entry.status = done.status;
+          entry.error = done.error ? errorOf(done.error) : null;
+          entry.stderr = (done.stderr ?? '').slice(0, 500);
+        } else if (spec.shape === 'oversize') {
+          // A well-formed result of exactly `bytes` bytes, so that its size
+          // is the only thing wrong with it.
+          const base = JSON.stringify({ status: 'completed', summary: '' }).length;
+          const bytes = Number(spec.bytes);
+          if (!Number.isInteger(bytes) || bytes <= base || bytes > 16 * 1024 * 1024 + 1) {
+            entry.outcome = 'refused_size';
+            break;
+          }
+          writeFileSync(RESULT_FILE, JSON.stringify({ status: 'completed', summary: 'x'.repeat(bytes - base) }));
+        } else if (spec.shape === 'rewriter') {
+          const opts = Buffer.from(JSON.stringify({ every_ms: spec.every_ms ?? 100, on_term: spec.on_term ?? 'ignore' })).toString('base64');
+          const rewriter = spawn(process.execPath, [fileURLToPath(import.meta.url), 'rewriter', opts], { stdio: 'ignore' });
+          rewriter.on('error', (err) => log('rewriter_error', { message: err.message }));
+          rewriter.unref();
+          entry.rewriter_pid = rewriter.pid ?? null;
+          // Go on once it has rewritten the file at least once.
+          const rewrote = () => {
+            try {
+              return readFileSync(logFile, 'utf8').split('\n').some((l) => l.includes('"rewrite"') && l.includes(`"invocation":${JSON.stringify(identity.invocation)}`));
+            } catch {
+              return false;
+            }
+          };
+          for (let waited = 0; waited < 5000 && !rewrote(); waited += 25) await sleep(25);
+          entry.ready = rewrote();
+        } else {
+          entry.outcome = 'unknown_shape';
+          break;
+        }
+        try {
+          const st = lstatSync(RESULT_FILE);
+          entry.type = typeOf(st);
+          entry.size = st.size;
+        } catch (err) {
+          entry.type = `absent:${errorOf(err)}`;
+        }
+        entry.outcome = 'shaped';
+        break;
+      }
+      case 'kill_parent': {
+        // Row M130 (e): a descendant of the role sends the role SIGKILL. The
+        // descendant checks that its parent is still exactly this process.
+        const opts = Buffer.from(JSON.stringify({ target: process.pid, delay_ms: spec.delay_ms ?? 300 })).toString('base64');
+        const killer = spawn(process.execPath, [fileURLToPath(import.meta.url), 'killer', opts], { stdio: 'ignore' });
+        killer.on('error', (err) => log('killer_error', { message: err.message }));
+        entry.killer_pid = killer.pid ?? null;
+        entry.outcome = killer.pid === undefined ? 'not_spawned' : 'spawned';
+        log('probe', entry);
+        // Wait to be killed; if that does not happen, say so and go on.
+        await sleep(Math.min(30_000, spec.wait_ms ?? 20_000));
+        log('kill_parent_survived', {});
+        return;
+      }
+      case 'spawn_until_refused': {
+        // Row M130 (h): `sleep` children, one at a time, at most `max` (never
+        // more than eight), until a spawn is refused; then every one is
+        // killed and awaited. The children never fork.
+        const max = Math.min(8, Math.max(1, Number(spec.max ?? 6)));
+        const seconds = String(Math.min(120, Math.max(1, Number(spec.seconds ?? 60))));
+        const children = [];
+        entry.attempts = 0;
+        entry.refused = null;
+        for (let i = 0; i < max; i++) {
+          entry.attempts++;
+          const child = spawn('sleep', [seconds], { stdio: 'ignore', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          const outcome = await new Promise((done) => {
+            child.once('spawn', () => done({ ok: true }));
+            child.once('error', (err) => done({ ok: false, error: errorOf(err) }));
+          });
+          if (!outcome.ok) {
+            entry.refused = { attempt: i + 1, error: outcome.error };
+            break;
+          }
+          children.push(child);
+        }
+        entry.spawned = children.length;
+        await Promise.all(
+          children.map(
+            (child) =>
+              new Promise((done) => {
+                if (child.exitCode !== null || child.signalCode !== null) return done();
+                child.once('exit', done);
+                child.kill('SIGKILL');
+              }),
+          ),
+        );
+        entry.outcome = entry.refused === null ? 'never_refused' : 'refused';
+        break;
+      }
       default:
         entry.outcome = 'unknown_action';
     }
@@ -1224,6 +1423,20 @@ async function runProbe(spec) {
 
 // A path a file step names: relative to the workspace, or absolute.
 const at = (path) => (isAbsolute(path) ? path : resolve(process.cwd(), path));
+
+// Write the role's result to /surety/out/result.json, as JSON text, and log
+// what was written (its length and hash: a test compares the engine's
+// record with it). Outside a sandbox nothing is written; that is logged.
+function writeResultFile(value) {
+  if (!outDirPresent()) return void log('result_file', { outcome: 'no_out_dir' });
+  const text = JSON.stringify(value);
+  try {
+    writeFileSync(RESULT_FILE, text);
+    log('result_file', { outcome: 'written', bytes: Buffer.byteLength(text), sha256: sha256Of(text) });
+  } catch (err) {
+    log('result_file', { outcome: 'failed', error: err?.code ?? String(err) });
+  }
+}
 
 async function runSteps(steps, ctx) {
   for (const step of steps ?? []) {
@@ -1264,7 +1477,12 @@ async function runSteps(steps, ctx) {
         }
       }
       log('released', { hold: step.hold });
-    } else if (step.result !== undefined) emit({ type: 'result', result: step.result });
+    } else if (step.result !== undefined) {
+      // In a sandbox: the file first, then the terminal success event.
+      if (outDirPresent()) writeResultFile(step.result);
+      emit({ type: 'result', result: step.result });
+    } else if (step.result_file !== undefined) writeResultFile(step.result_file);
+    else if (step.result_event !== undefined) emit({ type: 'result', result: step.result_event });
     else if (step.stdout !== undefined) writeOut(step.stdout);
     else if (step.stdout_b64 !== undefined) writeOut(Buffer.from(step.stdout_b64, 'base64'));
     else if (step.stdout_fill !== undefined) {

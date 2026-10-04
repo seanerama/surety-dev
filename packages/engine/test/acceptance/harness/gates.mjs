@@ -81,9 +81,15 @@ const created = (res, what) => {
 // An approved baseline and a plan: requirement keys, and stages that say which
 // requirements each implements. Returns the fixture's answer:
 // {plan, stages: [{id, number, work_item}], requirements: [{id, key}]}.
-export async function installGatedPlan(engine, project, { requirements = [], modules, stages }) {
-  const body = { project, requirements: requirements.map((key) => ({ key })), stages };
+// M2 slice 13 (E67 item 7; SEAM.md §139, as amended): a requirement may be
+// given as {key, text}, its approved text; `adrs` ([{key, text}]) and
+// `constraints` ([{key, text}]) join the approved baseline, a stage cites
+// ADRs by key in its own `adrs`, and every constraint is project-wide.
+export async function installGatedPlan(engine, project, { requirements = [], modules, stages, adrs, constraints }) {
+  const body = { project, requirements: requirements.map((r) => (typeof r === 'string' ? { key: r } : r)), stages };
   if (modules !== undefined) body.modules = modules;
+  if (adrs !== undefined) body.adrs = adrs;
+  if (constraints !== undefined) body.constraints = constraints;
   const plan = created(await engine.post('/v1/harness/fixtures/plan', body), 'plan fixture');
   assert.equal(plan.requirements?.length, requirements.length, `the plan fixture answers with one requirement per key (body: ${JSON.stringify(plan)})`);
   return plan;
