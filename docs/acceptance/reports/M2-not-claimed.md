@@ -119,3 +119,15 @@ When the slice is built and merged, part 1 will not claim:
 | **`unaccepted_result` is pinned only for `engine_signaled` and `unknown`** (M130 (d), (i)). Not pinned: `foreign_signal` and `resource_limit`, which publish one by D2 §1.4; and `clean`, `error_exit` or an invalid file, which D2 does not list. | M130 | B | `resource_limit`: part 3 | SEAM §143 |
 | **The phase plan's and the dependency interfaces' texts in the context package** follow E67 item 7. M125 (c) pins only the texts of the requirement, ADR and constraint. | M125 (c) | B | none planned; the real-backend journey (M140) reads them in use | SEAM §139 (amended); E67 item 7 |
 | **The session id's derivation is fixed in the seam and not yet pinned by a case.** Nor is it established that Claude Code accepts a version-4-shaped id derived by hash. | M131 (c); M136 | B | M131 (c), part 2; M136, the positive canary | SEAM §146 |
+
+**Part 2's entries** (the Verifier of slice 13 part 2, 2026-10-03; rows M131, M132, M134, M135). None of these cases has yet run on an engine that builds it (COVERAGE.md, "M2 slice 13 (part 2)").
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **The qualification attempt is proven only with the scripted backend.** Its binary is a stand-in that runs the scripted role program. No authentication, no provider stream, no real tool surface and no delegation test is exercised. A `claude` attempt is taken only as far as its proposal. | M135 | B | M136 to M139, the real lane under Sean's approval | SEAM §§148, 149 |
+| **`auth_failed` and the cancellation canary's negatives** (`barrier_not_reached`) have no sandbox-lane case. | M135; M137 (b) | B | M139, M137 in the real lane | SEAM §149 |
+| **The collection bounds are exceeded only below their configured ranges**, through the harness flag `--harness-collect-bounds` and the fault `collect_slow`. No case reaches `collect_entries_max` at 100 or `provider_files_max_bytes` at 1 MiB, or outlasts `collect_deadline` without the delay. | M132 (e) | B (an instrument's limit) | none planned on this host | SEAM §152 |
+| **A screen hit keeps the interim reason class.** It ends `failed` / `infra_error`, with `secret_refused` in `reason_text`. There is no reason class of its own. | M132 | C (recommended) or a new reason class | Sean decides | SEAM §152; E67 item 5 |
+| **Revocation is checked at starts and dispatches, not continuously.** A binary changed while no dispatch or start happens is found at the next one. | M134 | C (D2 §7.3 needs nothing more) | none | SEAM §150 |
+| **Requalification after a mechanism change is not a revocation.** The entry stays `active` and refused until an attempt. Whether a restart without the change restores it is not pinned. | M134 (g) | B | none planned | SEAM §150 |
+| **The context package's phase-plan and dependency-interface texts** have no case (part 1's question 6: not cheap). | M125 (c) | B | the real-backend journey, M140 | SEAM §153 |
