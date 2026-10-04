@@ -470,7 +470,9 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   // the host before the instructions are written, so that every target the
   // probe counts is one the role is told to open (D2 A.6 P2; SEAM.md §138).
   const engineLog = join(home, 'engine.log');
-  if (!existsSync(engineLog)) writeFileSync(engineLog, '', { mode: 0o600 });
+  // A target with content: where the home has no engine log yet, the suite
+  // starts one with a line of its own; an existing log is left as it is.
+  if (!existsSync(engineLog)) writeFileSync(engineLog, `${JSON.stringify({ log: 'info', at: new Date().toISOString(), what: 'engine log started by the isolation probe suite', tag })}\n`, { mode: 0o600, flag: 'wx' });
   mkdirSync(join(home, 'records'), { recursive: true, mode: 0o700 });
   const recordSentinel = join(home, 'records', `probe-sentinel-${tag}`);
   writeFileSync(recordSentinel, tag, { mode: 0o600 });

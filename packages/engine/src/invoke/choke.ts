@@ -679,8 +679,26 @@ export class Launcher {
   // it would have, and no re-grant is made. Returns true when it decided the
   // run (re-granted, or ended for its deadline or budget); false leaves the
   // run to the lease's ordinary reconciliation (E27 item 3).
-  async regrant(run: string): Promise<boolean> {
+  // One challenge at a time per run (D2 §3.5: "While the challenge is
+  // outstanding nothing replaces the run"): a tick that comes while one is
+  // outstanding waits for its outcome instead of sending another, and a
+  // challenge that went unanswered is not sent again on the same lease
+  // generation, so a later tick cannot re-grant what the unanswered one
+  // left to the lease's reconciliation.
+  private readonly challenges = new Map<string, Promise<boolean>>();
+  private readonly unanswered = new Map<string, number>();
+
+  regrant(run: string): Promise<boolean> {
+    const outstanding = this.challenges.get(run);
+    if (outstanding) return outstanding;
+    const p = this.regrantOnce(run).finally(() => this.challenges.delete(run));
+    this.challenges.set(run, p);
+    return p;
+  }
+
+  private async regrantOnce(run: string): Promise<boolean> {
     const handle = this.rt.handles.get(run);
+    if (!handle) this.unanswered.delete(run);
     if (!handle || handle.ending || handle.sandbox === null || handle.claim.cgroup_path === null) return false;
     const launch = handle.sandbox;
     const facts = await this.rt.read<{ eligible: boolean; reason: string | null; generation: number | null; domain: string | null; invocation: string | null; deadline_at: string | null }>(
@@ -688,6 +706,7 @@ export class Launcher {
       { run, incarnation: this.rt.incarnation },
     );
     if (!facts.eligible || facts.generation === null) return false;
+    if (this.unanswered.get(run) === facts.generation) return false;
     const gate = this.gate(handle);
     // Without a re-grant or an exit, what the role sent during the pause is
     // not acted on (its lease had expired), and its exit is the run's end's.
@@ -733,6 +752,7 @@ export class Launcher {
     const sentAt = isoAt(nowMs());
     const response = await launch.challenge(handle.claim.invocation, facts.generation, this.rt.setting('pause_challenge_timeout') * 1000, seamMainFault('challenge_response_dropped'));
     if (response === null || handle.ending) {
+      if (response === null) this.unanswered.set(run, facts.generation);
       dropGate();
       return false;
     }
