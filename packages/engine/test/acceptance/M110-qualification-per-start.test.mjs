@@ -61,12 +61,13 @@ function assertActiveRow(fx, info) {
   }
   // Extended by the slice-12 Verifier, as this file's head provides (SEAM.md
   // §138): a pass has every probe P1 to P19 passed against a seeded
-  // target, its negative denied and its control run; P20 is row M133's
-  // (slice 13) and is reported not_exercised in slice 12 with that reason.
+  // target, its negative denied and its control run. P20 (amended in M2
+  // slice 13, E69; SEAM.md §138) is passed, or not_exercised with the
+  // designation excuse on a host whose isolation_probe_exhaustion is false.
   const wsl2 = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
   for (const p of row.probes) {
     if (p.id === 'P20') {
-      assert.ok(['passed', 'not_exercised'].includes(p.result), `P20 is passed or, in slice 12, not_exercised (${JSON.stringify(p)})`);
+      assert.ok(p.result === 'passed' || (p.result === 'not_exercised' && /isolation_probe_exhaustion/.test(p.reason ?? '')), `P20 is passed, or not_exercised with the excuse that names isolation_probe_exhaustion (${JSON.stringify(p)})`);
       continue;
     }
     if (p.id === 'P11' && !wsl2) {

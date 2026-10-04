@@ -1685,6 +1685,15 @@ Accepted files that use the harness this pass changed (the stand-in, `child.mjs`
 
 **Accepted tests changed:** none. The stand-in's change leaves its kernel-lane behaviour as it was for any argument array other than exactly `--version` or `--help`.
 
+**After the slice-13 Builder's report** (2026-10-04, on `verify/m2-s13` from `main` at `9535a0a`). Two objections were answered and the contract gained one key. Each changed file was run alone on `build/m2-s13` at `697e325`, in a detached scratch worktree with the changed files copied in (removed afterwards; not an acceptance run). Results: M131 3 of 3, M132 6 of 6, M110-qualification-per-start 3 of 3, M07 17 of 17, M73 11 of 11. Before every file the user manager was `running`, and after every file no `surety-*` scope was left.
+
+| What | Change |
+|---|---|
+| Objection 011, M131 (c), **upheld** | The restarted engine is given the provider key again: the resolver holds it in memory only (SEAM §57). No assertion changed. |
+| Objection 012, M132 (a), (c), **upheld in part** | The engine-home scan accepts an unreadable file only as the init's execute-only node copy, verified by name (the device, inode, size and mtime of the very node the harness starts), mode 0111 and size, or as a hard link of such a copy. Any other unreadable file fails the case. The proposed recognition by mode and size alone was not taken. |
+| `contract/config.json` | The engine key `isolation_probe_exhaustion` (boolean, default false; E69 item 4), so M07 and M73 pin it. |
+| SEAM §138; `M110-qualification-per-start.test.mjs` | P20's excuse is the designation, no longer "slice 12 only". While `isolation_probe_exhaustion` is false, P20 is `not_exercised` with a reason naming the key, and it is excused. The M110 check now requires that reason, where it had accepted any `not_exercised`. |
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
