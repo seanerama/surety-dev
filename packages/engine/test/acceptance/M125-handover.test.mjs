@@ -10,8 +10,10 @@
 // none of the engine's own: the parent-only sentinel credentials are in
 // neither the backend's environment nor, read from the host's /proc, the
 // init's or any other engine process's of the domain. The context package
-// is read-only and holds what the work item binds, listed in its manifest;
-// a resumed run's is rebuilt from records; neither ever holds the raw
+// is read-only and holds what the work item binds, listed in its manifest,
+// as approved texts (E67 item 7, case (c) extended in M2 slice 13: a bound
+// requirement, ADR and constraint, and an unbound requirement and ADR that
+// must be absent); a resumed run's is rebuilt from records; neither ever holds the raw
 // report on the trigger. A binary whose hash is not the entry's is refused
 // before any launcher starts.
 //
@@ -154,12 +156,43 @@ describe('M125 what is handed over', () => {
     await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
   });
 
-  test("(c) the context package, fresh and resumed, with a raw report on the trigger: read-only, holding what the work item binds as its manifest lists; the resumed run's rebuilt from the prior run's records; never the raw report", async (t) => {
+  test("(c) the context package, fresh and resumed, with a raw report on the trigger: read-only, holding what the work item binds as its manifest lists, the approved texts of the bound requirement, ADR and constraint and nothing unbound (E67 item 7); the resumed run's rebuilt from the prior run's records; never the raw report", async (t) => {
     const fx = await sandboxEngine(t);
     const project = (await addGitProject(fx)).id;
 
-    // Fresh, a stage's work binding a requirement.
-    const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'build the one stage', implements: ['R1'] }] });
+    // Fresh, a stage's work binding a requirement, an ADR and the project's
+    // constraint, with a requirement and an ADR beside them that it does
+    // not bind (E67 item 7, Sean's decision: the package carries the
+    // approved texts; SEAM.md §139, as amended in M2 slice 13).
+    const tag = randomBytes(4).toString('hex');
+    const TEXT = {
+      R1: `R1 approved text ${tag}: the importer accepts UTF-8 CSV files of up to 10 MB.`,
+      R2: `R2 approved text ${tag}: an unbound requirement this stage does not implement.`,
+      ADR1: `ADR-1 approved text ${tag}: parse with a streaming reader; never load a file whole.`,
+      ADR2: `ADR-2 approved text ${tag}: an ADR this stage does not cite.`,
+      C1: `C1 approved text ${tag}: no network access at run time.`,
+    };
+    const plan = await installGatedPlan(fx.engine, project, {
+      requirements: [
+        { key: 'R1', text: TEXT.R1 },
+        { key: 'R2', text: TEXT.R2 },
+      ],
+      adrs: [
+        { key: 'ADR-1', text: TEXT.ADR1 },
+        { key: 'ADR-2', text: TEXT.ADR2 },
+      ],
+      constraints: [{ key: 'C1', text: TEXT.C1 }],
+      stages: [{ number: 1, goal: 'build the one stage', implements: ['R1'], adrs: ['ADR-1'] }],
+    });
+    const sourceOf = (list, key, what) => {
+      const found = (list ?? []).find((x) => x.key === key);
+      assert.ok(typeof found?.source === 'string' && found.source !== '', `the plan fixture answers with the ${what} ${key} and the source the engine names it by (answer: ${JSON.stringify(list ?? null)})`);
+      return found.source;
+    };
+    const adr1 = sourceOf(plan.adrs, 'ADR-1', 'ADR');
+    const adr2 = sourceOf(plan.adrs, 'ADR-2', 'ADR');
+    const c1 = sourceOf(plan.constraints, 'C1', 'constraint');
+    const r1 = plan.requirements.find((r) => r.key === 'R1').id;
     const stage = await armedRole(fx, project, plan.stages[0].work_item, {
       before: [step.probe('context_dump')],
       acts: (act) => [act.write('/surety/context/written-by-the-role.txt')],
@@ -170,8 +203,27 @@ describe('M125 what is handed over', () => {
     const manifest = assertManifest(fresh, 'the stage\'s run');
     assert.ok(manifest.files.some((f) => f.kind === 'prompt' && f.path === 'prompt.md'), 'the prompt is prompt.md');
     for (const kind of ['instructions', 'result_schema']) assert.ok(manifest.files.some((f) => f.kind === kind), `the package holds the ${kind}`);
-    const reqs = manifest.files.filter((f) => f.kind === 'requirement');
-    assert.deepEqual(reqs.map((f) => f.source), [plan.requirements[0].id], 'and the one requirement the work binds, by its id');
+    // E67 item 7: each bound item once, by its source, holding its approved
+    // text verbatim; nothing the work item does not bind.
+    const bound = [
+      ['requirement', r1, TEXT.R1, 'R1, the requirement the stage implements'],
+      ['adr', adr1, TEXT.ADR1, 'ADR-1, the ADR the stage cites'],
+      ['constraint', c1, TEXT.C1, 'C1, the project-wide constraint'],
+    ];
+    for (const [kind, source, text, what] of bound) {
+      const entries = manifest.files.filter((f) => f.kind === kind);
+      assert.deepEqual(entries.map((f) => f.source), [source], `E67 item 7: the manifest lists exactly one ${kind} file, ${what}, by its source (it lists ${JSON.stringify(entries)})`);
+      const file = fresh.files.find((f) => f.name === entries[0].path);
+      assert.ok(typeof file?.text === 'string', `E67 item 7: ${entries[0].path} was read whole by the role`);
+      assert.ok(file.text.includes(text), `E67 item 7: ${entries[0].path} holds the approved text of ${what} verbatim (it holds ${JSON.stringify(file.text.slice(0, 300))})`);
+    }
+    for (const [text, what] of [
+      [TEXT.R2, 'R2, a requirement the stage does not implement'],
+      [TEXT.ADR2, 'ADR-2, an ADR the stage does not cite'],
+    ]) {
+      assert.ok(!fresh.files.some((f) => (f.text ?? '').includes(text)), `E67 item 7: no file of the package holds ${what}`);
+    }
+    assert.ok(!manifest.files.some((f) => f.source === adr2 || f.source === plan.requirements.find((r) => r.key === 'R2').id), 'E67 item 7: the manifest names neither unbound item');
     assert.ok(fresh.files.find((f) => f.name === 'prompt.md').text.includes('build the one stage'), 'the prompt carries the stage\'s goal');
     assert.equal(stage.probe('write_probe').outcome, 'refused', '/surety/context is read-only');
     await stage.stop();
