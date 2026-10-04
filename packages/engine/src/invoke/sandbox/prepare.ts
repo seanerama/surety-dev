@@ -11,9 +11,9 @@ import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { recordsDir, writeWholeRecord } from '../../records/files.js';
-import { seamSandboxBinds } from '../../testing/seam.js';
+import { seamDomainLimits, seamSandboxBinds } from '../../testing/seam.js';
 
-import { createDomainCgroup } from '../../boundary/cgroup.js';
+import { type DomainLimits, createDomainCgroup } from '../../boundary/cgroup.js';
 import { workspaceLink } from '../../git/worktree.js';
 import { type RunHandle, type Runtime, log } from '../../runtime.js';
 import type { BackendSpec } from '../backend.js';
@@ -23,6 +23,7 @@ import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
 import { type ContextFacts, writeContextPackage } from './context.js';
+import { CANARY_BARRIER, canaryInstructions, witnessSocket } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
 import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
@@ -82,6 +83,22 @@ export function protectedBinds(workspace: string, roots: string[], empty: string
   return out;
 }
 
+// A domain's cgroup limits (D2 §3.7): `pids.max` from `domain_tasks_max`,
+// `memory.max` from `domain_memory_max`, `memory.swap.max` 0.
+// In harness mode a test may cap an item's domains below the configured
+// minimums (E69; seamDomainLimits); the limits are then those, written and
+// read back like any other.
+export function domainLimits(rt: Runtime, workItem: string): DomainLimits {
+  const o = seamDomainLimits(workItem);
+  return { memoryMax: o?.memory_max ?? rt.setting('domain_memory_max'), tasksMax: o?.pids_max ?? rt.setting('domain_tasks_max') };
+}
+
+// The volatile filesystem's bounds (D2 §§2.3, 3.7), likewise.
+export function volatileBounds(rt: Runtime, workItem: string): { bytes: number; inodes: number } {
+  const o = seamDomainLimits(workItem);
+  return { bytes: o?.writable_bytes ?? rt.setting('domain_writable_bytes'), inodes: o?.writable_inodes ?? rt.setting('domain_writable_inodes') };
+}
+
 export interface PreparedSandbox {
   plan: Plan;
   backend: BackendLaunch;
@@ -105,7 +122,25 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+  const canary = claim.attempt
+    ? canaryInstructions({
+        attempt: claim.attempt.id,
+        kind: claim.attempt.kind,
+        domain: claim.domain,
+        deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)),
+        node: engineNode(),
+        tokenPath: (() => {
+          try {
+            return realpathSync(join(rt.home, 'api.token'));
+          } catch {
+            return join(rt.home, 'api.token');
+          }
+        })(),
+        apiPort: rt.config.values.api_port,
+      })
+    : null;
   writeContextPackage(join(area, 'context'), claim, facts, {
+    canary,
     probe: claim.profile === 'probe',
     readRecord: (id) => {
       const path = recordPaths.get(id);
@@ -126,7 +161,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // The recorded path must be this domain's directory in this engine's own
   // scope; anything else is never created, entered or killed.
   if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
-  const limits = { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') };
+  const limits = domainLimits(rt, claim.work_item);
   const inode = createDomainCgroup(may.cgroup_path, limits);
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
   // The probe profile (D2 §2.8, A.6 P15; SEAM.md §127): the domain's own
@@ -166,7 +201,8 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
 
   let plan: Plan;
   try {
-    const writable = rt.setting('domain_writable_bytes');
+    const vb = volatileBounds(rt, claim.work_item);
+    const writable = vb.bytes;
     plan = buildPlan({
       area,
       context: join(area, 'context'),
@@ -175,7 +211,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       writablePaths: [...new Set([...(backend.binds ?? []), ...seamSandboxBinds()].filter((b) => b.writable).map((b) => b.path))],
       binds,
       volBytes: writable,
-      volInodes: rt.setting('domain_writable_inodes'),
+      volInodes: vb.inodes,
       shmBytes: Math.min(writable, 64 * 1024 * 1024),
       tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv, mknod: t.mknod },
       node: engineNode(),
@@ -222,7 +258,22 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   };
   return {
     plan,
-    backend: { argv: [backend.command, ...backend.args], env, cwd: '/surety/workspace', stdin, forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET } },
+    backend: {
+      argv: [backend.command, ...backend.args],
+      env,
+      cwd: '/surety/workspace',
+      stdin,
+      forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET },
+      ...(canary
+        ? {
+            canary: {
+              barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null,
+              witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null,
+              actions: canary.kind === 'containment' ? ((canary.actions as { name: string; argv: string[] }[] | undefined) ?? []) : [],
+            },
+          }
+        : {}),
+    },
     unshare: t.unshare,
     egress,
   };

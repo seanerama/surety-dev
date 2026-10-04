@@ -44,6 +44,7 @@ import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 import { terminateDomain } from '../boundary/terminate.js';
 import { finishEgress } from '../invoke/proxy/egress.js';
+import { redactText, redactValue } from '../records/redact.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 
 type Domain = EndFacts['domains'][number];
@@ -83,7 +84,16 @@ export class RunEnder {
 
   async endRun(run: string, end: RunEnd, opts: EndOptions = {}): Promise<void> {
     try {
-      await this.rt.engine('run.begin_end', { run, outcome: end.outcome, reason: end.reason, reasonText: end.reasonText, decidedAt: end.decidedAt, detail: end.detail });
+      // Every reason and detail is redacted before it is stored or emitted:
+      // some are built from names a role chose (the review's S4).
+      await this.rt.engine('run.begin_end', {
+        run,
+        outcome: end.outcome,
+        reason: end.reason,
+        reasonText: end.reasonText === undefined ? undefined : redactText(end.reasonText),
+        decidedAt: end.decidedAt,
+        detail: end.detail === undefined ? undefined : redactValue(end.detail),
+      });
     } catch (err) {
       this.failed(run, end, opts);
       throw err;
@@ -192,6 +202,12 @@ export class RunEnder {
   private async finish(run: string, invocations: Record<string, string>, opts: EndOptions): Promise<void> {
     const facts = await this.rt.engine<EndFacts>('run.end_facts', { run });
     if (facts.run.state === 'ended') return;
+    // What the domain's volatile filesystem held, collected now that every
+    // domain's termination is established (D2 §§1.4, 4.3): a result the run
+    // does not accept is published only as unaccepted. A run that was
+    // quarantined collects nothing (§3.4).
+    const own = this.rt.handles.get(run);
+    if (own && this.rt.services) await this.rt.services.collectAtEnd(own, facts.run.quarantined === 1);
     // Step 6 for Abandon: the workspace is discarded only now that
     // termination is established, never while a writer may survive.
     if (facts.run.outcome === 'abandoned' && facts.workspace && facts.workspace.disposition !== 'discarded') {
@@ -284,6 +300,7 @@ export class RunEnder {
     if (own?.egress) {
       const egress = own.egress;
       own.egress = null;
+      own.egressEntries = egress.entries.map((e) => ({ authority: e.authority, decision: e.decision, reason: e.reason, opened_at: e.opened_at }));
       await finishEgress(this.rt, egress, { project: own.claim.project, run: own.claim.run });
     }
     const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);

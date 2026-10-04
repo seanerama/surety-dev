@@ -7,6 +7,8 @@
 // restricted with the failure readable and the scheduler not started.
 
 import type { Server } from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { relative } from 'node:path';
 
 import { createApiServer } from './api/server.js';
@@ -32,6 +34,7 @@ import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
 import { seamHostChecks, seamScopeBarrier } from './testing/seam.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
+import { QualificationDriver } from './trust/attempts.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
@@ -90,6 +93,21 @@ function startFailure(home: string, err: unknown): { status: number; refusal: Re
   const e = err as NodeJS.ErrnoException;
   const at = typeof e?.path === 'string' ? relative(home, e.path) || '.' : '.';
   return { status: EXIT.notStarted, refusal: homeUnusable(at.startsWith('..') ? '.' : at, e?.message ?? String(err)) };
+}
+
+// The SHA-256 of each binary a live trust entry names, read here (null when
+// it cannot be read), and the store's revocation of what changed.
+async function revokeChangedEntries(rt: Runtime): Promise<void> {
+  const paths = await rt.read<string[]>('trust.binaries');
+  const binaries: Record<string, string | null> = {};
+  for (const p of paths) {
+    try {
+      binaries[p] = createHash('sha256').update(await readFile(p)).digest('hex');
+    } catch {
+      binaries[p] = null;
+    }
+  }
+  await rt.engine('trust.revoke_drifted', { binaries });
 }
 
 export async function serve(opts: ServeOptions): Promise<void> {
@@ -233,6 +251,17 @@ export async function serve(opts: ServeOptions): Promise<void> {
         decision_targets: config.values.decision_targets,
         ui_bootstrap: config.values.ui_bootstrap,
       },
+      // The resource envelope's admission (D2 §3.7), on the real boundary.
+      envelope: checksRun && scope.scope !== null
+        ? {
+            max_concurrent_domains: config.values.max_concurrent_domains,
+            host_reserve_memory: config.values.host_reserve_memory,
+            host_reserve_disk: config.values.host_reserve_disk,
+            domain_memory_max: config.values.domain_memory_max,
+            domain_writable_bytes: config.values.domain_writable_bytes,
+            home: opts.home,
+          }
+        : null,
     });
   } catch (err) {
     return fail('store', err);
@@ -247,6 +276,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const ender = new RunEnder(runtime);
   const acceptor = new Acceptor(runtime, ender, journal);
   const launcher = new Launcher(runtime);
+  const qualification = new QualificationDriver(runtime, launcher);
   const effects = new Effects(runtime, journal);
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
@@ -260,6 +290,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
     journal: (project) => reconcileProject(runtime, journal, project),
     effect: (intent) => effects.run(intent),
     regrant: (run) => launcher.regrant(run),
+    terminateDomains: (run) => ender.terminateDomains(run),
+    collectAtEnd: (handle, quarantined) => launcher.collectAtEnd(handle, quarantined),
+    qualificationStep: () => qualification.step(),
   };
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation
@@ -295,6 +328,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
       log('host checks', err);
     }
     state.completed.push('host_qualification');
+  }
+
+  // 5b. Revocation on change (D2 §7.3): every entry whose binary's bytes,
+  // template version, qualified profile or host identity no longer hold is
+  // revoked before anything is dispatched; no running domain is touched.
+  try {
+    await revokeChangedEntries(runtime);
+  } catch (err) {
+    log('trust revocation', err);
   }
 
   // 6. lift to full

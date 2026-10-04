@@ -57,7 +57,11 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
 export const ENGINE_FIXED: Record<string, number> = { body_cap: BODY_CAP, upload_cap: UPLOAD_CAP };
 
 // Boolean engine keys and their defaults (D2 A.7).
-export const ENGINE_BOOLEANS: Record<string, boolean> = { ui_bootstrap: false };
+// `isolation_probe_exhaustion` (E69): the host is designated for the
+// exhaustion probe P20, which forks to `pids.max`, allocates to `memory.max`
+// and fills the volatile filesystem's bounds; off by default, and P20 is then
+// `not_exercised`, excused.
+export const ENGINE_BOOLEANS: Record<string, boolean> = { ui_bootstrap: false, isolation_probe_exhaustion: false };
 
 // The order in which keys are validated and reported. api_port precedes
 // api_authority because the authority is checked against the port.
@@ -103,6 +107,8 @@ export const ENGINE_KEYS = [
   'egress_buffer_max_bytes',
   'egress_log_max_bytes',
   'pause_challenge_timeout',
+  // E69: the host is designated for the exhaustion probe P20.
+  'isolation_probe_exhaustion',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];

@@ -3,8 +3,12 @@
 // be made: `unknown` is a value, never taken for "absent" or "clean".
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
+
+import { readRegular } from '../invoke/sandbox/volatile.js';
+
+const METADATA_FILE_MAX = 64 * 1024 * 1024;
+import { basename, dirname, join } from 'node:path';
 
 import { type GitContext, SHA, git, gitOk } from './exec.js';
 
@@ -236,7 +240,9 @@ export async function treeIndexHash(ctx: GitContext, tree: string, scratch: stri
 // it cannot be read.
 export function readHeadFile(gitDir: string): { detached: string } | { branch: string } | null {
   try {
-    const text = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim();
+    const head = readRegular(gitDir, 'HEAD', 64 * 1024);
+    if (head.state !== 'read') return null;
+    const text = head.bytes.toString('utf8').trim();
     if (SHA.test(text)) return { detached: text };
     if (text.startsWith('ref: ')) return { branch: text.slice(5).trim() };
     return null;
@@ -252,7 +258,12 @@ export function contentHash(path: string): string | null {
   try {
     const st = lstatSync(path);
     if (st.isSymbolicLink()) return `link:${readlinkSync(path)}`;
-    if (st.isFile()) return sha256(readFileSync(path));
+    if (st.isFile()) {
+      // Never through a link, a regular file only, bounded (the review's S3).
+      const r = readRegular(dirname(path), basename(path), METADATA_FILE_MAX);
+      if (r.state === 'read') return sha256(r.bytes);
+      return `unhashed:${r.state === 'refused' ? r.reason : r.state}:${st.size}`;
+    }
     if (st.isDirectory()) {
       const parts = readdirSync(path)
         .sort()

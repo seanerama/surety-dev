@@ -5,8 +5,8 @@
 // mutating request past the Host check is audited, refusals included, once
 // the store is open. Every response carries the defensive headers.
 
-import { ECHO_HOST } from '../invoke/proxy/echo.js';
-import { canonicalHost } from '../invoke/proxy/proxy.js';
+import { prepareQualify } from '../trust/qualify.js';
+import { heldProviderCaps } from '../records/redact.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import { inspectEngineConfig } from '../config/engine-config.js';
@@ -201,15 +201,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'prepared',
         name: 'trust.qualify',
         prepare: async (b) => {
-          const body = (typeof b === 'object' && b !== null && !Array.isArray(b) ? b : {}) as Record<string, unknown>;
-          const list = body.candidate_egress;
-          if (list !== undefined && (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0))) {
-            throw new Refusal(400, 'invalid_value', 'candidate_egress must be a list of host names.', 'Send the host names the canaries may contact.', { field: 'candidate_egress' });
-          }
-          if (Array.isArray(list) && list.some((h) => canonicalHost(String(h)) === ECHO_HOST)) {
-            throw new Refusal(400, 'invalid_value', `candidate_egress names ${ECHO_HOST}, the engine's own echo endpoint, which only the probe suite may reach.`, 'Remove the echo endpoint from the list.', { field: 'candidate_egress' });
-          }
-          throw unsupported('A qualification attempt');
+          const request = await prepareQualify(b);
+          // The provider-side cap held with the key's reference, shown on
+          // the attempt as configured, never as engine enforcement (Q2).
+          const cap = heldProviderCaps()[`backend/${request.backend}/api_key`];
+          return { ...request, provider_cap_usd: cap ?? null };
         },
       };
     }

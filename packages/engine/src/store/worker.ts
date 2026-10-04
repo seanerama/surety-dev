@@ -91,7 +91,19 @@ import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext } from './reads.js';
-import { type HostObserved, recordHostQualification, setHostObserved, trustView } from './transitions/trust.js';
+import {
+  attemptTarget,
+  attemptUsage,
+  attemptsDue,
+  canaryItem,
+  canaryRunFacts,
+  concludeAttempt,
+  invalidateAttemptBy,
+  qualify,
+  recordCanary,
+  startAttemptRun,
+} from './transitions/qualification.js';
+import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
   authorizeLaunch,
   boundaryDomains,
@@ -102,12 +114,15 @@ import {
   domainMayCreate,
   getDomain,
   priorScopes,
+  recordCollection,
   recordExit,
+  secretRefused,
   recordObservation,
   recordPlacement,
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
+import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
 
 export interface WorkerData {
   file: string;
@@ -145,6 +160,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
+  'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
   'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
   'authorization.propose': (tx, a) => proposeAuthorization(tx, a),
@@ -203,7 +219,21 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
+  'domain.exit_of': (d, a: { domain: string }) => d.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "id" = ?').get(a.domain) ?? null,
   'decisions.engine': (d) => engineDecisions(d),
+  'qualification.due': (d) => attemptsDue(d),
+  'qualification.row': (d, a: { attempt: string }) => getAttempt(d, a.attempt) ?? null,
+  'qualification.drift': (d, a: { attempt: string }) => {
+    const row = getAttempt(d, a.attempt);
+    return row ? attemptDrift(d, row) : 'missing';
+  },
+  'qualification.target': (d, a: { project: string | null }) => attemptTarget(d, a),
+  'qualification.canary_run': (d, a: { item: string }) => (d.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(a.item) as { id: string } | undefined)?.id ?? null,
+  'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
+  'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
+  'qualification.provider_files': (d, a: { run: string }) =>
+    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(a.run) ?? null,
+  'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -282,8 +312,17 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'domain.close': (tx, a) => closeLaunch(tx, a),
   'domain.observed': (tx, a) => recordObservation(tx, a),
   'domain.exit': (tx, a) => recordExit(tx, a),
+  'evidence.secret_refused': (tx, a) => secretRefused(tx, a),
+  'run.collection': (tx, a) => recordCollection(tx, a),
   'run.regrant': (tx, a) => regrantLease(tx, a),
   'host.qualification': (tx, a) => recordHostQualification(tx, a),
+  'trust.revoke_drifted': (tx, a) => revokeDrifted(tx, a),
+  'qualification.sweep': (tx) => sweepAttempts(tx),
+  'qualification.start': (tx, a) => startAttemptRun(tx, a),
+  'qualification.invalidate': (tx, a) => invalidateAttemptBy(tx, a),
+  'qualification.canary_item': (tx, a) => canaryItem(tx, a),
+  'qualification.canary': (tx, a) => recordCanary(tx, a),
+  'qualification.conclude': (tx, a) => concludeAttempt(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
@@ -324,8 +363,9 @@ function mutate(args: { name: string; args: unknown; actor: Actor; method: strin
   }
 }
 
-function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null }) {
+function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null; envelope?: EnvelopeSettings | null }) {
   setEngineSettings({ ...args.settings, incarnation: args.lock.incarnation_id });
+  setEnvelope(args.envelope ?? null);
   const d = new Database(data.file);
   db = d;
   const mode = d.pragma('journal_mode = WAL', { simple: true });

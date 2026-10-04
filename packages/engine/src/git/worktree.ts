@@ -6,7 +6,9 @@
 // first, so that a repository that does not answer is `unknown`, never
 // "nothing there".
 
-import { lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+
+import { readRegular } from '../invoke/sandbox/volatile.js';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { syncDirectory, syncTree } from '../durable.js';
@@ -62,7 +64,7 @@ export function worktreeMetadata(repo: string, path: string): string | null | 'u
     try {
       const st = lstatSync(file);
       if (!st.isFile()) continue;
-      text = readFileSync(file, 'utf8').trim();
+      text = readSmall(file).trim();
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       return 'unknown';
@@ -90,7 +92,7 @@ function occupant(repo: string, path: string, metadata: string | null): Occupant
   try {
     const g = lstatSync(dotGit);
     if (!g.isFile()) return 'foreign';
-    text = readFileSync(dotGit, 'utf8').trim();
+    text = readSmall(dotGit).trim();
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'foreign' : 'unknown';
   }
@@ -205,10 +207,20 @@ export function workspaceLink(repo: string, path: string): { adminDir: string; g
   const metadata = worktreeMetadata(repo, path);
   if (metadata === null || metadata === 'unknown') return null;
   try {
-    return { adminDir: metadata, gitlink: readFileSync(join(path, '.git'), 'utf8') };
+    return { adminDir: metadata, gitlink: readSmall(join(path, '.git')) };
   } catch {
     return null;
   }
 }
 
 export { gitOk };
+
+// A small file a role's workspace holds (its .git link, a worktree's gitdir),
+// read never through a link, only a regular file, at most 64 KiB; throws
+// ENOENT when absent and an error otherwise, as readFileSync would.
+function readSmall(path: string): string {
+  const r = readRegular(dirname(path), basename(path), 64 * 1024);
+  if (r.state === 'read') return r.bytes.toString('utf8');
+  if (r.state === 'absent') throw Object.assign(new Error(`${path}: absent`), { code: 'ENOENT' });
+  throw Object.assign(new Error(`${path}: ${r.detail}`), { code: 'EINVAL' });
+}

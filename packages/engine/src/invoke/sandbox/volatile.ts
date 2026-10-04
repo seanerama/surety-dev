@@ -59,6 +59,23 @@ function openDir(path: string, magic: number, what: string): number {
   }
 }
 
+// A tmpfs mounted with `size=<bytes>,nr_inodes=<inodes>` reports, by statfs,
+// whole pages covering the size and exactly the inode count. null when the
+// filesystem at `path` is so bounded; otherwise what it reports.
+export function volatileBoundsWrong(path: string, bounds: { bytes: number; inodes: number }): string | null {
+  let st;
+  try {
+    st = statfsSync(path);
+  } catch (err) {
+    return `the volatile filesystem's bounds cannot be read (${(err as NodeJS.ErrnoException).code ?? 'error'})`;
+  }
+  const size = st.blocks * st.bsize;
+  const pageUp = Math.ceil(bounds.bytes / st.bsize) * st.bsize;
+  if (size !== pageUp) return `the volatile filesystem holds ${size} bytes, not the ${bounds.bytes} of domain_writable_bytes`;
+  if (st.files !== bounds.inodes) return `the volatile filesystem holds ${st.files} inodes, not the ${bounds.inodes} of domain_writable_inodes`;
+  return null;
+}
+
 export class VolatileHold {
   private open = true;
 
@@ -70,13 +87,20 @@ export class VolatileHold {
   // Take hold of the volatile filesystem at `vol` and the workspace's overlay
   // at `merged` (host paths as the setup stage's mount namespace has them),
   // through the init's root. Throws if either is not what the plan mounted.
-  static take(launcherPid: number, vol: string, merged: string | null): VolatileHold {
+  static take(launcherPid: number, vol: string, merged: string | null, bounds?: { bytes: number; inodes: number }): VolatileHold {
     const init = initHostPid(launcherPid);
     if (init === null) throw new Error(`the domain init of launcher ${launcherPid} could not be found`);
     const root = `/proc/${init}/root`;
     const volFd = openDir(`${root}${vol}`, TMPFS_MAGIC, 'the volatile filesystem');
     let mergedFd: number | null = null;
     try {
+      // The bounds are the mount's own options, read back from the kernel
+      // before the role starts (D2 §§2.3, 3.7): a volatile filesystem that is
+      // not as bounded as the plan says is never handed to a role.
+      if (bounds) {
+        const wrong = volatileBoundsWrong(`/proc/self/fd/${volFd}`, bounds);
+        if (wrong !== null) throw new Error(wrong);
+      }
       if (merged !== null) mergedFd = openDir(`${root}${merged}`, OVERLAYFS_MAGIC, "the workspace's overlay");
     } catch (err) {
       closeSync(volFd);

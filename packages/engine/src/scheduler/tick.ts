@@ -160,6 +160,9 @@ export class Scheduler {
       if (remaining() <= 0) break;
       await this.decide(project).catch((err) => log('tick decide', err, { project }));
     }
+    // Authorized qualification attempts: their canaries are dispatched by
+    // their own authority (D2 §7.2, K10), not by the queue below.
+    await this.rt.services?.qualificationStep().catch((err) => log('qualification', err));
     let dispatched = 0;
     if (remaining() > 0) {
       const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates', { maxConcurrentRuns: this.rt.setting('max_concurrent_runs') });

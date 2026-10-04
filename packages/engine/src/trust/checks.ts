@@ -34,7 +34,7 @@ import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import { canonical } from '../store/transitions/common.js';
 import { type CheckResult, isRequired, isWsl2 } from '../store/transitions/trust.js';
-import { seamHostChecks } from '../testing/seam.js';
+import { seamHostChecks, seamMechanismVariant } from '../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 
 export { PROBES };
@@ -402,6 +402,23 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     systemd: (await managerReachable()).observed,
     node: process.version,
   };
+  // The role profile's fingerprint (SEAM.md §150): its plan's, with the
+  // domain's volatile bounds and limits; an entry's adds its egress list.
+  const roleShape = initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null;
+  const profileFingerprint =
+    roleShape === null
+      ? null
+      : createHash('sha256')
+          .update(
+            canonical({
+              plan: roleShape,
+              domain_writable_bytes: v.domain_writable_bytes,
+              domain_writable_inodes: v.domain_writable_inodes,
+              domain_memory_max: v.domain_memory_max,
+              domain_tasks_max: v.domain_tasks_max,
+            }),
+          )
+          .digest('hex');
   const fingerprint = createHash('sha256')
     .update(
       canonical({
@@ -409,7 +426,9 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
         boundary: BOUNDARY_MECHANISM,
         kernel: release(),
         tools: versions,
-        profile: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null,
+        profile: profileFingerprint,
+        // The engine's test mode may stand for another mechanism (SEAM.md §150).
+        ...(seamMechanismVariant() !== null ? { variant: seamMechanismVariant() } : {}),
       }),
     )
     .digest('hex');
@@ -428,6 +447,8 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     plan: { probe: suite.plan, role: { fingerprint: initCopy && tools.missing.length === 0 ? planShape(rt, tools, initCopy) : null } },
     probes: suite.probes,
     suite: suite.evidence,
+    // P20's parts, each box's verdict (SEAM.md §157), at the top level too.
+    p20: (suite.evidence as { p20?: unknown }).p20 ?? null,
   };
   // What was observed is readable whatever the outcome; only a start whose
   // every required check passed writes a row, with its evidence record
@@ -438,6 +459,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     duration_ms: Math.round(performance.now() - began),
     scope_cgroup: scope?.path ?? null,
     wsl2,
+    profile_fingerprint: profileFingerprint,
   });
   let row: string | null = null;
   if (qualifies) {

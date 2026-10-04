@@ -241,9 +241,20 @@ export class RecordStream {
     announce();
   }
 
+  // The engine stopped reading at a bound before the role's output ended:
+  // the record keeps what was read before it, and nothing after.
+  truncate(): void {
+    this.cut = true;
+  }
+
+  // Set by truncate(): nothing more is accepted; what was is kept and
+  // published (SEAM.md §157: the transcript kept, holding fewer bytes than
+  // the role wrote).
+  private cut = false;
+
   // What the role wrote, as it was read.
   write(data: Buffer): void {
-    if (this.ended || data.length === 0) return;
+    if (this.ended || this.cut || data.length === 0) return;
     this.accept(this.redactor.push(data));
   }
 

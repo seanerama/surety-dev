@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
+import { readRegular } from './sandbox/volatile.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -27,22 +28,72 @@ import { fieldAllowed, parseReport } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
-import { type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
+import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } from '../runtime.js';
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
-import { redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
+import { redactText, redactValue } from '../records/redact.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
-import { readPopulated } from '../boundary/cgroup.js';
-import { prepareSandbox } from './sandbox/prepare.js';
+import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
+import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
-import { TEMPLATES } from './adapters/templates.js';
+import { TEMPLATES, templateOf } from './adapters/templates.js';
+import { helpHash } from './static.js';
+import { type ResultCollection, collectResult, inventory, inventoryRecord } from './collect.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
+import { materialize, screenWorkspace } from './sandbox/materialize.js';
+import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
+
+// What a qualification canary's run showed the engine (D2 §7.2), kept for
+// the attempt's judgement (trust/attempts.ts) once the run has ended.
+export interface CanaryObservation {
+  kind: string;
+  exitClass: string;
+  verdict: string;
+  value: unknown;
+  editContent: string | null;
+  witnesses: { action: string; outcome: string; pid: number; detail: string }[];
+  barrierSeen: boolean;
+  termToExitMs: number | null;
+  egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
+  providerFilesRecord: string | null;
+}
+export const canaryObservations = new Map<string, CanaryObservation>();
+
+function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null): void {
+  const launch = handle.sandbox;
+  canaryObservations.set(handle.claim.run, {
+    kind: handle.claim.attempt!.kind,
+    exitClass,
+    verdict: c.verdict.outcome,
+    value: c.value,
+    editContent,
+    witnesses: launch ? [...launch.witnesses] : [],
+    barrierSeen: launch?.barrierSeen ?? false,
+    termToExitMs: launch?.termToExitMs() ?? null,
+    egress: handle.egressEntries ?? [],
+    providerFilesRecord: c.providerRecord,
+  });
+}
+
+// The collector's reasons for a path that is not a result (SEAM.md §143).
+const REFUSAL_REASON: Record<string, string> = { link: 'link', fifo: 'fifo', device: 'device', oversize: 'oversize', socket: 'not_regular', directory: 'not_regular', path: 'not_regular', unreadable: 'not_regular' };
+
+// What collection found, once per run.
+interface Collected {
+  result: ResultCollection;
+  verdict: { outcome: 'accepted' | 'invalid' | 'missing' | 'not_collected'; reason: string | null; bytes_read: number | null };
+  value: RunResult | null;
+  providerFiles: string;
+  providerRecord: string | null;
+  boundText: string | null;
+  unacceptedDone: boolean;
+}
 
 export interface DispatchTarget {
   project: string;
@@ -110,9 +161,11 @@ function requestLine(handle: RunHandle, workspace: string): string {
 // engine has no adapter for the backend.
 function realBackend(claim: Claim): BackendSpec | null {
   const e = claim.entry!;
-  const template = TEMPLATES[e.backend];
+  // A canary of a harness-mode attempt for `scripted` runs the attempt's
+  // binary under the scripted protocol (SEAM.md §148).
+  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions() });
   if (!template) return null;
-  const key = heldSecret(e.key_ref);
+  const key = template.keyVariable === '' ? null : heldSecret(e.key_ref);
   return {
     id: e.backend,
     version: template.version,
@@ -130,7 +183,9 @@ export class Launcher {
   // One dispatch, as far as the tick waits for it: everything the run needs
   // before its spawn is durable when this returns true. The launch goes on
   // asynchronously (D1 §8.1 step 9).
-  async dispatch(target: DispatchTarget, item: { id: string }): Promise<boolean> {
+  // `attempt`: a qualification attempt's own dispatch of one of its canaries
+  // (D2 §7.2, K10; trust/attempts.ts), the only way such an item is run.
+  async dispatch(target: DispatchTarget, item: { id: string }, attempt: string | null = null): Promise<boolean> {
     // The scripted backend, which only harness mode has. Every other backend
     // is chosen by the claim from the project's policy and the trust table
     // (D2 §4.1).
@@ -148,6 +203,7 @@ export class Launcher {
       // The domain is a cgroup of the incarnation's scope on the real
       // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
       scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
+      attempt,
     });
     if (!claim) return false;
     const handle = newHandle(claim);
@@ -209,6 +265,14 @@ export class Launcher {
     // D2 §1.2: the binary is the one the entry names, by path and SHA-256;
     // a mismatch is refused before anything is launched.
     if (claim.entry !== null) {
+      // The engine's test mode never launches a real backend's binary: only
+      // the stand-in a test wrote (M2 plan §2.3).
+      const real = seamRefuseBinary(claim.entry.binary_path, claim.entry.backend);
+      if (real !== null) {
+        const refusal = refusalForm('backend_refused', `This engine does not launch ${claim.entry.backend}'s own binary here: ${real}.`, 'Bind the backend to a stand-in.', { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path });
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
       let found: string | null;
       try {
         found = createHash('sha256').update(await readFile(claim.entry.binary_path)).digest('hex');
@@ -216,6 +280,8 @@ export class Launcher {
         found = null;
       }
       if (found !== claim.entry.binary_sha256) {
+        // The entry no longer holds (D2 §7.3): revoked, then refused.
+        await this.rt.engine('trust.revoke_drifted', { entry: claim.trust_entry, binaries: { [claim.entry.binary_path]: found } }).catch((err) => log('trust revocation', err, { run: claim.run }));
         const refusal = refusalForm(
           'backend_refused',
           `The binary at ${claim.entry.binary_path} ${found === null ? 'cannot be read' : 'is not the one the trust entry names'}.`,
@@ -225,6 +291,41 @@ export class Launcher {
         this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
         return false;
       }
+      // Its help, the static check of D2 §7.2, unchanged since it was
+      // qualified (D2 §7.3; SEAM.md §150): a different help revokes an entry.
+      let help: string | null = null;
+      try {
+        help = await helpHash(claim.entry.binary_path, claim.entry.backend);
+      } catch {
+        help = null;
+      }
+      if (help !== null && help !== claim.entry.help_sha256) {
+        if (claim.trust_entry !== null) {
+          await this.rt.engine('trust.revoke_drifted', { entry: claim.trust_entry, helps: { [claim.entry.binary_path]: help } }).catch((err) => log('trust revocation', err, { run: claim.run }));
+        }
+        const refusal = refusalForm('backend_refused', `The help of ${claim.entry.binary_path} is not the one the qualification recorded.`, 'Qualify the binary that is installed.', {
+          trust_entry: claim.trust_entry,
+          binary_path: claim.entry.binary_path,
+          expected_help_sha256: claim.entry.help_sha256,
+          found_help_sha256: help,
+        });
+        this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+        return false;
+      }
+    }
+    // D2 §§1.2, 2.5: a real backend runs only with the provider key its
+    // grant names; a reference that cannot be resolved refuses the launch,
+    // never a launch without the key (E62).
+    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null })?.keyVariable ?? '') !== '';
+    if (claim.entry !== null && keyed && heldSecret(claim.entry.key_ref) === null) {
+      const refusal = refusalForm(
+        'backend_refused',
+        `The provider key ${claim.entry.key_ref} that ${claim.entry.backend}'s grant names cannot be resolved, so the backend is not launched without it.`,
+        'Make the key available to the engine under that reference.',
+        { trust_entry: claim.trust_entry, reference: claim.entry.key_ref },
+      );
+      this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
+      return false;
     }
     // The widening a project's policy may make to the mount plan, validated
     // before every launch, approved or not (D2 §2.3): a refusal names the
@@ -550,6 +651,18 @@ export class Launcher {
         // the store says so; the store's transaction checks the rest.
         authorize: async () => {
           if (handle.ending || handle.abort) return false;
+          // The domain's limits, read back again at the grant (D2 §3.7): no
+          // role code is authorized into a domain without them.
+          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt, claim.work_item));
+          if (wrong !== null) {
+            log('launch', new Error(`the domain's limits do not read as written: ${wrong}`), { run: claim.run, domain: claim.domain });
+            this.rt.requestEnd(handle, {
+              outcome: 'failed',
+              reason: 'infra_error',
+              reasonText: `the domain's cgroup limits do not read as the engine wrote them (${wrong}); its launch was refused`,
+            });
+            return false;
+          }
           const r = await this.rt.engine<{ granted: boolean }>('domain.authorize', {
             domain: claim.domain,
             invocation: claim.invocation,
@@ -584,13 +697,32 @@ export class Launcher {
       },
     );
     launch.dropExitReport = seamMainFault('init_report_lost');
+    // The cancellation canary (D2 §7.2): the init observed the barrier while
+    // the backend ran; the engine cancels through the boundary.
+    if (claim.attempt?.kind === 'cancellation') {
+      launch.onBarrier = () => {
+        if (handle.backendStarted && launch.exitReport === null) {
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'human_stop', reasonText: 'canary_barrier: the cancellation canary reached its barrier and the engine cancelled it' });
+        }
+      };
+    }
     handle.sandbox = launch;
     handle.child = launch.child;
     handle.pid = launch.pid;
     handle.startTime = launch.startTime;
     handle.settle();
 
-    const output = new RoleOutput(launch.output, (bytes) => transcript.write(bytes));
+    const output = new RoleOutput(launch.output, (bytes) => transcript.write(bytes), {
+      lineMax: this.rt.setting('stream_line_max_bytes'),
+      queueMax: this.rt.setting('stream_queue_max_bytes'),
+      onBound: (why) => {
+        // A supervisor bound reached cancels the run through the boundary
+        // and records the evidence incomplete, never complete (D2 §3.7).
+        transcript.truncate();
+        handle.streamBound = why;
+        this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: why });
+      },
+    });
     let outputDone: () => void = () => {};
     handle.output = { done: new Promise<void>((resolve) => (outputDone = resolve)), stop: () => output.close() };
     // The backend's exit, as the init reports it. Taken now, unless the
@@ -625,6 +757,9 @@ export class Launcher {
           this.gate(handle).lines.push(line);
           continue;
         }
+        // The harness's slow consumer (SEAM.md §157); 0 outside it.
+        const slow = seamStreamDelay();
+        if (slow > 0) await new Promise((r) => setTimeout(r, slow));
         await this.callback(handle, line).catch((err) => log('callback', err, { run: claim.run }));
       }
     } finally {
@@ -648,7 +783,284 @@ export class Launcher {
     }
     await backendStarted;
     if (handle.gate) await handle.gate.released;
-    this.childDone(handle);
+    await this.collectAfterExit(handle);
+  }
+
+  // ---- after the backend's exit, on the real boundary (D2 §§1.4, 1.6, 2.5, 4.3) ----
+
+  // The backend has exited and its output is read. Nothing it left is read
+  // before the domain's termination is established, with closure (K4): the
+  // engine terminates the domain first (a descendant still writing is ended
+  // by the boundary), then reads the exit class the boundary recorded and
+  // collects. Only then is the run's end decided: only `clean` with a
+  // well-formed result completes; every other class gives its outcome, and
+  // a result present for one of them is published as an unaccepted_result.
+  private async collectAfterExit(handle: RunHandle): Promise<void> {
+    const { claim } = handle;
+    // An end already decided (a Stop, a deadline, a stream bound) is the
+    // run-end protocol's, which collects what is unaccepted.
+    if (handle.ending || !this.rt.services) return;
+    handle.collecting = true;
+    let terminated = false;
+    try {
+      terminated = await this.rt.services.terminateDomains(claim.run);
+    } catch (err) {
+      log('termination after exit', err, { run: claim.run });
+      terminated = false;
+    }
+    if (handle.ending) return;
+    if (!terminated) {
+      // Unknown termination: nothing is collected at all (D2 §3.4); the
+      // run-end protocol quarantines it.
+      handle.collecting = false;
+      this.rt.requestEnd(handle, {
+        outcome: 'failed',
+        reason: 'infra_error',
+        reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
+        ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
+      });
+      return;
+    }
+    const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
+    const cls = exit?.exit_class ?? 'unknown';
+    const collected = await this.collectOnce(handle);
+    handle.collecting = false;
+    if (handle.ending) return;
+    const end = await this.decideAfterExit(handle, cls, collected);
+    if (end === 'accept') {
+      this.childDone(handle);
+      return;
+    }
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+  }
+
+  // What the result and the exit class give (D2 §1.6; SEAM.md §143's
+  // table), the result recorded first where it is the run's.
+  private async decideAfterExit(handle: RunHandle, cls: string, c: Collected): Promise<RunEnd | 'accept'> {
+    const { claim } = handle;
+    if (handle.streamBound !== null) {
+      await this.publishUnaccepted(handle, c);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: handle.streamBound };
+    }
+    if (c.boundText !== null) {
+      await this.publishUnaccepted(handle, c);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: c.boundText };
+    }
+    const r = c.result;
+    const accepted = c.verdict.outcome === 'accepted' && r.state === 'read';
+    // A screen hit (D2 §2.5; SEAM.md §152): what holds the secret is refused
+    // and the run cannot complete. What does not hold it is still kept: an
+    // accepted result is published as the run's record; and the workspace's
+    // changes are screened too, so a refusal there is reported as well.
+    const hits = [...(r.state === 'secret' ? ['the result'] : []), ...(c.providerFiles === 'refused_secret' ? ['the provider files'] : [])];
+    if (hits.length > 0) {
+      c.unacceptedDone = true;
+      // Only a clean exit's accepted file is the run's `result`; any other
+      // class's is `unaccepted_result` (D2 §1.4; the review's S5).
+      if (accepted && r.state === 'read') {
+        const kind = cls === 'clean' ? 'result' : 'unaccepted_result';
+        await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind, content: r.bytes }).catch((err) => log('result record', err, { run: claim.run }));
+      }
+      const hold = handle.sandbox?.volatile ?? null;
+      if (hold !== null && hold.held && hold.merged !== null && handle.workspacePath) {
+        // Under the snapshot's caps, as materialization is (E67 item 4): a
+        // workspace past them is refused before it is read.
+        const caps = await this.snapshotCaps(claim.project);
+        const m = screenWorkspace({ hold, home: this.rt.home, workspace: handle.workspacePath, caps });
+        if (m.state === 'refused' && m.reason === 'secret') {
+          hits.push("the workspace's changes");
+          await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
+        }
+      }
+      if (claim.attempt !== null) recordCanary(handle, cls, c, null);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused ${hits.join(', ')}; nothing of it was published` };
+    }
+    if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
+    if (cls === 'clean') {
+      // The result is the run's to take or refuse: never also unaccepted.
+      c.unacceptedDone = true;
+      if (!accepted) {
+        if (c.verdict.outcome === 'invalid') {
+          await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
+          handle.result = { valid: false };
+          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason})` };
+        }
+        return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with its terminal success event and left no result file' };
+      }
+      await pausePoint('run.result_received');
+      let record: string | null = null;
+      try {
+        record = await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'result', content: r.bytes });
+      } catch (err) {
+        log('result record', err, { run: claim.run });
+      }
+      const recorded = await this.recordResult(handle, true, c.value, record).catch((err) => {
+        log('result', err, { run: claim.run });
+        return false;
+      });
+      if (!recorded) return earnedEnd(handle);
+      handle.result = { valid: true };
+      if (handle.exit?.code !== 0) return earnedEnd(handle);
+      return 'accept';
+    }
+    // Any other class: the file, if accepted by the collector, is never the
+    // run's result (D2 §1.4).
+    if (cls === 'error_exit') {
+      if (accepted) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result contradicts the failed exit' };
+      return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class error_exit: the backend failed without a result' };
+    }
+    await this.publishUnaccepted(handle, c);
+    if (cls === 'resource_limit') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class resource_limit: the backend was ended by a resource limit of its domain (memory.events oom_kill rose)' };
+    if (cls === 'foreign_signal') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class foreign_signal: the backend was ended by a signal the engine did not send' };
+    return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}: no exit report of the backend reached the engine` };
+  }
+
+  // The snapshot's caps of a project's policy (D1 §7.3; M19).
+  private async snapshotCaps(project: string): Promise<{ files: number; bytes: number; fileBytes: number }> {
+    const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+    return { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
+  }
+
+  // A qualification canary's run (D2 §7.2): never the acceptance pipeline,
+  // never a commit. The positive canary's edit is materialized into the
+  // run's own workspace behind the screen, so its content can be judged.
+  private async decideCanary(handle: RunHandle, cls: string, c: Collected, accepted: boolean): Promise<RunEnd> {
+    const { claim } = handle;
+    const kind = claim.attempt!.kind;
+    c.unacceptedDone = true;
+    let editContent: string | null = null;
+    if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
+      const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: await this.snapshotCaps(claim.project) });
+      if (m.state === 'refused' && m.reason === 'secret') {
+        await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
+        recordCanary(handle, cls, c, null);
+        return { outcome: 'failed', reason: 'infra_error', reasonText: 'secret_refused: the secret screen refused the canary\'s materialization' };
+      }
+      handle.materialized = m.state === 'materialized';
+      // Read as the engine reads what a role left (the review's S3): never
+      // through a link, only a regular file, at most 64 KiB.
+      const r = readRegular(handle.workspacePath, canaryEdit(claim.attempt!.id).path, 64 * 1024);
+      editContent = r.state === 'read' ? r.bytes.toString('utf8') : null;
+    }
+    recordCanary(handle, cls, c, editContent);
+    if (kind === 'cancellation') return { outcome: 'failed', reason: 'infra_error', reasonText: 'barrier_not_reached: the cancellation canary ended without the engine observing its barrier' };
+    if (cls === 'clean' && accepted) return { outcome: 'completed', reason: 'none' };
+    if (cls === 'clean' || (cls === 'error_exit' && accepted)) return { outcome: 'failed', reason: 'invalid_result', reasonText: `exit class ${cls}: the canary's result is not one the engine may take` };
+    return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class ${cls}` };
+  }
+
+  // A result the run does not accept, published after the screen as an
+  // unaccepted_result record (D2 §1.4), once.
+  private async publishUnaccepted(handle: RunHandle, c: Collected): Promise<void> {
+    const r = c.result;
+    if (r.state !== 'read' || c.verdict.outcome !== 'accepted' || c.unacceptedDone) return;
+    c.unacceptedDone = true;
+    try {
+      const record = await writeWholeRecord(this.rt, { project: handle.claim.project, run: handle.claim.run, kind: 'unaccepted_result', content: r.bytes });
+      await this.recordCollection(handle, { unaccepted_result: record });
+    } catch (err) {
+      log('unaccepted result', err, { run: handle.claim.run });
+    }
+  }
+
+  private recordCollection(handle: RunHandle, collection: Record<string, unknown>): Promise<unknown> {
+    return this.rt.engine('run.collection', { run: handle.claim.run, collection }).catch((err) => log('collection', err, { run: handle.claim.run }));
+  }
+
+  // Collection from the volatile filesystem (invoke/collect.ts), once per
+  // run, after termination is established: the result read, the provider
+  // files inventoried, screened and published. A screen hit refuses the
+  // publication, raises the Critical security finding and
+  // evidence.secret_refused (D2 §2.5). A bound reached marks the evidence
+  // incomplete and the run cannot complete (§3.7).
+  collectOnce(handle: RunHandle): Promise<Collected> {
+    handle.collection ??= this.collect(handle);
+    return handle.collection as Promise<Collected>;
+  }
+
+  private async collect(handle: RunHandle): Promise<Collected> {
+    const { claim } = handle;
+    const hold = handle.sandbox?.volatile ?? null;
+    await pausePoint('collect.before_read');
+    // The engine's test mode may set the inventory's bounds below their
+    // ranges (SEAM.md §152); the configuration keeps its ranges.
+    const below = seamCollectBounds();
+    const bounds = {
+      resultMaxBytes: this.rt.setting('result_max_bytes'),
+      entriesMax: below?.entries ?? this.rt.setting('collect_entries_max'),
+      filesMaxBytes: below?.bytes ?? this.rt.setting('provider_files_max_bytes'),
+      deadlineMs: this.rt.setting('collect_deadline') * 1000,
+    };
+    const began = performance.now();
+    const result = collectResult(hold, bounds);
+    // The collector's verdict on the file (SEAM.md §143), apart from what the
+    // exit class makes of it.
+    let verdict: Collected['verdict'];
+    let value: RunResult | null = null;
+    if (result.state === 'not_held') verdict = { outcome: 'not_collected', reason: null, bytes_read: null };
+    else if (result.state === 'absent') verdict = { outcome: 'missing', reason: null, bytes_read: 0 };
+    else if (result.state === 'refused') verdict = { outcome: 'invalid', reason: REFUSAL_REASON[result.reason] ?? 'not_regular', bytes_read: 0 };
+    else if (result.state === 'secret') verdict = { outcome: 'invalid', reason: 'secret_refused', bytes_read: null };
+    else {
+      try {
+        value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
+      } catch {
+        value = null;
+      }
+      verdict = value === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
+    }
+    if (performance.now() - began > bounds.deadlineMs) verdict = { outcome: 'invalid', reason: 'deadline', bytes_read: verdict.bytes_read };
+    await this.recordCollection(handle, { result_collection: verdict });
+    if (result.state === 'secret') {
+      await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
+    }
+    // The provider files (D2 §4.3; SEAM.md §152), after the result.
+    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null }) : undefined;
+    const inv = await inventory(hold, bounds, template?.persistenceFlags ?? [], seamCollectDelay());
+    let providerFiles: string = hold === null || !hold.held ? 'not_collected' : 'published';
+    let providerRecord: string | null = null;
+    if (hold !== null && hold.held) {
+      if (inv.secret !== null) {
+        providerFiles = 'refused_secret';
+        await this.rt
+          .engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'provider_files', path: redactText(inv.secret.path), by: inv.secret.by })
+          .catch((err) => log('secret screen', err, { run: claim.run }));
+      } else {
+        try {
+          providerRecord = await writeWholeRecord(this.rt, { project: claim.project, run: claim.run, kind: 'provider_files', content: inventoryRecord(inv) });
+          if (inv.truncated) providerFiles = 'truncated';
+        } catch (err) {
+          log('provider files', err, { run: claim.run });
+          providerFiles = 'unwritten';
+        }
+      }
+    }
+    await this.recordCollection(handle, {
+      provider_files_collection: { outcome: providerFiles === 'refused_secret' ? 'refused' : providerFiles === 'unwritten' ? 'missing' : providerFiles, record: providerRecord },
+      excluded: inv.excluded.map((e) => redactText(e.path)),
+    });
+    const boundText = inv.truncated ? `collection reached ${inv.truncated.key} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete` : null;
+    return { result, verdict, value, providerFiles, providerRecord, boundText, unacceptedDone: false };
+  }
+
+  // On a run's end decided by the engine (a Stop, a deadline, a bound) or by
+  // its exit: once its domains are terminated, what the volatile filesystem
+  // held is collected, and a result is published only as unaccepted (D2
+  // §1.4). A run whose termination was not established when it ended (it was
+  // quarantined) is not collected: what it left is recorded missing.
+  async collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void> {
+    if (handle.sandbox === null || !handle.backendStarted) return;
+    if (quarantined && handle.collection === null) {
+      // A domain whose termination was unknown is not collected (D2 §3.4).
+      await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files_collection: { outcome: 'not_collected', record: null } });
+      return;
+    }
+    const c = await this.collectOnce(handle);
+    await this.publishUnaccepted(handle, c);
+    if (handle.claim.attempt !== null && !canaryObservations.has(handle.claim.run)) {
+      const exit = await this.rt.read<{ exit_class: string | null } | null>('domain.exit_of', { domain: handle.claim.domain }).catch(() => null);
+      recordCanary(handle, exit?.exit_class ?? 'unknown', c, null);
+    }
   }
 
   // Has the engine just resumed from a pause that outlived the run lease?
@@ -814,6 +1226,16 @@ export class Launcher {
       const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: m.semantics, raw: redactValue(m.raw) });
       if (recorded) await this.checkBudget(handle);
     } else if (m.type === 'result') {
+      // On the real boundary the result is the file the role leaves in
+      // /surety/out, read only after the domain's termination is established
+      // (D2 §1.4, K4): a result line read while the role runs is its
+      // terminal event (§1.6), never recorded now. The scripted adapter's
+      // line is held, unrecorded, as its stand-in for a role that wrote no
+      // file; a real backend's line is never a result.
+      if (handle.sandbox !== null) {
+        handle.terminal = m.is_error === true || (m.subtype !== undefined && m.subtype !== 'success') ? 'failure' : 'success';
+        return;
+      }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
       if (handle.result !== null) return;
       // A run the engine has decided to end takes no late result, as a
@@ -956,7 +1378,7 @@ const RESULT_RETRY_MS = [100, 300, 1000, 2000, 4000];
 // The role's standard output, as protocol lines. When the engine stops
 // reading, at the end of the stream or after the role's exit, whatever it has
 // read after the last line ending is a line like any other (E27 item 1).
-class RoleOutput {
+export class RoleOutput {
   private readonly lines: string[] = [];
   private readonly decoder = new StringDecoder('utf8');
   // The text read after the last line ending, as the pieces it arrived in:
@@ -969,9 +1391,16 @@ class RoleOutput {
   private wake: (() => void) | null = null;
   private readonly stream: Readable;
 
+  // The supervisor's bounds on the stream (D2 §3.7), on the real boundary:
+  // a line longer than `lineMax` bytes, or more than `queueMax` bytes of
+  // lines read and not yet acted on, stops the reading and is reported.
+  private partialBytes = 0;
+  private queuedBytes = 0;
+
   constructor(
     stream: Readable,
     private readonly onBytes: (bytes: Buffer) => void,
+    private readonly bounds: { lineMax: number; queueMax: number; onBound: (why: string) => void } | null = null,
   ) {
     this.stream = stream;
     this.stream.on('data', (chunk: Buffer) => {
@@ -979,6 +1408,24 @@ class RoleOutput {
       this.onBytes(chunk);
       this.take(this.decoder.write(chunk));
       this.lastDataAt = performance.now();
+      if (this.bounds && !this.closed) {
+        const why =
+          this.partialBytes > this.bounds.lineMax
+            ? `a line of the backend's output exceeded stream_line_max_bytes (${this.bounds.lineMax} bytes): the run was cancelled and its transcript is truncated`
+            : this.queuedBytes > this.bounds.queueMax
+              ? `the backend's output queued beyond stream_queue_max_bytes (${this.bounds.queueMax} bytes): the run was cancelled and its transcript is truncated`
+              : null;
+        if (why !== null) {
+          // Nothing past the bound is acted on: the line in progress and the
+          // lines queued are dropped with the reading.
+          this.partial = [];
+          this.lines.length = 0;
+          this.queuedBytes = 0;
+          this.bounds.onBound(why);
+          this.close();
+          return;
+        }
+      }
       this.wake?.();
     });
     const ended = () => this.stop();
@@ -992,13 +1439,24 @@ class RoleOutput {
     const parts = text.split('\n');
     if (parts.length === 1) {
       this.partial.push(text);
+      this.partialBytes += text.length;
       return;
     }
     const last = parts.pop()!;
     this.partial.push(parts[0]!);
+    this.partialBytes += parts[0]!.length;
+    if (this.bounds && this.partialBytes > this.bounds.lineMax) return;
     parts[0] = this.partial.join('');
     this.partial = last === '' ? [] : [last];
-    for (const part of parts) this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
+    this.partialBytes = last.length;
+    for (const part of parts) {
+      if (this.bounds && part.length > this.bounds.lineMax) {
+        this.partialBytes = part.length;
+        return;
+      }
+      this.lines.push(part.endsWith('\r') ? part.slice(0, -1) : part);
+      this.queuedBytes += part.length;
+    }
   }
 
   // No more is read. The text after the last line ending, if any, is the
@@ -1023,7 +1481,10 @@ class RoleOutput {
   async next(): Promise<string | null> {
     for (;;) {
       const line = this.lines.shift();
-      if (line !== undefined) return line;
+      if (line !== undefined) {
+        this.queuedBytes -= line.length;
+        return line;
+      }
       if (this.closed) return null;
       let waitMs: number | null = null;
       if (this.exitAt !== null) {

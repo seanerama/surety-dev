@@ -84,15 +84,20 @@ export function contextFacts(db: Database, args: { run: string }) {
       return fallback;
     }
   };
-  type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null };
+  type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null; text: string | null };
   let requirements: Req[] = [];
+  let adrs: { id: string; key: string; text: string }[] = [];
   let modules: { id: string; name: string; paths: unknown }[] = [];
   let plan: Record<string, unknown> | null = null;
   if (stage) {
     const ids = [...new Set([...parse<string[]>(stage.requirement_ids, []), ...parse<string[]>(stage.implements, [])])];
     requirements = ids
-      .map((id) => db.prepare('SELECT "id", "key", "text_ref", "assigned_phase" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, id, id) as Req | undefined)
+      .map((id) => db.prepare('SELECT "id", "key", "text_ref", "assigned_phase", "text" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, id, id) as Req | undefined)
       .filter((r): r is Req => r !== undefined);
+    // Every ADR the stage cites and no other (SEAM.md §139).
+    adrs = parse<string[]>(stage.adrs, [])
+      .map((key) => db.prepare(`SELECT "id", "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' AND "key" = ?`).get(item.project, key) as { id: string; key: string; text: string } | undefined)
+      .filter((a): a is { id: string; key: string; text: string } => a !== undefined);
     const names = parse<string[]>(stage.modules, []);
     modules = names
       .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { id: string; name: string; paths: string } | undefined)
@@ -119,6 +124,10 @@ export function contextFacts(db: Database, args: { run: string }) {
     work_item: item,
     stage: stage ? { number: stage.number, goal: stage.goal, modules: parse<unknown>(stage.modules, []), requirement_ids: parse<unknown>(stage.requirement_ids, []), implements: parse<unknown>(stage.implements, []) } : null,
     requirements,
+    adrs,
+    // The project's constraints are project-wide: every one of the approved
+    // baseline (F §3.10.8).
+    constraints: db.prepare(`SELECT "id", "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'constraint' ORDER BY "key"`).all(item.project) as { id: string; key: string; text: string }[],
     modules,
     phase_plan: plan,
     candidate: candidate ? { id: candidate.id, revision: candidate.revision, acceptance_content_hash: (run.content_hash as string | null) ?? null } : null,

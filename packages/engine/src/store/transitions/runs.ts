@@ -15,9 +15,10 @@ import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
-import { resolveBackend } from './trust.js';
+import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
-import { keyVariable } from '../../invoke/adapters/templates.js';
+import { envelopeHold } from './envelope.js';
+import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -163,6 +164,9 @@ export interface ClaimArgs {
   // The incarnation's scope, when the run's domain is a cgroup of the real
   // boundary (D2 §§3.1, 3.2): the domain is allocated with its path under it.
   scope?: string | null;
+  // A qualification attempt's own dispatch of one of its canaries (D2 §7.2,
+  // K10): the only way a canary's item is run.
+  attempt?: string | null;
 }
 
 export interface Claim {
@@ -190,7 +194,9 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; binary_path: string; binary_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  entry: { backend: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  // A canary run: the attempt whose authority dispatched it and its kind.
+  attempt: { id: string; kind: string } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
   // with the run's end (SEAM.md §116).
   refusal: { code: string; reason: string; what_to_do: string; subject: Record<string, unknown> } | null;
@@ -199,7 +205,9 @@ export interface Claim {
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 // `check`: false for a projection, which reads the budget without being a
 // budget check (D1 §6.6 governs the check, not the read).
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean } = {}): string | null {
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean; canary?: boolean } = {}): string | null {
+  // A canary's item is run only by its attempt's own dispatch (K10).
+  if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
   if (project.paused === 1) return 'project paused';
@@ -237,6 +245,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
 }
 
 export const CHAIN_BOUNDARY = 'chaining boundary';
+export const RESOURCE_ENVELOPE = 'resource_envelope';
 
 // D1 §8.1 step 9, one transaction: the run (claimed), its work item claimed,
 // the run lease, the grant, the invocation receipt, the execution domain
@@ -245,7 +254,10 @@ export const CHAIN_BOUNDARY = 'chaining boundary';
 export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.project !== args.project) return null;
-  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns) !== null) return null;
+  const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
+  const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
+  if (args.attempt && !canary) return null;
+  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns, { canary }) !== null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -254,11 +266,33 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   if (baseRevision === null) return null;
   const role = ROLE_OF[item.kind]!;
   const policy = projectPolicy(tx.db, item.project);
-  const deadlineSeconds = policy[`deadline_${role}`]!;
+  // A canary's deadline is its attempt's, per kind (D2 §7.2).
+  const canaryDeadline = (() => {
+    if (!canary) return undefined;
+    const a = getAttempt(tx.db, args.attempt!);
+    try {
+      const d = (JSON.parse(a?.canary_deadlines ?? '{}') as Record<string, number>)[canaryOf.canary_kind ?? ''];
+      return d !== undefined && Number.isSafeInteger(d) && d > 0 ? d : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`]!;
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
   // process started.
-  const backend = resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  // An entry whose qualification no longer holds is revoked first (D2 §7.3).
+  revokeDrifted(tx);
+  const attempt = canary ? getAttempt(tx.db, args.attempt!) : undefined;
+  if (canary && (!attempt || attempt.status !== 'running')) return null;
+  const backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
+    ? { kind: 'attempt', backend: attempt.backend, version: attempt.version, model: attempt.model, attempt }
+    : resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  // The resource envelope (D2 §3.7): a domain is admitted only within
+  // max_concurrent_domains and the host's reserves; otherwise the work stays
+  // eligible, nothing is written, and its read shows the hold. A dispatch
+  // refused before launch admits no domain and is not held.
+  if (backend.kind !== 'refused' && envelopeHold(tx.db) !== null) return null;
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
@@ -308,7 +342,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // cap, if one is held with it, is recorded as configured evidence, never
   // as the engine's enforcement (D2 §§2.5, 4.2; SEAM.md §§116, 120).
   const keyRef = `backend/${backend.backend}/api_key`;
-  const real = backend.kind === 'entry';
+  const real = backend.kind === 'entry' || (backend.kind === 'attempt' && backend.backend !== 'scripted');
   const cap = real ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
   tx.db
@@ -331,7 +365,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
 
   const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
-  const invocation = allocateReceipt(tx, run, { trustEntry });
+  const invocation = allocateReceipt(tx, run, { trustEntry, qualificationAttempt: backend.kind === 'attempt' ? backend.attempt.id : null });
   const domain = tx.newId('dom_');
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
   // with its cgroup path when the real boundary will hold it.
@@ -363,12 +397,26 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     profile,
     backend: backend.backend,
     trust_entry: trustEntry,
+    attempt: backend.kind === 'attempt' ? { id: backend.attempt.id, kind: canaryOf.canary_kind ?? 'positive' } : null,
     entry:
-      backend.kind === 'entry'
+      backend.kind === 'attempt'
+        ? {
+            backend: backend.attempt.backend,
+            binary_path: backend.attempt.binary_path,
+            binary_sha256: backend.attempt.binary_sha256,
+            help_sha256: backend.attempt.help_sha256,
+            model: backend.attempt.model,
+            key_ref: keyRef,
+            // The attempt's candidate list (D2 §2.4): the canaries' only
+            // destinations; an off-list one is refused and reported.
+            egress_hosts: JSON.parse(backend.attempt.candidate_egress) as string[],
+          }
+        : backend.kind === 'entry'
         ? {
             backend: backend.backend,
             binary_path: backend.entry.binary_path,
             binary_sha256: backend.entry.binary_sha256,
+            help_sha256: backend.entry.help_sha256,
             model: backend.entry.model,
             key_ref: keyRef,
             // The destinations the entry's egress list allows (D2 §2.4).
@@ -395,7 +443,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
 
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null } = {}): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -408,13 +456,18 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
   };
+  // The provider session id, derived from this receipt's own id and bound to
+  // it here, in the dispatch transaction, before any domain is placed (D2
+  // §1.7): a resumed run is a new receipt with its own.
+  const session = TEMPLATES[run.backend]?.sessionIdOf?.(id) ?? null;
   tx.db
     .prepare(
-      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry")
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id")
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null);
-  tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend });
+    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null, opts.qualificationAttempt ?? null, session);
+  if (session !== null) tx.db.prepare('UPDATE "runs" SET "provider_session_id" = ? WHERE "id" = ?').run(session, runId);
+  tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend, ...(session ? { provider_session_id: session } : {}) });
   return id;
 }
 
@@ -724,6 +777,24 @@ export function finishRun(
     if (terminal !== 'refused') chargeInvocation(tx, run, receipt);
   }
 
+  // A run whose role ran on the real boundary and whose end recorded no
+  // collection lost its volatile filesystem before collection (an engine
+  // crash): its result and provider files are recorded missing, never as an
+  // empty success (D2 §1.4, AR B08).
+  const ranReal = tx.db.prepare(`SELECT 1 FROM "execution_domains" WHERE "run" = ? AND "cgroup_path" IS NOT NULL AND "launch_binding" IS NOT NULL`).get(run.id);
+  const collection = (tx.db.prepare('SELECT "collection" FROM "runs" WHERE "id" = ?').get(run.id) as { collection: string | null }).collection;
+  if (ranReal && collection === null && args.recovery !== null) {
+    tx.db
+      .prepare('UPDATE "runs" SET "collection" = ? WHERE "id" = ?')
+      .run(
+        JSON.stringify({
+          result_collection: { outcome: 'missing', reason: null, bytes_read: null },
+          provider_files_collection: { outcome: 'missing', record: null },
+          why: "the engine restarted before collection: the domain's volatile filesystem was lost with it",
+        }),
+        run.id,
+      );
+  }
   tx.db
     .prepare(`UPDATE "workspaces" SET "disposition" = 'retained' WHERE "run" = ? AND "disposition" IN ('active', 'quarantined')`)
     .run(run.id);

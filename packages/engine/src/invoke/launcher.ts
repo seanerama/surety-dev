@@ -21,7 +21,7 @@
 //
 // This file imports nothing of the engine's: it runs as its own program.
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -40,6 +40,32 @@ interface Spec {
   waits?: Record<string, string>;
   releaseDir?: string | null;
 }
+
+
+// Descriptors inherited without close-on-exec, closed (D2 §§2.2, 2.3; A.6
+// P14): whatever this process was given beyond its standard streams never
+// reaches the next exec. A copy of invoke/descriptors.ts (this file imports
+// nothing of the engine's).
+function closeInherited(): void {
+  let names: string[];
+  try {
+    names = readdirSync('/proc/self/fd');
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    const fd = Number(n);
+    if (!Number.isInteger(fd) || fd <= 2) continue;
+    try {
+      const m = /^flags:\s+([0-7]+)$/m.exec(readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8'));
+      if (m && (parseInt(m[1]!, 8) & 0o2000000) === 0) closeSync(fd);
+    } catch {
+      // closed meanwhile
+    }
+  }
+}
+
+closeInherited();
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const queue: Record<string, unknown>[] = [];
@@ -196,6 +222,7 @@ async function main(): Promise<void> {
     spec.init,
     'setup',
   ];
+  closeInherited();
   (process as unknown as { execve(file: string, args: string[], env: Record<string, string>): never }).execve(spec.unshare, argv, {
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     LANG: 'C.UTF-8',

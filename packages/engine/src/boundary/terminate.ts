@@ -63,8 +63,10 @@ export function classifyExit(args: {
   cancelledBeforeExit: boolean;
   termSent: boolean;
   killWritten: boolean;
-  resources: { oom_kill: number | null; pids_max: number | null } | Record<string, never>;
-  cleanResult: boolean;
+  resources: { oom_kill: number | null; pids_max: number | null };
+  // The terminal event the backend's stream carried (D2 §1.6): only a
+  // terminal success event with exit status 0 is `clean`.
+  terminal: 'success' | 'failure' | null;
 }): ExitFacts {
   const { report } = args;
   const engineSignal = args.killWritten ? 9 : args.termSent ? 15 : null;
@@ -74,19 +76,22 @@ export function classifyExit(args: {
     status: report?.code ?? null,
     signal,
     signal_by_engine: byEngine,
-    terminal_event: args.cleanResult ? 'result' : null,
+    // SEAM.md §145: "result" when the terminal success event was read, null
+    // otherwise (a terminal failure event included; it makes the class
+    // error_exit, which says so).
+    terminal_event: args.terminal === 'success' ? 'result' : null,
     resource_events: args.resources,
     report: report === null ? 'none' : 'received',
     term_sent: args.termSent,
     kill_written: args.killWritten,
   };
-  const oom = 'oom_kill' in args.resources ? (args.resources.oom_kill ?? 0) : 0;
+  const oom = args.resources.oom_kill;
   let cls: string;
   if (args.cancelledBeforeExit) cls = 'engine_signaled';
   else if (report === null) cls = 'unknown';
-  else if (report.signal !== null && !byEngine && oom > 0) cls = 'resource_limit';
+  else if (report.signal !== null && !byEngine && oom !== null && oom > 0) cls = 'resource_limit';
   else if (report.signal !== null && !byEngine) cls = 'foreign_signal';
-  else if (report.code === 0 && args.cleanResult) cls = 'clean';
+  else if (report.code === 0 && args.terminal === 'success') cls = 'clean';
   else cls = 'error_exit';
   return { exit_class: cls, exit_evidence: evidence };
 }
@@ -233,8 +238,9 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   }
   if (launch && launch.alive && launch.placedPid === null) return unknown('the launcher is outstanding and is not a member');
   await pausePoint('boundary.before_terminated');
-  const read = final.state === 'populated' ? counters(path) : null;
-  const resources = read && (read.oom_kill !== null || read.pids_max !== null) ? read : {};
+  // Both counters always, each null where its file could not be read
+  // (SEAM.md §145): an unread counter is unknown, never 0.
+  const resources = final.state === 'populated' ? counters(path) : { oom_kill: null, pids_max: null };
   const report = launch?.exitReport ?? null;
   const exit = classifyExit({
     report,
@@ -242,7 +248,7 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     termSent,
     killWritten,
     resources,
-    cleanResult: handle?.result?.valid === true,
+    terminal: handle?.terminal ?? null,
   });
   // What is known of how the backend ended: from this engine's launch, or,
   // for a domain another incarnation launched, only that its exit report

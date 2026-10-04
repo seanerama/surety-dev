@@ -20,7 +20,8 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -101,6 +102,10 @@ const MAIN_BARRIERS: readonly string[] = [
   // (before the lock and the listener, so only `kill` can be released there).
   'init.before_backend',
   'boundary.before_terminated',
+  // M2 plan §2.3: before collection reads the volatile filesystem (I18), and
+  // before a qualification attempt dispatches a canary.
+  'collect.before_read',
+  'qualification.before_dispatch',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -136,6 +141,16 @@ export interface SeamInit {
   probes: Record<string, string>;
   // --harness-host-checks and --harness-host-check (SEAM.md §114).
   hostChecks: { mode: 'unrun' | 'run'; forced: Record<string, 'failed' | 'not_exercised'> };
+  // SEAM.md §§150, 152: a template version per backend, the host identity,
+  // a mechanism variant, collection bounds below their ranges.
+  switches?: HarnessSwitches;
+}
+
+export interface HarnessSwitches {
+  templateVersions: Record<string, string>;
+  hostId: string | null;
+  mechanismVariant: string | null;
+  collectBounds: { entries: number; bytes: number } | null;
 }
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
@@ -424,6 +439,36 @@ export function seamBackends(): BackendSpec[] {
   return [{ id: 'scripted', version: 'scripted-1', command: process.execPath, args: [join(init.scripted, 'child.mjs')], binds: [{ path: init.scripted, writable: true }] }];
 }
 
+// ---- the test caps (E69) -----------------------------------------------------
+
+// A harness-only override of a work item's domains' limits, set on the
+// trigger fixture (`domain_limits`), so that the exhaustion cases can run at
+// caps below the engine's configured minimums. Outside harness mode there is
+// none, and every domain has the configured limits.
+export interface DomainLimitOverride {
+  pids_max?: number;
+  memory_max?: number;
+  writable_bytes?: number;
+  writable_inodes?: number;
+}
+const domainLimitOverrides = new Map<string, DomainLimitOverride>();
+
+function parseDomainLimits(v: unknown): DomainLimitOverride {
+  const bad = () => new Refusal(400, 'invalid_value', 'domain_limits must be an object of positive integers: pids_max, memory_max, writable_bytes, writable_inodes.', 'Send the caps the case needs.', { field: 'domain_limits' });
+  if (!isObject(v)) throw bad();
+  const out: DomainLimitOverride = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!['pids_max', 'memory_max', 'writable_bytes', 'writable_inodes'].includes(k) || !Number.isSafeInteger(x) || (x as number) <= 0) throw bad();
+    (out as Record<string, number>)[k] = x as number;
+  }
+  return out;
+}
+
+export function seamDomainLimits(workItem: string): DomainLimitOverride | null {
+  if (!init.harness) return null;
+  return domainLimitOverrides.get(workItem) ?? null;
+}
+
 // SEAM.md §127: the scripted directory is bound read-write at its own path
 // inside every sandbox of a sandbox-lane engine, a real backend's (the
 // stand-in's log, SEAM.md §139) included. Nothing outside harness mode.
@@ -657,6 +702,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       handler: async () => {
         tickFaults.length = 0;
         mainFaults.length = 0;
+        collectSlowMs = 0;
+        streamSlow = null;
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
@@ -784,6 +831,14 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         // record of the project; the answer names the record. Nothing of it
         // reaches a context package.
         let report: string | null = null;
+        // E69: a harness-only override of the item's domains' limits, below
+        // the engine's configured minimums (the test caps).
+        let limits: DomainLimitOverride | null = null;
+        if (isObject(body) && body.domain_limits !== undefined) {
+          const { domain_limits: given, ...rest } = body;
+          limits = parseDomainLimits(given);
+          body = rest;
+        }
         if (isObject(body) && body.raw_user_report !== undefined) {
           const { raw_user_report: text, ...rest } = body;
           if (typeof text !== 'string' || text.length === 0 || typeof rest.project !== 'string') {
@@ -794,7 +849,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           report = await writeWholeRecord(rt, { project: rest.project, run: null, kind: 'raw_user_report', content: Buffer.from(text) });
           body = rest;
         }
-        const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean };
+        const result = (await storeOp(OP.fixtureTrigger, { body, actor: hooks.actor })) as { created: boolean; work_item: { id: string } };
+        if (limits !== null) domainLimitOverrides.set(result.work_item.id, limits);
         return { status: result.created ? 201 : 200, body: report === null ? result : { ...result, raw_user_report: report } };
       },
     };
@@ -849,7 +905,20 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
       armed:
-        isObject(body) && body.point === 'tick_step'
+        isObject(body) && body.point === 'stream_slow'
+          ? (() => {
+              const f = parseStreamSlow(body);
+              setStreamSlow(f);
+              return { point: 'stream_slow', delay_ms: f.delayMs, times: f.remaining };
+            })()
+          : isObject(body) && body.point === 'collect_slow'
+          ? (() => {
+              const ms = Number(body.delay_ms);
+              if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'collect_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
+              setCollectSlow(ms);
+              return { point: 'collect_slow', delay_ms: ms };
+            })()
+          : isObject(body) && body.point === 'tick_step'
           ? armTickFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
             ? armMainFault(body)
@@ -857,8 +926,13 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     }));
   }
   // The "help" of a stand-in binary is its own file (SEAM.md §116).
-  const helpOf = async (path: string): Promise<string> => {
+  // The help hash the engine's own check computes (the stand-in's `--help`
+  // output; SEAM.md §150), else the file's own hash.
+  const helpOf = async (path: string, backend = 'claude'): Promise<string> => {
     try {
+      const { helpHash } = await import('../invoke/static.js');
+      const h = await helpHash(path, backend).catch(() => null);
+      if (h !== null) return h;
       return createHash('sha256').update(await readFile(path)).digest('hex');
     } catch {
       throw new Refusal(400, 'invalid_value', `The binary ${path} cannot be read.`, 'Name the stand-in binary the test wrote.', { field: 'binary' });
@@ -1141,4 +1215,121 @@ export function beforeEventWrite(eventType: string): void {
     (f) => (f.point === 'before_event' && f.event_type === eventType) || (f.point === 'audit_write' && eventType === 'api.act'),
     eventType === 'api.act' ? 'audit write' : `before event ${eventType}`,
   );
+}
+
+// ---- qualification in harness mode (M2 plan §2.3; SEAM.md §116) ------------
+
+// Is `path` a real backend's binary, which harness mode never runs? An
+// executable image (ELF), or the file the backend's own name resolves to on
+// the engine's PATH or under the user's local installation. The harness's
+// stand-in is a script the test wrote. null when it may be run.
+export function realBinaryReason(path: string, backend: string): string | null {
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch {
+    return null;
+  }
+  try {
+    const head = Buffer.alloc(4);
+    const fd = openSync(real, 'r');
+    try {
+      readSync(fd, head, 0, 4, 0);
+    } finally {
+      closeSync(fd);
+    }
+    if (head.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) return `${real} is an executable image, not the harness's stand-in`;
+  } catch {
+    return null;
+  }
+  const dirs = [...(process.env.PATH ?? '').split(':'), join(homedir(), '.local', 'bin')].filter((d) => d.startsWith('/'));
+  for (const d of dirs) {
+    try {
+      if (realpathSync(join(d, backend)) === real) return `${real} is the ${backend} the engine's PATH names`;
+    } catch {
+      // not there
+    }
+  }
+  return null;
+}
+
+// In harness mode: a launch of a real backend's binary is refused (the
+// sandbox and kernel lanes run only the stand-in); null otherwise.
+export function seamRefuseBinary(path: string, backend: string): string | null {
+  if (!init.harness) return null;
+  return realBinaryReason(path, backend);
+}
+
+// Is the engine in its test mode, where a qualification request may name a
+// stand-in binary, a fixture project of the test's and the scripted
+// backend (SEAM.md §148)?
+export function seamQualifyMode(): boolean {
+  return init.harness;
+}
+
+// ---- the slice-13 switches (SEAM.md §§150, 152) -----------------------------
+
+// `--harness-template-version <backend>=<version>`, `--harness-host-id <id>`,
+// `--harness-mechanism-variant <label>`, `--harness-collect-bounds
+// entries=<n>,bytes=<n>`. Called once, after configureHarness, before the
+// store worker starts. Returns a usage problem, or null.
+export function setHarnessSwitches(values: { templateVersions: string[]; hostId: string | null; mechanismVariant: string | null; collectBounds: string | null }): string | null {
+  const templateVersions: Record<string, string> = {};
+  for (const v of values.templateVersions) {
+    const m = /^([a-z]+)=([A-Za-z0-9._-]+)$/.exec(v);
+    if (!m) return `--harness-template-version takes <backend>=<version>, not ${v}`;
+    templateVersions[m[1]!] = m[2]!;
+  }
+  if (values.hostId !== null && !/^[A-Za-z0-9._-]{1,128}$/.test(values.hostId)) return `--harness-host-id takes an identity, not ${values.hostId}`;
+  if (values.mechanismVariant !== null && !/^[A-Za-z0-9._-]{1,64}$/.test(values.mechanismVariant)) return `--harness-mechanism-variant takes a label, not ${values.mechanismVariant}`;
+  let collectBounds: HarnessSwitches['collectBounds'] = null;
+  if (values.collectBounds !== null) {
+    const m = /^entries=(\d+),bytes=(\d+)$/.exec(values.collectBounds);
+    if (!m || Number(m[1]) < 1 || Number(m[2]) < 1) return `--harness-collect-bounds takes entries=<n>,bytes=<n>, not ${values.collectBounds}`;
+    collectBounds = { entries: Number(m[1]), bytes: Number(m[2]) };
+  }
+  if (!init.harness) return null;
+  init = { ...init, switches: { templateVersions, hostId: values.hostId, mechanismVariant: values.mechanismVariant, collectBounds } };
+  return null;
+}
+
+// In harness mode only (either thread: the worker has the same init).
+export const seamTemplateVersions = (): Record<string, string> | null => (init.harness ? (init.switches?.templateVersions ?? null) : null);
+export const seamHostId = (): string | null => (init.harness ? (init.switches?.hostId ?? null) : null);
+export const seamMechanismVariant = (): string | null => (init.harness ? (init.switches?.mechanismVariant ?? null) : null);
+export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
+
+// The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays
+// the inventory's handling of each entry by `delay_ms`. 0 when not armed.
+let collectSlowMs = 0;
+export function seamCollectDelay(): number {
+  return init.harness ? collectSlowMs : 0;
+}
+export function setCollectSlow(ms: number): void {
+  collectSlowMs = ms;
+}
+
+// The fault `stream_slow` (SEAM.md §157): standing, or for `times` lines,
+// it delays acting on each line of a backend's output by `delay_ms`, so that
+// `stream_queue_max_bytes` can be exceeded by a modest stream. 0 outside
+// harness mode or when not armed.
+let streamSlow: { delayMs: number; remaining: number | null } | null = null;
+
+export function parseStreamSlow(body: unknown): { delayMs: number; remaining: number | null } {
+  const b = (isObject(body) ? body : {}) as Record<string, unknown>;
+  const ms = Number(b.delay_ms);
+  if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'stream_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
+  if (b.times !== undefined && (!Number.isSafeInteger(b.times) || (b.times as number) < 1)) throw new Refusal(400, 'invalid_value', 'times must be a positive integer.', 'Send times, or leave it out for a standing fault.', { field: 'times' });
+  return { delayMs: ms, remaining: b.times === undefined ? null : (b.times as number) };
+}
+
+export function setStreamSlow(value: { delayMs: number; remaining: number | null } | null): void {
+  streamSlow = value;
+}
+
+export function seamStreamDelay(): number {
+  if (!init.harness || streamSlow === null) return 0;
+  const ms = streamSlow.delayMs;
+  if (streamSlow.remaining !== null && --streamSlow.remaining <= 0) streamSlow = null;
+  return ms;
 }

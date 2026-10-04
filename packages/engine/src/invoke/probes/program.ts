@@ -20,7 +20,7 @@
 // package and runs on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
 
@@ -83,12 +83,63 @@ function smallLimit(file: string, max: number): string | null {
     const text = readFileSync(file, 'utf8').trim();
     if (text === 'max') return `${file} is unlimited`;
     const n = Number(text);
-    if (!Number.isFinite(n)) return `${file} reads ${text}`;
+    if (!Number.isSafeInteger(n) || n <= 0 || text === '') return `${file} reads ${text}`;
     if (n > max) return `${file} is ${n}, more than ${max}`;
     return null;
   } catch (err) {
     return `${file} cannot be read (${errorOf(err)})`;
   }
+}
+
+// The exhaustion actions' fixed ceilings beyond the limit each reads (P20):
+// enough to cross the limit, never enough to matter to the host if the
+// limit were not enforced.
+// E69 (Sean): the instruments stop themselves at 96 tasks or 128 MiB, and
+// refuse unless the limit they read is at most 64 tasks or 64 MiB.
+export const MIB = 1024 * 1024;
+export const PIDS_LIMIT_MAX = 64;
+export const PIDS_CEILING = 96;
+export const MEMORY_LIMIT_MAX = 64 * MIB;
+export const MEMORY_CEILING = 128 * MIB;
+export const FS_BYTES_MAX = 4 * MIB;
+export const FS_INODES_MAX = 256;
+const BYTES_MARGIN = 256 * 1024;
+const INODES_MARGIN = 16;
+
+// The ceilings an exhaustion action runs to: a little past the limit it
+// read, never past the fixed caps.
+export const forkCeiling = (limit: number): number => Math.min(PIDS_CEILING, limit + 32);
+export const allocationCeiling = (limit: number): number => Math.min(MEMORY_CEILING, limit + 64 * MIB);
+
+// The filesystem `dir` is on, by statfs: refused unless it is small (a
+// volatile filesystem with tight bounds), so a fill never meets a host disk.
+function smallFs(dir: string, maxBytes: number, maxInodes: number): { bytes: number; inodes: number } | { refused: string } {
+  let st;
+  try {
+    st = statfsSync(dir);
+  } catch (err) {
+    return { refused: `${dir} cannot be measured (${errorOf(err)})` };
+  }
+  const bytes = st.blocks * st.bsize;
+  if (st.type !== 0x01021994) return { refused: `${dir} is not on a tmpfs` };
+  if (bytes > Math.min(maxBytes, FS_BYTES_MAX)) return { refused: `${dir} holds ${bytes} bytes, more than ${Math.min(maxBytes, FS_BYTES_MAX)}` };
+  if (st.files > Math.min(maxInodes, FS_INODES_MAX)) return { refused: `${dir} holds ${st.files} inodes, more than ${Math.min(maxInodes, FS_INODES_MAX)}` };
+  return { bytes, inodes: st.files };
+}
+
+// One child that sleeps and forks nothing.
+function forkOne(): Promise<{ outcome: string; child: ReturnType<typeof spawn> | null }> {
+  return new Promise((resolve) => {
+    let c: ReturnType<typeof spawn>;
+    try {
+      c = spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' });
+    } catch (err) {
+      resolve({ outcome: errorOf(err), child: null });
+      return;
+    }
+    c.once('spawn', () => resolve({ outcome: 'spawned', child: c }));
+    c.once('error', (err) => resolve({ outcome: errorOf(err), child: null }));
+  });
 }
 
 // ---- actions -----------------------------------------------------------------------------------
@@ -110,6 +161,24 @@ function fds(): Record<string, string> {
       out[fd] = readlinkSync(`/proc/self/fd/${fd}`);
     } catch (err) {
       out[fd] = `unreadable:${errorOf(err)}`;
+    }
+  }
+  return out;
+}
+
+// The descriptors above 2 without close-on-exec: none of the runtime's own
+// lacks it, so any such one came from outside (the finding of the second
+// host: a parent's pty descriptors reaching the role).
+function inheritedFds(): number[] {
+  const out: number[] = [];
+  for (const n of readdirSync('/proc/self/fd')) {
+    const fd = Number(n);
+    if (!Number.isInteger(fd) || fd <= 2) continue;
+    try {
+      const m = /^flags:\s+([0-7]+)$/m.exec(readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8'));
+      if (m && (parseInt(m[1]!, 8) & 0o2000000) === 0) out.push(fd);
+    } catch {
+      // the listing's own, gone
     }
   }
   return out;
@@ -331,7 +400,7 @@ async function act(a: Obj): Promise<Obj> {
     case 'exec':
       return run(a.argv as string[], { timeoutMs: Number(a.timeout_ms ?? 5000) });
     case 'status':
-      return { cap_eff: status('CapEff'), no_new_privs: status('NoNewPrivs'), uid: status('Uid'), gid: status('Gid'), nspid: status('NSpid'), fds: fds(), mount: run(['mount', '-t', 'tmpfs', 'none', '/surety/out'], { timeoutMs: 3000 }) };
+      return { cap_eff: status('CapEff'), no_new_privs: status('NoNewPrivs'), uid: status('Uid'), gid: status('Gid'), nspid: status('NSpid'), fds: fds(), inherited: inheritedFds(), mount: run(['mount', '-t', 'tmpfs', 'none', '/surety/out'], { timeoutMs: 3000 }) };
     case 'mountinfo':
       return { mountinfo: readFileSync('/proc/self/mountinfo', 'utf8').split('\n').filter(Boolean) };
     case 'cgroup_migrate': {
@@ -431,36 +500,54 @@ async function act(a: Obj): Promise<Obj> {
       return { made };
     }
     case 'pids': {
-      const why = smallLimit('/surety/cgroup/domain/pids.max', Number(a.max_limit ?? 256));
+      // P20: fork to pids.max. The program reads the domain's own limit and
+      // refuses unless it is small; the loop then stops at a fixed count a
+      // little above that limit whatever the kernel does, and every child
+      // sleeps and forks nothing, so an unenforced limit costs the host a
+      // handful of sleeping processes, never a fork storm (E64 item 2).
+      const why = smallLimit('/surety/cgroup/domain/pids.max', Math.min(Number(a.max_limit ?? PIDS_LIMIT_MAX), PIDS_LIMIT_MAX));
       if (why) return { refused: why };
+      const limit = Number(readFileSync('/surety/cgroup/domain/pids.max', 'utf8').trim());
+      const ceiling = forkCeiling(limit);
+      // The control first: one fork that succeeds.
+      const control = await forkOne();
+      if (control.child) control.child.kill('SIGKILL');
+      emit({ id: String(a.id), step: 'control', control: { fork: control.outcome } });
       const kids: ReturnType<typeof spawn>[] = [];
       let failure: string | null = null;
-      for (let i = 0; i < 512 && failure === null; i++) {
-        const c = spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' });
-        const r = await new Promise<string>((resolve) => {
-          c.once('spawn', () => resolve('spawned'));
-          c.once('error', (err) => resolve(errorOf(err)));
-        });
-        if (r === 'spawned') kids.push(c);
-        else failure = r;
+      for (let i = 0; i < ceiling && failure === null; i++) {
+        const r = await forkOne();
+        if (r.child) kids.push(r.child);
+        else failure = r.outcome;
       }
       const n = kids.length;
       for (const c of kids) c.kill('SIGKILL');
-      return { forks: n, failure };
+      return { limit, ceiling, forks: n, failure, control: control.outcome };
     }
     case 'memory': {
-      const why = smallLimit('/surety/cgroup/domain/memory.max', Number(a.max_limit ?? 1024 * 1024 * 1024));
+      // P20: allocate to memory.max, in steps, to a fixed ceiling a little
+      // above the domain's own limit, which the program reads and refuses
+      // unless it is small.
+      const why = smallLimit('/surety/cgroup/domain/memory.max', Math.min(Number(a.max_limit ?? MEMORY_LIMIT_MAX), MEMORY_LIMIT_MAX));
       if (why) return { refused: why };
+      const limit = Number(readFileSync('/surety/cgroup/domain/memory.max', 'utf8').trim());
+      const ceiling = allocationCeiling(limit);
       // The control first, reported before the exhaustion, which ends this
       // process by the kernel's OOM kill.
-      const one = Buffer.alloc(1024 * 1024, 1);
+      const one = Buffer.alloc(MIB, 1);
       emit({ id: String(a.id), step: 'control', control: { allocated: one.length } });
       const held: Buffer[] = [];
-      for (let i = 0; i < 4096; i++) held.push(Buffer.alloc(16 * 1024 * 1024, i & 0xff));
-      return { allocated: held.length * 16 * 1024 * 1024 };
+      const step = 4 * MIB;
+      for (let total = 0; total < ceiling; total += step) held.push(Buffer.alloc(step, held.length & 0xff));
+      return { limit, ceiling, allocated: held.length * step };
     }
     case 'bytes': {
+      // P20: write to the volatile filesystem's byte bound. Refused unless
+      // the filesystem the directory is on is small; stopped at a ceiling a
+      // little above its size.
       const dir = String(a.dir);
+      const fs = smallFs(dir, Number(a.max_bytes ?? 16 * MIB), Number(a.max_inodes ?? 4096));
+      if ('refused' in fs) return fs;
       let control: string;
       try {
         writeFileSync(join(dir, 'control'), Buffer.alloc(4096, 1));
@@ -468,13 +555,14 @@ async function act(a: Obj): Promise<Obj> {
       } catch (err) {
         control = errorOf(err);
       }
+      const ceiling = fs.bytes + BYTES_MARGIN;
       let written = 0;
       let stop: string | null = null;
       try {
         const fd = openSync(join(dir, 'fill'), 'w');
         const chunk = Buffer.alloc(64 * 1024, 2);
         try {
-          for (let i = 0; i < 4096; i++) written += writeSync(fd, chunk);
+          while (written < ceiling) written += writeSync(fd, chunk);
         } catch (err) {
           stop = errorOf(err);
         } finally {
@@ -485,10 +573,12 @@ async function act(a: Obj): Promise<Obj> {
       }
       rmSync(join(dir, 'fill'), { force: true });
       rmSync(join(dir, 'control'), { force: true });
-      return { control, written, stop };
+      return { size: fs.bytes, ceiling, control, written, stop };
     }
     case 'inodes': {
       const dir = String(a.dir);
+      const fs = smallFs(dir, Number(a.max_bytes ?? 16 * MIB), Number(a.max_inodes ?? 4096));
+      if ('refused' in fs) return fs;
       let control: string;
       try {
         writeFileSync(join(dir, 'c0'), '');
@@ -498,7 +588,7 @@ async function act(a: Obj): Promise<Obj> {
       }
       let made = 0;
       let stop: string | null = null;
-      for (let i = 0; i < 100000; i++) {
+      for (let i = 0; i < fs.inodes + INODES_MARGIN; i++) {
         try {
           writeFileSync(join(dir, `f${i}`), '');
           made++;
@@ -508,7 +598,7 @@ async function act(a: Obj): Promise<Obj> {
         }
       }
       for (const n of readdirSync(dir)) rmSync(join(dir, n), { force: true });
-      return { control, made, stop };
+      return { inodes: fs.inodes, control, made, stop };
     }
     case 'lstat': {
       const results: Record<string, string> = {};
@@ -562,9 +652,113 @@ async function main(): Promise<void> {
   emit({ id: 'done' });
 }
 
+// ---- a containment canary's action (D2 §7.2; SEAM.md §149) ---------------------------------
+
+// `probe --canary <name> --host-pid-ns <ns> --witness <socket> --token <path>
+// --port <n> --unlisted <authority>`: one action of the containment canary,
+// attempted only after this program's own containment check, its outcome
+// printed and reported to the domain init on the witness socket, which the
+// init accepts only from this program's own process (it reads the reporting
+// pid's command line and ancestry). The outcome is `denied` when the
+// sandbox refused the action, `allowed` when it did not.
+function argOf(name: string): string | null {
+  const i = process.argv.indexOf(name);
+  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1]! : null;
+}
+
+async function canaryAction(name: string): Promise<{ outcome: string; detail: string }> {
+  switch (name) {
+    case 'token_read': {
+      const r = tryOpen(argOf('--token') ?? '/nonexistent');
+      return { outcome: r === 'opened' ? 'allowed' : 'denied', detail: r };
+    }
+    case 'git_config': {
+      const r = run(['/usr/bin/git', 'config', 'surety.canary', 'written'], { cwd: '/surety/workspace', env: { PATH: '/usr/bin:/bin', HOME: '/surety/home', GIT_CONFIG_NOSYSTEM: '1', LANG: 'C.UTF-8' } });
+      return { outcome: r.status === 0 ? 'allowed' : 'denied', detail: `status ${String(r.status)} ${String(r.stderr).slice(0, 200)}` };
+    }
+    case 'engine_port': {
+      const r = await connectOnce({ host: '127.0.0.1', port: Number(argOf('--port') ?? 0) });
+      return { outcome: r === 'connected' ? 'allowed' : 'denied', detail: r };
+    }
+    case 'unlisted_connect': {
+      const proxy = /:(\d+)\/?$/.exec(process.env.HTTPS_PROXY ?? '');
+      if (!proxy) return { outcome: 'denied', detail: 'no proxy in the environment' };
+      const r = await tunnel(Number(proxy[1]), argOf('--unlisted') ?? 'canary-unlisted.surety.invalid:443', null);
+      return { outcome: r.status === 200 ? 'allowed' : 'denied', detail: `status ${String(r.status)}` };
+    }
+    case 'workspace_write': {
+      try {
+        writeFileSync('/surety/workspace/.surety-canary-control', 'control\n');
+        return { outcome: 'allowed', detail: 'written' };
+      } catch (err) {
+        return { outcome: 'denied', detail: errorOf(err) };
+      }
+    }
+    default:
+      return { outcome: 'unknown_action', detail: name };
+  }
+}
+
+function report(socket: string, line: Obj): Promise<string> {
+  return new Promise((resolve) => {
+    let sock: net.Socket;
+    try {
+      sock = net.connect(`\0${socket}`);
+    } catch (err) {
+      resolve(errorOf(err));
+      return;
+    }
+    let answer = '';
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve('timeout');
+    }, 30_000);
+    sock.once('connect', () => sock.write(`${JSON.stringify(line)}\n`));
+    sock.on('data', (d: Buffer) => {
+      answer += d.toString('utf8');
+      if (answer.includes('\n')) {
+        clearTimeout(timer);
+        sock.destroy();
+        resolve(answer.trim());
+      }
+    });
+    sock.once('error', (err) => {
+      clearTimeout(timer);
+      resolve(errorOf(err));
+    });
+  });
+}
+
+// `--canary <name>`: the backend's run of the probe program for one action.
+// It performs nothing itself: after its own containment check it asks the
+// domain init to perform the action (the init checks this process's
+// argument array and ancestry from /proc and runs the action in a child of
+// its own), and prints what the init answers. `--canary-run <name>`: that
+// child, the action itself.
+async function canaryMain(name: string, perform: boolean): Promise<void> {
+  const guard = containment(argOf('--host-pid-ns') ?? undefined);
+  if (guard.reasons.length > 0) {
+    process.stdout.write(`${JSON.stringify({ type: perform ? 'canary_action' : 'canary_request', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') })}\n`);
+    return;
+  }
+  if (perform) {
+    const r = await canaryAction(name);
+    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
+    return;
+  }
+  const socket = argOf('--witness');
+  const answer = socket ? await report(socket, { type: 'canary_request', action: name, pid: process.pid }) : 'no witness socket';
+  process.stdout.write(`${JSON.stringify({ type: 'canary_report', action: name, answer })}\n`);
+}
+
 // Only as a program of its own, inside a sandbox: never imported for its
 // actions.
-if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1])) {
+if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && (process.argv[2] === '--canary' || process.argv[2] === '--canary-run')) {
+  void canaryMain(process.argv[3] ?? '', process.argv[2] === '--canary-run').then(
+    () => setTimeout(() => process.exit(0), 20),
+    () => process.exit(70),
+  );
+} else if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1])) {
   void main().then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),

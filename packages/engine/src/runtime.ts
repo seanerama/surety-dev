@@ -18,6 +18,7 @@ import type { Scope } from './boundary/scope.js';
 import type { SandboxLaunch } from './invoke/sandboxed.js';
 import type { DomainProxy } from './invoke/proxy/proxy.js';
 import { seamBoundary } from './testing/seam.js';
+import { redactText, redactValue } from './records/redact.js';
 
 export interface RunEnd {
   outcome: Outcome;
@@ -110,6 +111,22 @@ export interface RunHandle {
   // The backend exited during a pause the lease did not outlive by any
   // decision: the run ends by its exit, as decided, whatever the expiry.
   expiryExempt: boolean;
+  // On the real boundary: the terminal event the backend's stream carried,
+  // the last one read (D2 §1.6: `clean` needs a terminal success event).
+  terminal: 'success' | 'failure' | null;
+  // The scripted adapter's result line, held unrecorded until termination
+  // (its stand-in for the result file when the role wrote none).
+  streamResult: { value: unknown } | null;
+  // Collection after termination (invoke/collect.ts), once per run: the
+  // engine holds the run while it terminates and collects after the
+  // backend's exit (D2 §1.4).
+  collection: Promise<unknown> | null;
+  collecting: boolean;
+  // The stream's own bounds were exceeded (D2 §3.7): why.
+  streamBound: string | null;
+  // The domain's egress log entries, kept when its proxy closed (a
+  // qualification canary's contacts, D2 §7.2).
+  egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string }[] | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -150,6 +167,12 @@ export function newHandle(claim: Claim): RunHandle {
     materialized: false,
     gate: null,
     expiryExempt: false,
+    terminal: null,
+    streamResult: null,
+    collection: null,
+    collecting: false,
+    streamBound: null,
+    egressEntries: null,
   };
 }
 
@@ -186,6 +209,9 @@ export function expiryEnd(handle: RunHandle | undefined): RunEnd {
 function holding(handle: RunHandle): boolean {
   if (handle.ending || handle.leaseLost || handle.abort || handle.accepting) return false;
   if (handle.phase === 'preparing') return true;
+  // After the backend's exit, while the engine establishes termination and
+  // collects what it left (D2 §1.4): still held.
+  if (handle.collecting) return true;
   if (handle.phase !== 'spawned' || handle.exit !== null || handle.pid === null) return false;
   return handle.startTime === null || processState(handle.pid, handle.startTime) !== 'gone';
 }
@@ -206,6 +232,12 @@ export interface Services {
   effect(intent: string): Promise<void>;
   // The re-grant of an expired run lease after a pause (D2 §3.5).
   regrant(run: string): Promise<boolean>;
+  // Termination of a run's domains, before what they held is read (D2 §§1.4,
+  // 3.2); and collection, after it, on a run's end (invoke/collect.ts).
+  terminateDomains(run: string): Promise<boolean>;
+  collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void>;
+  // Authorized qualification attempts taken on their way (trust/attempts.ts).
+  qualificationStep(): Promise<void>;
 }
 
 export class Runtime {
@@ -250,6 +282,13 @@ export class Runtime {
       | 'pause_challenge_timeout'
       | 'result_max_bytes'
       | 'collect_deadline'
+      | 'collect_entries_max'
+      | 'provider_files_max_bytes'
+      | 'stream_line_max_bytes'
+      | 'stream_queue_max_bytes'
+      | 'max_concurrent_domains'
+      | 'host_reserve_memory'
+      | 'host_reserve_disk'
       | 'egress_resolve_timeout'
       | 'egress_connect_timeout'
       | 'egress_tunnel_max_seconds'
@@ -421,12 +460,12 @@ export class Runtime {
 // swallowed error can be diagnosed from the log alone.
 export function log(what: string, err: unknown, context: Record<string, unknown> = {}): void {
   const e = err instanceof Error ? err : null;
-  const line: Record<string, unknown> = { log: 'error', at: new Date().toISOString(), what, ...context, detail: e ? e.message : String(err) };
+  const line: Record<string, unknown> = { log: 'error', at: new Date().toISOString(), what, ...redactValue(context), detail: redactText(e ? e.message : String(err)) };
   // Not `code`: a startup refusal is the last stderr line with a string
   // `code` (SEAM.md §1), and a log line must never be taken for one.
   const code = (err as { code?: unknown } | null)?.code;
   if (code !== undefined) line.error_code = code;
-  if (e?.stack) line.stack = e.stack;
+  if (e?.stack) line.stack = redactText(e.stack);
   try {
     process.stderr.write(`${JSON.stringify(line)}\n`);
   } catch {

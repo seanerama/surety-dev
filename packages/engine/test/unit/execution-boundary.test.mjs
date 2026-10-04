@@ -52,9 +52,12 @@ test('a domain path is inside the verified hierarchy only as its own scope direc
 
 test('the exit class follows D2 §1.6 precedence and keeps every fact', () => {
   const none = { oom_kill: 0, pids_max: 0 };
-  const base = { termSent: false, killWritten: false, resources: none, cleanResult: true, cancelledBeforeExit: false };
+  const base = { termSent: false, killWritten: false, resources: none, terminal: 'success', cancelledBeforeExit: false };
   assert.equal(classifyExit({ ...base, report: { code: 0, signal: null } }).exit_class, 'clean');
-  assert.equal(classifyExit({ ...base, report: { code: 0, signal: null }, cleanResult: false }).exit_class, 'error_exit');
+  assert.equal(classifyExit({ ...base, report: { code: 0, signal: null } }).exit_evidence.terminal_event, 'result');
+  // Exit 0 with no terminal success event, or with a terminal failure event.
+  assert.equal(classifyExit({ ...base, report: { code: 0, signal: null }, terminal: null }).exit_class, 'error_exit');
+  assert.equal(classifyExit({ ...base, report: { code: 0, signal: null }, terminal: 'failure' }).exit_class, 'error_exit');
   assert.equal(classifyExit({ ...base, report: { code: 2, signal: null } }).exit_class, 'error_exit');
   assert.equal(classifyExit({ ...base, report: null }).exit_class, 'unknown');
   assert.equal(classifyExit({ ...base, report: { code: null, signal: 9 }, resources: { oom_kill: 1, pids_max: 0 } }).exit_class, 'resource_limit');

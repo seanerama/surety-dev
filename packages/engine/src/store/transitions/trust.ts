@@ -5,15 +5,17 @@
 // and a host's checks are run elsewhere, and answering either decision
 // launches nothing (CH incident 10).
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { BUDGET_BOUNDARIES } from '../../config/schema.js';
 import { Refusal } from '../../refusal.js';
-import { seamHostChecks } from '../../testing/seam.js';
+import { seamHostChecks, seamTemplateVersions } from '../../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from '../../trust/host.js';
 import { canonical, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
 import { engineSettings, projectOptions } from './settings.js';
+import { templateOf } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -216,6 +218,9 @@ export interface HostObserved {
   duration_ms: number | null;
   scope_cgroup: string | null;
   wsl2: boolean;
+  // The role profile's fingerprint this start qualified (its mount plan and
+  // volatile bounds without the domain's own paths; D2 §§2.3, 4.1).
+  profile_fingerprint?: string | null;
 }
 
 let observed: HostObserved | null = null;
@@ -223,6 +228,10 @@ let observed: HostObserved | null = null;
 export function setHostObserved(value: HostObserved): void {
   observed = value;
 }
+
+// The role profile's fingerprint this start's checks observed, or null when
+// they did not run (the kernel lane) or could not build it.
+export const currentProfileFingerprint = (): string | null => observed?.profile_fingerprint ?? null;
 
 // The checks that decide eligibility: H1 to H12, H10 only on WSL2 (D2 §6).
 export const isRequired = (id: string, wsl2: boolean): boolean => id !== 'H13' && (id !== 'H10' || wsl2);
@@ -281,6 +290,9 @@ export function hostReport(db: Db) {
     wsl2,
     checks,
     probes: mode === 'run' ? (observed?.probes ?? []) : [],
+    // The role profile this start qualified (SEAM.md §150), null when the
+    // checks did not run.
+    profile_fingerprint: mode === 'run' ? (observed?.profile_fingerprint ?? null) : null,
     message: eligible ? null : mode === 'run' ? (unqualifiedMessage(checks, wsl2) ?? 'isolation unqualified: no current host qualification; real backends are refused until then.') : null,
     scope_cgroup: mode === 'run' ? (observed?.scope_cgroup ?? null) : null,
     duration_ms: mode === 'run' ? (observed?.duration_ms ?? null) : null,
@@ -372,7 +384,43 @@ export function startAttempt(tx: Tx, args: { attempt: string }): AttemptRow {
 export function invalidateAttempt(tx: Tx, a: AttemptRow, reason: string, label: Record<string, unknown> = {}): void {
   if (a.status === 'invalidated' || a.status === 'succeeded' || a.status === 'failed') return;
   moveAttempt(tx, a, 'invalidated', { invalidated_reason: reason });
-  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...label, status: 'invalidated', reason });
+  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...label, status: 'invalidated', outcome: 'invalidated', code: null, failure_class: null, reason });
+}
+
+// What of an attempt's binding no longer holds (D2 §7.2; SEAM.md §148): its
+// binary's bytes (read here), its template's version, the host
+// qualification it was proposed under. Its help is checked by the main
+// thread before each dispatch. null when nothing changed.
+export function attemptDrift(db: Db, a: AttemptRow): string | null {
+  const now = currentBinarySha(a.binary_path);
+  if (now !== a.binary_sha256) return 'binary_changed';
+  const t = templateOf(a.backend, { scripted: true, versions: seamTemplateVersions() });
+  if (!t || t.version !== a.template_version) return 'template_changed';
+  const hq = currentHostQualification(db);
+  if (!hq || hq.id !== a.host_qualification || hostIdentity() === null) return 'host_changed';
+  return null;
+}
+
+export function currentBinarySha(path: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+// Every attempt not yet dispatching whose binding changed is invalidated
+// (within the ticks); its open approval then goes as its subject does.
+export function sweepAttempts(tx: Tx): string[] {
+  const rows = tx.db.prepare(`SELECT * FROM "qualification_attempts" WHERE "status" IN ('proposed', 'authorized')`).all() as AttemptRow[];
+  const out: string[] = [];
+  for (const a of rows) {
+    const reason = attemptDrift(tx.db, a);
+    if (reason === null) continue;
+    invalidateAttempt(tx, a, reason);
+    out.push(a.id);
+  }
+  return out;
 }
 
 export function finishAttempt(
@@ -386,14 +434,21 @@ export function finishAttempt(
     unexpected_contacts: JSON.stringify(args.unexpected_contacts ?? []),
     trust_entry: args.trust_entry ?? null,
   });
-  tx.emit('qualification.finished', { project: a.fixture_project, qualification_attempt: a.id }, { ...label, status: args.outcome, trust_entry: args.trust_entry ?? null });
+  const failed = (args.canaries as { passed?: boolean; failure_class?: string | null }[]).find((c) => c.passed === false);
+  tx.emit(
+    'qualification.finished',
+    { project: a.fixture_project, qualification_attempt: a.id },
+    { ...label, status: args.outcome, outcome: args.outcome, code: args.outcome === 'failed' ? 'qualification_failed' : null, failure_class: failed?.failure_class ?? null, trust_entry: args.trust_entry ?? null },
+  );
 }
 
 // What a qualification_approval binds (D2 A.7; SEAM.md §117).
 export function attemptManifest(db: Db, a: AttemptRow): Record<string, unknown> {
   return {
     attempt_status: a.status,
-    binary_sha256: a.binary_sha256,
+    // The binary as it is now: a change between preview and answer stales
+    // the decision (SEAM.md §148).
+    binary_sha256: a.status === 'proposed' ? (currentBinarySha(a.binary_path) ?? 'unreadable') : a.binary_sha256,
     help_sha256: a.help_sha256,
     template: a.template,
     template_version: a.template_version,
@@ -566,6 +621,62 @@ export function revokeEntry(tx: Tx, entry: EntryRow, reason: string, label: Reco
   tx.emit('trust.revoked', { trust_entry: entry.id }, { ...label, reason });
 }
 
+// ---- revocation on change (D2 §7.3) -----------------------------------------------------------
+
+// What has changed of what an entry was qualified with, or null: its host's
+// identity, its adapter's template version, the role profile this host now
+// qualifies, its binary's bytes (when the caller hashed them: `binary`
+// undefined means not read here, null that the file cannot be read).
+export function entryDrift(e: EntryRow, now: { host: string | null; profile: string | null; binary?: string | null | undefined; help?: string | null | undefined }): string | null {
+  if (now.host === null || e.host_id !== now.host) return 'host_changed';
+  const template = templateOf(e.backend, { scripted: true, versions: seamTemplateVersions() });
+  if (!template || template.version !== e.template_version) return 'template_changed';
+  // The profile is judged against an entry qualified under a host
+  // qualification of record; one with none (written in the kernel lane) has
+  // no qualified profile on this host to differ from.
+  if (now.profile !== null && e.host_qualification !== null && e.profile_fingerprint !== entryProfile(now.profile, e)) return 'profile_changed';
+  if (now.binary === null) return 'binary_changed';
+  if (now.binary !== undefined && now.binary !== e.binary_sha256) return 'binary_changed';
+  if (now.help !== undefined && now.help !== e.help_sha256) return 'help_changed';
+  return null;
+}
+
+// The profile fingerprint an entry is held to (SEAM.md §150): the role
+// profile's, as this start qualified it, with the entry's egress list.
+export function entryProfile(role: string, e: { egress_hosts: string }): string {
+  let hosts: string[] = [];
+  try {
+    hosts = JSON.parse(e.egress_hosts) as string[];
+  } catch {
+    hosts = [];
+  }
+  return profileWithEgress(role, hosts);
+}
+
+export const profileWithEgress = (role: string, hosts: string[]): string => (hosts.length === 0 ? role : sha256(canonical({ role, egress: [...new Set(hosts)].sort() })));
+
+// Every entry not already revoked whose qualification no longer holds is
+// revoked (`trust.revoked`), refusing new dispatch and touching no running
+// domain. `binaries` gives the SHA-256 the main thread read of each binary
+// path (null: unreadable); a path not given is not judged on its bytes.
+export function revokeDrifted(tx: Tx, args: { binaries?: Record<string, string | null>; helps?: Record<string, string | null>; entry?: string } = {}): string[] {
+  const rows = (
+    args.entry ? tx.db.prepare(`SELECT * FROM "trust_entries" WHERE "id" = ? AND "status" <> 'revoked'`).all(args.entry) : tx.db.prepare(`SELECT * FROM "trust_entries" WHERE "status" <> 'revoked'`).all()
+  ) as EntryRow[];
+  const revoked: string[] = [];
+  const now = { host: hostIdentity(), profile: currentProfileFingerprint() };
+  for (const e of rows) {
+    const binary = args.binaries && e.binary_path in args.binaries ? args.binaries[e.binary_path] : undefined;
+    // A help that could not be read is not judged a change of help.
+    const help = args.helps && e.binary_path in args.helps && args.helps[e.binary_path] !== null ? args.helps[e.binary_path] : undefined;
+    const drift = entryDrift(e, { ...now, binary, help });
+    if (drift === null) continue;
+    revokeEntry(tx, e, drift);
+    revoked.push(e.id);
+  }
+  return revoked;
+}
+
 // The state of an evidence record as a decision binds it (SEAM.md §§77, 117).
 function evidenceState(db: Db, id: string): { record: string; quarantined: boolean | null; missing: boolean } {
   const row = db.prepare('SELECT "missing_at", "post_scan" FROM "records" WHERE "id" = ?').get(id) as { missing_at: string | null; post_scan: string } | undefined;
@@ -662,6 +773,18 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
   }
   const report = hostReport(db);
   const host = hostEligibility(db);
+  if (host.eligible && report.source === 'qualification' && entry.host_qualification !== null && host.host_qualification !== null) {
+    // D2 §4.1 (E62): the current qualification must be compatible with the
+    // one the entry was qualified under: the same mechanism fingerprint. The
+    // entry's own row is historical and normally lapsed.
+    const then = getHostRow(db, entry.host_qualification);
+    if (!then || then.mechanism_fingerprint !== host.mechanism_fingerprint) {
+      return backendRefused(
+        `${backend}'s entry was qualified under a host qualification whose mechanism fingerprint (${then?.mechanism_fingerprint ?? 'unknown'}) is not the current one's (${host.mechanism_fingerprint}): it needs requalification.`,
+        { trust_entry: entry.id, requalification_required: true, entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null, current_mechanism_fingerprint: host.mechanism_fingerprint },
+      );
+    }
+  }
   if (!host.eligible) {
     return refuse(
       'isolation_unqualified',
