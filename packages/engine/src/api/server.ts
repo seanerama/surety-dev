@@ -6,6 +6,7 @@
 // the store is open. Every response carries the defensive headers.
 
 import { prepareQualify } from '../trust/qualify.js';
+import { FIXTURE_BRANCH, FIXTURE_NAME, ensureFixtureRepo, fixtureRepoPath } from '../trust/fixture.js';
 import { heldProviderCaps } from '../records/redact.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
@@ -21,7 +22,7 @@ import type { RecordRow } from '../store/transitions/records.js';
 import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
-import type { Actor } from '../store/transitions/tx.js';
+import { type Actor, ENGINE_ACTOR } from '../store/transitions/tx.js';
 import { seamBackends, seamDescribe, seamRoute, seamTokenRead } from '../testing/seam.js';
 import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
 import { SHELL_CSP, loadShell } from './shell.js';
@@ -163,6 +164,29 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     return state.runtime;
   };
 
+  // The engine's own fixture project for a qualification attempt outside the
+  // test mode (trust/fixture.ts): found by its repository, or made and
+  // registered once, by the engine, through the bootstrap of POST
+  // /v1/projects. Two requests at once make one: the second waits for the
+  // first.
+  let fixtureMaking: Promise<string> | null = null;
+  const engineFixtureProject = (): Promise<string> => {
+    fixtureMaking ??= (async () => {
+      const rt = runtime();
+      const repo = fixtureRepoPath(rt.home);
+      const found = await store().call<string | null>('read', { name: 'qualification.engine_fixture', args: { repo } });
+      if (found !== null) return found;
+      await ensureFixtureRepo(rt.home);
+      const args = await prepareBootstrap(rt, { name: FIXTURE_NAME, tier: 'T1', dev_repo_path: repo, integration_branch: FIXTURE_BRANCH });
+      const result = await store().call<{ status: number; body: { id?: string }; effects?: { kind: string }[] }>('mutate', { name: 'project.create', args, actor: ENGINE_ACTOR, method: 'POST', path: '/v1/projects' });
+      if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
+      return String(args.id);
+    })().finally(() => {
+      fixtureMaking = null;
+    });
+    return fixtureMaking;
+  };
+
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';
     const post = method === 'POST';
@@ -201,7 +225,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'prepared',
         name: 'trust.qualify',
         prepare: async (b) => {
-          const request = await prepareQualify(b);
+          const request = await prepareQualify(b, { fixtureProject: engineFixtureProject });
           // The provider-side cap held with the key's reference, shown on
           // the attempt as configured, never as engine enforcement (Q2).
           const cap = heldProviderCaps()[`backend/${request.backend}/api_key`];

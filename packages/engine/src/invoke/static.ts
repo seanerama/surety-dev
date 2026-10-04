@@ -7,7 +7,9 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { seamRefuseBinary } from '../testing/seam.js';
 
@@ -21,16 +23,49 @@ export interface StaticRun {
 
 export class StaticRefused extends Error {}
 
+// The environment of a static check: a home of its own, empty and removed
+// after, so that the operator's settings and credentials (`~/.claude`,
+// `~/.codex`) are neither read nor written and the help does not depend on
+// them; and, for Claude Code, its documented switches that stop it updating
+// itself or making other nonessential network contacts
+// (code.claude.com/docs: DISABLE_AUTOUPDATER, DISABLE_UPDATES,
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC), so that a check can never
+// replace the binary it checks.
+function staticEnv(home: string): NodeJS.ProcessEnv {
+  return {
+    PATH: '/usr/bin:/bin',
+    LANG: 'C.UTF-8',
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_CACHE_HOME: join(home, '.cache'),
+    XDG_DATA_HOME: join(home, '.local', 'share'),
+    CODEX_HOME: join(home, '.codex'),
+    DISABLE_AUTOUPDATER: '1',
+    DISABLE_UPDATES: '1',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  };
+}
+
 // Run `path arg`; null when it could not be started or did not end in time.
 export function runStatic(path: string, backend: string, arg: '--version' | '--help'): Promise<StaticRun | null> {
   const refused = seamRefuseBinary(path, backend);
   if (refused !== null) return Promise.reject(new StaticRefused(refused));
-  return new Promise((resolve) => {
+  let home: string;
+  try {
+    home = mkdtempSync(join(tmpdir(), 'surety-static-'));
+  } catch {
+    return Promise.resolve(null);
+  }
+  const done = (v: StaticRun | null) => {
+    rmSync(home, { recursive: true, force: true });
+    return v;
+  };
+  return new Promise<StaticRun | null>((resolve) => {
     let child;
     try {
       // In a process group of its own, so that on the time limit the whole
       // group (whatever it started) is killed, not the binary alone.
-      child = spawn(path, [arg], { cwd: tmpdir(), env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      child = spawn(path, [arg], { cwd: home, env: staticEnv(home), stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     } catch {
       resolve(null);
       return;
@@ -64,7 +99,7 @@ export function runStatic(path: string, backend: string, arg: '--version' | '--h
       clearTimeout(timer);
       resolve({ status, stdout: Buffer.concat(chunks) });
     });
-  });
+  }).then(done);
 }
 
 // The SHA-256 of `--help`'s standard output; null when it could not be run.

@@ -10,6 +10,8 @@ import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
 import { closeInheritedDescriptors } from './invoke/descriptors.js';
+import { holdEnvironmentKeys } from './invoke/keys.js';
+import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { configureHarness, setHarnessSwitches, setProbeOverrides } from './testing/seam.js';
 
 function usage(message: string): never {
@@ -32,6 +34,9 @@ if (command === 'store') {
 }
 if (command === 'contract') {
   await contractCommand(args);
+}
+if (command === 'qualify') {
+  await qualifyCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -131,6 +136,15 @@ try {
   usage('SURETY_HOME does not exist');
 }
 
+// The provider keys (invoke/keys.ts): outside the test mode, held from the
+// engine's environment and removed from it; in the test mode the harness
+// holds keys and the variables are only removed.
+{
+  const keys = harness ? { held: [], problems: [] } : holdEnvironmentKeys(process.env);
+  if (harness) for (const name of Object.keys(process.env)) if (name.startsWith('SURETY_SECRET_')) delete process.env[name];
+  for (const problem of keys.problems) process.stderr.write(`surety ${ENGINE_VERSION}: ${problem}\n`);
+}
+
 try {
   await serve({ home, migrationsDir, shellDir, homeFsType });
 } catch (err) {
@@ -215,4 +229,31 @@ async function contractCommand(argv: string[]): Promise<never> {
   // and an exit before that would cut the document short.
   await new Promise<void>((resolve) => process.stdout.write(done.stdout, () => resolve()));
   process.exit(status);
+}
+
+// `surety qualify <backend> --mode one_shot_headless --model <model>
+// [--egress <host>]... [--deadline <kind>=<seconds>]...` (D2 §7.2): asks the
+// engine running on $SURETY_HOME to propose a qualification attempt. The
+// engine's answer is printed as it came (one JSON line on stdout for 201,
+// on stderr otherwise, exit status 7). Nothing runs until a person answers
+// the attempt's qualification_approval.
+async function qualifyCommand(argv: string[]): Promise<never> {
+  const parsed = parseQualify(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendQualify(home, parsed.body);
+    if (status === 201) {
+      process.stdout.write(`${text.trim()}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${text.trim()}\n`);
+    process.exit(7);
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(7);
+  }
 }

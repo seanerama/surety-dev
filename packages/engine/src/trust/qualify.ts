@@ -19,6 +19,7 @@ import { ECHO_HOST } from '../invoke/proxy/echo.js';
 import { Refusal } from '../refusal.js';
 import { seamQualifyMode, seamRefuseBinary } from '../testing/seam.js';
 import { helpHash, versionOf } from '../invoke/static.js';
+import { resolveInstallation } from './fixture.js';
 
 const FIELDS = ['backend', 'mode', 'model', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines'];
 
@@ -42,7 +43,13 @@ export interface QualifyRequest {
   canary_deadlines: { positive: number; cancellation: number; containment: number };
 }
 
-export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
+// Outside the test mode: the engine's own fixture project, made and
+// registered on first use (trust/fixture.ts; api/server.ts).
+export interface QualifyContext {
+  fixtureProject: () => Promise<string>;
+}
+
+export async function prepareQualify(b: unknown, ctx: QualifyContext | null = null): Promise<QualifyRequest> {
   if (typeof b !== 'object' || b === null || Array.isArray(b)) throw invalid('the body', 'must be an object');
   const body = b as Record<string, unknown>;
   // In the engine's test mode only: a stand-in binary, a fixture project of
@@ -62,12 +69,23 @@ export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
   if (list.some((h) => canonicalHost(String(h)) === ECHO_HOST)) {
     throw new Refusal(400, 'invalid_value', `candidate_egress names ${ECHO_HOST}, the engine's own echo endpoint, which only the probe suite may reach.`, 'Remove the echo endpoint from the list.', { field: 'candidate_egress' });
   }
+  let fixtureProject: string;
+  let given: string | null;
   if (!testMode) {
-    // The engine's own fixture project and the backend's resolved
-    // installation are the paid lane's (slice 14).
-    throw new Refusal(501, 'not_implemented', "A qualification attempt of a real backend's installation on the engine's own fixture project is not made by this engine revision.", 'Wait for the real lane (M2 slice 14).', { backend });
+    // The backend's installation as the engine's PATH resolves it, to its
+    // real path (D2 §7.2, §7.3), and the engine's own fixture project.
+    if (backend === 'scripted') throw invalid('backend', 'must name a real backend outside the test mode');
+    given = resolveInstallation(backend);
+    if (given === null) {
+      throw new Refusal(409, 'backend_refused', `No executable named ${backend} is on the engine's PATH.`, `Install ${backend}, or start the engine with its directory on PATH, and ask again.`, { backend });
+    }
+    if (ctx === null) throw new Refusal(500, 'store_error', 'The engine could not make its fixture project.', 'Start the engine again.', { backend });
+    fixtureProject = await ctx.fixtureProject();
+  } else {
+    if (typeof body.fixture_project !== 'string' || body.fixture_project === '') throw invalid('fixture_project', 'must name the project the canaries run on');
+    fixtureProject = body.fixture_project;
+    given = null;
   }
-  if (typeof body.fixture_project !== 'string' || body.fixture_project === '') throw invalid('fixture_project', 'must name the project the canaries run on');
   const deadlines = { ...CANARY_DEADLINES };
   if (body.canary_deadlines !== undefined) {
     const d = body.canary_deadlines;
@@ -78,7 +96,9 @@ export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
     }
   }
   const binary = body.binary;
-  const path = typeof binary === 'object' && binary !== null && typeof (binary as Record<string, unknown>).path === 'string' ? String((binary as Record<string, unknown>).path) : typeof binary === 'string' ? binary : null;
+  const path =
+    given ??
+    (typeof binary === 'object' && binary !== null && typeof (binary as Record<string, unknown>).path === 'string' ? String((binary as Record<string, unknown>).path) : typeof binary === 'string' ? binary : null);
   if (path === null) throw invalid('binary', 'must be {"path": <the stand-in binary>}');
   const statics = await staticChecks(backend, path);
   return {
@@ -92,7 +112,7 @@ export async function prepareQualify(b: unknown): Promise<QualifyRequest> {
     template: template.text,
     template_version: template.version,
     candidate_egress: [...new Set(list.map((h) => canonicalHost(String(h))))],
-    fixture_project: body.fixture_project,
+    fixture_project: fixtureProject,
     canary_deadlines: deadlines,
   };
 }

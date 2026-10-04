@@ -195,6 +195,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.expirable': (d, a: { now: string }) => expirableRecords(d, a.now),
   'records.referenced': (d) => referencedRecords(d),
   'ancestry.pairs': (d, a: { project: string }) => ancestryPairs(d, a),
+  // The engine's own qualification fixture project, by its repository.
+  'qualification.engine_fixture': (d, a: { repo: string }) =>
+    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
     return row ? { repo: row.dev_repo_path } : null;
