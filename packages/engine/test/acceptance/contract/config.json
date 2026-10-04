@@ -20,6 +20,7 @@
     "git_output_cap": { "default": 8388608, "min": 65536, "max": 268435456, "unit": "bytes" },
     "decision_targets": { "default": {}, "unit": "map of DecisionKind to seconds", "value_min": 300, "value_max": 2592000, "not_overridable": ["stop_confirm", "abandon_confirm"] },
     "ui_bootstrap": { "default": false, "unit": "bool" },
+    "isolation_probe_exhaustion": { "default": false, "unit": "bool" },
     "max_concurrent_domains": { "default": 2, "min": 1, "max": 8, "unit": "count" },
     "host_reserve_memory": { "default": 2147483648, "min": 536870912, "max": 68719476736, "unit": "bytes" },
     "host_reserve_disk": { "default": 5368709120, "min": 1073741824, "max": 1099511627776, "unit": "bytes" },

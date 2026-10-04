@@ -29,7 +29,7 @@
 
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -39,7 +39,7 @@ import { findingsOf } from './harness/gates.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { armBarrier, changePolicy } from './harness/journal.mjs';
 import { readRun } from './harness/reads.mjs';
-import { filesHolding, holdSecret, recordFile, recordRow } from './harness/records.mjs';
+import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { addProject, addWork, assertRunEnded, getRow, run as runRow, stopRun, waitForRunState } from './harness/runs.mjs';
 import { eventsOf, roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { runRecords } from './harness/sandbox/result.mjs';
@@ -51,6 +51,54 @@ const COLLECT_DEADLINE = CONTRACT.engine.collect_deadline.min;
 const escaped = (s) => JSON.stringify(s).slice(1, -1);
 const holds = (text, secret) => text.includes(secret) || text.includes(escaped(secret));
 const recordText = (home, id) => readFileSync(recordFile(home, recordRow(home, id)), 'utf8');
+
+// Every regular file under the engine home that holds `needle` (objection
+// 012). A file the test cannot read fails the case ("unknown is not
+// absence"), with one exception, each instance verified: the domain init's
+// execute-only copy of the engine's node, which the engine keeps unreadable
+// so that the init is not dumpable (D2 §2.3; M117 (b)). A copy is accepted
+// only if it is in <home>/sandbox/, mode 0111 exactly, and named for the
+// device, inode, size and modification time of the very node the harness
+// starts the engine with, with that size; or if it is a hard link (the same
+// device and inode) of such a copy (a domain's `init-node`). Returns
+// {found, accounted}.
+function homeFilesHolding(home, needle) {
+  const node = statSync(realpathSync(process.execPath));
+  const expectedName = `node-${node.dev}-${node.ino}-${node.size}-${Math.floor(node.mtimeMs)}`;
+  const verified = new Set();
+  const sandboxDir = join(home, 'sandbox');
+  if (existsSync(sandboxDir)) {
+    for (const name of readdirSync(sandboxDir)) {
+      const st = lstatSync(join(sandboxDir, name));
+      if (name === expectedName && st.isFile() && (st.mode & 0o777) === 0o111 && st.size === node.size) verified.add(`${st.dev}:${st.ino}`);
+    }
+  }
+  const bytes = Buffer.from(needle);
+  const found = [];
+  const accounted = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) {
+        let content;
+        try {
+          content = readFileSync(path);
+        } catch (err) {
+          const st = lstatSync(path);
+          if (err.code === 'EACCES' && (st.mode & 0o777) === 0o111 && st.size === node.size && verified.has(`${st.dev}:${st.ino}`)) {
+            accounted.push(path);
+            continue;
+          }
+          throw new Error(`${path} cannot be read (${err.code}) and is not the init's verified execute-only node copy: what it holds is unknown`);
+        }
+        if (content.includes(bytes)) found.push(path);
+      }
+    }
+  };
+  walk(home);
+  return { found, accounted };
+}
 
 async function secretProject(t, { config = {}, args = [] } = {}) {
   const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2, ...config }, start: false });
@@ -113,8 +161,10 @@ describe('M132 secrets never reach disk; volatile before disk; provider files', 
     assert.equal(refs(project.repo.path), before, 'no ref moved: the materialization was refused');
     const checkout = getRow(fx.home, 'workspaces', role.run.workspace).path;
     assert.equal(existsSync(join(checkout, 'src/leak.txt')), false, 'host-read: the file holding the secret is not in the checkout');
-    assert.deepEqual(filesHolding(fx.home, secret), [], 'no file under the engine home holds the secret');
-    assert.deepEqual(filesHolding(fx.home, escaped(secret)), [], 'nor its JSON-escaped form');
+    for (const [needle, what] of [[secret, 'the secret'], [escaped(secret), 'its JSON-escaped form']]) {
+      const scan = homeFilesHolding(fx.home, needle);
+      assert.deepEqual(scan.found, [], `no file under the engine home holds ${what} (the init's execute-only node copies, unreadable by design and verified: ${scan.accounted.join(', ') || 'none'})`);
+    }
   });
 
   test("(b) the secret in the volatile home only: the provider_files publication refused with the finding; the run's other records published", async (t) => {
@@ -153,7 +203,10 @@ describe('M132 secrets never reach disk; volatile before disk; provider files', 
     const shown = await readRun(fx.engine, project.id, role.run.id);
     assert.equal(shown.result_collection?.outcome, 'missing', `the result is recorded missing (${JSON.stringify(shown.result_collection)})`);
     assert.equal(shown.provider_files_collection?.outcome, 'missing', `the provider files are recorded missing (${JSON.stringify(shown.provider_files_collection)})`);
-    for (const needle of [secret, escaped(secret), marker]) assert.deepEqual(filesHolding(fx.home, needle), [], `no file under the engine home holds ${needle === marker ? 'the home\'s contents' : 'the secret'}`);
+    for (const needle of [secret, escaped(secret), marker]) {
+      const scan = homeFilesHolding(fx.home, needle);
+      assert.deepEqual(scan.found, [], `no file under the engine home holds ${needle === marker ? 'the home\'s contents' : 'the secret'} (the init's execute-only node copies, unreadable by design and verified: ${scan.accounted.join(', ') || 'none'})`);
+    }
   });
 
   test("(d) swap: the domain's memory.swap.max reads 0 during the run", async (t) => {

@@ -49,10 +49,11 @@ async function claudeVerifierProject(t) {
   const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2 } });
   const standIn = new StandIn(join(fx.root, 'standin'), { logDir: fx.scripted.dir });
   const project = (await addGitProject(fx)).id;
-  await holdSecret(fx.engine, apiKeyRef(BACKENDS.claude), `sk-test-key-for-the-stand-in-${randomBytes(6).toString('hex')}`);
+  const key = `sk-test-key-for-the-stand-in-${randomBytes(6).toString('hex')}`;
+  await holdSecret(fx.engine, apiKeyRef(BACKENDS.claude), key);
   await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['verifier'], extra: { ...PARK_ON_REFUSAL, repair_attempts_max: 0 } });
   await installTrustEntry(fx.engine, standIn, { status: 'active' });
-  return { fx, standIn, project };
+  return { fx, standIn, project, key };
 }
 
 const argAfter = (args, flag) => {
@@ -122,7 +123,7 @@ describe('M131 known usage retained; a resume is a new invocation; the session i
   });
 
   test('(c) A12: the rendered argv carries --session-id, the UUID derived from the invocation id, recorded on the receipt before domain.placed; a crash at launcher.before_authorization, then a Resume: the resumed run\'s receipt has its own id and its own session id, the old receipt unchanged', async (t) => {
-    const { fx, standIn, project } = await claudeVerifierProject(t);
+    const { fx, standIn, project, key } = await claudeVerifierProject(t);
     const item = await addWork(fx.engine, project, 'verification');
     await armBarrier(fx.engine, 'launcher.before_placement', 'pause');
     await armBarrier(fx.engine, 'launcher.before_authorization', 'pause');
@@ -138,6 +139,9 @@ describe('M131 known usage retained; a resume is a new invocation; the session i
     await fx.engine.waitUntil('barrier:launcher.before_authorization', { timeoutMs: 60_000 });
     await fx.engine.kill();
     await fx.start();
+    // The resolver holds secrets in the running engine's memory only (SEAM.md
+    // §57): the restarted engine is given the key again (objection 011).
+    await holdSecret(fx.engine, apiKeyRef(BACKENDS.claude), key);
     const recovered = await waitForRunState(fx.home, first.id, 'ended', { timeoutMs: 60_000 });
     assert.deepEqual([recovered.outcome, recovered.reason_class], ['recovered', 'recovered'], 'recovery ended the run');
     assert.equal(standIn.launches().length, 0, 'the stand-in never ran for the crashed run');
