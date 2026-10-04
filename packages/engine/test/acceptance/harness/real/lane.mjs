@@ -203,10 +203,19 @@ function saveState(ctx, state) {
   renameSync(tmp, statePath(ctx));
 }
 
+// Sean's reruns are applied once per run of the lane, not once per file:
+// every file of one `--lane real` run is a child of the same runner
+// process, so the runner's pid and the names are the key. Applied again by
+// a later file of the same run, they would clear a step that file's
+// predecessor had just run, and a later case could run it a second time.
 function applyRerun(ctx) {
   const names = (process.env[ENV.rerun] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (names.length === 0) return;
   const state = loadState(ctx);
+  const key = `${process.ppid}:${names.join(',')}`;
+  state.reruns_applied ??= [];
+  if (state.reruns_applied.includes(key)) return;
+  state.reruns_applied.push(key);
   for (const name of names) delete state.steps[name];
   if (state.halted && names.includes(state.halted.step)) state.halted = null;
   saveState(ctx, state);
