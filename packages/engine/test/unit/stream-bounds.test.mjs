@@ -47,3 +47,26 @@ test('a slow consumer lets the queue pass stream_queue_max_bytes: the reading st
   assert.match(bounds[0], /stream_queue_max_bytes/);
   assert.equal(await out.next(), null, 'nothing queued is acted on after the bound');
 });
+
+// M133 (g) on the exhaustion host: the over-bound line was written to the
+// transcript whole before the bound was judged. The transcript now ends at
+// the bound itself, in one chunk and across chunks.
+test('a line over stream_line_max_bytes reaches the transcript only up to the bound', async () => {
+  for (const pieces of [[`ok\n${'x'.repeat(40)}\n`], ['ok\n', 'x'.repeat(20), `${'x'.repeat(20)}\n`]]) {
+    const stream = new PassThrough();
+    const kept = [];
+    const bounds = [];
+    const out = new RoleOutput(stream, (b) => kept.push(Buffer.from(b)), { lineMax: 32, queueMax: 1024, onBound: (why) => bounds.push(why) });
+    for (const p of pieces) stream.write(p);
+    const lines = [];
+    for (let l = await out.next(); l !== null; l = await out.next()) lines.push(l);
+    const written = pieces.join('').length;
+    const transcript = Buffer.concat(kept).toString();
+    assert.equal(bounds.length, 1, `the bound is reported once (${JSON.stringify(pieces.map((p) => p.length))})`);
+    assert.equal(transcript, `ok\n${'x'.repeat(32)}`, 'the transcript holds the line before and the long line up to the bound');
+    assert.ok(transcript.length < written, `fewer bytes than the role wrote (${transcript.length} of ${written})`);
+    // Lines queued when the bound is reached are dropped with the reading;
+    // none over the bound is ever acted on.
+    assert.ok(lines.every((l) => l === 'ok'), `nothing over the bound is acted on (${JSON.stringify(lines)})`);
+  }
+});
