@@ -929,6 +929,9 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   // The help hash the engine's own check computes (the stand-in's `--help`
   // output; SEAM.md §150), else the file's own hash.
   const helpOf = async (path: string, backend = 'claude'): Promise<string> => {
+    // No fixture is ever bound to a real backend's binary (SEAM.md §164).
+    const real = realBinaryReason(path, backend);
+    if (real !== null) throw new Refusal(409, 'backend_refused', `The engine's test mode never binds a fixture to a real backend's binary: ${real}.`, 'Name the stand-in binary the test wrote.', { field: 'binary' });
     try {
       const { helpHash } = await import('../invoke/static.js');
       const h = await helpHash(path, backend).catch(() => null);
@@ -1257,6 +1260,39 @@ export function realBinaryReason(path: string, backend: string): string | null {
 // sandbox and kernel lanes run only the stand-in); null otherwise.
 export function seamRefuseBinary(path: string, backend: string): string | null {
   if (!init.harness) return null;
+  return realBinaryReason(path, backend);
+}
+
+// ---- the test mode for the real lane (SEAM.md §164) ---------------------------
+//
+// `--harness-real-lane`, accepted only with --harness: the journey of the
+// real lane runs on the plan and check fixtures of the test mode, against
+// the active entry a production attempt wrote and Sean activated. Under it,
+// and only for a dispatch to an active entry of a real backend, the test
+// mode's refusal of a real binary does not apply (nor to that binary's
+// static --help check before the dispatch); it still applies to
+// POST /v1/trust/qualify and both fixture routes, so no test-mode engine can
+// propose, qualify or install an entry for a real binary.
+let realLane = false;
+export function setRealLane(on: boolean): void {
+  realLane = on && init.harness;
+}
+export const seamRealLane = (): boolean => init.harness && realLane;
+
+// A dispatch's launch of an entry's binary: as seamRefuseBinary, except
+// that under the real lane an active entry's binary may be launched.
+export function seamRefuseEntryBinary(path: string, backend: string, activeEntry: boolean): string | null {
+  if (!init.harness) return null;
+  if (realLane && activeEntry) return null;
+  return realBinaryReason(path, backend);
+}
+
+// A static check (`--version`, `--help`) of a binary: refused in the test
+// mode for a real binary, except under the real lane, where it is the
+// active entry's re-check before a dispatch (the qualification route and
+// the fixture routes refuse a real binary before they reach it).
+export function seamRefuseStatic(path: string, backend: string): string | null {
+  if (!init.harness || realLane) return null;
   return realBinaryReason(path, backend);
 }
 

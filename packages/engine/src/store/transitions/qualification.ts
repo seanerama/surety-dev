@@ -26,6 +26,8 @@ import {
   writeEntry,
 } from './trust.js';
 import type { Tx } from './tx.js';
+import { attemptSpendEstimate } from './ledger.js';
+import { projectPolicy } from './settings.js';
 
 // An attempt is proposed and its approval asked for; nothing runs until a
 // person authorizes it (Q7).
@@ -106,10 +108,18 @@ export function qualify(
   const current = currentProfileFingerprint();
   const profile = current === null ? null : profileWithEgress(current, a.candidate_egress);
   if (profile === null) throw new Refusal(409, 'isolation_unqualified', "This start's checks did not establish the role profile an attempt binds.", 'Start the engine where the host checks pass.', {});
-  // The spend (D2 §7.2, Q7; SEAM.md §148): no M2 mechanism enforces a cap;
-  // the figure is an estimate, labelled, and null where no price is known
-  // (never 0). This engine holds no price for any backend.
-  const spend = { cap: null, estimate: null, label: 'estimate', overshoot: 'deadline', ...(a.provider_cap_usd ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}) };
+  // The spend (D2 §7.2, Q7; SEAM.md §§148, 161): no M2 mechanism enforces a
+  // cap; the figure is an estimate, labelled, under the fixture project's
+  // run limit, and null where no price is known (never 0).
+  const estimate = attemptSpendEstimate(a.backend, a.model, projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!);
+  const spend = {
+    cap: null,
+    estimate: estimate?.usd ?? null,
+    label: 'estimate',
+    overshoot: 'deadline',
+    ...(estimate ? { basis: 'three canaries at the fixture project\'s budget_run_billable_tokens, at the model\'s output rate', price_version: estimate.price_version } : {}),
+    ...(a.provider_cap_usd ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}),
+  };
   const { attempt, decision } = proposeAttempt(tx, {
     backend: a.backend,
     version: a.version,

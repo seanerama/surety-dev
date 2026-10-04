@@ -17,7 +17,8 @@ import { execFileSync } from 'node:child_process';
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const { runStatic, helpHash } = await import(join(dist, 'invoke', 'static.js'));
 const { resolveInstallation, ensureFixtureRepo, fixtureRepoPath } = await import(join(dist, 'trust', 'fixture.js'));
-const { holdEnvironmentKeys, keyEnvironmentName, capEnvironmentName } = await import(join(dist, 'invoke', 'keys.js'));
+const { holdSecretFiles, readSecretFile, parseRefValue, SecretFileRefused } = await import(join(dist, 'invoke', 'keys.js'));
+const { normalizeFor, attemptSpendEstimate, CLAUDE_PRICE_TABLE } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
 const { heldSecret, heldProviderCaps, redactText } = await import(join(dist, 'records', 'redact.js'));
 const { parseQualify, DEFAULT_EGRESS } = await import(join(dist, 'trust', 'qualify-command.js'));
 const { canaryInstructions, canaryPromptText } = await import(join(dist, 'trust', 'canaries.js'));
@@ -67,21 +68,56 @@ test('the installation resolves through its launcher link to the versioned file 
   assert.equal(resolveInstallation('../claude', join(dir, 'bin')), null);
 });
 
-test('the provider key is held from the environment and removed from it; its cap recorded as configured; nothing else', () => {
+test('--secret-file: the key held from a mode-600 file of the user, outside the engine home; its cap recorded as configured; every unusable file refused', (t) => {
+  const dir = scratch(t);
+  const home = join(dir, 'home');
+  mkdirSync(home);
   const ref = 'backend/claude/api_key';
-  assert.equal(keyEnvironmentName(ref), 'SURETY_SECRET_BACKEND_CLAUDE_API_KEY');
-  assert.equal(capEnvironmentName(ref), 'SURETY_SECRET_BACKEND_CLAUDE_API_KEY_PROVIDER_CAP_USD');
   const key = 'sk-ant-api03-UNITTESTKEYVALUE00000000000000000000000000';
-  const env = { PATH: '/usr/bin', SURETY_SECRET_BACKEND_CLAUDE_API_KEY: key, SURETY_SECRET_BACKEND_CLAUDE_API_KEY_PROVIDER_CAP_USD: '50', SURETY_SECRET_BACKEND_CODEX_API_KEY_PROVIDER_CAP_USD: 'x' };
-  const r = holdEnvironmentKeys(env);
-  assert.deepEqual(r.held, [ref]);
-  assert.equal(r.problems.length, 1, 'a cap without its key is reported');
-  assert.deepEqual(Object.keys(env), ['PATH'], 'every key variable removed from the environment');
-  assert.equal(heldSecret(ref), key);
+  const file = join(dir, 'key');
+  writeFileSync(file, `${key}\n`, { mode: 0o600 });
+  assert.deepEqual(parseRefValue('--secret-file', `${ref}=${file}`), { ref, value: file });
+  assert.equal(typeof parseRefValue('--secret-file', `backend/other/api_key=${file}`), 'string');
+  assert.equal(typeof parseRefValue('--secret-file', ref), 'string');
+  assert.deepEqual(holdSecretFiles([{ ref, path: file }], [{ ref, usd: 50 }], home), [ref]);
+  assert.equal(heldSecret(ref), key, 'without its line end');
   assert.equal(heldProviderCaps()[ref], 50);
   assert.ok(!redactText(`the key ${key} leaked`).includes(key), 'and redacted from now on');
-  const bad = holdEnvironmentKeys({ SURETY_SECRET_BACKEND_CLAUDE_API_KEY: key, SURETY_SECRET_BACKEND_CLAUDE_API_KEY_PROVIDER_CAP_USD: '-1' });
-  assert.match(bad.problems[0], /not a positive number/);
+  const refused = (path, why) => {
+    assert.throws(() => readSecretFile(ref, path, home), (e) => e instanceof SecretFileRefused && why.test(e.why), String(why));
+  };
+  refused('relative/key', /not absolute/);
+  refused(join(dir, 'absent'), /cannot be examined/);
+  const link = join(dir, 'link');
+  symlinkSync(file, link);
+  refused(link, /symbolic link/);
+  refused(dir, /not a regular file/);
+  const open = join(dir, 'open');
+  writeFileSync(open, key, { mode: 0o640 });
+  chmodSync(open, 0o640);
+  refused(open, /group or others/);
+  const empty = join(dir, 'empty');
+  writeFileSync(empty, '\n', { mode: 0o600 });
+  refused(empty, /empty/);
+  const two = join(dir, 'two');
+  writeFileSync(two, `${key}\nsecond\n`, { mode: 0o600 });
+  refused(two, /more than one line/);
+  const inside = join(home, 'key');
+  writeFileSync(inside, key, { mode: 0o600 });
+  refused(inside, /under the engine home/);
+  assert.equal(readSecretFile(ref, (() => { const f = join(dir, 'ro'); writeFileSync(f, key, { mode: 0o400 }); return f; })(), home), key, 'mode 400 is accepted');
+});
+
+test("Claude's price table and the attempt's estimate: labelled, under the run limit, null without a price", () => {
+  assert.deepEqual(CLAUDE_PRICE_TABLE.models['claude-sonnet-5-5'], { billable_in: 2, cached_in: 0.2, out: 10 });
+  assert.deepEqual(attemptSpendEstimate('claude', 'claude-sonnet-5-5', 300_000), { usd: 9, price_version: CLAUDE_PRICE_TABLE.version });
+  assert.equal(attemptSpendEstimate('claude', 'some-other-model', 300_000), null);
+  assert.equal(attemptSpendEstimate('scripted', 'claude-sonnet-5-5', 300_000), null);
+  const n = normalizeFor('claude', { input_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 10_000, output_tokens: 500, model: 'claude-sonnet-5-5', usage_final: true });
+  assert.equal(n.cost_status, 'estimated', 'no reported cost: estimated from the table');
+  assert.equal(n.cost_usd, (1000 * 2 + 10_000 * 0.2 + 500 * 10) / 1e6);
+  assert.match(n.normalization_version, /anthropic-list-2026-09-25/);
+  assert.equal(normalizeFor('claude', { input_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, model: 'claude-sonnet-5-5' }).cost_status, 'unknown', 'an unknown amount: unknown, never estimated from a part');
 });
 
 test('surety qualify: the request it sends, and its refusals', () => {
@@ -89,14 +125,14 @@ test('surety qualify: the request it sends, and its refusals', () => {
     body: { backend: 'claude', mode: 'one_shot_headless', model: 'claude-sonnet-5-5', candidate_egress: DEFAULT_EGRESS.claude },
   });
   assert.deepEqual(DEFAULT_EGRESS.claude, ['api.anthropic.com']);
-  assert.deepEqual(parseQualify(['claude', '--mode', 'one_shot_headless', '--model', 'm', '--egress', 'a.example', '--egress', 'b.example', '--deadline', 'positive=300']).body, {
+  assert.deepEqual(parseQualify(['claude', '--mode', 'one_shot_headless', '--model', 'm', '--egress', 'a.example', '--egress', 'b.example', '--canary-deadline', 'positive=300']).body, {
     backend: 'claude',
     mode: 'one_shot_headless',
     model: 'm',
     candidate_egress: ['a.example', 'b.example'],
     canary_deadlines: { positive: 300 },
   });
-  for (const bad of [[], ['--model', 'm'], ['claude', '--model', 'm'], ['claude', '--mode', 'one_shot_headless'], ['claude', '--mode'], ['claude', '--mode', 'x', '--model', 'm', '--prompt', 'p'], ['claude', '--mode', 'x', '--model', 'm', '--deadline', 'other=3']]) {
+  for (const bad of [[], ['--model', 'm'], ['claude', '--model', 'm'], ['claude', '--mode', 'one_shot_headless'], ['claude', '--mode'], ['claude', '--mode', 'x', '--model', 'm', '--prompt', 'p'], ['claude', '--mode', 'x', '--model', 'm', '--canary-deadline', 'other=3'], ['claude', '--mode', 'x', '--model', 'm', '--deadline', 'positive=3']]) {
     assert.equal(typeof parseQualify(bad), 'string', JSON.stringify(bad));
   }
 });

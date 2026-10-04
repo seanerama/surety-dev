@@ -20,6 +20,10 @@ import { accessSync, constants, existsSync, mkdirSync, realpathSync, statSync, w
 import { delimiter, isAbsolute, join } from 'node:path';
 
 import { git, repoContext } from '../git/exec.js';
+import { prepareBootstrap } from '../projects/commands.js';
+import type { Runtime } from '../runtime.js';
+import type { StoreClient } from '../store/client.js';
+import { ENGINE_ACTOR } from '../store/transitions/tx.js';
 
 export const FIXTURE_NAME = 'surety-qualification-fixture';
 export const FIXTURE_BRANCH = 'main';
@@ -63,4 +67,30 @@ export function resolveInstallation(backend: string, path = process.env.PATH ?? 
     }
   }
   return null;
+}
+
+// The engine's own fixture project's id, or null where none is registered
+// (a home that has none: before the first start outside the test mode, and
+// in a test-mode home).
+export function findFixtureProject(store: StoreClient, home: string): Promise<string | null> {
+  return store.call<string | null>('read', { name: 'qualification.engine_fixture', args: { repo: fixtureRepoPath(home) } });
+}
+
+// Found, or made and registered by the engine through the bootstrap of
+// POST /v1/projects (SEAM.md §164: at the engine's first start outside the
+// test mode). Two callers at once make one.
+let making: Promise<string> | null = null;
+export function ensureFixtureProject(rt: Runtime, store: StoreClient): Promise<string> {
+  making ??= (async () => {
+    const found = await findFixtureProject(store, rt.home);
+    if (found !== null) return found;
+    const repo = await ensureFixtureRepo(rt.home);
+    const args = await prepareBootstrap(rt, { name: FIXTURE_NAME, tier: 'T1', dev_repo_path: repo, integration_branch: FIXTURE_BRANCH });
+    const result = await store.call<{ status: number; effects?: { kind: string }[] }>('mutate', { name: 'project.create', args, actor: ENGINE_ACTOR, method: 'POST', path: '/v1/projects' });
+    if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
+    return String(args.id);
+  })().finally(() => {
+    making = null;
+  });
+  return making;
 }

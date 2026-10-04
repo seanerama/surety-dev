@@ -1,5 +1,5 @@
 // `surety qualify <backend> --mode one_shot_headless --model <m>
-// [--egress <host>]... [--deadline <kind>=<seconds>]...` (D2 §7.2; the M2
+// [--egress <host>]... [--canary-deadline <kind>=<seconds>]...` (D2 §7.2; the M2
 // plan's M136 setup): a client of the running engine's
 // `POST /v1/trust/qualify`, with the token of $SURETY_HOME/api.token and the
 // authority of its config.json. It proposes an attempt and prints the answer:
@@ -37,9 +37,9 @@ export function parseQualify(argv: string[]): QualifyCommand | string {
     if (flag === '--mode') mode = value;
     else if (flag === '--model') model = value;
     else if (flag === '--egress') egress.push(value);
-    else if (flag === '--deadline') {
+    else if (flag === '--canary-deadline') {
       const m = /^(positive|cancellation|containment)=([1-9]\d*)$/.exec(value);
-      if (!m) return '--deadline takes <positive|cancellation|containment>=<seconds>';
+      if (!m) return '--canary-deadline takes <positive|cancellation|containment>=<seconds>';
       deadlines[m[1]!] = Number(m[2]);
     } else return `unknown flag ${flag} for qualify`;
   }

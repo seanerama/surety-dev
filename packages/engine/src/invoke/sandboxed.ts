@@ -121,6 +121,8 @@ export class SandboxLaunch {
   // probe-program report it accepted, and the barrier file's appearance.
   readonly witnesses: { action: string; outcome: string; pid: number; detail: string }[] = [];
   barrierSeen = false;
+  // When the init's report of the barrier reached the engine (SEAM.md §165).
+  barrierAt: string | null = null;
   onBarrier: (() => void) | null = null;
   // The engine's TERM and the backend's end, on the monotonic clock: the
   // TERM-to-exit time where the init's own count did not reach the engine.
@@ -301,6 +303,7 @@ export class SandboxLaunch {
       case 'barrier':
         if (!this.barrierSeen) {
           this.barrierSeen = true;
+          this.barrierAt = new Date().toISOString();
           this.onBarrier?.();
         }
         return;

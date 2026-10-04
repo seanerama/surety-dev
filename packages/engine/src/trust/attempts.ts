@@ -19,7 +19,7 @@ import { performance } from 'node:perf_hooks';
 
 import { redactText, redactValue } from '../records/redact.js';
 import { type BackendSampling, type ClaudeCapabilities, type ClaudeStreamSummary, claudeAnswered, claudeAuthFailure, claudeCapabilities, claudeKeyDelivery, claudeProviderError } from '../invoke/adapters/claude.js';
-import { CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, canaryEdit, canaryResult } from './canaries.js';
+import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, canaryEdit, canaryResult } from './canaries.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
@@ -203,7 +203,22 @@ export class QualificationDriver {
       const resultOk = obs?.verdict === 'accepted' && got?.summary === want.summary;
       const editOk = obs?.editContent === canaryEdit(a.id).content;
       passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (stream !== null && authFailure === null));
-      detail = { ...detail, result_collection: obs?.verdict ?? null, result_matches: resultOk, edit_matches: editOk };
+      const edit = canaryEdit(a.id);
+      // What was asked and what was seen (SEAM.md §165): the edit read after
+      // materialization without following a link, the result as collected,
+      // and the key's delivery as the stream established it.
+      const delivery = real && stream !== null ? claudeKeyDelivery(stream) : null;
+      detail = {
+        ...detail,
+        result_collection: obs?.verdict ?? null,
+        result_matches: resultOk,
+        edit_matches: editOk,
+        expected: { edit, result: want },
+        observed: { edit: { path: edit.path, ...(obs?.editObserved ?? { type: 'missing' }) }, result: obs?.resultValue ?? null },
+        key_delivery: real
+          ? { variable: 'ANTHROPIC_API_KEY', established: delivery?.established === true, how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the engine wrote no credential file, the key reached the backend only in ANTHROPIC_API_KEY` }
+          : { variable: null, established: false, how: 'the scripted backend takes no key' },
+      };
     } else if (kind === 'cancellation') {
       termToExit = obs?.termToExitMs ?? null;
       // A real backend must have been authenticated and answering when it
@@ -211,7 +226,15 @@ export class QualificationDriver {
       // authentication failure in its stream.
       const answered = !real || (stream !== null && claudeAnswered(stream));
       passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null && answered;
-      detail = { ...detail, barrier_observed: obs?.barrierSeen ?? false, term_to_exit_ms: termToExit, ...(real ? { authenticated: answered } : {}) };
+      detail = {
+        ...detail,
+        barrier_observed: obs?.barrierSeen ?? false,
+        // The witness is the domain init's report on its channel, never the
+        // stream (SEAM.md §165).
+        barrier: { path: CANARY_BARRIER, witnessed: obs?.barrierSeen ?? false, witnessed_at: obs?.barrierAt ?? null },
+        term_to_exit_ms: termToExit,
+        ...(real ? { authenticated: answered } : {}),
+      };
     } else {
       // Each action witnessed by the init (it performed the action itself,
       // asked by a probe program the backend ran with the action's exact
@@ -232,8 +255,20 @@ export class QualificationDriver {
         const ok = ws.length > 0 && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
         return { name: x.name, witnessed: ws.length > 0, outcome, expected: x.expected, host: c, passed: ok };
       });
-      passed = actions.every((x) => x.passed);
-      detail = { actions };
+      // The permitted controls (D2 §7.2; SEAM.md §165): the workspace write
+      // the init witnessed allowed; for a real backend also the provider's
+      // tunnel, an accepted CONNECT to a candidate destination with bytes
+      // both ways in the run's egress log.
+      const write = actions.find((x) => x.name === 'workspace_write');
+      const controls: { name: string; ran: boolean; detail: string }[] = [
+        { name: 'workspace_write', ran: write?.witnessed === true && write.outcome === 'allowed', detail: 'the init performed the workspace write the probe program asked for' },
+      ];
+      if (real) {
+        const tunnel = (obs?.egress ?? []).find((e) => e.decision === 'accepted' && candidates.includes(e.authority.replace(/:443$/, '').toLowerCase()) && (e.bytes_up ?? 0) > 0 && (e.bytes_down ?? 0) > 0);
+        controls.push({ name: 'provider_tunnel', ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' });
+      }
+      passed = actions.every((x) => x.passed) && controls.every((x) => x.ran);
+      detail = { actions, controls };
       if (real) {
         // The tool surface and the absence of delegation, scheduling and
         // background work (D2 §§4.5, 7.2; T13): over every canary's stream

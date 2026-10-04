@@ -128,7 +128,7 @@ export interface RunHandle {
   streamBound: string | null;
   // The domain's egress log entries, kept when its proxy closed (a
   // qualification canary's contacts, D2 §7.2).
-  egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string }[] | null;
+  egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[] | null;
   // A real backend's stream, as its adapter reads it (invoke/adapters/
   // claude.ts); null for the scripted protocol.
   adapterStream: ClaudeStream | null;

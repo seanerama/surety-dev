@@ -78,6 +78,17 @@ export function normalize(raw: Record<string, unknown>): Normalized {
 // otherwise unknown, never zero.
 export const CLAUDE_NORMALIZATION = 'claude-stream-json-1';
 
+// The price table for a cost Claude Code did not report (D1 §13.2, D2 C4;
+// SEAM.md §161): USD per million tokens, by model, its version on every
+// estimated row. The figures are Anthropic's first-party list rates as the
+// Claude API reference gave them on 2026-09-25, pinned by the Verifier and
+// pending Sean's confirmation on his console; billable input (input plus
+// cache creation) at the input rate. An estimate is never a maximum.
+export const CLAUDE_PRICE_TABLE = {
+  version: 'anthropic-list-2026-09-25-unconfirmed',
+  models: { 'claude-sonnet-5-5': { billable_in: 2, cached_in: 0.2, out: 10 } } as Record<string, { billable_in: number; cached_in: number; out: number }>,
+};
+
 function normalizeClaude(raw: Record<string, unknown>): Normalized {
   const input = amount(raw.input_tokens);
   const creation = amount(raw.cache_creation_input_tokens);
@@ -90,7 +101,26 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
   };
   const cost = raw.total_cost_usd;
   if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) return cost > 0 ? { ...base, cost_status: 'reported', cost_usd: cost } : { ...base, cost_status: 'measured_zero', cost_usd: 0 };
+  // The price of the one model the invocation used, where the table has it
+  // and every amount is known.
+  const prices = base.model_observed === null ? undefined : CLAUDE_PRICE_TABLE.models[base.model_observed];
+  if (prices && base.billable_in !== null && base.cached_in !== null && base.out !== null) {
+    const usd = (base.billable_in * prices.billable_in + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
+    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CLAUDE_NORMALIZATION}+${CLAUDE_PRICE_TABLE.version}` };
+  }
   return { ...base, cost_status: 'unknown', cost_usd: null };
+}
+
+// The most a qualification attempt's canaries can cost in billable tokens,
+// as an estimate (D2 §7.2, Q7; SEAM.md §161): three canaries, each at the
+// fixture project's run limit, priced at the model's output rate (the
+// highest); null where the model has no price (never 0). An estimate, never
+// a maximum: cache reads and the overshoot to each canary's deadline are
+// outside it (D2 §4.2).
+export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number): { usd: number; price_version: string } | null {
+  const prices = provider === 'claude' ? CLAUDE_PRICE_TABLE.models[model] : undefined;
+  if (!prices) return null;
+  return { usd: money((3 * runLimitTokens * prices.out) / 1_000_000), price_version: CLAUDE_PRICE_TABLE.version };
 }
 
 // The provider's normalization; the scripted one for every provider without

@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { seamRefuseBinary } from '../testing/seam.js';
+import { seamRefuseStatic } from '../testing/seam.js';
 
 const OUTPUT_MAX = 1024 * 1024;
 const TIMEOUT_MS = 10_000;
@@ -48,7 +48,7 @@ function staticEnv(home: string): NodeJS.ProcessEnv {
 
 // Run `path arg`; null when it could not be started or did not end in time.
 export function runStatic(path: string, backend: string, arg: '--version' | '--help'): Promise<StaticRun | null> {
-  const refused = seamRefuseBinary(path, backend);
+  const refused = seamRefuseStatic(path, backend);
   if (refused !== null) return Promise.reject(new StaticRefused(refused));
   let home: string;
   try {

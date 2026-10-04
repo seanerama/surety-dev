@@ -32,7 +32,7 @@ import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } 
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseEntryBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
@@ -59,10 +59,17 @@ export interface CanaryObservation {
   verdict: string;
   value: unknown;
   editContent: string | null;
+  // The positive canary's edit as read after materialization, without
+  // following a link (SEAM.md §165); null where nothing was materialized.
+  // The result file as collected, parsed, redacted; null where none was.
+  resultValue: unknown;
+  editObserved: { type: 'file' | 'symlink' | 'fifo' | 'other' | 'missing'; sha256?: string; bytes?: number } | null;
   witnesses: { action: string; outcome: string; pid: number; detail: string }[];
   barrierSeen: boolean;
+  // When the init reported the barrier (SEAM.md §165), null where it did not.
+  barrierAt: string | null;
   termToExitMs: number | null;
-  egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
+  egress: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[];
   providerFilesRecord: string | null;
   // A real backend's: its stream as the adapter read it, and the host's
   // samples of its domain's processes; null for the scripted backend.
@@ -72,7 +79,7 @@ export interface CanaryObservation {
 }
 export const canaryObservations = new Map<string, CanaryObservation>();
 
-function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null): void {
+function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null, editObserved: CanaryObservation['editObserved'] = null): void {
   const launch = handle.sandbox;
   canaryObservations.set(handle.claim.run, {
     kind: handle.claim.attempt!.kind,
@@ -80,6 +87,9 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     verdict: c.verdict.outcome,
     value: c.value,
     editContent,
+    editObserved,
+    resultValue: collectedValue(c),
+    barrierAt: launch?.barrierAt ?? null,
     witnesses: launch ? [...launch.witnesses] : [],
     barrierSeen: launch?.barrierSeen ?? false,
     termToExitMs: launch?.termToExitMs() ?? null,
@@ -89,6 +99,15 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     sampling: stopSampler(handle),
     exitStatus: typeof handle.exit?.code === 'number' ? handle.exit.code : null,
   });
+}
+
+function collectedValue(c: Collected): unknown {
+  if (c.result.state !== 'read') return null;
+  try {
+    return redactValue(JSON.parse(c.result.bytes.toString('utf8')));
+  } catch {
+    return null;
+  }
 }
 
 // The canary's host samples, ended once; null where none were taken.
@@ -291,7 +310,7 @@ export class Launcher {
     if (claim.entry !== null) {
       // The engine's test mode never launches a real backend's binary: only
       // the stand-in a test wrote (M2 plan §2.3).
-      const real = seamRefuseBinary(claim.entry.binary_path, claim.entry.backend);
+      const real = seamRefuseEntryBinary(claim.entry.binary_path, claim.entry.backend, claim.trust_entry !== null && claim.attempt === null);
       if (real !== null) {
         const refusal = refusalForm('backend_refused', `This engine does not launch ${claim.entry.backend}'s own binary here: ${real}.`, 'Bind the backend to a stand-in.', { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path });
         this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
@@ -960,6 +979,7 @@ export class Launcher {
     const kind = claim.attempt!.kind;
     c.unacceptedDone = true;
     let editContent: string | null = null;
+    let editObserved: CanaryObservation['editObserved'] = null;
     if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
       const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: await this.snapshotCaps(claim.project) });
       if (m.state === 'refused' && m.reason === 'secret') {
@@ -972,8 +992,14 @@ export class Launcher {
       // through a link, only a regular file, at most 64 KiB.
       const r = readRegular(handle.workspacePath, canaryEdit(claim.attempt!.id).path, 64 * 1024);
       editContent = r.state === 'read' ? r.bytes.toString('utf8') : null;
+      editObserved =
+        r.state === 'read'
+          ? { type: 'file', sha256: createHash('sha256').update(r.bytes).digest('hex'), bytes: r.bytes.length }
+          : r.state === 'absent'
+            ? { type: 'missing' }
+            : { type: r.reason === 'link' ? 'symlink' : r.reason === 'fifo' ? 'fifo' : 'other' };
     }
-    recordCanary(handle, cls, c, editContent);
+    recordCanary(handle, cls, c, editContent, editObserved);
     if (kind === 'cancellation') return { outcome: 'failed', reason: 'infra_error', reasonText: 'barrier_not_reached: the cancellation canary ended without the engine observing its barrier' };
     if (cls === 'clean' && accepted) return { outcome: 'completed', reason: 'none' };
     if (cls === 'clean' || (cls === 'error_exit' && accepted)) return { outcome: 'failed', reason: 'invalid_result', reasonText: `exit class ${cls}: the canary's result is not one the engine may take` };

@@ -136,13 +136,17 @@ test('an authentication failure: auth_failed, its zeroed totals unknown and neve
   assert.ok(!JSON.stringify(redactValue(usage)).includes(KEY));
 });
 
-test('no reported cost: cost unknown, never zero; main-loop totals used without modelUsage', () => {
+test('no reported cost: estimated from the price table with its version, never zero, unknown for a model without a price; main-loop totals used without modelUsage', () => {
   const { usage } = read('no-cost.jsonl');
   const { raw, n, final } = ledgerOf(usage);
   assert.equal(raw.usage_scope, 'main_loop');
   assert.equal(final, true);
-  assert.equal(n.cost_status, 'unknown');
-  assert.equal(n.cost_usd, null);
+  assert.equal(n.cost_status, 'estimated');
+  assert.equal(n.cost_usd, (105 * 2 + 0 * 0.2 + 7 * 10) / 1e6);
+  assert.match(n.normalization_version, /^claude-stream-json-1\+anthropic-list-/);
+  const other = normalizeFor('claude', { ...raw, model: 'a-model-without-a-price' });
+  assert.equal(other.cost_status, 'unknown');
+  assert.equal(other.cost_usd, null);
   assert.equal(n.billable_in, 105);
   assert.equal(n.out, 7);
 });
