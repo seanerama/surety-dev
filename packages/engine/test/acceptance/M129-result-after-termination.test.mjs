@@ -98,19 +98,29 @@ describe('M129 the result is read after termination with closure; links are neve
     const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2 } });
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
-    const armed = await armedRole(fx, project, item, { acts: (act) => [act.resultShape('rewriter', { every_ms: 100, on_term: 'ignore' })] });
+    // The role writes its own valid result first, then starts the
+    // descendant, lets it rewrite the file for half a second, sends its
+    // terminal success event and exits 0: whatever the file holds when the
+    // domain is killed is one of the descendant's markers.
+    const armed = await armedRole(fx, project, item, {
+      before: [step.resultFile()],
+      acts: (act) => [act.resultShape('rewriter', { every_ms: 100, on_term: 'ignore' })],
+      after: [step.sleep(500), step.resultEvent()],
+      result: false,
+    });
     const ended = await armed.release();
     const shaped = armed.probe('result_shape');
     assert.equal(shaped.ready, true, `the fixture is live: the descendant rewrote the file before the role went on (${JSON.stringify(shaped)})`);
+    assert.equal(resultFileOf(fx.scripted, armed.launch.invocation)?.outcome, 'written', 'the fixture is live: the role wrote its own valid result first');
 
-    // The role's exit, and the rewrites logged after it, in log order.
     const log = fx.scripted.log().filter((e) => e.invocation === armed.launch.invocation);
-    const exitAt = log.findIndex((e) => e.event === 'exit' && e.pid === armed.launch.pid);
-    assert.ok(exitAt >= 0, 'the role logged its exit');
-    assert.equal(log[exitAt].code, 0, 'the role exited 0');
+    const exit = log.find((e) => e.event === 'exit' && e.pid === armed.launch.pid);
+    assert.equal(exit?.code, 0, 'the role exited 0');
     const markers = log.filter((e) => e.event === 'rewrite').map((e) => e.n);
-    const afterExit = log.slice(exitAt + 1).filter((e) => e.event === 'rewrite');
-    assert.ok(afterExit.length >= 1, `the fixture is live: the descendant went on rewriting the file after the role exited (${afterExit.length} rewrites after the exit, ${markers.length} in all), as a member of the domain (M116 (b))`);
+    // Whether the descendant outlives the role's exit is the engine's (the
+    // domain init may leave with the backend and end the pid namespace); the
+    // case pins what is collected, not that window (COVERAGE.md, "M2 slice 13 (part 1)").
+    assert.ok(markers.length >= 3, `the fixture is live: the descendant rewrote the file while the role ran (${markers.length} rewrites logged)`);
     const last = Math.max(...markers);
 
     assert.deepEqual([ended.outcome, ended.reason_class], ['completed', 'none'], `the run completes on the file it collected (${ended.reason_text})`);
