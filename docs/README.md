@@ -8,7 +8,9 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 |---|---|
 | [spec/M1-build-spec.md](spec/M1-build-spec.md) | How M1 was built: scope, roles, corrections to the design, slices, definition of done. Its roles and constraints stay in force. |
 | [spec/M2-build-spec.md](spec/M2-build-spec.md) | How M2 is built: one real backend on one small project under D2; the three test lanes; five slices; what is in and out; done. Start here for M2. |
-| [spec/handoff-2026-10-03.md](spec/handoff-2026-10-03.md) | Handoff for the next orchestrator (rewritten late on 2026-10-03): where M2 stands (slices 1 and 2 merged, D2 approved, the M2 plan adopted, D3 draft 1 awaiting Astra, slice 10 running), what waits for Sean, how the build is driven, host facts, what not to do. |
+| [spec/handoff-2026-10-04-orchestrator.md](spec/handoff-2026-10-04-orchestrator.md) | **Start here as orchestrator.** The standalone handoff (2026-10-04, build paused): where M2 stands, what happens when Sean resumes, how the build is driven, the safety rules, the hosts and recovery, how Sean works. |
+| [spec/orchestrator-prompt.md](spec/orchestrator-prompt.md) | The paste-ready opening prompt for a new orchestrator session. |
+| [spec/handoff-2026-10-03.md](spec/handoff-2026-10-03.md) | The previous handoff, superseded; kept for history. |
 | [spec/M2-input-triage.md](spec/M2-input-triage.md) | Confirmed by Sean (E48): the eighteen untested behaviours sorted into before a real agent, in M2, and later. |
 | [spec/M2-slice-1-hardening.md](spec/M2-slice-1-hardening.md) | The first slice of M2 (built and merged 2026-10-03, E50 to E52): the five gate-integrity entries of the triage, their cases, the procedure and what done means. |
 | [spec/M2-slice-2-legibility.md](spec/M2-slice-2-legibility.md) | The second slice of M2 (built and merged 2026-10-03, E53 to E55): bucket B of the triage, the six entries a first real project needs to be usable and legible. |
