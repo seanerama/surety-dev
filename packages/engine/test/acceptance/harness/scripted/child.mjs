@@ -571,7 +571,7 @@ function signalAllRefusal(spec) {
 // `spawn_until_refused` (at most eight `sleep` children, one at a time,
 // until a spawn is refused). None of them exhausts anything: each is
 // bounded by its own count, and each runs only behind this guard.
-const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions']);
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -1435,6 +1435,47 @@ async function runProbe(spec) {
           ),
         );
         entry.outcome = entry.refused === null ? 'never_refused' : 'refused';
+        break;
+      }
+      case 'volatile_shapes': {
+        // M2 slice 13 part 2 (SEAM.md §152; row M132): small files, links
+        // and FIFOs on the domain's volatile filesystem only (under
+        // /surety/home, /surety/out or /tmp, no ".."), at most 16 of each,
+        // each file at most 64 KiB: what the provider-files inventory walks.
+        if (!outDirPresent()) {
+          entry.outcome = 'no_out_dir';
+          break;
+        }
+        const ok = (p) => typeof p === 'string' && /^\/(surety\/home|surety\/out|tmp)\//.test(p) && !p.split('/').includes('..');
+        entry.made = [];
+        for (const f of (spec.files ?? []).slice(0, 16)) {
+          if (!ok(f.path) || !(Number(f.bytes ?? 0) <= 65536)) {
+            entry.made.push({ path: f.path, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(f.path), { recursive: true });
+          writeFileSync(f.path, f.content ?? Buffer.alloc(Number(f.bytes ?? 1), 'v'));
+          entry.made.push({ path: f.path, type: 'file' });
+        }
+        for (const l of (spec.links ?? []).slice(0, 16)) {
+          if (!ok(l.path)) {
+            entry.made.push({ path: l.path, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(l.path), { recursive: true });
+          symlinkSync(l.target, l.path);
+          entry.made.push({ path: l.path, type: 'symlink', target: l.target });
+        }
+        for (const f of (spec.fifos ?? []).slice(0, 16)) {
+          if (!ok(f)) {
+            entry.made.push({ path: f, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(f), { recursive: true });
+          const done = spawnSync('mkfifo', ['-m', '600', f], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          entry.made.push({ path: f, type: 'fifo', status: done.status });
+        }
+        entry.outcome = 'made';
         break;
       }
       case 'canary_actions': {

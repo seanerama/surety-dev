@@ -104,7 +104,7 @@ export const step = {
 // role is contained (harness/sandbox/view.mjs, assertContained).
 // M2 slice 13 (SEAM.md §144) adds `result_shape`, `kill_parent` and
 // `spawn_until_refused`, each bounded and behind the same guard.
-export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions']);
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes']);
 const NS_KINDS = ['pid', 'net', 'mnt'];
 const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
 
@@ -167,6 +167,9 @@ export function acting(hostNs) {
     spawnUntilRefused: (args = {}) => one('spawn_until_refused', args),
     // The containment canary's actions from canary.json (SEAM.md §149).
     canaryActions: (args = {}) => one('canary_actions', args),
+    // Small files, links and FIFOs on the volatile filesystem only (SEAM.md §152):
+    // {files: [{path, bytes} | {path, content}], links: [{path, target}], fifos: [path]}.
+    volatileShapes: (shapes) => one('volatile_shapes', shapes),
   };
 }
 
