@@ -1834,7 +1834,7 @@ Written 2026-10-04 by the Verifier of slice 14, on `verify/m2-s14` from `main` a
 | M138 | `M138-containment-canary.test.mjs` | real | (a); (b); (c) |
 | M139 | `M139-unauthenticated-canary.test.mjs` | real | (a); (b) |
 | M140 | `M140-real-backend-journey.test.mjs` | real | (a); (e); (b); (c); (d), in that order |
-| M141 | `M141-report-qualified-facts.test.mjs` | slice 14, no engine | (a) the sections M141 lists; (b) honesty in the report's state |
+| M141 | `M141-report-qualified-facts.test.mjs` | slice 14, no engine | (a) the sections M141 lists; (b) the report final, which **fails while it holds a pending fact** (after checking the skeleton's honesty) |
 | M142 | `M142-hands-on-script.test.mjs` | slice 14, no engine | (a) `bash -n`; (b) checks (1) to (9) printed with commands; (c) every paid step gated; (d) the refusals. The row's checks (1) to (9) are Sean's, made by hand with the script. |
 
 The plan's 17 real-lane cases are all written: 16 in the real lane and M137 (b) in the sandbox lane, where it needs no model (the plan cites M135 (i) for it, which is the containment canary's; no merged case made a cancellation canary miss its barrier). The manifest's `real` list is ordered M139, M136, M137, M138, M140 (SEAM §159).
@@ -1869,7 +1869,7 @@ The plan's 17 real-lane cases are all written: 16 in the real lane and M137 (b) 
 - `node --check` on every new `.mjs` file: all passed.
 - `bash -n docs/acceptance/reports/M2-hands-on.sh`: passed; `shellcheck -S warning`: two warnings, both an unused loop variable; the script's four refusals run by hand with `env -i`: each refused with "Nothing was started".
 - `M137-cancellation-canary-negatives.test.mjs` alone (`node --test`, after `npm run build`), on `main`'s engine at `872afe9`: **2 of 2 passed** (31.6 s). The engine already fails a cancellation canary `barrier_not_reached` in both ways.
-- `M141-report-qualified-facts.test.mjs` alone: **2 of 2 passed** on the skeleton report.
+- `M141-report-qualified-facts.test.mjs` alone: **2 of 2 passed** on the skeleton report as first written. **Changed after the merge** (the driver's provisional decision on question 3, 2026-10-04; `verify/m2-s14b` from `main` at `165344d`): (b) fails while the report holds any `[[PENDING` marker. Run alone after the change: **1 of 2**, (a) passed, (b) failed with `the real lane has not run: the M2 report is a skeleton (50 pending facts)`, as intended. `M142-hands-on-script.test.mjs` alone on the same revision: 4 of 4. So `--slice 14` and `npm test` fail at M141 (b) until the real lane has run and the report is final.
 - `M142-hands-on-script.test.mjs` alone: **4 of 4 passed**.
 - A sandbox-lane engine started once on `main` at `872afe9`, only to read the host checks and probes for the report's section 5 (no dispatch): H1 to H12 passed, H13 not exercised, P1 to P19 passed, P20 not exercised (excused); no scope left after it.
 - `cp ~/.local/share/claude/versions/2.1.289` to a scratch path, then that copy with `--version` and an empty `HOME`: `2.1.289 (Claude Code)`, nothing written (the pinning question's evidence; no prompt, no model).
@@ -1877,7 +1877,7 @@ The plan's 17 real-lane cases are all written: 16 in the real lane and M137 (b) 
 
 **Recorded, not pinned:** the attempt's estimate formula (the Verifier's reading: three canaries at the run limit at the output rate); which hosts beyond the provider Claude Code contacts; whether `--verbose` is still needed; the shape of Claude Code's events beyond `system`/`init` and `result`; the static checks' environment beyond `HOME`; how the journey's engine behaves if a held item of path one is resumed (none is).
 
-**Questions for Sean** (with the report's section 21): pinning Claude Code against its self-updater (recommended: a copy outside the updater's directory, qualified by its hash); whether the real lane's chain boundary waits for him; whether M141 should fail on a skeleton once slice 14's engine side is merged; the key flags rather than a configuration key; the 10 / 6 / 9 split of his 25 USD; the price of `claude-sonnet-5-5`.
+**Questions for Sean** (with the report's section 21): pinning Claude Code against its self-updater (recommended: a copy outside the updater's directory, qualified by its hash); whether the real lane's chain boundary waits for him; whether M141 should fail on a skeleton (decided by the driver, provisionally: it does); the key flags rather than a configuration key; the 10 / 6 / 9 split of his 25 USD; the price of `claude-sonnet-5-5`.
 
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
