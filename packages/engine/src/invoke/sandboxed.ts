@@ -224,7 +224,7 @@ export class SandboxLaunch {
         const plan = this.hooks.plan();
         try {
           this.volatile?.release();
-          this.volatile = VolatileHold.take(this.pid, plan.vol, plan.workspaceMount ? join(plan.stage, plan.workspaceMount) : null);
+          this.volatile = VolatileHold.take(this.pid, plan.vol, plan.workspaceMount ? join(plan.stage, plan.workspaceMount) : null, { bytes: plan.volBytes, inodes: plan.volInodes });
           this.send({ t: 'volatile_held' });
         } catch (err) {
           this.volatile = null;

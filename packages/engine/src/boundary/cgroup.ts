@@ -144,13 +144,53 @@ export interface DomainLimits {
 // without its bounds is not launched.
 export function createDomainCgroup(path: string, limits: DomainLimits): number {
   if (!isEngineScopePath(path)) throw new Error(`${path || '(empty)'} is not inside an engine scope`);
+  if (!validLimits(limits)) throw new Error(`the limits ${JSON.stringify(limits)} are not positive integers`);
   mkdirSync(path);
-  writeFileSync(join(path, 'memory.max'), String(limits.memoryMax));
-  writeFileSync(join(path, 'memory.swap.max'), '0');
-  writeFileSync(join(path, 'pids.max'), String(limits.tasksMax));
+  try {
+    writeFileSync(join(path, 'memory.max'), String(limits.memoryMax));
+    writeFileSync(join(path, 'memory.swap.max'), '0');
+    writeFileSync(join(path, 'pids.max'), String(limits.tasksMax));
+    // Read back before anything is placed in it (D2 §3.7): a domain whose
+    // limits do not read as written is never launched into.
+    const wrong = verifyLimits(path, limits);
+    if (wrong !== null) throw new Error(`the cgroup ${path} does not hold its limits: ${wrong}`);
+  } catch (err) {
+    // Nothing was placed in it: the empty directory the engine just made
+    // goes (rmdir, which removes only an empty cgroup).
+    removeCgroup(path);
+    throw err;
+  }
   const ino = cgroupInode(path);
   if (ino === null) throw new Error(`the cgroup ${path} could not be read back`);
   return ino;
+}
+
+const PAGE = 4096;
+const validLimits = (l: DomainLimits): boolean => Number.isSafeInteger(l.memoryMax) && l.memoryMax > 0 && Number.isSafeInteger(l.tasksMax) && l.tasksMax > 0;
+
+// What the domain's limit files say, against what the engine wrote: null when
+// `memory.max` reads the bytes written (the kernel keeps whole pages, so it
+// may read them rounded down to a page), `memory.swap.max` reads 0 and
+// `pids.max` reads the count written; otherwise what is wrong. A file that
+// cannot be read, or reads `max`, is wrong: an unknown limit is never taken
+// for the one written.
+export function verifyLimits(path: string, limits: DomainLimits): string | null {
+  const read = (file: string): string | null => {
+    try {
+      return readFileSync(join(path, file), 'utf8').trim();
+    } catch (err) {
+      return `unreadable (${(err as NodeJS.ErrnoException).code ?? 'error'})`;
+    }
+  };
+  const problems: string[] = [];
+  const mem = read('memory.max');
+  const pagesDown = Math.floor(limits.memoryMax / PAGE) * PAGE;
+  if (mem !== String(limits.memoryMax) && mem !== String(pagesDown)) problems.push(`memory.max reads ${mem}, not ${limits.memoryMax}`);
+  const swap = read('memory.swap.max');
+  if (swap !== '0') problems.push(`memory.swap.max reads ${swap}, not 0`);
+  const pids = read('pids.max');
+  if (pids !== String(limits.tasksMax)) problems.push(`pids.max reads ${pids}, not ${limits.tasksMax}`);
+  return problems.length === 0 ? null : problems.join('; ');
 }
 
 // Remove an empty cgroup. Only after `terminated` is recorded (D2 §3.2).

@@ -20,7 +20,7 @@
 // package and runs on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
 
@@ -83,12 +83,52 @@ function smallLimit(file: string, max: number): string | null {
     const text = readFileSync(file, 'utf8').trim();
     if (text === 'max') return `${file} is unlimited`;
     const n = Number(text);
-    if (!Number.isFinite(n)) return `${file} reads ${text}`;
+    if (!Number.isSafeInteger(n) || n <= 0 || text === '') return `${file} reads ${text}`;
     if (n > max) return `${file} is ${n}, more than ${max}`;
     return null;
   } catch (err) {
     return `${file} cannot be read (${errorOf(err)})`;
   }
+}
+
+// The exhaustion actions' fixed ceilings beyond the limit each reads (P20):
+// enough to cross the limit, never enough to matter to the host if the
+// limit were not enforced.
+const MIB = 1024 * 1024;
+const PIDS_MARGIN = 8;
+const MEMORY_MARGIN = 32 * MIB;
+const BYTES_MARGIN = 256 * 1024;
+const INODES_MARGIN = 16;
+
+// The filesystem `dir` is on, by statfs: refused unless it is small (a
+// volatile filesystem with tight bounds), so a fill never meets a host disk.
+function smallFs(dir: string, maxBytes: number, maxInodes: number): { bytes: number; inodes: number } | { refused: string } {
+  let st;
+  try {
+    st = statfsSync(dir);
+  } catch (err) {
+    return { refused: `${dir} cannot be measured (${errorOf(err)})` };
+  }
+  const bytes = st.blocks * st.bsize;
+  if (st.type !== 0x01021994) return { refused: `${dir} is not on a tmpfs` };
+  if (bytes > Math.min(maxBytes, 64 * MIB)) return { refused: `${dir} holds ${bytes} bytes, more than ${Math.min(maxBytes, 64 * MIB)}` };
+  if (st.files > Math.min(maxInodes, 16384)) return { refused: `${dir} holds ${st.files} inodes, more than ${Math.min(maxInodes, 16384)}` };
+  return { bytes, inodes: st.files };
+}
+
+// One child that sleeps and forks nothing.
+function forkOne(): Promise<{ outcome: string; child: ReturnType<typeof spawn> | null }> {
+  return new Promise((resolve) => {
+    let c: ReturnType<typeof spawn>;
+    try {
+      c = spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' });
+    } catch (err) {
+      resolve({ outcome: errorOf(err), child: null });
+      return;
+    }
+    c.once('spawn', () => resolve({ outcome: 'spawned', child: c }));
+    c.once('error', (err) => resolve({ outcome: errorOf(err), child: null }));
+  });
 }
 
 // ---- actions -----------------------------------------------------------------------------------
@@ -431,36 +471,54 @@ async function act(a: Obj): Promise<Obj> {
       return { made };
     }
     case 'pids': {
-      const why = smallLimit('/surety/cgroup/domain/pids.max', Number(a.max_limit ?? 256));
+      // P20: fork to pids.max. The program reads the domain's own limit and
+      // refuses unless it is small; the loop then stops at a fixed count a
+      // little above that limit whatever the kernel does, and every child
+      // sleeps and forks nothing, so an unenforced limit costs the host a
+      // handful of sleeping processes, never a fork storm (E64 item 2).
+      const why = smallLimit('/surety/cgroup/domain/pids.max', Math.min(Number(a.max_limit ?? 256), 256));
       if (why) return { refused: why };
+      const limit = Number(readFileSync('/surety/cgroup/domain/pids.max', 'utf8').trim());
+      const ceiling = limit + PIDS_MARGIN;
+      // The control first: one fork that succeeds.
+      const control = await forkOne();
+      if (control.child) control.child.kill('SIGKILL');
+      emit({ id: String(a.id), step: 'control', control: { fork: control.outcome } });
       const kids: ReturnType<typeof spawn>[] = [];
       let failure: string | null = null;
-      for (let i = 0; i < 512 && failure === null; i++) {
-        const c = spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' });
-        const r = await new Promise<string>((resolve) => {
-          c.once('spawn', () => resolve('spawned'));
-          c.once('error', (err) => resolve(errorOf(err)));
-        });
-        if (r === 'spawned') kids.push(c);
-        else failure = r;
+      for (let i = 0; i < ceiling && failure === null; i++) {
+        const r = await forkOne();
+        if (r.child) kids.push(r.child);
+        else failure = r.outcome;
       }
       const n = kids.length;
       for (const c of kids) c.kill('SIGKILL');
-      return { forks: n, failure };
+      return { limit, ceiling, forks: n, failure, control: control.outcome };
     }
     case 'memory': {
-      const why = smallLimit('/surety/cgroup/domain/memory.max', Number(a.max_limit ?? 1024 * 1024 * 1024));
+      // P20: allocate to memory.max, in steps, to a fixed ceiling a little
+      // above the domain's own limit, which the program reads and refuses
+      // unless it is small.
+      const why = smallLimit('/surety/cgroup/domain/memory.max', Math.min(Number(a.max_limit ?? 512 * MIB), 512 * MIB));
       if (why) return { refused: why };
+      const limit = Number(readFileSync('/surety/cgroup/domain/memory.max', 'utf8').trim());
+      const ceiling = limit + MEMORY_MARGIN;
       // The control first, reported before the exhaustion, which ends this
       // process by the kernel's OOM kill.
-      const one = Buffer.alloc(1024 * 1024, 1);
+      const one = Buffer.alloc(MIB, 1);
       emit({ id: String(a.id), step: 'control', control: { allocated: one.length } });
       const held: Buffer[] = [];
-      for (let i = 0; i < 4096; i++) held.push(Buffer.alloc(16 * 1024 * 1024, i & 0xff));
-      return { allocated: held.length * 16 * 1024 * 1024 };
+      const step = 4 * MIB;
+      for (let total = 0; total < ceiling; total += step) held.push(Buffer.alloc(step, held.length & 0xff));
+      return { limit, ceiling, allocated: held.length * step };
     }
     case 'bytes': {
+      // P20: write to the volatile filesystem's byte bound. Refused unless
+      // the filesystem the directory is on is small; stopped at a ceiling a
+      // little above its size.
       const dir = String(a.dir);
+      const fs = smallFs(dir, Number(a.max_bytes ?? 16 * MIB), Number(a.max_inodes ?? 4096));
+      if ('refused' in fs) return fs;
       let control: string;
       try {
         writeFileSync(join(dir, 'control'), Buffer.alloc(4096, 1));
@@ -468,13 +526,14 @@ async function act(a: Obj): Promise<Obj> {
       } catch (err) {
         control = errorOf(err);
       }
+      const ceiling = fs.bytes + BYTES_MARGIN;
       let written = 0;
       let stop: string | null = null;
       try {
         const fd = openSync(join(dir, 'fill'), 'w');
         const chunk = Buffer.alloc(64 * 1024, 2);
         try {
-          for (let i = 0; i < 4096; i++) written += writeSync(fd, chunk);
+          while (written < ceiling) written += writeSync(fd, chunk);
         } catch (err) {
           stop = errorOf(err);
         } finally {
@@ -485,10 +544,12 @@ async function act(a: Obj): Promise<Obj> {
       }
       rmSync(join(dir, 'fill'), { force: true });
       rmSync(join(dir, 'control'), { force: true });
-      return { control, written, stop };
+      return { size: fs.bytes, ceiling, control, written, stop };
     }
     case 'inodes': {
       const dir = String(a.dir);
+      const fs = smallFs(dir, Number(a.max_bytes ?? 16 * MIB), Number(a.max_inodes ?? 4096));
+      if ('refused' in fs) return fs;
       let control: string;
       try {
         writeFileSync(join(dir, 'c0'), '');
@@ -498,7 +559,7 @@ async function act(a: Obj): Promise<Obj> {
       }
       let made = 0;
       let stop: string | null = null;
-      for (let i = 0; i < 100000; i++) {
+      for (let i = 0; i < fs.inodes + INODES_MARGIN; i++) {
         try {
           writeFileSync(join(dir, `f${i}`), '');
           made++;
@@ -508,7 +569,7 @@ async function act(a: Obj): Promise<Obj> {
         }
       }
       for (const n of readdirSync(dir)) rmSync(join(dir, n), { force: true });
-      return { control, made, stop };
+      return { inodes: fs.inodes, control, made, stop };
     }
     case 'lstat': {
       const results: Record<string, string> = {};

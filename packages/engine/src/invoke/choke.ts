@@ -34,8 +34,8 @@ import { redactValue } from '../records/redact.js';
 import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
-import { readPopulated } from '../boundary/cgroup.js';
-import { prepareSandbox } from './sandbox/prepare.js';
+import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
+import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES } from './adapters/templates.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
@@ -550,6 +550,18 @@ export class Launcher {
         // the store says so; the store's transaction checks the rest.
         authorize: async () => {
           if (handle.ending || handle.abort) return false;
+          // The domain's limits, read back again at the grant (D2 §3.7): no
+          // role code is authorized into a domain without them.
+          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt));
+          if (wrong !== null) {
+            log('launch', new Error(`the domain's limits do not read as written: ${wrong}`), { run: claim.run, domain: claim.domain });
+            this.rt.requestEnd(handle, {
+              outcome: 'failed',
+              reason: 'infra_error',
+              reasonText: `the domain's cgroup limits do not read as the engine wrote them (${wrong}); its launch was refused`,
+            });
+            return false;
+          }
           const r = await this.rt.engine<{ granted: boolean }>('domain.authorize', {
             domain: claim.domain,
             invocation: claim.invocation,

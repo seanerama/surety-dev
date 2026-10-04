@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { createDomainCgroup, readPopulated, readProcs, removeCgroup, writeKill } from '../../boundary/cgroup.js';
+import { type DomainLimits, createDomainCgroup, readPopulated, readProcs, removeCgroup, verifyLimits, writeKill } from '../../boundary/cgroup.js';
 import type { Scope } from '../../boundary/scope.js';
 import { gitOk, repoContext } from '../../git/exec.js';
 import { newId } from '../../ids.js';
@@ -95,6 +95,8 @@ interface BoxOptions {
   context: (dir: string) => void;
   actions: Obj[];
   onLine?: (o: Obj, box: Box) => void | Promise<void>;
+  // P20's boxes: the limits the host reads back before the program starts.
+  limits?: DomainLimits;
 }
 
 interface Box {
@@ -148,6 +150,30 @@ function containedFromHost(launcherPid: number, cgroup: string): string | null {
   }
   return null;
 }
+
+// The second half of the engine's guard for a box whose program exhausts a
+// limit (P20): the box's own limit files, read from the host, say what the
+// suite wrote, and each is small.
+function limitsFromHost(cgroup: string, limits: DomainLimits): string | null {
+  const wrong = verifyLimits(cgroup, limits);
+  if (wrong !== null) return `the box's limits do not read as written: ${wrong}`;
+  if (limits.tasksMax > P20_MAX.tasksMax || limits.memoryMax > P20_MAX.memoryMax) return `the box's limits ${JSON.stringify(limits)} are not small`;
+  return null;
+}
+
+// P20's boxes (D2 A.6 P20; M2 plan §2.6, "the small caps used for P20"). The
+// pids and memory caps leave room for the box's own init and program (two
+// node processes and unshare); the storage caps are D2's preamble's.
+type P20Kind = 'pids' | 'memory' | 'bytes' | 'inodes';
+const P20_KINDS: readonly P20Kind[] = ['pids', 'memory', 'bytes', 'inodes'];
+const MIB = 1024 * 1024;
+const P20_CAPS: Record<P20Kind, { memoryMax: number; tasksMax: number; volBytes: number; volInodes: number }> = {
+  pids: { memoryMax: 512 * MIB, tasksMax: 48, volBytes: MIB, volInodes: 256 },
+  memory: { memoryMax: 192 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
+  bytes: { memoryMax: 512 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 256 },
+  inodes: { memoryMax: 512 * MIB, tasksMax: 64, volBytes: MIB, volInodes: 64 },
+};
+const P20_MAX = { tasksMax: 64, memoryMax: 512 * MIB };
 
 async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy: string, o: BoxOptions): Promise<Box> {
   const t = tools.paths;
@@ -210,7 +236,7 @@ async function openBox(rt: Runtime, scope: Scope, tools: ResolvedTools, initCopy
       // The engine's half of the guard: nothing of the program starts unless
       // the host sees process 1 of the sandbox in a pid namespace of its own.
       barrier: async () => {
-        const why = containedFromHost(launch.pid, cgroup);
+        const why = containedFromHost(launch.pid, cgroup) ?? (o.limits ? limitsFromHost(cgroup, o.limits) : null);
         if (why !== null) {
           box.hostRefusal = why;
           launch.closed = true;
@@ -825,6 +851,46 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     : null;
   if (p16Box) opened.push(p16Box);
 
+  // ---- P20: each limit alone, in a domain of its own with small caps ----
+  // (D2 §3.7, A.6 P20; E64 item 2). The program's exhaustion actions refuse
+  // unless the limit they read is small and stop at a fixed ceiling a little
+  // above it; the engine's half: before the program may start, the host
+  // reads that process 1 is in a pid namespace of its own and that the box's
+  // `pids.max`, `memory.max` and `memory.swap.max` read as the suite wrote
+  // them (verifyLimits); a box that fails either never starts its program.
+  const p20: Record<P20Kind, Box | null> = { pids: null, memory: null, bytes: null, inodes: null };
+  if (run('P20')) {
+    for (const kind of P20_KINDS) {
+      const caps = P20_CAPS[kind];
+      try {
+        const b = await openBox(rt, scope, tools, initCopy, {
+          label: `p20-${kind}`,
+          fixture: null,
+          memoryMax: caps.memoryMax,
+          tasksMax: caps.tasksMax,
+          volBytes: caps.volBytes,
+          volInodes: caps.volInodes,
+          egress: null,
+          context: () => {},
+          actions: neg('P20')
+            ? [
+                kind === 'pids'
+                  ? { id: 'p20', kind: 'pids', max_limit: caps.tasksMax }
+                  : kind === 'memory'
+                    ? { id: 'p20', kind: 'memory', max_limit: caps.memoryMax }
+                    : { id: 'p20', kind, dir: '/surety/out', max_bytes: caps.volBytes, max_inodes: caps.volInodes },
+              ]
+            : [{ id: 'p20c', kind: 'write_read', path: '/surety/out/p20-control', content: tag }],
+          limits: { memoryMax: caps.memoryMax, tasksMax: caps.tasksMax },
+        });
+        p20[kind] = b;
+        opened.push(b);
+      } catch (err) {
+        log('probe suite', err, { probe: 'P20', kind });
+      }
+    }
+  }
+
   // The host controls run meanwhile (P4's and P5's after the sandboxes, so
   // that the repository is compared before and after the role alone).
   const p11Control = winPresent && run('P11') ? runHost(WIN_EXE, ['/c', 'echo', marker], { cwd: '/' }) : Promise.resolve(null);
@@ -1180,9 +1246,81 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
       detail: `the protected roots ${fixture.protectedRoots.join(', ')} for a role other than the Verifier`,
     });
   });
-  // P20 (fork, memory, storage exhaustion) is row M133's, slice 13's: not
-  // exercised in this slice, excused by SEAM.md §138 until then.
-  results.push(notRun('P20', 'P20 is slice 13\'s (row M133): not exercised in slice 12', 'slice_12'));
+  // P20: each limit alone in its own capped domain (D2 §3.7, A.6 P20). Each
+  // part passes only if its box was built with its limits read back from the
+  // host, the program's exhaustion was stopped by the kernel short of the
+  // program's own ceiling with the counter the kernel keeps risen where it
+  // keeps one, and the control (one fork, one allocation, one write, one
+  // file) succeeded first.
+  if (!run('P20')) results.push(notRun('P20', 'this probe was made unable to run at start'));
+  else {
+    const parts: { kind: P20Kind; seeded: boolean; held: boolean; control: boolean; negative: string | null; detail: string }[] = [];
+    for (const kind of P20_KINDS) {
+      const b = p20[kind];
+      if (b === null) {
+        parts.push({ kind, seeded: false, held: false, control: false, negative: null, detail: `the ${kind} box could not be made` });
+        continue;
+      }
+      const problem = b.hostRefusal ?? (b.launch.setupFailure ? `its sandbox could not be built: ${b.launch.setupFailure}` : null) ?? (b.finished ? null : 'it did not finish within tick_step_budget');
+      const g = line(b, 'guard');
+      const guardReasons = (g?.guard as { reasons?: string[] } | undefined)?.reasons ?? [];
+      const o = line(b, 'p20');
+      const c = b.lines.find((l) => l.id === 'p20' && l.step === 'control') ?? null;
+      const k = b.counters ?? { oom_kill: null, pids_max: null };
+      const seeded = problem === null && g !== null && guardReasons.length === 0;
+      let held = false;
+      let control = false;
+      let negative: string | null = null;
+      if (!neg('P20')) {
+        control = line(b, 'p20c')?.outcome === 'same';
+      } else if (kind === 'pids') {
+        const r = o && o.step !== 'control' ? o : b.lines.filter((l) => l.id === 'p20' && l.step !== 'control').at(-1) ?? null;
+        control = (c?.control as { fork?: string } | undefined)?.fork === 'spawned';
+        const forks = Number(r?.forks ?? NaN);
+        const ceiling = Number(r?.ceiling ?? NaN);
+        held = r !== null && typeof r.failure === 'string' && forks < ceiling && (k.pids_max ?? 0) > 0;
+        negative = r ? (typeof r.refused === 'string' ? `refused: ${String(r.refused)}` : `${forks} forks of a ceiling of ${ceiling}, stopped by ${String(r.failure)}; pids.events max ${k.pids_max ?? 'unreadable'}`) : null;
+      } else if (kind === 'memory') {
+        const finals = b.lines.filter((l) => l.id === 'p20' && l.step !== 'control');
+        control = (c?.control as { allocated?: number } | undefined)?.allocated === MIB;
+        const exit = b.launch.exitReport;
+        // The program never reported reaching its ceiling: the kernel ended
+        // it at memory.max (memory.events oom_kill rose).
+        held = c !== null && finals.every((l) => typeof l.allocated !== 'number' || Number(l.allocated) < Number(l.ceiling)) && (k.oom_kill ?? 0) > 0;
+        negative = c ? `${finals.length === 0 ? 'the program was ended before it reported' : JSON.stringify(finals.at(-1))}; exit ${JSON.stringify(exit)}; memory.events oom_kill ${k.oom_kill ?? 'unreadable'}` : null;
+      } else {
+        const r = o;
+        control = kind === 'bytes' ? r?.control === 'written' : r?.control === 'created';
+        if (kind === 'bytes') {
+          const written = Number(r?.written ?? NaN);
+          held = r !== null && r.stop === 'ENOSPC' && written <= Number(r.size) + 64 * 1024 && written < Number(r.ceiling);
+          negative = r ? (typeof r.refused === 'string' ? `refused: ${String(r.refused)}` : `${written} bytes written to a ${String(r.size)}-byte volatile filesystem, stopped by ${String(r.stop)}`) : null;
+        } else {
+          const made = Number(r?.made ?? NaN);
+          held = r !== null && r.stop === 'ENOSPC' && made < Number(r.inodes);
+          negative = r ? (typeof r.refused === 'string' ? `refused: ${String(r.refused)}` : `${made} files made on a ${String(r.inodes)}-inode volatile filesystem, stopped by ${String(r.stop)}`) : null;
+        }
+      }
+      const caps = P20_CAPS[kind];
+      parts.push({
+        kind,
+        seeded,
+        held,
+        control,
+        negative,
+        detail: `${kind}: ${problem ?? (guardReasons.length > 0 ? `the program refused: ${guardReasons.join('; ')}` : `pids.max ${caps.tasksMax}, memory.max ${caps.memoryMax}, volatile ${caps.volBytes} bytes and ${caps.volInodes} inodes`)}`,
+      });
+    }
+    evidence.p20 = parts;
+    const v = verdict(ctx, 'P20', {
+      seeded: parts.every((p) => p.seeded),
+      negative: parts.some((p) => p.negative === null) ? null : parts.map((p) => `${p.kind}: ${p.negative}`).join('; '),
+      held: parts.every((p) => p.held),
+      control: parts.every((p) => p.control),
+      detail: parts.map((p) => p.detail).join('; '),
+    });
+    results.push(v);
+  }
 
   evidence.domains = opened.map((b) => ({ id: b.id, cgroup: b.cgroup, finished: b.finished, host_refusal: b.hostRefusal, setup_failure: b.launch.setupFailure, counters: b.counters, exit: b.launch.exitReport }));
   evidence.egress = main.proxy?.entries ?? null;

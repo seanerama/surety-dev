@@ -13,7 +13,7 @@ import { basename, join } from 'node:path';
 import { recordsDir, writeWholeRecord } from '../../records/files.js';
 import { seamSandboxBinds } from '../../testing/seam.js';
 
-import { createDomainCgroup } from '../../boundary/cgroup.js';
+import { type DomainLimits, createDomainCgroup } from '../../boundary/cgroup.js';
 import { workspaceLink } from '../../git/worktree.js';
 import { type RunHandle, type Runtime, log } from '../../runtime.js';
 import type { BackendSpec } from '../backend.js';
@@ -82,6 +82,12 @@ export function protectedBinds(workspace: string, roots: string[], empty: string
   return out;
 }
 
+// A domain's cgroup limits (D2 §3.7): `pids.max` from `domain_tasks_max`,
+// `memory.max` from `domain_memory_max`, `memory.swap.max` 0.
+export function domainLimits(rt: Runtime): DomainLimits {
+  return { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') };
+}
+
 export interface PreparedSandbox {
   plan: Plan;
   backend: BackendLaunch;
@@ -126,7 +132,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // The recorded path must be this domain's directory in this engine's own
   // scope; anything else is never created, entered or killed.
   if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
-  const limits = { memoryMax: rt.setting('domain_memory_max'), tasksMax: rt.setting('domain_tasks_max') };
+  const limits = domainLimits(rt);
   const inode = createDomainCgroup(may.cgroup_path, limits);
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
   // The probe profile (D2 §2.8, A.6 P15; SEAM.md §127): the domain's own
