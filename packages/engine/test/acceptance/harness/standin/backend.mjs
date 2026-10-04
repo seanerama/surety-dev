@@ -41,14 +41,37 @@
 // keep it from starting; the entry's SHA-256 is of the file as written.
 // Self-contained: Node built-ins only.
 
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 // eslint-disable-next-line no-undef
 const logDir = typeof LOG_DIR_OVERRIDE === 'string' ? LOG_DIR_OVERRIDE : dir;
+// eslint-disable-next-line no-undef
+const runsChild = typeof RUN_CHILD === 'boolean' ? RUN_CHILD : false;
+
+// M2 slice 13 part 2 (SEAM.md §148): the static checks a qualification
+// attempt, and the engine's re-check of an entry, make of a binary. Exactly
+// `--version` prints one line, `surety-standin <version>`; exactly `--help`
+// prints `help.txt` beside the binary if there is one, else a fixed text.
+// Each is logged as a `static` entry (never a `launch`) and exits 0.
+const STANDIN_VERSION = '0.0.1';
+const only = process.argv.slice(2);
+if (only.length === 1 && (only[0] === '--version' || only[0] === '--help')) {
+  const help = join(dir, 'help.txt');
+  const text = only[0] === '--version' ? `surety-standin ${STANDIN_VERSION}\n` : existsSync(help) ? readFileSync(help, 'utf8') : 'usage: surety-standin [options] [prompt]\n  a stand-in backend for the Surety acceptance tests\n';
+  process.stdout.write(text);
+  try {
+    appendFileSync(join(logDir, 'standin.jsonl'), `${JSON.stringify({ event: 'static', at: new Date().toISOString(), args: only, pid: process.pid })}\n`);
+  } catch {
+    // evidence only
+  }
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  process.exit(0);
+}
 
 function statField(n) {
   const stat = readFileSync('/proc/self/stat', 'utf8');
@@ -127,6 +150,32 @@ try {
   appendFileSync(join(logDir, 'standin.jsonl'), `${JSON.stringify(entry)}\n`);
 } catch {
   // The log is the test's evidence; a lost line must not change what the stand-in does.
+}
+
+// M2 slice 13 part 2 (SEAM.md §148; row M131 (b)): a result file the test
+// left beside the log, copied to /surety/out/result.json, inside a sandbox only.
+if (existsSync(join(logDir, 'standin-result.json')) && existsSync('/surety/out')) {
+  try {
+    if (lstatSync('/surety/out').isDirectory()) copyFileSync(join(logDir, 'standin-result.json'), '/surety/out/result.json');
+  } catch {
+    // evidence only
+  }
+}
+
+// M2 slice 13 part 2 (SEAM.md §148; row M135): built with RUN_CHILD, the
+// stand-in is the binary of a `scripted` qualification attempt. After
+// recording it runs the scripted role program of the log directory
+// (`child.mjs`, the scripted directory) with its own standard streams and
+// environment, and exits as that program did. SIGTERM reaches both through
+// the process group; the stand-in itself waits for the program.
+if (runsChild && existsSync(join(logDir, 'child.mjs'))) {
+  process.on('SIGTERM', () => {});
+  const child = spawn(process.execPath, [join(logDir, 'child.mjs')], { stdio: 'inherit' });
+  const code = await new Promise((resolve) => {
+    child.once('error', () => resolve(97));
+    child.once('exit', (status, signal) => resolve(status ?? (signal === 'SIGKILL' ? 137 : signal === 'SIGTERM' ? 143 : 128)));
+  });
+  process.exit(code);
 }
 
 // The hold (see the head of this file): bounded, so that a test that failed

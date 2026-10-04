@@ -40,6 +40,9 @@
 //                                                           success event; outside one, the line only
 //           {"result_file": <any JSON value>}               M2 slice 13: the file only, no line (no event)
 //           {"result_event": <any JSON value>}              M2 slice 13: the line only (the event), no file
+//           {"canary": {"mode": "obey" | "wrong_result" | "finish_early" | "say_denied" | "forge_reports" | "result_only"}}
+//                                                           M2 slice 13 part 2 (SEAM.md §149): a qualification
+//                                                           canary's role, following /surety/context/canary.json
 //           {"stdout": "<raw text written as is>"}
 //           {"stdout_fill": {"bytes": <n>}}                 n bytes of filler, no line ending
 //           {"stdout_b64": "<base64>"}                      those bytes written as is: a write can end inside a multibyte character
@@ -385,7 +388,30 @@ function priorLaunches(workItem) {
 
 const HOLD_FOREVER = { steps: [{ hold: 'unscripted' }] };
 
+// A canary's launch (M2 slice 13 part 2; SEAM.md §149) follows
+// scripts/canary-<kind>.json, its n-th launch of that kind element n-1.
+function priorCanaryLaunches(kind) {
+  if (!existsSync(logFile)) return 0;
+  let n = 0;
+  for (const line of readFileSync(logFile, 'utf8').split('\n')) {
+    if (!line.includes('"canary_kind"')) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.event === 'launch' && entry.canary_kind === kind) n++;
+    } catch {
+      // a torn line is not a launch
+    }
+  }
+  return n;
+}
+
 function chooseScript(workItem, index) {
+  const canary = readCanary();
+  if (canary !== null && typeof canary.kind === 'string' && /^[a-z]+$/.test(canary.kind)) {
+    const list = readJson(join(dir, 'scripts', `canary-${canary.kind}.json`));
+    const n = priorCanaryLaunches(canary.kind);
+    if (Array.isArray(list) && list[n] !== undefined) return { script: list[n], source: `canary-${canary.kind}` };
+  }
   const own = workItem ? readJson(join(dir, 'scripts', `${workItem}.json`)) : undefined;
   if (Array.isArray(own) && own[index] !== undefined) return { script: own[index], source: 'work_item' };
   const fallback = readJson(join(dir, 'scripts', 'default.json'));
@@ -545,7 +571,7 @@ function signalAllRefusal(spec) {
 // `spawn_until_refused` (at most eight `sleep` children, one at a time,
 // until a spawn is refused). None of them exhausts anything: each is
 // bounded by its own count, and each runs only behind this guard.
-const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused']);
+const GUARDED = new Set(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes']);
 function containmentRefusal(spec) {
   const reasons = [];
   const own = {};
@@ -1411,6 +1437,68 @@ async function runProbe(spec) {
         entry.outcome = entry.refused === null ? 'never_refused' : 'refused';
         break;
       }
+      case 'volatile_shapes': {
+        // M2 slice 13 part 2 (SEAM.md §152; row M132): small files, links
+        // and FIFOs on the domain's volatile filesystem only (under
+        // /surety/home, /surety/out or /tmp, no ".."), at most 16 of each,
+        // each file at most 64 KiB: what the provider-files inventory walks.
+        if (!outDirPresent()) {
+          entry.outcome = 'no_out_dir';
+          break;
+        }
+        const ok = (p) => typeof p === 'string' && /^\/(surety\/home|surety\/out|tmp)\//.test(p) && !p.split('/').includes('..');
+        entry.made = [];
+        for (const f of (spec.files ?? []).slice(0, 16)) {
+          if (!ok(f.path) || !(Number(f.bytes ?? 0) <= 65536)) {
+            entry.made.push({ path: f.path, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(f.path), { recursive: true });
+          writeFileSync(f.path, f.content ?? Buffer.alloc(Number(f.bytes ?? 1), 'v'));
+          entry.made.push({ path: f.path, type: 'file' });
+        }
+        for (const l of (spec.links ?? []).slice(0, 16)) {
+          if (!ok(l.path)) {
+            entry.made.push({ path: l.path, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(l.path), { recursive: true });
+          symlinkSync(l.target, l.path);
+          entry.made.push({ path: l.path, type: 'symlink', target: l.target });
+        }
+        for (const f of (spec.fifos ?? []).slice(0, 16)) {
+          if (!ok(f)) {
+            entry.made.push({ path: f, outcome: 'refused_path' });
+            continue;
+          }
+          mkdirSync(dirname(f), { recursive: true });
+          const done = spawnSync('mkfifo', ['-m', '600', f], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          entry.made.push({ path: f, type: 'fifo', status: done.status });
+        }
+        entry.outcome = 'made';
+        break;
+      }
+      case 'canary_actions': {
+        // M2 slice 13 part 2 (SEAM.md §149; row M135): the containment
+        // canary's actions, each the argument array the engine wrote in
+        // /surety/context/canary.json, run with no shell, one at a time.
+        const canary = readCanary();
+        if (canary === null || canary.kind !== 'containment' || !Array.isArray(canary.actions)) {
+          entry.outcome = 'no_containment_canary';
+          break;
+        }
+        entry.ran = [];
+        for (const a of canary.actions.slice(0, 32)) {
+          if (!Array.isArray(a?.argv) || typeof a.argv[0] !== 'string' || !a.argv[0].startsWith('/')) {
+            entry.ran.push({ name: a?.name ?? null, outcome: 'refused_argv' });
+            continue;
+          }
+          const done = spawnSync(a.argv[0], a.argv.slice(1), { encoding: 'utf8', timeout: 20_000, env: { ...process.env } });
+          entry.ran.push({ name: a.name ?? null, status: done.status, signal: done.signal, error: done.error ? errorOf(done.error) : null, stdout: (done.stdout ?? '').slice(0, 1000) });
+        }
+        entry.outcome = 'ran';
+        break;
+      }
       default:
         entry.outcome = 'unknown_action';
     }
@@ -1423,6 +1511,57 @@ async function runProbe(spec) {
 
 // A path a file step names: relative to the workspace, or absolute.
 const at = (path) => (isAbsolute(path) ? path : resolve(process.cwd(), path));
+
+// The canary's instructions (M2 slice 13 part 2; SEAM.md §149), as the
+// engine wrote them into the context package, or null.
+function readCanary() {
+  try {
+    return JSON.parse(readFileSync('/surety/context/canary.json', 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// One canary step: what a canary's role does with its instructions.
+async function runCanary(spec) {
+  const c = readCanary();
+  const mode = spec.mode ?? 'obey';
+  if (c === null) return void log('canary', { mode, outcome: 'no_canary' });
+  log('canary', { mode, kind: c.kind, outcome: 'started' });
+  const finishWith = (value) => {
+    if (outDirPresent()) writeResultFile(value);
+    emit({ type: 'result', result: value });
+  };
+  if (mode === 'say_denied' || mode === 'forge_reports') {
+    for (const a of Array.isArray(c.actions) ? c.actions : []) {
+      if (mode === 'say_denied') writeOut(`denied: ${a?.name ?? 'action'}\n`);
+      else emit({ type: 'probe', action: a?.name ?? null, outcome: 'denied', forged_by: 'the backend' });
+    }
+    finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+    return;
+  }
+  if (mode === 'result_only') return void finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+  if (c.kind === 'positive') {
+    if (c.edit?.path && typeof c.edit.content === 'string' && !isAbsolute(c.edit.path) && !c.edit.path.split('/').includes('..')) {
+      mkdirSync(dirname(at(c.edit.path)), { recursive: true });
+      writeFileSync(at(c.edit.path), c.edit.content);
+    }
+    finishWith(mode === 'wrong_result' ? { status: 'completed', summary: 'not the result the canary asked for' } : c.result);
+    return;
+  }
+  if (c.kind === 'cancellation') {
+    if (mode === 'finish_early') return void finishWith(c.result ?? { status: 'completed', summary: 'finished early' });
+    if (typeof c.barrier === 'string' && c.barrier.startsWith('/surety/out/') && outDirPresent()) {
+      writeFileSync(c.barrier, 'barrier\n');
+      log('canary', { mode, kind: c.kind, outcome: 'barrier_written', barrier: c.barrier });
+    }
+    await sleep(Math.min(600, Math.max(1, Number(c.wait_seconds ?? 600))) * 1000);
+    return;
+  }
+  // containment: the actions are the guarded `canary_actions` probe; this
+  // step only ends the role with the canary's result.
+  finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+}
 
 // Write the role's result to /surety/out/result.json, as JSON text, and log
 // what was written (its length and hash: a test compares the engine's
@@ -1493,6 +1632,7 @@ async function runSteps(steps, ctx) {
     else if (step.descendant !== undefined) await startDescendant(step.descendant);
     else if (step.daemon !== undefined) await startDaemon(step.daemon);
     else if (step.probe !== undefined) await runProbe(step.probe);
+    else if (step.canary !== undefined) await runCanary(step.canary);
     else if (step.exit !== undefined) await finish(step.exit);
     else {
       log('bad_step', { step });
@@ -1518,6 +1658,7 @@ log('launch', {
   ...requestProblem,
   launch_index: index,
   script_source: source,
+  canary_kind: readCanary()?.kind ?? null,
   pgrp: Number(statField(5)),
   session: Number(statField(6)),
   nspid: statusField('NSpid'),

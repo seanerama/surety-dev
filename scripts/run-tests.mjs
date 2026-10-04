@@ -3,7 +3,7 @@
 // part of the acceptance execution path (F §5.2).
 //
 // Usage: node scripts/run-tests.mjs unit
-//        node scripts/run-tests.mjs acceptance [--slice <n> | --lane real]
+//        node scripts/run-tests.mjs acceptance [--slice <n> | --lane real | --lane exhaust]
 //
 // It always builds first, so a stale dist/ is never what gets tested, and it
 // runs one test file at a time. For the acceptance suite it refuses to report
@@ -19,11 +19,18 @@
 // backend against a model and cost money. They are never part of the full run
 // or of a slice; only --lane real runs them, and only then does a run count
 // them. The full run still requires each real-lane row to have its file.
+// The exhaustion lane (E69): files listed under manifest "exhaust" fork,
+// allocate or write up to a domain's limits. They run only on a host Sean
+// designated for them, never on the development workstation: only
+// --lane exhaust runs them, and only when SURETY_EXHAUSTION_HOST names this
+// machine's hostname. Like the real lane they are never part of the full run
+// or of a slice, and the full run still requires their rows to have files.
 // The full report of every run is also written under test-results/ (not tracked).
 // Exit 0 pass, 1 fail, 2 usage error.
 
 import { spawnSync } from 'node:child_process';
 import { createWriteStream, globSync, mkdirSync, readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
@@ -40,7 +47,7 @@ const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const usage = () => {
-  console.error('usage: run-tests.mjs unit | acceptance [--slice <n> | --lane real]');
+  console.error('usage: run-tests.mjs unit | acceptance [--slice <n> | --lane real | --lane exhaust]');
   process.exit(2);
 };
 const fail = (message) => {
@@ -55,7 +62,7 @@ let slice = null;
 let lane = null;
 if (suite === 'acceptance' && rest.length > 0) {
   if (rest.length === 2 && rest[0] === '--slice' && /^[1-9]\d*$/.test(rest[1])) slice = Number(rest[1]);
-  else if (rest.length === 2 && rest[0] === '--lane' && rest[1] === 'real') lane = 'real';
+  else if (rest.length === 2 && rest[0] === '--lane' && (rest[1] === 'real' || rest[1] === 'exhaust')) lane = rest[1];
   else usage();
 }
 
@@ -72,10 +79,13 @@ if (suite === 'acceptance') {
 
   const byName = new Map(files.map((f) => [basename(f), f]));
   const realLane = manifest.real ?? [];
+  const exhaustLane = manifest.exhaust ?? [];
   const inSlices = Object.values(manifest.slices).flat();
-  const both = realLane.filter((name) => inSlices.includes(name));
-  if (both.length > 0) fail(`acceptance: listed both under a slice and under "real" in manifest.json:${list(both)}`);
-  const allListed = [...inSlices, ...realLane];
+  const both = [...realLane, ...exhaustLane].filter((name) => inSlices.includes(name));
+  if (both.length > 0) fail(`acceptance: listed both under a slice and under "real" or "exhaust" in manifest.json:${list(both)}`);
+  const twice = realLane.filter((name) => exhaustLane.includes(name));
+  if (twice.length > 0) fail(`acceptance: listed under both "real" and "exhaust" in manifest.json:${list(twice)}`);
+  const allListed = [...inSlices, ...realLane, ...exhaustLane];
   const absent = allListed.filter((name) => !byName.has(name));
   if (absent.length > 0) fail(`acceptance: listed in manifest.json but not present:${list(absent)}`);
   const unlisted = files.filter((f) => !allListed.includes(basename(f)));
@@ -84,6 +94,13 @@ if (suite === 'acceptance') {
   if (lane === 'real') {
     if (realLane.length === 0) fail('acceptance: manifest.json lists no files under "real".');
     files = realLane.map((name) => byName.get(name));
+  } else if (lane === 'exhaust') {
+    // E69: never on a host not designated by name.
+    if (process.env.SURETY_EXHAUSTION_HOST !== hostname()) {
+      fail(`acceptance: the exhaustion lane runs only on a host designated for it (E69); SURETY_EXHAUSTION_HOST must equal this host's name (${hostname()}), and this is not to be set on the development workstation.`);
+    }
+    if (exhaustLane.length === 0) fail('acceptance: manifest.json lists no files under "exhaust".');
+    files = exhaustLane.map((name) => byName.get(name));
   } else if (slice === null) {
     const covered = new Set(files.map(rowOf));
     const missing = ROWS.filter((r) => !covered.has(r));
@@ -91,8 +108,9 @@ if (suite === 'acceptance') {
       fail(`acceptance: ${missing.length} of ${ROWS.length} rows have no test file (first ${missing[0]}, last ${missing.at(-1)}). A missing row is not a pass.`);
     }
     // The full run is the kernel and sandbox lanes; the real lane's files are present but not run.
-    files = files.filter((f) => !realLane.includes(basename(f)));
+    files = files.filter((f) => !realLane.includes(basename(f)) && !exhaustLane.includes(basename(f)));
     if (realLane.length > 0) console.log(`acceptance: ${realLane.length} real-lane file(s) not run (only --lane real runs them).`);
+    if (exhaustLane.length > 0) console.log(`acceptance: ${exhaustLane.length} exhaustion-lane file(s) not run (only --lane exhaust on a designated host runs them, E69).`);
   } else {
     const selected = [];
     for (let n = 1; n <= slice; n++) {

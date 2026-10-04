@@ -149,7 +149,7 @@ M2 is accepted when section 1's conditions hold. **The M2 acceptance report** (`
 | H12's `host_reserve_*` defaults | D2 leaves the values to the tests; the Verifier fixes them in the seam | The envelope slice |
 | The M1 bootstrap case (row M68) opts in (K3) | An accepted test changes; the Verifier records it in `COVERAGE.md` as a K3 change, not a weakening | The first kernel-lane slice |
 | Codex qualification | Designed, optional; one attempt if Sean approves its spend | After Claude Code's entry is active |
-| Foundations v1.1 text | E1 to E69 still unmerged | Whenever convenient |
+| Foundations v1.1 text | E1 to E70 still unmerged | Whenever convenient |
 
 ## 12. Starting a session
 

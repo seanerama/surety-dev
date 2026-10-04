@@ -53,6 +53,10 @@ export const step = {
   // event without the file.
   resultFile: (value = VALID_RESULT) => ({ result_file: value }),
   resultEvent: (value = VALID_RESULT) => ({ result_event: value }),
+  // M2 slice 13 part 2 (SEAM.md §149): a qualification canary's role,
+  // following /surety/context/canary.json: 'obey', 'wrong_result',
+  // 'finish_early', 'say_denied', 'forge_reports', 'result_only'.
+  canary: (mode = 'obey') => ({ canary: { mode } }),
   exit: (code) => ({ exit: code }),
   // Raw text on the role's stdout, exactly as given: no line ending is added.
   stdout: (text) => ({ stdout: text }),
@@ -100,7 +104,7 @@ export const step = {
 // role is contained (harness/sandbox/view.mjs, assertContained).
 // M2 slice 13 (SEAM.md §144) adds `result_shape`, `kill_parent` and
 // `spawn_until_refused`, each bounded and behind the same guard.
-export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused']);
+export const GUARDED_ACTIONS = Object.freeze(['write_probe', 'git_path_probe', 'protected_ops', 'shm_roundtrip', 'unix_connect', 'tcp_connect', 'http_request', 'proxy_connect', 'proxy_flood', 'proxy_concurrent', 'exec_probe', 'result_shape', 'kill_parent', 'spawn_until_refused', 'canary_actions', 'volatile_shapes']);
 const NS_KINDS = ['pid', 'net', 'mnt'];
 const nsForm = (kind, value) => typeof value === 'string' && new RegExp(`^${kind}:\\[\\d+\\]$`).test(value);
 
@@ -161,6 +165,11 @@ export function acting(hostNs) {
     // At most `max` (≤ 8) `sleep` children, one at a time, until a spawn is
     // refused; all killed and awaited afterwards (row M130 (h)).
     spawnUntilRefused: (args = {}) => one('spawn_until_refused', args),
+    // The containment canary's actions from canary.json (SEAM.md §149).
+    canaryActions: (args = {}) => one('canary_actions', args),
+    // Small files, links and FIFOs on the volatile filesystem only (SEAM.md §152):
+    // {files: [{path, bytes} | {path, content}], links: [{path, target}], fifos: [path]}.
+    volatileShapes: (shapes) => one('volatile_shapes', shapes),
   };
 }
 
@@ -231,6 +240,12 @@ export class Scripted {
   // Launch n of `workItem` follows scripts[n-1].
   script(workItem, scripts) {
     this.#writeJson(join(this.dir, 'scripts', `${workItem}.json`), Array.isArray(scripts) ? scripts : [scripts]);
+  }
+
+  // A qualification canary's launches of `kind` follow these, in order
+  // (SEAM.md §149), whatever work item the engine made for them.
+  canaryScript(kind, scripts) {
+    this.#writeJson(join(this.dir, 'scripts', `canary-${kind}.json`), Array.isArray(scripts) ? scripts : [scripts]);
   }
 
   // Every launch that has no script of its own follows this one.
