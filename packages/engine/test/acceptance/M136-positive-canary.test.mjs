@@ -22,8 +22,8 @@
 // with `total_cost_usd`); where it is silent the case records that.
 
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
-import { basename } from 'node:path';
+import { lstatSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { canaryOfKind, collectAttempt, homeOf, qualificationAttempt } from './harness/real/attempt.mjs';
@@ -80,10 +80,23 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       const { c } = await attemptOf(ctx);
       const e = c.entry;
       assert.ok(e, 'the succeeded attempt wrote an entry');
+      // The operator's source binary as the test read it at qualification
+      // time (objection 016): every expected value below is the test's own.
+      const source = readObserved(ctx, 'attempt').source_binary;
+      assert.ok(source?.sha256 && source?.version, `the test read the source binary before the attempt (${JSON.stringify(source)})`);
+      // The engine-owned pinned copy (E74 item 3; E75 item 1): under the
+      // engine home, named for the version and the first 16 hex digits of
+      // the hash the TEST computed, mode 0500, its bytes hashing to that.
+      const expected = join(homeOf(ctx, 'home'), 'backends', `claude-${source.version}-${source.sha256.slice(0, 16)}`);
+      assert.equal(e.binary_path, expected, `the entry binds the engine's pinned copy, not the operator's file (${e.binary_path})`);
+      const pin = lstatSync(e.binary_path);
+      assert.ok(pin.isFile() && (pin.mode & 0o777) === 0o500 && pin.uid === process.getuid(), `the pinned copy is a regular file of this user, mode 0500 (${(pin.mode & 0o777).toString(8)})`);
+      assert.equal(sha256(readFileSync(e.binary_path)), source.sha256, "the pinned copy's bytes hash to what the test computed of the source");
+      observe(ctx, 'M136', 'pinned_binary', { path: e.binary_path, mode: (pin.mode & 0o777).toString(8), source });
       assert.ok(['proposed', 'active'].includes(e.status), `the entry is proposed, or active once Sean activated it (${e.status})`);
       assert.deepEqual(
-        { backend: e.backend, mode: e.mode, model: e.model, auth_mode: e.auth_mode, binary_sha256: e.binary_sha256, binary_path: e.binary_path, isolation: e.isolation, boundary: e.boundary, result_channel: e.result_channel, session_qualified: e.session_qualified, host_id: e.host_id },
-        { backend: REAL.backend, mode: REAL.mode, model: REAL.model, auth_mode: ctx.authMode, binary_sha256: ctx.binarySha256, binary_path: realpathSync(ctx.binary), isolation: ISOLATION, boundary: BOUNDARY, result_channel: 'file', session_qualified: 0, host_id: hostId() },
+        { backend: e.backend, mode: e.mode, model: e.model, auth_mode: e.auth_mode, binary_sha256: e.binary_sha256, isolation: e.isolation, boundary: e.boundary, result_channel: e.result_channel, session_qualified: e.session_qualified, host_id: e.host_id },
+        { backend: REAL.backend, mode: REAL.mode, model: REAL.model, auth_mode: ctx.authMode, binary_sha256: source.sha256, isolation: ISOLATION, boundary: BOUNDARY, result_channel: 'file', session_qualified: 0, host_id: hostId() },
         'the entry binds what the attempt qualified (D2 §4.1)',
       );
       assert.equal(e.template, c.attempt.template, 'the exact template the canaries ran');
@@ -113,7 +126,14 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       observe(ctx, 'M136', 'credential_delivery', delivery ?? null);
       assert.deepEqual([delivery?.auth_mode, delivery?.established], [ctx.authMode, true], `the ${ctx.authMode}'s delivery is established by the canary (SEAM.md §165): ${JSON.stringify(delivery)}`);
       assert.ok(typeof delivery.variable === 'string' && delivery.variable.length > 0, 'the variable it was delivered in is recorded');
-      if (ctx.authMode === 'api_key') assert.equal(delivery.variable, 'ANTHROPIC_API_KEY', 'an API key through ANTHROPIC_API_KEY (D2 §4.5)');
+      // The documented delivery (code.claude.com/docs, Environment variables:
+      // CLAUDE_CODE_OAUTH_TOKEN, "Generate one with claude setup-token"); an
+      // API key through ANTHROPIC_API_KEY (D2 §4.5).
+      assert.equal(delivery.variable, ctx.authMode === 'api_key' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN', `the ${ctx.authMode} is delivered in its documented variable`);
+      // The subscription mode's template has no --bare (E74 item 1): with it,
+      // Claude Code takes Anthropic authentication only from an API key.
+      assert.equal(/(^|\s)--bare(\s|$)/.test(e.template), ctx.authMode === 'api_key', `--bare ${ctx.authMode === 'api_key' ? 'is' : 'is not'} in the ${ctx.authMode} template (${e.template})`);
+      for (const name of ['DISABLE_AUTOUPDATER', 'DISABLE_UPDATES', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC']) assert.ok(e.template.includes(name), `the template the entry binds names ${name} (E74 item 3)`);
 
       // Egress: the hosts the canaries used, within the candidate list;
       // every refused destination reported and none added (D2 §2.4, §7.2).
