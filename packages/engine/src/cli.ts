@@ -9,12 +9,17 @@ import { EXIT, serve } from './engine.js';
 import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
+import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { configureHarness, setHarnessSwitches, setProbeOverrides } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
   process.exit(EXIT.usage);
 }
+
+// Nothing the engine was started with beyond its standard streams reaches
+// a helper, a launcher, an init or a role (D2 §§2.2, 2.3; A.6 P14).
+closeInheritedDescriptors();
 
 const [command, ...args] = process.argv.slice(2);
 

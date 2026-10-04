@@ -1192,6 +1192,9 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
     const foreign = Object.entries(fds).filter(([fd, target]) => {
       if (['0', '1', '2'].includes(fd)) return false;
       // (A descriptor gone before its link was read is the listing's own.)
+      // A descriptor without close-on-exec is never the runtime's own: it
+      // was inherited from outside, whatever it names.
+      if (((o?.inherited as number[] | undefined) ?? []).includes(Number(fd))) return true;
       return !(target.startsWith('anon_inode:') || target.startsWith('pipe:') || target === '/dev/null' || target === '/dev/urandom' || target === 'unreadable:ENOENT' || /^\/proc\/\d+\/fd$/.test(target));
     });
     const uids = String(o?.uid ?? '').split(/\s+/);

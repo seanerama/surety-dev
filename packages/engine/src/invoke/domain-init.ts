@@ -29,13 +29,37 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 type Msg = Record<string, unknown>;
+
+// Descriptors inherited without close-on-exec, closed (D2 §§2.2, 2.3; A.6
+// P14): whatever this process was given beyond its standard streams never
+// reaches the next exec. A copy of invoke/descriptors.ts (this file imports
+// nothing of the engine's).
+function closeInherited(): void {
+  let names: string[];
+  try {
+    names = readdirSync('/proc/self/fd');
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    const fd = Number(n);
+    if (!Number.isInteger(fd) || fd <= 2) continue;
+    try {
+      const m = /^flags:\s+([0-7]+)$/m.exec(readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8'));
+      if (m && (parseInt(m[1]!, 8) & 0o2000000) === 0) closeSync(fd);
+    } catch {
+      // closed meanwhile
+    }
+  }
+}
+
 
 let channelOpen = true;
 const queue: Msg[] = [];
@@ -251,6 +275,7 @@ async function setup(): Promise<void> {
   // root; `setpriv` sets no_new_privs and, being exec'd as a non-root uid,
   // runs without capabilities; the init is then exec'd from an execute-only
   // file, so it is not dumpable (see the head of this file).
+  closeInherited();
   const p = process as unknown as { execve(file: string, args: string[], env: Record<string, string>): never };
   p.execve(
     plan.tools.unshare,
@@ -501,6 +526,8 @@ async function init(): Promise<void> {
   for (const m of queue.splice(0)) onMessage(m);
 
   let child;
+  // Nothing of the init's but the pipes it makes reaches the backend.
+  closeInherited();
   try {
     child = spawn(spec.argv[0]!, spec.argv.slice(1), {
       cwd: spec.cwd,
@@ -568,6 +595,7 @@ async function init(): Promise<void> {
   });
 }
 
+closeInherited();
 const stage = process.argv[2];
 // The init is process 1 of the pid namespace the launcher created, or it is
 // nothing: outside one it would start a backend on the host.

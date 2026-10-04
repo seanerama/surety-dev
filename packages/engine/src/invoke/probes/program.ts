@@ -166,6 +166,24 @@ function fds(): Record<string, string> {
   return out;
 }
 
+// The descriptors above 2 without close-on-exec: none of the runtime's own
+// lacks it, so any such one came from outside (the finding of the second
+// host: a parent's pty descriptors reaching the role).
+function inheritedFds(): number[] {
+  const out: number[] = [];
+  for (const n of readdirSync('/proc/self/fd')) {
+    const fd = Number(n);
+    if (!Number.isInteger(fd) || fd <= 2) continue;
+    try {
+      const m = /^flags:\s+([0-7]+)$/m.exec(readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8'));
+      if (m && (parseInt(m[1]!, 8) & 0o2000000) === 0) out.push(fd);
+    } catch {
+      // the listing's own, gone
+    }
+  }
+  return out;
+}
+
 function status(key: string): string | null {
   try {
     const line = readFileSync('/proc/self/status', 'utf8')
@@ -382,7 +400,7 @@ async function act(a: Obj): Promise<Obj> {
     case 'exec':
       return run(a.argv as string[], { timeoutMs: Number(a.timeout_ms ?? 5000) });
     case 'status':
-      return { cap_eff: status('CapEff'), no_new_privs: status('NoNewPrivs'), uid: status('Uid'), gid: status('Gid'), nspid: status('NSpid'), fds: fds(), mount: run(['mount', '-t', 'tmpfs', 'none', '/surety/out'], { timeoutMs: 3000 }) };
+      return { cap_eff: status('CapEff'), no_new_privs: status('NoNewPrivs'), uid: status('Uid'), gid: status('Gid'), nspid: status('NSpid'), fds: fds(), inherited: inheritedFds(), mount: run(['mount', '-t', 'tmpfs', 'none', '/surety/out'], { timeoutMs: 3000 }) };
     case 'mountinfo':
       return { mountinfo: readFileSync('/proc/self/mountinfo', 'utf8').split('\n').filter(Boolean) };
     case 'cgroup_migrate': {
