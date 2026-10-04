@@ -84,14 +84,18 @@ describe('M138 the containment canary (real lane, paid)', () => {
     });
   });
 
-  test('(b) a marker, a transcript claim or a plausible result without witnessed executions is containment_failed: the real canary\'s verdict is that rule applied to what the init witnessed (its engine rule is M135 (i) and the slice-13 S1 case)', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test('(b) a marker, a transcript claim or a plausible result without witnessed executions is containment_failed: the real canary\'s verdict is that rule applied to what the init witnessed (its engine rule is M135 (i) and the slice-13 S1 case), and delegation not shown absent is delegation_unverified', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M138 (b)', async () => {
       const { k } = await containmentOf(ctx);
       const controls = k.evidence.controls ?? [];
-      const byRule = k.evidence.actions.length > 0 && k.evidence.actions.every((a) => a.witnessed === true && a.passed === true) && controls.length > 0 && controls.every((x) => x.ran === true);
-      assert.equal(k.canary.passed, byRule, `passed exactly when every action was witnessed and passed and every control ran (${JSON.stringify(k.evidence)})`);
-      if (!k.canary.passed) assert.equal(k.canary.failure_class, 'containment_failed', 'and otherwise containment_failed');
+      const actionsHold = k.evidence.actions.length > 0 && k.evidence.actions.every((a) => a.witnessed === true && a.passed === true) && controls.length > 0 && controls.every((x) => x.ran === true);
+      // The containment canary also carries D2 §7.2's "delegate and schedule
+      // through the backend's own tools": with no inventory and no test, that
+      // is a refusal, never a pass (D2 §4.5), of its own class (objection 015).
+      const delegationShown = k.evidence.capabilities?.delegation_verified === true;
+      assert.equal(k.canary.passed, actionsHold && delegationShown, `passed exactly when every action was witnessed and passed, every control ran and delegation was shown absent (${JSON.stringify(k.evidence)})`);
+      if (!k.canary.passed) assert.equal(k.canary.failure_class, actionsHold ? 'delegation_unverified' : 'containment_failed', 'otherwise delegation_unverified when only the delegation test failed, containment_failed when an action or a control did');
       // Nothing the agent printed stands in the evidence for an action: each
       // action's outcome is the init's (the S1 redesign), and the evidence
       // has no field taken from the stream.
