@@ -1489,6 +1489,38 @@ Run, each file alone, on `build/m2-s12` at `cf92925` (a detached scratch worktre
 
 **M125 (c) and the plan's list** (a question, not a change). M125 (c) pins: the package holds exactly the files its manifest lists; each file is of a known kind; the prompt carries the stage's goal; there is one `requirement` entry per bound requirement, whose `source` is the requirement's id; a resumed run has `prior_run` entries sourced from the prior run's records; there is no raw report; the package is read-only. It does not pin a requirement's **text**, nor ADRs, constraints, the phase plan or dependency interfaces: the plan fixture binds requirement keys only and none of the others, and SEAM §139 asks for an entry per bound item with its source, not its content. The plan's M125 (c) lists "the bound requirements, ADRs, constraints and phase plan, dependency interfaces" (D2 §1.3). Whether "the bound requirement" means its approved text in the package or a reference to it is put to Sean; the case is unchanged.
 
+**The closing run** (the Verifier's closing pass of slice 12, 2026-10-03, on `verify/m2-s12-close` from `main` at `dc9c4f4`, whose engine is `fa2b3f8`'s; the branch's one commit before the run, `f1b01fa`, changed `SEAM.md` only; `main` has since moved to `6641172` with no engine or test change). `npm run build`, then `npm run test:unit`: **156 tests in 31 files, all passed** ("unit: 31 file(s) passed."). Then `node scripts/run-tests.mjs acceptance --slice 12`, alone in this working copy, from 20:32:30 to 21:08:03 CDT (01:32 to 02:08 UTC, 2026-10-04), the user manager `running` before it:
+
+```
+ℹ tests 974
+ℹ suites 247
+ℹ pass 974
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2200944.216713
+acceptance: 156 file(s) passed.
+```
+
+No case failed, so none was rerun alone. The report is `test-results/acceptance-slice12-2026-10-04T01-32-30-807Z.log` in that working copy (not tracked). Slice 12's own cases, as reported: M110 7 of 7 (both files); M119 7 of 7; M120 4 of 4; M121 6 of 6, **S1 among them, passed**; M122 5 of 5; M123 5 of 5; M124 6 of 6, **S2 among them, passed**; M125 3 of 3; M126 2 of 2; M127 3 of 3; M128 6 of 6. The cases that assert a `[not_exercised]` fact passed, as such, and are **not counted as passed cases of their rows** (M2 plan §2.5):
+- the two observer cases of this slice, M124 (e) and M128 (g): H13 `not_exercised` with its reason, no observer envelope, no probe citing one;
+- slice 11's M112 (g) and M116 (d);
+- M115 (f) and (h)'s host facts;
+- on this host, the exercised branches of M119 (d) (host submounts under `/usr/lib` exist, so it ran in full) and M122 (d) (WSL2, so P11 ran in full).
+
+After the run there was no process of this worktree, no scope holding one, no `/dev/shm/surety-*`, no `/tmp/surety-probe-*` or `/tmp/surety-sock-*` and no `surety-test-*` unit.
+
+**The Reviewer's two unexamined scripts, re-run as instruments** (not acceptance cases; against the engine of `dc9c4f4`, in a scratch directory, each engine with its own disposable home as its `HOME`; scripts adapted to this worktree's harness and to print what they found):
+
+- **r3, a SIGKILL during the start-up suite.** The engine was killed while two probe boxes were populated. The kill left:
+  - in the scope: a `sleep 60` in the supervisor leaf, and empty probe and sibling cgroups;
+  - `/dev/shm/surety-probe-<tag>` and `/tmp/surety-probe-<tag>`;
+  - four `domains/probe_*` areas.
+
+  The next start of the same home reached full mode. By then the old scope was gone, the only member was the new engine in its supervisor leaf, `domains/` and both probe directories were empty, and the host was eligible. **Swept, as E67 item 4 says.**
+- **r4, a home reached through a symbolic link** (`TMPDIR` a link to a directory of the scratch, so the home's path goes through the link). The host was eligible on an active row (only H13 not passed, `not_exercised`). A Builder's run on that home completed and its write was committed (`fix: ok`, `src/a.txt`). **Qualifies.**
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
