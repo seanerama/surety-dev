@@ -5,12 +5,15 @@
 // The report (`docs/acceptance/reports/M2-report.md`) is the Verifier's,
 // written after the real lane has run. Until then it is a skeleton: what is
 // already true is filled, and every real-lane fact is a placeholder of the
-// form `[[PENDING <label>: <what>; from <source>]]`. These cases hold the
-// report to M141's list in either state, and hold it to honesty: a skeleton
-// says M2 is not accepted and claims no real-lane result; a report marked
-// final has no placeholder left and cites the real lane's records, which
-// must exist. The row is met only by a final report (a question for Sean in
-// the report: whether this file should fail while the report is a skeleton).
+// form `[[PENDING <label>: <what>; from <source>]]`. Case (a) holds the
+// report to M141's list in either state. Case (b) FAILS while any
+// placeholder remains (the driver's provisional decision on the report's
+// question 3, 2026-10-04: "nothing described as passing that was not run"):
+// the row is met only by a final report, so this file fails in `--slice 14`
+// and in `npm test` until the real lane has run and the report is written.
+// Before it fails it still checks that the skeleton is honest (it says M2 is
+// not accepted and claims no real-lane result); a final report must have no
+// placeholder left and cite the real lane's records, which must exist.
 
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -89,7 +92,7 @@ describe('M141 the M2 acceptance report records what M141 lists, and claims noth
     assert.ok(sectionLike(all, /^The real-backend journey/).length > 0 && sectionLike(all, /^Limits of the instruments/).length > 0 && sectionLike(all, /^Hands-on run/).length > 0, 'the journey, the instruments\' limits and the hands-on run (BS §10)');
   });
 
-  test('(b) honest in its state: a skeleton says M2 is not accepted, marks every real-lane fact as pending and claims no real-lane result; a final report has no placeholder left and its real-lane records exist', () => {
+  test('(b) the report is final: no pending fact remains and its real-lane records exist (it fails while the report is a skeleton, after checking that the skeleton claims nothing it has not run)', () => {
     const md = text();
     const status = statusOf(md);
     assert.ok(status, 'the report states its status, skeleton or final');
@@ -103,8 +106,10 @@ describe('M141 the M2 acceptance report records what M141 lists, and claims noth
         assert.ok(row && row.includes('[[PENDING'), `the run of ${f} is pending, not reported (${row})`);
         assert.ok(!/\b(passed|succeeded)\b/i.test(row.replace(PLACEHOLDER, '')), `and nothing in its row says it passed (${row})`);
       }
+      // An honest skeleton is still not the row met.
+      assert.fail(`the real lane has not run: the M2 report is a skeleton (${pending.length} pending facts)`);
     } else {
-      assert.deepEqual(pending, [], 'a final report has no placeholder left');
+      assert.equal(pending.length, 0, `the real lane has not run: the M2 report is a skeleton (${pending.length} pending facts)`);
       assert.ok(existsSync(RECORDS), `the real lane's records are kept at ${RECORDS}`);
       const kept = readdirSync(RECORDS, { recursive: true }).map(String);
       assert.ok(kept.some((p) => p.endsWith('state.json')), 'with the run directory\'s state.json');
