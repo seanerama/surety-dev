@@ -41,7 +41,7 @@ import { armBarrier, changePolicy } from './harness/journal.mjs';
 import { readRun } from './harness/reads.mjs';
 import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { addProject, addWork, assertRunEnded, getRow, run as runRow, stopRun, waitForRunState } from './harness/runs.mjs';
-import { eventsOf, roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
+import { eventsOf, receiptOf, roleHolding, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { runRecords } from './harness/sandbox/result.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
 import { step } from './harness/scripted.mjs';
@@ -280,5 +280,80 @@ describe('M132 secrets never reach disk; volatile before disk; provider files', 
     assert.deepEqual([notes?.type, notes?.retained, Buffer.from(notes?.content_base64 ?? '', 'base64').length], ['file', true, 20], 'an ordinary file is retained, its content in the record');
     const c = await providerFiles(fx, project.id, role.run.id);
     assert.deepEqual([c.outcome, c.record], ['published', pf.row.id]);
+  });
+
+  // The slice-13 review's S2: a held secret spelled as a CONNECT authority
+  // reached the store and GET /v1/events through domain.egress_refused's
+  // payload (the raw authority), and an attempt's unexpected_contacts. The
+  // proxy's refusal is a place output is handled; it must be redacted like
+  // any other (D2 §2.5; E37 item 2).
+  test('S2 (the slice-13 review): a held secret spelled as a CONNECT authority reaches neither the events API, nor the store, nor any file under the engine home', async (t) => {
+    const { fx, project, secret } = await secretProject(t);
+    const item = await addWork(fx.engine, project.id, 'fix');
+    const role = await armedRole(fx, project.id, item, { acts: (act) => [act.proxyConnect(`${secret}.example:443`, { label: 'leak' })] });
+    await role.release();
+    const probe = role.probe('proxy_connect', 'leak');
+    assert.equal(probe.status, 403, `the fixture is live: the proxy refused the unlisted authority (${JSON.stringify(probe)})`);
+
+    // The events API, by every route the suite reads events.
+    const res = await fx.engine.get('/v1/events?since=0&limit=100000');
+    const apiText = res.text ?? JSON.stringify(res.body ?? '');
+    assert.ok(!holds(apiText, secret), 'GET /v1/events holds neither the secret nor its JSON-escaped form');
+    // The store: every event's payload, every record file, the egress log.
+    const events = withStore(fx.home, (db) => db.prepare('SELECT "type", "payload" FROM "events"').all());
+    for (const e of events) assert.ok(!holds(e.payload ?? '', secret), `event ${e.type} holds neither form (${(e.payload ?? '').slice(0, 200)})`);
+    for (const r of runRecords(fx.home, role.run.id)) {
+      if (r.published === 1 && r.path) assert.ok(!holds(recordText(fx.home, r.id), secret), `record ${r.id} (${r.kind}) holds neither form`);
+    }
+    for (const [needle, what] of [[secret, 'the secret'], [escaped(secret), 'its JSON-escaped form']]) {
+      const scan = homeFilesHolding(fx.home, needle);
+      assert.deepEqual(scan.found, [], `no file under the engine home holds ${what} (verified unreadable: ${scan.accounted.join(', ') || 'none'})`);
+    }
+  });
+
+  // The slice-13 review's S4: a held secret in a path the materialization
+  // could not act on (a directory the role made unreadable) reached the run's
+  // reason_text and its run.finalizing event. A materialization error, like
+  // every other handling of role output, is redacted (D2 §2.5).
+  test('S4 (the slice-13 review): a held secret in a workspace path the materialization cannot act on reaches neither the run reason, nor its events, nor the run read; the run still fails for the materialization', async (t) => {
+    const { fx, project, secret } = await secretProject(t);
+    const item = await addWork(fx.engine, project.id, 'fix');
+    const role = await armedRole(fx, project.id, item, {
+      before: [step.write(`${secret}/locked/x.txt`, 'x\n')],
+      acts: (act) => [act.workspaceChmod(`${secret}/locked`, 0)],
+    });
+    const ended = await role.release();
+    assert.equal(role.probe('workspace_chmod').outcome, 'changed', 'the fixture is live: the role made the directory unreadable');
+    assert.notEqual(ended.outcome, 'completed', `the run still fails for the materialization (${ended.outcome} / ${ended.reason_class}: ${ended.reason_text})`);
+    const run = runRow(fx.home, role.run.id);
+    assert.ok(!holds(run.reason_text ?? '', secret), `the run reason holds neither the secret nor its JSON-escaped form (${run.reason_text})`);
+    const shown = await readRun(fx.engine, project.id, role.run.id);
+    assert.ok(!holds(JSON.stringify(shown), secret), 'the run read holds neither form');
+    const events = withStore(fx.home, (db) => db.prepare('SELECT "type", "payload" FROM "events"').all());
+    for (const e of events) assert.ok(!holds(e.payload ?? '', secret), `event ${e.type} holds neither form`);
+    for (const [needle, what] of [[secret, 'the secret'], [escaped(secret), 'its JSON-escaped form']]) {
+      assert.deepEqual(homeFilesHolding(fx.home, needle).found, [], `no file under the engine home holds ${what}`);
+    }
+  });
+
+  // The slice-13 review's S5 (minor): a run whose exit class is not clean got
+  // a record of kind `result` when its provider files hit the screen. D2
+  // §1.4: only a clean exit's accepted file is the run's result; otherwise it
+  // is an unaccepted_result.
+  test('S5 (the slice-13 review): a non-clean run (error_exit) gets no record of kind result, its runs.result null', async (t) => {
+    const { fx, project, secret } = await secretProject(t);
+    const item = await addWork(fx.engine, project.id, 'fix');
+    const role = await armedRole(fx, project.id, item, {
+      acts: (act) => [act.write('/surety/home/notes.txt', { content: `home ${secret}\n` })],
+      after: [step.resultFile({ status: 'completed', summary: 'a well-formed result' }), step.exit(1)],
+      result: false,
+    });
+    const ended = await role.release();
+    const terminal = terminalObservation(fx.home, receiptOf(fx.home, role.run.id).id);
+    assert.equal(terminal.exit_class, 'error_exit', `the exit class is not clean (${JSON.stringify(terminal)})`);
+    assert.deepEqual([ended.outcome, ended.reason_class], ['failed', 'infra_error'], `the run failed (${ended.reason_text})`);
+    assert.equal(runRow(fx.home, role.run.id).result, null, 'runs.result is null for a non-clean exit');
+    const resultRecords = runRecords(fx.home, role.run.id, 'result');
+    assert.deepEqual(resultRecords, [], `no record of kind result for a run whose exit class is not clean (D2 §1.4); it has ${runRecords(fx.home, role.run.id).map((r) => r.kind).join(', ')}`);
   });
 });
