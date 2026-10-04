@@ -233,6 +233,17 @@ export async function serve(opts: ServeOptions): Promise<void> {
         decision_targets: config.values.decision_targets,
         ui_bootstrap: config.values.ui_bootstrap,
       },
+      // The resource envelope's admission (D2 §3.7), on the real boundary.
+      envelope: checksRun
+        ? {
+            max_concurrent_domains: config.values.max_concurrent_domains,
+            host_reserve_memory: config.values.host_reserve_memory,
+            host_reserve_disk: config.values.host_reserve_disk,
+            domain_memory_max: config.values.domain_memory_max,
+            domain_writable_bytes: config.values.domain_writable_bytes,
+            home: opts.home,
+          }
+        : null,
     });
   } catch (err) {
     return fail('store', err);

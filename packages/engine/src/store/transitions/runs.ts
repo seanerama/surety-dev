@@ -17,6 +17,7 @@ import { chargeInvocation, exhaustedLimits } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { resolveBackend } from './trust.js';
 import { closeLaunch } from './boundary.js';
+import { envelopeHold } from './envelope.js';
 import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
@@ -218,6 +219,9 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
+  // The resource envelope (D2 §3.7): a domain is admitted only within
+  // max_concurrent_domains and the host's reserves.
+  if (envelopeHold(db) !== null) return RESOURCE_ENVELOPE;
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
     const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -237,6 +241,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
 }
 
 export const CHAIN_BOUNDARY = 'chaining boundary';
+export const RESOURCE_ENVELOPE = 'resource_envelope';
 
 // D1 §8.1 step 9, one transaction: the run (claimed), its work item claimed,
 // the run lease, the grant, the invocation receipt, the execution domain

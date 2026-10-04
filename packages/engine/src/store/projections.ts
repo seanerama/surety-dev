@@ -16,6 +16,7 @@ import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
+import { envelopeHold } from './transitions/envelope.js';
 import { projectPolicy } from './transitions/settings.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -531,6 +532,9 @@ export function readWork(db: Db, args: { project: string }) {
       trigger_generation: w.trigger_generation,
       chain: w.chain,
       blocker: blockerOf(db, w),
+      // An eligible item held by the resource envelope (D2 §3.7, A.7): it
+      // stays eligible, and this says why it is not dispatched now.
+      dispatch_hold: w.status === 'eligible' ? envelopeHold(db) : null,
     })),
   };
 }

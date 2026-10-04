@@ -110,6 +110,7 @@ import {
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
+import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
 
 export interface WorkerData {
   file: string;
@@ -329,8 +330,9 @@ function mutate(args: { name: string; args: unknown; actor: Actor; method: strin
   }
 }
 
-function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null }) {
+function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null; envelope?: EnvelopeSettings | null }) {
   setEngineSettings({ ...args.settings, incarnation: args.lock.incarnation_id });
+  setEnvelope(args.envelope ?? null);
   const d = new Database(data.file);
   db = d;
   const mode = d.pragma('journal_mode = WAL', { simple: true });
