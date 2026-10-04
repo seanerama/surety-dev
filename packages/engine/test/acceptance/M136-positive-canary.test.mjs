@@ -27,7 +27,7 @@ import { basename } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { canaryOfKind, collectAttempt, homeOf, qualificationAttempt } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, sha256, terminalOutput } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, costStatusFor, judged, observe, readObserved, realPreflight, sha256, terminalOutput } from './harness/real/lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { BOUNDARY, ISOLATION, hostId } from './harness/trust.mjs';
 
@@ -83,7 +83,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.ok(['proposed', 'active'].includes(e.status), `the entry is proposed, or active once Sean activated it (${e.status})`);
       assert.deepEqual(
         { backend: e.backend, mode: e.mode, model: e.model, auth_mode: e.auth_mode, binary_sha256: e.binary_sha256, binary_path: e.binary_path, isolation: e.isolation, boundary: e.boundary, result_channel: e.result_channel, session_qualified: e.session_qualified, host_id: e.host_id },
-        { backend: REAL.backend, mode: REAL.mode, model: REAL.model, auth_mode: 'api_key', binary_sha256: ctx.binarySha256, binary_path: realpathSync(ctx.binary), isolation: ISOLATION, boundary: BOUNDARY, result_channel: 'file', session_qualified: 0, host_id: hostId() },
+        { backend: REAL.backend, mode: REAL.mode, model: REAL.model, auth_mode: ctx.authMode, binary_sha256: ctx.binarySha256, binary_path: realpathSync(ctx.binary), isolation: ISOLATION, boundary: BOUNDARY, result_channel: 'file', session_qualified: 0, host_id: hostId() },
         'the entry binds what the attempt qualified (D2 §4.1)',
       );
       assert.equal(e.template, c.attempt.template, 'the exact template the canaries ran');
@@ -104,9 +104,16 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.ok(boundaries.some((b) => b.boundary === 'invocation' && b.mechanism === 'dispatch_check'), `the invocation boundary, by dispatch_check, with the deadline as overshoot (D2 §4.2): ${JSON.stringify(boundaries)}`);
       assert.ok(!boundaries.some((b) => b.boundary === 'model_turn'), 'no model_turn boundary: per-call usage events establish no admission control (D2 §4.2)');
 
-      // Key delivery, established by the positive canary (D2 §2.5; SEAM.md §165).
+      // The credential's delivery, established by the positive canary, never
+      // assumed (D2 §2.5; E74 item 1; SEAM.md §165). For an API key D2 names
+      // the variable; for a subscription token the path is Claude Code's
+      // documented one, recorded as the canary established it.
       const p = canaryOfKind(c, 'positive');
-      assert.deepEqual([p.evidence?.key_delivery?.variable, p.evidence?.key_delivery?.established], ['ANTHROPIC_API_KEY', true], `the key's delivery through ANTHROPIC_API_KEY is established by the canary, not assumed (SEAM.md §165): ${JSON.stringify(p.evidence?.key_delivery)}`);
+      const delivery = p.evidence?.credential_delivery;
+      observe(ctx, 'M136', 'credential_delivery', delivery ?? null);
+      assert.deepEqual([delivery?.auth_mode, delivery?.established], [ctx.authMode, true], `the ${ctx.authMode}'s delivery is established by the canary (SEAM.md §165): ${JSON.stringify(delivery)}`);
+      assert.ok(typeof delivery.variable === 'string' && delivery.variable.length > 0, 'the variable it was delivered in is recorded');
+      if (ctx.authMode === 'api_key') assert.equal(delivery.variable, 'ANTHROPIC_API_KEY', 'an API key through ANTHROPIC_API_KEY (D2 §4.5)');
 
       // Egress: the hosts the canaries used, within the candidate list;
       // every refused destination reported and none added (D2 §2.4, §7.2).
@@ -167,7 +174,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
     });
   });
 
-  test("(d) usage: the canary's ledger row holds the reported tokens, cost_status reported if total_cost_usd is present, usage_complete 1", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test("(d) usage: the canary's ledger row holds the reported tokens, cost_status reported if total_cost_usd is present (estimated in the subscription mode, E74), usage_complete 1", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M136 (d)', async () => {
       const { c } = await attemptOf(ctx);
@@ -181,8 +188,10 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.ok(Number.isInteger(row.billable_in) && row.billable_in >= 0, `billable input tokens reported (${row.billable_in})`);
       const t = p.stream.terminal;
       if (typeof t?.total_cost_usd === 'number') {
-        assert.equal(row.cost_status, 'reported', 'the backend reported its cost: cost_status reported (D2 §4.5)');
-        assert.ok(Math.abs(row.cost_usd - t.total_cost_usd) < 1e-6, `the ledger's cost is the reported one (${row.cost_usd} against ${t.total_cost_usd})`);
+        // With an API key, the provider's reported cost (D2 §4.5); with a
+        // subscription token, Claude Code's own estimate (E74 item 1).
+        assert.equal(row.cost_status, costStatusFor(ctx), `the stream's total_cost_usd is recorded as ${costStatusFor(ctx)} in the ${ctx.authMode} mode`);
+        assert.ok(Math.abs(row.cost_usd - t.total_cost_usd) < 1e-6, `the ledger's cost is the stream's (${row.cost_usd} against ${t.total_cost_usd})`);
         // Every model call's output tokens, as total_cost_usd covers them
         // (`modelUsage` where present, else the main loop's `usage`; objection 015).
         const reported = terminalOutput(t);
@@ -190,6 +199,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
         if (reported.tokens !== null) assert.equal(row.out, reported.tokens, `the output tokens are the terminal event's (${reported.scope})`);
       } else {
         assert.notEqual(row.cost_status, 'reported', 'no cost in the stream: the ledger does not claim one was reported');
+        assert.notEqual(row.cost_usd, 0, 'and never zero for it');
         assert.ok(row.cost_usd === null || row.cost_status === 'estimated', `an unreported cost is estimated with its price version or unknown, never zero (${JSON.stringify(row)})`);
       }
     });

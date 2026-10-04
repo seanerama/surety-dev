@@ -10,6 +10,8 @@ The sources it cites: the **build specification** (`docs/spec/M2-build-spec.md`,
 
 M2 is the engine running Claude Code in one-shot headless mode as a real backend on this WSL2 host, under D2's sandbox, cgroup boundary, trust table and egress proxy (BS §1). If accepted, it supports one claim: **on this host, with the recorded versions and limits, the engine ran one real backend through the complete journey (plan, build, verification, review, the stage gate and an issued Alpha authorization) with the engine making every commit, the backend unable to reach the control plane, every process it started observed gone, and its usage recorded as the provider reported it.** It does not support the claims that any other host, backend, version or mode is qualified, that sessions work, or that Surety can deploy anything (BS §1).
 
+**Authentication (E74 item 1, Sean's decision).** M2's real lane runs on Sean's Claude subscription, through a long-lived token he makes himself with `claude setup-token`, held by the engine as a secret file. The engine also supports the `api_key` mode (a dedicated API key, D2 Q1), kept for later; **M2 claims only the subscription mode.** In that mode the dollar figures are Claude Code's own estimates (`total_cost_usd`, recorded `estimated`), and the hard limit is the subscription's usage limits, which Sean's own Claude use shares; there is no dollar cap on the token.
+
 BS §1's conditions, and where each stands at the time of writing:
 
 | Condition | State |
@@ -55,7 +57,9 @@ Observed by the Verifier on 2026-10-04 (the tools' own output; not a qualificati
 | The binary qualified: path, SHA-256, `--version` | [[PENDING real lane: `binary_path`, `binary_sha256`, `version`; from the entry in `observed/attempt.json`]] |
 | Help hash | [[PENDING real lane: `help_sha256`; from the entry]] |
 | Model | `claude-sonnet-5-5` for every canary and every role (E59). [[PENDING real lane: the model the entry records; from the entry]] |
-| Template | `claude-one-shot-1` (D2 §4.5's text, `src/invoke/adapters/templates.ts`). [[PENDING real lane: the template version the entry records]] |
+| Template | The subscription mode's template, D2 §4.5's text without `--bare` (E74 item 1), a template version of its own. [[PENDING real lane: the template and version the entry records]] |
+| Auth mode | `subscription_token` (E74 item 1). [[PENDING real lane: `auth_mode` as the entry records it]] |
+| The binary's pin | The engine copies the qualified binary into its own home and pins the copy (E74 item 3, the driver's default), so neither Claude Code's updater nor its installer's pruning can change or remove it. [[PENDING real lane: the copy's path and SHA-256; from the entry]] |
 
 ## 5. The host qualification
 
@@ -92,7 +96,8 @@ D2 §4.5 lists what only the canaries establish for Claude Code. Each is class B
 
 | What | Established |
 |---|---|
-| Key delivery (`ANTHROPIC_API_KEY`) | [[PENDING real lane: `key_delivery`; from the positive canary's evidence, M136 (b)]] |
+| The subscription token's delivery (the path Claude Code documents, established, not assumed) | [[PENDING real lane: `credential_delivery`; from the positive canary's evidence, M136 (b)]] |
+| What loads without `--bare` (hooks, plugins, CLAUDE.md discovery, from an empty volatile home) | [[PENDING real lane: from the canaries' streams and provider files]] |
 | Usage events and their granularity | [[PENDING real lane: `usage_granularity`, `usage_semantics`, the events carrying usage; from the entry and the positive canary's stream, M136 (b), (d)]] |
 | Terminal events (success, failure) | [[PENDING real lane: the terminal event's fields; from `observed/M136.json` `terminal_event`]] |
 | The tool surface; delegation verified absent | [[PENDING real lane: `capabilities`, the stream's inventory if any, the most backend processes per sample; from M136 (c)]] |
@@ -107,11 +112,11 @@ D2 §4.5 lists what only the canaries establish for Claude Code. Each is class B
 
 | What | Value |
 |---|---|
-| The bounds Sean set (E59) | 300 000 billable tokens a run; 25 USD verified a day, split across the qualification fixture project (10), path one's project (6) and path two's (9) (SEAM §161); the provider-side cap of 50 USD on the dedicated key, recorded as configured, never as the engine's |
-| The most the canaries' billable tokens can cost | 3 × 300 000 × 10 USD per million = 9.00 USD, plus cache reads and any overshoot until a canary's deadline |
+| The bounds Sean set (E59, E74) | 300 000 billable tokens a run; 25 USD a day on Claude Code's own estimates, split across the qualification fixture project (10), path one's project (6) and path two's (9) (SEAM §161); the hard limit is the subscription's usage limits, shared with Sean's own Claude use (E74 item 1). No dollar cap exists on the token; the 50 USD provider-side cap applies only to the `api_key` mode, not used in M2 |
+| The most the canaries' billable tokens can use | 3 × 300 000 × 10 USD per million = 9.00 USD at list rates (an estimate in this mode), plus cache reads and any overshoot until a canary's deadline |
 | The spend as estimated before approval | [[PENDING real lane: the attempt's `spend`; from `observed/attempt.json` `proposed`]] |
 | The spend as charged | [[PENDING real lane: each canary's ledger row and the day's totals; from `observed/attempt.json`]] |
-| The wrong-key attempt (M139) | [[PENDING real lane: its ledger row (cost unknown, not zero); from `observed/M139.json`]] |
+| The invalid-token attempt (M139) | [[PENDING real lane: its ledger row (cost unknown, not zero); from `observed/M139.json`]] |
 | `term_to_exit_ms` | [[PENDING real lane: from the cancellation canary]] |
 
 ## 9. The configuration in force
@@ -148,11 +153,11 @@ Each run below was made and its output kept by the session named; this report re
 
 ## 14. The real lane's runs
 
-The real lane runs only by Sean's command (`node scripts/run-tests.mjs acceptance --lane real`), with his key reference, his spend confirmation and his answers (SEAM §159). The files run in this order; each records what it saw in the run directory (SEAM §163).
+The real lane runs only by Sean's command (`node scripts/run-tests.mjs acceptance --lane real`), with his subscription token's reference, his confirmation and his answers (SEAM §159). The files run in this order; each records what it saw in the run directory (SEAM §163).
 
 | File | Rows | Spends | Date | Outcome |
 |---|---|---|---|---|
-| `M139-unauthenticated-canary` | M139 (a), (b) | no tokens (a wrong key) | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
+| `M139-unauthenticated-canary` | M139 (a), (b) | no tokens (an invalid subscription token) | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
 | `M136-positive-canary` | M136 (a) to (d) | the attempt: 3 canaries | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
 | `M137-cancellation-canary` | M137 (a), (c) | none beyond the attempt | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
 | `M138-containment-canary` | M138 (a) to (c) | none beyond the attempt | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
@@ -169,7 +174,7 @@ Output kept: [[PENDING real lane: the runner's report under `test-results/` and 
 | The engine's commits (R12.2) | [[PENDING real lane: each commit with its trailers and identity; from `observed/M140.json` `commits`]] |
 | The ledger against the transcripts (R12.3) | [[PENDING real lane: from `observed/M140.json` `ledger_against_transcripts`]] |
 | The Stop (R12.4): `populated 0` read before the run read said ended | [[PENDING real lane: from `observed/M140.json` `stop_case`]] |
-| The key's absence | [[PENDING real lane: the search's roots and repositories and its result; from `observed/M140.json` `key_search`]] |
+| The subscription token's absence | [[PENDING real lane: the search's roots and repositories and its result; from `observed/M140.json` `key_search`]] |
 
 What stays a fixture in the journey, labelled: the approved plan and its texts, the protected check's declaration and **its execution** (D3's runner is not built: the check is recorded passed by the test, as row M01 records it, and is evidence of nothing about the code), and the Alpha test target.
 
@@ -189,7 +194,7 @@ Each passes by asserting the host fact and its reason, and is **never counted as
 
 **Class B as it stands after the real lane**: [[PENDING real lane: D2 §8 class B less what the canaries established; from section 7]]. Before the real lane, all of D2 §4.5's "established by the canaries" items are class B; Codex (not in M2, E59 item 6); a second host for anything but the exhaustion lane; every `not_exercised` case of section 16.
 
-**Class C, verbatim from D2 §8:** Q2's limitation, as Sean decided it: the role holds its provider key, so the backend's reported usage is attributed evidence, not an independent meter of all the key could spend; a role can make extra provider calls through the allowed destination, and a hard maximum belongs to a provider-side limit on the key, not to the engine. The role can read that key, and can copy or encode it into its workspace or send it to an allowed host; the secret screen (§2.5) detects registered raw and escaped forms only, never an arbitrary encoding. The proxy restricts destinations, not content. At the `invocation` boundary, overshoot within one invocation is bounded only by the deadline (§4.2). A crash loses the volatile filesystem: the role's unsnapshotted workspace changes, its provider files and its unvalidated result are recorded missing and are not recovered, so a Resume starts from the last snapshot (E30 item 10 does not apply to real backends). The mount plan is validated before each launch; a socket or credential an operator's own software creates in an approved `sandbox_read_paths` directory after that validation is not caught. The role reads all of the repository's objects and refs (F §3.10.8). A same-uid process outside every domain can read the token file and replace a backend binary between the hash check and the exec. With `ui_bootstrap` on, any local uid can obtain the token (§2.6). Sessions, filter drivers, Git LFS, partial clones, repositories with alternates, and any host other than Linux are not supported. The optional execution observer (§3.9) is a qualification aid only: production monitoring and BPF-based enforcement are out of D2's scope, and no claim rests on an event the observer did not record.
+**Class C, verbatim from D2 §8** (under E74, "the role holds its provider key" reads "the role holds its subscription token": a leaked token reaches the subscription account, which Sean revokes; the egress proxy allows only the provider): Q2's limitation, as Sean decided it: the role holds its provider key, so the backend's reported usage is attributed evidence, not an independent meter of all the key could spend; a role can make extra provider calls through the allowed destination, and a hard maximum belongs to a provider-side limit on the key, not to the engine. The role can read that key, and can copy or encode it into its workspace or send it to an allowed host; the secret screen (§2.5) detects registered raw and escaped forms only, never an arbitrary encoding. The proxy restricts destinations, not content. At the `invocation` boundary, overshoot within one invocation is bounded only by the deadline (§4.2). A crash loses the volatile filesystem: the role's unsnapshotted workspace changes, its provider files and its unvalidated result are recorded missing and are not recovered, so a Resume starts from the last snapshot (E30 item 10 does not apply to real backends). The mount plan is validated before each launch; a socket or credential an operator's own software creates in an approved `sandbox_read_paths` directory after that validation is not caught. The role reads all of the repository's objects and refs (F §3.10.8). A same-uid process outside every domain can read the token file and replace a backend binary between the hash check and the exec. With `ui_bootstrap` on, any local uid can obtain the token (§2.6). Sessions, filter drivers, Git LFS, partial clones, repositories with alternates, and any host other than Linux are not supported. The optional execution observer (§3.9) is a qualification aid only: production monitoring and BPF-based enforcement are out of D2's scope, and no claim rests on an event the observer did not record.
 
 **Bucket C of the triage** (`M1-not-claimed.md` class B, unchanged by M2; M2 plan §4.3): M11 (a requirement-versus-contract contradiction goes to a person), M20 (git output over the cap), M27 (the verified set frozen at nomination), M31 with M32 (a workspace whose repository entry was pruned by hand), M43 (a module's tier override and a sensitive area's required checks), M58 (a notification plainly refused by its channel), M70 (a record file replaced by a real device file), M72 (the event stream filtered to one project).
 
@@ -214,18 +219,19 @@ Each passes by asserting the host fact and its reason, and is **never counted as
 
 ## 20. Hands-on run
 
-Sean runs `docs/acceptance/reports/M2-hands-on.sh` (row M142): it refuses to start without his key reference and spend confirmation, asks before every paid step saying what it can cost at most, waits for his two approvals, and prints checks (1) to (9) each with the command he can run himself. [[PENDING hands-on: the date, what he checked, and what surprised him; from Sean]]
+Sean runs `docs/acceptance/reports/M2-hands-on.sh` (row M142): it begins with step 0, his own `claude setup-token` into a mode-600 file (never pasted into the script), explains that the runs use his subscription's allowance shared with his own Claude use and how to revoke the token after M2, refuses to start without the token's reference and his confirmation, asks before every paid step saying what it can cost at most, waits for his two approvals, and prints checks (1) to (9) each with the command he can run himself. [[PENDING hands-on: the date, what he checked, and what surprised him; from Sean]]
 
 ## 21. Questions for Sean
 
 These are open at the time of writing; each is a decision, with options and the Verifier's recommendation.
 
-1. **Pinning Claude Code against its self-updater.** The binary updated itself from 2.1.288 to 2.1.289 overnight (2026-10-03 18:24); `~/.local/bin/claude` now names 2.1.289 and four versions are on disk. An entry is bound to a file and its hash: a changed or removed file revokes it by design (D2 §7.3), and an updater that keeps a few versions may remove an old one at any update (four are on disk now; whether and when it prunes was not observed). Options: (a) copy the chosen version to a directory the updater does not manage (for example `~/.local/share/surety/backends/claude-2.1.289`, mode 0555) and qualify that copy (`SURETY_REAL_CLAUDE_BINARY`); the Verifier checked that a copy of 2.1.289 answers `--version` from another path with an empty `HOME` and writes nothing; (b) turn Claude Code's auto-update off for the account during M2 and qualify the version file in place; (c) qualify the version file in place and accept a paid requalification each time the updater removes it. **Recommendation: (a)**: no account-wide change, the hash proves the bytes, and the operator's own Claude Code keeps updating. Whichever is chosen, the version qualified is the one recorded (BS §5), not 2.1.288.
-2. **The chain boundary in the real lane** (SEAM §162). The journey's test answers `continue` at the chain boundary as row M01 does; each answer starts a paid run within the project's limits. Options: (a) as written; (b) the test waits for Sean's answer at each boundary as it does for the two money decisions. Recommendation: (a) for the test, since his activation already authorizes the journey and the limits bound it; the hands-on script asks him before each run either way.
+1. **Pinning Claude Code against its self-updater.** The binary updated itself from 2.1.288 to 2.1.289 overnight (2026-10-03 18:24), and an entry bound to a file that changes or goes is revoked by design (D2 §7.3). *The driver's default (E74 item 3):* the engine copies the qualified binary into its own home and pins the copy, and sets `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the backend's environment; your own install and settings are never touched. (The Verifier checked that a copy of 2.1.289 answers `--version` from another path with an empty `HOME` and writes nothing.) Sean confirms.
+2. **The chain boundary in the real lane** (SEAM §162). *The driver's default: (a).* The journey's test answers `continue` at the chain boundary as row M01 does; each answer starts a paid run within the project's limits. Options: (a) as written; (b) the test waits for Sean's answer at each boundary as it does for the two money decisions. Recommendation: (a) for the test, since his activation already authorizes the journey and the limits bound it; the hands-on script asks him before each run either way.
 3. **M141 and `npm test`.** *Decided by the driver, provisionally (2026-10-04):* M141's file fails while this report holds any pending fact, with "the real lane has not run: the M2 report is a skeleton (N pending facts)", so `--slice 14` and `npm test` fail until the real lane has run and the report is final (SEAM §163). Sean confirms or overturns.
-4. **The engine's key flags** (`--secret-file`, `--provider-cap-usd`, SEAM §160) rather than a configuration key. Recommendation: keep the flags for M2; a configuration key belongs with the UI's settings later.
-5. **The day's 25 USD split across projects** (10 / 6 / 9, SEAM §161). Recommendation: as written; raise a project's limit only by policy, which is a widening and asks you.
-6. **The price of `claude-sonnet-5-5`** in the engine's table (2 / 10 / 0.20 USD per million, as cached on 2026-09-25): confirm against your console before the run.
+4. *The driver's default: keep the flags.* **The engine's credential flags** (`--secret-file`, `--provider-cap-usd`, SEAM §160) rather than a configuration key. Recommendation: keep the flags for M2; a configuration key belongs with the UI's settings later.
+5. *The driver's default: as written.* **The day's 25 USD split across projects** (10 / 6 / 9, SEAM §161). Recommendation: as written; raise a project's limit only by policy, which is a widening and asks you.
+6. **The price of `claude-sonnet-5-5`** in the engine's table (2 / 10 / 0.20 USD per million, as cached on 2026-09-25), used for the attempt's estimate; in the subscription mode the ledger's figures are Claude Code's own `total_cost_usd`. Confirm the list rates.
+7. **Whether automated use fits your subscription's terms** is yours to check (E74 item 1).
 
 ## 22. How to read the suite
 

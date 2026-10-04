@@ -22,7 +22,7 @@ import { describe, test } from 'node:test';
 import { REPO_ROOT } from './harness/engine.mjs';
 
 const SCRIPT = join(REPO_ROOT, 'docs', 'acceptance', 'reports', 'M2-hands-on.sh');
-const CONFIRM = 'I accept up to 25 USD a day and 50 USD in all';
+const CONFIRM = 'I accept the M2 real lane on my Claude subscription, up to 25 USD a day as estimated';
 const lines = () => readFileSync(SCRIPT, 'utf8').split('\n');
 
 // A directory of fakes and a log of what was started.
@@ -75,7 +75,7 @@ describe('M142 the hands-on script: its form and its guards (nothing is run that
     const def = all.findIndex((l) => /^paid\(\) \{/.test(l));
     assert.ok(def >= 0, 'a paid() gate');
     const gate = all.slice(def, def + 14).join('\n');
-    assert.ok(/At most/.test(gate) && /only hard maximum/.test(gate) && /read -r/.test(gate) && /die/.test(gate), 'it states the most a step can cost, names the only hard maximum, asks, and stops on anything but yes');
+    assert.ok(/At most/.test(gate) && /hard limit is your subscription's usage limits/.test(gate) && /allowance your own Claude use shares/.test(gate) && /read -r/.test(gate) && /die/.test(gate), 'it states the most a step can use, says it draws on the subscription his own use shares and names the hard limit, asks, and stops on anything but yes (E74 item 1)');
     // The lines that start paid work: Sean's approval of the attempt, every
     // chain-boundary answer, and a stage's first tick.
     const starts = all.map((l, i) => ({ l: l.trim(), i })).filter(({ l }) => /^wait_for_sean qualification_approval\b/.test(l) || /^let_through "\$P"/.test(l) || l === 'tick "$P"');
@@ -88,13 +88,24 @@ describe('M142 the hands-on script: its form and its guards (nothing is run that
     }
   });
 
+  test('(e) step 0 is Sean\'s own: he makes the subscription token with claude setup-token, keeps it in a mode-600 file, never pastes it into the script, and is told how to revoke it after M2 (E74 item 1)', () => {
+    const text = lines().join('\n');
+    assert.match(text, /claude setup-token/, 'it tells him to run claude setup-token himself');
+    assert.match(text, /install -m 600/, 'to keep the token in a file readable by him only');
+    assert.match(text, /never paste the token/i, 'never to paste it into the script');
+    assert.match(text, /revoke the (subscription )?token/i, 'and how to end it after M2');
+    assert.match(text, /--secret-file "\$KEY_REF_NAME=\$SURETY_REAL_CREDENTIAL_REF"/, 'the engine is given the file, by reference');
+    assert.match(text, /KEY_REF_NAME=backend\/claude\/subscription_token/, 'under the subscription token\'s reference (SEAM.md §160)');
+    assert.match(text, /--auth-mode "\$AUTH_MODE"/, 'and the attempt asks for the subscription mode');
+  });
+
   test('(d) it refuses before starting anything: without the key reference, with a reference that is not a path, with a key file others can read, without the spend confirmation, and without a terminal', (t) => {
     const f = fakes(t);
     const cases = [
-      ['no key reference', {}, /SURETY_REAL_KEY_REF/],
-      ['a key, not a path', { SURETY_REAL_KEY_REF: 'sk-test-surety-m142-inline-0000000000' }, /absolute path/],
-      ['no spend confirmation', { SURETY_REAL_KEY_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary }, /SURETY_HANDS_ON_CONFIRM_SPEND/],
-      ['no terminal', { SURETY_REAL_KEY_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary, SURETY_HANDS_ON_CONFIRM_SPEND: CONFIRM }, /terminal/],
+      ['no credential reference', {}, /SURETY_REAL_CREDENTIAL_REF/],
+      ['a token, not a path', { SURETY_REAL_CREDENTIAL_REF: 'sk-test-surety-m142-inline-0000000000' }, /absolute path/],
+      ['no spend confirmation', { SURETY_REAL_CREDENTIAL_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary }, /SURETY_HANDS_ON_CONFIRM_SPEND/],
+      ['no terminal', { SURETY_REAL_CREDENTIAL_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary, SURETY_HANDS_ON_CONFIRM_SPEND: CONFIRM }, /terminal/],
     ];
     for (const [what, env, message] of cases) {
       const res = runScript(f, env);
@@ -105,8 +116,8 @@ describe('M142 the hands-on script: its form and its guards (nothing is run that
       assert.ok(!res.stderr.includes('sk-test-surety-m142') && !res.stdout.includes('sk-test-surety-m142'), `${what}: no key is echoed`);
     }
     chmodSync(f.key, 0o640);
-    const open = runScript(f, { SURETY_REAL_KEY_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary, SURETY_HANDS_ON_CONFIRM_SPEND: CONFIRM });
-    assert.notEqual(open.status, 0, `a key file others can read: refused (${open.stderr})`);
+    const open = runScript(f, { SURETY_REAL_CREDENTIAL_REF: f.key, SURETY_REAL_CLAUDE_BINARY: f.binary, SURETY_HANDS_ON_CONFIRM_SPEND: CONFIRM });
+    assert.notEqual(open.status, 0, `a token file others can read: refused (${open.stderr})`);
     assert.match(open.stderr, /readable by you only/);
     assert.equal(open.started, '', 'and nothing was started');
   });
