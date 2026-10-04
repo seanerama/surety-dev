@@ -1605,6 +1605,86 @@ No case on this host forks, allocates or writes to a limit. M130 (h)'s two `slee
 
 **Accepted tests changed:** M125 (c), extended for E67 item 7 as above. Nothing else.
 
+## M2 slice 13 (part 2): usage and resume, secrets and provider files, revocation, the qualification attempt (M2 build spec §9; E59, E67 item 5)
+
+Written 2026-10-03 by the Verifier of slice 13 part 2, on `verify/m2-s13` reset to `main` at `e1f6e73`. It covers rows M131, M132, M134 and M135 of `docs/acceptance/sdlc-M2-acceptance-plan.md` §§3.6 and 3.7, each with every named case. The seam's §§148 to 154 fix what the plan's §2.6 and D2 leave to the tests for these rows. Four new files are listed under manifest slice 13 and in the `sandbox` list. The exhaustion cases (P20, M130 (f) and (g), M133) are part 3's, on `mini-hp01` (E69).
+
+**Rows and cases**
+
+| Row | File | Cases (plan letters) |
+|---|---|---|
+| M131 | `M131-usage-resume-session-id.test.mjs` | (a); (b); (c) |
+| M132 | `M132-secrets-volatile-provider-files.test.mjs` | (a); (b); (c); (d); (e), where the inventory and the three bounds share one test; (f) |
+| M134 | `M134-revocation-and-host-qualification.test.mjs` | (a); (b); (c); (d); (e); (f); (g) |
+| M135 | `M135-qualification-attempt.test.mjs` | (a) to (i); (j) is `[not_exercised]` (OBS) |
+
+**The outcome of a screen hit** (fixed here, as the plan asks; SEAM §152). The run ends `failed` / `infra_error`, keeping E67 item 5's interim reason class. Its `reason_text` names `secret_refused`. The hit also raises:
+- one finding: `category` `security`, `effective_severity` `critical`, `source_run` the run;
+- one `evidence.secret_refused` event, with `payload.what` set to `materialization`, `result` or `provider_files`.
+
+The refused materialization or publication writes nothing. The transcript is redacted, not refused.
+
+**How the cases avoid writing to a limit.** No case exhausts anything.
+- M132 (e) needs each collection bound exceeded. It does not raise the role's use to the configured minimums (100 entries, 1 MiB). It lowers the bound instead, with the harness flag `--harness-collect-bounds` (4 entries, then 4 KiB) and the fault `collect_slow` (2 s per entry against the 5 s deadline). Against these the role writes a handful of files of at most 2 KiB each.
+- Every write outside the workspace goes through a guarded action released after `assertContained`: `write_probe`, the new `volatile_shapes`, and the new `canary_actions`.
+
+**New and changed harness**
+- `harness/standin/backend.mjs` and `StandIn`:
+  - `--version` and `--help` are answered and logged as `static`;
+  - `help.txt` beside the binary changes the help text;
+  - `runsChild` makes the stand-in run the scripted role program, so it can be a `scripted` attempt's binary;
+  - `leaveResult` gives it a result file;
+  - `changeBytes` and `changeHelp` change the binary or its help.
+- `harness/scripted/child.mjs`:
+  - a canary's launch follows `scripts/canary-<kind>.json`, chosen from `/surety/context/canary.json`;
+  - the `canary` step has modes `obey`, `wrong_result`, `finish_early`, `say_denied`, `forge_reports` and `result_only`;
+  - new guarded actions `canary_actions` and `volatile_shapes`.
+- `harness/scripted.mjs`: `step.canary`, `acting(...).canaryActions` and `volatileShapes`, and `Scripted.canaryScript`.
+- `harness/sandbox/qualify.mjs` (new): the attempt's route, its row, canary runs, approval, `armedCanary`, and the default obeying canaries.
+
+**What was run.** `npm run build`, then each file alone with `node --test` on `main`'s engine at `e1f6e73`, never two at once. Before every file, `systemctl --user is-system-running` printed `running`. After every file, no scope of this worktree and no `/tmp/surety-fifo-*` remained. Two scopes were listed during the runs: one was this pass's own M134 engine, still running at the time; the other belonged to the slice-13 Builder's engine.
+
+| File | Cases | Result on today's engine (first failing assertion) |
+|---|---|---|
+| M131 | 1 of 3 | **(a) passes**: two observations, then a Stop, the failed ledger write, its retry and a restart leave one original row `{4000, 1000, usage_complete 0, allowance 5000}`. **(b)** fails at "one unaccepted_result record": the stopped run published `transcript`, `qualification_evidence` and `egress_log` only. **(c)** fails at the receipt's `provider_session_id` (undefined; the derivation gives `17894726-f097-4425-907e-3ed47fba51a6`). |
+| M132 | 1 of 6 | **(d) passes**: `memory.swap.max` reads 0. **(a)** fails at `reason_text`. Before that it held: the materialization was refused and the run ended `failed` / `infra_error` ("the secret screen refused the workspace's materialization: src/leak.txt holds a registered secret"); the name `secret_refused` is what is missing. **(b)** fails at "outcome": the run with the secret only in its home `completed`. **(c)** fails at the barrier `collect.before_read`, which is unknown. **(e), (f)** fail at "one provider_files record". |
+| M134 | 1 of 7 | **(f) passes**: H6 failed suspends the entry; a compatible restart restores dispatch with no attempt, the entry's own row `lapsed` and another row active. **(a)** fails at "revoked for binary_changed (active, null)": the dispatch was already refused for the hash, but the entry was not revoked. **(b)** fails by timeout: the changed help is not checked, so the second dispatch launched the held stand-in. **(c), (e), (g)** fail at the unknown harness flags. **(d)** fails at "revoked for profile_changed (active, null)". |
+| M135 | 2 of 10 | **(h)** passes (the echo endpoint is refused at the route, as slice 12 built). **(j)** passes, `[not_exercised]`, and is never counted as passed. **(a) to (g), (i)** fail at `POST /v1/trust/qualify` (`unsupported`). |
+| M125 | 2 of 3 | Unchanged by this pass. (c) still fails at part 1's fixture fields. |
+
+M134's first run also failed (d) because of the case's own defect: rewriting `config.json` dropped `api_port`, so the engine listened on another port. It was fixed before any Builder had the file, and the second run is the one in the table.
+
+Accepted files that use the harness this pass changed (the stand-in, `child.mjs`'s script choice), each run alone on the same engine: M101 3 of 3, M103 5 of 5, M116 4 of 4.
+
+**Readings where the plan's words met the mechanism** († marks a question for Sean in the report):
+
+| Plan | Reading | Where |
+|---|---|---|
+| M135 setup: "for `scripted` with the stand-in binary" | A harness-mode attempt for `scripted`, whose binary is a stand-in that runs the scripted role program; `claude` bound to a stand-in only to render the template into the row † | SEAM §148 |
+| M135 (a): "no process spawned" | Only the static checks, `--version` and `--help`, once each; no domain, no launch | SEAM §148 |
+| M135 (b): "other eligible items … untouched" | No other item gets a receipt naming the attempt; items whose role names `claude` with no active entry are refused as without the attempt | SEAM §148 |
+| M135 (f): "the redacted provider error record kept" | `canaries[].provider_error` names a published record; for `scripted`, the run's redacted output | SEAM §148 |
+| M135 (i): "a report from another process" | The backend writing, on its own output, lines in the probe program's report form; nothing it prints is a witnessed execution † | SEAM §149 |
+| M134 (a), (b): "a run in flight untouched" | Found by the next dispatch while the run is held; the run in flight ends by its own exit, its domain still authorized | SEAM §150 |
+| M134 (c), (e): "(harness)" | `--harness-template-version`, `--harness-host-id` | SEAM §150 |
+| M134 (g): "an incompatible restart" | Another mechanism fingerprint (`--harness-mechanism-variant`): refused, `requalification_required`, not revoked † | SEAM §150 |
+| M132 (a): "the run not `completed` (the Verifier fixes the outcome)" | `failed` / `infra_error`, `reason_text` `secret_refused` † | SEAM §152 |
+| M132 (a): "the credential file is listed under `excluded`" | Pinned in (f), where the home holds no secret: in (a) the home holds the secret, so the whole provider-files publication is refused | SEAM §152 |
+| M132 (c): "recorded missing on the run read" | `result_collection` and the new `provider_files_collection`, both `missing` | SEAM §§143, 152 |
+| M132 (e): each bound "set low" | Lowered below range by a harness flag, so that no filling write is needed † | SEAM §152 |
+
+**Recorded, not pinned:**
+
+| Not pinned | Why |
+|---|---|
+| The canaries' work-item kind and the cancellation canary's run outcome | The plan asks for neither. |
+| The `auth_failed` class and the cancellation negatives (`barrier_not_reached`) | The scripted backend has no authentication. `finish_early` exists, but no case uses it: M137 (b) says the negatives are M135 (i)'s and the engine's rule. |
+| A `claude` attempt beyond its proposal | Approving one would launch the stand-in as Claude Code, whose stream it does not write. |
+| Whether the requalification refusal survives a restart without the variant | The plan asks only for the refusal. |
+| The phase plan's and dependency interfaces' texts in the package (question 6 of part 1) | Not cheap: the plan fixture binds no module with an interface text. SEAM §153 records it for M140. |
+
+**Accepted tests changed:** none. The stand-in's change leaves its kernel-lane behaviour as it was for any argument array other than exactly `--version` or `--help`.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
