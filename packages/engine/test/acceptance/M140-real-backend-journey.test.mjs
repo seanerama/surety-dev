@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { describe, test } from 'node:test';
 
 import { activation, homeOf } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent, terminalOutput } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent, terminalOutput, costStatusFor, dayTotalFor } from './harness/real/lane.mjs';
 import { pathOne, pathTwo, stopCase } from './harness/real/journey.mjs';
 import { authorizationsOf } from './harness/gates.mjs';
 import { trailersOf, identityOf } from './harness/repos.mjs';
@@ -81,7 +81,7 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
     });
   });
 
-  test('(e) R12.4: a Stop during a real run: the run read is not ended until the test reads populated 0; the key is absent from every record and from git', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test('(e) R12.4: a Stop during a real run: the run read is not ended until the test reads populated 0; the credential (the subscription token) is absent from every record and from git', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M140 (e)', async () => {
       await activation(ctx);
@@ -102,7 +102,7 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
       const repos = [...donePaths(ctx).map((p) => p.repo), readObserved(ctx, 'attempt').host_witness?.before?.repo].filter(Boolean);
       const hits = secretHits(ctx.keyValue, { roots: [ctx.runDir], repos });
       observe(ctx, 'M140', 'key_search', { roots: [ctx.runDir], repos, hits: hits.length });
-      assert.deepEqual(hits, [], 'the dedicated key is in no file and no git object');
+      assert.deepEqual(hits, [], `the ${ctx.authMode} credential is in no file and no git object`);
     });
   });
 
@@ -154,7 +154,7 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
     });
   });
 
-  test("(d) R12.3: each invocation's ledger row equals the usage the provider reported in its transcript record, or is unknown with the reason; the day's reported_usd is the sum", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test("(d) R12.3: each invocation's ledger row equals the usage the provider reported in its transcript record, or is unknown with the reason; the day's total is the sum (reported_usd with an API key, estimated_usd with a subscription token)", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M140 (d)', async () => {
       const home = homeOf(ctx, 'home');
@@ -170,7 +170,7 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
           const t = terminalEvent(streamEvents(home, r.id));
           compared.push({ run: r.id, role: r.role, row, terminal: t ? { total_cost_usd: t.total_cost_usd ?? null, usage: t.usage ?? null, modelUsage: t.modelUsage ?? null } : null });
           if (typeof t?.total_cost_usd === 'number') {
-            assert.equal(row.cost_status, 'reported', `${r.id}: the provider's reported cost is the ledger's`);
+            assert.equal(row.cost_status, costStatusFor(ctx), `${r.id}: the stream's total_cost_usd is the ledger's, ${costStatusFor(ctx)} in the ${ctx.authMode} mode (E74 item 1)`);
             assert.ok(Math.abs(row.cost_usd - t.total_cost_usd) < 1e-6, `${r.id}: ${row.cost_usd} against the transcript's ${t.total_cost_usd}`);
             // Every model call's output tokens (`modelUsage` where present; objection 015).
             const reported = terminalOutput(t);
@@ -181,13 +181,14 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
             assert.ok(row.cost_usd === null || row.cost_status === 'estimated', `${r.id}: unknown (null) or estimated with its price version, never zero: ${JSON.stringify(row)}`);
           }
         }
-        // The day's reported_usd, as the project's ledger read gave it while
-        // its engine ran, is the sum of its rows' reported cost.
+        // The day's total of that status (reported_usd with an API key,
+        // estimated_usd with a subscription token), as the project's ledger
+        // read gave it while its engine ran, is the sum of its rows'.
         const read = p.name === 'path_one' && (() => { try { return stepValue(ctx, 'stop_case').ledger_read; } catch { return null; } })() || p.ledger_read;
         const rows = withStore(home, (db) => db.prepare(`SELECT * FROM "ledger_rows" WHERE "project" = ?`).all(p.project));
-        const sum = rows.filter((x) => x.cost_status === 'reported').reduce((a, x) => a + x.cost_usd, 0);
-        const shown = read?.totals?.reported_usd;
-        assert.ok(typeof shown === 'number' && Math.abs(shown - sum) < 1e-6, `${p.name}: the day's reported_usd (${shown}) is the sum of the rows' reported cost (${sum})`);
+        const sum = rows.filter((x) => x.cost_status === costStatusFor(ctx)).reduce((a, x) => a + x.cost_usd, 0);
+        const shown = read?.totals?.[dayTotalFor(ctx)];
+        assert.ok(typeof shown === 'number' && Math.abs(shown - sum) < 1e-6, `${p.name}: the day's ${dayTotalFor(ctx)} (${shown}) is the sum of the rows' ${costStatusFor(ctx)} cost (${sum})`);
       }
       observe(ctx, 'M140', 'ledger_against_transcripts', compared);
       // The day's spend against Sean's bound (E59): recorded for the report.

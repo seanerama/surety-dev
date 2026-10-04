@@ -185,3 +185,15 @@ Settled since the entries above were written:
 | **Codex** is designed and not qualified (E59 item 6). | M136 to M139 | B | M3 | E59 item 6 |
 
 Settled by slice 14's cases, once they pass: the slice-13 part-2 entry "`auth_failed` and the cancellation canary's negatives have no sandbox-lane case" is half settled now (M137 (b) passes on `872afe9`); `auth_failed` waits for M139.
+
+**After E74** (2026-10-04: the subscription token; the slice-14 review):
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **The `api_key` mode is built and kept, not claimed in M2.** M2's real lane runs on Sean's subscription token; an entry of one mode never authorizes the other. | M136 to M140 | B (the `api_key` mode) | a later qualification (a team or CI setup) | E74 item 1 |
+| **In the subscription mode the dollar figures are Claude Code's own estimates** (`total_cost_usd`, recorded `estimated`), and the hard limit is the subscription's usage limits, shared with Sean's own Claude use; no dollar cap exists on the token. | M136 (d), M140 (d) | C (Sean's decision) | none | E74 item 1 |
+| **Without `--bare`, what Claude Code loads** (hooks, plugins, CLAUDE.md discovery) from an empty volatile home is recorded by the canaries, not assumed absent. | M136 | B until run | M136, recorded | E74 item 1 |
+| **Whether automated use fits Sean's subscription terms** is his to check. | — | A (outside the engine) | Sean | E74 item 1 |
+| **Background Bash under `--tools Bash`** is contained by the domain, not prevented. | M136 (c) | C | none | E74 item 3 |
+| **The review's three defects** (S1 incomplete totals recorded complete, S2 delegation verified on a deny-list and on a blind sampler, S3 a credential echoed) are pinned by sandbox- and kernel-lane cases with a fake `claude`; their real-lane behaviour is the canaries'. | M136, M140 (e) | — (a record) | `M136-adapter-with-a-fake-backend`, `M140-credential-never-echoed` | E74 item 2; SEAM §167 |
+

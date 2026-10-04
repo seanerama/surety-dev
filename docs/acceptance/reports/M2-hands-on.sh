@@ -6,22 +6,27 @@
 # Each step says in plain words what it does, and each of M142's checks (1)
 # to (9) is printed as "CHECK (n)" with the command he can run himself.
 #
-# IT SPENDS MONEY, ON SEAN'S DEDICATED ANTHROPIC KEY. It refuses to start
-# unless he has set the key's reference and typed the spend confirmation
-# (below), and it asks him again before every paid step, saying what that
-# step can cost at most. The two decisions that let paid work start, the
+# IT USES SEAN'S CLAUDE SUBSCRIPTION (E74 item 1, his decision): a long-
+# lived token he makes himself with `claude setup-token`. Every run draws on
+# his subscription's usage allowance, the same allowance his own Claude use
+# draws on; the hard limit is that subscription's usage limits, not a dollar
+# cap, and the dollar figures the engine shows are Claude Code's own
+# estimates (`total_cost_usd`). It refuses to start unless he has set the
+# token's reference (the path of the file holding it) and typed the
+# confirmation (below), and it asks him again before every paid step, saying
+# what that step can use at most. The two decisions that let paid work start, the
 # attempt's `qualification_approval` and the entry's `trust_activation`,
 # are his: the script shows each preview and waits; it sends an answer
 # only when he types it here, or he sends it himself from another terminal.
 #
-# What a step can cost at most, in billable tokens: 300 000 billable tokens
-# a run (E59) at claude-sonnet-5-5's dearest rate, 10 USD per million output
-# tokens, is 3.00 USD a run. Cache reads (0.20 USD per million) are not
-# billable tokens and are not counted by the engine's limit, and one run can
-# overshoot its limit until its deadline (D2 §4.2, §8 class C). The engine
-# stops starting runs at each project's day limit (10 USD for the
-# qualification's own project, 6 USD for the journey's); the provider-side
-# cap of 50 USD on the key is the only hard maximum (D2 Q2).
+# What a step can use at most: 300 000 billable tokens a run (E59), which
+# at claude-sonnet-5-5's dearest list rate, 10 USD per million output
+# tokens, is 3.00 USD a run in Claude Code's own estimate. Cache reads
+# (0.20 USD per million) are not billable tokens and are not counted by the
+# engine's limit, and one run can overshoot its limit until its deadline
+# (D2 §4.2, §8 class C). The engine stops starting runs at each project's day
+# limit on those estimates (10 USD for the qualification's own project, 6 USD
+# for the journey's); the hard limit is your subscription's usage limits.
 #
 # Before running it:
 #   - from a login session of uid 1000 with the user manager running
@@ -30,16 +35,24 @@
 #     scope, D2 K9);
 #   - `npm run build` in this checkout, which must be on a revision whose
 #     engine builds slice 14 (the real lane's engine side);
-#   - the dedicated key in a file of its own, readable by you only:
-#       install -m 600 /dev/null ~/.config/surety/anthropic.key   # then put the key in it
+#   - step 0, yourself, before this script: make the subscription token and
+#     keep it in a file of its own, readable by you only. Never paste the token
+#     into this script, a command line or a chat:
+#       claude setup-token          # sign in in the browser it opens; it prints a long-lived token
+#       install -m 600 /dev/null ~/.config/surety/claude-subscription.token
+#       $EDITOR ~/.config/surety/claude-subscription.token   # paste the token, one line, save
+#     When M2 is done, revoke the token in your Claude account's settings
+#     (where your plan lists Claude Code's long-lived tokens) and delete the
+#     file. A leaked token reaches your subscription account, nothing else:
+#     inside the sandbox the proxy lets the agent reach the provider only.
 #   - the Claude Code binary to qualify, by its own file (not the
 #     ~/.local/bin/claude link, which moves when Claude Code updates itself);
 #     see the M2 report's question on pinning it.
 #
 # Usage:
-#   SURETY_REAL_KEY_REF=$HOME/.config/surety/anthropic.key \
+#   SURETY_REAL_CREDENTIAL_REF=$HOME/.config/surety/claude-subscription.token \
 #   SURETY_REAL_CLAUDE_BINARY=/path/to/the/pinned/claude \
-#   SURETY_HANDS_ON_CONFIRM_SPEND='I accept up to 25 USD a day and 50 USD in all' \
+#   SURETY_HANDS_ON_CONFIRM_SPEND='I accept the M2 real lane on my Claude subscription, up to 25 USD a day as estimated' \
 #   bash docs/acceptance/reports/M2-hands-on.sh
 #
 # Everything it makes is under one directory (SURETY_HANDS_ON_DIR, by
@@ -52,25 +65,25 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 die()  { echo "STOP: $*" >&2; exit 1; }
 
-CONFIRM_PHRASE='I accept up to 25 USD a day and 50 USD in all'
+CONFIRM_PHRASE='I accept the M2 real lane on my Claude subscription, up to 25 USD a day as estimated'
 MODEL=claude-sonnet-5-5
 RUN_TOKENS=300000
 OUT_USD_PER_MILLION=10
-CAP_USD=50
-KEY_REF_NAME=backend/claude/api_key
+AUTH_MODE=subscription_token
+KEY_REF_NAME=backend/claude/subscription_token
 
 # ---- the guards: nothing starts unless every one holds ------------------------------
 
-[ -n "${SURETY_REAL_KEY_REF:-}" ] || die "set SURETY_REAL_KEY_REF to the absolute path of the file that holds the dedicated key (never the key itself). Nothing was started."
-case $SURETY_REAL_KEY_REF in
+[ -n "${SURETY_REAL_CREDENTIAL_REF:-}" ] || die "set SURETY_REAL_CREDENTIAL_REF to the absolute path of the file that holds your subscription token from claude setup-token (never the token itself). Nothing was started."
+case $SURETY_REAL_CREDENTIAL_REF in
   /*) ;;
-  *) die "SURETY_REAL_KEY_REF must be an absolute path to the key's file; its value is not shown. Nothing was started." ;;
+  *) die "SURETY_REAL_CREDENTIAL_REF must be an absolute path to the token's file; its value is not shown. Nothing was started." ;;
 esac
-[ -f "$SURETY_REAL_KEY_REF" ] && [ ! -L "$SURETY_REAL_KEY_REF" ] || die "SURETY_REAL_KEY_REF must name a regular file, not a link. Nothing was started."
-KEY_MODE=$(stat -c %a "$SURETY_REAL_KEY_REF")
-[ "$KEY_MODE" = 600 ] || [ "$KEY_MODE" = 400 ] || die "the key's file must be readable by you only (chmod 600). Nothing was started."
-[ "$(wc -l < "$SURETY_REAL_KEY_REF")" -le 1 ] || die "the key's file must hold the key on one line and nothing else. Nothing was started."
-[ "${SURETY_HANDS_ON_CONFIRM_SPEND:-}" = "$CONFIRM_PHRASE" ] || die "set SURETY_HANDS_ON_CONFIRM_SPEND='$CONFIRM_PHRASE' to confirm the spend. Nothing was started."
+[ -f "$SURETY_REAL_CREDENTIAL_REF" ] && [ ! -L "$SURETY_REAL_CREDENTIAL_REF" ] || die "SURETY_REAL_CREDENTIAL_REF must name a regular file, not a link. Nothing was started."
+KEY_MODE=$(stat -c %a "$SURETY_REAL_CREDENTIAL_REF")
+[ "$KEY_MODE" = 600 ] || [ "$KEY_MODE" = 400 ] || die "the token's file must be readable by you only (chmod 600). Nothing was started."
+[ "$(wc -l < "$SURETY_REAL_CREDENTIAL_REF")" -le 1 ] || die "the token's file must hold the token on one line and nothing else. Nothing was started."
+[ "${SURETY_HANDS_ON_CONFIRM_SPEND:-}" = "$CONFIRM_PHRASE" ] || die "set SURETY_HANDS_ON_CONFIRM_SPEND='$CONFIRM_PHRASE' to confirm the use of your subscription. Nothing was started."
 [ -n "${SURETY_REAL_CLAUDE_BINARY:-}" ] || die "set SURETY_REAL_CLAUDE_BINARY to the Claude Code binary to qualify, by its own file. Nothing was started."
 [ -f "$SURETY_REAL_CLAUDE_BINARY" ] && [ ! -L "$SURETY_REAL_CLAUDE_BINARY" ] && [ -x "$SURETY_REAL_CLAUDE_BINARY" ] || die "SURETY_REAL_CLAUDE_BINARY must be an executable regular file, not a link. Nothing was started."
 [ -t 0 ] || die "run this from your terminal: it asks you before every paid step. Nothing was started."
@@ -88,10 +101,10 @@ paid() {
   local what=$1 runs=$2 usd
   usd=$(awk -v r="$runs" -v t="$RUN_TOKENS" -v p="$OUT_USD_PER_MILLION" 'BEGIN { printf "%.2f", r * t * p / 1000000 }')
   printf '\n\033[1;33m!! PAID STEP: %s\033[0m\n' "$what"
-  note "It starts $runs real run(s) of Claude Code ($MODEL) on your key."
-  note "At most, in billable tokens: $runs x $RUN_TOKENS tokens x $OUT_USD_PER_MILLION USD per million = $usd USD,"
+  note "It starts $runs real run(s) of Claude Code ($MODEL) on your Claude subscription, drawing on the usage allowance your own Claude use shares."
+  note "At most, in billable tokens: $runs x $RUN_TOKENS tokens x $OUT_USD_PER_MILLION USD per million = $usd USD in Claude Code's own estimate,"
   note "plus cache reads (0.20 USD per million, not counted by the engine's limit) and any overshoot until a run's deadline."
-  note "The project's day limit stops new runs; the provider-side cap of $CAP_USD USD on the key is the only hard maximum."
+  note "The project's day limit on those estimates stops new runs; the hard limit is your subscription's usage limits."
   local answer
   read -r -p "   Type yes to go on, anything else to stop here: " answer
   [ "$answer" = yes ] || die "stopped before: $what. Nothing of it was started."
@@ -132,7 +145,7 @@ record_path() { dbq "SELECT path FROM records WHERE id = '$1'" | head -1 | sed "
 start_engine() { # production | real-lane
   local -a args=(serve)
   [ "$1" = real-lane ] && args+=(--harness --harness-real-lane)
-  args+=(--secret-file "$KEY_REF_NAME=$SURETY_REAL_KEY_REF" --provider-cap-usd "$KEY_REF_NAME=$CAP_USD")
+  args+=(--secret-file "$KEY_REF_NAME=$SURETY_REAL_CREDENTIAL_REF")
   printf '{"api_port": %s, "tick_interval": %s}\n' "$PORT" "$([ "$1" = real-lane ] && echo 600 || echo 30)" > "$SURETY_HOME/config.json"
   ( cd "$SURETY_HOME" && exec env -i SURETY_HOME="$SURETY_HOME" PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME="$SURETY_HOME" LANG=C.UTF-8 TZ=UTC \
       XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}" \
@@ -230,7 +243,7 @@ wait_run_end() { # project, work item, seconds
 
 say "0. Where everything is kept: $WORK"
 note "The engine's home is $SURETY_HOME. The pinned binary is $SURETY_REAL_CLAUDE_BINARY,"
-note "reached by the engine through $BIN/claude, first on its PATH. The key stays in its file: the engine is given the path."
+note "reached by the engine through $BIN/claude, first on its PATH. The token stays in its file: the engine is given the path."
 
 # ---------------------------------------------------------------------------------------
 say "1. Start the engine from this login session (production mode: no test switches)"
@@ -285,11 +298,11 @@ FIXTURE_CONFIG=$FIXTURE_REPO/.git/config; [ -f "$FIXTURE_CONFIG" ] || FIXTURE_CO
 TOKEN_BEFORE=$(sha256sum "$SURETY_HOME/api.token" | cut -c1-64)
 CONFIG_BEFORE=$(sha256sum "$FIXTURE_CONFIG" | cut -c1-64)
 env -i SURETY_HOME="$SURETY_HOME" PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME="$SURETY_HOME" LANG=C.UTF-8 \
-  "$NODE" "$CLI" qualify claude --mode one_shot_headless --model "$MODEL" --egress api.anthropic.com | tee "$WORK/qualify.json"
+  "$NODE" "$CLI" qualify claude --mode one_shot_headless --model "$MODEL" --auth-mode "$AUTH_MODE" --egress api.anthropic.com | tee "$WORK/qualify.json"
 QA=$(jq -r '.qualification_attempt.id' "$WORK/qualify.json")
 [[ $QA == qa_* ]] || die "no attempt was proposed (see above)"
 S "$API/v1/decisions" | jq --arg q "$QA" '.decisions[] | select(.subject_id == $q) | .manifest | {binary_sha256, help_sha256, model, template_version, auth_mode, candidate_egress, canary_deadlines, spend}'
-check 3 "the approval's preview shows the binary's hash, the model and the spend labelled an estimate (and the 50 USD cap as configured, not as the engine's)" \
+check 3 "the approval's preview shows the binary's hash, the model, the auth mode subscription_token and the spend labelled an estimate (Claude Code's own; no dollar cap: your subscription's limits are the hard limit)" \
   "curl -sS -H \"X-Surety-Token: \$(cat $SURETY_HOME/api.token)\" $API/v1/decisions | jq '.decisions[] | select(.kind == \"qualification_approval\") | .manifest'"
 echo "   the binary you pinned: $(sha256sum "$SURETY_REAL_CLAUDE_BINARY" | cut -c1-64)"
 
@@ -427,14 +440,15 @@ sleep 5
 S "$API/v1/projects/$P/runs/$SR" | jq '.run | {id, state, outcome, reason_class, exit_class, domain_observation}'
 
 # ---------------------------------------------------------------------------------------
-say "11. The key is nowhere the engine or the repository keeps anything"
-note "grep reads the key from its file (-f), so it never appears on a command line."
-grep -rlFf "$SURETY_REAL_KEY_REF" "$SURETY_HOME" "$PROJ_REPO" && die "the key was found (above)" || echo "   nothing found in files"
-N=$(git -C "$PROJ_REPO" cat-file --batch-all-objects --batch | grep -cFf "$SURETY_REAL_KEY_REF" || true)
+say "11. The token is nowhere the engine or the repository keeps anything"
+note "grep reads the token from its file (-f), so it never appears on a command line."
+grep -rlFf "$SURETY_REAL_CREDENTIAL_REF" "$SURETY_HOME" "$PROJ_REPO" && die "the token was found (above)" || echo "   nothing found in files"
+N=$(git -C "$PROJ_REPO" cat-file --batch-all-objects --batch | grep -cFf "$SURETY_REAL_CREDENTIAL_REF" || true)
 echo "   git objects holding it: $N"
-check 9 "grep of the key's value over the engine home and the repository finds nothing" \
-  "grep -rlFf \$SURETY_REAL_KEY_REF $SURETY_HOME $PROJ_REPO; git -C $PROJ_REPO cat-file --batch-all-objects --batch | grep -cFf \$SURETY_REAL_KEY_REF"
+check 9 "grep of the token's value over the engine home and the repository finds nothing" \
+  "grep -rlFf \$SURETY_REAL_CREDENTIAL_REF $SURETY_HOME $PROJ_REPO; git -C $PROJ_REPO cat-file --batch-all-objects --batch | grep -cFf \$SURETY_REAL_CREDENTIAL_REF"
 
 stop_engine
 say "Done. Write down anything that surprised you: each surprise is a decision for you or a new failing test."
+note "When M2 is done: revoke the subscription token in your Claude account's settings and delete $SURETY_REAL_CREDENTIAL_REF."
 note "The records of this run are kept in $WORK."

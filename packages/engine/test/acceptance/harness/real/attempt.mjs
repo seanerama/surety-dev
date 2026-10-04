@@ -155,7 +155,9 @@ function spendGuard(ctx, attempt, fixtureDayUsd) {
   assert.equal(attempt.spend?.overshoot, 'deadline', 'with the overshoot stated');
   assert.ok(typeof attempt.spend?.estimate === 'number' && attempt.spend.estimate > 0, `the estimate is shown before approval, a figure greater than zero (SEAM.md §161): ${JSON.stringify(attempt.spend)}`);
   assert.ok(attempt.spend.estimate <= fixtureDayUsd, `the estimate (${attempt.spend.estimate} USD) is within the day limit the attempt runs under (${fixtureDayUsd} USD); otherwise Sean is not asked`);
-  assert.deepEqual([attempt.spend?.provider_cap?.status, attempt.spend?.provider_cap?.usd], ['configured', REAL.providerCapUsd], `the provider-side cap is shown as configured, never as the engine's enforcement (D2 §4.2): ${JSON.stringify(attempt.spend)}`);
+  assert.equal(attempt.auth_mode, ctx.authMode, `the attempt binds the auth mode the lane runs in (E74 item 1): ${attempt.auth_mode}`);
+  if (ctx.authMode === 'api_key') assert.deepEqual([attempt.spend?.provider_cap?.status, attempt.spend?.provider_cap?.usd], ['configured', REAL.providerCapUsd], `the provider-side cap is shown as configured, never as the engine's enforcement (D2 §4.2): ${JSON.stringify(attempt.spend)}`);
+  else assert.ok(attempt.spend?.provider_cap === undefined || attempt.spend?.provider_cap === null, `a subscription has no dollar cap on its credential: none is shown (E74 item 1): ${JSON.stringify(attempt.spend)}`);
   return {
     'binary path': attempt.binary_path,
     'binary sha256': attempt.binary_sha256,
@@ -164,7 +166,11 @@ function spendGuard(ctx, attempt, fixtureDayUsd) {
     'spend (the engine\'s estimate, labelled)': attempt.spend,
     'at most, billable tokens alone': `3 canaries x ${REAL.runBillableTokens} billable tokens x ${REAL.usdPerMillion.output} USD per million = ${(3 * RUN_BILLABLE_MAX_USD).toFixed(2)} USD, plus cache reads and any overshoot until a canary's deadline`,
     'day limit of the fixture project': `${fixtureDayUsd} USD verified`,
-    'provider-side cap (the only hard maximum)': `${REAL.providerCapUsd} USD`,
+    'auth mode': ctx.authMode,
+    'the only hard maximum':
+      ctx.authMode === 'api_key'
+        ? `the provider-side cap of ${REAL.providerCapUsd} USD on the key`
+        : "your Claude subscription's own usage limits, which your own Claude use shares; the dollar figures are Claude Code's own estimates",
     'candidate egress': attempt.candidate_egress,
     'canary deadlines (s)': attempt.canary_deadlines,
     'host qualification': attempt.host_qualification,
@@ -184,7 +190,7 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
     await changePolicy(fx.engine, fixtureProject, realPolicy(REAL.dayVerifiedUsd.qualification));
 
     const witnessBefore = hostWitness(fx.home, fixtureProject);
-    const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines } });
+    const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
     assert.equal(res.status, 201, `POST /v1/trust/qualify proposes the attempt (body: ${res.text})`);
     const id = res.body.qualification_attempt.id;
     const proposed = attemptOf(fx.home, id);
@@ -231,7 +237,7 @@ export async function wrongKeyAttempt(ctx) {
     const out = await runAttempt(ctx, {
       homeName: 'home-auth',
       keyFile: wrong.file,
-      label: 'an attempt whose key is WRONG ON PURPOSE (M139): the provider refuses it; it costs no tokens. Approve it so the refusal is observed.',
+      label: `an attempt whose credential (${ctx.authMode}) is INVALID ON PURPOSE (M139): the provider refuses it; it uses no tokens. Approve it so the refusal is observed.`,
       row: 'wrong_key',
     });
     if (out.status !== 'failed') throw new Error(`the wrong-key attempt ended ${out.status}, not failed: an unexpected outcome`);

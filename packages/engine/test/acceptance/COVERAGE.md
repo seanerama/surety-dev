@@ -1893,6 +1893,36 @@ The real-lane files were checked with `node --check` only (no money). Run alone 
 
 No `surety-*` scope was left after them.
 
+**After E74: the subscription token, and the review's cases** (2026-10-04, on `verify/m2-s14-review` from `main` at `b6251bd`).
+
+*The subscription token* (E74 item 1, Sean's decision: both modes, M2's real lane on the subscription). Changed, real-lane files checked with `node --check` only:
+
+| Where | Change |
+|---|---|
+| `harness/real/lane.mjs` | `SURETY_REAL_KEY_REF` becomes `SURETY_REAL_CREDENTIAL_REF`, and `SURETY_REAL_AUTH_MODE` is added (`subscription_token` by default, or `api_key`). The secret reference is per mode; `--provider-cap-usd` is passed in the `api_key` mode only. The invalid credential is per mode. The confirmation phrase is the subscription's. `costStatusFor` and `dayTotalFor` are added. |
+| `harness/real/attempt.mjs` | The attempt asks for and binds `auth_mode`. A dollar cap is shown, and required, only for an API key; none is shown for a subscription. |
+| M136 (b), (d) | `auth_mode` is the lane's. `credential_delivery` must be established, with its variable recorded (`ANTHROPIC_API_KEY` asserted only for an API key). `total_cost_usd` is `estimated` in the subscription mode and `reported` with a key. |
+| M139 | An invalid subscription token: `auth_failed`, the redacted error, the cost unknown and not zero. |
+| M140 (d), (e) | The day's `estimated_usd` (or `reported_usd` with a key) is the sum of its rows. The token is absent everywhere. |
+| `M2-hands-on.sh`, M142 | Step 0 is Sean's own `claude setup-token` into a mode-600 file, never pasted into the script, revoked after M2. The paid gate says the runs draw on the allowance his own Claude use shares, and that the hard limit is the subscription's. M142 gains case (e); run alone: 5 of 5. |
+| SEAM §§159 to 165, the report skeleton, `M2-not-claimed.md` | Amended to match. |
+
+*The review's cases* (E74 items 2 and 3; SEAM §167), written with a fake `claude` and listed under slice 14:
+
+| Case | File | Lane |
+|---|---|---|
+| S1 (a), S1 (b), S2 (a), S2 (b) | `M136-adapter-with-a-fake-backend.test.mjs` | sandbox |
+| S3 | `M140-credential-never-echoed.test.mjs` | kernel |
+
+Each was run alone with `node --test` on `a2c091e`, in a detached scratch worktree after `npm ci` and `npm run build`, with the new harness files copied in uncommitted. **Each failed at the assertion that states its defect:**
+- **S1 (a)**: "the observed billable input (1200 + 3000 cache creation) is kept, not overwritten by the terminal's missing count". The row had `billable_in` null, `usage_complete` 1 and `unknown_allowance_tokens` null.
+- **S1 (b)**: "the observed per-call counts are kept when the terminal event carries none". The row had `billable_in`, `cached_in` and `out` all null.
+- **S2 (a)**: "an inventory with Skill, a tool the template does not grant, is not delegation_verified". The capabilities read `delegation_verified` true with `tools` holding `Skill`; the positive canary had passed, so the fixture was live.
+- **S2 (b)**: "a sampler that never saw the backend shows nothing absent: not delegation_verified". `delegation_verified` was true with sampling `max_backend` 0 (3 and 5 samples).
+- **S3**: "the refusal does not echo the credential". The value was in the refusal's `reason` and `subject.path`.
+
+No `surety-*` scope was left after them.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

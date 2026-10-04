@@ -2,8 +2,9 @@
 // M2 plan §3.8 M139; D2 §7.2 (diagnostics), A.2 CanaryFailureClass; AR N04,
 // T11; CH incident 3; SEAM.md §§159 to 165.
 //
-// PAID LANE, BUT THIS FILE SPENDS NO TOKENS: its attempt's key is wrong on
-// purpose, so the provider refuses the first request. It still runs only by
+// PAID LANE, BUT THIS FILE SPENDS NO TOKENS: its attempt's credential is
+// invalid on purpose (in M2 an invalid subscription token; E74 item 1), so
+// the provider refuses the first request. It still runs only by
 // Sean's command (`--lane real`) and only after his `qualification_approval`
 // of that attempt, which the test waits for and never gives. It is first in
 // the manifest's `real` list: the real binary, the sandbox, the proxy's
@@ -34,7 +35,7 @@ import { eventsNamed, trustEntries } from './harness/trust.mjs';
 import { decision } from './harness/decisions.mjs';
 
 describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
-  test("(a) a reference whose value is a wrong key: auth_failed, the redacted structured provider error kept with the key absent, the attempt failed / qualification_failed, no entry; the ledger row's cost unknown, not zero", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test("(a) a reference whose value is an invalid credential (an invalid subscription token in M2; a wrong key in the api_key mode): auth_failed, the redacted structured provider error kept with the key absent, the attempt failed / qualification_failed, no entry; the ledger row's cost unknown, not zero", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M139 (a)', async () => {
     const out = await wrongKeyAttempt(ctx);
@@ -60,7 +61,7 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
     }
     assert.ok(structured !== null && typeof structured === 'object', `the provider error is kept structured, as JSON (D2 §7.2; CH incident 3): ${positive.provider_error.slice(0, 300)}`);
     observe(ctx, 'M139', 'provider_error', structured);
-    assert.ok(!positive.provider_error.includes(wrong.value), 'the wrong key is not in the provider error');
+    assert.ok(!positive.provider_error.includes(wrong.value), 'the invalid credential is not in the provider error');
 
     // The finish, and no entry.
     const finished = eventsNamed(home, 'qualification.finished').filter((e) => e.subject?.qualification_attempt === out.attempt);
@@ -74,9 +75,9 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
     assert.equal(row.cost_usd, null, `the cost is unknown (null), not zero: ${JSON.stringify(row)}`);
     assert.equal(row.cost_status, 'unknown', `cost_status is unknown: ${JSON.stringify(row)}`);
 
-    // The wrong key, and the real one, are absent from everything this home holds.
-    assert.deepEqual(secretHits(wrong.value, { roots: [home] }), [], 'the wrong key is in no file under its engine home');
-    assert.deepEqual(secretHits(ctx.keyValue, { roots: [home] }), [], 'the dedicated key is in no file under this engine home either');
+    // The invalid credential, and the real one, are absent from everything this home holds.
+    assert.deepEqual(secretHits(wrong.value, { roots: [home] }), [], 'the invalid credential is in no file under its engine home');
+    assert.deepEqual(secretHits(ctx.keyValue, { roots: [home] }), [], 'the real credential is in no file under this engine home either');
     });
   });
 
@@ -97,7 +98,7 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
         assert.equal(again.status, 409, `answering it again is refused (body: ${again.text})`);
         assert.equal(again.body?.code, 'decision_consumed');
         // A replay is a new attempt with its own approval, and waits for it.
-        const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines } });
+        const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
         assert.equal(res.status, 201, `a new attempt is proposed (body: ${res.text})`);
         const replay = attemptOf(home, res.body.qualification_attempt.id);
         assert.notEqual(replay.id, first.attempt, 'a new attempt');
@@ -108,7 +109,7 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
         assert.equal(withStore(home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "invocation_receipts" WHERE "qualification_attempt" = ?').get(replay.id).n), 0, 'nothing runs under it');
         assert.equal(JSON.stringify(attemptOf(home, first.attempt)), before, 'the old attempt is untouched');
         // Left proposed, its question open: only Sean could approve it, and
-        // its key is the wrong one. The engine is stopped below.
+        // its credential is invalid. The engine is stopped below.
         return { replay: replay.id, decision: replay.decision };
       } finally {
         await fx.engine.stop();
