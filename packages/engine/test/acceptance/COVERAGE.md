@@ -1970,6 +1970,21 @@ After each run: no `surety-*` scope left and nothing left in the scratch `TMPDIR
 
 This includes the `[not_exercised]` cases (f) and (h), as before. The user manager was `running` before and after, and no `surety-*` scope was left.
 
+**After the M128 (b) rerun failure: the fault `egress_connect_hang`** (2026-10-05, on `verify/m2-s14-hang` from `main` at `c3a2651`; the driver's decision; SEAM §169).
+
+**Why.** In the driver's rerun, M128 (b) failed. Its connect to the documentation address `198.51.100.20` was answered `EHOSTUNREACH` by this host's router (3.1 s cold, sooner once cached), so the proxy logged `connect_failed`, not `connect_timeout`. A passing retry does not close it (E75 item 2's rule).
+
+**The change.** The cases now hold the connect unconnected with a harness-only fault, `egress_connect_hang` `{"address"}`, instead of relying on the network:
+- **M128 (b)** arms it for `DOC.b`; its assertions are unchanged.
+- **M127 (a) to (e)** arms it for `DOC.a` (rebinding's first attempt).
+- **M127 (h)** arms it for `DOC.c`.
+
+Those M127 cases asserted no failure mode, but they did depend on what the network answered. No other case of M127 or M128 connects anywhere but the echo endpoint. The addresses stay in the documentation ranges.
+
+**Runs on `main` at `c3a2651`, which has no such fault.** Each file was run alone with `node --test` after `npm run build`, with a name pattern for the changed cases. Each fails at the fault's arming, as expected until the Builder's `build/m2-s14-hang` adds it:
+- **M128 (a)/(b):** 0 of 1. The error: `arm fault {"point":"egress_connect_hang","address":"198.51.100.20"} → 400 {"code":"invalid_value","reason":"Unknown fault."...}`.
+- **M127 (a) to (e) and (g)/(h):** 0 of 2, the same error for `192.0.2.10` and for `203.0.113.30`.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
