@@ -198,7 +198,7 @@ export function realPreflight() {
 
 // ---- the dress rehearsal (E79 item 1; SEAM.md §170) ---------------------------------
 
-// The marker the rehearsal's fake carries (harness/standin/rehearsal-claude.mjs).
+// The marker the rehearsal's fake carries (harness/standin/rehearsal-claude.cjs).
 export const REHEARSAL_MARKER = 'SURETY REHEARSAL FAKE CLAUDE';
 // The rehearsal's only candidate destination: a name that resolves nowhere,
 // so nothing leaves this machine for a provider (the provider-tunnel

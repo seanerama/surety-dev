@@ -33,9 +33,12 @@
 // Built-ins only. It acts only inside a sandbox: without /surety/context it
 // prints a failure result and exits 1.
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+// CommonJS, so that Node runs it under any file name: the engine pins its
+// copy as `claude-<version>-<sha16>`, a name whose dot an ES module loader
+// would read as an unknown file extension.
+const { spawnSync } = require('node:child_process');
+const { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } = require('node:fs');
+const { dirname } = require('node:path');
 
 const argv = process.argv.slice(2);
 if (argv.length === 1 && argv[0] === '--version') {
@@ -143,7 +146,7 @@ if (role === 'builder') {
   } else {
     if (files.includes('greeting')) write('src/greeting.js', 'export const greeting = (name) => `Hello, ${name}!`;\n');
     if (files.includes('logout')) write('src/logout.js', 'export const logout = (session) => ({ ...session, revoked: true });\n');
-    finish({ status: 'completed', summary: `rehearsal: wrote ${files.map((f) => `src/${f}.js`).join(', ') || 'nothing'}` });
+    finish({ status: 'completed', summary: `rehearsal: wrote ${files.map((f) => 'src/' + f + '.js').join(', ') || 'nothing'}` });
   }
 } else if (role === 'verifier') {
   const defect = existsSync(ws('src/session.js')) && readFileSync(ws('src/session.js'), 'utf8').includes('SESSION_LIFETIME * 1000 * 1000');
