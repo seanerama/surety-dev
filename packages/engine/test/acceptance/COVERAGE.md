@@ -2054,6 +2054,18 @@ The report is `test-results/acceptance-slice13-2026-10-05T03-04-30-989Z.log`, no
 
 Two leftovers were found, both from before this pass: `/dev/shm/surety-probe-479295dcfa04` and `/tmp/surety-probe-479295dcfa04/`, dated 2026-10-04 08:05 local time, of an earlier engine whose home tag is `479295dcfa04`. This run made neither. I left them in place: the engine sweeps its own tag's leftovers at that home's next start.
 
+## After E79 item 2: the launcher-exit tick
+
+2026-10-05, on `verify/m2-tick` from `main` at `1677b76`; E79 item 2 (decided by Sean), E77 item 1, objection 018's "not taken"; SEAM §170.
+
+**The case.** `M115-every-unknown-quarantines.test.mjs`, "(e) the launcher-exit tick (E79 item 2)", beside (e) and S1. It is (e)'s fixture: the launcher paused at `launcher.before_placement`, a Stop under `launcher_wait`, the run quarantined because the launcher is outstanding, then the launcher released. After the release **the test sends no tick**. Within 30 s of the launcher's exit (host-read), the domain must be terminated and the quarantine cleared once, and an `engine.tick` must follow the `domain.terminated`. Every assertion of (e) holds as well: no `domain.launch_authorized`, no role, the invocation `refused` and uncharged, the work `held`. The sandbox lane's `tick_interval` is 600 s, so only a tick the engine asks for itself can clear it in time.
+
+**Runs on `main` at `1677b76`**, which has no such tick, after `npm run build`, with `node --test` on the file alone:
+- **Whole file:** 10 of 12 passed. The new case failed at its assertion (line 374): `with no tick sent by the test, the quarantine was not cleared within 30 s of the launcher's exit (host pid 847103): … Run state finalizing, domain {"status":"quarantined","observation":"unknown","launch_state":"closed"}, the domain's directory empty`. **(e) also failed**, at its first line of fixture (`assertEngineInScope`: "the user manager lists the scope … with a control group", nothing listed, 681 ms in). The user manager's journal shows a `daemon-reexec` at 22:59:48, when (e) started, requested by a `systemctl` that was not this run's (this run's own, from (h), is the one at 23:01:05). A Builder session was running sandbox-lane tests on the same host at the time. This is an inference from the times, not established.
+- **The two (e) cases alone** (`--test-name-pattern '^\(e\) '`), straight afterwards, with no re-exec in their window: (e) passed; the new case failed at the same assertion, with the same state.
+
+The user manager was `running` before and after each run. Afterwards no `surety-*` scope was listed.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
