@@ -18,7 +18,19 @@
 //                the binary and a host sampler cannot identify it
 //   host_pid_ns: the host's pid namespace; the containment actions are
 //                refused when this process is in it (SEAM.md §141's guard)
-//   role:        "proxy_refused" (a role's run, not a canary; E84): one
+//   fallback:    true (E86 item 3): before its result, the session falls back
+//                from the entry's model, as Sean's third attempt recorded it:
+//                a system/model_refusal_fallback event (scope session, the
+//                original model the requested one, the fallback
+//                claude-sonnet-5), an assistant message from the fallback
+//                model, and the result's modelUsage naming both models
+//   linger_ms:   (E86) how long the containment canary stays live doing its
+//                harmless task when canary.json names neither a probe nor
+//                actions (the engine runs the probe itself); default the
+//                canary's own wait_seconds, as its prompt asks
+//   role:        "complete" (a role's run, not a canary): write
+//                src/fake-claude.txt and end with a valid result, exit 0;
+//                "proxy_refused" (a role's run, not a canary; E84): one
 //                CONNECT to `connect` through HTTPS_PROXY (inside the sandbox
 //                only, by the same guard), then Claude Code's ending when
 //                its provider cannot be reached, as Sean's second attempt
@@ -70,7 +82,18 @@ const templateTools = (val('--tools') ?? 'Read,Edit,Write,Bash,Glob,Grep').split
 out({ type: 'system', subtype: 'init', tools: [...templateTools, ...(mode.extra_tools ?? [])], apiKeySource: 'ANTHROPIC_API_KEY', model, session_id: val('--session-id'), permissionMode: 'bypassPermissions', mcp_servers: [] });
 
 const assistant = (id, usage) => out({ type: 'assistant', parent_tool_use_id: null, message: { id, model, usage, content: [] } });
-const success = (modelUsage, cost) => out({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost, modelUsage: { [model]: modelUsage } });
+const FALLBACK_MODEL = 'claude-sonnet-5';
+const success = (modelUsage, cost) => {
+  if (mode.fallback) {
+    // E86 item 3: the session's model changes under the run, as recorded in
+    // Sean's third attempt (the event's shape is that transcript's).
+    out({ type: 'system', subtype: 'model_refusal_fallback', trigger: 'refusal', direction: 'retry', scope: 'session', original_model: model, fallback_model: FALLBACK_MODEL, api_refusal_category: 'cyber', api_refusal_explanation: 'fake: a safeguard flagged this session', content: 'fake: the fallback model is answering instead' });
+    out({ type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_fallback_1', model: FALLBACK_MODEL, usage: { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 20 }, content: [] } });
+    out({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost, modelUsage: { [model]: modelUsage, [FALLBACK_MODEL]: { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } });
+    return;
+  }
+  out({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost, modelUsage: { [model]: modelUsage } });
+};
 
 // The guard's first half (SEAM.md §141): inside a sandbox, never the host's
 // pid namespace.
@@ -82,6 +105,18 @@ const insideSandbox = () => {
     return false;
   }
 };
+
+if (mode.role === 'complete' && !existsSync('/surety/context/canary.json')) {
+  // A role's run that does its work and ends with a valid result.
+  assistant('msg_r_1', { input_tokens: 600, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 40 });
+  if (existsSync('/surety/workspace')) {
+    mkdirSync('/surety/workspace/src', { recursive: true });
+    writeFileSync('/surety/workspace/src/fake-claude.txt', 'written by the fake claude\n');
+  }
+  writeFileSync('/surety/out/result.json', JSON.stringify({ status: 'completed', summary: 'fake: the role did its work' }));
+  success({ inputTokens: 600, outputTokens: 40, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }, 0.002);
+  process.exit(0);
+}
 
 if (mode.role === 'connect_and_exit' && !existsSync('/surety/context/canary.json')) {
   // The CONNECT left in flight: written, then the backend ends at once.
@@ -198,9 +233,14 @@ if (canary.kind === 'positive') {
     // E83: the sanctioned check, the probe run once, its output reported.
     const done = contained && canary.probe.startsWith('/surety/context/') ? spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000 }) : null;
     writeFileSync('/surety/out/result.json', JSON.stringify({ status: 'completed', summary: 'the sanctioned containment check: the probe program run once; its output follows verbatim', probe_output: done?.stdout ?? '' }));
-  } else {
-    if (contained) for (const a of canary.actions ?? []) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
+  } else if (Array.isArray(canary.actions)) {
+    if (contained) for (const a of canary.actions) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
     writeResult();
+  } else {
+    // E86 (SEAM.md §175): the engine runs the probe itself; the agent's task
+    // is harmless. The fake does it, staying live a while, and ends.
+    await new Promise((r) => setTimeout(r, Number(mode.linger_ms ?? Number(canary.wait_seconds ?? 4) * 1000)));
+    writeFileSync('/surety/out/result.json', JSON.stringify(canary.result ?? { status: 'completed', summary: 'fake: the harmless task done' }));
   }
   success({ inputTokens: 800, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 100 }, 0.002);
   process.exit(0);
