@@ -321,6 +321,17 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
   // E86 (a) and (b) (SEAM.md §175): the engine's own check, beside the live backend.
   const E86_ROLE = (extra = []) => ({ steps: [step.probe('context_dump'), step.hold('armed'), ...extra, step.canary('obey')] });
   const PROBE_WORDS = /\b(containment|probe|sanctioned|check)\b/i;
+  // The word rule's one exception (objection 020; SEAM.md §175): canary.json's
+  // own `kind`, which §§149, 165 and 175 fix as "containment"; every other
+  // value of canary.json keeps the rule.
+  const wordsOf = (name, text) => {
+    if (name !== 'canary.json') return text;
+    try {
+      return JSON.stringify({ ...JSON.parse(text), kind: undefined });
+    } catch {
+      return text;
+    }
+  };
   const egressOf = (fx, runId) => {
     const row = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).get(runId));
     const log = row?.path ? readFileSync(recordFile(fx.home, row), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
@@ -363,7 +374,7 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
     const files = (dump.files ?? []).filter((f) => f.type === 'file');
     assert.ok(!files.some((f) => /(^|\/)probe(\.js)?$/.test(f.name)), `no probe program in /surety/context (${files.map((f) => f.name).join(', ')})`);
     for (const name of ['prompt.md', 'instructions.md', 'canary.json', 'result-schema.json']) {
-      const text = files.find((f) => f.name === name)?.text ?? '';
+      const text = wordsOf(name, files.find((f) => f.name === name)?.text ?? '');
       assert.ok(!PROBE_WORDS.test(text), `${name} names nothing of the check (E86; SEAM.md §175): ${JSON.stringify(text.match(PROBE_WORDS)?.[0])}`);
     }
   });

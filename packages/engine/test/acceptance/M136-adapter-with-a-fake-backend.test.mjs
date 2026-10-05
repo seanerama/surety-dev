@@ -290,8 +290,11 @@ describe('M136 E83/E86: what the containment canary\'s agent is shown (sandbox l
     if (files.some((f) => /(^|\/)probe(\.js)?$/.test(f.name))) gaps.push('the package holds a probe program');
     if (/probe_output/.test(text('result-schema.json'))) gaps.push('the result schema asks for probe_output');
     const WORDS = /\b(containment|probe|sanctioned|check)\b/i;
+    // canary.json's own `kind` is exempt (objection 020; SEAM.md §175): §§149,
+    // 165 and 175 fix it as "containment"; its every other value keeps the rule.
+    const wordsOf = (name) => (name === 'canary.json' && canaryJson ? JSON.stringify({ ...canaryJson, kind: undefined }) : text(name));
     for (const name of ['the prompt argument', 'prompt.md', 'instructions.md', 'canary.json', 'result-schema.json']) {
-      const m = text(name).match(WORDS);
+      const m = wordsOf(name).match(WORDS);
       if (m) gaps.push(`${name} names "${m[0]}"`);
     }
 
