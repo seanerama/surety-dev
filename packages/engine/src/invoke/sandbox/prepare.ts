@@ -22,7 +22,8 @@ import { finishEgress, startEgress } from '../proxy/egress.js';
 import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
-import { type ContextFacts, writeContextPackage } from './context.js';
+import { type CandidateDiff, type ContextFacts, writeContextPackage } from './context.js';
+import { SHA, git, repoContext } from '../../git/exec.js';
 import { CANARY_BARRIER, canaryInstructions, witnessSocket } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
@@ -140,8 +141,10 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
         apiPort: rt.config.values.api_port,
       })
     : null;
+  const diff = facts?.run.role === 'reviewer' && facts.candidate && facts.review ? await candidateDiff(repo, facts.review.diff_base, facts.candidate.revision) : null;
   writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
+    diff,
     probe: claim.profile === 'probe',
     readRecord: (id) => {
       const path = recordPaths.get(id);
@@ -278,4 +281,43 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     unshare: t.unshare,
     egress,
   };
+}
+
+// The most of a candidate's diff the context package carries (D2 §1.3).
+export const DIFF_CAP_BYTES = 2 * 1024 * 1024;
+
+// The Reviewer's candidate diff (D2 §1.3; E41 item 4): from the base the
+// store names to the candidate's revision, taken from the project's
+// repository by the engine's own git. With no base, from the empty tree.
+// What could not be taken is said, never given as an empty diff.
+export async function candidateDiff(repo: string, base: { revision: string | null; from: string | null }, revision: string): Promise<CandidateDiff> {
+  const ctx = repoContext(repo);
+  const out = (state: CandidateDiff['state'], text: string, detail: string | null, from: string | null = base.revision): CandidateDiff => ({
+    base: from,
+    base_from: base.from,
+    revision,
+    state,
+    text,
+    detail,
+  });
+  if (!SHA.test(revision) || (base.revision !== null && !SHA.test(base.revision))) return out('unavailable', '', 'a revision is not an object id');
+  let from = base.revision;
+  if (from === null) {
+    const empty = await git(ctx, ['hash-object', '-t', 'tree', '--stdin'], { input: '' });
+    from = empty.code === 0 ? empty.stdout.trim() : null;
+    if (from === null) return out('unavailable', '', 'the empty tree could not be named', null);
+  }
+  const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--find-renames', from, revision, '--'];
+  const whole = await git(ctx, args);
+  if (whole.code === 0) {
+    const bytes = Buffer.from(whole.stdout, 'utf8');
+    if (bytes.length <= DIFF_CAP_BYTES) return out('complete', whole.stdout, null, from);
+    const cut = bytes.subarray(0, DIFF_CAP_BYTES);
+    const end = cut.lastIndexOf(0x0a);
+    return out('truncated', cut.subarray(0, end < 0 ? cut.length : end + 1).toString('utf8'), `${bytes.length} bytes, the first ${DIFF_CAP_BYTES} given`, from);
+  }
+  const why = whole.timedOut ? 'git diff passed its deadline or its output cap' : `git diff exited ${String(whole.code)}: ${whole.stderr.trim().slice(0, 200)}`;
+  const stat = await git(ctx, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--find-renames', '--stat=200', from, revision, '--']);
+  if (stat.code === 0 && Buffer.byteLength(stat.stdout) <= DIFF_CAP_BYTES) return out('stat_only', stat.stdout, why, from);
+  return out('unavailable', '', why, from);
 }

@@ -35,8 +35,35 @@ export type ContextFacts = {
   modules: { id: string; name: string; paths: unknown }[];
   phase_plan: Record<string, unknown> | null;
   candidate: { id: string; revision: string; acceptance_content_hash: string | null } | null;
+  review?: {
+    findings: FindingFacts[];
+    assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
+    signoffs: { role: string; scope: string; module?: string }[];
+    diff_base: { revision: string | null; from: string | null };
+  } | null;
+  finding?: FindingFacts | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
+
+export type FindingFacts = {
+  id: string;
+  seq: number;
+  scope: string;
+  candidate: string | null;
+  category: string;
+  severity: string;
+  message: string;
+  check: string | null;
+  sensitive_area: string | null;
+  status: string;
+  disposition: string | null;
+  source_role: string | null;
+};
+
+// The candidate's diff as the engine could take it (D2 §1.3): from `base` to
+// the candidate's revision. `state` says what the patch is: the whole diff,
+// its first bytes, only its file summary, or nothing, with why.
+export type CandidateDiff = { base: string | null; base_from: string | null; revision: string; state: 'complete' | 'truncated' | 'stat_only' | 'unavailable'; text: string; detail: string | null };
 
 export type ContextKind = 'prompt' | 'instructions' | 'result_schema' | 'requirement' | 'adr' | 'constraint' | 'phase_plan' | 'interface' | 'diff' | 'acceptance_content_hash' | 'prior_run';
 
@@ -55,23 +82,141 @@ const ROLE_TASK: Record<string, string> = {
   architect: 'Plan or replan the work below.',
 };
 
-export const RESULT_SCHEMA = {
-  type: 'object',
-  required: ['status', 'summary'],
-  properties: {
-    status: { const: 'completed' },
-    summary: { type: 'string' },
-    checkpoint: { type: 'boolean' },
-    nominate: { type: 'boolean' },
+// The result's schema, per role (D2 §1.3; SEAM.md §68): every field the
+// engine reads from that role's result, each in the form the engine takes,
+// with what the engine does with it. A field of another role's is not
+// listed: the engine records nothing of it, and an Alpha exception proposal
+// from any role but the Reviewer makes the result invalid.
+const SEVERITY = { enum: ['critical', 'high', 'medium', 'low'] };
+const FINDING_ID = { type: 'string', pattern: '^fnd_', description: 'A finding id, as listed in /surety/context/findings.json.' };
+const FIELDS: Record<string, Record<string, unknown>> = {
+  status: { const: 'completed' },
+  summary: { type: 'string', description: 'What you did, in a few sentences.' },
+  checkpoint: { type: 'boolean', description: 'true asks the engine to commit your workspace as a checkpoint and continue the work in a new run.' },
+  nominate: { type: 'boolean', description: 'true asks the engine to nominate the result as a candidate (honoured at tier T1 only; otherwise the engine nominates on its own cadence).' },
+  findings: {
+    type: 'array',
+    description: 'Each defect or conflict you found in the candidate. The engine records each as an open finding of the candidate. Do not repeat a finding already listed in /surety/context/findings.json; change its severity instead.',
+    items: {
+      type: 'object',
+      required: ['category', 'severity', 'message'],
+      properties: {
+        category: { enum: ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] },
+        severity: SEVERITY,
+        message: { type: 'string', description: 'What is wrong and where, so a Builder can fix it.' },
+        scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
+        sensitive_area: { type: 'string' },
+        check: { type: 'string', description: 'The key of the check whose passing shows the finding fixed.' },
+      },
+    },
   },
-  additionalProperties: true,
+  severity_changes: {
+    type: 'array',
+    description: 'A new severity for a listed finding.',
+    items: { type: 'object', required: ['finding', 'to'], properties: { finding: FINDING_ID, to: SEVERITY } },
+  },
 };
+const VERIFIER_FIELDS: Record<string, Record<string, unknown>> = {
+  severity_changes: { ...FIELDS.severity_changes, description: 'A higher severity for a listed finding. A Verifier may raise a severity, never lower one.' },
+  applicability: {
+    type: 'array',
+    description: 'A proposal that a listed finding does not apply to a candidate, with your reason and evidence. A Reviewer assesses it.',
+    items: {
+      type: 'object',
+      required: ['finding', 'candidate', 'reason', 'evidence'],
+      properties: { finding: FINDING_ID, candidate: { type: 'string', description: 'The candidate id.' }, reason: { type: 'string' }, evidence: { type: 'string', description: 'Published as an evidence record.' } },
+    },
+  },
+  proposal: {
+    type: 'object',
+    description: 'Only when you changed protected files (the checks): the rationale of that change, which the engine captures as a proposal. Any change outside them rejects the run whole.',
+    required: ['rationale', 'requested_change_kind'],
+    properties: { rationale: { type: 'string' }, requested_change_kind: { enum: ['tightening', 'loosening', 'unclassifiable'] } },
+  },
+};
+const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
+  signoffs: {
+    type: 'array',
+    description: 'Your sign-off of the candidate, bound to the acceptance content hash you reviewed. /surety/context/review.json lists the sign-offs the project\'s tier requires.',
+    items: { type: 'object', required: ['scope'], properties: { scope: { enum: ['candidate', 'module', 'security'] }, module: { type: 'string', description: 'The module, for scope module.' } } },
+  },
+  dispositions: {
+    type: 'array',
+    description:
+      'What is to be done about each open finding listed in /surety/context/findings.json. fix: the engine registers fix work for it. defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides.',
+    items: {
+      type: 'object',
+      required: ['finding', 'disposition'],
+      properties: {
+        finding: FINDING_ID,
+        disposition: { enum: ['fix', 'defer', 'accept'] },
+        linked_issue: { type: 'string' },
+        defer_target: { type: 'string', format: 'date-time' },
+      },
+    },
+  },
+  severity_changes: {
+    ...FIELDS.severity_changes,
+    description: 'A new severity for a listed finding. Raising applies; lowering a Critical finding, or a High one out of the blocking range, is a proposal the human owner decides.',
+  },
+  assessments: {
+    type: 'array',
+    description: 'Your verdict on an applicability assessment listed in /surety/context/review.json, proposed by a Verifier.',
+    items: { type: 'object', required: ['assessment', 'verdict'], properties: { assessment: { type: 'string' }, verdict: { enum: ['not_applicable', 'applicable'] } } },
+  },
+  proposal_approval: {
+    type: 'object',
+    description: 'Your recommendation to approve a captured protected-change proposal, by its id.',
+    required: ['proposal', 'reason'],
+    properties: { proposal: { type: 'string' }, reason: { type: 'string' } },
+  },
+  alpha_exception_proposals: {
+    type: 'array',
+    description: 'A proposal that a High finding be nonblocking at Alpha, with its containment argument and testing purpose. The human owner decides.',
+    items: {
+      type: 'object',
+      required: ['finding', 'containment_text', 'testing_purpose', 'references'],
+      properties: {
+        finding: FINDING_ID,
+        containment_text: { type: 'string' },
+        testing_purpose: { type: 'string' },
+        references: {
+          type: 'array',
+          items: { oneOf: [{ type: 'object', required: ['path'], properties: { path: { type: 'string', minLength: 1 } }, additionalProperties: false }, { type: 'object', required: ['record'], properties: { record: { type: 'string', minLength: 1 } }, additionalProperties: false }] },
+        },
+      },
+    },
+  },
+};
+
+const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
+  builder: { checkpoint: FIELDS.checkpoint!, nominate: FIELDS.nominate! },
+  architect: { checkpoint: FIELDS.checkpoint! },
+  verifier: { findings: FIELDS.findings!, ...VERIFIER_FIELDS },
+  reviewer: { findings: FIELDS.findings!, ...REVIEWER_FIELDS },
+};
+
+export function resultSchema(role: string): Record<string, unknown> {
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: `The ${role}'s result, written to /surety/out/result.json`,
+    type: 'object',
+    required: ['status', 'summary'],
+    properties: { status: FIELDS.status, summary: FIELDS.summary, ...(ROLE_FIELDS[role] ?? {}) },
+    additionalProperties: false,
+  };
+}
 
 const safeName = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'item';
 
 // `readRecord` gives a record's bytes by its id (for a resumed run's prior
 // context); null if they cannot be read.
-export function writeContextPackage(dir: string, claim: Claim, facts: ContextFacts | null, opts: { probe: boolean; readRecord?: (id: string) => Buffer | null; canary?: Record<string, unknown> | null }): void {
+export function writeContextPackage(
+  dir: string,
+  claim: Claim,
+  facts: ContextFacts | null,
+  opts: { probe: boolean; readRecord?: (id: string) => Buffer | null; canary?: Record<string, unknown> | null; diff?: CandidateDiff | null },
+): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: ContextKind; source: string | null; sha256: string }[] = [];
   const put = (path: string, kind: ContextKind, source: string | null, content: string | Buffer) => {
@@ -81,6 +226,52 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
   };
   const role = claim.role;
   const goal = typeof facts?.stage?.goal === 'string' ? facts.stage.goal : null;
+  // What a Verifier or a Reviewer reports against, and what a fix Builder
+  // fixes (D2 §1.3): named in the prompt, given whole in the files.
+  const review = facts?.candidate && facts.review ? facts.review : null;
+  const open = review ? review.findings.filter((f) => f.status === 'open') : [];
+  const diff = review && role === 'reviewer' ? (opts.diff ?? null) : null;
+  const DIFF_STATE: Record<CandidateDiff['state'], string> = {
+    complete: 'the whole diff',
+    truncated: 'the diff\'s first part only: it was too large to give whole; read the rest from the repository',
+    stat_only: 'only the diff\'s file summary: the diff could not be taken whole; read it from the repository',
+    unavailable: 'no diff: it could not be taken',
+  };
+  const reviewText = review
+    ? [
+        '',
+        '## What you report on',
+        '',
+        ...(diff
+          ? [
+              `- /surety/context/candidate.diff: the candidate's changes, from ${diff.base ?? '(no base: the engine has no earlier revision of this project)'}${diff.base_from ? ` (${diff.base_from.replace(/_/g, ' ')})` : ''} to ${diff.revision}; ${DIFF_STATE[diff.state]}${diff.detail ? ` (${diff.detail})` : ''}.`,
+            ]
+          : []),
+        `- /surety/context/findings.json: the ${review.findings.length} finding(s) that apply to this candidate, ${open.length} of them open, each by the id your result names it by.${
+          open.length > 0 ? ` Open: ${open.map((f) => `${f.id} (${f.severity})`).join(', ')}.` : ''
+        }`,
+        ...(role === 'reviewer'
+          ? [
+              '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
+              '',
+              'Give every open finding a disposition in your result\'s `dispositions`: `fix` registers fix work for it; without a disposition the finding stays open and nothing is done about it. Record new findings in `findings`, and your sign-offs in `signoffs`.',
+            ]
+          : ['', 'Record what you find in your result\'s `findings`; name a listed finding by its id.']),
+      ]
+    : [];
+  const fix = facts?.finding ?? null;
+  const fixText = fix
+    ? [
+        '',
+        '## The finding you fix',
+        '',
+        `Finding ${fix.id} (${fix.severity}, ${fix.category}${fix.check ? `; the check ${fix.check} shows it fixed` : ''}):`,
+        '',
+        fix.message,
+        '',
+        'It is also in /surety/context/finding.json.',
+      ]
+    : [];
   const prompt = [
     `# Your task (${role})`,
     '',
@@ -89,14 +280,45 @@ export function writeContextPackage(dir: string, claim: Claim, facts: ContextFac
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
     ...(facts?.candidate ? ['', '## The candidate', '', `Candidate ${facts.candidate.id} at revision ${facts.candidate.revision}.`] : []),
+    ...reviewText,
+    ...fixText,
     '',
     ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
     '',
   ].join('\n');
   put('prompt.md', 'prompt', null, prompt);
-  put('instructions.md', 'instructions', null, ['# Instructions', '', ...PROHIBITIONS.map((p) => `- ${p}`), '', 'The result must follow /surety/context/result-schema.json.', ''].join('\n'));
-  put('result-schema.json', 'result_schema', null, `${JSON.stringify(RESULT_SCHEMA, null, 2)}\n`);
+  put(
+    'instructions.md',
+    'instructions',
+    null,
+    ['# Instructions', '', ...PROHIBITIONS.map((p) => `- ${p}`), '', 'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.', ''].join('\n'),
+  );
+  put('result-schema.json', 'result_schema', null, `${JSON.stringify(resultSchema(role), null, 2)}\n`);
+  if (review) {
+    if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);
+    put('findings.json', 'instructions', facts!.candidate!.id, `${JSON.stringify({ candidate: facts!.candidate!.id, findings: review.findings }, null, 2)}\n`);
+    if (role === 'reviewer') {
+      put(
+        'review.json',
+        'instructions',
+        facts!.candidate!.id,
+        `${JSON.stringify(
+          {
+            candidate: facts!.candidate!.id,
+            revision: facts!.candidate!.revision,
+            acceptance_content_hash: facts!.candidate!.acceptance_content_hash,
+            diff: diff ? { base: diff.base, base_from: diff.base_from, revision: diff.revision, state: diff.state, detail: diff.detail } : null,
+            signoffs_required: review.signoffs,
+            assessments: review.assessments,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    }
+  }
+  if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);
   // The approved texts, verbatim (E67 item 7; SEAM.md §139): a role inside
   // the sandbox has no other way to read them.
   for (const r of facts?.requirements ?? []) {
