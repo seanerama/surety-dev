@@ -84,10 +84,11 @@ export async function realProject(ctx, fx, spec, { dayUsd, roles = {} }) {
   const repo = makeProjectRepo(dir, { files: { ...PROTECTED_FILES, ...spec.files } });
   const base = refOid(repo.path, repo.ref);
   const { id } = await createProject(fx.engine, { repoPath: repo.path, name: spec.name, tier: 'T2' });
-  // The policy (which backend each role runs) before the plan: the plan makes the first stage's work eligible, and the engine
-  // dispatches it at once, under whatever backend the policy names then
-  // (found by the E79 rehearsal: installed after the plan, the policy came
-  // too late and the Builder ran on the default backend, refused).
+  // The policy (which backend each role runs) before the plan: the plan
+  // makes the first stage's work eligible, and the engine dispatches it at
+  // once, under whatever backend the policy names then (found by the E79
+  // rehearsal: set after the plan, the policy came too late and the Builder
+  // ran on the default backend, refused).
   await changePolicy(fx.engine, id, {
     ...realPolicy(dayUsd),
     backend_builder: roles.builder ?? REAL.backend,
