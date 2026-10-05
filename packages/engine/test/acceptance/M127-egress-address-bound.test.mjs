@@ -17,9 +17,10 @@
 //
 // NETWORK: the names are under `.example`; their answers are constructed
 // by the harness resolver; a "public" address is a documentation address
-// (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32), routed
-// nowhere, so a connection the proxy makes to one times out and reaches no
-// host. The role's CONNECTs are guarded probes (SEAM.md §141).
+// (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32), and
+// each one the proxy connects to is held unconnected by the harness fault
+// `egress_connect_hang` (SEAM.md §169), so the connect times out, sends
+// nothing and reaches no host, whatever the network would have answered. The role's CONNECTs are guarded probes (SEAM.md §141).
 //
 // Every case here is expected to fail on the engine these tests were
 // written against, which has no egress proxy (COVERAGE.md, "M2 slice 12").
@@ -28,7 +29,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { describe, test } from 'node:test';
 
-import { sha256Hex } from './harness/engine.mjs';
+import { armFault, sha256Hex } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { addWork } from './harness/runs.mjs';
 import { DOC, ECHO_AUTHORITY, assertEntryForm, echoConnections, egressLogOf, egressRefusals, entryFor, hostAddresses, resolverQueries, setResolver } from './harness/sandbox/egress.mjs';
@@ -63,6 +64,8 @@ describe('M127 egress is bound to the validated address', () => {
     const names = { ...FORBIDDEN, 'host-own.example': [host], 'rebind.example': { answers: [[DOC.a], ['127.0.0.1']] }, 'listed.example': [DOC.b] };
     const project = await listedProject(fx, Object.keys(names));
     await setResolver(fx.engine, names);
+    // Rebinding's first attempt connects to DOC.a: held by the harness (SEAM.md §169).
+    await armFault(fx.engine, { point: 'egress_connect_hang', address: DOC.a });
     const item = await addProfiledWork(fx, project, 'verification', { profile: 'probe' });
     const { run, domain, probe } = await probedRun(fx, project, item, {
       acts: (act) => [
@@ -135,6 +138,8 @@ describe('M127 egress is bound to the validated address', () => {
     const fx = await sandboxEngine(t, { config: CONFIG });
     const project = (await addGitProject(fx)).id;
     await setResolver(fx.engine, { 'extra.example': [DOC.c] });
+    // The approved name's address: held by the harness (SEAM.md §169).
+    await armFault(fx.engine, { point: 'egress_connect_hang', address: DOC.c });
 
     const before = await probedRun(fx, project, await addWork(fx.engine, project, 'verification'), {
       acts: (act) => [act.proxyConnect(ECHO_AUTHORITY, { label: 'echo' }), act.proxyConnect('extra.example:443', { label: 'extra', timeout_ms: 8000 })],
