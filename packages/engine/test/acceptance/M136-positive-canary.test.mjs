@@ -61,8 +61,14 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.equal(ev.observed.edit.path, ev.expected.edit.path, 'the edit is at the expected path');
       assert.equal(ev.observed.edit.type, 'file', 'a regular file, read without following a link');
       assert.equal(ev.observed.edit.sha256, sha256(ev.expected.edit.content), 'holding exactly the expected content');
-      // The result: the run's `result` record is the collected file.
-      assert.deepEqual(p.result, ev.expected.result, `the collected result is exactly the expected one (${JSON.stringify(p.result)})`);
+      // The result: the collected value as the engine recorded it in the
+      // canary's evidence (SEAM.md §165: `observed.result`, "the collected
+      // value or null"). A canary run is never the acceptance pipeline, and
+      // no section publishes a `result` record for it; if one is ever
+      // published it must hold the same value. (Found by the E79 rehearsal:
+      // this case first read a `result` record no section promises.)
+      assert.deepEqual(ev.observed.result, ev.expected.result, `the collected result is exactly the expected one (${JSON.stringify(ev.observed.result)})`);
+      if (p.result !== null) assert.deepEqual(p.result, ev.expected.result, `a published result record holds the same value (${JSON.stringify(p.result)})`);
       assert.deepEqual([p.run.outcome, p.run.reason_class], ['completed', 'none'], 'the canary run completed');
 
       // Recorded, not asserted beyond D2: the session id the engine assigned
@@ -140,11 +146,11 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       const accepted = new Set(c.runs.flatMap((r) => r.egress_log.filter((l) => l.decision === 'accepted').map((l) => String(l.authority).replace(/:443$/, ''))));
       const refused = c.runs.flatMap((r) => r.egress_log.filter((l) => l.decision === 'refused' && l.reason === 'not_listed').map((l) => l.authority));
       observe(ctx, 'M136', 'egress', { accepted: [...accepted], refused, unexpected_contacts: c.attempt.unexpected_contacts, entry_egress_hosts: e.egress_hosts });
-      assert.ok(accepted.has('api.anthropic.com'), `the canaries reached the provider through the proxy (${[...accepted].join(', ')})`);
-      assert.ok(e.egress_hosts.every((h) => REAL.candidateEgress.includes(h)), `the entry's egress hosts are within the candidate list (${JSON.stringify(e.egress_hosts)})`);
+      assert.ok(accepted.has(ctx.providerHost), `the canaries reached the provider (${ctx.providerHost}) through the proxy (${[...accepted].join(', ')})`);
+      assert.ok(e.egress_hosts.every((h) => ctx.candidateEgress.includes(h)), `the entry's egress hosts are within the candidate list (${JSON.stringify(e.egress_hosts)})`);
       assert.ok(e.egress_hosts.every((h) => accepted.has(h)), 'and each was contacted');
       for (const authority of refused) {
-        if (REAL.candidateEgress.some((h) => authority.startsWith(`${h}:`))) continue;
+        if (ctx.candidateEgress.some((h) => authority.startsWith(`${h}:`))) continue;
         assert.ok(c.attempt.unexpected_contacts.some((u) => u.destination === authority), `the refused contact ${authority} is reported in unexpected_contacts`);
         assert.ok(!e.egress_hosts.some((h) => authority.startsWith(h)), `and not added to the entry (${authority})`);
       }
@@ -169,6 +175,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
     const ctx = realPreflight();
     await judged(ctx, 'M136 (c)', async () => {
       const { c } = await attemptOf(ctx);
+      assert.ok(c.entry, 'the succeeded attempt wrote an entry');
       const caps = c.entry.capabilities;
       assert.equal(caps.delegation_verified, true, `delegation verified absent, by inventory or by the capability test (D2 §4.5): ${JSON.stringify(caps)}`);
       for (const name of DENIED) {
