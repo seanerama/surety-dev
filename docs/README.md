@@ -28,7 +28,7 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [design/sdlc-design-D2-backends-and-isolation.md](design/sdlc-design-D2-backends-and-isolation.md) | D2 draft 2, approved to build (E58): the adapter contract, the namespace sandbox, the cgroup execution boundary with launch closure, the trust table and qualification attempts, the optional observer; ten D1 corrections, 73 test statements. |
 | [design/sdlc-design-D1-resolution-note.md](design/sdlc-design-D1-resolution-note.md) | Seven corrections to D1 and the rule that ended prose review. |
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
-| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E76 amending the foundations. |
+| [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E77 amending the foundations. |
 
 ## Background and record
 
