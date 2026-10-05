@@ -21,7 +21,7 @@
 // recorded fallback, SURETY_REAL_PATH_TWO=mixed).
 
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { releaseBarrier } from '../engine.mjs';
@@ -79,7 +79,11 @@ export const PATH_TWO = Object.freeze({
 // route; the plan with its texts and the check declared as fixtures; every
 // role Claude Code unless `roles` says otherwise; the lane's limits.
 export async function realProject(ctx, fx, spec, { dayUsd, roles = {} }) {
-  const dir = join(ctx.runDir, 'repos', spec.name);
+  // A new directory for each try: a rerun of the step keeps the earlier
+  // try's repository as it was (found by the E79 rehearsal: a rerun could
+  // not make its fixture repository where the first try's still was).
+  let dir = join(ctx.runDir, 'repos', spec.name);
+  for (let n = 2; existsSync(dir); n++) dir = join(ctx.runDir, 'repos', `${spec.name}-${n}`);
   mkdirSync(join(ctx.runDir, 'repos'), { recursive: true, mode: 0o700 });
   const repo = makeProjectRepo(dir, { files: { ...PROTECTED_FILES, ...spec.files } });
   const base = refOid(repo.path, repo.ref);
