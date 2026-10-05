@@ -1959,6 +1959,17 @@ The stepped run used a scratch copy of the instrument with its own step file and
 
 After each run: no `surety-*` scope left and nothing left in the scratch `TMPDIR`.
 
+**After objection 018: M115 (e) ticks once the released launcher is gone** (2026-10-05, on `verify/m2-s14-018` from `main` at `97195aa`; `docs/acceptance/objections/018-M115-e-single-tick-before-the-released-launcher-is-gone.answer.md`).
+
+**The change.** (e) finds the waiting launcher in the supervisor leaf, as S1 does. After the release it waits for that pid to be gone and for the domain to read `populated 0` or be removed, and only then ticks. Every assertion is kept. S1 already waited this way and is unchanged.
+
+**Runs.** `M115-every-unknown-quarantines.test.mjs` was run alone with `node --test` on the Builder's tip `25cefa4`, in a detached scratch worktree after `npm ci` and `npm run build`, with this branch's file copied in:
+- run 1: 11 of 11 passed;
+- run 2: 11 of 11 passed;
+- run 3: 11 of 11 passed.
+
+This includes the `[not_exercised]` cases (f) and (h), as before. The user manager was `running` before and after, and no `surety-*` scope was left.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
