@@ -15,7 +15,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +30,7 @@ import {
   initEvent,
   ledgerOriginal,
   observe,
+  journeyEngine,
   productionEngine,
   realStep,
   recordJson,
@@ -167,7 +168,7 @@ function spendGuard(ctx, attempt, fixtureDayUsd) {
   assert.equal(attempt.status, 'proposed', 'the attempt waits for its approval');
   assert.equal(attempt.model, REAL.model, `the attempt binds the model Sean chose (E59): ${attempt.model}`);
   assert.equal(attempt.binary_sha256, ctx.binarySha256, 'the attempt binds the pinned binary, by hash');
-  assert.deepEqual(attempt.candidate_egress, [...REAL.candidateEgress], 'the attempt proposes the provider and nothing else');
+  assert.deepEqual(attempt.candidate_egress, [...ctx.candidateEgress], 'the attempt proposes the provider and nothing else');
   assert.equal(attempt.spend?.label, 'estimate', `the spend is labelled an estimate (D2 §7.2, Q7): ${JSON.stringify(attempt.spend)}`);
   assert.equal(attempt.spend?.overshoot, 'deadline', 'with the overshoot stated');
   assert.ok(typeof attempt.spend?.estimate === 'number' && attempt.spend.estimate > 0, `the estimate is shown before approval, a figure greater than zero (SEAM.md §161): ${JSON.stringify(attempt.spend)}`);
@@ -208,7 +209,7 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
 
     const witnessBefore = hostWitness(fx.home, fixtureProject);
     observe(ctx, row, 'source_binary', sourceBinary(ctx));
-    const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
+    const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...ctx.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
     assert.equal(res.status, 201, `POST /v1/trust/qualify proposes the attempt (body: ${res.text})`);
     const id = res.body.qualification_attempt.id;
     const proposed = attemptOf(fx.home, id);
@@ -242,9 +243,37 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
 export async function qualificationAttempt(ctx) {
   return realStep(ctx, 'attempt', async () => {
     const out = await runAttempt(ctx, { homeName: 'home', keyFile: ctx.keyRef, label: 'the qualification attempt for Claude Code: three canaries (positive, cancellation, containment), paid', row: 'attempt' });
-    if (out.status !== 'succeeded') throw new Error(`the qualification attempt ended ${out.status}; its records are in ${out.home}`);
+    if (out.status !== 'succeeded') {
+      const expected = ctx.rehearsal ? rehearsalOnlyTunnel(out) : null;
+      if (expected === null) throw new Error(`the qualification attempt ended ${out.status}; its records are in ${out.home}`);
+      return { ...out, rehearsal_expected: expected };
+    }
     return out;
   });
+}
+
+// In a rehearsal (SEAM.md §170) the attempt cannot succeed: its only
+// candidate destination resolves nowhere, so the containment canary's
+// provider-tunnel control does not run. When that is the ONLY thing that
+// failed (the positive and cancellation canaries passed; every containment
+// action witnessed and passed; the workspace write ran), the failure is the
+// rehearsal's expected one and is recorded, not a halt. Anything else is
+// a real failure. Returns the reason, or null.
+function rehearsalOnlyTunnel(out) {
+  const c = collectAttempt(out.home, out.attempt);
+  const by = (k) => c.runs.find((r) => r.kind === k);
+  const k = by('containment');
+  const ev = k?.evidence;
+  const ok =
+    by('positive')?.canary.passed === true &&
+    by('cancellation')?.canary.passed === true &&
+    k?.canary.passed === false &&
+    Array.isArray(ev?.actions) &&
+    ev.actions.length > 0 &&
+    ev.actions.every((a) => a.passed === true) &&
+    (ev.controls ?? []).every((x) => x.ran === true || x.name === 'provider_tunnel') &&
+    (ev.controls ?? []).some((x) => x.name === 'provider_tunnel' && x.ran === false);
+  return ok ? 'rehearsal: the provider-tunnel control did not run (no provider is reachable); every other canary check passed' : null;
 }
 
 // The attempt whose key is wrong (M139). Its expected end is `failed` with
@@ -268,6 +297,7 @@ export async function wrongKeyAttempt(ctx) {
 export async function activation(ctx) {
   return realStep(ctx, 'activation', async () => {
     const attemptStep = await qualificationAttempt(ctx);
+    if (ctx.rehearsal && !attemptStep.entry) return rehearsalEntry(ctx, attemptStep);
     const fx = await productionEngine(ctx, 'home');
     try {
       const entryId = attemptStep.entry;
@@ -299,6 +329,33 @@ export async function activation(ctx) {
       await fx.engine.stop();
     }
   });
+}
+
+// A rehearsal's entry (SEAM.md §170): the rehearsal's attempt writes none
+// (its expected provider-tunnel failure), so the journey runs on an active
+// entry the harness's trust-entry fixture installs, in the journey engine's
+// test mode, bound to a copy of the fake under another name (the fixture
+// refuses a binary the engine's PATH names `claude`). The fixture records
+// the `api_key` mode only, so this needs SURETY_REAL_AUTH_MODE=api_key.
+// Labelled: nothing here stands for the real activation step.
+async function rehearsalEntry(ctx, attemptStep) {
+  if (!attemptStep.rehearsal_expected) throw new Error('rehearsal: the attempt wrote no entry and its failure was not the expected provider tunnel');
+  if (ctx.authMode !== 'api_key') throw new Error('rehearsal: the journey runs on a fixture entry, which the harness records in the api_key mode only; rehearse M140 with SURETY_REAL_AUTH_MODE=api_key');
+  const dir = join(ctx.runDir, 'rehearsal');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const copy = join(dir, 'fake-backend');
+  copyFileSync(ctx.binary, copy);
+  chmodSync(copy, 0o755);
+  const fx = await journeyEngine(ctx, 'home');
+  try {
+    const res = await fx.engine.post('/v1/harness/fixtures/trust-entry', { backend: REAL.backend, status: 'active', binary: { path: copy, sha256: sha256(readFileSync(copy)) }, model: REAL.model, egress_hosts: [...ctx.candidateEgress] });
+    assert.equal(res.status, 201, `rehearsal: the fixture entry is installed (${res.text})`);
+    tellSean(ctx, `SURETY REAL LANE REHEARSAL: the journey runs on fixture entry ${res.body.trust_entry.id} (active), bound to a copy of the fake; the real activation step did not run.`);
+    observe(ctx, 'activation', 'rehearsal_fixture_entry', res.body);
+    return { entry: res.body.trust_entry.id, activated_by: null, rehearsal_fixture: true };
+  } finally {
+    await fx.engine.stop();
+  }
 }
 
 export const canaryOfKind = (collected, kind) => collected.runs.find((r) => r.kind === kind);
