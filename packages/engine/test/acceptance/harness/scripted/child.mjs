@@ -1722,6 +1722,19 @@ async function runProbe(spec) {
         // canary's actions, each the argument array the engine wrote in
         // /surety/context/canary.json, run with no shell, one at a time.
         const canary = readCanary();
+        // E83 (SEAM.md §173): the probe program, named by `probe`, run once
+        // with no arguments; its output is what the role reports.
+        if (canary?.kind === 'containment' && typeof canary.probe === 'string') {
+          if (!canary.probe.startsWith('/surety/context/')) {
+            entry.outcome = 'refused_probe_path';
+            break;
+          }
+          const done = spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000, env: { ...process.env } });
+          probeOutput = done.stdout ?? '';
+          entry.ran = [{ name: 'probe', status: done.status, signal: done.signal, error: done.error ? errorOf(done.error) : null, stdout: probeOutput.slice(0, 1000) }];
+          entry.outcome = 'ran';
+          break;
+        }
         if (canary === null || canary.kind !== 'containment' || !Array.isArray(canary.actions)) {
           entry.outcome = 'no_containment_canary';
           break;
@@ -1751,6 +1764,10 @@ async function runProbe(spec) {
 // A path a file step names: relative to the workspace, or absolute.
 const at = (path) => (isAbsolute(path) ? path : resolve(process.cwd(), path));
 
+// What the containment canary's probe program printed (E83; SEAM.md §173),
+// or null when it was not run.
+let probeOutput = null;
+
 // The canary's instructions (M2 slice 13 part 2; SEAM.md §149), as the
 // engine wrote them into the context package, or null.
 function readCanary() {
@@ -1772,14 +1789,14 @@ async function runCanary(spec) {
     emit({ type: 'result', result: value });
   };
   if (mode === 'say_denied' || mode === 'forge_reports') {
-    for (const a of Array.isArray(c.actions) ? c.actions : []) {
+    for (const a of Array.isArray(c.actions) ? c.actions : [{ name: 'probe' }]) {
       if (mode === 'say_denied') writeOut(`denied: ${a?.name ?? 'action'}\n`);
       else emit({ type: 'probe', action: a?.name ?? null, outcome: 'denied', forged_by: 'the backend' });
     }
-    finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+    finishWith(c.result ?? containmentReport(c));
     return;
   }
-  if (mode === 'result_only') return void finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+  if (mode === 'result_only') return void finishWith(c.result ?? containmentReport(c));
   if (c.kind === 'positive') {
     if (c.edit?.path && typeof c.edit.content === 'string' && !isAbsolute(c.edit.path) && !c.edit.path.split('/').includes('..')) {
       mkdirSync(dirname(at(c.edit.path)), { recursive: true });
@@ -1798,8 +1815,16 @@ async function runCanary(spec) {
     return;
   }
   // containment: the actions are the guarded `canary_actions` probe; this
-  // step only ends the role with the canary's result.
-  finishWith(c.result ?? { status: 'completed', summary: 'canary' });
+  // step only ends the role with the canary's result (before E83) or its
+  // report of the probe's output (E83; SEAM.md §173).
+  finishWith(c.result ?? containmentReport(c));
+}
+
+// The containment canary's report under E83 (SEAM.md §173): the probe's
+// output verbatim, or the empty text when the role did not run it.
+function containmentReport(c) {
+  if (typeof c?.probe !== 'string') return { status: 'completed', summary: 'canary' };
+  return { status: 'completed', summary: 'the sanctioned containment check: the probe program run once; its output follows verbatim', probe_output: probeOutput ?? '' };
 }
 
 // Write the role's result to /surety/out/result.json, as JSON text, and log
