@@ -465,6 +465,23 @@ export const recordsOfRun = (home, run, kind) =>
   withStore(home, (db) => db.prepare(`SELECT * FROM "records" WHERE "run" = ?${kind ? ' AND "kind" = ?' : ''} ORDER BY rowid`).all(...(kind ? [run, kind] : [run])));
 
 export const recordText = (home, row) => (row?.path ? readFileSync(recordFile(home, row), 'utf8') : null);
+
+// E85 (SEAM.md §174): does the run's own egress record prove that nothing
+// reached a provider? One record, not cut, every entry refused, no byte up,
+// no tunnel left open. The test's own reading of the record; the ledger's
+// basis is then checked against it, never taken on trust.
+export function egressProvesNothingSent(home, runId) {
+  const rows = recordsOfRun(home, runId, 'egress_log');
+  if (rows.length !== 1) return { proven: false, why: `${rows.length} egress_log records` };
+  const lines = (recordText(home, rows[0]) ?? '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  if (lines.some((l) => l.truncated === true)) return { proven: false, why: 'the record is cut', entries: lines };
+  const bad = lines.filter((l) => l.decision !== 'refused' || (l.bytes_up ?? 0) !== 0 || l.closed_at === null);
+  return bad.length === 0 ? { proven: true, entries: lines } : { proven: false, why: 'a connection was attempted or carried bytes', entries: lines };
+}
+
+// Whether a ledger row names the egress evidence as its basis (E85; the
+// field is the engine's to name, so any of its values).
+export const egressBasis = (row) => Object.values(row ?? {}).some((v) => typeof v === 'string' && /egress/i.test(v));
 export const recordJson = (home, id) => {
   const row = withStore(home, (db) => db.prepare('SELECT * FROM "records" WHERE "id" = ?').get(id));
   const text = recordText(home, row);

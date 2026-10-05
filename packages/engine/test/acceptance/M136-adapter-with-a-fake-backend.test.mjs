@@ -293,13 +293,13 @@ describe('M136 E83: what the containment canary\'s agent is shown (sandbox lane,
 // reached (E84). `accepted`: the harness resolver answers the name with a
 // documentation address the harness holds unconnected (SEAM.md §169), so the
 // proxy accepts the tunnel and the connect times out, nothing sent.
-async function providerUnreachable(t, { accepted = false } = {}) {
-  const { fx, fake, project } = await fakeFixture(t, { config: { egress_connect_timeout: 1, egress_resolve_timeout: 1 } });
+async function providerUnreachable(t, { accepted = false, role = 'proxy_refused', connectTimeout = 1 } = {}) {
+  const { fx, fake, project } = await fakeFixture(t, { config: { egress_connect_timeout: connectTimeout, egress_resolve_timeout: 1 } });
   if (accepted) {
     await setResolver(fx.engine, { [EGRESS[0]]: [DOC.c] });
     await armFault(fx.engine, { point: 'egress_connect_hang', address: DOC.c });
   }
-  fake.set({ role: 'proxy_refused', connect: `${EGRESS[0]}:443` });
+  fake.set({ role, connect: `${EGRESS[0]}:443` });
   await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: PARK_ON_REFUSAL });
   await installTrustEntry(fx.engine, { binary: { path: fake.path, sha256: fake.sha256 } }, { status: 'active', model: MODEL, egress_hosts: [...EGRESS] });
   const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: 'a stage the provider never hears of' }] });
@@ -309,7 +309,7 @@ async function providerUnreachable(t, { accepted = false } = {}) {
   const ledger = (await fx.engine.get(`/v1/projects/${project}/ledger`)).body;
   const row = (ledger?.rows ?? []).find((r) => r.run === run.id && r.corrects === null);
   assert.ok(row, `the run has its original ledger row in GET /v1/projects/:p/ledger (${JSON.stringify(ledger?.rows)})`);
-  return { fx, project, run, log, ledger, row };
+  return { fx, fake, project, run, log, ledger, row };
 }
 
 describe('M136 E84: a role run that ends error_exit on its own after its egress was refused (sandbox lane, the fake backend, no model)', () => {
@@ -354,5 +354,25 @@ describe('M136 E85: a known zero by the egress evidence (sandbox lane, the fake 
     assert.equal(row.usage_complete, false, `an accepted tunnel breaks E85's condition (c): the usage is not complete (${JSON.stringify(seen)})`);
     assert.ok(row.unknown_allowance_tokens > 0, `and the unknown allowance is charged (${JSON.stringify(seen)})`);
     assert.ok(!Object.values(row).some((v) => typeof v === 'string' && /egress/i.test(v)), `no egress basis is recorded (${JSON.stringify(row)})`);
+  });
+
+  test('E85 (c) (the Reviewer\'s in-flight CONNECT; D2 §2.4): the backend writes its CONNECT, bytes pipelined after it, and ends at once; the domain terminates while the proxy\'s connect is still held: the attempt is in the egress record, and the run is not a known zero by egress (usage unknown, the allowance charged)', async (t) => {
+    const WINDOW_S = 20;
+    const { fx, run, log, row } = await providerUnreachable(t, { accepted: true, role: 'connect_and_exit', connectTimeout: WINDOW_S });
+    const sent = JSON.parse(readFileSync(join(fx.scripted.dir, 'fake-claude-connect.json'), 'utf8'));
+    assert.ok(sent.sent_at, `the fixture is live: the fake wrote its CONNECT to the proxy (${JSON.stringify(sent)})`);
+    const terminated = withStore(fx.home, (db) => db.prepare(`SELECT e."at" FROM "events" e WHERE e."type" = 'domain.terminated' AND e."subject" LIKE ? ORDER BY e."seq" LIMIT 1`).get(`%${run.id}%`));
+    assert.ok(terminated?.at, 'the fixture is live: the domain was terminated');
+    const windowMs = Date.parse(terminated.at) - Date.parse(sent.sent_at);
+    assert.ok(windowMs >= 0 && windowMs < WINDOW_S * 1000, `the fixture is live: the domain was terminated ${windowMs} ms after the CONNECT, inside the proxy's ${WINDOW_S} s connect window (the connect held by egress_connect_hang)`);
+
+    // D2 §2.4: every connection is in the record, the one still in flight
+    // at the domain's close included.
+    assert.ok(log.entries.some((l) => l.authority === sent.authority), `the in-flight CONNECT is in the egress record (D2 §2.4; SEAM.md §140): ${JSON.stringify(log.entries)}`);
+    // E85 (c): a connection was attempted, so this is no zero by egress.
+    const seen = { billable_in: row.billable_in, cost_usd: row.cost_usd, cost_status: row.cost_status, usage_complete: row.usage_complete, unknown_allowance_tokens: row.unknown_allowance_tokens };
+    assert.ok(!Object.values(row).some((v) => typeof v === 'string' && /egress/i.test(v)), `not a known zero by the egress evidence: a connection was attempted (E85 (c)): ${JSON.stringify(row)}`);
+    assert.equal(row.usage_complete, false, `the usage stays unknown (${JSON.stringify(seen)})`);
+    assert.ok(row.unknown_allowance_tokens > 0, `and the unknown allowance is charged (${JSON.stringify(seen)})`);
   });
 });

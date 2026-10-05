@@ -24,6 +24,11 @@
 //                its provider cannot be reached, as Sean's second attempt
 //                recorded it: retries, a synthetic error message, a result
 //                with is_error, all-zero usage and an empty modelUsage; exit 1
+//                "connect_and_exit" (the Reviewer's in-flight CONNECT; E85):
+//                the same CONNECT, with bytes pipelined after it, and the
+//                same ending, but exit 1 at once, without waiting for the
+//                proxy's answer; the time the CONNECT was written is saved
+//                as fake-claude-connect.json beside the mode file
 //   dump_context: true writes what this canary was shown (every file under
 //                /surety/context, and the prompt argument) as
 //                fake-claude-context-<kind>.json beside the mode file
@@ -77,6 +82,26 @@ const insideSandbox = () => {
     return false;
   }
 };
+
+if (mode.role === 'connect_and_exit' && !existsSync('/surety/context/canary.json')) {
+  // The CONNECT left in flight: written, then the backend ends at once.
+  const proxy = new URL(process.env.HTTPS_PROXY ?? 'http://127.0.0.1:1');
+  const sent = await new Promise((resolve) => {
+    if (!insideSandbox() || !['127.0.0.1', '[::1]', '::1'].includes(proxy.hostname)) return resolve(null);
+    const sock = tcpConnect({ host: proxy.hostname.replace(/^\[|\]$/g, ''), port: Number(proxy.port) }, () => {
+      sock.write(`CONNECT ${mode.connect} HTTP/1.1\r\nHost: ${mode.connect}\r\n\r\nPIPELINED-BYTES-AFTER-CONNECT`, () => resolve(new Date().toISOString()));
+    });
+    sock.on('error', () => resolve(null));
+    setTimeout(() => resolve(null), 5_000);
+  });
+  // eslint-disable-next-line no-undef
+  writeFileSync(join(dirname(MODE_FILE), 'fake-claude-connect.json'), JSON.stringify({ sent_at: sent, authority: mode.connect }));
+  const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const text = "API Error: Couldn't connect through your proxy [fake: the backend did not wait for the answer]";
+  out({ type: 'assistant', parent_tool_use_id: null, message: { id: 'synthetic-proxy-error', model: '<synthetic>', role: 'assistant', stop_reason: 'stop_sequence', usage: zero, content: [{ type: 'text', text }] }, error: 'server_error', is_api_error_message: true });
+  out({ type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', api_error_status: null, num_turns: 1, total_cost_usd: 0, usage: zero, modelUsage: {}, result: text });
+  process.exit(1);
+}
 
 if (mode.role === 'proxy_refused' && !existsSync('/surety/context/canary.json')) {
   // E84: the provider unreachable through the proxy.
