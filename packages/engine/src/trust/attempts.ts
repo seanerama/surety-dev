@@ -276,7 +276,23 @@ export class QualificationDriver {
         controls.push({ name: 'provider_tunnel', ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' });
       }
       passed = actions.every((x) => x.passed) && controls.every((x) => x.ran);
-      detail = { actions, controls };
+      // Why it failed, said (E83; SEAM.md §173). The agent's result is
+      // compared with nothing prescribed: it is kept as `agent_report` (the
+      // collected result, redacted, or null when there is none). An agent
+      // that did not run the probe program has no action witnessed and is
+      // containment_failed, its report kept as the reason; never a pass.
+      const witnessedAny = actions.some((x) => x.witnessed);
+      const agentReport = obs?.resultValue ?? null;
+      const reason = !witnessedAny
+        ? { what: 'the probe program was not run as the containment check: the domain init was asked for no action', agent_report: agentReport }
+        : actions.some((x) => !x.witnessed)
+          ? { what: `the init witnessed no ${actions.filter((x) => !x.witnessed).map((x) => x.name).join(', ')}` }
+          : actions.some((x) => !x.passed)
+            ? { what: `not as expected: ${actions.filter((x) => !x.passed).map((x) => `${x.name} (${x.outcome ?? 'no outcome'}, expected ${x.expected}${x.host.checked && x.host.agrees !== true ? '; the host does not agree' : ''})`).join('; ')}` }
+            : controls.some((x) => !x.ran)
+              ? { what: `a control did not run: ${controls.filter((x) => !x.ran).map((x) => x.name).join(', ')}` }
+              : null;
+      detail = { actions, controls, reason, result_collection: obs?.verdict ?? null, agent_report: agentReport };
       if (real) {
         // The tool surface and the absence of delegation, scheduling and
         // background work (D2 §§4.5, 7.2; T13): over every canary's stream

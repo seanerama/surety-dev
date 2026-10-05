@@ -24,7 +24,7 @@ import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
 import { type CandidateDiff, type ContextFacts, writeContextPackage } from './context.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
-import { CANARY_BARRIER, canaryInstructions, witnessSocket } from '../../trust/canaries.js';
+import { CANARY_BARRIER, CONTAINMENT_ACTIONS, canaryInstructions, containmentTargets, witnessSocket } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
 import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
@@ -127,20 +127,23 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     ? canaryInstructions({
         attempt: claim.attempt.id,
         kind: claim.attempt.kind,
-        backend: claim.entry?.backend ?? 'scripted',
-        domain: claim.domain,
         deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)),
-        node: engineNode(),
-        tokenPath: (() => {
-          try {
-            return realpathSync(join(rt.home, 'api.token'));
-          } catch {
-            return join(rt.home, 'api.token');
-          }
-        })(),
-        apiPort: rt.config.values.api_port,
       })
     : null;
+  // The containment check's targets, for the domain init only (E83).
+  const targets =
+    claim.attempt?.kind === 'containment'
+      ? containmentTargets({
+          tokenPath: (() => {
+            try {
+              return realpathSync(join(rt.home, 'api.token'));
+            } catch {
+              return join(rt.home, 'api.token');
+            }
+          })(),
+          apiPort: rt.config.values.api_port,
+        })
+      : null;
   const diff = facts?.run.role === 'reviewer' && facts.candidate && facts.review ? await candidateDiff(repo, facts.review.diff_base, facts.candidate.revision) : null;
   writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
@@ -273,7 +276,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
             canary: {
               barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null,
               witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null,
-              actions: canary.kind === 'containment' ? ((canary.actions as { name: string; argv: string[] }[] | undefined) ?? []) : [],
+              containment: canary.kind === 'containment' && targets !== null ? { targets, actions: CONTAINMENT_ACTIONS.map((a) => a.name) } : null,
             },
           }
         : {}),

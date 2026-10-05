@@ -29,10 +29,10 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { createInterface } from 'node:readline';
 
 type Msg = Record<string, unknown>;
@@ -311,20 +311,24 @@ interface BackendSpec {
   // init reports while the backend runs; for the containment canary, the
   // abstract socket on which the probe program asks for its actions, and the
   // exact argument array of each action as canary.json gives it.
-  canary?: { barrier?: string | null; witness?: string | null; actions?: { name: string; argv: string[] }[] } | null;
+  canary?: { barrier?: string | null; witness?: string | null; containment?: { targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; actions: string[] } | null } | null;
 }
 
-// The containment canary's witnessing (D2 §7.2; the slice-13 review's S1).
-// Nothing a process inside the sandbox says about an action's outcome is
-// taken: the probe program, run by the backend with an action's exact
-// argument array, only asks the init to perform that action; the init
-// checks, from /proc, that a live process with exactly that argument array
-// is a descendant of the backend, and then performs the action itself, in a
-// child of its own started from the init's execute-only copy of node (not
-// dumpable: the backend can neither trace it nor take its descriptors), with
-// an environment the init constructs. The outcome the engine records is
-// what that child observed. Each asking process is taken once.
-const askedBy = new Set<number>();
+// The containment canary's witnessing (D2 §7.2; the slice-13 review's S1;
+// E83). Nothing a process inside the sandbox says about an action's outcome
+// is taken, and nothing the agent reads names an action's target. The agent
+// runs the engine's probe program once, as `/surety/context/probe` with no
+// argument; the program asks the init, on the witness socket,
+// for the containment check, giving only its own pid. The init checks, from
+// /proc, that the asker is a live descendant of the backend running exactly
+// that command, and then performs every action itself, one at a time, each
+// in a child of its own started from the init's execute-only copy of node
+// (not dumpable: the backend can neither trace it nor take its descriptors),
+// with an environment the init constructs and the action's targets, which
+// only the engine gave it, on the child's standard input. The outcome the
+// engine records is what that child observed. The check runs once per
+// domain; the asker is told each action's outcome and nothing of its target.
+let containmentAsked = false;
 
 function cmdlineOf(pid: number): string[] | null {
   try {
@@ -354,27 +358,46 @@ function descendantOfBackend(pid: number): boolean {
   return false;
 }
 
-// The probe program's own run of one action, as the init's child.
-function performAction(argv: string[]): Promise<{ outcome: string; detail: string }> {
-  const args = argv.slice(1);
-  const i = args.indexOf('--canary');
-  if (i < 0) return Promise.resolve({ outcome: 'not_run', detail: 'not a canary action' });
-  args[i] = '--canary-run';
-  const w = args.indexOf('--witness');
-  if (w >= 0) args.splice(w, 2);
+const PROBE_PATH = '/surety/context/probe';
+
+// Is this the probe program run as the containment check (SEAM.md §173)?
+// Its interpreter (argv[0]) is whatever ran it; the program is the probe,
+// by its path, resolved from the process's own working directory where the
+// path is relative; it has no argument.
+function isContainmentCheck(argv: string[] | null, cwd: string | null): boolean {
+  if (argv === null || argv.length !== 2) return false;
+  const program = argv[1]!;
+  if (program === PROBE_PATH) return true;
+  if (program.startsWith('/') || cwd === null) return false;
+  return posix.resolve(cwd, program) === PROBE_PATH;
+}
+
+function cwdOf(pid: number): string | null {
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return null;
+  }
+}
+
+// One action, performed by a child of the init (the probe program's
+// `--canary-run <name>`), its targets on its standard input.
+function performAction(name: string, targets: Record<string, unknown>): Promise<{ outcome: string; detail: string }> {
   return new Promise((resolve) => {
     let out = '';
     let child;
     try {
-      child = spawn(process.execPath, args, {
+      child = spawn(process.execPath, [PROBE_PATH, '--canary-run', name], {
         cwd: '/surety/workspace',
         env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', HTTPS_PROXY: backendEnv.HTTPS_PROXY ?? '' },
-        stdio: ['ignore', 'pipe', 'ignore'],
+        stdio: ['pipe', 'pipe', 'ignore'],
       });
     } catch (err) {
       resolve({ outcome: 'not_run', detail: (err as Error).message });
       return;
     }
+    child.stdin!.on('error', () => {});
+    child.stdin!.end(`${JSON.stringify(targets)}\n`);
     const timer = setTimeout(() => {
       try {
         child.kill('SIGKILL');
@@ -406,7 +429,7 @@ function performAction(argv: string[]): Promise<{ outcome: string; detail: strin
 
 let backendEnv: Record<string, string> = {};
 
-function startWitness(name: string, actions: { name: string; argv: string[] }[]): void {
+function startWitness(name: string, check: { targets: Record<string, unknown>; actions: string[] }): void {
   const server = net.createServer((sock) => {
     let buf = '';
     let taken = false;
@@ -424,15 +447,19 @@ function startWitness(name: string, actions: { name: string; argv: string[] }[])
         return void sock.end('refused\n');
       }
       const pid = Number(m.pid);
-      const action = actions.find((a) => a.name === String(m.action ?? ''));
-      const argv = Number.isInteger(pid) ? cmdlineOf(pid) : null;
-      const exact = action !== undefined && argv !== null && argv.length === action.argv.length && argv.every((x, k) => x === action.argv[k]);
-      if (!exact || askedBy.has(pid) || !descendantOfBackend(pid)) return void sock.end('refused\n');
-      askedBy.add(pid);
-      void performAction(action.argv).then((r) => {
-        send({ t: 'witness', action: action.name, outcome: r.outcome, pid, detail: r.detail });
-        sock.end(`${JSON.stringify({ outcome: r.outcome, detail: r.detail })}\n`);
-      });
+      if (m.type !== 'containment_request' || !Number.isInteger(pid)) return void sock.end('refused\n');
+      if (!isContainmentCheck(cmdlineOf(pid), cwdOf(pid)) || !descendantOfBackend(pid)) return void sock.end('refused\n');
+      if (containmentAsked) return void sock.end(`${JSON.stringify({ refused: 'the containment check has already run in this domain' })}\n`);
+      containmentAsked = true;
+      void (async () => {
+        const outcomes: { action: string; outcome: string }[] = [];
+        for (const action of check.actions) {
+          const r = await performAction(action, check.targets);
+          send({ t: 'witness', action, outcome: r.outcome, pid, detail: r.detail });
+          outcomes.push({ action, outcome: r.outcome });
+        }
+        sock.end(`${JSON.stringify({ actions: outcomes })}\n`);
+      })();
     });
     sock.on('error', () => {});
   });
@@ -592,7 +619,7 @@ async function init(): Promise<void> {
     }
   }
   backendEnv = spec.env;
-  if (spec.canary?.witness) startWitness(spec.canary.witness, spec.canary.actions ?? []);
+  if (spec.canary?.witness && spec.canary.containment) startWitness(spec.canary.witness, spec.canary.containment);
   send({ t: 'ready' });
   const go = await next();
   if (!go || go.t !== 'start') process.exit(0);
