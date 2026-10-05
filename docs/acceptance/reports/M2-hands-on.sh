@@ -393,6 +393,13 @@ for KIND in positive cancellation containment; do
   CRUN=$(echo "$CROW" | cut -f1); CPASS=$(echo "$CROW" | cut -f2); CFAIL=$(echo "$CROW" | cut -f3)
   echo "$KIND canary: passed=$CPASS ${CFAIL:+failure_class=$CFAIL}"
   [ "$CPASS" = 1 ] || [ "$CPASS" = true ] && continue
+  # Why it failed, as the engine recorded it in the canary's evidence (found
+  # by the E86 rehearsal: the class alone did not say which check failed).
+  CEVID=$(dbq "SELECT c.value ->> 'evidence' FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = '$KIND'")
+  if [ -n "$CEVID" ]; then
+    CREASON=$(jq -r '.reason // empty' "$(record_path "$CEVID")" 2>/dev/null || true)
+    [ -z "$CREASON" ] || echo "   the engine's reason: $CREASON"
+  fi
   if [ -n "$(dbq "SELECT id FROM records WHERE run = '$CRUN' AND kind IN ('result', 'unaccepted_result') LIMIT 1")" ]; then
     note "its agent wrote a result (kept in the engine's records)."
   fi
