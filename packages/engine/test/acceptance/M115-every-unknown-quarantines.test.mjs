@@ -17,6 +17,11 @@
 // Every case here but the two not_exercised ones is expected to fail on the
 // engine these tests were written against, which has no cgroup boundary
 // (COVERAGE.md, "M2 slice 11").
+//
+// The case "(e) the launcher-exit tick" (E79 item 2; SEAM.md §170) was added
+// after M2 slice 14: it sends no tick after the launcher's release and fails
+// on an engine that does not tick when its launcher of a quarantined domain
+// exits.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -25,13 +30,15 @@ import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, clearFaults, waitFor } from './harness/engine.mjs';
+import { now } from './harness/mono.mjs';
 import { recordsOf } from './harness/records.mjs';
-import { addProject, addWork, answerDecision, assertRunEnded, assertRunQuarantined, requestTick, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
+import { addProject, addWork, answerDecision, assertRunEnded, assertRunQuarantined, requestTick, run as runRow, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, daemonReexec, makeLeaf, makeUnreadable, moveIntoCgroup, populated, procsOf, removeCgroup, restoreReadable, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
-import { assertEngineInScope, domainOf, eventsOf, roleAlive, roleHolding, sandboxEngine, updateDomain, waitForEvent } from './harness/sandbox/lane.mjs';
+import { assertEngineInScope, domainOf, eventsOf, roleAlive, roleHolding, SANDBOX_CONFIG, sandboxEngine, updateDomain, waitForEvent } from './harness/sandbox/lane.mjs';
 import { hostProcess, memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
 import { cgroupSentinel } from './harness/sandbox/sentinel.mjs';
 import { script, step } from './harness/scripted.mjs';
+import { withStore } from './harness/store.mjs';
 
 const GRACE = { terminate_grace: 3, kill_grace: 2 };
 const ignoring = { on_term: 'ignore', before: [step.descendant({ holds_stdout: false, on_term: 'ignore' })] };
@@ -91,6 +98,9 @@ function emptyOrRemoved(dir) {
     throw err;
   }
 }
+
+// The seqs of every engine.tick event, in order (SEAM.md §15).
+const recordedTicks = (home) => withStore(home, (db) => db.prepare(`SELECT "seq" FROM "events" WHERE "type" = 'engine.tick' ORDER BY "seq"`).all().map((r) => r.seq));
 
 // The tests' own privilege, read without asking for any: the effective uid
 // and the effective capability set of this process.
@@ -324,6 +334,58 @@ describe('M115 every unknown quarantines', () => {
     await tick(fx.engine, project);
     await waitForWork(fx.home, waiting, 'complete');
     assert.equal(JSON.stringify(assertRunEnded(fx.home, run.id, { outcome: 'stopped', launched: false, recovery: false })), settled, 'further ticks write nothing more about the cleared run');
+  });
+
+  // The launcher-exit tick (E79 item 2, decided by Sean; E77 item 1;
+  // objection 018's "not taken"; SEAM.md §170). (e)'s fixture, with one
+  // difference: once the launcher is released the test sends no tick. When
+  // this engine's launcher of a quarantined domain exits, the engine asks for
+  // a tick itself, so the re-observation of section 128 follows the exit
+  // instead of waiting for the next scheduled tick (`tick_interval` 600 s
+  // here). Everything (e) asserts holds.
+  test("(e) the launcher-exit tick (E79 item 2): the launcher of a quarantined domain released and gone, the engine ticks by itself; with no tick sent by the test the domain is terminated and the quarantine cleared once within 30 s, no grant, no role, the invocation refused and uncharged, the work held", async (t) => {
+    const fx = await sandboxEngine(t, { config: GRACE, barriers: ['launcher.before_placement=pause'] });
+    assert.equal({ ...SANDBOX_CONFIG, ...GRACE }.tick_interval, 600, 'the fixture is live: the scheduled tick is 600 s away');
+    const scope = await assertEngineInScope(fx);
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    fx.scripted.script(item, [script.complete()]);
+    await requestTick(fx.engine, project);
+    await fx.engine.waitUntil('barrier:launcher.before_placement');
+    const run = await waitForRun(fx.home, item);
+    const domain = domainOf(fx.home, run.id);
+    const launchers = procsOf(scope.supervisor).filter((p) => p !== fx.engine.pid && /node$/.test(hostProcess(p)?.cmdline[0] ?? ''));
+    assert.equal(launchers.length, 1, `the launcher waits in the supervisor leaf (members: ${procsOf(scope.supervisor).join(', ')})`);
+    const [launcher] = launchers;
+    await armFault(fx.engine, { point: 'launcher_wait' });
+    await stopRun(fx.engine, project, run.id);
+    await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
+    const facts = assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
+    assert.equal(facts.domains[0].status, 'quarantined');
+    assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'no role was launched');
+    assert.ok(hostProcess(launcher) !== null, `the fixture is live: the quarantine stands while the launcher (host pid ${launcher}) is outstanding`);
+
+    // The release; from here on the test sends no tick.
+    const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
+    assert.equal(res.status, 200, `the waiting launcher is released (${res.status} ${res.text})`);
+    await waitHostGone(launcher, { timeoutMs: 20_000 });
+    const gone = now();
+    const ended = await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 30_000 }).catch((err) => err);
+    assert.ok(
+      !(ended instanceof Error),
+      `with no tick sent by the test, the quarantine was not cleared within 30 s of the launcher's exit (host pid ${launcher}): when this engine's launcher of a quarantined domain exits, the engine requests a tick itself, so the domain is re-observed and the quarantine cleared without waiting for the scheduled tick (tick_interval 600 s; E79 item 2; SEAM.md §170). Run state ${runRow(fx.home, run.id)?.state}, domain ${JSON.stringify((({ status, observation, launch_state }) => ({ status, observation, launch_state }))(domainOf(fx.home, run.id)))}, the domain's directory ${String(emptyOrRemoved(domain.cgroup_path))}`,
+    );
+    t.diagnostic(`(e) launcher-exit tick: the run ended ${Math.round(now() - gone)} ms after the launcher's exit was read on the host`);
+
+    // The clearance, once, as (e) and S1 require it.
+    await assertClearedOnce(fx, project, run.id, 'stopped', { launched: false });
+    const terminated = eventsOf(fx.home, 'domain', domain.id, 'domain.terminated');
+    assert.equal(terminated.length, 1, 'one domain.terminated');
+    await waitFor(() => recordedTicks(fx.home).some((seq) => seq > terminated[0].seq) || undefined, { timeoutMs: 10_000, what: 'the engine.tick of the tick the engine asked for, after the domain.terminated it wrote (SEAM.md §15: a tick writes engine.tick after everything else it wrote)' });
+    assert.ok(eventsOf(fx.home, 'domain', domain.id, 'domain.placed').every((e) => e.seq < terminated[0].seq), 'no placement is recorded after the termination (B12)');
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'the released launcher got no grant');
+    assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'and ran nothing');
+    await waitForWork(fx.home, item, 'held');
   });
 
   test('(f) cgroup.kill refused during termination: unknown and quarantined with the role alive, across a restart; writable again, a tick observes populated 1 and keeps the quarantine; the role gone, the next tick clears it', async (t) => {
