@@ -6,6 +6,8 @@
 // witness store and against mutants of it (it is deleted since; SEAM.md §21).
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { LIFECYCLE, assertRunPathLegal, assertWorkPathLegal, outcomeSpec, roleOf } from './transitions.mjs';
 
@@ -86,7 +88,29 @@ const TERMINAL_OBSERVATIONS = ['ended', 'unknown'];
 // ledger row. Or it was launched, or whether it was cannot be established: it
 // has exactly one terminal observation (`ended` or `unknown`), which is the
 // last, and is charged exactly once. Returns true for the second form.
-function assertReceiptFinal(receipt, run, what) {
+// E85 (Sean's rule; SEAM.md §174): unobserved usage may be a known zero only
+// when the row names the egress evidence as its basis AND the test's own
+// reading of the run's egress record shows that nothing reached a provider:
+// one published record, not cut, every connection refused, no byte up, no
+// tunnel left open. The record is read from the store's own directory (the
+// engine home is the store's).
+const egressBasis = (row) => Object.values(row ?? {}).some((v) => typeof v === 'string' && /egress/i.test(v));
+function egressProvesNothingSent(db, runId) {
+  const rows = db.prepare(`SELECT * FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).all(runId);
+  if (rows.length !== 1 || rows[0].published !== 1 || !rows[0].path) return { proven: false, why: `${rows.length} egress_log record(s), published ${rows[0]?.published ?? null}` };
+  let text;
+  try {
+    text = readFileSync(join(dirname(db.name), 'records', rows[0].path), 'utf8');
+  } catch (err) {
+    return { proven: false, why: `the record could not be read beside the store (${err.code ?? err})` };
+  }
+  const lines = text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  if (lines.some((l) => l.truncated === true)) return { proven: false, why: 'the record is cut', entries: lines };
+  const bad = lines.filter((l) => l.decision !== 'refused' || (l.bytes_up ?? 0) !== 0 || l.closed_at === null);
+  return bad.length === 0 ? { proven: true, entries: lines } : { proven: false, why: 'a connection was attempted or carried bytes', entries: bad };
+}
+
+function assertReceiptFinal(db, receipt, run, what) {
   const s = receipt.statuses;
   const seen = s.join(', ') || 'no observation';
   const terminal = s.filter((x) => TERMINAL_OBSERVATIONS.includes(x)).length;
@@ -105,6 +129,17 @@ function assertReceiptFinal(receipt, run, what) {
   assert.equal(originals[0].role, run.role, `${what}: the ledger row names the role`);
   if (receipt.usage.length === 0) {
     const row = originals[0];
+    if (egressBasis(row)) {
+      const proof = egressProvesNothingSent(db, run.id);
+      assert.ok(proof.proven, `${what}: a zero by the egress evidence needs the run's egress record to show nothing sent (E85): ${proof.why} ${JSON.stringify(proof.entries ?? [])}`);
+      assert.deepEqual(
+        { billable_in: row.billable_in, cached_in: row.cached_in, out: row.out, usage_complete: row.usage_complete, cost_usd: row.cost_usd },
+        { billable_in: 0, cached_in: 0, out: 0, usage_complete: 1, cost_usd: 0 },
+        `${what}: a zero by the egress evidence is a known zero (E85)`,
+      );
+      assert.notEqual(row.cost_status, 'unknown', `${what}: its cost is known (E85)`);
+      return true;
+    }
     assert.deepEqual(
       { billable_in: row.billable_in, cached_in: row.cached_in, out: row.out, usage_complete: row.usage_complete, cost_status: row.cost_status },
       { billable_in: null, cached_in: null, out: null, usage_complete: 0, cost_status: 'unknown' },
@@ -150,7 +185,7 @@ export function assertEndedRun(db, runId, expect = {}) {
   }
 
   let launches = 0;
-  for (const receipt of f.receipts) if (assertReceiptFinal(receipt, run, `${what}, invocation ${receipt.id}`)) launches++;
+  for (const receipt of f.receipts) if (assertReceiptFinal(db, receipt, run, `${what}, invocation ${receipt.id}`)) launches++;
   if (expect.launched === true) assert.ok(launches >= 1, `${what}: an invocation that was launched is recorded as ended or unknown, and charged`);
   if (expect.launched === false) assert.equal(launches, 0, `${what}: no invocation is recorded as launched`);
 
