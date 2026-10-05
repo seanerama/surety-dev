@@ -2066,6 +2066,25 @@ Two leftovers were found, both from before this pass: `/dev/shm/surety-probe-479
 
 The user manager was `running` before and after each run. Afterwards no `surety-*` scope was listed.
 
+**After objection 019: S1 and (h) read the domain after the launcher-exit tick** (2026-10-05, on `verify/m2-tick-019` from `main` at `ce7d9f4`; `docs/acceptance/objections/019-M115-S1-h-read-the-domain-after-the-launcher-exit-tick.answer.md`).
+
+**The change.** Under SEAM §170 the launcher's exit brings the engine's own tick, which can clear the quarantine and remove the domain's directory before the test reads it. On the Builder's engine, S1 and (h) threw ENOENT.
+- **S1** keeps its two ticks with the launcher outstanding, unchanged. From the release to the launcher's exit, it now fails if a `domain.terminated` is recorded while the launcher is still alive.
+- **(h)** reads the role's exit on the host.
+- **Both** then take the domain as empty or removed. A removed domain requires the one `domain.terminated` already recorded. Both still send their tick and require one clearance (`assertClearedOnce`). Nothing else in the file changed.
+
+**Runs.** `M115-every-unknown-quarantines.test.mjs` was run alone with `node --test` on the Builder's tip `f842022`, in a detached scratch worktree after `npm ci` and `npm run build`, with this branch's file copied in:
+
+| Run | Result | S1 and (h): the domain after the exit | The launcher-exit case |
+|---|---|---|---|
+| 1 (23:44:08 to 23:45:29) | 12 of 12 passed | (no diagnostic yet) | ended 56 ms after the exit |
+| 2 (23:45:41 to 23:47:02) | 12 of 12 passed | removed; the engine's tick had cleared it | 56 ms |
+| 3 (23:47:02 to 23:48:21) | 12 of 12 passed | removed; the engine's tick had cleared it | 55 ms |
+
+Every run includes the two `[not_exercised]` cases. Runs 2 and 3 differ from run 1 by two `t.diagnostic` lines only.
+
+**What else was running.** Before runs 1 and 2, `ps` showed no other `run-tests` or `node --test` process, and no `surety-*` scope was listed. At the end of run 2 another session's `node --test` (a file under the driver's scratchpad, probably the rehearsal) was running and had a `surety-*` scope, so run 3 overlapped it. The user manager's journal shows three re-execs in the window, at 23:45:26, 23:46:59 and 23:48:18, one per run, each this run's own (h). The user manager was `running` before and after each run. Afterwards no `surety-*` scope was left and no test process was running.
+
 ## After E79 item 1: the dress rehearsal of the real lane
 
 2026-10-05, on `verify/m2-rehearsal` from `main` at `1677b76`, rebased onto `ce7d9f4`; E79 item 1 (Sean's choice); SEAM §171. Nothing here is evidence for M2: it ran against a fake Claude Code, with a made-up token and key, and no egress host but `provider.rehearsal.invalid`. The real `claude` was never run; its file was read only by the guard check, which refused it.
