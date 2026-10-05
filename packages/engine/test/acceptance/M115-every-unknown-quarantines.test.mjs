@@ -203,6 +203,7 @@ describe('M115 every unknown quarantines', () => {
 
   test("(e) the launcher_wait fault: a launcher's exit that cannot be established is unknown and quarantined; the launcher released and refused, the next tick clears it", async (t) => {
     const fx = await sandboxEngine(t, { config: GRACE, barriers: ['launcher.before_placement=pause'] });
+    const scope = await assertEngineInScope(fx);
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
     fx.scripted.script(item, [script.complete()]);
@@ -210,6 +211,9 @@ describe('M115 every unknown quarantines', () => {
     await fx.engine.waitUntil('barrier:launcher.before_placement');
     const run = await waitForRun(fx.home, item);
     const domain = domainOf(fx.home, run.id);
+    const launchers = procsOf(scope.supervisor).filter((p) => p !== fx.engine.pid && /node$/.test(hostProcess(p)?.cmdline[0] ?? ''));
+    assert.equal(launchers.length, 1, `the launcher waits in the supervisor leaf (members: ${procsOf(scope.supervisor).join(', ')})`);
+    const [launcher] = launchers;
     await armFault(fx.engine, { point: 'launcher_wait' });
     await stopRun(fx.engine, project, run.id);
     await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
@@ -218,6 +222,14 @@ describe('M115 every unknown quarantines', () => {
     assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'no role was launched');
     const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
     assert.ok([200, 404, 409].includes(res.status), `the launcher is released (or is already gone): ${res.status}`);
+    // Objection 018: the released launcher may place itself after closure
+    // (D2 §3.2; not pinned, SEAM.md §131) and is refused its grant; until it
+    // has exited the domain is populated and its launcher outstanding, which
+    // is not termination (slice 11's S1). So the next tick is asked for once
+    // the launcher is gone (host-read) and the domain is empty or removed,
+    // as S1 does; "the next tick clears it" then holds by construction.
+    await waitHostGone(launcher, { timeoutMs: 20_000 });
+    await waitFor(() => emptyOrRemoved(domain.cgroup_path) || undefined, { timeoutMs: 10_000, what: 'the domain to be empty or removed once the launcher is gone' });
     await tick(fx.engine, project);
     await assertClearedOnce(fx, project, run.id, 'stopped', { launched: false });
     assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'the released launcher got no grant');
