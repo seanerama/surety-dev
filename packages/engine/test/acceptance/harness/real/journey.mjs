@@ -72,6 +72,10 @@ export const PATH_TWO = Object.freeze({
   ],
   constraints: [{ key: 'C1', text: 'Plain JavaScript modules (ES modules) with no dependencies. Do not add a package.json.' }],
   stages: [{ number: 1, goal: 'R1 is already implemented in src/session.js. Implement R2: create src/logout.js as R2 describes.', implements: ['R1', 'R2'] }],
+  // The stage implements R1 and R2, so each needs a protected check in the
+  // acceptance scope (found by the E79 rehearsal: with `login` alone, both
+  // gates were ACCEPTANCE_SCOPE_INCOMPLETE on R2).
+  checks: [check('login', { requirements: ['R1'] }), check('logout', { requirements: ['R2'] })],
 });
 
 // A project of the journey: a disposable repository holding its protected
@@ -100,8 +104,12 @@ export async function realProject(ctx, fx, spec, { dayUsd, roles = {} }) {
     backend_reviewer: roles.reviewer ?? REAL.backend,
   });
   const plan = await installGatedPlan(fx.engine, id, { requirements: spec.requirements, constraints: spec.constraints, stages: spec.stages });
-  const checks = (await installChecks(fx.engine, id, [check('login', { requirements: ['R1'] })])).id;
-  return { id, repo: repo.path, ref: repo.ref, base, stage: plan.stages[0], checks };
+  const checks = (await installChecks(fx.engine, id, spec.checks ?? [check('login', { requirements: ['R1'] })])).id;
+  // Where the journey starts: the integration branch after the engine's
+  // own setup commits (the project's bootstrap and its policy revision,
+  // which no run makes and which carry no run or role trailer).
+  const journeyBase = refOid(repo.path, repo.ref);
+  return { id, repo: repo.path, ref: repo.ref, base, journeyBase, stage: plan.stages[0], checks };
 }
 
 // ---- moving one piece of work through a real role ---------------------------------------
@@ -169,7 +177,7 @@ async function verify(fx, P, candidate, path) {
 // A candidate's review: the check's execution recorded (a fixture: D3 is
 // not built), the review the engine queues let through, the run ended.
 async function review(fx, P, candidate, path) {
-  const [execution] = await passAll(fx.engine, P.id, candidate.id, [P.checks.login]);
+  const [execution] = await passAll(fx.engine, P.id, candidate.id, Object.values(P.checks));
   const queued = await tickWhile(fx, P.id, () => workItemsOf(fx.home, P.id).find((w) => w.kind === 'review' && w.subject?.candidate === candidate.id), { timeoutMs: 180_000, everyMs: 5_000, what: `the engine to queue the review of ${candidate.id}` });
   await letThrough(fx, P.id, queued.id);
   const run = await runEnds(fx, P.id, queued.id);
@@ -235,6 +243,7 @@ export async function pathOne(ctx) {
           project: P.id,
           repo: P.repo,
           base: P.base,
+          journey_base: P.journeyBase,
           candidate: candidate.id,
           runs: [build, verification.run, reviewed.run].map((r) => runSummary(fx.home, r)),
           findings: findingsOf(fx.home, P.id),
@@ -287,7 +296,7 @@ export async function pathTwo(ctx, { mixed = false } = {}) {
 
       if (mixed) {
         const rv = () => workItemsOf(fx.home, P.id).find((w) => w.kind === 'review' && w.subject?.candidate === first.id);
-        await passAll(fx.engine, P.id, first.id, [P.checks.login]);
+        await passAll(fx.engine, P.id, first.id, Object.values(P.checks));
         const queued = await tickWhile(fx, P.id, rv, { timeoutMs: 180_000, everyMs: 5_000, what: 'the review of the first candidate' });
         scripted.script(queued.id, [{ steps: [step.result({ ...VALID_RESULT, dispositions: [{ finding: finding.id, disposition: 'fix' }] })] }]);
       }
@@ -302,7 +311,7 @@ export async function pathTwo(ctx, { mixed = false } = {}) {
       const [, second] = await waitCandidates(fx, P.id, 2);
       const secondVerification = await verify(fx, P, second, label);
       if (mixed) {
-        await passAll(fx.engine, P.id, second.id, [P.checks.login]);
+        await passAll(fx.engine, P.id, second.id, Object.values(P.checks));
         const queued = await tickWhile(fx, P.id, () => workItemsOf(fx.home, P.id).find((w) => w.kind === 'review' && w.subject?.candidate === second.id), { timeoutMs: 180_000, everyMs: 5_000, what: 'the review of the fix\'s candidate' });
         scripted.script(queued.id, [{ steps: [step.result({ ...VALID_RESULT, signoffs: [{ scope: 'candidate' }] })] }]);
       }
@@ -321,6 +330,7 @@ export async function pathTwo(ctx, { mixed = false } = {}) {
         project: P.id,
         repo: P.repo,
         base: P.base,
+        journey_base: P.journeyBase,
         candidates: [first.id, second.id],
         finding: resolved,
         blocked_on_first: { outcome: blocked.outcome, reasons: blocked.reasons },
