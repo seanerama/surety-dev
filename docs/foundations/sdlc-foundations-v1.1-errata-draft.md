@@ -1532,3 +1532,13 @@ After E82 (the real agent refused the containment canary as a prompt injection),
 Then the rehearsal is rerun against the fake, and Sean runs one more attempt (all three canaries, about 0.3 USD in Claude Code's estimate on his subscription).
 
 ---
+
+## E84. The containment canary redesign merged and rehearsed; ready for Sean's second attempt (provisional, 2026-10-05)
+
+**Status: provisional.** The driver's record.
+
+1. **The redesign** (E83; SEAM §173) merged at `e2b15aa`. The driver's rerun on `0974089`: `--slice 14` 1,038 of 1,039 (the one failure M141 (b) by design), unit 238 in 45 files.
+2. **The rehearsal rerun** (fake only, nothing to a provider), merged at `20a1abf`: the containment canary works end to end (the probe run once with no arguments; the domain init's five actions witnessed with the expected outcomes and corroborated host-side where designed; `agent_report` kept with the probe's output; delegation established from the inventory); the attempt fails only on the provider-tunnel control, as expected offline; `M2-hands-on.sh` ran cleanly twice through all eleven steps. The script now shows the containment canary's `agent_report` as soon as the attempt ends, so a refusal's reason reaches Sean even when the attempt fails.
+3. **Ready for Sean's second attempt:** the same command as the first run, with the same token file; a new attempt and its approval (all three canaries again, about 0.3 USD in Claude Code's estimate). Whether the real Claude Code now runs the probe is what only this attempt can show.
+
+---
