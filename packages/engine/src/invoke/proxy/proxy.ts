@@ -40,6 +40,7 @@ import { duplexPair } from 'node:stream';
 import { answerVerdict, hostAddresses } from './address.js';
 import { ECHO_HOST, ECHO_PORT, type EchoEndpoint } from './echo.js';
 import { type Resolver, resolveOnce } from './resolver.js';
+import { seamConnectHang } from '../../testing/seam.js';
 
 export interface ProxyLimits {
   resolveTimeoutMs: number;
@@ -379,7 +380,10 @@ export class DomainProxy {
     const address = answer.addresses[0]!;
     e.address = address;
     this.active++;
-    const remote = net.connect({ host: address, port: authority.port });
+    // The harness's egress_connect_hang: a socket never connected, so the
+    // connect timeout below ends it as it would a destination that never
+    // answers (no-op outside harness mode).
+    const remote = seamConnectHang(address) ? new net.Socket() : net.connect({ host: address, port: authority.port });
     this.open.add(remote);
     const outcome = await new Promise<'connected' | 'timeout' | string>((resolve) => {
       const t = setTimeout(() => resolve('timeout'), this.opts.limits.connectTimeoutMs);
