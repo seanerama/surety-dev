@@ -119,6 +119,9 @@ if (canary?.kind === 'positive') {
 } else if (canary) {
   fail();
 }
+// A canary is played above: the cancellation canary waits on its timer
+// and TERM, and must not fall through into a journey role.
+if (canary) return;
 
 // A journey role.
 const prompt = readFileSync('/surety/context/prompt.md', 'utf8');
