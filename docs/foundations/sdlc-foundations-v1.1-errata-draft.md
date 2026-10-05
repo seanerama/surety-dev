@@ -1475,3 +1475,15 @@ On `mini-hp01` (bare-metal, Arch-based, kernel 7.1.9; Node 22.22.0 installed in 
 4. **What M2 now waits on, all Sean's** (E74, E75): the real-agent run (`docs/acceptance/reports/M2-hands-on.sh`), for which he creates his subscription token with `claude setup-token` and saves it in a file only he can read, answers the two approvals (`qualification_approval`, `trust_activation`) as the run reaches them, and makes the hands-on checks; confirming the `claude-sonnet-5-5` prices; whether `--safe-mode` stays in the subscription template; the defaults `DISABLE_UPDATES=1` and the pinned copy's naming (E76 item 1); whether automated use fits his plan's terms; and, outside M2, handing the D3 review brief to Astra.
 
 ---
+
+## E79. While M2 waits: a dress rehearsal of the real lane and the launcher-exit tick (decided by Sean, 2026-10-05)
+
+**Status: decided by Sean** (the choice of work); the mechanisms are the driver's provisional defaults.
+
+Asked what could be done while M2 waits for his real-agent run, Sean chose two of four options:
+1. **A dress rehearsal.** The real-lane cases M136 to M140 and `M2-hands-on.sh` have never run. They are run end to end against a fake Claude Code (a script printing synthetic stream-json, never the real binary) in a disposable home, so their own defects surface before the real run spends his time and subscription allowance. The rehearsal sends nothing to Anthropic and uses no credential of his: a made-up token in a private file, and an egress list with no real host, so the provider-tunnel control is expected to fail and is recorded as such. Approvals that the real run leaves to Sean are answered by the rehearsal only through a rehearsal switch that refuses to work unless the backend binary is the fake one. Defects found go to the role that owns them (the cases and the script to the Verifier, the engine to the Builder).
+2. **The launcher-exit tick** (E77 item 1, recorded then as a later improvement). When the launcher of a quarantined or closing domain exits, the engine requests a tick, so that recovery and clearance do not wait up to the next scheduled tick (600 s). One case and one engine change. Sean accepted the scope.
+
+Not chosen: re-running the exhaustion lane on `mini-hp01`; the test harness sweeping its disposed homes' probe leftovers.
+
+---
