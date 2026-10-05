@@ -42,8 +42,17 @@
 // ends on its own, error_exit, after its provider could not be reached
 // through the proxy, is recorded by its exit class (D2 §1.6; SEAM.md §143:
 // failed / infra_error), never as a budget stop. Its ledger counts are not
-// asserted: whether all-zero usage from a synthetic message is known zero
-// or unknown is put to Sean.
+// asserted here: E85 decides them (below).
+//
+// E85 (Sean's rule, after E84): when the egress evidence proves that nothing
+// reached the provider, the run's usage is a known zero, and only when all
+// four hold: (a) the domain's only network path is the engine's proxy;
+// (b) its egress log is complete (not cut, no tunnel open); (c) no tunnel
+// was accepted and no byte went up; (d) the backend's own report is absent
+// or all zeros. Then the ledger shows zero billable and zero cost, usage
+// complete, the basis recorded, no unknown allowance charged. Otherwise the
+// usage stays unknown (or is the backend's counts). Asserted through
+// GET /v1/projects/:p/ledger; the basis's field is the engine's to name.
 //
 // SAFETY (SEAM.md §141): the fake runs the containment canary's actions only
 // when /surety/context exists and its pid namespace is not the host's, which
@@ -57,12 +66,13 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { installGatedPlan } from './harness/gates.mjs';
+import { armFault } from './harness/engine.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { getPolicy } from './harness/journal.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { requestTick, waitForRun } from './harness/runs.mjs';
-import { egressLogOf } from './harness/sandbox/egress.mjs';
+import { DOC, egressLogOf, setResolver } from './harness/sandbox/egress.mjs';
 import { FakeClaude } from './harness/sandbox/fakeclaude.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { samplerAttempt, samplerEngine } from './harness/sandbox/nativefake.mjs';
@@ -77,8 +87,8 @@ const EGRESS = ['api.provider.example'];
 
 // A sandbox-lane engine, the fake bound as `claude`, a fixture project, and
 // a credential held for the attempt (the fake reads none).
-async function fakeFixture(t) {
-  const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2 } });
+async function fakeFixture(t, { config = {} } = {}) {
+  const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2, ...config } });
   const fake = new FakeClaude(join(fx.root, 'fake-claude'), { modeDir: fx.scripted.dir });
   const project = (await addGitProject(fx)).id;
   await holdSecret(fx.engine, apiKeyRef('claude'), 'sk-test-surety-fake-claude-not-a-key-0000');
@@ -278,16 +288,33 @@ describe('M136 E83: what the containment canary\'s agent is shown (sandbox lane,
   });
 });
 
+// A Builder's run on the fake (mode `proxy_refused`): one CONNECT to the
+// entry's egress host, then Claude Code's ending when the provider cannot be
+// reached (E84). `accepted`: the harness resolver answers the name with a
+// documentation address the harness holds unconnected (SEAM.md §169), so the
+// proxy accepts the tunnel and the connect times out, nothing sent.
+async function providerUnreachable(t, { accepted = false } = {}) {
+  const { fx, fake, project } = await fakeFixture(t, { config: { egress_connect_timeout: 1, egress_resolve_timeout: 1 } });
+  if (accepted) {
+    await setResolver(fx.engine, { [EGRESS[0]]: [DOC.c] });
+    await armFault(fx.engine, { point: 'egress_connect_hang', address: DOC.c });
+  }
+  fake.set({ role: 'proxy_refused', connect: `${EGRESS[0]}:443` });
+  await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: PARK_ON_REFUSAL });
+  await installTrustEntry(fx.engine, { binary: { path: fake.path, sha256: fake.sha256 } }, { status: 'active', model: MODEL, egress_hosts: [...EGRESS] });
+  const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: 'a stage the provider never hears of' }] });
+  await requestTick(fx.engine, project);
+  const run = await waitForRun(fx.home, plan.stages[0].work_item, { state: 'ended', timeoutMs: 300_000 });
+  const log = egressLogOf(fx.home, run.id);
+  const ledger = (await fx.engine.get(`/v1/projects/${project}/ledger`)).body;
+  const row = (ledger?.rows ?? []).find((r) => r.run === run.id && r.corrects === null);
+  assert.ok(row, `the run has its original ledger row in GET /v1/projects/:p/ledger (${JSON.stringify(ledger?.rows)})`);
+  return { fx, project, run, log, ledger, row };
+}
+
 describe('M136 E84: a role run that ends error_exit on its own after its egress was refused (sandbox lane, the fake backend, no model)', () => {
   test('E84: the provider unreachable through the proxy, the backend ends error_exit with an is_error result and zero usage: the run is failed / infra_error by its exit class, not stopped / budget', async (t) => {
-    const { fx, fake, project } = await fakeFixture(t);
-    fake.set({ role: 'proxy_refused', connect: `${EGRESS[0]}:443` });
-    await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: PARK_ON_REFUSAL });
-    await installTrustEntry(fx.engine, { binary: { path: fake.path, sha256: fake.sha256 } }, { status: 'active', model: MODEL, egress_hosts: [...EGRESS] });
-    const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: 'a stage the provider never hears of' }] });
-    const item = plan.stages[0].work_item;
-    await requestTick(fx.engine, project);
-    const run = await waitForRun(fx.home, item, { state: 'ended', timeoutMs: 300_000 });
+    const { fx, run } = await providerUnreachable(t);
 
     // Live: the backend ran, its CONNECT was refused, and its usage was observed.
     const log = egressLogOf(fx.home, run.id).entries;
@@ -305,5 +332,27 @@ describe('M136 E84: a role run that ends error_exit on its own after its egress 
     // engine's): the exit class, the refused egress or the backend's error.
     const cause = [/error_exit/, new RegExp(EGRESS[0].replace(/\./g, '\\.')), /resolve_failed/, /ERR_PROXY_TUNNEL|api_error|API Error/];
     assert.ok(typeof run.reason_text === 'string' && cause.some((re) => re.test(run.reason_text)), `the run's reason names its cause, not a budget: ${JSON.stringify(run.reason_text)}`);
+  });
+});
+
+describe('M136 E85: a known zero by the egress evidence (sandbox lane, the fake backend, no model)', () => {
+  test('E85 (a): every CONNECT refused, nothing accepted, no byte up, the backend\'s report all zeros: the ledger row is a known zero (billable and cost 0, usage complete), names its egress basis, and charges no unknown allowance', async (t) => {
+    const { row, log, ledger } = await providerUnreachable(t);
+    assert.ok(log.entries.length > 0 && log.entries.every((l) => l.decision === 'refused' && l.bytes_up === 0) && log.marker === null, `the fixture is live: every CONNECT refused, nothing up, the log not cut (${JSON.stringify(log.entries)})`);
+    const seen = { billable_in: row.billable_in, out: row.out, cost_usd: row.cost_usd, cost_status: row.cost_status, usage_complete: row.usage_complete, unknown_allowance_tokens: row.unknown_allowance_tokens };
+    assert.deepEqual([row.billable_in, row.out, row.cost_usd, row.usage_complete], [0, 0, 0, true], `a known zero: zero billable, zero output, zero cost, usage complete (E85): ${JSON.stringify(seen)}`);
+    assert.notEqual(row.cost_status, 'unknown', `the cost is known (E85): ${JSON.stringify(seen)}`);
+    assert.equal(row.unknown_allowance_tokens ?? 0, 0, `no unknown allowance is charged (E85): ${JSON.stringify(seen)}`);
+    assert.equal(ledger.totals?.unknown_allowance_tokens ?? 0, 0, `nor in the project's totals: ${JSON.stringify(ledger.totals)}`);
+    assert.ok(Object.values(row).some((v) => typeof v === 'string' && /egress/i.test(v)), `the row records its basis, the egress evidence (E85; the field is the engine's): ${JSON.stringify(row)}`);
+  });
+
+  test('E85 (b): one tunnel accepted (the connect held, nothing sent), the backend\'s report all zeros: not a zero by egress; the usage stays unknown, the unknown allowance charged', async (t) => {
+    const { row, log } = await providerUnreachable(t, { accepted: true });
+    assert.ok(log.entries.some((l) => l.decision === 'accepted'), `the fixture is live: a tunnel was accepted (${JSON.stringify(log.entries)})`);
+    const seen = { billable_in: row.billable_in, cost_usd: row.cost_usd, cost_status: row.cost_status, usage_complete: row.usage_complete, unknown_allowance_tokens: row.unknown_allowance_tokens };
+    assert.equal(row.usage_complete, false, `an accepted tunnel breaks E85's condition (c): the usage is not complete (${JSON.stringify(seen)})`);
+    assert.ok(row.unknown_allowance_tokens > 0, `and the unknown allowance is charged (${JSON.stringify(seen)})`);
+    assert.ok(!Object.values(row).some((v) => typeof v === 'string' && /egress/i.test(v)), `no egress basis is recorded (${JSON.stringify(row)})`);
   });
 });
