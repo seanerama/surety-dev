@@ -438,12 +438,15 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     const { k, ev } = containmentCapabilities(fx, done);
     const g = (ev.actions ?? []).find((a) => a.name === 'git_config');
     assert.ok(g, `the fixture is live: git_config is among the engine's actions (${JSON.stringify(ev.actions)})`);
-    // The verdict must rest on the filesystem refusing the write, not on git
-    // exiting non-zero for a config the backend planted. On c4a7f7f a planted
-    // ~/.gitconfig makes git exit 128 and the action read denied anyway.
-    assert.equal(g.outcome, g.expected, `git_config's outcome is its expected denial, by the filesystem's refusal, not git's own error (${JSON.stringify(g)})`);
     assert.equal(g.witnessed, true, 'git_config witnessed by the init');
-    assert.notEqual(g.outcome, 'not_run', 'a git error that is not the filesystem\'s refusal is not_run, which would fail the canary');
+    // The denial must rest on the filesystem refusing the write, not on git
+    // failing to read a config the backend planted (contract: "a denial
+    // counts only when it is the filesystem's refusal of the write; anything
+    // else is not_run, which fails the canary"). On c4a7f7f the probe child's
+    // HOME is /surety/home, which the backend wrote, so git exits 128 reading
+    // the planted ~/.gitconfig and the detail names it; that is the defect.
+    const detail = String(g.detail ?? '');
+    assert.ok(!/bad config line|\.gitconfig|could not (parse|read)/i.test(detail), `git_config's denial is the filesystem's refusal of the write, not a failure to read the backend's planted config (E86 review S1): ${JSON.stringify(detail)}`);
     assert.deepEqual([done.status, k.passed], ['succeeded', true], `the backend's planted config does not change the canary's verdict (${JSON.stringify(done.canaries)})`);
   });
 
@@ -454,13 +457,15 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     await approveAttempt(fx, project, attempt.id);
     const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 600_000 });
     const { k, ev } = containmentCapabilities(fx, done);
-    // The signal must not change any verdict. On c4a7f7f the action children
-    // are node without --disable-sigusr1: SIGUSR1 opens the inspector and the
-    // check can be altered. The canary passes only when every action is still
-    // witnessed with its expected outcome; otherwise it is containment_failed.
     assert.ok((ev.actions ?? []).length > 0, `the fixture is live: the engine ran its actions (${JSON.stringify(ev.actions)})`);
-    const unmoved = ev.actions.every((a) => a.witnessed === true && a.outcome === a.expected);
-    assert.equal(k.passed, unmoved, `the canary passes exactly when the signal moved no action's verdict (${JSON.stringify(ev.actions)})`);
-    assert.deepEqual([done.status, k.passed], ['succeeded', true], `a backend signalling the probe's children cannot leave an action unverified (E86 review S2): the children are hardened against SIGUSR1 (${JSON.stringify(done.canaries)})`);
+    // The probe's action children must run hardened against the signal: a
+    // backend that signals them cannot disturb the check. On the fixed engine
+    // SIGUSR1 is a no-op (the init runs each child with --disable-sigusr1) and
+    // the canary passes cleanly; on c4a7f7f the children are unhardened and
+    // the signal opens their inspector and disrupts the check (here it ended
+    // containment_failed). So "the canary still passes, every action
+    // witnessed and denied, through the signalling" separates fixed from not.
+    assert.ok(ev.actions.every((a) => a.witnessed === true && a.outcome === a.expected), `every action witnessed with its expected outcome despite the signal (${JSON.stringify(ev.actions)})`);
+    assert.deepEqual([done.status, k.passed], ['succeeded', true], `a backend signalling the probe's children does not disturb the check: the children run hardened against SIGUSR1 (E86 review S2) (${JSON.stringify(done.canaries)})`);
   });
 });
