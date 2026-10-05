@@ -18,6 +18,12 @@
 //                the binary and a host sampler cannot identify it
 //   host_pid_ns: the host's pid namespace; the containment actions are
 //                refused when this process is in it (SEAM.md §141's guard)
+//   role:        "proxy_refused" (a role's run, not a canary; E84): one
+//                CONNECT to `connect` through HTTPS_PROXY (inside the sandbox
+//                only, by the same guard), then Claude Code's ending when
+//                its provider cannot be reached, as Sean's second attempt
+//                recorded it: retries, a synthetic error message, a result
+//                with is_error, all-zero usage and an empty modelUsage; exit 1
 //   dump_context: true writes what this canary was shown (every file under
 //                /surety/context, and the prompt argument) as
 //                fake-claude-context-<kind>.json beside the mode file
@@ -29,6 +35,7 @@
 // Built-ins only.
 
 import { spawnSync } from 'node:child_process';
+import { connect as tcpConnect } from 'node:net';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -59,6 +66,46 @@ out({ type: 'system', subtype: 'init', tools: [...templateTools, ...(mode.extra_
 
 const assistant = (id, usage) => out({ type: 'assistant', parent_tool_use_id: null, message: { id, model, usage, content: [] } });
 const success = (modelUsage, cost) => out({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost, modelUsage: { [model]: modelUsage } });
+
+// The guard's first half (SEAM.md §141): inside a sandbox, never the host's
+// pid namespace.
+const insideSandbox = () => {
+  try {
+    const ns = readlinkSync('/proc/self/ns/pid');
+    return existsSync('/surety/context') && Boolean(mode.host_pid_ns) && ns !== mode.host_pid_ns;
+  } catch {
+    return false;
+  }
+};
+
+if (mode.role === 'proxy_refused' && !existsSync('/surety/context/canary.json')) {
+  // E84: the provider unreachable through the proxy.
+  const proxy = new URL(process.env.HTTPS_PROXY ?? 'http://127.0.0.1:1');
+  const answer = await new Promise((resolve) => {
+    if (!insideSandbox() || !['127.0.0.1', '[::1]', '::1'].includes(proxy.hostname)) return resolve('not_attempted');
+    const sock = tcpConnect({ host: proxy.hostname.replace(/^\[|\]$/g, ''), port: Number(proxy.port) }, () => sock.write(`CONNECT ${mode.connect} HTTP/1.1\r\nHost: ${mode.connect}\r\n\r\n`));
+    let got = '';
+    sock.on('data', (d) => {
+      got += d.toString('latin1');
+      if (got.includes('\r\n')) {
+        sock.destroy();
+        resolve(got.split('\r\n')[0]);
+      }
+    });
+    sock.on('error', () => resolve('error'));
+    sock.on('close', () => resolve(got.split('\r\n')[0] || 'closed'));
+    setTimeout(() => {
+      sock.destroy();
+      resolve('timeout');
+    }, 10_000);
+  });
+  for (let attempt = 1; attempt <= 2; attempt++) out({ type: 'system', subtype: 'api_retry', attempt, max_retries: 10, retry_delay_ms: 500, error_status: null, error: 'unknown' });
+  const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const text = `API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL) [fake: the proxy answered ${answer}]`;
+  out({ type: 'assistant', parent_tool_use_id: null, message: { id: 'synthetic-proxy-error', model: '<synthetic>', role: 'assistant', stop_reason: 'stop_sequence', usage: zero, content: [{ type: 'text', text }] }, error: 'server_error', is_api_error_message: true });
+  out({ type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', api_error_status: null, num_turns: 1, total_cost_usd: 0, usage: zero, modelUsage: {}, result: text });
+  process.exit(1);
+}
 
 let canary = null;
 try {

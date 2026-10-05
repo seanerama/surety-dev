@@ -22,6 +22,13 @@
 // `egress_connect_hang` (SEAM.md §169), so the connect times out, sends
 // nothing and reaches no host, whatever the network would have answered. The role's CONNECTs are guarded probes (SEAM.md §141).
 //
+// (j) (E84, Sean's second real-agent attempt; SEAM.md §174): under the test
+// mode for the real lane the proxy resolves with the system's resolver, as a
+// production engine does, never the harness map; in plain test mode, the
+// harness map only. Told apart without the network: `localhost`, which the
+// host resolves itself to a loopback address that the address policy then
+// refuses, so nothing is ever connected.
+//
 // Every case here is expected to fail on the engine these tests were
 // written against, which has no egress proxy (COVERAGE.md, "M2 slice 12").
 
@@ -159,5 +166,32 @@ describe('M127 egress is bound to the validated address', () => {
     const e = entryFor(egressLogOf(fx.home, after.run.id), 'extra.example:443');
     assert.deepEqual([e.decision, e.address], ['accepted', DOC.c], `(h) approved, the name passes the list and the address policy and the proxy connects to its validated address (${JSON.stringify(e)})`);
     assert.equal((await resolverQueries(fx.engine))['extra.example'], 1, '(h) resolved once, for the approved attempt only');
+  });
+
+  test('(j) the resolver by mode (E84): under --harness-real-lane an allowed name is resolved by the system\'s resolver (localhost: a loopback answer, refused address_policy, nothing connected); in plain test mode the harness map only (resolve_failed, nothing resolved)', async (t) => {
+    const NAME = 'localhost';
+    const tryOn = async (fx, what) => {
+      const project = (await addGitProject(fx)).id;
+      await approveWidening(fx, project, { egress_allow_extra: [NAME] });
+      const run = await probedRun(fx, project, await addWork(fx.engine, project, 'verification'), { acts: (act) => [act.proxyConnect(`${NAME}:443`, { timeout_ms: 8000 })] });
+      const e = entryFor(egressLogOf(fx.home, run.run.id), `${NAME}:443`);
+      assertEntryForm(e);
+      return { e, status: run.probe('proxy_connect').status };
+    };
+
+    // Plain test mode: hermetic, the harness map only; the name is not in it.
+    const plain = await sandboxEngine(t, { config: CONFIG });
+    await setResolver(plain.engine, {});
+    const { e: p } = await tryOn(plain, 'plain test mode');
+    assert.deepEqual([p.decision, p.reason, p.resolved], ['refused', 'resolve_failed', []], `plain test mode: the name is not in the harness map, so it does not resolve; the system's resolver is never asked (SEAM.md §140) (${JSON.stringify(p)})`);
+
+    // The real lane's test mode (SEAM.md §164, as amended by §174): the
+    // system's resolver; the address policy refuses its loopback answer.
+    const real = await sandboxEngine(t, { config: CONFIG, start: false });
+    await real.start({ args: ['--harness-real-lane'] });
+    const { e: r, status } = await tryOn(real, 'the real lane\'s test mode');
+    assert.ok(Array.isArray(r.resolved) && r.resolved.length > 0, `the real lane's test mode resolves an allowed name with the system's resolver, as production does (E84: api.anthropic.com was refused resolve_failed); localhost resolved to nothing: ${JSON.stringify(r)}`);
+    assert.deepEqual([r.decision, r.reason, r.address], ['refused', 'address_policy', null], `its loopback answer is refused by the address policy and nothing is connected (${JSON.stringify(r)})`);
+    assert.equal(status, 403, 'a refusal by the address policy answers 403 (SEAM.md §140)');
   });
 });
