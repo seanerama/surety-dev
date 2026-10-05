@@ -15,7 +15,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -350,7 +350,10 @@ async function rehearsalEntry(ctx, attemptStep) {
   const dir = join(ctx.runDir, 'rehearsal');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const copy = join(dir, 'fake-backend');
-  copyFileSync(ctx.binary, copy);
+  // The fake's script form: the fixture refuses an executable image, so
+  // the native wrapper (the attempt's binary) cannot stand here.
+  const script = readFileSync(new URL('../standin/rehearsal-claude.cjs', import.meta.url), 'utf8');
+  writeFileSync(copy, `#!${process.execPath}\n${script}`, { mode: 0o755 });
   chmodSync(copy, 0o755);
   const fx = await journeyEngine(ctx, 'home');
   try {
