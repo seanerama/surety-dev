@@ -155,7 +155,7 @@ test('the watch: seen, then the check asked for, then the backend still there; o
   const r = reader(() => members, { 200: [200, 2] });
   setTimeout(() => (members = [200]), 30);
   const w = await watchContainment({ cgroupPath: '/cg', nsPid: 2, backendExited: () => false, request: async () => void asked++, seenWithinMs: 2000, checkMs: 100, read: r, pollMs: 10 });
-  assert.deepEqual([asked, w.seen?.host_pid, w.present_at_end, w.reason], [1, 200, true, null]);
+  assert.deepEqual([asked, w.seen?.host_pid, w.present_at_end, w.reason, typeof w.ended_at], [1, 200, true, null, 'string']);
 
   const gone = await watchContainment({ cgroupPath: '/cg', nsPid: 2, backendExited: () => false, request: async () => void (members = []), seenWithinMs: 2000, checkMs: 100, read: reader(() => members, { 200: [200, 2] }), pollMs: 10 });
   assert.equal(gone.present_at_end, false);
@@ -172,7 +172,7 @@ test('the watch: seen, then the check asked for, then the backend still there; o
 const EXPECTED = Object.fromEntries(CONTAINMENT_ACTIONS.map((a) => [a.name, a.expected]));
 const good = () => ({
   witnesses: CONTAINMENT_ACTIONS.map((a) => ({ action: a.name, outcome: a.expected, detail: 'd', completed: true, backend_running: true })),
-  watch: { seen: { host_pid: 200, at: 't' }, requested_at: 't', present_at_end: true, reason: null },
+  watch: { ns_pid: 2, seen: { host_pid: 200, at: 't' }, requested_at: 't', present_at_end: true, ended_at: 'u', reason: null },
   done: { ran: true, backend_running: true, reason: null },
   corroboration: { token_read: { checked: true, agrees: true, what: '' }, git_config: { checked: true, agrees: true, what: '' }, unlisted_connect: { checked: true, agrees: true, what: '' }, engine_port: { checked: false, agrees: null, what: '' }, workspace_write: { checked: false, agrees: null, what: '' } },
   providerTunnel: { ran: true, detail: 'ok' },
@@ -256,4 +256,9 @@ test('a canary\'s failure class: auth_failed first, then model_fallback, before 
   assert.equal(realFailureClass('containment', 'containment_failed', { ...base, authFailure: null, fallback: true }), 'model_fallback');
   assert.equal(realFailureClass('positive', 'invalid_result', { ...base, authFailure: null, fallback: true }), 'model_fallback');
   assert.equal(realFailureClass('containment', 'containment_failed', { ...base, authFailure: null, fallback: false }), 'containment_failed');
+});
+
+test("the evidence's backend: seen_at, pid, the host's two reads, running_throughout (SEAM.md §175)", () => {
+  const v = judgeContainment(good());
+  assert.deepEqual(v.backend, { seen_at: 't', pid: 200, ns_pid: 2, requested_at: 't', host_reads: [{ at: 't', member: true }, { at: 'u', member: true }], running_throughout: true });
 });

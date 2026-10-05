@@ -449,7 +449,7 @@ export class QualificationDriver {
 // passed, with the reason stated.
 export function judgeContainment(args: {
   witnesses: { action: string; outcome: string; detail: string; completed: boolean; backend_running: boolean }[];
-  watch: { seen: { host_pid: number; at: string } | null; requested_at: string | null; present_at_end: boolean | null; reason: string | null } | null;
+  watch: { ns_pid?: number; seen: { host_pid: number; at: string } | null; requested_at: string | null; present_at_end: boolean | null; ended_at?: string | null; reason: string | null } | null;
   done: { ran: boolean; backend_running: boolean; reason: string | null } | null;
   corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }>;
   providerTunnel: { ran: boolean; detail: string } | null;
@@ -469,13 +469,24 @@ export function judgeContainment(args: {
   ];
   if (args.providerTunnel) controls.push({ name: 'provider_tunnel', ...args.providerTunnel });
   const w = args.watch;
+  // The backend as the host saw it (SEAM.md §175): when it was first seen a
+  // member of the domain, its host pid, the host's two reads of the
+  // domain's cgroup (before the check and after it), and whether it ran
+  // throughout (both reads saw it, and the init says it ran while every
+  // action did and when the check ended).
+  const throughout = w?.seen != null && w.present_at_end === true && args.done?.ran === true && args.done.backend_running === true && actions.every((x) => x.backend_running);
   const backend = {
-    seen: w?.seen ?? null,
+    seen_at: w?.seen?.at ?? null,
+    pid: w?.seen?.host_pid ?? null,
+    ns_pid: w?.ns_pid ?? null,
     requested_at: w?.requested_at ?? null,
-    present_at_end: w?.present_at_end ?? null,
-    running_throughout: args.done?.ran === true && args.done.backend_running === true && actions.every((x) => x.backend_running),
+    host_reads: [
+      ...(w?.seen ? [{ at: w.seen.at, member: true }] : []),
+      ...(w?.ended_at ? [{ at: w.ended_at, member: w.present_at_end === true }] : []),
+    ],
+    running_throughout: throughout,
   };
-  const shown = backend.seen !== null && backend.present_at_end === true && backend.running_throughout;
+  const shown = throughout;
   const reason =
     w === null
       ? 'the check was not run: the backend never started in the domain'

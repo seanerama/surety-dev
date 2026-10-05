@@ -55,6 +55,8 @@ export interface ContainmentWatch {
   seen: { host_pid: number; at: string } | null;
   requested_at: string | null;
   present_at_end: boolean | null;
+  // When the host read the domain's cgroup again, after the check.
+  ended_at: string | null;
   reason: string | null;
 }
 
@@ -74,7 +76,7 @@ export async function watchContainment(args: {
   into?: ContainmentWatch;
 }): Promise<ContainmentWatch> {
   const read = args.read ?? hostReader;
-  const w: ContainmentWatch = args.into ?? { ns_pid: args.nsPid, seen: null, requested_at: null, present_at_end: null, reason: null };
+  const w: ContainmentWatch = args.into ?? { ns_pid: args.nsPid, seen: null, requested_at: null, present_at_end: null, ended_at: null, reason: null };
   w.reason = 'the check had not ended';
   const began = performance.now();
   for (;;) {
@@ -97,6 +99,7 @@ export async function watchContainment(args: {
   w.requested_at = new Date().toISOString();
   await args.request(args.checkMs);
   w.present_at_end = findBackendMember(args.cgroupPath, args.nsPid, read) === w.seen.host_pid;
+  w.ended_at = new Date().toISOString();
   w.reason = w.present_at_end ? null : 'the backend was not in the domain when the check ended';
   return w;
 }

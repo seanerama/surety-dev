@@ -785,7 +785,7 @@ export class Launcher {
           // the domain, the engine asks the init for the check.
           if (claim.attempt?.kind === 'containment' && claim.cgroup_path !== null) {
             const cgroupPath = claim.cgroup_path;
-            const watch: ContainmentWatch = { ns_pid: nsPid, seen: null, requested_at: null, present_at_end: null, reason: 'the check had not ended' };
+            const watch: ContainmentWatch = { ns_pid: nsPid, seen: null, requested_at: null, present_at_end: null, ended_at: null, reason: 'the check had not ended' };
             handle.containment = watch;
             void watchContainment({
               cgroupPath,
