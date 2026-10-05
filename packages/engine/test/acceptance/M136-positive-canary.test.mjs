@@ -61,8 +61,14 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.equal(ev.observed.edit.path, ev.expected.edit.path, 'the edit is at the expected path');
       assert.equal(ev.observed.edit.type, 'file', 'a regular file, read without following a link');
       assert.equal(ev.observed.edit.sha256, sha256(ev.expected.edit.content), 'holding exactly the expected content');
-      // The result: the run's `result` record is the collected file.
-      assert.deepEqual(p.result, ev.expected.result, `the collected result is exactly the expected one (${JSON.stringify(p.result)})`);
+      // The result: the collected value as the engine recorded it in the
+      // canary's evidence (SEAM.md §165: `observed.result`, "the collected
+      // value or null"). A canary run is never the acceptance pipeline, and
+      // no section publishes a `result` record for it; if one is ever
+      // published it must hold the same value. (Found by the E79 rehearsal:
+      // this case first read a `result` record no section promises.)
+      assert.deepEqual(ev.observed.result, ev.expected.result, `the collected result is exactly the expected one (${JSON.stringify(ev.observed.result)})`);
+      if (p.result !== null) assert.deepEqual(p.result, ev.expected.result, `a published result record holds the same value (${JSON.stringify(p.result)})`);
       assert.deepEqual([p.run.outcome, p.run.reason_class], ['completed', 'none'], 'the canary run completed');
 
       // Recorded, not asserted beyond D2: the session id the engine assigned

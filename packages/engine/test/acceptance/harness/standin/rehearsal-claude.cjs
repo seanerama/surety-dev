@@ -35,7 +35,8 @@
 
 // CommonJS, so that Node runs it under any file name: the engine pins its
 // copy as `claude-<version>-<sha16>`, a name whose dot an ES module loader
-// would read as an unknown file extension.
+// would read as an unknown file extension. No top-level `return`: the
+// native wrapper (rehearsal-claude.c) runs this text with `node -e`.
 const { spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } = require('node:fs');
 const { dirname } = require('node:path');
@@ -121,9 +122,10 @@ if (canary?.kind === 'positive') {
 }
 // A canary is played above: the cancellation canary waits on its timer
 // and TERM, and must not fall through into a journey role.
-if (canary) return;
+if (!canary) playRole();
 
 // A journey role.
+function playRole() {
 const prompt = readFileSync('/surety/context/prompt.md', 'utf8');
 const role = /# Your task \(([a-z]+)\)/.exec(prompt)?.[1] ?? 'builder';
 const ws = (p) => `/surety/workspace/${p}`;
@@ -158,4 +160,5 @@ if (role === 'builder') {
   finish({ status: 'completed', summary: 'rehearsal: reviewed', signoffs: [{ scope: 'candidate' }] });
 } else {
   finish({ status: 'completed', summary: `rehearsal: ${role}` });
+}
 }

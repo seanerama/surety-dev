@@ -206,9 +206,10 @@ export const REHEARSAL_MARKER = 'SURETY REHEARSAL FAKE CLAUDE';
 export const REHEARSAL_EGRESS = Object.freeze(['provider.rehearsal.invalid']);
 
 // SURETY_REAL_REHEARSAL=1 lets the harness answer Sean's approvals itself,
-// and only for the rehearsal's fake: a script (not an executable image)
-// carrying the marker, outside Claude Code's own install directories, under
-// 1 MiB. Anything else refuses the run before anything starts. Without the
+// and only for the rehearsal's fake: the script, or its native wrapper
+// (harness/standin/rehearsal-claude.c, which embeds the script), carrying
+// the marker, outside Claude Code's own install directories, under 1 MiB.
+// Anything else refuses the run before anything starts. Without the
 // switch, nothing changes: the test waits for Sean.
 function rehearsalGuard(value, binary) {
   if (value === undefined || value === '') return false;
@@ -216,8 +217,8 @@ function rehearsalGuard(value, binary) {
   const real = realpathSync(binary);
   const bytes = readFileSync(real);
   const reasons = [];
-  if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) reasons.push('it is an executable image');
-  if (!bytes.subarray(0, 2).equals(Buffer.from('#!'))) reasons.push('it is not a script');
+  const image = bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  if (!image && !bytes.subarray(0, 2).equals(Buffer.from('#!'))) reasons.push('it is neither a script nor an executable image');
   if (!bytes.includes(Buffer.from(REHEARSAL_MARKER))) reasons.push(`it does not carry "${REHEARSAL_MARKER}"`);
   if (bytes.length > 1 << 20) reasons.push('it is larger than 1 MiB');
   for (const dir of [join(homedir(), '.local', 'share', 'claude'), join(homedir(), '.local', 'bin')]) if (inside(real, dir)) reasons.push(`it is inside ${dir}`);

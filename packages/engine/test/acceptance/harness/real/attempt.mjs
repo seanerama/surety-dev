@@ -272,8 +272,11 @@ function rehearsalOnlyTunnel(out) {
     ev.actions.length > 0 &&
     ev.actions.every((a) => a.passed === true) &&
     (ev.controls ?? []).every((x) => x.ran === true || x.name === 'provider_tunnel') &&
-    (ev.controls ?? []).some((x) => x.name === 'provider_tunnel' && x.ran === false);
-  return ok ? 'rehearsal: the provider-tunnel control did not run (no provider is reachable); every other canary check passed' : null;
+    (ev.controls ?? []).some((x) => x.name === 'provider_tunnel' && x.ran === false) &&
+    // Delegation shown absent too (SEAM.md §165): otherwise the attempt
+    // failed for more than the provider tunnel, and that is a halt.
+    ev.capabilities?.delegation_verified === true;
+  return ok ? 'rehearsal: the provider-tunnel control did not run (no provider is reachable); every other canary check passed, delegation shown absent' : null;
 }
 
 // The attempt whose key is wrong (M139). Its expected end is `failed` with
