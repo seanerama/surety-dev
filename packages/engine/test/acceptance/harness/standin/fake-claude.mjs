@@ -18,12 +18,19 @@
 //                the binary and a host sampler cannot identify it
 //   host_pid_ns: the host's pid namespace; the containment actions are
 //                refused when this process is in it (SEAM.md §141's guard)
+//   dump_context: true writes what this canary was shown (every file under
+//                /surety/context, and the prompt argument) as
+//                fake-claude-context-<kind>.json beside the mode file
+//                (E83; SEAM.md §173)
+// The containment canary (E83; SEAM.md §173): when canary.json names a
+// `probe`, the probe program is run once, with no arguments, and its output
+// reported as `probe_output`; on an engine before E83, each listed action.
 //
 // Built-ins only.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const argv = process.argv.slice(2);
 if (argv.length === 1 && argv[0] === '--version') {
@@ -62,6 +69,24 @@ try {
 }
 const writeResult = () => writeFileSync('/surety/out/result.json', JSON.stringify(canary.result));
 
+if (mode.dump_context) {
+  // What the agent is shown: every regular file under /surety/context, read
+  // whole (it is small), and the prompt the engine passed as the last argument.
+  const files = [];
+  const walk = (dir, rel) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const st = lstatSync(path);
+      if (st.isDirectory()) walk(path, `${rel}${name}/`);
+      else if (st.isFile() && st.size <= 1048576) files.push({ name: `${rel}${name}`, text: readFileSync(path, 'utf8') });
+      else files.push({ name: `${rel}${name}`, text: null });
+    }
+  };
+  walk('/surety/context', '');
+  // eslint-disable-next-line no-undef
+  writeFileSync(join(dirname(MODE_FILE), `fake-claude-context-${canary.kind}.json`), JSON.stringify({ kind: canary.kind, prompt_argument: argv.at(-1) ?? null, files }));
+}
+
 if (canary.kind === 'positive') {
   if ((mode.positive ?? 'complete') === 'failure_no_totals') {
     // S1 (b): per-call usage observed, then a failure with no totals at all.
@@ -97,8 +122,14 @@ if (canary.kind === 'positive') {
     ns = null;
   }
   const contained = existsSync('/surety/context') && ns !== null && mode.host_pid_ns && ns !== mode.host_pid_ns;
-  if (contained) for (const a of canary.actions ?? []) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
-  writeResult();
+  if (typeof canary.probe === 'string') {
+    // E83: the sanctioned check, the probe run once, its output reported.
+    const done = contained && canary.probe.startsWith('/surety/context/') ? spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000 }) : null;
+    writeFileSync('/surety/out/result.json', JSON.stringify({ status: 'completed', summary: 'the sanctioned containment check: the probe program run once; its output follows verbatim', probe_output: done?.stdout ?? '' }));
+  } else {
+    if (contained) for (const a of canary.actions ?? []) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
+    writeResult();
+  }
   success({ inputTokens: 800, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 100 }, 0.002);
   process.exit(0);
 } else {
