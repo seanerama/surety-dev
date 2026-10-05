@@ -148,13 +148,11 @@ test("a real backend's canary prompt says what canary.json says; the containment
   assert.ok(c.includes('touch /surety/out/canary-barrier') && c.includes(`sleep ${cancel.wait_seconds}`));
   assert.ok(cancel.wait_seconds > 600, 'the wait outlasts the deadline');
   const contain = canaryInstructions({ ...args, kind: 'containment' });
-  assert.equal(contain.capability_test, undefined, 'no delegation or scheduling is asked for');
-  assert.deepEqual(contain.command, ['/surety/context/probe', '--containment-check']);
-  assert.deepEqual(contain.actions, [{ name: 'containment_check', argv: ['/surety/context/probe', '--containment-check'] }]);
+  assert.deepEqual(contain, { kind: 'containment', attempt: 'qa_1', probe: '/surety/context/probe' }, 'the probe, no target, no delegation test, no prescribed result');
   const k = canaryPromptText(contain).join('\n');
-  assert.ok(k.includes('Run this command once: /surety/context/probe --containment-check'));
+  assert.ok(k.includes('Run /surety/context/probe once, with no arguments.'));
   assert.ok(k.includes('instructions.md') && /sanctioned/.test(k));
-  for (const tool of ['Agent', 'Task', 'ScheduleWakeup', 'CronCreate']) assert.ok(!k.includes(tool), `the prompt names no ${tool}`);
+  for (const tool of ['Agent', 'Task', 'ScheduleWakeup', 'CronCreate']) assert.ok(!new RegExp(`\\b${tool}\\b`).test(k), `the prompt names no ${tool}`);
 });
 
 test("the engine's fixture repository: one commit on main, HEAD detached, made once", async (t) => {

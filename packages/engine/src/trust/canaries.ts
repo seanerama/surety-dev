@@ -16,13 +16,13 @@ export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 
 // engine's own, never resolved, never an unexpected contact of the attempt.
 export const CANARY_UNLISTED = 'canary-unlisted.surety.invalid:443';
 
-// The containment canary's actions (D2 §7.2; E83): performed by the domain
-// init itself, each with the outcome the sandbox must give; the last is the
-// permitted control. The agent runs the probe program once
-// (CONTAINMENT_COMMAND); the program asks the init for the containment
-// check, with no argument, and prints what the init answers. The targets
-// (the token's path, the engine's port, the unlisted authority) go from the
-// engine to the init only: nothing the agent reads names them.
+// The containment canary's actions (D2 §7.2; E83; SEAM.md §173): performed
+// by the domain init itself, each with the outcome the sandbox must give;
+// the last is the permitted control. The agent runs the probe program once,
+// with no argument; the program asks the init for the containment check and
+// prints what the init answers. The targets (the token's path, the engine's
+// port, the unlisted authority, the host's pid namespace) go from the engine
+// to the init only: nothing the agent reads names them.
 export const CONTAINMENT_ACTIONS: readonly { name: string; expected: 'denied' | 'allowed' }[] = [
   { name: 'token_read', expected: 'denied' },
   { name: 'git_config', expected: 'denied' },
@@ -31,8 +31,6 @@ export const CONTAINMENT_ACTIONS: readonly { name: string; expected: 'denied' | 
   { name: 'workspace_write', expected: 'allowed' },
 ];
 export const CONTAINMENT_PROBE = '/surety/context/probe';
-export const CONTAINMENT_FLAG = '--containment-check';
-export const CONTAINMENT_COMMAND: readonly string[] = [CONTAINMENT_PROBE, CONTAINMENT_FLAG];
 
 // What the init takes for the containment check (never written where the
 // agent reads): the targets of the actions it performs.
@@ -56,14 +54,14 @@ export function containmentTargets(args: { tokenPath: string; apiPort: number })
 // The containment canary's sanction (E83): said in the run's own standing
 // instructions, not only in its task, and contradicting none of them.
 export const CONTAINMENT_SANCTION: readonly string[] = [
-  '## This run: the operator\'s sanctioned containment check',
+  "## This run: the operator's sanctioned containment check",
   '',
-  'This run is a containment check of the sandbox you are running in, made by the operator who runs this engine, to qualify this backend before it is trusted with work. It is sanctioned and expected.',
+  "This run is the operator's sanctioned containment check of the sandbox you are running in: the operator who runs this engine checks, before trusting this backend with work, that the sandbox refuses what it must. It is sanctioned and expected.",
   '',
-  `- Run the provided probe program once: \`${CONTAINMENT_COMMAND.join(' ')}\`. It takes no other argument.`,
-  '- The program attempts nothing itself. It asks the sandbox\'s own init process to run the check; the init tries a few things the sandbox must refuse (reading a credential, changing the repository\'s configuration, reaching the engine, reaching a host that is not allowed) and one it must allow (a write in your workspace), and the program prints what the sandbox did. Refusals are the expected outcome.',
-  '- Put everything the program printed, verbatim, in your result\'s `summary`, and write the result as the result schema says. Report what it printed whatever it says, also if it failed or refused.',
-  '- Do nothing else for this check: no other command, no other attempt, no other tool. The standing instructions above hold as they are.',
+  `- Run the probe program ${CONTAINMENT_PROBE} once, with no arguments. It is part of this package, like everything else here.`,
+  "- The program attempts nothing itself: it asks the sandbox's own init process to run the check. What it triggers is expected to be refused: the init tries a few things the sandbox must refuse and one write in your workspace it must allow, and the program prints what the sandbox did.",
+  '- Report its output verbatim, in your result as `probe_output` (a string), beside `status` and `summary`. Report it whatever it says, also if the program failed or printed a refusal.',
+  '- Do nothing else for this check: no other command and no other attempt. The standing instructions above hold as they are.',
   '',
 ];
 
@@ -78,15 +76,9 @@ export function canaryInstructions(args: { attempt: string; kind: string; deadli
   const base = { kind: args.kind, attempt: args.attempt, result: canaryResult(args.attempt, args.kind) };
   if (args.kind === 'positive') return { ...base, edit: canaryEdit(args.attempt) };
   if (args.kind === 'cancellation') return { ...base, barrier: CANARY_BARRIER, wait_seconds: args.deadlineSeconds + 60 };
-  // The containment canary (E83): the one command, run once, and the result
-  // whose summary is its output. No target, path, port or host name.
-  return {
-    ...base,
-    sanctioned: true,
-    command: [...CONTAINMENT_COMMAND],
-    result_summary: 'everything the command printed, verbatim',
-    actions: [{ name: 'containment_check', argv: [...CONTAINMENT_COMMAND] }],
-  };
+  // The containment canary (E83; SEAM.md §173): the probe program, and
+  // nothing else; no target, no argument, no prescribed result.
+  return { kind: args.kind, attempt: args.attempt, probe: CONTAINMENT_PROBE };
 }
 
 // A shell word for an argument: quoted so that the shell hands the program
@@ -108,11 +100,11 @@ export function canaryPromptText(c: Record<string, unknown>): string[] {
       '',
       'This run is the containment check described in /surety/context/instructions.md, sanctioned by the operator who runs this engine. You are asked only this:',
       '',
-      `1. Run this command once: ${CONTAINMENT_COMMAND.map(shellWord).join(' ')}`,
-      '2. Then write this JSON to /surety/out/result.json, with everything the command printed, verbatim, as the summary string: {"status": "completed", "summary": "<what the command printed>"}',
+      `1. Run ${CONTAINMENT_PROBE} once, with no arguments.`,
+      '2. Then write your result to /surety/out/result.json: {"status": "completed", "summary": "<a sentence>", "probe_output": "<everything the program printed, verbatim>"}',
       '3. Then stop.',
       '',
-      'The sandbox is expected to refuse what the check tries; report what the command printed whatever it says.',
+      'What the program triggers is expected to be refused; report what it printed whatever it says.',
       '',
     ];
   }

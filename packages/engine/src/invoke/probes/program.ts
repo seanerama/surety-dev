@@ -733,31 +733,34 @@ function report(socket: string, line: Obj): Promise<string> {
   });
 }
 
-// The init's witness socket: the abstract socket the engine named after the
-// domain, found by the domain marker in the environment or, where the
-// agent's shell did not pass it on, in the domain's own network namespace's
-// list of unix sockets.
+// The init's witness socket, if this domain has one: the abstract socket
+// the engine named after the domain, listed in the domain's own network
+// namespace's unix sockets only while a containment check can be asked for
+// (the domain marker in the environment picks it where there are several).
 function witnessName(): string | null {
-  const domain = process.env.SURETY_DOMAIN;
-  if (domain && /^[A-Za-z0-9_-]+$/.test(domain)) return `surety-witness-${domain}`;
+  let names: string[];
   try {
-    const names = readFileSync('/proc/net/unix', 'utf8')
+    names = readFileSync('/proc/net/unix', 'utf8')
       .split('\n')
       .map((l) => l.trim().split(/\s+/).at(-1) ?? '')
-      .filter((n) => /^@surety-witness-[A-Za-z0-9_-]+$/.test(n));
-    const distinct = [...new Set(names)];
-    return distinct.length === 1 ? distinct[0]!.slice(1) : null;
+      .filter((n) => /^@surety-witness-[A-Za-z0-9_-]+$/.test(n))
+      .map((n) => n.slice(1));
   } catch {
     return null;
   }
+  const distinct = [...new Set(names)];
+  const domain = process.env.SURETY_DOMAIN;
+  if (domain && distinct.includes(`surety-witness-${domain}`)) return `surety-witness-${domain}`;
+  return distinct.length === 1 ? distinct[0]! : null;
 }
 
-// `probe --containment-check`: what the agent runs, once (E83). It attempts
+// `probe`, with no argument, in a domain with a witness socket: what the
+// agent runs, once (E83; SEAM.md §173). It attempts
 // nothing itself: after its own check that it is in a sandbox, it asks the
 // domain init for the containment check, giving only its own pid, and
 // prints what the init answers, an outcome per action and nothing of any
 // target.
-async function containmentCheck(): Promise<number> {
+async function containmentCheck(socket: string): Promise<number> {
   const say = (line: string) => process.stdout.write(`${line}\n`);
   say('Surety containment check');
   // The host's pid namespace is not the agent's to know (E83): every other
@@ -765,11 +768,6 @@ async function containmentCheck(): Promise<number> {
   const reasons = containment('pid:[0]').reasons;
   if (reasons.length > 0) {
     say(`not run: this is not the engine's sandbox (${reasons.join('; ')})`);
-    return 2;
-  }
-  const socket = witnessName();
-  if (socket === null) {
-    say("not run: the sandbox's init could not be found");
     return 2;
   }
   const answer = await report(socket, { type: 'containment_request', pid: process.pid });
@@ -817,17 +815,19 @@ async function canaryRun(name: string): Promise<void> {
 
 // Only as a program of its own, inside a sandbox: never imported for its
 // actions.
-if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--containment-check') {
-  void containmentCheck().then(
+const asProgram = process.argv[1] !== undefined && /probe(\.js)?$/.test(process.argv[1]);
+const witness = asProgram && process.argv.length === 2 ? witnessName() : null;
+if (asProgram && witness !== null) {
+  void containmentCheck(witness).then(
     (code) => setTimeout(() => process.exit(code), 20),
     () => process.exit(70),
   );
-} else if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--canary-run') {
+} else if (asProgram && process.argv[2] === '--canary-run') {
   void canaryRun(process.argv[3] ?? '').then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),
   );
-} else if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1])) {
+} else if (asProgram) {
   void main().then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),

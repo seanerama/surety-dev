@@ -317,8 +317,8 @@ interface BackendSpec {
 // The containment canary's witnessing (D2 §7.2; the slice-13 review's S1;
 // E83). Nothing a process inside the sandbox says about an action's outcome
 // is taken, and nothing the agent reads names an action's target. The agent
-// runs the engine's probe program once, as `/surety/context/probe
-// --containment-check`; the program asks the init, on the witness socket,
+// runs the engine's probe program once, as `/surety/context/probe` with no
+// argument; the program asks the init, on the witness socket,
 // for the containment check, giving only its own pid. The init checks, from
 // /proc, that the asker is a live descendant of the backend running exactly
 // that command, and then performs every action itself, one at a time, each
@@ -359,14 +359,13 @@ function descendantOfBackend(pid: number): boolean {
 }
 
 const PROBE_PATH = '/surety/context/probe';
-const CHECK_FLAG = '--containment-check';
 
-// Is this the probe program run as the containment check? Its interpreter
-// (argv[0]) is whatever ran it; the program is the probe, by its path, from
-// the process's own working directory where the path is relative; the one
-// argument is the check's flag.
+// Is this the probe program run as the containment check (SEAM.md §173)?
+// Its interpreter (argv[0]) is whatever ran it; the program is the probe,
+// by its path, resolved from the process's own working directory where the
+// path is relative; it has no argument.
 function isContainmentCheck(argv: string[] | null, cwd: string | null): boolean {
-  if (argv === null || argv.length !== 3 || argv[2] !== CHECK_FLAG) return false;
+  if (argv === null || argv.length !== 2) return false;
   const program = argv[1]!;
   if (program === PROBE_PATH) return true;
   if (program.startsWith('/') || cwd === null) return false;
