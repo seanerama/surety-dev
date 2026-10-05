@@ -1938,6 +1938,27 @@ Run alone with `node --test` on the Builder's `228cf5e`, in a detached scratch w
 
 The real-lane files were checked with `node --check` only. Afterwards, one `surety-*` scope was present: the Builder's, from its own `build-m2-s14` worktree, running at the time. None was this run's.
 
+**After objection 017: M118 (a) and (b) pause until the lease has expired on the engine's clock** (2026-10-04, on `verify/m2-s14-017` from `main` at `4b961a0`; E76 item 3; `docs/acceptance/objections/017-M118-a-b-pause-margin-under-clock-steps.answer.md`).
+
+**The change.** (a) and (b) keep the engine stopped for at least `lease_ttl` + 3 s, and then until the host's wall clock has passed both of these by 2 s:
+- the stored `expires_at`;
+- the stop time plus `lease_ttl`.
+
+The host's wall clock is the one the engine reads. The pause has a ceiling of `lease_ttl` + 60 s of real time, beyond which the case fails with its reason. "After the pause" is the midpoint of the pause actually made. What (a) and (b) pin is unchanged, and (c) to (g) are unchanged.
+
+**Runs** on the Builder's tip `266bc08` (which contains `c7d533b`, the (c) fix), in a detached scratch worktree after `npm ci` and `npm run build`, with this branch's `M118-pause-regrant.test.mjs` copied in:
+
+| Run | Result |
+|---|---|
+| `node --test` on M118 alone, run 1 | 7 of 7 passed |
+| run 2 | 7 of 7 passed |
+| run 3 | 7 of 7 passed |
+| (a) and (b) with the engine's wall clock stepped back 5.8 s at the SIGSTOP (the Builder's instrument) | (a) passed, (b) passed |
+
+The stepped run used a scratch copy of the instrument with its own step file and a disposable `TMPDIR`: the engine was started through the wrapper via `SURETY_WITNESS_ENGINE`, and the test's view of the engine's clock was stepped with it. Its one failure is the harness's own "NOT AN ACCEPTANCE RUN" marker, which every run through `SURETY_WITNESS_ENGINE` adds. The same step had failed the old fixed pause 3 of 3 (the Builder's reproduction).
+
+After each run: no `surety-*` scope left and nothing left in the scratch `TMPDIR`.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
