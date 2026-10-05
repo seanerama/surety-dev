@@ -203,7 +203,9 @@ export class DomainProxy {
   account(): { complete: boolean; entries: number; accepted: number; bytes_up: number } {
     const text = this.recordText();
     const cut = this.truncated || text.includes('"truncated":true');
-    const open = this.tunnels.size > 0 || this.entries.some((e) => e.closed_at === null);
+    // A CONNECT still in flight (resolving, or connecting upstream) has no
+    // entry yet: while one is, the log is not the domain's whole egress.
+    const open = this.inflight > 0 || this.tunnels.size > 0 || this.entries.some((e) => e.closed_at === null);
     return {
       complete: this.closing && !cut && !open,
       entries: this.entries.length,
@@ -324,7 +326,21 @@ export class DomainProxy {
     }
   }
 
+  // A CONNECT is in flight from its parsing to its entry's being logged: a
+  // resolution or an upstream connect may be under way, and the log does not
+  // yet hold it (E85: the account is not complete while one is).
+  private inflight = 0;
+
   private async request(client: net.Socket, header: string, rest: Buffer): Promise<void> {
+    this.inflight++;
+    try {
+      await this.handleRequest(client, header, rest);
+    } finally {
+      this.inflight--;
+    }
+  }
+
+  private async handleRequest(client: net.Socket, header: string, rest: Buffer): Promise<void> {
     const line = header.split('\r\n')[0] ?? '';
     const parts = line.split(' ');
     const authorityText = parts[1] ?? '(none)';
@@ -411,8 +427,22 @@ export class DomainProxy {
         clearTimeout(t);
         resolve((err as NodeJS.ErrnoException).code ?? 'error');
       });
+      // Destroyed by the proxy's close while connecting.
+      remote.once('close', () => {
+        clearTimeout(t);
+        resolve('closed');
+      });
     });
     this.active--;
+    // The egress ended while the connection was being made: the attempt is
+    // logged as made and ended with the run; no tunnel opens after the
+    // close, and no byte goes up.
+    if (this.closing || outcome === 'closed') {
+      remote.destroy();
+      this.open.delete(remote);
+      this.failed(client, e, 503, 'run_ended');
+      return;
+    }
     if (outcome !== 'connected') {
       remote.destroy();
       this.open.delete(remote);
@@ -426,6 +456,13 @@ export class DomainProxy {
   // A tunnel: `200`, then bytes both ways, unchanged, within the per-tunnel
   // limits; a limit ends the tunnel, never the run.
   private tunnel(client: net.Socket, remote: Duplex, e: EgressEntry, rest: Buffer): void {
+    // Never after the close (E85): the attempt is logged, nothing passes.
+    if (this.closing) {
+      remote.destroy();
+      this.open.delete(remote);
+      this.failed(client, e, 503, 'run_ended');
+      return;
+    }
     e.decision = 'accepted';
     if (!this.admit(e)) {
       remote.destroy();

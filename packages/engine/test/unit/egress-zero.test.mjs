@@ -168,3 +168,93 @@ test("the proxy's account: complete only once closed, with every entry closed an
   assert.deepEqual(proxy.account(), { complete: true, entries: 1, accepted: 0, bytes_up: 0 });
   assert.equal(proxy.entries[0].reason, 'resolve_failed');
 });
+
+// A proxy in a scratch directory whose one allowed name resolves to a
+// documentation address; its upstream connect is redirected per test, to a
+// loopback listener of the test's own or to a socket never connected.
+const realConnect = net.connect;
+async function inflightProxy(t) {
+  const area = scratch(t);
+  const proxy = new DomainProxy({
+    area,
+    domain: 'dom_x',
+    run: 'run_x',
+    invocation: 'inv_x',
+    profile: 'role',
+    allow: ['api.provider.example'],
+    limits: { resolveTimeoutMs: 2000, connectTimeoutMs: 5000, tunnelMaxMs: 60000, tunnelsMax: 8, bufferMaxBytes: 1 << 20, logMaxBytes: 1 << 20 },
+    resolver: { resolve: async () => ['192.0.2.10'] },
+    echo: null,
+  });
+  await proxy.listen();
+  // The test's own client, by the real connect (the proxy's is replaced).
+  const c = realConnect(proxy.socketPath);
+  await new Promise((r) => c.once('connect', r));
+  c.on('error', () => {});
+  t.after(() => c.destroy());
+  // The CONNECT and bytes pipelined behind it, in one write.
+  c.write('CONNECT api.provider.example:443 HTTP/1.1\r\nHost: api.provider.example:443\r\n\r\nPIPELINED-BYTES');
+  return proxy;
+}
+
+test('a CONNECT whose upstream connect is in flight at the close: the account is not complete; the connect ends with the run, no tunnel, no byte up', async (t) => {
+  const real = net.connect;
+  // A socket that never connects: the connect is in flight until destroyed.
+  net.connect = () => new net.Socket();
+  t.after(() => {
+    net.connect = real;
+  });
+  const proxy = await inflightProxy(t);
+  await new Promise((r) => setTimeout(r, 150));
+  await proxy.close();
+  // Taken as finishEgressAccount takes it: never a zero's evidence. Either
+  // the attempt is still in flight (not complete), or it is logged as made.
+  const at = proxy.account();
+  assert.ok(!at.complete || at.accepted > 0, `in flight at the close: not complete, or the attempt logged (${JSON.stringify(at)})`);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(proxy.entries.map((e) => [e.decision, e.ended, e.bytes_up]), [['accepted', 'run_ended', 0]], 'logged as an attempt ended with the run');
+});
+
+test('an upstream connect that completes after the close (the race the close cannot win) is destroyed and logged; no tunnel, no byte up', async (t) => {
+  let upBytes = 0;
+  let upConns = 0;
+  let upClosed = 0;
+  const upstream = net.createServer((s) => {
+    upConns++;
+    s.on('data', (d) => (upBytes += d.length));
+    s.on('close', () => upClosed++);
+    s.on('error', () => {});
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  t.after(() => {
+    upstream.closeAllConnections?.();
+    upstream.close();
+  });
+  const real = net.connect;
+  // The upstream answers 300 ms later, on loopback, and the close's destroy
+  // does not reach the socket before then: the connect completes after it.
+  net.connect = () => {
+    const s = new net.Socket();
+    const destroy = s.destroy.bind(s);
+    let early = true;
+    s.destroy = (...a) => (early ? s : destroy(...a));
+    s.once('connect', () => {
+      early = false;
+    });
+    setTimeout(() => s.connect(upstream.address().port, '127.0.0.1'), 300);
+    t.after(() => destroy());
+    return s;
+  };
+  t.after(() => {
+    net.connect = real;
+  });
+  const proxy = await inflightProxy(t);
+  await new Promise((r) => setTimeout(r, 100));
+  await proxy.close();
+  assert.equal(proxy.account().complete, false, 'in flight at the close: not complete (the connect has not ended)');
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(upConns, 1, 'the fixture is live: the connect completed after the close');
+  assert.equal(upBytes, 0, 'no byte reached the upstream: not the pipelined ones');
+  assert.equal(upClosed, 1, 'the late connection was destroyed');
+  assert.deepEqual(proxy.entries.map((e) => [e.decision, e.ended, e.bytes_up, e.closed_at !== null]), [['accepted', 'run_ended', 0, true]], 'logged, ended with the run');
+});
