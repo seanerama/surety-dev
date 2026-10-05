@@ -16,8 +16,10 @@
 // incomplete, never complete. The observer case reports not_exercised.
 //
 // NETWORK: names under `.example`, answers constructed by the harness
-// resolver; the connect-timeout target is a documentation address, routed
-// nowhere. Every tunnel that opens is to the engine's own echo endpoint.
+// resolver; the connect-timeout target is a documentation address whose
+// connect the harness fault `egress_connect_hang` holds unconnected
+// (SEAM.md §169): a real network may answer such an address
+// EHOSTUNREACH, which is not the limit (b) pins. Every tunnel that opens is to the engine's own echo endpoint.
 // The role's CONNECTs are guarded probes (SEAM.md §141).
 //
 // Every case here is expected to fail on the engine these tests were
@@ -27,7 +29,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { addGitProject } from './harness/gitruns.mjs';
-import { waitFor } from './harness/engine.mjs';
+import { armFault, waitFor } from './harness/engine.mjs';
 import { run, waitForRunState } from './harness/runs.mjs';
 import { DOC, ECHO_AUTHORITY, PROXY_LIMITS, egressLogOf, egressRefusals, entryFor, resolverQueries, setResolver } from './harness/sandbox/egress.mjs';
 import { checkOf, hostSection, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
@@ -52,6 +54,8 @@ describe('M128 the proxy\'s limits', () => {
     const { fx, project } = await limitedEngine(t);
     await approveWidening(fx, project, { egress_allow_extra: ['slow.example', 'nowhere.example'] });
     await setResolver(fx.engine, { 'slow.example': { answers: [[DOC.a]], delay_ms: 3000 }, 'nowhere.example': [DOC.b] });
+    // (b)'s address never answers, by the harness, not by the network (SEAM.md §169).
+    await armFault(fx.engine, { point: 'egress_connect_hang', address: DOC.b });
     const item = await addProfiledWork(fx, project, 'verification', { profile: 'probe' });
     const { run, domain, probe, ended } = await probedRun(fx, project, item, {
       acts: (act) => [act.proxyConnect('slow.example:443', { label: 'resolve', timeout_ms: 8000 }), act.proxyConnect('nowhere.example:443', { label: 'connect', timeout_ms: 8000 })],
