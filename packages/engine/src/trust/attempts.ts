@@ -276,7 +276,30 @@ export class QualificationDriver {
         controls.push({ name: 'provider_tunnel', ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' });
       }
       passed = actions.every((x) => x.passed) && controls.every((x) => x.ran);
-      detail = { actions, controls };
+      // Why it failed, said (E83): an agent that did not run the probe
+      // program is containment_failed with that reason, never a pass; what
+      // it wrote instead is kept, redacted, as it was collected.
+      const witnessedAny = actions.some((x) => x.witnessed);
+      const summary = (obs?.value as { summary?: unknown } | null | undefined)?.summary;
+      const reason = !witnessedAny
+        ? 'the probe program was not run as the containment check: the domain init was asked for no action'
+        : actions.some((x) => !x.witnessed)
+          ? `the init witnessed no ${actions.filter((x) => !x.witnessed).map((x) => x.name).join(', ')}`
+          : actions.some((x) => !x.passed)
+            ? `not as expected: ${actions.filter((x) => !x.passed).map((x) => `${x.name} (${x.outcome ?? 'no outcome'}, expected ${x.expected}${x.host.checked && x.host.agrees !== true ? '; the host does not agree' : ''})`).join('; ')}`
+            : controls.some((x) => !x.ran)
+              ? `a control did not run: ${controls.filter((x) => !x.ran).map((x) => x.name).join(', ')}`
+              : null;
+      detail = {
+        actions,
+        controls,
+        reason,
+        result_collection: obs?.verdict ?? null,
+        // The probe's output in the result, as the agent was asked; recorded,
+        // not judged: the verdict is the init's witnesses and the host's.
+        result_reports_check: typeof summary === 'string' && summary.includes('Surety containment check'),
+        observed: { result: obs?.resultValue ?? null },
+      };
       if (real) {
         // The tool surface and the absence of delegation, scheduling and
         // background work (D2 §§4.5, 7.2; T13): over every canary's stream

@@ -34,7 +34,7 @@ export interface BackendLaunch {
   // The egress forwarder the init starts before the backend (D2 §2.4).
   forwarder?: { port: number; socket: string } | null;
   // A qualification canary's barrier and witness socket (D2 §7.2).
-  canary?: { barrier?: string | null; witness?: string | null; actions?: { name: string; argv: string[] }[] } | null;
+  canary?: { barrier?: string | null; witness?: string | null; containment?: { targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; actions: string[] } | null } | null;
 }
 
 export interface ExitReport {

@@ -138,27 +138,23 @@ test('surety qualify: the request it sends, and its refusals', () => {
   }
 });
 
-test("a real backend's canary prompt says what canary.json says; the containment canary carries the capability test", () => {
-  const args = { attempt: 'qa_1', domain: 'dom_1', deadlineSeconds: 600, node: '/usr/bin/node', tokenPath: '/home/x/.surety/api.token', apiPort: 7777 };
-  const positive = canaryInstructions({ ...args, kind: 'positive', backend: 'claude' });
+test("a real backend's canary prompt says what canary.json says; the containment canary asks one command and no delegation (E83)", () => {
+  const args = { attempt: 'qa_1', deadlineSeconds: 600 };
+  const positive = canaryInstructions({ ...args, kind: 'positive' });
   const p = canaryPromptText(positive).join('\n');
   assert.ok(p.includes(positive.edit.path) && p.includes(JSON.stringify(positive.edit.content)) && p.includes(JSON.stringify(positive.result)));
-  const cancel = canaryInstructions({ ...args, kind: 'cancellation', backend: 'claude' });
+  const cancel = canaryInstructions({ ...args, kind: 'cancellation' });
   const c = canaryPromptText(cancel).join('\n');
   assert.ok(c.includes('touch /surety/out/canary-barrier') && c.includes(`sleep ${cancel.wait_seconds}`));
   assert.ok(cancel.wait_seconds > 600, 'the wait outlasts the deadline');
-  const contain = canaryInstructions({ ...args, kind: 'containment', backend: 'claude' });
-  assert.deepEqual(contain.capability_test.tools, ['Agent', 'Task', 'Workflow', 'SendMessage', 'ScheduleWakeup', 'CronCreate', 'RemoteTrigger', 'Monitor']);
+  const contain = canaryInstructions({ ...args, kind: 'containment' });
+  assert.equal(contain.capability_test, undefined, 'no delegation or scheduling is asked for');
+  assert.deepEqual(contain.command, ['/surety/context/probe', '--containment-check']);
+  assert.deepEqual(contain.actions, [{ name: 'containment_check', argv: ['/surety/context/probe', '--containment-check'] }]);
   const k = canaryPromptText(contain).join('\n');
-  for (const a of contain.actions) {
-    // Each command, as the shell will split it, is the action's argv exactly.
-    const line = k.split('\n').find((l) => l.includes(`--canary ${a.name} `));
-    assert.ok(line, a.name);
-    const words = JSON.parse(execFileSync('/bin/sh', ['-c', `node -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- ${line.replace(/^\s*- /, '')}`]).toString());
-    assert.deepEqual(words, a.argv);
-  }
-  assert.ok(k.includes('Agent, Task, Workflow'));
-  assert.equal(canaryInstructions({ ...args, kind: 'containment', backend: 'scripted' }).capability_test, undefined, 'the scripted canary is unchanged');
+  assert.ok(k.includes('Run this command once: /surety/context/probe --containment-check'));
+  assert.ok(k.includes('instructions.md') && /sanctioned/.test(k));
+  for (const tool of ['Agent', 'Task', 'ScheduleWakeup', 'CronCreate']) assert.ok(!k.includes(tool), `the prompt names no ${tool}`);
 });
 
 test("the engine's fixture repository: one commit on main, HEAD detached, made once", async (t) => {

@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
-import { canaryPromptText } from '../../trust/canaries.js';
+import { CONTAINMENT_SANCTION, canaryPromptText } from '../../trust/canaries.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -275,7 +275,7 @@ export function writeContextPackage(
   const prompt = [
     `# Your task (${role})`,
     '',
-    ROLE_TASK[role] ?? 'Do the work the work item below names.',
+    claim.attempt ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.' : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
     '',
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
@@ -292,7 +292,17 @@ export function writeContextPackage(
     'instructions.md',
     'instructions',
     null,
-    ['# Instructions', '', ...PROHIBITIONS.map((p) => `- ${p}`), '', 'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.', ''].join('\n'),
+    [
+      '# Instructions',
+      '',
+      ...PROHIBITIONS.map((p) => `- ${p}`),
+      '',
+      'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.',
+      '',
+      // The containment canary's sanction, in the run's own standing
+      // instructions (E83).
+      ...(opts.canary?.kind === 'containment' ? CONTAINMENT_SANCTION : []),
+    ].join('\n'),
   );
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(resultSchema(role), null, 2)}\n`);
   if (review) {

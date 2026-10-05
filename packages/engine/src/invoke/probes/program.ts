@@ -1,3 +1,4 @@
+#!/.init/node
 // The engine's probe program (D2 §§2.8, 7.2, A.6; M2 plan §2.3): shipped at
 // /surety/context/probe in the `probe` profile and run by node inside a
 // sandbox. It is an instrument, not a judge: it attempts what its
@@ -652,24 +653,26 @@ async function main(): Promise<void> {
   emit({ id: 'done' });
 }
 
-// ---- a containment canary's action (D2 §7.2; SEAM.md §149) ---------------------------------
+// ---- the containment check (D2 §7.2; SEAM.md §149; E83) -----------------------------------------
 
-// `probe --canary <name> --host-pid-ns <ns> --witness <socket> --token <path>
-// --port <n> --unlisted <authority>`: one action of the containment canary,
-// attempted only after this program's own containment check, its outcome
-// printed and reported to the domain init on the witness socket, which the
-// init accepts only from this program's own process (it reads the reporting
-// pid's command line and ancestry). The outcome is `denied` when the
-// sandbox refused the action, `allowed` when it did not.
-function argOf(name: string): string | null {
-  const i = process.argv.indexOf(name);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1]! : null;
+// `probe --canary-run <name>`: one action of the containment check, run by
+// the domain init as a child of its own, never by the agent. Its targets
+// (the host's pid namespace, the token's path, the engine's port, the
+// unlisted authority) come on standard input from the init, which had them
+// from the engine: no argument and no file the agent reads names them. It
+// acts only after its own containment check; the outcome is `denied` when
+// the sandbox refused the action, `allowed` when it did not.
+interface Targets {
+  host_pid_ns?: unknown;
+  token?: unknown;
+  port?: unknown;
+  unlisted?: unknown;
 }
 
-async function canaryAction(name: string): Promise<{ outcome: string; detail: string }> {
+async function canaryAction(name: string, t: Targets): Promise<{ outcome: string; detail: string }> {
   switch (name) {
     case 'token_read': {
-      const r = tryOpen(argOf('--token') ?? '/nonexistent');
+      const r = tryOpen(typeof t.token === 'string' && t.token !== '' ? t.token : '/nonexistent');
       return { outcome: r === 'opened' ? 'allowed' : 'denied', detail: r };
     }
     case 'git_config': {
@@ -677,13 +680,14 @@ async function canaryAction(name: string): Promise<{ outcome: string; detail: st
       return { outcome: r.status === 0 ? 'allowed' : 'denied', detail: `status ${String(r.status)} ${String(r.stderr).slice(0, 200)}` };
     }
     case 'engine_port': {
-      const r = await connectOnce({ host: '127.0.0.1', port: Number(argOf('--port') ?? 0) });
+      const r = await connectOnce({ host: '127.0.0.1', port: Number(t.port ?? 0) });
       return { outcome: r === 'connected' ? 'allowed' : 'denied', detail: r };
     }
     case 'unlisted_connect': {
       const proxy = /:(\d+)\/?$/.exec(process.env.HTTPS_PROXY ?? '');
       if (!proxy) return { outcome: 'denied', detail: 'no proxy in the environment' };
-      const r = await tunnel(Number(proxy[1]), argOf('--unlisted') ?? 'canary-unlisted.surety.invalid:443', null);
+      if (typeof t.unlisted !== 'string' || t.unlisted === '') return { outcome: 'not_run', detail: 'no authority was given' };
+      const r = await tunnel(Number(proxy[1]), t.unlisted, null);
       return { outcome: r.status === 200 ? 'allowed' : 'denied', detail: `status ${String(r.status)}` };
     }
     case 'workspace_write': {
@@ -729,32 +733,97 @@ function report(socket: string, line: Obj): Promise<string> {
   });
 }
 
-// `--canary <name>`: the backend's run of the probe program for one action.
-// It performs nothing itself: after its own containment check it asks the
-// domain init to perform the action (the init checks this process's
-// argument array and ancestry from /proc and runs the action in a child of
-// its own), and prints what the init answers. `--canary-run <name>`: that
-// child, the action itself.
-async function canaryMain(name: string, perform: boolean): Promise<void> {
-  const guard = containment(argOf('--host-pid-ns') ?? undefined);
+// The init's witness socket: the abstract socket the engine named after the
+// domain, found by the domain marker in the environment or, where the
+// agent's shell did not pass it on, in the domain's own network namespace's
+// list of unix sockets.
+function witnessName(): string | null {
+  const domain = process.env.SURETY_DOMAIN;
+  if (domain && /^[A-Za-z0-9_-]+$/.test(domain)) return `surety-witness-${domain}`;
+  try {
+    const names = readFileSync('/proc/net/unix', 'utf8')
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/).at(-1) ?? '')
+      .filter((n) => /^@surety-witness-[A-Za-z0-9_-]+$/.test(n));
+    const distinct = [...new Set(names)];
+    return distinct.length === 1 ? distinct[0]!.slice(1) : null;
+  } catch {
+    return null;
+  }
+}
+
+// `probe --containment-check`: what the agent runs, once (E83). It attempts
+// nothing itself: after its own check that it is in a sandbox, it asks the
+// domain init for the containment check, giving only its own pid, and
+// prints what the init answers, an outcome per action and nothing of any
+// target.
+async function containmentCheck(): Promise<number> {
+  const say = (line: string) => process.stdout.write(`${line}\n`);
+  say('Surety containment check');
+  // The host's pid namespace is not the agent's to know (E83): every other
+  // sign of the sandbox is checked; the actions' own runs check it too.
+  const reasons = containment('pid:[0]').reasons;
+  if (reasons.length > 0) {
+    say(`not run: this is not the engine's sandbox (${reasons.join('; ')})`);
+    return 2;
+  }
+  const socket = witnessName();
+  if (socket === null) {
+    say("not run: the sandbox's init could not be found");
+    return 2;
+  }
+  const answer = await report(socket, { type: 'containment_request', pid: process.pid });
+  type Answer = { actions?: { action?: unknown; outcome?: unknown }[]; refused?: unknown };
+  let parsed: Answer | null;
+  try {
+    parsed = JSON.parse(answer) as Answer;
+  } catch {
+    parsed = null;
+  }
+  if (parsed === null || !Array.isArray(parsed.actions)) {
+    say(`not run: the init answered ${typeof parsed?.refused === 'string' ? parsed.refused : JSON.stringify(answer.slice(0, 200))}`);
+    return 1;
+  }
+  const expected: Record<string, string> = { token_read: 'denied', git_config: 'denied', engine_port: 'denied', unlisted_connect: 'denied', workspace_write: 'allowed' };
+  for (const a of parsed.actions) {
+    const name = String(a.action ?? '');
+    say(`${name}: ${String(a.outcome ?? '')} (expected ${expected[name] ?? 'unknown'})`);
+  }
+  say('done');
+  return 0;
+}
+
+// `--canary-run <name>`: the init's child, the action itself.
+async function canaryRun(name: string): Promise<void> {
+  let text = '';
+  for await (const chunk of process.stdin) {
+    text += String(chunk);
+    if (text.length > 65536) break;
+  }
+  let targets: Targets = {};
+  try {
+    targets = JSON.parse(text) as Targets;
+  } catch {
+    targets = {};
+  }
+  const guard = containment(targets.host_pid_ns);
   if (guard.reasons.length > 0) {
-    process.stdout.write(`${JSON.stringify({ type: perform ? 'canary_action' : 'canary_request', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') })}\n`);
     return;
   }
-  if (perform) {
-    const r = await canaryAction(name);
-    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
-    return;
-  }
-  const socket = argOf('--witness');
-  const answer = socket ? await report(socket, { type: 'canary_request', action: name, pid: process.pid }) : 'no witness socket';
-  process.stdout.write(`${JSON.stringify({ type: 'canary_report', action: name, answer })}\n`);
+  const r = await canaryAction(name, targets);
+  process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
 }
 
 // Only as a program of its own, inside a sandbox: never imported for its
 // actions.
-if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && (process.argv[2] === '--canary' || process.argv[2] === '--canary-run')) {
-  void canaryMain(process.argv[3] ?? '', process.argv[2] === '--canary-run').then(
+if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--containment-check') {
+  void containmentCheck().then(
+    (code) => setTimeout(() => process.exit(code), 20),
+    () => process.exit(70),
+  );
+} else if (process.argv[1] && /probe(\.js)?$/.test(process.argv[1]) && process.argv[2] === '--canary-run') {
+  void canaryRun(process.argv[3] ?? '').then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),
   );
