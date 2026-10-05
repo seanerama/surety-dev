@@ -17,20 +17,50 @@ export interface Sampler {
   stop(): BackendSampling;
 }
 
-export function startBackendSampler(cgroupPath: string, binaryPath: string, everyMs = 250): Sampler {
+// What counts as a backend process (SEAM.md §172; the dress rehearsal's
+// second engine finding): a member running the qualified binary, except a
+// fork of it that has not exec'd (the kernel's PF_FORKNOEXEC) and is younger
+// than FORK_GRACE_MS by its start time. A process starts a program by
+// forking a child that is its own image until the child's exec; Claude Code
+// does so for every command it runs, and such a child caught before its exec
+// is not a second backend. One that stays unexec'd past the bound runs the
+// backend's own code, and is one. A flag or age that cannot be read counts
+// the member as a backend.
+export const FORK_GRACE_MS = 1000;
+
+export type MemberClass = 'backend' | 'fork' | 'other';
+
+// What the sampler reads; the host's /proc and cgroup by default.
+export interface SamplerIo {
+  procs(): number[] | null;
+  // null: neither its executable nor its command line could be read.
+  classify(pid: number): MemberClass | null;
+  cmdline(pid: number): string | null;
+}
+
+export function startBackendSampler(cgroupPath: string, binaryPath: string, everyMs = 250, io?: SamplerIo): Sampler {
   let target: { dev: number; ino: number } | null = null;
-  try {
-    const st = statSync(binaryPath);
-    target = { dev: st.dev, ino: st.ino };
-  } catch {
-    target = null;
+  if (io === undefined) {
+    try {
+      const st = statSync(binaryPath);
+      target = { dev: st.dev, ino: st.ino };
+    } catch {
+      target = null;
+    }
   }
-  const report: BackendSampling = { samples: 0, max_backend: 0, max_members: 0, unclassified: 0, backend_cmdlines: [] };
+  const read: SamplerIo = io ?? {
+    procs: () => readProcs(cgroupPath),
+    classify: (pid) => (target === null ? null : classifyMember(pid, target, binaryPath)),
+    cmdline,
+  };
+  const known = io !== undefined || target !== null;
+  const report: BackendSampling = { samples: 0, max_backend: 0, max_members: 0, unclassified: 0, backend_cmdlines: [], transient_backend: 0 };
+  const forks = new Set<number>();
   let gone = 0;
   let timer: NodeJS.Timeout | null = null;
   const sample = () => {
-    const pids = readProcs(cgroupPath);
-    if (pids === null || target === null) {
+    const pids = read.procs();
+    if (pids === null || !known) {
       // The domain's directory is gone (terminated and removed): nothing is
       // left to sample, and the timer stops by itself (E74 item 3).
       if (pids === null && ++gone >= 3 && timer !== null) {
@@ -45,19 +75,24 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
     let backends = 0;
     let unclassified = 0;
     for (const pid of pids) {
-      const v = isBackend(pid, target, binaryPath);
-      if (v === true) {
+      const v = read.classify(pid);
+      if (v === 'backend') {
         backends++;
-        const line = cmdline(pid);
+        const line = read.cmdline(pid);
         if (line !== null && report.backend_cmdlines.length < 16 && !report.backend_cmdlines.includes(line)) report.backend_cmdlines.push(line);
-      }
-      else if (v === null) unclassified++;
+      } else if (v === 'fork') {
+        // Each distinct fork once, however many samples caught it.
+        if (forks.size < 4096) forks.add(pid);
+      } else if (v === null) unclassified++;
     }
     report.max_backend = Math.max(report.max_backend, backends);
     report.unclassified = Math.max(report.unclassified, unclassified);
+    report.transient_backend = forks.size;
   };
-  timer = setInterval(sample, everyMs);
-  timer.unref();
+  if (everyMs > 0) {
+    timer = setInterval(sample, everyMs);
+    timer.unref();
+  }
   return {
     sample,
     stop: () => {
@@ -66,6 +101,42 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
       return { ...report, backend_cmdlines: [...report.backend_cmdlines] };
     },
   };
+}
+
+// The kernel's PF_FORKNOEXEC (include/linux/sched.h): forked, not exec'd.
+const PF_FORKNOEXEC = 0x40;
+// USER_HZ, the unit of /proc/<pid>/stat's start time: 100 on every
+// architecture this engine runs on (Linux exports it fixed to userspace).
+const USER_HZ = 100;
+
+// A member running the binary: a fork before its exec younger than the
+// bound, or a backend. Fields of /proc/<pid>/stat are counted after the
+// command's closing parenthesis (the command may hold spaces and
+// parentheses): field 9 the flags, field 22 the start time in ticks since
+// boot.
+export function forkState(statText: string | null, uptimeSeconds: number | null): 'fork' | 'backend' {
+  if (statText === null || uptimeSeconds === null) return 'backend';
+  const close = statText.lastIndexOf(')');
+  if (close < 0) return 'backend';
+  const fields = statText.slice(close + 2).trim().split(/\s+/);
+  const flags = Number(fields[9 - 3]);
+  const start = Number(fields[22 - 3]);
+  if (!Number.isSafeInteger(flags) || !Number.isSafeInteger(start) || flags < 0 || start < 0) return 'backend';
+  if ((flags & PF_FORKNOEXEC) === 0) return 'backend';
+  const ageMs = uptimeSeconds * 1000 - (start * 1000) / USER_HZ;
+  return ageMs >= 0 && ageMs < FORK_GRACE_MS ? 'fork' : 'backend';
+}
+
+function uptime(): number | null {
+  const text = readBounded('/proc/uptime');
+  const n = text === null ? NaN : Number(text.split(/\s+/)[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function classifyMember(pid: number, target: { dev: number; ino: number }, binaryPath: string): MemberClass | null {
+  const v = isBackend(pid, target, binaryPath);
+  if (v !== true) return v === null ? null : 'other';
+  return forkState(readBounded(`/proc/${pid}/stat`), uptime());
 }
 
 // true: the member runs the qualified binary; false: it does not; null:

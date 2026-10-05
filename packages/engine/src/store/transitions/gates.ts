@@ -108,6 +108,18 @@ export interface Scope {
   contentHash: string;
 }
 
+// The sign-offs a project's tier requires of a candidate (D1 §9; E36 item 3).
+export function requiredSignoffs(db: Db, project: string, tier: string): Scope['signoffs'] {
+  const signoffs: Scope['signoffs'] = [];
+  if ((TIER_RANK[tier] ?? 0) >= 2) signoffs.push({ role: 'reviewer', scope: 'candidate' });
+  if ((TIER_RANK[tier] ?? 0) >= 3) {
+    const modules = db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? ORDER BY "name"').all(project) as { name: string }[];
+    for (const m of modules) signoffs.push({ role: 'reviewer', scope: 'module', module: m.name });
+    signoffs.push({ role: 'reviewer', scope: 'security' });
+  }
+  return signoffs;
+}
+
 export function buildScope(db: Db, args: { project: string; candidate: CandidateRow; kind: GateKind; stage: string | null; environment: string | null; artifact: string | null }): Scope {
   const project = db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string } | undefined;
   if (!project) throw notFound('project', args.project);
@@ -125,13 +137,7 @@ export function buildScope(db: Db, args: { project: string; candidate: Candidate
   }
   const required = ofTier.filter((c) => requirementsOf(c).length === 0 || requirementsOf(c).some((r) => obligations.includes(r)));
   const uncovered = obligations.filter((r) => !required.some((c) => requirementsOf(c).includes(r)));
-  const signoffs: Scope['signoffs'] = [];
-  if (TIER_RANK[tier]! >= 2) signoffs.push({ role: 'reviewer', scope: 'candidate' });
-  if (TIER_RANK[tier]! >= 3) {
-    const modules = db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? ORDER BY "name"').all(args.project) as { name: string }[];
-    for (const m of modules) signoffs.push({ role: 'reviewer', scope: 'module', module: m.name });
-    signoffs.push({ role: 'reviewer', scope: 'security' });
-  }
+  const signoffs = requiredSignoffs(db, args.project, tier);
   return {
     candidate: args.candidate,
     kind: args.kind,

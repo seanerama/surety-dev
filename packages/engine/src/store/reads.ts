@@ -5,6 +5,8 @@ import type { Database } from 'better-sqlite3';
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
+import type { CandidateRow } from './transitions/evidence.js';
+import { type FindingRow, findingApplies, requiredSignoffs } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
 
 // The project's effective ungoverned policy: the revision the engine
@@ -76,7 +78,6 @@ export function contextFacts(db: Database, args: { run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   if (!run) return null;
   const item = db.prepare('SELECT "id", "kind", "subject", "project" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { id: string; kind: string; subject: string; project: string };
-  const stage = db.prepare('SELECT * FROM "stages" WHERE "id" = ? OR "work_item" = ? ORDER BY "number" LIMIT 1').get(item.subject, item.id) as Record<string, unknown> | undefined;
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
       return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
@@ -84,6 +85,10 @@ export function contextFacts(db: Database, args: { run: string }) {
       return fallback;
     }
   };
+  // The work item's subject is JSON: {"stage"}, {"candidate"}, {"finding"}.
+  const subject = parse<Record<string, unknown> | null>(item.subject, null) ?? {};
+  const subjectId = (key: string): string | null => (typeof subject[key] === 'string' ? (subject[key] as string) : null);
+  const stage = db.prepare('SELECT * FROM "stages" WHERE "id" = ? OR "work_item" = ? ORDER BY "number" LIMIT 1').get(subjectId('stage'), item.id) as Record<string, unknown> | undefined;
   type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null; text: string | null };
   let requirements: Req[] = [];
   let adrs: { id: string; key: string; text: string }[] = [];
@@ -106,7 +111,57 @@ export function contextFacts(db: Database, args: { run: string }) {
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
   }
-  const candidate = db.prepare('SELECT "id", "revision" FROM "candidates" WHERE "id" = ?').get(item.subject) as { id: string; revision: string } | undefined;
+  const candidate = db.prepare('SELECT * FROM "candidates" WHERE "id" = ? AND "project" = ?').get(subjectId('candidate'), item.project) as CandidateRow | undefined;
+  const role = run.role as string;
+  type Finding = FindingRow & { message: string; source_role: string | null };
+  const findingFacts = (f: Finding) => ({
+    id: f.id,
+    seq: f.seq,
+    scope: f.scope,
+    candidate: f.candidate,
+    category: f.category,
+    severity: f.effective_severity,
+    message: f.message,
+    check: f.check,
+    sensitive_area: f.sensitive_area,
+    status: f.status,
+    disposition: f.disposition,
+    source_role: f.source_role,
+  });
+  // What a Verifier or a Reviewer of a candidate reports against (D2 §1.3;
+  // F §6): the findings open or dispositioned that apply to the candidate,
+  // each by the id its result names, the applicability assessments proposed
+  // on it, the sign-offs the tier requires, and the revision the candidate's
+  // diff is taken from: the project's previous candidate, else the parent of
+  // the first revision the engine recorded (null if there is none).
+  let review: {
+    findings: ReturnType<typeof findingFacts>[];
+    assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
+    signoffs: { role: string; scope: string; module?: string }[];
+    diff_base: { revision: string | null; from: 'previous_candidate' | 'first_recorded_parent' | null };
+  } | null = null;
+  if (candidate && (role === 'reviewer' || role === 'verifier')) {
+    const findings = (db.prepare(`SELECT * FROM "findings" WHERE "project" = ? AND "status" IN ('open', 'dispositioned') ORDER BY "seq"`).all(item.project) as Finding[])
+      .filter((f) => findingApplies(db, f, candidate))
+      .map(findingFacts);
+    const assessments = db
+      .prepare(`SELECT "id", "finding", "candidate", "reason", "status" FROM "applicability_assessments" WHERE "project" = ? AND "candidate" = ? AND "status" = 'proposed' ORDER BY "created_at", "id"`)
+      .all(item.project, candidate.id) as { id: string; finding: string; candidate: string; reason: string; status: string }[];
+    const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
+    const previous = db.prepare('SELECT "revision" FROM "candidates" WHERE "project" = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1').get(item.project, candidate.seq) as { revision: string } | undefined;
+    const first = previous
+      ? undefined
+      : (db.prepare('SELECT "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "recorded_at", "created_at", "id" LIMIT 1').get(item.project) as { parent_sha: string } | undefined);
+    review = {
+      findings,
+      assessments,
+      signoffs: role === 'reviewer' ? requiredSignoffs(db, item.project, tier) : [],
+      diff_base: previous ? { revision: previous.revision, from: 'previous_candidate' } : first ? { revision: first.parent_sha, from: 'first_recorded_parent' } : { revision: null, from: null },
+    };
+  }
+  // A fix's finding (D1 §9; F §6.2): the Builder is told what it fixes.
+  const fixFinding = subjectId('finding');
+  const finding = fixFinding === null ? undefined : (db.prepare('SELECT * FROM "findings" WHERE "id" = ? AND "project" = ?').get(fixFinding, item.project) as Finding | undefined);
   // A resumed run's context is rebuilt from the records of the run it
   // resumes (D1 §15.3): its published records other than a raw report.
   let resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null = null;
@@ -131,6 +186,8 @@ export function contextFacts(db: Database, args: { run: string }) {
     modules,
     phase_plan: plan,
     candidate: candidate ? { id: candidate.id, revision: candidate.revision, acceptance_content_hash: (run.content_hash as string | null) ?? null } : null,
+    review,
+    finding: finding ? findingFacts(finding) : null,
     resumed,
   };
 }
