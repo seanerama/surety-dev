@@ -46,8 +46,9 @@ int main(int argc, char **argv) {
   /* Until execv, a forked child is this image too, and the engine samples
    * the domain once at the backend's start (src/invoke/choke.ts): forking
    * at once would be counted as a second backend process. Wait 100 ms, so
-   * the start sample sees only this process. (Claude Code forks for every
-   * tool it runs; the same window exists there, narrower.) */
+   * the start sample sees only this process. (Claude Code starts a child
+   * for each command its Bash tool runs: the same window exists there,
+   * of a width not measured.) */
   struct timespec pause_ = {0, 100 * 1000 * 1000};
   nanosleep(&pause_, NULL);
   child = fork();

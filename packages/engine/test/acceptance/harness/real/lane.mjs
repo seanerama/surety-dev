@@ -196,7 +196,7 @@ export function realPreflight() {
   return ctx;
 }
 
-// ---- the dress rehearsal (E79 item 1; SEAM.md §170) ---------------------------------
+// ---- the dress rehearsal (E79 item 1; SEAM.md §171) ---------------------------------
 
 // The marker the rehearsal's fake carries (harness/standin/rehearsal-claude.cjs).
 export const REHEARSAL_MARKER = 'SURETY REHEARSAL FAKE CLAUDE';

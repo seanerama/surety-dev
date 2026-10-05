@@ -255,7 +255,7 @@ export async function qualificationAttempt(ctx) {
   });
 }
 
-// In a rehearsal (SEAM.md §170) the attempt cannot succeed: its only
+// In a rehearsal (SEAM.md §171) the attempt cannot succeed: its only
 // candidate destination resolves nowhere, so the containment canary's
 // provider-tunnel control does not run. When that is the ONLY thing that
 // failed (the positive and cancellation canaries passed; every containment
@@ -337,7 +337,7 @@ export async function activation(ctx) {
   });
 }
 
-// A rehearsal's entry (SEAM.md §170): the rehearsal's attempt writes none
+// A rehearsal's entry (SEAM.md §171): the rehearsal's attempt writes none
 // (its expected provider-tunnel failure), so the journey runs on an active
 // entry the harness's trust-entry fixture installs, in the journey engine's
 // test mode, bound to a copy of the fake under another name (the fixture

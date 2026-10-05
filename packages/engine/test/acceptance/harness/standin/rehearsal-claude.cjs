@@ -2,7 +2,7 @@
 // rehearsal backend: a script that plays Claude Code's documented headless
 // behaviour, never Claude Code. It contacts nothing, runs no model, holds no
 // account. The marker on the first line of this comment is what the
-// rehearsal switch looks for (SEAM.md §170): the harness refuses to answer
+// rehearsal switch looks for (SEAM.md §171): the harness refuses to answer
 // Sean's approvals itself for any binary without it.
 //
 // What it plays, from what the engine's Claude adapter parses (stream-json,
