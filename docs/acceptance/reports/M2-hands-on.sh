@@ -140,6 +140,11 @@ paid() {
   [ "$answer" = yes ] || die "stopped before: $what. Nothing of it was started."
 }
 
+# Whether a control group has members. A cgroupfs file reports size 0
+# whatever it holds, so `[ -s ]` is always false there (found by the E79
+# rehearsal): its content is read instead.
+has_members() { [ -n "$(cat "$1/cgroup.procs" 2>/dev/null)" ]; }
+
 # Each check of M142, with the command Sean can run himself.
 check() { # number, what to look for, command
   printf '\n\033[1;36mCHECK (%s)\033[0m %s\n' "$1" "$2"
@@ -334,9 +339,13 @@ env -i SURETY_HOME="$SURETY_HOME" PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME=
   "$NODE" "$CLI" qualify claude --mode one_shot_headless --model "$MODEL" --auth-mode "$AUTH_MODE" --egress "$EGRESS_HOST" | tee "$WORK/qualify.json"
 QA=$(jq -r '.qualification_attempt.id' "$WORK/qualify.json")
 [[ $QA == qa_* ]] || die "no attempt was proposed (see above)"
-S "$API/v1/decisions" | jq --arg q "$QA" '.decisions[] | select(.subject_id == $q) | .manifest | {binary_sha256, help_sha256, model, template_version, auth_mode, candidate_egress, canary_deadlines, spend}'
+# What the approval binds: its dependency manifest, read from the engine's
+# store (GET /v1/decisions lists the question and the options, not the
+# manifest; SEAM.md section 117). Found by the E79 rehearsal: read from the
+# API it printed nulls.
+dbq "SELECT dependency_manifest FROM decisions WHERE kind = 'qualification_approval' AND subject_id = '$QA' AND status = 'open'" | jq '{binary_sha256, help_sha256, model, template_version, auth_mode, candidate_egress, canary_deadlines, spend}'
 check 3 "the approval's preview shows the binary's hash, the model, the auth mode subscription_token and the spend labelled an estimate (Claude Code's own; no dollar cap: your subscription's limits are the hard limit)" \
-  "curl -sS -H \"X-Surety-Token: \$(cat $SURETY_HOME/api.token)\" $API/v1/decisions | jq '.decisions[] | select(.kind == \"qualification_approval\") | .manifest'"
+  "the manifest above is the decision row's dependency_manifest in $SURETY_HOME/store.db; the question the API shows: curl -sS -H \"X-Surety-Token: \$(cat $SURETY_HOME/api.token)\" $API/v1/decisions | jq '.decisions[] | select(.kind == \"qualification_approval\") | {question, preview_hash}'"
 echo "   the binary you pinned: $(sha256sum "$SURETY_REAL_CLAUDE_BINARY" | cut -c1-64)"
 
 paid "the qualification attempt: three canaries (positive, cancellation, containment)" 3
@@ -349,7 +358,7 @@ for i in $(seq 1 600); do
   tick "$FIXTURE"
   STATUS=$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")
   CG=$(dbq "SELECT d.cgroup_path FROM execution_domains d JOIN invocation_receipts r ON r.run = d.run WHERE r.qualification_attempt = '$QA' AND d.observation IS NOT 'terminated' ORDER BY d.created_at DESC LIMIT 1")
-  if [ -z "$SHOWN" ] && [ -n "$CG" ] && [ -s "$CG/cgroup.procs" ]; then
+  if [ -z "$SHOWN" ] && [ -n "$CG" ] && has_members "$CG"; then
     echo "a canary's domain: $CG"
     cat "$CG/cgroup.procs"
     ps -o pid,cgroup,args -p "$(paste -sd, "$CG/cgroup.procs")" || true
@@ -360,6 +369,9 @@ for i in $(seq 1 600); do
   case $STATUS in succeeded|failed|invalidated) break ;; esac
   sleep 3
 done
+# Not seen is said, never left out (found by the E79 rehearsal, where the
+# fake's canaries ended between two looks).
+[ -n "$SHOWN" ] || note "CHECK (4) NOT SHOWN: no canary's domain was seen with processes in it between two looks (every 3 s); the canaries' evidence below still holds what the engine sampled."
 dbq "SELECT status, canaries FROM qualification_attempts WHERE id = '$QA'" | tee "$WORK/attempt.tsv"
 REHEARSAL_FIXTURE=
 if [ "$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")" != succeeded ]; then
@@ -467,11 +479,11 @@ DAUTH=$(S -X POST "$API/v1/projects/$P/candidates/$C/authorizations" -d "{\"envi
 S -X POST "$API/v1/projects/$P/candidates/$C/gates/alpha_authorize" -d "{\"authorization\": \"$DAUTH\"}" | jq '.evaluation | {outcome, reasons}'
 
 echo "the engine's setup commits before the journey (no run makes them: they name the project, not a run):"
-git -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$BASE..$JOURNEY_BASE"
+git --no-pager -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$BASE..$JOURNEY_BASE"
 echo "the journey's commits:"
-git -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$JOURNEY_BASE..main"
+git --no-pager -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$JOURNEY_BASE..main"
 check 6 "every commit of the journey on the integration branch is the engine's, with Surety-Run and Surety-Role trailers, and none is the agent's (the setup commits before it are the engine's too, with Surety-Project)" \
-  "git -C $PROJ_REPO log --format='%h %an <%ae>%n%(trailers:only)' $BASE..main"
+  "git --no-pager -C $PROJ_REPO log --format='%h %an <%ae>%n%(trailers:only)' $BASE..main"
 
 echo "the ledger, as the engine reads it:"
 S "$API/v1/projects/$P/ledger" | jq '{totals, rows: [.rows[] | {run, billable_in, cached_in, out, cost_status, cost_usd, usage_complete}]}'
@@ -494,12 +506,13 @@ paid "a Builder run that you will stop" 1
 tick "$P"
 for i in $(seq 1 120); do
   SR=$(run_of "$STOPW"); SCG=$([ -n "$SR" ] && dbq "SELECT cgroup_path FROM execution_domains WHERE run = '$SR'" || true)
-  [ -n "$SCG" ] && [ -s "$SCG/cgroup.procs" ] && break
+  [ -n "$SCG" ] && has_members "$SCG" && break
   tick "$P"; sleep 2
 done
-[ -n "$SCG" ] || die "the run did not start"
+[ -n "$SCG" ] && has_members "$SCG" || die "the run was never seen with processes in its domain; a Stop now would end nothing, so the walkthrough stops here"
 echo "the run $SR is in $SCG:"; cat "$SCG/cgroup.procs"
 read -r -p "   Press enter to Stop it. " _
+has_members "$SCG" || note "NOTE: the run's processes had already ended before the Stop was sent: what follows shows nothing about a Stop of a live process (CHECK (8) is not shown by this run)."
 FIRST=$(S -X POST "$API/v1/projects/$P/runs/$SR/stop" -d '{}')
 SHASH=$(echo "$FIRST" | jq -r '.subject.preview_hash')
 S -X POST "$API/v1/projects/$P/runs/$SR/stop" -d "{\"preview_hash\": \"$SHASH\"}" | jq -c '{status: .run.state?}'
