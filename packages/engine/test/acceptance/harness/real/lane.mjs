@@ -33,9 +33,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { REPO_ROOT, freePort, startEngine, writeEngineConfig } from '../engine.mjs';
@@ -564,6 +564,7 @@ export function secretHits(value, { roots = [], repos = [] } = {}) {
   const forms = [...new Set([value, JSON.stringify(value).slice(1, -1)])].map((v) => Buffer.from(v));
   const holds = (buf) => forms.some((f) => buf.includes(f));
   const hits = [];
+  const unreadable = [];
   const walk = (dir) => {
     let names;
     try {
@@ -584,12 +585,23 @@ export function secretHits(value, { roots = [], repos = [] } = {}) {
         try {
           if (holds(readFileSync(path))) hits.push(path);
         } catch {
-          hits.push(`${path} (unreadable: not shown to hold nothing)`);
+          unreadable.push({ path, st });
         }
       }
     }
   };
   for (const root of roots) walk(root);
+  // An unreadable file is a hit ("not shown to hold nothing"), with one
+  // exception, each instance verified as M132 verifies it (objection 012):
+  // the domain init's execute-only copy of the engine's node, in an engine
+  // home's sandbox/ directory, mode 0111 exactly, named for the device,
+  // inode, size and modification time of the node this harness runs, with
+  // that size; or a hard link of such a copy (a domain's init-node).
+  const node = statSync(realpathSync(process.execPath));
+  const expectedName = `node-${node.dev}-${node.ino}-${node.size}-${Math.floor(node.mtimeMs)}`;
+  const isCopy = (st) => (st.mode & 0o777) === 0o111 && st.size === node.size;
+  const verified = new Set(unreadable.filter(({ path, st }) => isCopy(st) && basename(path) === expectedName && basename(dirname(path)) === 'sandbox').map(({ st }) => `${st.dev}:${st.ino}`));
+  for (const { path, st } of unreadable) if (!(isCopy(st) && verified.has(`${st.dev}:${st.ino}`))) hits.push(`${path} (unreadable: not shown to hold nothing)`);
   for (const repo of repos) {
     const all = execFileSync('git', ['-C', repo, 'cat-file', '--batch-all-objects', '--batch'], { maxBuffer: 1 << 30 });
     if (holds(all)) hits.push(`${repo}: a git object`);
