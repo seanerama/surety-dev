@@ -78,6 +78,7 @@ describe('M138 the containment canary (real lane, paid)', () => {
       observe(ctx, 'M138', 'engine_port', k.evidence.actions.find((a) => a.name === 'engine_port') ?? null);
 
       // Delegation and scheduling: the entry's surface (M136 (c)).
+      assert.ok(c.entry, 'the succeeded attempt wrote an entry');
       const caps = c.entry.capabilities;
       assert.equal(caps.delegation_verified, true, 'delegation verified absent');
       for (const name of DENIED_TOOLS) assert.ok(!caps.tools.includes(name) || caps.denied.includes(name), `${name} denied or absent`);

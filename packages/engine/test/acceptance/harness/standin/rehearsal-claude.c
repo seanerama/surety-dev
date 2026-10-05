@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -42,6 +43,13 @@ int main(int argc, char **argv) {
   sigemptyset(&sa.sa_mask);
   int sigs[] = {SIGTERM, SIGINT, SIGHUP};
   for (int i = 0; i < 3; i++) sigaction(sigs[i], &sa, NULL);
+  /* Until execv, a forked child is this image too, and the engine samples
+   * the domain once at the backend's start (src/invoke/choke.ts): forking
+   * at once would be counted as a second backend process. Wait 100 ms, so
+   * the start sample sees only this process. (Claude Code forks for every
+   * tool it runs; the same window exists there, narrower.) */
+  struct timespec pause_ = {0, 100 * 1000 * 1000};
+  nanosleep(&pause_, NULL);
   child = fork();
   if (child < 0) return 71;
   if (child == 0) {

@@ -218,12 +218,15 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
     assert.deepEqual(withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "invocation_receipts" WHERE "qualification_attempt" = ?').get(id).n), 0, 'nothing launched before the approval');
 
     const facts = spendGuard(ctx, proposed, REAL.dayVerifiedUsd.qualification);
-    await waitForSean(ctx, fx, 'qualification_approval', id, { what: label, facts });
-
+    // The host samples from before the approval: the engine starts the
+    // canaries as soon as it is answered, and the wait notices the answer
+    // only at its next poll (found by the E79 rehearsal: started after the
+    // wait, the sampler saw none of the canaries).
     const sampler = sampleDomains(fx.home, fixtureProject);
     const limitMs = (REAL.canaryDeadlines.positive + REAL.canaryDeadlines.cancellation + REAL.canaryDeadlines.containment) * 1000 + 20 * 60_000;
     let finished;
     try {
+      await waitForSean(ctx, fx, 'qualification_approval', id, { what: label, facts });
       finished = await tickWhile(fx, fixtureProject, () => (['succeeded', 'failed', 'invalidated'].includes(attemptOf(fx.home, id)?.status) ? attemptOf(fx.home, id) : undefined), { timeoutMs: limitMs, what: `attempt ${id} to finish` });
     } finally {
       observe(ctx, row, 'domain_samples', sampler.stop());

@@ -175,6 +175,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
     const ctx = realPreflight();
     await judged(ctx, 'M136 (c)', async () => {
       const { c } = await attemptOf(ctx);
+      assert.ok(c.entry, 'the succeeded attempt wrote an entry');
       const caps = c.entry.capabilities;
       assert.equal(caps.delegation_verified, true, `delegation verified absent, by inventory or by the capability test (D2 §4.5): ${JSON.stringify(caps)}`);
       for (const name of DENIED) {
