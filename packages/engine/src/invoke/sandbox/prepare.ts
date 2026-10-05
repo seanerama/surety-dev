@@ -22,9 +22,9 @@ import { finishEgress, startEgress } from '../proxy/egress.js';
 import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
-import { type CandidateDiff, type ContextFacts, writeContextPackage } from './context.js';
+import { type CandidateDiff, type ContextFacts, PROBE_PROGRAM, writeContextPackage } from './context.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
-import { CANARY_BARRIER, CONTAINMENT_ACTIONS, canaryInstructions, containmentTargets, witnessSocket } from '../../trust/canaries.js';
+import { CANARY_BARRIER, CONTAINMENT_ACTIONS, CONTAINMENT_CHECK_MS, CONTAINMENT_PROBE, canaryInstructions, containmentTargets } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
 import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
@@ -224,6 +224,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       node: engineNode(),
       initNodeCopy: await initNodeIn(area, copy),
       initScript: INIT_SCRIPT,
+      probeProgram: targets !== null ? PROBE_PROGRAM : null,
       git,
       // The Verifier writes the protected set, as proposals (D1 §7.3).
       workspaceBinds: claim.role === 'verifier' ? [] : protectedBinds(workspace, handle.protectedRoots, join(area, 'git', 'empty')),
@@ -275,8 +276,10 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
         ? {
             canary: {
               barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null,
-              witness: canary.kind === 'containment' ? witnessSocket(claim.domain) : null,
-              containment: canary.kind === 'containment' && targets !== null ? { targets, actions: CONTAINMENT_ACTIONS.map((a) => a.name) } : null,
+              containment:
+                canary.kind === 'containment' && targets !== null
+                  ? { program: CONTAINMENT_PROBE, actions: CONTAINMENT_ACTIONS.map((a) => a.name), targets, action_timeout_ms: 20_000, check_ms: CONTAINMENT_CHECK_MS }
+                  : null,
             },
           }
         : {}),

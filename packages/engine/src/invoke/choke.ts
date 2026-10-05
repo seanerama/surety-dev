@@ -48,8 +48,10 @@ import { GOVERNED_FILE } from '../protected/set.js';
 import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
-import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream } from './adapters/claude.js';
+import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
 import { exitCause } from './exit-cause.js';
+import { type ContainmentWatch, watchContainment } from './containment.js';
+import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
 import { startBackendSampler } from './sampler.js';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
@@ -65,7 +67,11 @@ export interface CanaryObservation {
   // The result file as collected, parsed, redacted; null where none was.
   resultValue: unknown;
   editObserved: { type: 'file' | 'symlink' | 'fifo' | 'other' | 'missing'; sha256?: string; bytes?: number } | null;
-  witnesses: { action: string; outcome: string; pid: number; detail: string }[];
+  witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean; hardening: string[] }[];
+  // The containment check (E86): what the engine saw of the backend around
+  // it, and the init's report of its end.
+  containment: ContainmentWatch | null;
+  containmentDone: { ran: boolean; backend_running: boolean; reason: string | null; at: string } | null;
   barrierSeen: boolean;
   // When the init reported the barrier (SEAM.md §165), null where it did not.
   barrierAt: string | null;
@@ -92,6 +98,8 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     resultValue: collectedValue(c),
     barrierAt: launch?.barrierAt ?? null,
     witnesses: launch ? [...launch.witnesses] : [],
+    containment: handle.containment === null ? null : { ...handle.containment },
+    containmentDone: launch?.containmentDone ?? null,
     barrierSeen: launch?.barrierSeen ?? false,
     termToExitMs: launch?.termToExitMs() ?? null,
     egress: handle.egressEntries ?? [],
@@ -771,8 +779,24 @@ export class Launcher {
         plan: () => prepared!.plan,
         backend: () => prepared!.backend,
         // The launch was recorded with the grant (SEAM.md §125).
-        started: async () => {
+        started: async (nsPid: number) => {
           handle.backendStarted = true;
+          // The containment canary (E86): once the host sees the backend in
+          // the domain, the engine asks the init for the check.
+          if (claim.attempt?.kind === 'containment' && claim.cgroup_path !== null) {
+            const cgroupPath = claim.cgroup_path;
+            const watch: ContainmentWatch = { ns_pid: nsPid, seen: null, requested_at: null, present_at_end: null, ended_at: null, reason: 'the check had not ended' };
+            handle.containment = watch;
+            void watchContainment({
+              cgroupPath,
+              nsPid,
+              backendExited: () => launch.exitReport !== null || handle.ending,
+              request: (ms) => launch.requestContainment(ms),
+              seenWithinMs: 30_000,
+              checkMs: CONTAINMENT_CHECK_MS + 10_000,
+              into: watch,
+            }).catch((err) => log('containment check', err, { run: claim.run }));
+          }
           // A real backend's canary: the host samples the domain's members
           // from the backend's start (D2 §7.2; M136 (c)).
           if (claim.attempt !== null && handle.adapterStream !== null && claim.entry !== null && claim.cgroup_path !== null) {
@@ -985,6 +1009,16 @@ export class Launcher {
       return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused ${hits.join(', ')}; nothing of it was published` };
     }
     if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
+    // A model fallback (E86 item 3): the work is not the entry's model's, so
+    // its result is not accepted as the entry's work.
+    const fallback = claim.entry !== null ? claudeModelFallback(handle.adapterStream?.summary() ?? null, claim.entry.model) : null;
+    if (cls === 'clean' && fallback !== null) {
+      // Kept as unaccepted, never the run's result.
+      await this.publishUnaccepted(handle, c);
+      await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
+      handle.result = { valid: false };
+      return { outcome: 'failed', reason: 'invalid_result', reasonText: fallback.text };
+    }
     if (cls === 'clean') {
       // The result is the run's to take or refuse: never also unaccepted.
       c.unacceptedDone = true;
@@ -1019,7 +1053,7 @@ export class Launcher {
       // The cause, as far as the engine saw it: the backend's terminal
       // event and the domain's egress refusals.
       const cause = exitCause(handle.adapterStream?.summary() ?? null, handle.egressEntries);
-      return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}` };
+      return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}${fallback ? `; ${fallback.text}` : ''}` };
     }
     await this.publishUnaccepted(handle, c);
     if (cls === 'resource_limit') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class resource_limit: the backend was ended by a resource limit of its domain (memory.events oom_kill rose)' };

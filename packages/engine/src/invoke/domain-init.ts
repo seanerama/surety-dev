@@ -29,10 +29,10 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
-import { dirname, join, posix } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 type Msg = Record<string, unknown>;
@@ -311,161 +311,73 @@ interface BackendSpec {
   // init reports while the backend runs; for the containment canary, the
   // abstract socket on which the probe program asks for its actions, and the
   // exact argument array of each action as canary.json gives it.
-  canary?: { barrier?: string | null; witness?: string | null; containment?: { targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; actions: string[] } | null } | null;
+  canary?: { barrier?: string | null; containment?: ContainmentSpec | null } | null;
 }
 
-// The containment canary's witnessing (D2 §7.2; the slice-13 review's S1;
-// E83). Nothing a process inside the sandbox says about an action's outcome
-// is taken, and nothing the agent reads names an action's target. The agent
-// runs the engine's probe program once, as `/surety/context/probe` with no
-// argument; the program asks the init, on the witness socket,
-// for the containment check, giving only its own pid. The init checks, from
-// /proc, that the asker is a live descendant of the backend running exactly
-// that command, and then performs every action itself, one at a time, each
-// in a child of its own started from the init's execute-only copy of node
-// (not dumpable: the backend can neither trace it nor take its descriptors),
-// with an environment the init constructs and the action's targets, which
-// only the engine gave it, on the child's standard input. The outcome the
-// engine records is what that child observed. The check runs once per
-// domain; the asker is told each action's outcome and nothing of its target.
-let containmentAsked = false;
+// The containment check the engine gives the init (E86): the probe
+// program's path in the sandbox, the actions in order, their targets, the
+// bounds.
+interface ContainmentSpec {
+  program: string;
+  actions: string[];
+  targets: { host_pid_ns: string; token: string; port: number; unlisted: string };
+  action_timeout_ms: number;
+  check_ms: number;
+}
 
-function cmdlineOf(pid: number): string[] | null {
+// The containment canary's actions (D2 §7.2; E86 item 2, Sean's decision).
+// The engine asks for the check on this init's own channel, once the host
+// has seen the backend in the domain's cgroup; nothing inside the sandbox
+// can ask, skip or alter it: the init listens on no socket for it, and an
+// action's report reaches the init only on the pipe of a child of its own.
+// Each action runs in that child: the engine's probe program
+// (`--canary-run <name>`), from the init's execute-only node (not dumpable:
+// the backend can neither trace it nor take its descriptors), a sibling of
+// the backend with the same uid, namespaces, cgroup, mount view and egress,
+// its environment the init's construction, its targets (which only the
+// engine gave the init) on its standard input. The actions run one at a
+// time, only while the backend has not exited, within the check's bound;
+// each is reported as a witness with whether it completed and whether the
+// backend was running when it ended. The check runs once per domain.
+let containmentRan = false;
+
+async function runContainment(check: ContainmentSpec): Promise<void> {
+  if (containmentRan) return;
+  containmentRan = true;
+  const began = performance.now();
+  if (exit !== null) {
+    send({ t: 'containment_done', ran: false, backend_running: false, reason: 'the backend had exited before the check' });
+    return;
+  }
+  let runner: typeof import('./probes/program.js').runCanaryAction;
   try {
-    const parts = readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0');
-    if (parts.at(-1) === '') parts.pop();
-    return parts;
-  } catch {
-    return null;
+    runner = ((await import(check.program)) as typeof import('./probes/program.js')).runCanaryAction;
+  } catch (err) {
+    send({ t: 'containment_done', ran: false, backend_running: exit === null, reason: `the probe program could not be loaded: ${(err as Error).message}` });
+    return;
   }
-}
-
-function descendantOfBackend(pid: number): boolean {
-  if (backendPid === null || !Number.isInteger(pid) || pid <= 1) return false;
-  let at = pid;
-  for (let i = 0; i < 64; i++) {
-    let ppid: number;
-    try {
-      const line = readFileSync(`/proc/${at}/status`, 'utf8').split('\n').find((l) => l.startsWith('PPid:'));
-      ppid = Number(line?.slice(5).trim());
-    } catch {
-      return false;
+  for (const action of check.actions) {
+    const left = check.check_ms - (performance.now() - began);
+    if (exit !== null || left <= 0) {
+      send({ t: 'witness', action, outcome: 'not_run', completed: false, pid: null, backend_running: exit === null, hardening: [], detail: exit !== null ? 'the backend exited before this action' : "the check's bound passed before this action" });
+      continue;
     }
-    if (ppid === backendPid) return true;
-    if (!Number.isInteger(ppid) || ppid <= 1) return false;
-    at = ppid;
+    const r = await runner({
+      node: process.execPath,
+      program: check.program,
+      name: action,
+      targets: check.targets,
+      env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', HTTPS_PROXY: backendEnv.HTTPS_PROXY ?? '' },
+      cwd: '/surety/workspace',
+      timeoutMs: Math.max(1, Math.min(check.action_timeout_ms, left)),
+    });
+    send({ t: 'witness', action, outcome: r.outcome, completed: r.completed, pid: r.pid, backend_running: exit === null, detail: r.detail, hardening: r.hardening });
   }
-  return false;
-}
-
-const PROBE_PATH = '/surety/context/probe';
-
-// Is this the probe program run as the containment check (SEAM.md §173)?
-// Its interpreter (argv[0]) is whatever ran it; the program is the probe,
-// by its path, resolved from the process's own working directory where the
-// path is relative; it has no argument.
-function isContainmentCheck(argv: string[] | null, cwd: string | null): boolean {
-  if (argv === null || argv.length !== 2) return false;
-  const program = argv[1]!;
-  if (program === PROBE_PATH) return true;
-  if (program.startsWith('/') || cwd === null) return false;
-  return posix.resolve(cwd, program) === PROBE_PATH;
-}
-
-function cwdOf(pid: number): string | null {
-  try {
-    return readlinkSync(`/proc/${pid}/cwd`);
-  } catch {
-    return null;
-  }
-}
-
-// One action, performed by a child of the init (the probe program's
-// `--canary-run <name>`), its targets on its standard input.
-function performAction(name: string, targets: Record<string, unknown>): Promise<{ outcome: string; detail: string }> {
-  return new Promise((resolve) => {
-    let out = '';
-    let child;
-    try {
-      child = spawn(process.execPath, [PROBE_PATH, '--canary-run', name], {
-        cwd: '/surety/workspace',
-        env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', HTTPS_PROXY: backendEnv.HTTPS_PROXY ?? '' },
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-    } catch (err) {
-      resolve({ outcome: 'not_run', detail: (err as Error).message });
-      return;
-    }
-    child.stdin!.on('error', () => {});
-    child.stdin!.end(`${JSON.stringify(targets)}\n`);
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // gone
-      }
-    }, 20_000);
-    child.stdout!.on('data', (d: Buffer) => {
-      if (out.length < 65536) out += d.toString('utf8');
-    });
-    child.once('close', () => {
-      clearTimeout(timer);
-      for (const line of out.split('\n').reverse()) {
-        try {
-          const m = JSON.parse(line) as Msg;
-          if (m.type === 'canary_action') return void resolve({ outcome: String(m.outcome ?? ''), detail: String(m.detail ?? '').slice(0, 500) });
-        } catch {
-          // not a report line
-        }
-      }
-      resolve({ outcome: 'not_run', detail: 'the action reported nothing' });
-    });
-    child.once('error', () => {
-      clearTimeout(timer);
-      resolve({ outcome: 'not_run', detail: 'the action could not be started' });
-    });
-  });
+  send({ t: 'containment_done', ran: true, backend_running: exit === null, reason: null });
 }
 
 let backendEnv: Record<string, string> = {};
-
-function startWitness(name: string, check: { targets: Record<string, unknown>; actions: string[] }): void {
-  const server = net.createServer((sock) => {
-    let buf = '';
-    let taken = false;
-    sock.on('data', (d: Buffer) => {
-      if (taken) return;
-      buf += d.toString('utf8');
-      if (buf.length > 4096) return void sock.destroy();
-      const nl = buf.indexOf('\n');
-      if (nl < 0) return;
-      taken = true;
-      let m: Msg;
-      try {
-        m = JSON.parse(buf.slice(0, nl)) as Msg;
-      } catch {
-        return void sock.end('refused\n');
-      }
-      const pid = Number(m.pid);
-      if (m.type !== 'containment_request' || !Number.isInteger(pid)) return void sock.end('refused\n');
-      if (!isContainmentCheck(cmdlineOf(pid), cwdOf(pid)) || !descendantOfBackend(pid)) return void sock.end('refused\n');
-      if (containmentAsked) return void sock.end(`${JSON.stringify({ refused: 'the containment check has already run in this domain' })}\n`);
-      containmentAsked = true;
-      void (async () => {
-        const outcomes: { action: string; outcome: string }[] = [];
-        for (const action of check.actions) {
-          const r = await performAction(action, check.targets);
-          send({ t: 'witness', action, outcome: r.outcome, pid, detail: r.detail });
-          outcomes.push({ action, outcome: r.outcome });
-        }
-        sock.end(`${JSON.stringify({ actions: outcomes })}\n`);
-      })();
-    });
-    sock.on('error', () => {});
-  });
-  server.on('error', () => {});
-  server.listen(`\0${name}`);
-}
+let containmentSpec: ContainmentSpec | null = null;
 
 let termAt: number | null = null;
 
@@ -581,6 +493,10 @@ function onMessage(m: Msg): void {
       }
     }
     leaveWhenAlone();
+  } else if (m.t === 'containment') {
+    // The engine's request, on this channel only (E86).
+    if (containmentSpec === null) send({ t: 'containment_done', ran: false, backend_running: exit === null, reason: 'this domain has no containment check' });
+    else void runContainment(containmentSpec);
   } else if (m.t === 'challenge') {
     send({
       t: 'challenge_response',
@@ -619,7 +535,7 @@ async function init(): Promise<void> {
     }
   }
   backendEnv = spec.env;
-  if (spec.canary?.witness && spec.canary.containment) startWitness(spec.canary.witness, spec.canary.containment);
+  containmentSpec = spec.canary?.containment ?? null;
   send({ t: 'ready' });
   const go = await next();
   if (!go || go.t !== 'start') process.exit(0);
