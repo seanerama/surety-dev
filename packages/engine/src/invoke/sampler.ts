@@ -17,22 +17,25 @@ export interface Sampler {
   stop(): BackendSampling;
 }
 
-// How long a member must be seen running the backend's binary before it
-// counts as a backend (the dress rehearsal's second engine finding, SEAM
-// §171). A process the backend forks runs the backend's binary until it
-// calls exec, and Claude Code forks a child for every command it runs: one
-// caught in that moment is not a second backend. A second backend is one
-// that is still the binary at a later look, at least this long after it
-// was first seen; one that has exec'd something else or gone by then was a
-// fork. Below a sample's interval, so every look after the first decides.
-export const PERSIST_MS = 200;
+// What counts as a backend process (SEAM.md §172; the dress rehearsal's
+// second engine finding): a member running the qualified binary, except a
+// fork of it that has not exec'd (the kernel's PF_FORKNOEXEC) and is younger
+// than FORK_GRACE_MS by its start time. A process starts a program by
+// forking a child that is its own image until the child's exec; Claude Code
+// does so for every command it runs, and such a child caught before its exec
+// is not a second backend. One that stays unexec'd past the bound runs the
+// backend's own code, and is one. A flag or age that cannot be read counts
+// the member as a backend.
+export const FORK_GRACE_MS = 1000;
+
+export type MemberClass = 'backend' | 'fork' | 'other';
 
 // What the sampler reads; the host's /proc and cgroup by default.
 export interface SamplerIo {
   procs(): number[] | null;
-  classify(pid: number): boolean | null;
+  // null: neither its executable nor its command line could be read.
+  classify(pid: number): MemberClass | null;
   cmdline(pid: number): string | null;
-  now(): number;
 }
 
 export function startBackendSampler(cgroupPath: string, binaryPath: string, everyMs = 250, io?: SamplerIo): Sampler {
@@ -47,19 +50,12 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
   }
   const read: SamplerIo = io ?? {
     procs: () => readProcs(cgroupPath),
-    classify: (pid) => (target === null ? null : isBackend(pid, target, binaryPath)),
+    classify: (pid) => (target === null ? null : classifyMember(pid, target, binaryPath)),
     cmdline,
-    now: () => performance.now(),
   };
   const known = io !== undefined || target !== null;
   const report: BackendSampling = { samples: 0, max_backend: 0, max_members: 0, unclassified: 0, backend_cmdlines: [], transient_backend: 0 };
-  // Members seen running the binary: those that have persisted, and those
-  // seen first at `since` and not yet looked at again late enough to say,
-  // with whether another backend was there when they were first seen.
-  let established = new Set<number>();
-  let pending = new Map<number, { since: number; beside: boolean }>();
-  // The last look's members, if the domain could be read.
-  let lastReadable = false;
+  const forks = new Set<number>();
   let gone = 0;
   let timer: NodeJS.Timeout | null = null;
   const sample = () => {
@@ -67,7 +63,6 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
     if (pids === null || !known) {
       // The domain's directory is gone (terminated and removed): nothing is
       // left to sample, and the timer stops by itself (E74 item 3).
-      lastReadable = false;
       if (pids === null && ++gone >= 3 && timer !== null) {
         clearInterval(timer);
         timer = null;
@@ -75,38 +70,24 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
       return;
     }
     gone = 0;
-    lastReadable = true;
-    const at = read.now();
     report.samples++;
     report.max_members = Math.max(report.max_members, pids.length);
-    const backends: number[] = [];
+    let backends = 0;
     let unclassified = 0;
     for (const pid of pids) {
       const v = read.classify(pid);
-      if (v === true) {
-        backends.push(pid);
+      if (v === 'backend') {
+        backends++;
         const line = read.cmdline(pid);
         if (line !== null && report.backend_cmdlines.length < 16 && !report.backend_cmdlines.includes(line)) report.backend_cmdlines.push(line);
+      } else if (v === 'fork') {
+        // Each distinct fork once, however many samples caught it.
+        if (forks.size < 4096) forks.add(pid);
       } else if (v === null) unclassified++;
     }
-    const nextEstablished = new Set<number>();
-    const nextPending = new Map<number, { since: number; beside: boolean }>();
-    for (const pid of backends) {
-      const first = pending.get(pid);
-      if (established.has(pid) || (first !== undefined && at - first.since >= PERSIST_MS)) nextEstablished.add(pid);
-      else nextPending.set(pid, first ?? { since: at, beside: backends.length > 1 });
-    }
-    // A member first seen beside another backend that is no longer the
-    // binary: a fork caught before its exec.
-    for (const [pid, p] of pending) if (!nextEstablished.has(pid) && !nextPending.has(pid) && p.beside) report.transient_backend++;
-    established = nextEstablished;
-    pending = nextPending;
-    // At once: every member that has persisted; while none has, the one
-    // being seen (the backend at its start), so a backend is identified
-    // from its first sample.
-    const atOnce = established.size + (established.size === 0 && pending.size > 0 ? 1 : 0);
-    report.max_backend = Math.max(report.max_backend, atOnce);
+    report.max_backend = Math.max(report.max_backend, backends);
     report.unclassified = Math.max(report.unclassified, unclassified);
+    report.transient_backend = forks.size;
   };
   if (everyMs > 0) {
     timer = setInterval(sample, everyMs);
@@ -117,19 +98,45 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
     stop: () => {
       if (timer !== null) clearInterval(timer);
       timer = null;
-      if (lastReadable) {
-        // Still in a live domain at the last look, and not yet looked at
-        // late enough to tell: not known to be a fork, so counted.
-        report.max_backend = Math.max(report.max_backend, established.size + pending.size);
-      } else {
-        // The domain ended before a later look: what was pending did not
-        // outlive it, and nothing showed it was more than a fork.
-        for (const p of pending.values()) if (p.beside) report.transient_backend++;
-      }
-      pending = new Map();
       return { ...report, backend_cmdlines: [...report.backend_cmdlines] };
     },
   };
+}
+
+// The kernel's PF_FORKNOEXEC (include/linux/sched.h): forked, not exec'd.
+const PF_FORKNOEXEC = 0x40;
+// USER_HZ, the unit of /proc/<pid>/stat's start time: 100 on every
+// architecture this engine runs on (Linux exports it fixed to userspace).
+const USER_HZ = 100;
+
+// A member running the binary: a fork before its exec younger than the
+// bound, or a backend. Fields of /proc/<pid>/stat are counted after the
+// command's closing parenthesis (the command may hold spaces and
+// parentheses): field 9 the flags, field 22 the start time in ticks since
+// boot.
+export function forkState(statText: string | null, uptimeSeconds: number | null): 'fork' | 'backend' {
+  if (statText === null || uptimeSeconds === null) return 'backend';
+  const close = statText.lastIndexOf(')');
+  if (close < 0) return 'backend';
+  const fields = statText.slice(close + 2).trim().split(/\s+/);
+  const flags = Number(fields[9 - 3]);
+  const start = Number(fields[22 - 3]);
+  if (!Number.isSafeInteger(flags) || !Number.isSafeInteger(start) || flags < 0 || start < 0) return 'backend';
+  if ((flags & PF_FORKNOEXEC) === 0) return 'backend';
+  const ageMs = uptimeSeconds * 1000 - (start * 1000) / USER_HZ;
+  return ageMs >= 0 && ageMs < FORK_GRACE_MS ? 'fork' : 'backend';
+}
+
+function uptime(): number | null {
+  const text = readBounded('/proc/uptime');
+  const n = text === null ? NaN : Number(text.split(/\s+/)[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function classifyMember(pid: number, target: { dev: number; ino: number }, binaryPath: string): MemberClass | null {
+  const v = isBackend(pid, target, binaryPath);
+  if (v !== true) return v === null ? null : 'other';
+  return forkState(readBounded(`/proc/${pid}/stat`), uptime());
 }
 
 // true: the member runs the qualified binary; false: it does not; null:

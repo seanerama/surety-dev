@@ -1,127 +1,106 @@
-// Developer tests for the host sampler's count of backends (D2 §7.2; the
-// dress rehearsal's second engine finding, SEAM §171): a process the backend
-// forks runs the backend's binary until its exec, so a look that catches it
-// then must not read as a second backend; a second backend that persists
-// must still count. The sampler's reads are given here, look by look, with
-// the time of each look: no process is made and nothing is signalled.
+// Developer tests for the host sampler's count of backends (D2 §7.2; SEAM.md
+// §172, the dress rehearsal's second engine finding): a member running the
+// backend's binary is a backend, except a fork of it not yet exec'd
+// (PF_FORKNOEXEC) and younger than 1 s; two backends in one sample are a
+// second backend. The sampler's reads are given here, look by look, and the
+// /proc/<pid>/stat rule on text: no process is made and nothing signalled.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const { startBackendSampler, PERSIST_MS } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
+const { startBackendSampler, forkState, FORK_GRACE_MS } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
 const { claudeCapabilities } = await import(join(root, 'dist', 'invoke', 'adapters', 'claude.js'));
 
 const INIT = 1;
-const SHELL = 50;
 
-// A domain whose members, and which of them run the backend's binary, are
-// set before each look. `members: null` is a domain whose directory is gone.
+// A /proc/<pid>/stat line with the given flags and start time (ticks), its
+// command holding a space and parentheses.
+const stat = (flags, startTicks) => {
+  const after = ['S', '1', '1', '1', '0', '-1', String(flags), '0', '0', '0', '0', '0', '0', '0', '0', '20', '0', '1', '0', String(startTicks), '1000', '10'];
+  return `4242 (cla (u) de) ${after.join(' ')}\n`;
+};
+
+test('the stat rule: an unexec\'d fork younger than the bound is a fork; older, exec\'d, or unreadable, a backend', () => {
+  const PF = 0x40;
+  // Up 100 s; started at tick 9950 = 99.5 s: 500 ms old.
+  assert.equal(forkState(stat(0x400000 | PF, 9950), 100), 'fork');
+  assert.equal(forkState(stat(0x400000, 9950), 100), 'backend', 'exec\'d: the flag is clear');
+  assert.equal(forkState(stat(PF, 9850), 100), 'backend', `unexec'd 1.5 s: past ${FORK_GRACE_MS} ms`);
+  assert.equal(forkState(stat(PF, 9900), 100), 'backend', 'exactly the bound: a backend');
+  assert.equal(forkState(null, 100), 'backend', 'an unreadable stat counts');
+  assert.equal(forkState(stat(PF, 9950), null), 'backend', 'an unreadable uptime counts');
+  assert.equal(forkState('garbage', 100), 'backend');
+  assert.equal(forkState(stat(PF, 20000), 100), 'backend', 'a start time after now is not believed');
+});
+
+test("this process's own stat parses: not a fork (it exec'd node)", () => {
+  const up = Number(readFileSync('/proc/uptime', 'utf8').split(/\s+/)[0]);
+  assert.equal(forkState(readFileSync('/proc/self/stat', 'utf8'), up), 'backend');
+});
+
 function scripted() {
-  const state = { at: 0, members: [], backends: new Set(), gone: new Set() };
+  const state = { members: [], classes: new Map() };
   const io = {
     procs: () => (state.members === null ? null : [...state.members]),
-    classify: (pid) => (state.gone.has(pid) ? null : state.backends.has(pid)),
-    cmdline: (pid) => (state.backends.has(pid) ? `/surety/backend/claude -p prompt (${pid})` : null),
-    now: () => state.at,
+    classify: (pid) => (state.classes.has(pid) ? state.classes.get(pid) : 'other'),
+    cmdline: (pid) => (state.classes.get(pid) === 'backend' ? `/surety/backend/claude -p prompt (${pid})` : null),
   };
   const sampler = startBackendSampler('/unused', '/unused', 0, io);
-  const look = (at, members, backends, gone = []) => {
-    Object.assign(state, { at, members, backends: new Set(backends), gone: new Set(gone) });
+  const look = (members, classes) => {
+    Object.assign(state, { members, classes: new Map(Object.entries(classes).map(([k, v]) => [Number(k), v])) });
     sampler.sample();
   };
   return { look, stop: () => sampler.stop() };
 }
 
-test('one backend, looked at for a while: one backend, nothing transient', () => {
+test('one backend with forks caught before their exec at several looks: one backend, the forks counted apart', () => {
   const s = scripted();
-  for (const at of [0, 250, 500, 750]) s.look(at, [INIT, 10], [10]);
+  s.look([INIT, 10], { 10: 'backend' });
+  s.look([INIT, 10, 11], { 10: 'backend', 11: 'fork' });
+  s.look([INIT, 10, 11], { 10: 'backend', 11: 'fork' });
+  s.look([INIT, 10, 12], { 10: 'backend', 12: 'fork' });
+  s.look([INIT, 10, 13], { 10: 'backend', 13: 'other' });
   const r = s.stop();
-  assert.deepEqual([r.samples, r.max_backend, r.transient_backend, r.max_members], [4, 1, 0, 2]);
+  assert.deepEqual([r.samples, r.max_backend, r.transient_backend, r.max_members], [5, 1, 2, 3]);
+  assert.ok(!claudeCapabilities([], r, []).reasons.some((x) => /second backend|never identified/.test(x)));
 });
 
-test('a backend seen at one look only is still identified', () => {
+test('two backends in one sample are a second backend, however briefly; a fork past the bound is one', () => {
   const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT], []);
-  const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [1, 0]);
-});
-
-test("a fork caught before its exec, at one look, then a shell: not a second backend, and counted as transient", () => {
-  const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT, 10, 11], [10, 11]);
-  s.look(500, [INIT, 10, 11], [10]);
-  s.look(750, [INIT, 10], [10]);
-  const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [1, 1]);
-  assert.equal(claudeCapabilities([], r, []).delegation_verified, false, 'still unverified here: no stream shows the tools');
-  assert.ok(!claudeCapabilities([], r, []).reasons.some((x) => /second backend/.test(x)), 'but not for a second backend');
-});
-
-test('a fork caught at two looks a few milliseconds apart is not yet a second backend; its exec by the next look settles it', () => {
-  const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT, 10, 11], [10, 11]);
-  s.look(255, [INIT, 10, 11], [10, 11]);
-  s.look(505, [INIT, 10, 11], [10]);
-  const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [1, 1]);
-});
-
-test('a second backend that persists counts: two at once', () => {
-  const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT, 10, SHELL, 12], [10, 12]);
-  s.look(250 + PERSIST_MS, [INIT, 10, SHELL, 12], [10, 12]);
-  const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [2, 0]);
-  assert.ok(r.backend_cmdlines.some((c) => c.includes('(12)')), 'and its command line is kept');
-});
-
-test('a second backend that persists after the first has gone counts once the first look is old enough, and two that start together both count', () => {
-  const s = scripted();
-  s.look(0, [INIT, 10, 12], [10, 12]);
-  s.look(250, [INIT, 10, 12], [10, 12]);
-  const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [2, 0]);
-});
-
-test('a second backend first seen at the last look of a live domain is counted: nothing showed it a fork', () => {
-  const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT, 10], [10]);
-  s.look(500, [INIT, 10, 13], [10, 13]);
+  s.look([INIT, 10], { 10: 'backend' });
+  s.look([INIT, 10, 12], { 10: 'backend', 12: 'backend' });
+  s.look([INIT, 10], { 10: 'backend' });
   const r = s.stop();
   assert.equal(r.max_backend, 2);
+  assert.ok(r.backend_cmdlines.some((c) => c.includes('(12)')));
+  assert.ok(claudeCapabilities([], r, []).reasons.some((x) => /second backend/.test(x)));
 });
 
-test('a member pending when the domain was removed did not outlive it: transient, not a second backend', () => {
+test('a fork alone, the backend not seen: no backend identified', () => {
   const s = scripted();
-  s.look(0, [INIT, 10], [10]);
-  s.look(250, [INIT, 10, 11], [10, 11]);
-  s.look(500, null, []);
+  s.look([INIT, 11], { 11: 'fork' });
   const r = s.stop();
-  assert.deepEqual([r.max_backend, r.transient_backend], [1, 1]);
+  assert.deepEqual([r.max_backend, r.transient_backend], [0, 1]);
+  assert.ok(claudeCapabilities([], r, []).reasons.some((x) => /never identified the backend/.test(x)));
 });
 
-test('a member gone between its listing and its read is unclassified, not a backend', () => {
+test('a member unreadable is unclassified, not a backend; a removed domain is not a sample', () => {
   const s = scripted();
-  s.look(0, [INIT, 10, 14], [10], [14]);
-  s.look(250, [INIT, 10], [10]);
+  s.look([INIT, 10, 14], { 10: 'backend', 14: null });
+  s.look(null, {});
   const r = s.stop();
-  assert.deepEqual([r.max_backend, r.unclassified, r.transient_backend], [1, 1, 0]);
+  assert.deepEqual([r.samples, r.max_backend, r.unclassified], [1, 1, 1]);
 });
 
-test('the capabilities still fail on a persisting second backend and on none identified', () => {
-  const base = { samples: 4, max_members: 3, unclassified: 0, backend_cmdlines: [], transient_backend: 2 };
-  const two = claudeCapabilities([], { ...base, max_backend: 2 }, []);
-  assert.ok(two.reasons.some((x) => /second backend/.test(x)));
-  const none = claudeCapabilities([], { ...base, max_backend: 0 }, []);
-  assert.ok(none.reasons.some((x) => /never identified the backend/.test(x)));
-  const one = claudeCapabilities([], { ...base, max_backend: 1 }, []);
-  assert.ok(!one.reasons.some((x) => /second backend|never identified/.test(x)));
+test("a containment canary whose control did not run is containment_failed, not delegation_unverified (SEAM.md §165)", async () => {
+  const { realFailureClass } = await import(join(root, 'dist', 'trust', 'attempts.js'));
+  const caps = { delegation_verified: false };
+  const base = { stream: null, authFailure: null, obs: undefined, candidates: [], capabilities: caps };
+  assert.equal(realFailureClass('containment', 'containment_failed', { ...base, containmentHeld: false }), 'containment_failed');
+  assert.equal(realFailureClass('containment', 'containment_failed', { ...base, containmentHeld: true }), 'delegation_unverified');
+  assert.equal(realFailureClass('containment', 'containment_failed', { ...base, capabilities: { delegation_verified: true }, containmentHeld: true }), 'containment_failed');
 });

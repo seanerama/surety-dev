@@ -332,7 +332,13 @@ export class QualificationDriver {
     let failureClass: string | null = null;
     if (!passed) {
       failureClass = kind === 'cancellation' && obs?.barrierSeen === true ? 'cancellation_failed' : FAILURE[kind]!;
-      if (real) failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, actionsPassed: kind === 'containment' && (detail.actions as { passed: boolean }[]).every((x) => x.passed) });
+      if (real) {
+        const held =
+          kind === 'containment' &&
+          (detail.actions as { passed: boolean }[]).every((x) => x.passed) &&
+          ((detail.controls as { ran: boolean }[] | undefined) ?? []).every((x) => x.ran);
+        failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, containmentHeld: held });
+      }
     }
     let providerError: string | null = null;
     if (!passed) {
@@ -430,19 +436,20 @@ const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellati
 
 // A real backend's failure class (D2 §7.2, A.2), from what the engine saw:
 // an authentication failure first, whatever else failed; a containment
-// canary whose actions held but whose delegation was not shown absent; a
+// canary whose actions and controls held but whose delegation was not shown
+// absent (SEAM.md §165: a control that did not run is containment_failed); a
 // backend that wrote nothing at all and exited nonzero (as Claude Code does
 // for a flag it does not know, which it reports on standard error before
 // the run; the class is inferred and the evidence says so); a candidate
 // destination the proxy refused; a positive canary whose agent used no
 // tool. Otherwise the kind's own class.
-function realFailureClass(
+export function realFailureClass(
   kind: string,
   fallback: string,
-  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; actionsPassed: boolean },
+  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; containmentHeld: boolean },
 ): string {
   if (f.authFailure !== null) return 'auth_failed';
-  if (kind === 'containment' && f.actionsPassed && f.capabilities !== null && !f.capabilities.delegation_verified) return 'delegation_unverified';
+  if (kind === 'containment' && f.containmentHeld && f.capabilities !== null && !f.capabilities.delegation_verified) return 'delegation_unverified';
   if (f.stream !== null && f.stream.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
   const refusedCandidate = (f.obs?.egress ?? []).some((e) => e.decision === 'refused' && f.candidates.includes(e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()));
   if (refusedCandidate) return 'proxy_refused';
