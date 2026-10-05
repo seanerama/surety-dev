@@ -1,0 +1,35 @@
+Generated with the built-in image_gen tool on 2026-10-03.
+
+Use case: infographic-diagram.
+Create a clear, beautiful hand-drawn WHITEBOARD DIAGRAM explaining the FULL PRODUCT VISION of SURETY to IT business managers. Landscape 16:9, high resolution, bright white background, natural colored dry-erase marker strokes, crisp large readable hand lettering. Professional meeting whiteboard, generous whitespace, simple icons and bold directional arrows, no people/photos, no jargon, no tiny paragraphs. This is an ongoing software-and-operations lifecycle, not a one-way coding pipeline.
+
+Title at top in large BLUE marker: "SURETY"
+Subtitle exactly: "From your idea to a deployed, monitored and continuously improved application"
+Smaller supporting line: "You set the intent. Surety coordinates the lifecycle."
+
+Main composition: a LARGE CLOCKWISE CONTINUOUS LOOP with SIX illustrated stations arranged as two rows of three. TOP row flows left to right: 1 → 2 → 3. Right-side arrow descends from 3 to 4. BOTTOM row flows right to left: 4 → 5 → 6. Left-side arrow curves UP from 6 back to 2 (not back to idea; improvements re-enter build). Initial idea enters the workflow at station 1. All arrows unambiguous. Surrounding stations leave clear central white space for governance. Avoid crossing arrows or overlapping labels.
+
+Station 1 TOP LEFT, blue lightbulb and document: "1  IDEA + SPEC" / "Goals • Requirements • Constraints"
+Station 2 TOP MIDDLE, orange laptop and teal checklist: "2  BUILD + VERIFY" / "AI builders • Independent checks"
+Station 3 TOP RIGHT, purple shield and cloud/server icon: "3  DEPLOY SAFELY" / "Approved release • Verified rollout"
+Station 4 BOTTOM RIGHT, teal pulse line and eye icon: "4  OBSERVE + LISTEN" / "Health • Errors • User feedback"
+Station 5 BOTTOM MIDDLE, purple bug report and funnel icon: "5  REPORT + TRIAGE" / "Evidence-backed issues • Priorities"
+Station 6 BOTTOM LEFT, orange wrench and checklist: "6  APPROVED FIXES" / "Repair • Re-test • Re-deploy"
+
+In CENTER of the loop a neat dark-blue outlined panel with title "SURETY'S CONTROL ENGINE" and three short lines:
+"Human approvals + scoped permissions"
+"Quality gates + budgets"
+"Durable evidence + safe recovery"
+Near panel a small human decision-maker icon, no additional text.
+
+Near arrow from 3 to 4, a slim purple infrastructure panel clearly associated with deployment, with title "APPROVED INFRASTRUCTURE" and two lines:
+"AWS • GCP • Azure"
+"Bare metal • Kubernetes • Local"
+This panel must fit cleanly at right side with all text legible, and no arrows through text. It is a deployment-target list, NOT an extra stage in the loop. Adjust main station widths and spacing to leave room for it.
+
+Along bottom a blue marker underline above two readable takeaway lines:
+"Monitoring agents report problems. Approved fixes go through the delivery gates."
+"Management view: What is running? Is it healthy? What needs me? What does it cost?"
+Small subdued footer: "Product vision • Each deployment target requires a qualified adapter"
+
+Color semantics consistent: BLUE business intent/coordination, ORANGE build/fix work, TEAL evidence/observation, PURPLE approvals/deployment. A small red exclamation mark by triage may indicate urgent escalation. Use only text provided, no invented claims of already implemented cloud support, no promises of fully autonomous production changes. Make the continuous post-deployment feedback loop the unmistakable main story.

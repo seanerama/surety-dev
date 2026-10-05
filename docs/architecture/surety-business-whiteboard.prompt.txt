@@ -1,0 +1,29 @@
+Generated with the built-in image_gen tool on 2026-10-03.
+
+Use case: infographic-diagram.
+Create a polished hand-drawn WHITEBOARD EXPLAINER for IT business managers about SURETY, a governed delivery engine coordinating AI software work. Wide landscape 16:9, high-resolution, suitable for a meeting-room presentation. Pure white board, subtle dry-erase marker texture, clean hand-lettered large readable typography, colorful marker diagrams, lots of whitespace, visually engaging but professional. No people, no photo of a room, no tiny text, no code, no technical jargon. Use deep blue for coordination, purple for human decisions, teal for evidence and success, orange for AI work, red for blocked work. All wording below must be legible and spelled correctly. Draw friendly simple icons (target, checklist, laptop, magnifying glass, gate, shield, receipt, circular recovery arrow), not ornamental complex drawings.
+
+Top: large dark-blue title "SURETY" and subtitle "AI software delivery with human control and evidence".
+Under title one short explanatory line "Turns business goals into controlled, traceable work."
+
+Upper right/upper band: purple outlined human-owner icon and label "BUSINESS OWNER", with small labels "Sets priorities" and "Approves key decisions". Thin purple arrows connect to the plan and the decision point.
+
+Central left-to-right workflow: FIVE generously spaced numbered illustrated stations:
+1 blue target: "BUSINESS GOAL" with "Define the outcome".
+2 blue clipboard: "APPROVED PLAN" with "Scope • Acceptance criteria".
+3 orange laptop: "BUILD" with "AI agents do scoped work".
+4 teal magnifying glass/checklist: "VERIFY + REVIEW" with "Tests + independent review".
+5 blue outlined gate: "RELEASE DECISION" with "Evidence + required approvals".
+Use prominent arrows between stations. Draw a blue rounded rectangular boundary around stations 2 through 5 with top-edge label "SURETY COORDINATES THE WORK". All station labels clear and non-overlapping.
+
+Below station 5 a red branch to a small stop-sign shape labelled "BLOCKED?" and supporting line "Explain • Ask • Fix • Recheck". A red curved return arrow goes clearly to BUILD. Beside the gate a teal check and exact sentence "Required checks must pass." Do not depict human approval bypassing failed tests. Release is a readiness decision, not a claim that production deployment already exists.
+
+Bottom third: three parallel supporting panels, hand-drawn marker borders:
+blue shield: "GUARDRAILS" with two short lines "Isolated work" and "Time + budget limits".
+teal receipt/notebook: "DURABLE RECORD" with two short lines "Changes • Evidence • Decisions" and "Known costs + unknowns".
+purple circular arrow with small paused-work icon: "SAFE RECOVERY" with two short lines "Preserve completed work" and "Reconcile before resuming".
+
+Very bottom, small but readable: "Manager's view: What is happening? What is blocked? What does it cost?"
+Then a subdued footer "Conceptual workflow — deployment capabilities arrive in later milestones."
+
+Keep the drawing explanatory, not marketing hype. Large visual structure and clear arrow directions. Do not add any other labels or paragraphs. This is a designed whiteboard sketch, with purposeful colored strokes, hand-drawn circles and underlines, and natural marker feel.

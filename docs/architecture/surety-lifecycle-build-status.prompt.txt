@@ -1,0 +1,81 @@
+Generated with the built-in image_gen tool on 2026-10-03.
+Metrics and status are pinned to main @ 6527f69; see sibling .data.json.
+
+INITIAL EDIT PROMPT
+
+Edit the referenced Surety full-lifecycle whiteboard into a MORE RIGID, GRID-ALIGNED PROJECT STATUS DIAGRAM for IT business managers. Preserve the full idea → build → deploy → observe → triage → improve loop, including the return from improvements to build. Keep the colored-marker character but make straight-edged boxes, equal card sizes, orthogonal arrows, clean alignment, consistent icon sizes, disciplined typography, minimal sketch wobble. Landscape 16:10 or similarly roomy landscape, high resolution, pure white background. Readable text and generous whitespace are paramount.
+
+IMPORTANT: Color now means IMPLEMENTATION STATUS, not role. Bright saturated teal/blue with strong borders = BUILT AND MERGED. Muted desaturated amber with soft fill = IN PROGRESS (design or build). Neutral grayscale only = WAITING ON DEPENDENCIES. Gray text remains dark enough to read. Do not color planned deployment/monitoring features as built. Use explicit status labels as well as color.
+
+Title "SURETY — LIFECYCLE & BUILD STATUS"
+Subtitle "From an idea to a deployed, monitored and continuously improved application"
+Small snapshot caption "03 OCT 2026 • main @ 6527f69"
+
+Main diagram: 6 aligned rectangular cards in two rows of three, arranged clockwise. Upper row left-to-right 1,2,3. Lower row right-to-left 4,5,6. Arrows 1→2→3→4→5→6 then a clearly routed return arrow 6→2 labelled "Approved improvements". Place a strong BRIGHT BUILT foundations panel BETWEEN the rows, showing the working core that supports the whole lifecycle. This is the brightest region; the rest is appropriately dimmed.
+
+Card text EXACT:
+1 grayscale with document/lightbulb icon:
+"1  IDEA + SPEC"
+"Human-provided today"
+"Planning assistants: WAITING"
+2 muted amber with laptop/checklist icon:
+"2  BUILD + VERIFY"
+"IN PROGRESS"
+"Agent isolation + network controls"
+"Independent check design"
+3 grayscale cloud/server icon:
+"3  DEPLOY SAFELY"
+"WAITING"
+"Approved release • Verified rollout"
+"Cloud / server adapters"
+4 grayscale pulse/eye icon:
+"4  OBSERVE + LISTEN"
+"WAITING"
+"Health • Errors • User feedback"
+5 grayscale report/funnel icon:
+"5  REPORT + TRIAGE"
+"WAITING"
+"Evidence-backed issues"
+"Human or policy-approved intake"
+6 grayscale wrench icon:
+"6  FIX + REDEPLOY"
+"PRODUCTION LOOP WAITING"
+"Approved fixes return to build"
+
+Central BRIGHT saturated teal/blue box exact text:
+"BUILT & MERGED — SURETY CONTROL ENGINE"
+"Workflow + fix orchestration • Gates + decisions"
+"Evidence + cost ledger • Crash recovery"
+"Execution boundary + launch fencing"
+Small line below inside panel: "Kernel proven with scripted agents; real-agent qualification still ahead"
+
+Add a slim grayscale strip associated with deployment, exact text:
+"TARGET INFRASTRUCTURE: AWS • GCP • Azure • Bare metal • Kubernetes • Local"
+Do not claim any cloud adapter is already built.
+
+BOTTOM LEFT: a compact STATUS KEY with three neat swatches:
+"BRIGHT — Built & merged"
+"MUTED — In progress: design / build"
+"GRAYSCALE — Waiting on dependencies"
+Below key one concise explanatory line:
+"Monitoring reports problems; approved fixes pass the delivery gates."
+
+BOTTOM RIGHT CORNER: small but highly readable boxed BUILD RECORD, compact two-column metric table. Exact content:
+"BUILD RECORD • SINCE 01 OCT 2026"
+"Implementation lines     25,095"
+"Test + harness lines     41,907"
+"Commits                  379"
+"Merges into main         53"
+"All merge commits        81"
+"Pull requests            Not tracked"
+"Last green slice         924 acceptance + 146 unit"
+Under table in small legible type:
+"Local Git workflow • Retained physical lines, including comments"
+"Test result: completed slice 11; newer tests are pending"
+
+Allocate enough footer space for this metrics box and legend; do not overlay diagram elements. Be exact with all numbers. Avoid extra charts, percentages, invented counts, decorative scribbles, oversized empty areas or implied complete real-agent operation. Preserve business-level clarity of the reference. This is an honest dated project snapshot, not a completed product claim.
+
+TARGETED CORRECTION PROMPT
+
+Make ONE targeted correction to this existing diagram, preserving all text, numbers, colors, card positions, icons, typography, footer metrics and layout exactly.
+Correct the "Approved improvements" return route. It currently goes upward from card 6 into card 1 IDEA + SPEC, while a separate blue elbow near card 2 is disconnected. Replace those with ONE continuous blue orthogonal arrow from the TOP of card 6 FIX + REDEPLOY to the LEFT EDGE of card 2 BUILD + VERIFY. Keep the "Approved improvements" label on that route. The route travels up from card 6 through that existing label, then turns RIGHT in the narrow WHITE GAP beneath card 1 and ABOVE the central bright-blue control-engine panel, then turns UP in the WHITE GAP between cards 1 and 2, then turns RIGHT with its sole arrowhead entering card 2. Remove the arrowhead into card 1 entirely. Do not cross any text or panel. Make no other changes.

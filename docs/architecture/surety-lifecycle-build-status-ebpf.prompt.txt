@@ -1,0 +1,12 @@
+Generated with the built-in image_gen tool on 2026-10-03.
+Input: surety-lifecycle-build-status.png.
+Snapshot metrics remain as defined in surety-lifecycle-build-status.data.json.
+eBPF status source: docs/design/sdlc-design-D2-ebpf-note.md (E57) and docs/spec/handoff-2026-10-03.md section 2.
+
+Edit this existing Surety lifecycle/status diagram with ONE small targeted addition. Preserve the entire diagram, all six workflow cards, arrows, status colors, central built-engine box, title, dated commit snapshot, and every metric and number exactly.
+In the BOTTOM-LEFT footer panel, preserve the STATUS KEY and its three colored swatches in the left half. Replace ONLY the explanatory paragraph in the right half of that footer panel ("Monitoring reports problems; approved fixes pass the delivery gates.") with a compact clean GRAYSCALE callout. Give it a small chip/eye icon and the prominent title "eBPF OBSERVABILITY" with the correct lowercase e and uppercase BPF. Below it, readable lines exactly:
+"PLANNED • Optional prototype"
+"Evidence of agent activity:"
+"Processes • Files • Network"
+"Feasibility check pending"
+The callout must fit within the existing footer panel without overlapping the legend or the build record. Keep the heading legible and visually noticeable. Use dark gray type and a light gray background/border to match the waiting/planned status. Do NOT put eBPF inside the BUILT & MERGED box, do NOT claim eBPF production monitoring is already implemented, and do NOT change the snapshot or build metrics. Maintain the rigid aligned business-diagram style.

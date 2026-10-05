@@ -1,0 +1,54 @@
+{
+  "snapshot": "6527f694870e1dfee939601312e417b9c5aab7fa",
+  "build_start_commit": "b721723d19b6f1a24ba59f59ad54f0887de0dead",
+  "build_start_date": "2026-10-01T10:08:45-05:00",
+  "baseline": "a1b8943446f332f55809ff12ac4cf784cbfb4dae",
+  "commits_including_merges": 379,
+  "merge_commits_all_ancestry": 81,
+  "merges_into_main_first_parent": 53,
+  "remotes": "",
+  "line_counts": {
+    "implementation": {
+      "files": 112,
+      "physical_lines": 25095,
+      "nonblank_lines": 23309
+    },
+    "tests_and_harness": {
+      "files": 238,
+      "physical_lines": 41907,
+      "nonblank_lines": 38185
+    },
+    "tooling": {
+      "files": 3,
+      "physical_lines": 328,
+      "nonblank_lines": 305
+    }
+  },
+  "counting_method": {
+    "range": "Build scaffolding commit b721723 through snapshot, inclusive; reachable committed history only.",
+    "implementation": "Current retained physical lines, including comments and blank lines, in packages/engine/src/**/*.ts excluding src/testing, plus migrations/*.sql.",
+    "tests_and_harness": "Current retained physical lines in packages/engine/test/**/*.{ts,mjs,js} and packages/engine/src/testing/**/*.ts.",
+    "merge_counts": "53 first-parent merge commits into the main history; 81 merge commits across its reachable ancestry, including branch synchronization.",
+    "pull_requests": "Not tracked: no Git remote configured. Local merge commits are not counted as PRs.",
+    "exclusions": "Unmerged branches, uncommitted work, generated output, dependencies, documentation and historical deleted lines are not implementation LOC."
+  },
+  "last_completed_slice_test_record": {
+    "slice": 11,
+    "acceptance": 924,
+    "unit": 146,
+    "source": "docs/spec/handoff-2026-10-03.md section 1; docs/acceptance/reports/M2-not-claimed.md After slice 11",
+    "rerun_for_graphic": false,
+    "note": "These are recorded completed-slice results, not a claim that all newly added slice-12 tests currently pass."
+  },
+  "status_mapping": {
+    "bright_built": "Merged kernel and slice-11 execution boundary; workflow/fix orchestration, gates/decisions, ledger/evidence, recovery, launch fencing.",
+    "muted_in_progress": "M2 slice 12 sandbox view, handover and egress work; independent-check design D3. Real-backend qualification remains ahead.",
+    "grayscale_waiting": "Automated idea/spec roles, deployment adapters, live monitoring/intake and the full production feedback loop. Human-authored specs work as inputs now; kernel fix orchestration is already built."
+  },
+  "status_sources": [
+    "docs/spec/handoff-2026-10-03.md sections 1-2",
+    "docs/spec/M2-build-spec.md section 9",
+    "docs/acceptance/reports/M2-not-claimed.md After slice 11 and After slice 12",
+    "docs/foundations/sdlc-framework-foundations-v1.0.md sections 3.5, 4.1, 8, 10"
+  ]
+}
