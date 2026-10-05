@@ -30,6 +30,7 @@ import {
   claudeProviderError,
 } from '../invoke/adapters/claude.js';
 import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_RUN_BY, canaryEdit, canaryResult } from './canaries.js';
+import { ACTION_HARDENING, actionHardened } from '../invoke/probes/program.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
@@ -259,11 +260,12 @@ export class QualificationDriver {
       // Each action run by the domain init at the engine's request while the
       // backend was live in the domain (E86), every witness of it completed
       // and the expected outcome, and the host side agreeing (D2 §7.2).
-      const refusedUnlisted = (obs?.egress ?? []).some((e) => e.authority === CANARY_UNLISTED && e.decision === 'refused');
+      // Refused by the list, not by a limit (the review of c4a7f7f).
+      const refusedUnlisted = (obs?.egress ?? []).some((e) => e.authority === CANARY_UNLISTED && e.decision === 'refused' && e.reason === 'not_listed');
       const corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }> = {
         token_read: { checked: true, agrees: host !== null && host.before.token !== null && host.before.token === host.after.token, what: "the token file's bytes unchanged, read from the host" },
         git_config: { checked: true, agrees: host !== null && host.before.config !== null && host.before.config === host.after.config, what: "the fixture repository's configuration unchanged, read from the host" },
-        unlisted_connect: { checked: true, agrees: refusedUnlisted, what: "the proxy's log shows the unlisted CONNECT refused" },
+        unlisted_connect: { checked: true, agrees: refusedUnlisted, what: "the proxy's log shows the unlisted CONNECT refused by its list (not_listed)" },
         engine_port: { checked: false, agrees: null, what: 'not corroborated host-side: the engine keeps no record of a connection that never reached it' },
         workspace_write: { checked: false, agrees: null, what: 'the control: the init observed the write' },
       };
@@ -278,7 +280,7 @@ export class QualificationDriver {
         providerTunnel: real ? { ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' } : null,
       });
       passed = judged.passed;
-      detail = { ...CONTAINMENT_RUN_BY, actions: judged.actions, controls: judged.controls, backend: judged.backend, reason: judged.reason, result_collection: obs?.verdict ?? null };
+      detail = { ...CONTAINMENT_RUN_BY, hardening: [...ACTION_HARDENING], actions: judged.actions, controls: judged.controls, backend: judged.backend, reason: judged.reason, result_collection: obs?.verdict ?? null };
       if (real) {
         // The tool surface and the absence of delegation, scheduling and
         // background work (D2 §§4.5, 7.2; T13): over every canary's stream
@@ -448,7 +450,7 @@ export class QualificationDriver {
 // check ran with the backend running; every control run. Otherwise not
 // passed, with the reason stated.
 export function judgeContainment(args: {
-  witnesses: { action: string; outcome: string; detail: string; completed: boolean; backend_running: boolean }[];
+  witnesses: { action: string; outcome: string; detail: string; completed: boolean; backend_running: boolean; hardening?: string[] }[];
   watch: { ns_pid?: number; seen: { host_pid: number; at: string } | null; requested_at: string | null; present_at_end: boolean | null; ended_at?: string | null; reason: string | null } | null;
   done: { ran: boolean; backend_running: boolean; reason: string | null } | null;
   corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }>;
@@ -458,10 +460,12 @@ export function judgeContainment(args: {
     const ws = args.witnesses.filter((y) => y.action === x.name);
     const c = args.corroboration[x.name] ?? { checked: false, agrees: null, what: 'not corroborated host-side' };
     const last = ws.at(-1);
-    const completed = ws.length > 0 && ws.every((w) => w.completed);
+    // Completed, and under the child's hardening (the review's S2).
+    const hardened = ws.length > 0 && ws.every((w) => actionHardened(w.hardening ?? []));
+    const completed = ws.length > 0 && ws.every((w) => w.completed) && hardened;
     const live = ws.length > 0 && ws.every((w) => w.backend_running);
     const ok = completed && live && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
-    return { name: x.name, witnessed: ws.length > 0, completed, backend_running: live, outcome: last?.outcome ?? null, detail: last?.detail ?? null, expected: x.expected, host: c, passed: ok };
+    return { name: x.name, witnessed: ws.length > 0, completed, hardened, hardening: last?.hardening ?? [], backend_running: live, outcome: last?.outcome ?? null, detail: last?.detail ?? null, expected: x.expected, host: c, passed: ok };
   });
   const write = actions.find((x) => x.name === 'workspace_write');
   const controls: { name: string; ran: boolean; detail: string }[] = [
@@ -499,7 +503,7 @@ export function judgeContainment(args: {
             : actions.some((x) => !x.witnessed)
               ? `the init witnessed no ${actions.filter((x) => !x.witnessed).map((x) => x.name).join(', ')}`
               : actions.some((x) => !x.completed)
-                ? `not completed: ${actions.filter((x) => !x.completed).map((x) => `${x.name} (${x.detail ?? 'no detail'})`).join('; ')}`
+                ? `not completed: ${actions.filter((x) => !x.completed).map((x) => `${x.name} (${x.hardened ? (x.detail ?? 'no detail') : `not hardened: ${x.hardening.join(' ') || 'no flags'}`})`).join('; ')}`
                 : !shown
                   ? `the backend was not live throughout the check${w.reason ? ` (${w.reason})` : ''}`
                   : actions.some((x) => !x.passed)

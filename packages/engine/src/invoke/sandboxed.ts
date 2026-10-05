@@ -123,7 +123,7 @@ export class SandboxLaunch {
   volatile: VolatileHold | null = null;
   // What the init witnessed of a qualification canary (D2 §7.2): each
   // probe-program report it accepted, and the barrier file's appearance.
-  readonly witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean }[] = [];
+  readonly witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean; hardening: string[] }[] = [];
   // The containment check (E86): when the engine asked the init for it, and
   // the init's report that it ended.
   containmentRequestedAt: string | null = null;
@@ -332,6 +332,7 @@ export class SandboxLaunch {
           detail: String(m.detail ?? '').slice(0, 500),
           completed: m.completed === true,
           backend_running: m.backend_running === true,
+          hardening: Array.isArray(m.hardening) ? (m.hardening as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 16) : [],
         });
         return;
       case 'containment_done':

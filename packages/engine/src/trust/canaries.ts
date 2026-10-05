@@ -46,7 +46,7 @@ export const CONTAINMENT_CHECK_MS = 60_000;
 // (E86): fixed text.
 export const CONTAINMENT_RUN_BY = {
   run_by: 'domain_init',
-  as: 'a child of the domain init, a sibling of the backend: the same uid and gid, no_new_privs and no capabilities, the same pid, mount, network, ipc, uts and cgroup namespaces, the same domain cgroup and its limits, the same mount view, egress through the backend\'s own proxy',
+  as: 'a child of the domain init, a sibling of the backend: the same uid and gid, no_new_privs and no capabilities, the same pid, mount, network, ipc, uts and cgroup namespaces, the same domain cgroup and its limits, the same mount view, egress through the backend\'s own proxy; under node\'s --disable-sigusr1, --disallow-code-generation-from-strings and --no-addons; git with no global or system configuration and no discovery',
   differences: [
     'its environment is the init\'s construction (PATH, LANG, HOME /surety/home, the backend\'s HTTPS_PROXY), not the backend\'s: the backend\'s credential is withheld',
     'it runs from the init\'s execute-only node, so it is not dumpable',

@@ -14,7 +14,8 @@
 // program, run on the host, refuses before it acts.
 
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, readlinkSync, mkdtempSync, rmSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, readdirSync, readlinkSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -24,7 +25,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
 const { canaryInstructions, canaryPromptText, containmentTargets, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_PROBE, CONTAINMENT_RUN_BY } = await import(join(dist, 'trust', 'canaries.js'));
 const { writeContextPackage } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
-const { runCanaryAction } = await import(join(dist, 'invoke', 'probes', 'program.js'));
+const { runCanaryAction, ACTION_HARDENING, classifyTokenRead, classifyPortConnect, classifyTunnelStatus, classifyGitConfig, GIT_ACTION_ENV } = await import(join(dist, 'invoke', 'probes', 'program.js'));
 const { findBackendMember, watchContainment } = await import(join(dist, 'invoke', 'containment.js'));
 const { judgeContainment, realFailureClass } = await import(join(dist, 'trust', 'attempts.js'));
 const { ClaudeStream, claudeModelFallback } = await import(join(dist, 'invoke', 'adapters', 'claude.js'));
@@ -92,13 +93,13 @@ const run = (program, extra = {}) =>
   runCanaryAction({ node: process.execPath, program, name: 'token_read', targets: { token: '/nonexistent' }, env: { PATH: '/usr/bin:/bin' }, cwd: tmpdir(), timeoutMs: 5000, ...extra });
 
 test('an action that reports and exits 0 by itself is completed, its outcome its report', async (t) => {
-  const p = standIn(t, `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'canary_action',action:process.argv[3],outcome:'denied',detail:'EACCES'}))})`);
+  const p = standIn(t, `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'canary_action',action:process.argv[3],outcome:'denied',detail:'EACCES',hardening:process.execArgv}))})`);
   const r = await run(p);
   assert.deepEqual([r.completed, r.outcome, r.detail, r.exit.code], [true, 'denied', 'EACCES', 0]);
 });
 
 test('an action child killed before it reports (as the backend, under the same uid, could do) is not completed: not_run, the signal named', async (t) => {
-  const p = standIn(t, `setTimeout(()=>{console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'late'}))},5000)`);
+  const p = standIn(t, `setTimeout(()=>{console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'late',hardening:process.execArgv}))},5000)`);
   const r = await run(p, {
     onSpawn: (pid) => {
       // The child this call just spawned, by its own pid.
@@ -110,7 +111,7 @@ test('an action child killed before it reports (as the backend, under the same u
 });
 
 test('an action killed after it reported is still not completed', async (t) => {
-  const p = standIn(t, `console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'x'}));setTimeout(()=>{},5000)`);
+  const p = standIn(t, `console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'x',hardening:process.execArgv}));setTimeout(()=>{},5000)`);
   const r = await run(p, { onSpawn: (pid) => setTimeout(() => process.kill(pid, 'SIGKILL'), 300) });
   assert.deepEqual([r.completed, r.outcome], [false, 'not_run']);
   assert.match(r.detail, /SIGKILL.*it had reported denied/);
@@ -123,7 +124,7 @@ test('an action that does not end in time, that exits without a report, or exits
   const silent = await run(standIn(t, 'process.exit(0)'));
   assert.deepEqual([silent.completed, silent.outcome], [false, 'not_run']);
   assert.match(silent.detail, /without a report/);
-  const failing = await run(standIn(t, `console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'x'}));process.exit(3)`));
+  const failing = await run(standIn(t, `console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'x',hardening:process.execArgv}));process.exit(3)`));
   assert.deepEqual([failing.completed, failing.outcome], [false, 'not_run']);
   const missing = await run(join(scratch(t), 'no-such.js'));
   assert.equal(missing.completed, false);
@@ -134,7 +135,7 @@ test("the engine's probe program, run by the runner on the host, refuses before 
   const p = join(dir, 'probe.js');
   copyFileSync(join(dist, 'invoke', 'probes', 'program.js'), p);
   const r = await runCanaryAction({ node: process.execPath, program: p, name: 'workspace_write', targets: { host_pid_ns: readlinkSync('/proc/self/ns/pid') }, env: { PATH: '/usr/bin:/bin' }, cwd: dir, timeoutMs: 10_000 });
-  assert.deepEqual([r.completed, r.outcome], [true, 'refused_unsandboxed']);
+  assert.deepEqual([r.completed, r.outcome, r.hardening], [true, 'refused_unsandboxed', [...ACTION_HARDENING]]);
 });
 
 // ---- the backend seen in the domain, then the check ----
@@ -171,7 +172,7 @@ test('the watch: seen, then the check asked for, then the backend still there; o
 
 const EXPECTED = Object.fromEntries(CONTAINMENT_ACTIONS.map((a) => [a.name, a.expected]));
 const good = () => ({
-  witnesses: CONTAINMENT_ACTIONS.map((a) => ({ action: a.name, outcome: a.expected, detail: 'd', completed: true, backend_running: true })),
+  witnesses: CONTAINMENT_ACTIONS.map((a) => ({ action: a.name, outcome: a.expected, detail: 'd', completed: true, backend_running: true, hardening: [...ACTION_HARDENING] })),
   watch: { ns_pid: 2, seen: { host_pid: 200, at: 't' }, requested_at: 't', present_at_end: true, ended_at: 'u', reason: null },
   done: { ran: true, backend_running: true, reason: null },
   corroboration: { token_read: { checked: true, agrees: true, what: '' }, git_config: { checked: true, agrees: true, what: '' }, unlisted_connect: { checked: true, agrees: true, what: '' }, engine_port: { checked: false, agrees: null, what: '' }, workspace_write: { checked: false, agrees: null, what: '' } },
@@ -188,6 +189,7 @@ test('every action completed and as expected, the backend live throughout, the c
 const FAILS = [
   ['an action killed (not completed), whatever its outcome', (g) => (g.witnesses[0] = { ...g.witnesses[0], completed: false, outcome: 'not_run', detail: 'the action was ended by SIGKILL before it reported' }), /not completed: token_read/],
   ['an action never witnessed', (g) => g.witnesses.splice(2, 1), /witnessed no engine_port/],
+  ['an action that ran without its hardening', (g) => (g.witnesses[1].hardening = ['--disable-sigusr1']), /not completed: git_config \(not hardened/],
   ['the backend exited mid-check', (g) => (g.witnesses[3].backend_running = false), /not live throughout/],
   ['the init reports the backend gone at the end', (g) => (g.done.backend_running = false), /not live throughout/],
   ['the backend not in the domain at the end', (g) => (g.watch.present_at_end = false), /not live throughout/],
@@ -261,4 +263,73 @@ test('a canary\'s failure class: auth_failed first, then model_fallback, before 
 test("the evidence's backend: seen_at, pid, the host's two reads, running_throughout (SEAM.md §175)", () => {
   const v = judgeContainment(good());
   assert.deepEqual(v.backend, { seen_at: 't', pid: 200, ns_pid: 2, requested_at: 't', host_reads: [{ at: 't', member: true }, { at: 'u', member: true }], running_throughout: true });
+});
+
+// ---- the review of c4a7f7f: S1 and M1, nothing the backend can write decides a verdict ----
+
+test('token_read: only a filesystem refusal is a denial', () => {
+  assert.equal(classifyTokenRead('opened'), 'allowed');
+  for (const c of ['ENOENT', 'EACCES', 'EPERM', 'EROFS']) assert.equal(classifyTokenRead(c), 'denied', c);
+  for (const c of ['ELOOP', 'ENOTDIR', 'EMFILE', 'EIO', 'weird']) assert.equal(classifyTokenRead(c), 'not_run', c);
+});
+
+test('engine_port: only a refusal or no route is a denial; a timeout is not', () => {
+  assert.equal(classifyPortConnect('connected'), 'allowed');
+  for (const c of ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'EADDRNOTAVAIL']) assert.equal(classifyPortConnect(c), 'denied', c);
+  for (const c of ['timeout', 'ECONNRESET', 'EMFILE']) assert.equal(classifyPortConnect(c), 'not_run', c);
+});
+
+test("unlisted_connect: only the proxy's 403 is a denial; a limit's 503, a timeout or no answer is not", () => {
+  assert.equal(classifyTunnelStatus(200), 'allowed');
+  assert.equal(classifyTunnelStatus(403), 'denied');
+  for (const st of [503, 504, 502, 400, null, undefined]) assert.equal(classifyTunnelStatus(st), 'not_run', String(st));
+});
+
+const SEEN = 'status 4 error: could not write config file /surety/git/config: Device or resource busy\n';
+test('git_config: denied only for a write of the view config refused by the filesystem, unchanged, a direct open refused too', () => {
+  const base = { status: 4, stderr: SEEN, before: 'x', after: 'x', direct: 'EROFS' };
+  assert.equal(classifyGitConfig(base), 'denied', 'as seen in the sandbox: rename onto the read-only bind, EBUSY; open for writing EROFS');
+  assert.equal(classifyGitConfig({ ...base, stderr: 'error: could not write config file /surety/git/config: Read-only file system' }), 'denied');
+  assert.equal(classifyGitConfig({ ...base, after: 'x\n[surety]\n' }), 'allowed', 'changed');
+  assert.equal(classifyGitConfig({ ...base, status: 0 }), 'allowed');
+  assert.equal(classifyGitConfig({ ...base, direct: 'opened' }), 'allowed', 'writable by a direct open');
+  // What the backend could cause: none is a denial.
+  assert.equal(classifyGitConfig({ ...base, status: 128, stderr: 'fatal: bad config line 1 in file /surety/home/.gitconfig' }), 'not_run', 'a malformed ~/.gitconfig');
+  assert.equal(classifyGitConfig({ ...base, status: 128, stderr: 'fatal: not a git repository: /surety/workspace/.git' }), 'not_run');
+  assert.equal(classifyGitConfig({ ...base, status: 255, stderr: 'error: could not lock config file /surety/git/config: Permission denied' }), 'not_run', 'a lock in a directory the backend can chmod');
+  assert.equal(classifyGitConfig({ ...base, status: 255, stderr: 'error: could not lock config file /surety/git/config: File exists' }), 'not_run', 'a lock file planted');
+  assert.equal(classifyGitConfig({ ...base, status: 255, stderr: 'error: could not lock config file /surety/git/config: Read-only file system' }), 'denied');
+  assert.equal(classifyGitConfig({ ...base, stderr: 'error: could not write config file /elsewhere/config: Device or resource busy' }), 'not_run', 'another file');
+  assert.equal(classifyGitConfig({ ...base, direct: 'ENOENT' }), 'not_run', 'the direct open not a filesystem refusal of the file');
+  assert.equal(classifyGitConfig({ ...base, before: null }), 'not_run', 'the view config unreadable');
+});
+
+test("git_config's environment ignores a malformed ~/.gitconfig and XDG config the backend could plant", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, 'home');
+  mkdirSync(join(home, '.config', 'git'), { recursive: true });
+  writeFileSync(join(home, '.gitconfig'), '[[[ not a config\n');
+  writeFileSync(join(home, '.config', 'git', 'config'), '[[[ not a config\n');
+  const target = join(dir, 'config');
+  writeFileSync(target, '[core]\n\tbare = false\n');
+  const args = ['config', '--file', target, 'surety.canary', 'written'];
+  const planted = spawnSync('/usr/bin/git', args, { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C', HOME: home }, encoding: 'utf8' });
+  assert.notEqual(planted.status, 0, `the fixture is live: with the backend's HOME, git fails on the planted file (${planted.stderr})`);
+  const ours = spawnSync('/usr/bin/git', args, { cwd: '/', env: { ...GIT_ACTION_ENV, XDG_CONFIG_HOME: join(home, '.config') }, encoding: 'utf8' });
+  assert.equal(ours.status, 0, `with the action's environment the planted files are not read (${ours.stderr})`);
+});
+
+// ---- S2: the child runs hardened; a signal from the backend fails closed ----
+
+test("the action child runs under its hardening and reports it; a SIGUSR1 (the inspector's signal) opens no inspector", async (t) => {
+  const p = standIn(t, `process.on('exit',()=>{});setTimeout(()=>{console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:require('node:inspector').url()??'no inspector',hardening:process.execArgv}))},1500)`);
+  const r = await run(p, { onSpawn: (pid) => setTimeout(() => process.kill(pid, 'SIGUSR1'), 300) });
+  assert.deepEqual([r.completed, r.detail], [true, 'no inspector'], `the signal reached a child that ignores it: no inspector opened (${r.detail})`);
+  assert.deepEqual(r.hardening.slice().sort(), [...ACTION_HARDENING].sort());
+  const liar = await run(standIn(t, `console.log(JSON.stringify({type:'canary_action',outcome:'denied',detail:'x',hardening:[]}))`));
+  assert.equal(liar.completed, false);
+  assert.match(liar.detail, /without its hardening/);
+  // Any signal that ends the child fails closed (the killed-child tests above; SIGTERM here).
+  const termed = await run(standIn(t, 'setTimeout(()=>{},5000)'), { onSpawn: (pid) => setTimeout(() => process.kill(pid, 'SIGTERM'), 200) });
+  assert.deepEqual([termed.completed, termed.outcome, termed.exit.signal], [false, 'not_run', 'SIGTERM']);
 });

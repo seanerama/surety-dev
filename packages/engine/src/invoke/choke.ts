@@ -67,7 +67,7 @@ export interface CanaryObservation {
   // The result file as collected, parsed, redacted; null where none was.
   resultValue: unknown;
   editObserved: { type: 'file' | 'symlink' | 'fifo' | 'other' | 'missing'; sha256?: string; bytes?: number } | null;
-  witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean }[];
+  witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean; hardening: string[] }[];
   // The containment check (E86): what the engine saw of the backend around
   // it, and the init's report of its end.
   containment: ContainmentWatch | null;

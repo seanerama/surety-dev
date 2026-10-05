@@ -359,7 +359,7 @@ async function runContainment(check: ContainmentSpec): Promise<void> {
   for (const action of check.actions) {
     const left = check.check_ms - (performance.now() - began);
     if (exit !== null || left <= 0) {
-      send({ t: 'witness', action, outcome: 'not_run', completed: false, pid: null, backend_running: exit === null, detail: exit !== null ? 'the backend exited before this action' : "the check's bound passed before this action" });
+      send({ t: 'witness', action, outcome: 'not_run', completed: false, pid: null, backend_running: exit === null, hardening: [], detail: exit !== null ? 'the backend exited before this action' : "the check's bound passed before this action" });
       continue;
     }
     const r = await runner({
@@ -371,7 +371,7 @@ async function runContainment(check: ContainmentSpec): Promise<void> {
       cwd: '/surety/workspace',
       timeoutMs: Math.max(1, Math.min(check.action_timeout_ms, left)),
     });
-    send({ t: 'witness', action, outcome: r.outcome, completed: r.completed, pid: r.pid, backend_running: exit === null, detail: r.detail });
+    send({ t: 'witness', action, outcome: r.outcome, completed: r.completed, pid: r.pid, backend_running: exit === null, detail: r.detail, hardening: r.hardening });
   }
   send({ t: 'containment_done', ran: true, backend_running: exit === null, reason: null });
 }

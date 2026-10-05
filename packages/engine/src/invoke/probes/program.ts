@@ -21,7 +21,7 @@
 // package and runs on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, symlinkSync, truncateSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
 
@@ -669,26 +669,94 @@ interface Targets {
   unlisted?: unknown;
 }
 
+// How each action's observation is classified (the review of c4a7f7f, S1
+// and M1): `denied` only for a refusal the sandbox makes and the backend,
+// which shares the domain, cannot produce; `allowed` when the action
+// happened; anything else `not_run`, which fails the canary: an unknown is
+// never a denial.
+const REFUSED_FS = ['ENOENT', 'EACCES', 'EPERM', 'EROFS'];
+const REFUSED_NET = ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'EADDRNOTAVAIL'];
+
+export function classifyTokenRead(result: string): 'allowed' | 'denied' | 'not_run' {
+  return result === 'opened' ? 'allowed' : REFUSED_FS.includes(result) ? 'denied' : 'not_run';
+}
+
+export function classifyPortConnect(result: string): 'allowed' | 'denied' | 'not_run' {
+  return result === 'connected' ? 'allowed' : REFUSED_NET.includes(result) ? 'denied' : 'not_run';
+}
+
+// 403 is the proxy's refusal by its list; any other answer (a limit, a
+// timeout, no answer) says nothing of the list.
+export function classifyTunnelStatus(status: unknown): 'allowed' | 'denied' | 'not_run' {
+  return status === 200 ? 'allowed' : status === 403 ? 'denied' : 'not_run';
+}
+
+// The repository configuration the role sees (the git view's `config`, a
+// read-only bind): git is asked to write it by its path, with no discovery
+// and no configuration from anywhere the backend can write (HOME,
+// XDG_CONFIG_HOME, the workspace's .git). Denied only when the file is
+// unchanged, git failed writing that file (or locking it on a read-only
+// filesystem) for a filesystem refusal, and a direct open of it for writing
+// is refused by the filesystem too. A lock refused for EACCES is not
+// counted: the lock is made in /surety/git, a directory the backend can
+// chmod.
+export const GIT_VIEW_CONFIG = '/surety/git/config';
+// git's environment for the action: messages in C, no HOME the backend can
+// write (no ~/.gitconfig, no $HOME/.config/git), no global or system file.
+export const GIT_ACTION_ENV: Readonly<Record<string, string>> = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', HOME: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
+const REFUSAL_TEXT = '(Read-only file system|Permission denied|Operation not permitted|Device or resource busy)';
+export function classifyGitConfig(o: { status: number | null; stderr: string; before: string | null; after: string | null; direct: string }): 'allowed' | 'denied' | 'not_run' {
+  if (o.before === null || o.after === null) return 'not_run';
+  if (o.after !== o.before || o.status === 0 || o.direct === 'opened') return 'allowed';
+  const file = GIT_VIEW_CONFIG.replace(/[/.]/g, '\\$&');
+  const refusedWrite = new RegExp(`could not (write|commit) config file ${file}: ${REFUSAL_TEXT}`).test(o.stderr);
+  const refusedLock = new RegExp(`could not lock config file ${file}: Read-only file system`).test(o.stderr);
+  return (refusedWrite || refusedLock) && ['EROFS', 'EACCES', 'EPERM'].includes(o.direct) ? 'denied' : 'not_run';
+}
+
+const fileText = (path: string): string | null => {
+  try {
+    return readFileSync(path, 'latin1');
+  } catch {
+    return null;
+  }
+};
+
+function tryOpenForWrite(path: string): string {
+  try {
+    const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+    closeSync(fd);
+    return 'opened';
+  } catch (err) {
+    return errorOf(err);
+  }
+}
+
 async function canaryAction(name: string, t: Targets): Promise<{ outcome: string; detail: string }> {
   switch (name) {
     case 'token_read': {
       const r = tryOpen(typeof t.token === 'string' && t.token !== '' ? t.token : '/nonexistent');
-      return { outcome: r === 'opened' ? 'allowed' : 'denied', detail: r };
+      return { outcome: classifyTokenRead(r), detail: r };
     }
     case 'git_config': {
-      const r = run(['/usr/bin/git', 'config', 'surety.canary', 'written'], { cwd: '/surety/workspace', env: { PATH: '/usr/bin:/bin', HOME: '/surety/home', GIT_CONFIG_NOSYSTEM: '1', LANG: 'C.UTF-8' } });
-      return { outcome: r.status === 0 ? 'allowed' : 'denied', detail: `status ${String(r.status)} ${String(r.stderr).slice(0, 200)}` };
+      const before = fileText(GIT_VIEW_CONFIG);
+      const r = run(['/usr/bin/git', 'config', '--file', GIT_VIEW_CONFIG, 'surety.canary', 'written'], { cwd: '/', env: { ...GIT_ACTION_ENV } });
+      const after = fileText(GIT_VIEW_CONFIG);
+      const direct = tryOpenForWrite(GIT_VIEW_CONFIG);
+      const stderr = String(r.stderr ?? '');
+      const outcome = classifyGitConfig({ status: typeof r.status === 'number' ? r.status : null, stderr, before, after, direct });
+      return { outcome, detail: `status ${String(r.status)}; direct open for writing ${direct}; ${before === after ? 'unchanged' : 'changed'}; ${stderr.slice(0, 200)}` };
     }
     case 'engine_port': {
       const r = await connectOnce({ host: '127.0.0.1', port: Number(t.port ?? 0) });
-      return { outcome: r === 'connected' ? 'allowed' : 'denied', detail: r };
+      return { outcome: classifyPortConnect(r), detail: r };
     }
     case 'unlisted_connect': {
       const proxy = /:(\d+)\/?$/.exec(process.env.HTTPS_PROXY ?? '');
-      if (!proxy) return { outcome: 'denied', detail: 'no proxy in the environment' };
+      if (!proxy) return { outcome: 'not_run', detail: 'no proxy in the environment' };
       if (typeof t.unlisted !== 'string' || t.unlisted === '') return { outcome: 'not_run', detail: 'no authority was given' };
       const r = await tunnel(Number(proxy[1]), t.unlisted, null);
-      return { outcome: r.status === 200 ? 'allowed' : 'denied', detail: `status ${String(r.status)}` };
+      return { outcome: classifyTunnelStatus(r.status), detail: `status ${String(r.status)}` };
     }
     case 'workspace_write': {
       try {
@@ -717,7 +785,17 @@ export interface ActionRun {
   completed: boolean;
   pid: number | null;
   exit: { code: number | null; signal: string | null };
+  // The node flags the child ran under, as it reported them itself.
+  hardening: string[];
 }
+
+// The node flags an action's child runs under (the review of c4a7f7f, S2):
+// the backend shares its uid and pid namespace, so the child takes no
+// SIGUSR1 (which would open the inspector), compiles no code from strings
+// and loads no native addon. The child reports the flags it ran with, and
+// refuses to act without them.
+export const ACTION_HARDENING = ['--disable-sigusr1', '--disallow-code-generation-from-strings', '--no-addons'] as const;
+export const actionHardened = (execArgv: readonly string[]): boolean => ACTION_HARDENING.every((f) => execArgv.includes(f));
 
 export function runCanaryAction(args: {
   node: string;
@@ -735,9 +813,9 @@ export function runCanaryAction(args: {
     let child: ReturnType<typeof spawn>;
     let timedOut = false;
     try {
-      child = spawn(args.node, [args.program, '--canary-run', args.name], { cwd: args.cwd, env: args.env, stdio: ['pipe', 'pipe', 'ignore'] });
+      child = spawn(args.node, [...ACTION_HARDENING, args.program, '--canary-run', args.name], { cwd: args.cwd, env: args.env, stdio: ['pipe', 'pipe', 'ignore'] });
     } catch (err) {
-      resolve({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid: null, exit: { code: null, signal: null } });
+      resolve({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid: null, exit: { code: null, signal: null }, hardening: [] });
       return;
     }
     const pid = child.pid ?? null;
@@ -762,26 +840,29 @@ export function runCanaryAction(args: {
       clearTimeout(timer);
       resolve(r);
     };
-    child.once('error', (err) => done({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid, exit: { code: null, signal: null } }));
+    child.once('error', (err) => done({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid, exit: { code: null, signal: null }, hardening: [] }));
     child.once('close', (code, signal) => {
       const exit = { code: code ?? null, signal: signal ?? null };
-      let report: { outcome: string; detail: string } | null = null;
+      let report: { outcome: string; detail: string; hardening: string[] } | null = null;
       for (const line of out.split('\n').reverse()) {
         try {
           const m = JSON.parse(line) as Obj;
           if (m.type === 'canary_action') {
-            report = { outcome: String(m.outcome ?? ''), detail: String(m.detail ?? '').slice(0, 500) };
+            const h = Array.isArray(m.hardening) ? (m.hardening as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 16) : [];
+            report = { outcome: String(m.outcome ?? ''), detail: String(m.detail ?? '').slice(0, 500), hardening: h };
             break;
           }
         } catch {
           // not a report line
         }
       }
-      if (timedOut) return done({ outcome: 'not_run', detail: `the action did not end within ${args.timeoutMs} ms and was killed`, completed: false, pid, exit });
-      if (signal !== null) return done({ outcome: 'not_run', detail: `the action was ended by ${signal} before it reported${report ? ` (it had reported ${report.outcome})` : ''}`, completed: false, pid, exit });
-      if (report === null) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} without a report`, completed: false, pid, exit });
-      if (code !== 0) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} (it had reported ${report.outcome})`, completed: false, pid, exit });
-      done({ ...report, completed: true, pid, exit });
+      const hardening = report?.hardening ?? [];
+      if (timedOut) return done({ outcome: 'not_run', detail: `the action did not end within ${args.timeoutMs} ms and was killed`, completed: false, pid, exit, hardening });
+      if (signal !== null) return done({ outcome: 'not_run', detail: `the action was ended by ${signal} before it reported${report ? ` (it had reported ${report.outcome})` : ''}`, completed: false, pid, exit, hardening });
+      if (report === null) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} without a report`, completed: false, pid, exit, hardening });
+      if (code !== 0) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} (it had reported ${report.outcome})`, completed: false, pid, exit, hardening });
+      if (!actionHardened(hardening)) return done({ outcome: 'not_run', detail: `the action ran without its hardening (${hardening.join(' ') || 'none reported'})`, completed: false, pid, exit, hardening });
+      done({ outcome: report.outcome, detail: report.detail, completed: true, pid, exit, hardening });
     });
   });
 }
@@ -799,13 +880,18 @@ async function canaryRun(name: string): Promise<void> {
   } catch {
     targets = {};
   }
+  const hardening = process.execArgv.filter((f) => (ACTION_HARDENING as readonly string[]).includes(f));
+  if (!actionHardened(process.execArgv)) {
+    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, outcome: 'not_run', detail: `not hardened: ran with ${process.execArgv.join(' ') || 'no flags'}`, hardening })}\n`);
+    return;
+  }
   const guard = containment(targets.host_pid_ns);
   if (guard.reasons.length > 0) {
-    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; ') })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, outcome: 'refused_unsandboxed', detail: guard.reasons.join('; '), hardening })}\n`);
     return;
   }
   const r = await canaryAction(name, targets);
-  process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r, hardening })}\n`);
 }
 
 // Only as a program of its own, inside a sandbox; imported by the domain
