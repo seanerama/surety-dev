@@ -705,7 +705,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         mainFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
-        connectHangs.length = 0;
+        connectHangs.clear();
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
@@ -923,8 +923,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           : isObject(body) && body.point === 'egress_connect_hang'
           ? (() => {
               const f = parseConnectHang(body);
-              connectHangs.push(f);
-              return { point: 'egress_connect_hang', address: f.address, times: f.remaining };
+              connectHangs.add(f.address);
+              return { point: 'egress_connect_hang', address: f.address };
             })()
           : isObject(body) && body.point === 'tick_step'
           ? armTickFault(body)
@@ -1373,38 +1373,29 @@ export function setStreamSlow(value: { delayMs: number; remaining: number | null
 
 // ---- egress_connect_hang (the M128 (b) follow-up) ----------------------------
 //
-// `{"point": "egress_connect_hang", "address": <numeric IPv4 or IPv6>,
-// "times"?: <n>}`: the egress proxy's connection to that validated address
+// `{"point": "egress_connect_hang", "address": <numeric IPv4 or IPv6>}`
+// (SEAM.md §169): the egress proxy's connection to that validated address
 // never completes, so its connect timeout (`egress_connect_timeout`) is what
-// ends it, on any host, whatever the host's router answers. No SYN is sent:
-// the proxy's socket is never connected. Standing until the faults are
-// cleared, or for `times` connections. A no-op outside harness mode (SEAM.md
-// §7).
-const connectHangs: { address: string; remaining: number | null }[] = [];
+// ends it, on any host, whatever the host's router answers. No packet is
+// sent: the proxy's socket is never connected. Standing: every attempt to
+// that address until the faults are cleared; arming another address adds
+// it. A no-op outside harness mode (SEAM.md §7).
+const connectHangs = new Set<string>();
 
-export function parseConnectHang(body: unknown): { address: string; remaining: number | null } {
+export function parseConnectHang(body: unknown): { address: string } {
   const b = (isObject(body) ? body : {}) as Record<string, unknown>;
-  if (Object.keys(b).some((k) => !['point', 'address', 'times'].includes(k))) {
-    throw new Refusal(400, 'invalid_value', 'egress_connect_hang takes address and times only.', 'Send {"point":"egress_connect_hang","address":<numeric address>,"times"?:<n>}.', { field: 'point' });
-  }
-  if (typeof b.address !== 'string' || isIP(b.address) === 0) throw new Refusal(400, 'invalid_value', 'egress_connect_hang takes a numeric IPv4 or IPv6 address.', 'Send address.', { field: 'address' });
-  if (b.times !== undefined && (!Number.isSafeInteger(b.times) || (b.times as number) < 1)) throw new Refusal(400, 'invalid_value', 'times must be a positive integer.', 'Send times, or leave it out for a standing fault.', { field: 'times' });
-  return { address: b.address, remaining: b.times === undefined ? null : (b.times as number) };
+  if (typeof b.address !== 'string' || isIP(b.address) === 0) throw new Refusal(400, 'invalid_value', 'egress_connect_hang takes a numeric IPv4 or IPv6 address.', 'Send {"point":"egress_connect_hang","address":<numeric address>}.', { field: 'address' });
+  return { address: b.address };
 }
 
-export function armConnectHang(value: { address: string; remaining: number | null }): void {
-  connectHangs.push(value);
+export function armConnectHang(address: string): void {
+  connectHangs.add(address);
 }
 
-// Whether the proxy's connection to `address` hangs now (consuming one of
-// a fault's `times`); always false outside harness mode.
+// Whether the proxy's connection to `address` hangs; always false outside
+// harness mode.
 export function seamConnectHang(address: string): boolean {
-  if (!init.harness) return false;
-  const i = connectHangs.findIndex((f) => f.address === address);
-  if (i < 0) return false;
-  const f = connectHangs[i]!;
-  if (f.remaining !== null && --f.remaining <= 0) connectHangs.splice(i, 1);
-  return true;
+  return init.harness && connectHangs.has(address);
 }
 
 export function seamStreamDelay(): number {

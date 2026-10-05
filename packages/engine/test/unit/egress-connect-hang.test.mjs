@@ -21,30 +21,30 @@ const { DomainProxy } = await import(join(dist, 'invoke', 'proxy', 'proxy.js'));
 const ADDRESS = '198.51.100.20';
 
 test('outside harness mode the fault changes nothing', () => {
-  seam.armConnectHang({ address: ADDRESS, remaining: null });
+  seam.armConnectHang(ADDRESS);
   assert.equal(seam.seamConnectHang(ADDRESS), false);
 });
 
-test('its form: a numeric address, times optional; anything else refused', () => {
-  assert.deepEqual(seam.parseConnectHang({ point: 'egress_connect_hang', address: ADDRESS }), { address: ADDRESS, remaining: null });
-  assert.deepEqual(seam.parseConnectHang({ point: 'egress_connect_hang', address: '2001:db8::1', times: 2 }), { address: '2001:db8::1', remaining: 2 });
-  for (const bad of [{ point: 'egress_connect_hang' }, { point: 'egress_connect_hang', address: 'named.example' }, { point: 'egress_connect_hang', address: ADDRESS, times: 0 }, { point: 'egress_connect_hang', address: ADDRESS, port: 443 }]) {
-    assert.throws(() => seam.parseConnectHang(bad), (e) => e.code === 'invalid_value', JSON.stringify(bad));
+test('its form: a numeric IPv4 or IPv6 address; anything else is invalid_value naming address', () => {
+  assert.deepEqual(seam.parseConnectHang({ point: 'egress_connect_hang', address: ADDRESS }), { address: ADDRESS });
+  assert.deepEqual(seam.parseConnectHang({ point: 'egress_connect_hang', address: '2001:db8::1' }), { address: '2001:db8::1' });
+  for (const bad of [{ point: 'egress_connect_hang' }, { point: 'egress_connect_hang', address: 'named.example' }, { point: 'egress_connect_hang', address: 7 }]) {
+    assert.throws(() => seam.parseConnectHang(bad), (e) => e.code === 'invalid_value' && e.subject?.field === 'address', JSON.stringify(bad));
   }
 });
 
-test('in harness mode: the named address hangs, for its times; other addresses do not', () => {
+test('in harness mode: every attempt to an armed address hangs, arming another adds it, other addresses do not', () => {
   assert.equal(seam.configureHarness(true, []), null);
-  seam.armConnectHang({ address: '192.0.2.7', remaining: 2 });
+  seam.armConnectHang('192.0.2.7');
+  seam.armConnectHang('203.0.113.30');
   assert.equal(seam.seamConnectHang('203.0.113.9'), false);
-  assert.equal(seam.seamConnectHang('192.0.2.7'), true);
-  assert.equal(seam.seamConnectHang('192.0.2.7'), true);
-  assert.equal(seam.seamConnectHang('192.0.2.7'), false, 'spent after its times');
+  for (let i = 0; i < 3; i++) assert.equal(seam.seamConnectHang('192.0.2.7'), true, 'standing');
+  assert.equal(seam.seamConnectHang('203.0.113.30'), true);
 });
 
 test("the proxy's connect to the hung address ends at egress_connect_timeout, recorded as connect_timeout with the limit and its figure", async () => {
   assert.equal(seam.configureHarness(true, []), null);
-  seam.armConnectHang({ address: ADDRESS, remaining: null });
+  seam.armConnectHang(ADDRESS);
   const dir = mkdtempSync(join(tmpdir(), 'surety-unit-hang-'));
   const proxy = new DomainProxy({
     area: dir,
