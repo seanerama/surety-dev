@@ -32,7 +32,8 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { seamHostChecks, seamScopeBarrier } from './testing/seam.js';
+import { seamHostChecks, seamQualifyMode, seamScopeBarrier } from './testing/seam.js';
+import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
 
@@ -51,6 +52,7 @@ export interface StartupFailure {
 }
 
 export interface EngineState {
+  home: string;
   config: EngineConfig;
   lock: LockRecord;
   token: string;
@@ -174,6 +176,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   if (token === null) exitRefused(EXIT.notStarted, homeUnusable('api.token', 'the token was neither found nor created'));
 
   const state: EngineState = {
+    home: opts.home,
     config,
     lock,
     token,
@@ -339,6 +342,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
     log('trust revocation', err);
   }
 
+  // 5c. The engine's own qualification fixture project (SEAM.md §164), made
+  // at the first start outside the test mode, before full mode, so that its
+  // policy can be set before any attempt is proposed and nothing it does
+  // runs beside the first requests. A failure is logged; an attempt asks
+  // again.
+  if (!seamQualifyMode()) {
+    await ensureFixtureProject(runtime, store).catch((err) => log('qualification fixture', err));
+  }
+
   // 6. lift to full
   state.step = 'full';
   try {
@@ -360,4 +372,5 @@ export async function serve(opts: ServeOptions): Promise<void> {
   runtime.startWatch();
   scheduler.start();
   state.completed.push('scheduler');
+
 }

@@ -10,7 +10,9 @@ import { CONTRACT_EXIT, runContractCommand } from './contract/command.js';
 import { STORE_EXIT, StoreCommandRefused, backupStore, restoreStore } from './store/backup.js';
 import { ENGINE_VERSION } from './index.js';
 import { closeInheritedDescriptors } from './invoke/descriptors.js';
-import { configureHarness, setHarnessSwitches, setProbeOverrides } from './testing/seam.js';
+import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
+import { parseQualify, sendQualify } from './trust/qualify-command.js';
+import { configureHarness, setHarnessSwitches, setProbeOverrides, setRealLane } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -32,6 +34,9 @@ if (command === 'store') {
 }
 if (command === 'contract') {
   await contractCommand(args);
+}
+if (command === 'qualify') {
+  await qualifyCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -55,10 +60,34 @@ let mechanismVariantValue: string | null = null;
 let collectBoundsValue: string | null = null;
 let hostChecksMode: string | null = null;
 const harnessOnly: string[] = [];
+// The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
+// with or without --harness; and the test mode for the real lane (SEAM.md
+// §164), accepted only with --harness.
+const secretFiles: { ref: string; path: string }[] = [];
+const providerCaps: { ref: string; usd: number }[] = [];
+let realLane = false;
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
     harness = true;
+  } else if (flag === '--harness-real-lane') {
+    harnessOnly.push(flag);
+    realLane = true;
+  } else if (flag === '--secret-file' || flag === '--provider-cap-usd') {
+    const value = args[++i];
+    if (value === undefined) usage(`${flag} needs a value`);
+    const parsed = parseRefValue(flag, value);
+    if (typeof parsed === 'string') usage(parsed);
+    if (flag === '--secret-file') {
+      if (secretFiles.some((f) => f.ref === parsed.ref)) usage(`--secret-file names ${parsed.ref} twice`);
+      secretFiles.push({ ref: parsed.ref, path: parsed.value });
+    } else {
+      if (!parsed.ref.endsWith('/api_key')) usage('--provider-cap-usd is for an API key only: a subscription token has no dollar cap');
+      const usd = Number(parsed.value);
+      if (!/^\d+(\.\d+)?$/.test(parsed.value) || !Number.isFinite(usd) || usd <= 0) usage('--provider-cap-usd takes <ref>=<a positive number of US dollars>');
+      if (providerCaps.some((c) => c.ref === parsed.ref)) usage(`--provider-cap-usd names ${parsed.ref} twice`);
+      providerCaps.push({ ref: parsed.ref, usd });
+    }
   } else if (
     flag === '--harness-migrations' ||
     flag === '--harness-barrier' ||
@@ -116,6 +145,9 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (!harness && harnessOnly.length > 0) usage(`${harnessOnly[0]} is accepted only with --harness`);
+// The real lane's journey runs with the host checks (SEAM.md §164).
+if (realLane && hostChecksMode === 'unrun') usage('--harness-real-lane runs the host checks: it is not accepted with --harness-host-checks unrun');
+if (realLane) hostChecksMode = 'run';
 const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, probeValues, hostChecksMode, hostCheckValues);
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
@@ -130,6 +162,24 @@ try {
 } catch {
   usage('SURETY_HOME does not exist');
 }
+
+// The provider keys (invoke/keys.ts; SEAM.md §160): read and held before
+// anything is written; a file that may not be used refuses the start.
+try {
+  holdSecretFiles(secretFiles, providerCaps, home);
+} catch (err) {
+  if (!(err instanceof SecretFileRefused)) throw err;
+  process.stderr.write(
+    `${JSON.stringify({
+      code: 'secret_file_refused',
+      reason: `The secret file ${err.shownPath} for ${err.ref} cannot be used: ${err.why}.`,
+      what_to_do: 'Name a regular file of your own, mode 600 or 400, outside the engine home, holding the credential on one line, and start again.',
+      subject: { ref: err.ref, path: err.shownPath },
+    })}\n`,
+  );
+  process.exit(EXIT.config);
+}
+setRealLane(harness && realLane);
 
 try {
   await serve({ home, migrationsDir, shellDir, homeFsType });
@@ -215,4 +265,39 @@ async function contractCommand(argv: string[]): Promise<never> {
   // and an exit before that would cut the document short.
   await new Promise<void>((resolve) => process.stdout.write(done.stdout, () => resolve()));
   process.exit(status);
+}
+
+// `surety qualify <backend> --mode one_shot_headless --model <model>
+// [--egress <host>]... [--canary-deadline <kind>=<seconds>]...` (D2 §7.2): asks the
+// engine running on $SURETY_HOME to propose a qualification attempt. The
+// engine's answer is printed as it came (one JSON line on stdout for 201,
+// a refusal on stderr in its form, exit status 1; no engine running, exit
+// status 1). Nothing runs until a person answers
+// the attempt's qualification_approval.
+async function qualifyCommand(argv: string[]): Promise<never> {
+  const parsed = parseQualify(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendQualify(home, parsed.body);
+    const oneLine = (t: string): string => {
+      try {
+        return JSON.stringify(JSON.parse(t));
+      } catch {
+        return t.trim().replace(/\n/g, ' ');
+      }
+    };
+    if (status === 201) {
+      process.stdout.write(`${oneLine(text)}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${oneLine(text)}\n`);
+    process.exit(1);
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
 }

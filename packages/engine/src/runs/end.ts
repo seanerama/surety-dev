@@ -300,7 +300,7 @@ export class RunEnder {
     if (own?.egress) {
       const egress = own.egress;
       own.egress = null;
-      own.egressEntries = egress.entries.map((e) => ({ authority: e.authority, decision: e.decision, reason: e.reason, opened_at: e.opened_at }));
+      own.egressEntries = egress.entries.map((e) => ({ authority: e.authority, decision: e.decision, reason: e.reason, opened_at: e.opened_at, bytes_up: e.bytes_up, bytes_down: e.bytes_down }));
       await finishEgress(this.rt, egress, { project: own.claim.project, run: own.claim.run });
     }
     const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);
@@ -442,6 +442,14 @@ export class RunEnder {
       // acceptance pipeline, which ends it with the outcome its steps decide
       // (runs/accept.ts); it does not wait for a renewal it would never get.
       if (handle?.accepting && !handle.ending) continue;
+      // A run whose backend exited while the engine was paused, and whose
+      // exit the re-grant step has taken (D2 §3.5; SEAM.md §130: "the run
+      // ends by its exit"), is ended by that exit's own protocol (collection,
+      // the exit class, acceptance). Its lease is not re-granted, so it stays
+      // expired meanwhile; a later tick must not recover the run under it
+      // (the M118 investigation: case (c) recovered while it was being
+      // collected).
+      if (handle?.expiryExempt && !handle.ending) continue;
       // A run on the real boundary that this engine holds, after a pause: a
       // fresh challenge may re-grant it (D2 §3.5).
       if (handle && handle.sandbox !== null && !handle.ending && this.rt.services && (await this.rt.services.regrant(e.run).catch(() => false))) continue;

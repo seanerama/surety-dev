@@ -394,7 +394,7 @@ export function invalidateAttempt(tx: Tx, a: AttemptRow, reason: string, label: 
 export function attemptDrift(db: Db, a: AttemptRow): string | null {
   const now = currentBinarySha(a.binary_path);
   if (now !== a.binary_sha256) return 'binary_changed';
-  const t = templateOf(a.backend, { scripted: true, versions: seamTemplateVersions() });
+  const t = templateOf(a.backend, { scripted: true, versions: seamTemplateVersions(), authMode: a.auth_mode });
   if (!t || t.version !== a.template_version) return 'template_changed';
   const hq = currentHostQualification(db);
   if (!hq || hq.id !== a.host_qualification || hostIdentity() === null) return 'host_changed';
@@ -629,7 +629,7 @@ export function revokeEntry(tx: Tx, entry: EntryRow, reason: string, label: Reco
 // undefined means not read here, null that the file cannot be read).
 export function entryDrift(e: EntryRow, now: { host: string | null; profile: string | null; binary?: string | null | undefined; help?: string | null | undefined }): string | null {
   if (now.host === null || e.host_id !== now.host) return 'host_changed';
-  const template = templateOf(e.backend, { scripted: true, versions: seamTemplateVersions() });
+  const template = templateOf(e.backend, { scripted: true, versions: seamTemplateVersions(), authMode: e.auth_mode });
   if (!template || template.version !== e.template_version) return 'template_changed';
   // The profile is judged against an entry qualified under a host
   // qualification of record; one with none (written in the kernel lane) has

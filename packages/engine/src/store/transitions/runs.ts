@@ -18,7 +18,7 @@ import { type Baseline, blockingObservation, integrationRef, projectRepoRow, reb
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
-import { TEMPLATES, keyVariable } from '../../invoke/adapters/templates.js';
+import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
 
@@ -167,6 +167,11 @@ export interface ClaimArgs {
   // A qualification attempt's own dispatch of one of its canaries (D2 §7.2,
   // K10): the only way a canary's item is run.
   attempt?: string | null;
+  // The main thread's check of the entry this claim would dispatch to, made
+  // just before it (D2 §§1.2, 7.3): the binary's SHA-256 and its help hash
+  // as found (null where they could not be read). A mismatch is a refusal
+  // before launch, decided here, before any domain is admitted (D2 §3.7).
+  preflight?: { entry: string; found_sha256: string | null; found_help: string | null } | null;
 }
 
 export interface Claim {
@@ -194,7 +199,7 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  entry: { backend: string; auth_mode: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
   // A canary run: the attempt whose authority dispatched it and its kind.
   attempt: { id: string; kind: string } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
@@ -244,6 +249,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   return null;
 }
 
+// The active entry a dispatch of this item would resolve to, for the main
+// thread's check of its binary and help before the claim (claimDispatch's
+// `preflight`); null where the item's backend has none.
+export function dispatchEntryProbe(db: Tx['db'], args: { project: string; workItem: string }): { entry: string; backend: string; binary_path: string } | null {
+  const item = db.prepare('SELECT "project", "kind" FROM "work_items" WHERE "id" = ?').get(args.workItem) as { project: string; kind: string } | undefined;
+  if (!item || item.project !== args.project) return null;
+  const role = ROLE_OF[item.kind];
+  if (!role) return null;
+  const r = resolveBackend(db, { project: item.project, role, scripted: null });
+  return r.kind === 'entry' ? { entry: r.entry.id, backend: r.backend, binary_path: r.entry.binary_path } : null;
+}
+
 export const CHAIN_BOUNDARY = 'chaining boundary';
 export const RESOURCE_ENVELOPE = 'resource_envelope';
 
@@ -285,9 +302,36 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   revokeDrifted(tx);
   const attempt = canary ? getAttempt(tx.db, args.attempt!) : undefined;
   if (canary && (!attempt || attempt.status !== 'running')) return null;
-  const backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
+  let backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
     ? { kind: 'attempt', backend: attempt.backend, version: attempt.version, model: attempt.model, attempt }
     : resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  // An entry whose binary or help no longer is what was qualified (as the
+  // main thread found it just now) is revoked and the dispatch refused
+  // before launch (D2 §§1.2, 7.3), before admission: a dispatch that would
+  // be refused takes no domain, so it is never held behind one.
+  if (backend.kind === 'entry' && args.preflight && args.preflight.entry === backend.entry.id) {
+    const e = backend.entry;
+    const pf = args.preflight;
+    const helpChanged = pf.found_help !== null && pf.found_help !== e.help_sha256;
+    if (pf.found_sha256 !== e.binary_sha256 || helpChanged) {
+      const binary = pf.found_sha256 !== e.binary_sha256;
+      revokeDrifted(tx, binary ? { entry: e.id, binaries: { [e.binary_path]: pf.found_sha256 } } : { entry: e.id, helps: { [e.binary_path]: pf.found_help } });
+      backend = {
+        kind: 'refused',
+        backend: backend.backend,
+        version: backend.version,
+        model: backend.model,
+        code: 'backend_refused',
+        reason: binary
+          ? `The binary at ${e.binary_path} ${pf.found_sha256 === null ? 'cannot be read' : 'is not the one the trust entry names'}.`
+          : `The help of ${e.binary_path} is not the one the qualification recorded.`,
+        what_to_do: binary ? 'Qualify the binary that is installed, or restore the one the entry names.' : 'Qualify the binary that is installed.',
+        subject: binary
+          ? { trust_entry: e.id, binary_path: e.binary_path, expected_sha256: e.binary_sha256, found_sha256: pf.found_sha256 }
+          : { trust_entry: e.id, binary_path: e.binary_path, expected_help_sha256: e.help_sha256, found_help_sha256: pf.found_help },
+      };
+    }
+  }
   // The resource envelope (D2 §3.7): a domain is admitted only within
   // max_concurrent_domains and the host's reserves; otherwise the work stays
   // eligible, nothing is written, and its read shows the hold. A dispatch
@@ -341,9 +385,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // variable the adapter's template delivers it in; the key's provider-side
   // cap, if one is held with it, is recorded as configured evidence, never
   // as the engine's enforcement (D2 §§2.5, 4.2; SEAM.md §§116, 120).
-  const keyRef = `backend/${backend.backend}/api_key`;
+  // The credential is the one of the entry's (or the attempt's) mode, never
+  // the other's (E74 item 1).
+  const authMode = backend.kind === 'entry' ? backend.entry.auth_mode : backend.kind === 'attempt' ? backend.attempt.auth_mode : 'api_key';
+  const keyRef = credentialRef(backend.backend, authMode);
   const real = backend.kind === 'entry' || (backend.kind === 'attempt' && backend.backend !== 'scripted');
-  const cap = real ? args.providerCaps?.[keyRef] : undefined;
+  const cap = real && authMode === 'api_key' ? args.providerCaps?.[keyRef] : undefined;
   const grant = tx.newId('grant_');
   tx.db
     .prepare(
@@ -356,7 +403,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       item.project,
       run,
       JSON.stringify(['workspace_write']),
-      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend)] : [])]),
+      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend, authMode), ...Object.keys(templateOf(backend.backend, { authMode })?.env ?? {})] : [])]),
       JSON.stringify(real ? [keyRef] : []),
       tx.at,
       deadlineAt,
@@ -402,6 +449,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       backend.kind === 'attempt'
         ? {
             backend: backend.attempt.backend,
+            auth_mode: backend.attempt.auth_mode,
             binary_path: backend.attempt.binary_path,
             binary_sha256: backend.attempt.binary_sha256,
             help_sha256: backend.attempt.help_sha256,
@@ -414,6 +462,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
         : backend.kind === 'entry'
         ? {
             backend: backend.backend,
+            auth_mode: backend.entry.auth_mode,
             binary_path: backend.entry.binary_path,
             binary_sha256: backend.entry.binary_sha256,
             help_sha256: backend.entry.help_sha256,

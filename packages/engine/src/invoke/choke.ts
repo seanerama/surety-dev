@@ -32,7 +32,7 @@ import { type RunEnd, type RunHandle, type Runtime, earnedEnd, log, newHandle } 
 import type { Claim, Outcome, ReasonClass } from '../store/transitions/runs.js';
 import { RecordStream, writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
-import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamLauncherBarriers, seamLauncherReached, seamCollectBounds, seamCollectDelay, seamMainFault, seamRefuseEntryBinary, seamStreamDelay, seamTemplateVersions } from '../testing/seam.js';
 import { SandboxLaunch } from './sandboxed.js';
 import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
@@ -48,6 +48,8 @@ import { GOVERNED_FILE } from '../protected/set.js';
 import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
+import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream } from './adapters/claude.js';
+import { startBackendSampler } from './sampler.js';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
 // the attempt's judgement (trust/attempts.ts) once the run has ended.
@@ -57,15 +59,27 @@ export interface CanaryObservation {
   verdict: string;
   value: unknown;
   editContent: string | null;
+  // The positive canary's edit as read after materialization, without
+  // following a link (SEAM.md §165); null where nothing was materialized.
+  // The result file as collected, parsed, redacted; null where none was.
+  resultValue: unknown;
+  editObserved: { type: 'file' | 'symlink' | 'fifo' | 'other' | 'missing'; sha256?: string; bytes?: number } | null;
   witnesses: { action: string; outcome: string; pid: number; detail: string }[];
   barrierSeen: boolean;
+  // When the init reported the barrier (SEAM.md §165), null where it did not.
+  barrierAt: string | null;
   termToExitMs: number | null;
-  egress: { authority: string; decision: string; reason: string | null; opened_at: string }[];
+  egress: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[];
   providerFilesRecord: string | null;
+  // A real backend's: its stream as the adapter read it, and the host's
+  // samples of its domain's processes; null for the scripted backend.
+  stream: ClaudeStreamSummary | null;
+  sampling: BackendSampling | null;
+  exitStatus: number | null;
 }
 export const canaryObservations = new Map<string, CanaryObservation>();
 
-function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null): void {
+function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editContent: string | null, editObserved: CanaryObservation['editObserved'] = null): void {
   const launch = handle.sandbox;
   canaryObservations.set(handle.claim.run, {
     kind: handle.claim.attempt!.kind,
@@ -73,12 +87,38 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     verdict: c.verdict.outcome,
     value: c.value,
     editContent,
+    editObserved,
+    resultValue: collectedValue(c),
+    barrierAt: launch?.barrierAt ?? null,
     witnesses: launch ? [...launch.witnesses] : [],
     barrierSeen: launch?.barrierSeen ?? false,
     termToExitMs: launch?.termToExitMs() ?? null,
     egress: handle.egressEntries ?? [],
     providerFilesRecord: c.providerRecord,
+    stream: handle.adapterStream?.summary() ?? null,
+    sampling: stopSampler(handle),
+    exitStatus: typeof handle.exit?.code === 'number' ? handle.exit.code : null,
   });
+}
+
+function collectedValue(c: Collected): unknown {
+  if (c.result.state !== 'read') return null;
+  try {
+    return redactValue(JSON.parse(c.result.bytes.toString('utf8')));
+  } catch {
+    return null;
+  }
+}
+
+// The canary's host samples, ended once; null where none were taken.
+export function stopSampler(handle: RunHandle): BackendSampling | null {
+  const s = handle.sampler;
+  if (s === null) return handle.samplingReport;
+  s.sample();
+  handle.sampler = null;
+  const report = s.stop();
+  handle.samplingReport = report;
+  return report;
 }
 
 // The collector's reasons for a path that is not a result (SEAM.md §143).
@@ -163,7 +203,7 @@ function realBackend(claim: Claim): BackendSpec | null {
   const e = claim.entry!;
   // A canary of a harness-mode attempt for `scripted` runs the attempt's
   // binary under the scripted protocol (SEAM.md §148).
-  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions() });
+  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions(), authMode: e.auth_mode });
   if (!template) return null;
   const key = template.keyVariable === '' ? null : heldSecret(e.key_ref);
   return {
@@ -171,7 +211,9 @@ function realBackend(claim: Claim): BackendSpec | null {
     version: template.version,
     command: e.binary_path,
     args: template.render({ model: e.model, invocation: claim.invocation }),
-    env: key === null ? {} : { [template.keyVariable]: key },
+    // The template's fixed variables and the credential of the entry's mode
+    // in the variable that mode's template names (E74 items 1 and 3).
+    env: { ...template.env, ...(key === null ? {} : { [template.keyVariable]: key }) },
     // The backend's installation, read-only at its pinned path (D2 §2.3).
     binds: [{ path: e.binary_path, writable: false }],
   };
@@ -190,6 +232,11 @@ export class Launcher {
     // is chosen by the claim from the project's policy and the trust table
     // (D2 §4.1).
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
+    // The entry a dispatch would launch is checked before the claim (D2
+    // §§1.2, 7.3): its binary's bytes and its help, so that a mismatch is a
+    // refusal decided before admission and never waits behind another
+    // domain (D2 §3.7). The launch checks the bytes again (prepare).
+    const preflight = attempt === null ? await this.preflight(target.project, item.id) : null;
     // The run's base is the commit the registry expects the integration
     // branch at, or the checkpoint the work continues from (D1 §7.4); the
     // claim reads it in its own transaction.
@@ -204,9 +251,17 @@ export class Launcher {
       // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
       scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
       attempt,
+      preflight,
     });
     if (!claim) return false;
     const handle = newHandle(claim);
+    // The help was checked just now, for this very entry: not again.
+    if (preflight !== null && claim.trust_entry === preflight.entry && preflight.found_help !== null) handle.helpChecked = preflight.found_help;
+    // The adapter that reads a real backend's stream (D2 §1.1): Claude
+    // Code's for `claude`; the scripted protocol otherwise.
+    // Under the subscription token the reported cost is Claude Code's own
+    // estimate, recorded `estimated` (E74 item 1).
+    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream({ costAs: claim.entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
     this.rt.handles.set(claim.run, handle);
     // The baseline of a fresh checkout of the base, read now: it is fixed
     // with the workspace's intent.
@@ -232,6 +287,25 @@ export class Launcher {
     }
     if (ready && runs) void this.launch(handle, runs, target.repo);
     return true;
+  }
+
+  // The main thread's half of the check before the claim: the hash of the
+  // entry's binary and of its help, as found now (null where unreadable).
+  // Nothing where the item's backend has no active entry, or where the
+  // engine's test mode would refuse to run the binary at all (prepare
+  // refuses it then).
+  private async preflight(project: string, workItem: string): Promise<{ entry: string; found_sha256: string | null; found_help: string | null } | null> {
+    const probe = await this.rt.read<{ entry: string; backend: string; binary_path: string } | null>('dispatch.entry_probe', { project, workItem }).catch(() => null);
+    if (probe === null) return null;
+    if (seamRefuseEntryBinary(probe.binary_path, probe.backend, true) !== null) return null;
+    let found: string | null;
+    try {
+      found = createHash('sha256').update(await readFile(probe.binary_path)).digest('hex');
+    } catch {
+      found = null;
+    }
+    const help = found === null ? null : await helpHash(probe.binary_path, probe.backend).catch(() => null);
+    return { entry: probe.entry, found_sha256: found, found_help: help };
   }
 
   // The run will never be spawned into by this incarnation.
@@ -267,7 +341,7 @@ export class Launcher {
     if (claim.entry !== null) {
       // The engine's test mode never launches a real backend's binary: only
       // the stand-in a test wrote (M2 plan §2.3).
-      const real = seamRefuseBinary(claim.entry.binary_path, claim.entry.backend);
+      const real = seamRefuseEntryBinary(claim.entry.binary_path, claim.entry.backend, claim.trust_entry !== null && claim.attempt === null);
       if (real !== null) {
         const refusal = refusalForm('backend_refused', `This engine does not launch ${claim.entry.backend}'s own binary here: ${real}.`, 'Bind the backend to a stand-in.', { trust_entry: claim.trust_entry, binary_path: claim.entry.binary_path });
         this.never(handle, 'refused', 'preflight_refused', 'never', refusal.code, refusal);
@@ -293,11 +367,13 @@ export class Launcher {
       }
       // Its help, the static check of D2 §7.2, unchanged since it was
       // qualified (D2 §7.3; SEAM.md §150): a different help revokes an entry.
-      let help: string | null = null;
-      try {
-        help = await helpHash(claim.entry.binary_path, claim.entry.backend);
-      } catch {
-        help = null;
+      let help: string | null = handle.helpChecked;
+      if (help === null) {
+        try {
+          help = await helpHash(claim.entry.binary_path, claim.entry.backend);
+        } catch {
+          help = null;
+        }
       }
       if (help !== null && help !== claim.entry.help_sha256) {
         if (claim.trust_entry !== null) {
@@ -316,7 +392,7 @@ export class Launcher {
     // D2 §§1.2, 2.5: a real backend runs only with the provider key its
     // grant names; a reference that cannot be resolved refuses the launch,
     // never a launch without the key (E62).
-    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null })?.keyVariable ?? '') !== '';
+    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode })?.keyVariable ?? '') !== '';
     if (claim.entry !== null && keyed && heldSecret(claim.entry.key_ref) === null) {
       const refusal = refusalForm(
         'backend_refused',
@@ -678,6 +754,12 @@ export class Launcher {
         // The launch was recorded with the grant (SEAM.md §125).
         started: async () => {
           handle.backendStarted = true;
+          // A real backend's canary: the host samples the domain's members
+          // from the backend's start (D2 §7.2; M136 (c)).
+          if (claim.attempt !== null && handle.adapterStream !== null && claim.entry !== null && claim.cgroup_path !== null) {
+            handle.sampler = startBackendSampler(claim.cgroup_path, claim.entry.binary_path);
+            handle.sampler.sample();
+          }
           started();
         },
         // D2 §7.1: a sandbox the launcher fails to build refuses the run
@@ -753,7 +835,8 @@ export class Launcher {
         // While an expired lease is pending its challenge (SEAM.md §130), a
         // usage line is recorded and checked against the budget at once; a
         // result and a heartbeat wait for the challenge's outcome.
-        if ((handle.gate || this.pausedPastLease(handle)) && !isUsageLine(line)) {
+        const usageOnly = handle.adapterStream !== null ? ClaudeStream.usageOnly(line) : isUsageLine(line);
+        if ((handle.gate || this.pausedPastLease(handle)) && !usageOnly) {
           this.gate(handle).lines.push(line);
           continue;
         }
@@ -929,6 +1012,7 @@ export class Launcher {
     const kind = claim.attempt!.kind;
     c.unacceptedDone = true;
     let editContent: string | null = null;
+    let editObserved: CanaryObservation['editObserved'] = null;
     if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
       const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: await this.snapshotCaps(claim.project) });
       if (m.state === 'refused' && m.reason === 'secret') {
@@ -941,8 +1025,14 @@ export class Launcher {
       // through a link, only a regular file, at most 64 KiB.
       const r = readRegular(handle.workspacePath, canaryEdit(claim.attempt!.id).path, 64 * 1024);
       editContent = r.state === 'read' ? r.bytes.toString('utf8') : null;
+      editObserved =
+        r.state === 'read'
+          ? { type: 'file', sha256: createHash('sha256').update(r.bytes).digest('hex'), bytes: r.bytes.length }
+          : r.state === 'absent'
+            ? { type: 'missing' }
+            : { type: r.reason === 'link' ? 'symlink' : r.reason === 'fifo' ? 'fifo' : 'other' };
     }
-    recordCanary(handle, cls, c, editContent);
+    recordCanary(handle, cls, c, editContent, editObserved);
     if (kind === 'cancellation') return { outcome: 'failed', reason: 'infra_error', reasonText: 'barrier_not_reached: the cancellation canary ended without the engine observing its barrier' };
     if (cls === 'clean' && accepted) return { outcome: 'completed', reason: 'none' };
     if (cls === 'clean' || (cls === 'error_exit' && accepted)) return { outcome: 'failed', reason: 'invalid_result', reasonText: `exit class ${cls}: the canary's result is not one the engine may take` };
@@ -1015,7 +1105,7 @@ export class Launcher {
       await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
     }
     // The provider files (D2 §4.3; SEAM.md §152), after the result.
-    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null }) : undefined;
+    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode }) : undefined;
     const inv = await inventory(hold, bounds, template?.persistenceFlags ?? [], seamCollectDelay());
     let providerFiles: string = hold === null || !hold.held ? 'not_collected' : 'published';
     let providerRecord: string | null = null;
@@ -1051,6 +1141,7 @@ export class Launcher {
   async collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void> {
     if (handle.sandbox === null || !handle.backendStarted) return;
     if (quarantined && handle.collection === null) {
+      stopSampler(handle);
       // A domain whose termination was unknown is not collected (D2 §3.4).
       await this.recordCollection(handle, { result_collection: { outcome: 'not_collected', reason: null, bytes_read: null }, provider_files_collection: { outcome: 'not_collected', record: null } });
       return;
@@ -1209,7 +1300,29 @@ export class Launcher {
     return true;
   }
 
+  // A real backend's line, read by its adapter (D2 §§1.1, 1.5, 1.6): each
+  // usage observation recorded (redacted) and checked against the budget as
+  // the scripted protocol's are; the terminal event noted for the exit
+  // class. Its result is the file, read after termination (D2 §1.4), never
+  // a line; and nothing else in the stream is a command to the engine.
+  private async adapterCallback(handle: RunHandle, stream: ClaudeStream, line: string): Promise<void> {
+    const r = stream.feed(line);
+    const { run, generation, invocation } = handle.claim;
+    for (const u of r.usage) {
+      const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: u.semantics, raw: redactValue(u.raw) });
+      if (recorded) await this.checkBudget(handle);
+    }
+    if (r.terminal !== null) handle.terminal = r.terminal;
+    // A protocol error (a second terminal event) is ignored with what it
+    // carried, and the run cannot be clean (E74 item 3).
+    if (r.protocolError !== null) {
+      handle.terminal = 'failure';
+      log('backend stream', new Error(r.protocolError), { run });
+    }
+  }
+
   private async callback(handle: RunHandle, line: string): Promise<void> {
+    if (handle.adapterStream !== null) return this.adapterCallback(handle, handle.adapterStream, line);
     let message: unknown;
     try {
       message = JSON.parse(line);

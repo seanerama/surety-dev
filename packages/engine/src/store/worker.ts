@@ -64,7 +64,7 @@ import {
   recordUsage,
   renewLease,
   unendedRuns,
-} from './transitions/runs.js';
+ dispatchEntryProbe } from './transitions/runs.js';
 import { budgetCheck, ledgerView } from './transitions/ledger.js';
 import {
   chunkReceipt,
@@ -195,6 +195,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.expirable': (d, a: { now: string }) => expirableRecords(d, a.now),
   'records.referenced': (d) => referencedRecords(d),
   'ancestry.pairs': (d, a: { project: string }) => ancestryPairs(d, a),
+  // The engine's own qualification fixture project, by its repository.
+  'qualification.engine_fixture': (d, a: { repo: string }) =>
+    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
+  'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
     return row ? { repo: row.dev_repo_path } : null;

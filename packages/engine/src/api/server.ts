@@ -6,6 +6,8 @@
 // the store is open. Every response carries the defensive headers.
 
 import { prepareQualify } from '../trust/qualify.js';
+import { credentialRef } from '../invoke/adapters/templates.js';
+import { ensureFixtureProject, findFixtureProject } from '../trust/fixture.js';
 import { heldProviderCaps } from '../records/redact.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
@@ -163,6 +165,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     return state.runtime;
   };
 
+  // The engine's own fixture project for a qualification attempt outside the
+  // test mode (trust/fixture.ts).
+  const engineFixtureProject = (): Promise<string> => ensureFixtureProject(runtime(), store());
+
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';
     const post = method === 'POST';
@@ -201,10 +207,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'prepared',
         name: 'trust.qualify',
         prepare: async (b) => {
-          const request = await prepareQualify(b);
+          const request = await prepareQualify(b, { fixtureProject: engineFixtureProject, home: runtime().home });
           // The provider-side cap held with the key's reference, shown on
           // the attempt as configured, never as engine enforcement (Q2).
-          const cap = heldProviderCaps()[`backend/${request.backend}/api_key`];
+          const cap = heldProviderCaps()[credentialRef(request.backend, request.auth_mode)];
           return { ...request, provider_cap_usd: cap ?? null };
         },
       };
@@ -739,6 +745,9 @@ async function engineInfo(state: EngineState) {
     // protection from other local uids is claimed and no host qualification
     // is active.
     bootstrap_exception: bootstrap,
+    // SEAM.md §164: the engine's own qualification fixture project, null
+    // where the home has none (and while the store cannot be read).
+    qualification_fixture_project: state.store && state.completed.includes('store') ? await findFixtureProject(state.store, state.home).catch(() => null) : null,
     // D2 §6, §7.1 (SEAM.md §§114, 118): the checks, the host's eligibility
     // and where it comes from. The checks are not built in this engine
     // revision: each is not_exercised, never passed.

@@ -1,0 +1,120 @@
+// The engine's own fixture project for a qualification attempt outside its
+// test mode (D2 §7.2: "the engine-owned fixture project"; SEAM.md §148:
+// outside harness mode the fixture project is the engine's own and a
+// request may not name one). A small git repository in the engine home,
+// registered once as an ordinary project through the same bootstrap as
+// `POST /v1/projects`, its HEAD detached so that the engine can integrate
+// onto its `main` (correction 6). The canaries run on it under the
+// attempt's authority alone (K10); it holds nothing but what they write.
+//
+// Its repository is in the engine home, as every workspace is: what a
+// canary's sandbox binds of it is the git view of D2 §2.3 (objects and refs,
+// read-only) and the overlay's lower layer, as for any project.
+//
+// And where the backend the attempt qualifies is installed: resolved from
+// the engine's own PATH to its real path, which is what an entry binds (D2
+// §7.3: Claude Code installs each version at its own path, so the entry is
+// pinned to that file, not to the launcher's symbolic link).
+
+import { accessSync, constants, existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { delimiter, isAbsolute, join } from 'node:path';
+
+import { git, repoContext } from '../git/exec.js';
+import { prepareBootstrap } from '../projects/commands.js';
+import { type Runtime, log } from '../runtime.js';
+import type { StoreClient } from '../store/client.js';
+import { ENGINE_ACTOR } from '../store/transitions/tx.js';
+
+export const FIXTURE_NAME = 'surety-qualification-fixture';
+export const FIXTURE_BRANCH = 'main';
+export const fixtureRepoPath = (home: string): string => join(home, 'qualification', 'fixture');
+
+const IDENTITY = { GIT_AUTHOR_NAME: 'Surety Engine', GIT_AUTHOR_EMAIL: 'engine@surety.invalid', GIT_COMMITTER_NAME: 'Surety Engine', GIT_COMMITTER_EMAIL: 'engine@surety.invalid' };
+
+// The fixture repository, made if it is not there and repaired if a start
+// stopped half way (E74 item 3): one commit on `main` holding a README,
+// HEAD detached. A repository already whole is left as it is. Returned by
+// its resolved path, which is the path the project is registered under.
+export async function ensureFixtureRepo(home: string): Promise<string> {
+  mkdirSync(fixtureRepoPath(home), { recursive: true, mode: 0o700 });
+  const repo = realpathSync(fixtureRepoPath(home));
+  const ctx = repoContext(repo);
+  const run = (args: string[], env: Record<string, string> = {}) => git(ctx, args, { env });
+  const step = async (args: string[], env: Record<string, string> = {}) => {
+    const r = await run(args, env);
+    if (r.code !== 0) throw new Error(`git ${args[0]} in the fixture repository failed: ${r.stderr.trim().slice(0, 200)}`);
+  };
+  if (!existsSync(join(repo, '.git'))) await step(['init', '-q', '-b', FIXTURE_BRANCH]);
+  if ((await run(['rev-parse', '-q', '--verify', `refs/heads/${FIXTURE_BRANCH}`])).code !== 0) {
+    // No commit on main yet: the README committed there (HEAD is main's,
+    // unborn, after the init).
+    if ((await run(['symbolic-ref', '-q', 'HEAD'])).code !== 0) await step(['symbolic-ref', 'HEAD', `refs/heads/${FIXTURE_BRANCH}`]);
+    writeFileSync(join(repo, 'README.md'), '# Surety qualification fixture\n\nThe engine qualifies backends here: each canary of a qualification attempt runs on this project.\n');
+    await step(['add', 'README.md']);
+    await step(['commit', '-q', '-m', 'surety: the qualification fixture'], { ...IDENTITY, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+  }
+  // HEAD detached, so that the engine can integrate onto main.
+  if ((await run(['symbolic-ref', '-q', 'HEAD'])).code === 0) await step(['checkout', '-q', '--detach']);
+  return repo;
+}
+
+// The backend's installation: the first executable named `backend` on the
+// engine's PATH, resolved to its real path. null when there is none.
+export function resolveInstallation(backend: string, path = process.env.PATH ?? ''): string | null {
+  if (!/^[a-z][a-z0-9-]*$/.test(backend)) return null;
+  for (const dir of path.split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const candidate = join(dir, backend);
+    try {
+      accessSync(candidate, constants.X_OK);
+      const real = realpathSync(candidate);
+      if (statSync(real).isFile()) return real;
+    } catch {
+      // not here
+    }
+  }
+  return null;
+}
+
+// The engine's own fixture project's id, or null where none is registered
+// (a home that has none: before the first start outside the test mode, and
+// in a test-mode home).
+// Found by its repository's path as given and as resolved (a home reached
+// through a link registers the resolved one).
+export async function findFixtureProject(store: StoreClient, home: string): Promise<string | null> {
+  const given = fixtureRepoPath(home);
+  let resolved = given;
+  try {
+    resolved = realpathSync(given);
+  } catch {
+    // not made yet
+  }
+  for (const repo of new Set([resolved, given])) {
+    const id = await store.call<string | null>('read', { name: 'qualification.engine_fixture', args: { repo } });
+    if (id !== null) return id;
+  }
+  return null;
+}
+
+// Found, or made and registered by the engine through the bootstrap of
+// POST /v1/projects (SEAM.md §164: at the engine's first start outside the
+// test mode). Two callers at once make one.
+let making: Promise<string> | null = null;
+export function ensureFixtureProject(rt: Runtime, store: StoreClient): Promise<string> {
+  making ??= (async () => {
+    const found = await findFixtureProject(store, rt.home);
+    if (found !== null) return found;
+    const repo = await ensureFixtureRepo(rt.home);
+    const args = await prepareBootstrap(rt, { name: FIXTURE_NAME, tier: 'T1', dev_repo_path: repo, integration_branch: FIXTURE_BRANCH });
+    const result = await store.call<{ status: number; effects?: { kind: string }[] }>('mutate', { name: 'project.create', args, actor: ENGINE_ACTOR, method: 'POST', path: '/v1/projects' });
+    // The bootstrap commit is integrated now, before the caller goes on (at
+    // start, before the engine is in full mode), not left to a later tick.
+    const id = String(args.id);
+    if (rt.services) await rt.services.journal(id).catch((err) => log('qualification fixture', err, { project: id }));
+    else if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
+    return id;
+  })().finally(() => {
+    making = null;
+  });
+  return making;
+}

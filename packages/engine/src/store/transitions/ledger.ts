@@ -65,15 +65,104 @@ export function normalize(raw: Record<string, unknown>): Normalized {
   return { ...base, cost_status: 'unknown', cost_usd: null };
 }
 
+// ---- Claude Code's normalization (D2 §§1.5, 4.5; invoke/adapters/claude.ts) ----------
+//
+// The adapter's observations keep the provider's own names: per API call,
+// `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`
+// (delta); at the end, the same with `output_tokens` and `total_cost_usd`
+// (cumulative, replacing the increments in the fold) and `usage_final`.
+// Billable input is input plus cache creation, both billed as input; cache
+// reads are never billable (D1 §13.2). A count not reported is unknown, and
+// so is a sum that needs it. The cost is `reported` when the backend gave
+// `total_cost_usd` (D2 §4.5); with no price table for the provider it is
+// otherwise unknown, never zero.
+export const CLAUDE_NORMALIZATION = 'claude-stream-json-1';
+
+// The price table for a cost Claude Code did not report (D1 §13.2, D2 C4;
+// SEAM.md §161): USD per million tokens, by model, its version on every
+// estimated row. The figures are Anthropic's first-party list rates as the
+// Claude API reference gave them on 2026-09-25, pinned by the Verifier and
+// pending Sean's confirmation on his console; billable input (input plus
+// cache creation) at the input rate. An estimate is never a maximum.
+// Cache writes at their own rate: 1.25 times the input rate (Anthropic's
+// list multiplier for five-minute cache writes), labelled as derived, where
+// the table gives none of its own (E74 item 3).
+export const CLAUDE_PRICE_TABLE = {
+  version: 'anthropic-list-2026-09-25-unconfirmed+cache-write-1.25x-input-derived',
+  models: { 'claude-sonnet-5-5': { input: 2, cache_write: 2.5, cached_in: 0.2, out: 10 } } as Record<string, { input: number; cache_write?: number; cached_in: number; out: number }>,
+};
+
+function normalizeClaude(raw: Record<string, unknown>): Normalized {
+  const input = amount(raw.input_tokens);
+  const creation = amount(raw.cache_creation_input_tokens);
+  const base = {
+    billable_in: input === null || creation === null ? null : input + creation,
+    cached_in: amount(raw.cache_read_input_tokens),
+    out: amount(raw.output_tokens),
+    model_observed: typeof raw.model === 'string' ? raw.model : null,
+    normalization_version: CLAUDE_NORMALIZATION,
+  };
+  const cost = raw.total_cost_usd;
+  if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) return cost > 0 ? { ...base, cost_status: 'reported', cost_usd: cost } : { ...base, cost_status: 'measured_zero', cost_usd: 0 };
+  // Under the subscription token (E74 item 1) the figure Claude Code
+  // reports is its own client-side estimate: recorded `estimated`, labelled.
+  const estimate = raw.total_cost_usd_estimate;
+  if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate >= 0) {
+    return { ...base, cost_status: 'estimated', cost_usd: estimate, normalization_version: `${CLAUDE_NORMALIZATION}+claude-code-total_cost_usd` };
+  }
+  // The price of the one model the invocation used, where the table has it
+  // and the usage is final (a partial count, a per-call output count among
+  // them, is a lower bound and never priced as the whole); cache writes at
+  // their own rate.
+  const prices = base.model_observed === null ? undefined : CLAUDE_PRICE_TABLE.models[base.model_observed];
+  if (prices && raw.usage_final === true && input !== null && creation !== null && base.cached_in !== null && base.out !== null) {
+    const usd = (input * prices.input + creation * (prices.cache_write ?? prices.input * 1.25) + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
+    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CLAUDE_NORMALIZATION}+${CLAUDE_PRICE_TABLE.version}` };
+  }
+  return { ...base, cost_status: 'unknown', cost_usd: null };
+}
+
+// The most a qualification attempt's canaries can cost in billable tokens,
+// as an estimate (D2 §7.2, Q7; SEAM.md §161): three canaries, each at the
+// fixture project's run limit, priced at the model's output rate (the
+// highest); null where the model has no price (never 0). An estimate, never
+// a maximum: cache reads and the overshoot to each canary's deadline are
+// outside it (D2 §4.2).
+export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number): { usd: number; price_version: string } | null {
+  const prices = provider === 'claude' ? CLAUDE_PRICE_TABLE.models[model] : undefined;
+  if (!prices) return null;
+  return { usd: money((3 * runLimitTokens * prices.out) / 1_000_000), price_version: CLAUDE_PRICE_TABLE.version };
+}
+
+// The provider's normalization; the scripted one for every provider without
+// its own.
+export function normalizeFor(provider: string, raw: Record<string, unknown>): Normalized {
+  return provider === 'claude' ? normalizeClaude(raw) : normalize(raw);
+}
+
+// Whether an invocation's observations include its terminal usage: for
+// Claude Code, the result's totals (`usage_final`); a stream that ended
+// without them is incomplete whatever per-call usage it carried. Other
+// providers as M1 had it.
+export function terminalUsageObserved(provider: string, raw: Record<string, unknown>): boolean {
+  return provider === 'claude' ? raw.usage_final === true : true;
+}
+
+const providerOf = (db: Db, invocation: string): string =>
+  (db.prepare('SELECT "provider" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { provider: string } | undefined)?.provider ?? 'scripted';
+
 const NOTHING_OBSERVED: Normalized = { billable_in: null, cached_in: null, out: null, model_observed: null, cost_status: 'unknown', cost_usd: null, normalization_version: NORMALIZATION };
 
 // An invocation's observations folded key by key: for cumulative ones the
 // value of the latest observation that carries the key; for delta ones the
 // sum of the numbers over those that carry it (SEAM.md §53).
+// A null never replaces a count already known (the slice-14 review's S1):
+// an observation that does not know a count says nothing of it.
 export function foldObservations(observations: { semantics: string; raw: Record<string, unknown> }[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const o of observations) {
     for (const [key, value] of Object.entries(o.raw)) {
+      if ((value === null || value === undefined) && typeof out[key] === 'number') continue;
       if (o.semantics === 'delta' && typeof value === 'number' && typeof out[key] === 'number') out[key] = (out[key] as number) + value;
       else out[key] = value;
     }
@@ -91,7 +180,7 @@ function observationsOf(db: Db, invocation: string): { semantics: string; raw: R
 // What the engine knows of an invocation under way, from its observations.
 function observedSoFar(db: Db, invocation: string): Normalized {
   const obs = observationsOf(db, invocation);
-  return obs.length === 0 ? NOTHING_OBSERVED : normalize(foldObservations(obs));
+  return obs.length === 0 ? NOTHING_OBSERVED : normalizeFor(providerOf(db, invocation), foldObservations(obs));
 }
 
 // ---- the original row (D1 §13.1; SEAM.md §53) ------------------------------------
@@ -109,8 +198,8 @@ export function chargeInvocation(
   if (exists) return;
   const obs = observationsOf(tx.db, receipt.id);
   const raw = foldObservations(obs);
-  const n = obs.length === 0 ? NOTHING_OBSERVED : normalize(raw);
-  const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') ? 1 : 0;
+  const n = obs.length === 0 ? NOTHING_OBSERVED : normalizeFor(run.backend, raw);
+  const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') && terminalUsageObserved(run.backend, raw) ? 1 : 0;
   const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
   const id = tx.newId('led_');
   tx.db
@@ -160,14 +249,20 @@ function runLimit(db: Db, invocation: string, project: string): number {
 // amended by the slice-10 review's S2): an invocation whose usage is
 // incomplete is charged, once, on its original row, the run's
 // budget_run_billable_tokens less the billable tokens observed, not below
-// zero. Every incomplete invocation of a trust entry's backend is charged,
+// zero. Every incomplete invocation of a trust entry's backend (or of a real
+// backend's qualification canary) is charged,
 // however it ended (a failure on its own with no usage event as much as a
 // cancellation). One of the scripted provider is charged when the engine
 // ended it after at least one observation: an M1 scripted role that reports
 // none is a provider that said nothing, as M1 accepted.
 function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number, engineEnded: boolean): number | null {
-  const receipt = db.prepare('SELECT "trust_entry" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { trust_entry: string | null } | undefined;
-  const real = (receipt?.trust_entry ?? null) !== null;
+  const receipt = db.prepare('SELECT "trust_entry", "qualification_attempt", "provider" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as
+    | { trust_entry: string | null; qualification_attempt: string | null; provider: string }
+    | undefined;
+  // A real backend's invocation: under a trust entry, or a canary of an
+  // attempt for a backend other than the scripted one (D2 §7.2: a canary is
+  // charged to the ordinary ledger, its incomplete usage as any other).
+  const real = (receipt?.trust_entry ?? null) !== null || ((receipt?.qualification_attempt ?? null) !== null && receipt?.provider !== 'scripted');
   if (!real && (observations === 0 || !engineEnded)) return null;
   return Math.max(0, runLimit(db, invocation, project) - (billable(n) ?? 0));
 }
@@ -491,8 +586,16 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string }): 
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
   const policy = projectPolicy(db, run.project);
-  const spent = billable(observedSoFar(db, args.invocation)) ?? 0;
-  if (spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
+  // An unknown count is never read as zero (E74 item 3): where usage has
+  // been observed and nothing billable in it is known, the run's budget
+  // cannot be judged and the run does not go on without it (D1 §6.6). With
+  // nothing observed yet (a check at a pause's re-grant, before any usage)
+  // there is nothing to judge the run's limit on, and only the day's limits
+  // are checked.
+  const observed = observationsOf(db, args.invocation).length > 0;
+  const spent = billable(observedSoFar(db, args.invocation));
+  if (observed && spent === null) return 'budget_usage_unknown';
+  if (spent !== null && spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
 }

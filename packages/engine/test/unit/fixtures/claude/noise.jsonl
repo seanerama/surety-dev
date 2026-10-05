@@ -1,0 +1,5 @@
+not json at all
+[1,2,3]
+{"type":"stream_event","event":{"type":"message_start"}}
+
+{"type":"result","is_error":false}

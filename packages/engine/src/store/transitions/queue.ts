@@ -1100,12 +1100,12 @@ const QUALIFICATION_APPROVAL: KindSpec = {
           label: 'Authorize',
           consequence:
             `The attempt is authorized: only its three canaries may then be dispatched, on the fixture project, charged to the ledger ` +
-            `(${spend.cap !== undefined && spend.cap !== null ? `cap ${String(spend.cap)}` : `${String(spend.label ?? 'estimate')} ${String(spend.estimate ?? 'unknown')}, overshoot ${String(spend.overshoot ?? 'bounded by the deadline')}`}). Nothing is launched by this answer.`,
+            `(${spend.cap !== undefined && spend.cap !== null ? `cap ${String(spend.cap)} USD` : `${String(spend.label ?? 'estimate')} ${spend.estimate === null || spend.estimate === undefined ? 'unknown' : `${String(spend.estimate)} USD`}, overshoot ${String(spend.overshoot ?? 'bounded by the deadline')}`}). Nothing is launched by this answer.`,
           effect: { qualification_attempt: a.id, to: 'authorized' },
         },
         { key: 'reject', label: 'Reject', consequence: 'The attempt stays proposed and nothing is run.', effect: { qualification_attempt: a.id } },
       ],
-      question: `Authorize a paid qualification attempt of ${a.backend} ${a.version} with model ${a.model}?`,
+      question: `Authorize a paid qualification attempt of ${a.backend} ${a.version} with model ${a.model}, authenticated by ${a.auth_mode}?`,
     };
   },
   manifest(tx, d) {

@@ -4,18 +4,20 @@
 // and `host_reserve_disk` free on the engine home's filesystem. Otherwise the
 // work stays eligible and its read shows the hold as `resource_envelope`.
 //
-// What this code does, and how it differs from D2's words: D2 says the
-// reserves are kept "beyond what the admitted domains may use". For memory
-// this code counts only the new domain's `domain_memory_max` beyond the
-// reserve, against the memory the host has available now (`MemAvailable`),
-// which already leaves out what the running domains hold; it does not hold
-// back what each running domain may still grow to (that stricter reading
-// admits one domain at a time at the default `domain_memory_max` on a 16 GB
-// host). Which reading stands is Sean's decision. For disk it counts
-// `domain_writable_bytes` for every running domain and the new one, beyond
-// `host_reserve_disk`. A value that cannot be read holds the dispatch, never
-// counts as zero. Only the real boundary has domains to admit; the kernel
-// lane's scripted boundary does not hold its runs here.
+// Memory, as Sean decided it (E75 item 3: option B of E71 item 6): every
+// admitted domain may grow to its configured `domain_memory_max`, so
+// admission keeps room for each of them, the new one included, at that
+// maximum (not at what it uses now), beyond `host_reserve_memory`. The room
+// is what the host has available now (`MemAvailable`) plus what the running
+// domains already hold (each one's `memory.current`, which `MemAvailable`
+// has left out), so a domain's present use is counted once, inside its
+// maximum. Further work is held (`dispatch_hold` `resource_envelope`) when
+// the room is short; the single-run setting stays, and the per-domain limit
+// is not lowered (lower concurrency is the accepted trade-off). For disk it
+// counts `domain_writable_bytes` for every running domain and the new one,
+// beyond `host_reserve_disk`. A value that cannot be read holds the
+// dispatch, never counts as zero. Only the real boundary has domains to
+// admit; the kernel lane's scripted boundary does not hold its runs here.
 
 import { readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -75,15 +77,20 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
   if (running.length + 1 > s.max_concurrent_domains) {
     return hold(`${running.length} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
   }
-  // Memory: the new domain's bound beyond the reserve, against what the host
-  // has available now (see the head of this file).
-  const mayTake = s.domain_memory_max;
-  void readNumber;
+  // Memory (option B, above): every admitted domain at its maximum, the new
+  // one included, beyond the reserve, against the room the host has.
+  const admitted = running.length + 1;
+  const needed = s.host_reserve_memory + s.domain_memory_max * admitted;
   const available = memAvailable();
-  if (available === null || available < s.host_reserve_memory + mayTake) {
+  const held = running.map((d) => readNumber(join(d.cgroup_path, 'memory.current')));
+  const unread = held.some((v) => v === null);
+  const room = available === null || unread ? null : available + (held as number[]).reduce((a, b) => a + b, 0);
+  if (room === null || room < needed) {
     return hold(
-      `the host has ${available ?? 'an unreadable amount of'} bytes of memory available; admitting a domain needs host_reserve_memory (${s.host_reserve_memory}) beyond the ${mayTake} bytes the domains may use.`,
-      { limit: 'host_reserve_memory', value: s.host_reserve_memory, available, needed: s.host_reserve_memory + mayTake },
+      room === null
+        ? `the room for another domain cannot be read (${available === null ? 'MemAvailable' : "a running domain's memory.current"} unreadable); admission waits.`
+        : `admitting a domain needs host_reserve_memory (${s.host_reserve_memory}) beyond domain_memory_max (${s.domain_memory_max}) for each of the ${admitted} admitted domains, ${needed} bytes; the host has ${room} (${available} available and ${room - available!} held by the running domains).`,
+      { limit: 'host_reserve_memory', value: s.host_reserve_memory, available, held_by_running: room === null ? null : room - available!, needed, domain_memory_max: s.domain_memory_max, admitted },
     );
   }
   let free: number | null = null;

@@ -306,7 +306,8 @@
       "rejected"
     ],
     "AuthMode": [
-      "api_key"
+      "api_key",
+      "subscription_token"
     ],
     "QualificationAttemptStatus": [
       "proposed",

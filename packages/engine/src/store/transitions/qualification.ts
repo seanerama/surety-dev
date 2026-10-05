@@ -26,6 +26,8 @@ import {
   writeEntry,
 } from './trust.js';
 import type { Tx } from './tx.js';
+import { attemptSpendEstimate } from './ledger.js';
+import { projectPolicy } from './settings.js';
 
 // An attempt is proposed and its approval asked for; nothing runs until a
 // person authorizes it (Q7).
@@ -82,6 +84,7 @@ export function qualify(
     backend: string;
     mode: string;
     model: string;
+    auth_mode?: string;
     binary_path: string;
     binary_sha256: string;
     help_sha256: string;
@@ -106,10 +109,21 @@ export function qualify(
   const current = currentProfileFingerprint();
   const profile = current === null ? null : profileWithEgress(current, a.candidate_egress);
   if (profile === null) throw new Refusal(409, 'isolation_unqualified', "This start's checks did not establish the role profile an attempt binds.", 'Start the engine where the host checks pass.', {});
-  // The spend (D2 §7.2, Q7; SEAM.md §148): no M2 mechanism enforces a cap;
-  // the figure is an estimate, labelled, and null where no price is known
-  // (never 0). This engine holds no price for any backend.
-  const spend = { cap: null, estimate: null, label: 'estimate', overshoot: 'deadline', ...(a.provider_cap_usd ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}) };
+  // The spend (D2 §7.2, Q7; SEAM.md §§148, 161): no M2 mechanism enforces a
+  // cap; the figure is an estimate, labelled, under the fixture project's
+  // run limit, and null where no price is known (never 0).
+  const estimate = attemptSpendEstimate(a.backend, a.model, projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!);
+  const spend = {
+    cap: null,
+    estimate: estimate?.usd ?? null,
+    label: 'estimate',
+    overshoot: 'deadline',
+    ...(estimate ? { basis: 'three canaries at the fixture project\'s budget_run_billable_tokens, at the model\'s output rate', price_version: estimate.price_version } : {}),
+    auth_mode: a.auth_mode ?? 'api_key',
+    // A provider-side cap is an API key's only (SEAM.md §160): a subscription
+    // has none on its token, its hard limit being its usage limits.
+    ...(a.provider_cap_usd && (a.auth_mode ?? 'api_key') === 'api_key' ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}),
+  };
   const { attempt, decision } = proposeAttempt(tx, {
     backend: a.backend,
     version: a.version,
@@ -119,7 +133,7 @@ export function qualify(
     template: a.template,
     template_version: a.template_version,
     model: a.model,
-    auth_mode: 'api_key',
+    auth_mode: a.auth_mode ?? 'api_key',
     host_qualification: hq.id,
     profile_fingerprint: profile,
     fixture_project: a.fixture_project,
@@ -174,11 +188,13 @@ export function attemptTarget(db: Tx['db'], a: { project: string | null }) {
 }
 
 export function canaryRunFacts(db: Tx['db'], a: { run: string }) {
-  const run = db.prepare('SELECT "outcome", "transcript" FROM "runs" WHERE "id" = ?').get(a.run) as { outcome: string | null; transcript: string | null } | undefined;
+  const run = db.prepare('SELECT "outcome", "transcript", "provider_session_id" FROM "runs" WHERE "id" = ?').get(a.run) as
+    | { outcome: string | null; transcript: string | null; provider_session_id: string | null }
+    | undefined;
   const exit = db
     .prepare(`SELECT o."exit_class" FROM "invocation_status_observations" o JOIN "invocation_receipts" r ON r."id" = o."invocation" WHERE r."run" = ? AND o."exit_class" IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`)
     .get(a.run) as { exit_class: string } | undefined;
-  return { outcome: run?.outcome ?? null, exit_class: exit?.exit_class ?? null, transcript: run?.transcript ?? null };
+  return { outcome: run?.outcome ?? null, exit_class: exit?.exit_class ?? null, transcript: run?.transcript ?? null, provider_session_id: run?.provider_session_id ?? null };
 }
 
 // Whether the attempt's canaries observed usage, and a cost (D2 §4.2).
@@ -186,6 +202,6 @@ export function attemptUsage(db: Tx['db'], a: { attempt: string }) {
   const rows = db
     .prepare(`SELECT u."raw" FROM "usage_observations" u JOIN "invocation_receipts" r ON r."id" = u."invocation" WHERE r."qualification_attempt" = ?`)
     .all(a.attempt) as { raw: string }[];
-  return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd"\s*:/.test(r.raw)) };
+  return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd(_estimate)?"\s*:/.test(r.raw)) };
 }
 
