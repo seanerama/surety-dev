@@ -502,7 +502,7 @@ check 6 "every commit of the journey on the integration branch is the engine's, 
   "git --no-pager -C $PROJ_REPO log --format='%h %an <%ae>%n%(trailers:only)' $BASE..main"
 
 echo "the ledger, as the engine reads it:"
-S "$API/v1/projects/$P/ledger" | jq '{totals, rows: [.rows[] | {run, billable_in, cached_in, out, cost_status, cost_usd, usage_complete}]}'
+S "$API/v1/projects/$P/ledger" | jq '{totals, rows: [.rows[] | {run, billable_in, cached_in, out, cost_status, cost_usd, usage_complete, unknown_allowance_tokens, normalization_version}]}'
 echo "what the provider reported, the last 'result' event of each run's transcript:"
 for R in $(dbq "SELECT id FROM runs WHERE project = '$P' ORDER BY seq"); do
   T=$(dbq "SELECT id FROM records WHERE run = '$R' AND kind = 'transcript' ORDER BY rowid LIMIT 1")
@@ -543,6 +543,26 @@ sleep 5
 S "$API/v1/projects/$P/runs/$SR" | jq '.run | {id, state, outcome, reason_class, exit_class, domain_observation}'
 
 # ---------------------------------------------------------------------------------------
+if [ -n "$REHEARSAL" ]; then
+  # REHEARSAL ONLY (E84, E85): a Builder whose provider cannot be reached. The
+  # rehearsal's fake, seeing the marker in its stage, sends one CONNECT to its
+  # listed name (a .invalid one, which never resolves) and ends as Claude Code
+  # did in Sean's second attempt. Shown: what ended the run, its egress log,
+  # and its ledger row (a zero by the egress evidence, if the engine makes one).
+  say "10b. REHEARSAL ONLY: a Builder whose provider is unreachable through the proxy"
+  S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P\", \"requirements\": [{\"key\": \"R4\", \"text\": \"src/unreachable.js exports nothing.\"}], \"stages\": [{\"number\": 3, \"goal\": \"[rehearsal: provider unreachable] Implement R4.\", \"implements\": [\"R4\"]}]}" > "$WORK/plan3.json"
+  UNREACH=$(jq -r '.stages[0].work_item' "$WORK/plan3.json")
+  paid "a Builder run whose provider is unreachable (rehearsal only)" 1
+  tick "$P"
+  wait_run_end "$P" "$UNREACH" 600
+  UR=$(run_of "$UNREACH")
+  echo "its egress log:"
+  UEG=$(dbq "SELECT id FROM records WHERE run = '$UR' AND kind = 'egress_log'")
+  if [ -n "$UEG" ]; then jq -c '{authority, decision, reason, resolved, bytes_up}' "$(record_path "$UEG")"; else echo "   (no egress_log record)"; fi
+  echo "its ledger row:"
+  S "$API/v1/projects/$P/ledger" | jq --arg r "$UR" '.rows[] | select(.run == $r) | {billable_in, cached_in, out, cost_status, cost_usd, usage_complete, unknown_allowance_tokens, normalization_version}'
+fi
+
 say "11. The token is nowhere the engine or the repository keeps anything"
 note "grep reads the token from its file (-f), so it never appears on a command line."
 # Matches, unreadable files and the verdict kept apart (found by the E79

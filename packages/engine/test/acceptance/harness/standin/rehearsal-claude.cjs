@@ -134,6 +134,10 @@ if (!canary) playRole();
 // A journey role.
 function playRole() {
 const prompt = readFileSync('/surety/context/prompt.md', 'utf8');
+// A stage marked "[rehearsal: provider unreachable]" (M2-hands-on.sh's
+// rehearsal-only step 10b; E84, E85): Claude Code when its provider cannot
+// be reached through the proxy.
+if (prompt.includes('[rehearsal: provider unreachable]')) return providerUnreachable();
 const role = /# Your task \(([a-z]+)\)/.exec(prompt)?.[1] ?? 'builder';
 const ws = (p) => `/surety/workspace/${p}`;
 const write = (p, text) => {
@@ -175,4 +179,44 @@ if (role === 'builder') {
 } else {
   finish({ status: 'completed', summary: `rehearsal: ${role}` });
 }
+}
+
+// One CONNECT to the rehearsal's provider name through the proxy (inside a
+// sandbox only: /surety/context present, the proxy on loopback), then Claude
+// Code's ending when that fails, as Sean's second attempt recorded it (E84):
+// a synthetic error message and a result with is_error, all-zero usage and
+// an empty modelUsage; exit 1. The name is a `.invalid` one: it never
+// resolves, so nothing goes to any provider.
+function providerUnreachable() {
+  const net = require('node:net');
+  const target = 'provider.rehearsal.invalid:443';
+  let ended = false;
+  const done = (answer) => {
+    if (ended) return;
+    ended = true;
+    const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const text = `API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL) [rehearsal: the proxy answered ${answer}]`;
+    out({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: null, error: 'unknown' });
+    out({ type: 'assistant', parent_tool_use_id: null, message: { id: 'synthetic-proxy-error', model: '<synthetic>', role: 'assistant', stop_reason: 'stop_sequence', usage: zero, content: [{ type: 'text', text }] }, error: 'server_error', is_api_error_message: true });
+    out({ type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', api_error_status: null, num_turns: 1, total_cost_usd: 0, usage: zero, modelUsage: {}, result: text });
+    process.exit(1);
+  };
+  let proxy;
+  try {
+    proxy = new URL(process.env.HTTPS_PROXY ?? '');
+  } catch {
+    return done('nothing: no proxy');
+  }
+  if (!existsSync('/surety/context') || !['127.0.0.1', '[::1]'].includes(proxy.hostname)) return done('nothing: not attempted outside a sandbox');
+  const sock = net.connect({ host: proxy.hostname.replace(/^\[|\]$/g, ''), port: Number(proxy.port) }, () => sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`));
+  let got = '';
+  sock.on('data', (d) => {
+    got += d.toString('latin1');
+    if (got.includes('\r\n')) {
+      sock.destroy();
+      done(got.split('\r\n')[0]);
+    }
+  });
+  sock.on('error', () => done('an error'));
+  setTimeout(() => done('nothing within 15 s'), 15_000);
 }
