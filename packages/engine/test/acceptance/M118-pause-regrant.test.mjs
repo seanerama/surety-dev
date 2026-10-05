@@ -14,7 +14,9 @@
 // without a re-grant; a new incarnation never re-grants; a Stop confirmed
 // before the pause completes; a backend that failed during the pause fails.
 //
-// Each pause is real time: lease_ttl's minimum plus a margin. Every case
+// Each pause is real time: lease_ttl's minimum plus a margin; in (a) and
+// (b), until the lease has expired on the engine's own clock (objection
+// 017, below). Every case
 // here is expected to fail on the engine these tests were written against,
 // which has no init to challenge (COVERAGE.md, "M2 slice 11").
 
@@ -66,6 +68,49 @@ async function pause(fx) {
   return { stoppedAt, contAt: Date.now() };
 }
 
+// (a) and (b) need the run lease EXPIRED on the engine's clock when the
+// engine continues: that is what makes it send the fresh challenge
+// (objection 017; E76 item 3). The engine judges a lease's expiry on the
+// wall clock (Sean kept that rule, E76 item 3), and this host's wall clock
+// steps back about every 31.6 s (by 0.6 s to 2.9 s measured), so a fixed
+// pause of lease_ttl + 3 s can end before the lease has expired by the
+// clock that judges it. So the engine stays stopped until the wall clock
+// the engine will read (this host's; the engine runs on it) has passed,
+// by MARGIN_MS, both the stored `expires_at` and the expiry of a renewal
+// the engine may have been writing when it was stopped (at most the stop
+// time plus lease_ttl); and at least PAUSE_MS of real time. It fails, with
+// its reason, if that has not happened by the ceiling.
+const MARGIN_MS = 2000;
+const CEILING_MS = (LEASE_TTL + 60) * 1000;
+const engineNow = () => Date.now();
+async function pauseUntilExpired(fx, runId) {
+  const stoppedAt = Date.now();
+  const started = performance.now();
+  stopEngine(fx);
+  let expired = false;
+  let last = null;
+  try {
+    await sleep(PAUSE_MS);
+    while (performance.now() - started < CEILING_MS) {
+      last = runLease(fx.home, runId)?.expires_at ?? null;
+      const by = Math.max(last === null ? 0 : Date.parse(last), stoppedAt + LEASE_TTL * 1000) + MARGIN_MS;
+      if (engineNow() > by) {
+        expired = true;
+        break;
+      }
+      await sleep(250);
+    }
+  } finally {
+    continueEngine(fx);
+  }
+  const pauseMs = performance.now() - started;
+  assert.ok(expired, `the run lease expired on the engine's clock within ${CEILING_MS / 1000} s of real time (stored expires_at ${last}; stopped at ${new Date(stoppedAt).toISOString()}; the wall clock now ${new Date(engineNow()).toISOString()}): the host's clock stepped back by more than the ceiling allows`);
+  return { stoppedAt, contAt: Date.now(), pauseMs };
+}
+// "After the pause", for (a) and (b): past the midpoint of the pause they
+// actually made, which is at least PAUSE_MS long.
+const afterPause = (iso, p) => Date.parse(iso) > p.stoppedAt + p.pauseMs / 2;
+
 describe('M118 a healthy run survives a pause', () => {
   test('(a) the challenge answered: run.lease_regranted on the same generation with a fresh challenge, expires_at renewed, deadline_at and the budget unchanged, the run completes', async (t) => {
     const fx = await sandboxEngine(t, { config: CONFIG });
@@ -76,7 +121,8 @@ describe('M118 a healthy run survives a pause', () => {
     const deadline = runRow(fx.home, run.id).deadline_at;
     const seqBeforePause = maxSeq(fx.home);
 
-    const { stoppedAt } = await pause(fx);
+    const p = await pauseUntilExpired(fx, run.id);
+    const { stoppedAt } = p;
     assert.equal(roleAlive(domain, launch), true, 'the fixture is live: the role lived through the pause');
     // The test asks for a tick; an engine that ticks by itself as soon as it
     // finds the lease expired has re-granted already, which is as good.
@@ -88,8 +134,8 @@ describe('M118 a healthy run survives a pause', () => {
     assert.equal(event.payload.generation, before.generation, 'the same generation: fencing is unchanged');
     const c = event.payload.challenge;
     assert.ok(c && typeof c.nonce === 'string' && /^[0-9a-f]{16,}$/.test(c.nonce), `a fresh nonce (${JSON.stringify(c)})`);
-    assert.equal(afterThePause(c.sent_at, stoppedAt), true, `the challenge was sent after the pause (${c.sent_at}; stopped at ${new Date(stoppedAt).toISOString()} for ${PAUSE_MS / 1000} s)`);
-    assert.equal(afterThePause(c.answered_at, stoppedAt), true, 'and answered after the pause');
+    assert.equal(afterPause(c.sent_at, p), true, `the challenge was sent after the pause (${c.sent_at}; stopped at ${new Date(stoppedAt).toISOString()} for ${Math.round(p.pauseMs / 1000)} s)`);
+    assert.equal(afterPause(c.answered_at, p), true, 'and answered after the pause');
     assert.ok(Date.parse(c.answered_at) >= Date.parse(c.sent_at) - STEP_SLACK_MS, 'and not before it was sent');
     assert.equal(c.backend_state, 'running', 'the init reported the backend running');
     const after = runLease(fx.home, run.id);
@@ -97,7 +143,7 @@ describe('M118 a healthy run survives a pause', () => {
     assert.equal(after.generation, before.generation);
     assert.ok(Date.parse(after.expires_at) > Date.parse(before.expires_at), `expires_at renewed (${before.expires_at} → ${after.expires_at})`);
     assert.ok(Date.parse(event.payload.expires_at) > Date.parse(before.expires_at), `the event carries the renewed expiry (${before.expires_at} → ${event.payload.expires_at})`);
-    assert.equal(afterThePause(after.renewed_at, stoppedAt), true, 'the lease is renewed again once it is re-granted');
+    assert.equal(afterPause(after.renewed_at, p), true, 'the lease is renewed again once it is re-granted');
     assert.equal(runRow(fx.home, run.id).deadline_at, deadline, 'deadline_at is unchanged');
     assert.equal(runRow(fx.home, run.id).state, 'executing', 'the run goes on');
     assert.equal(regrants(fx.home, run.id).length, 1, 'one re-grant');
@@ -123,14 +169,15 @@ describe('M118 a healthy run survives a pause', () => {
     const before = runLease(fx.home, run.id);
     await armFault(fx.engine, { point: 'challenge_response_dropped' });
 
-    const { stoppedAt } = await pause(fx);
+    const p = await pauseUntilExpired(fx, run.id);
+    const { stoppedAt } = p;
     assert.equal(roleAlive(domain, launch), true, 'the fixture is live: the role lived, heartbeating, through the pause');
     await tick(fx.engine, project);
     await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
     assert.deepEqual(regrants(fx.home, run.id), [], 'no re-grant without a fresh response');
     assertRunEnded(fx.home, run.id, { outcome: 'recovered', reason_class: 'recovered', launched: true, recovery: false });
     const after = leasesOf(fx.home, run.id).find((l) => l.id === before.id);
-    assert.equal(afterThePause(after.renewed_at, stoppedAt), false, `a heartbeat buffered during the pause renewed nothing (last renewal ${after.renewed_at}, stopped at ${new Date(stoppedAt).toISOString()})`);
+    assert.equal(afterPause(after.renewed_at, p), false, `a heartbeat buffered during the pause renewed nothing (last renewal ${after.renewed_at}, stopped at ${new Date(stoppedAt).toISOString()})`);
     assert.equal(roleAlive(domain, launch), false, 'the role was terminated through the boundary');
     await waitCgroupGone(domain.cgroup_path);
     assert.equal(terminalObservation(fx.home, receiptOf(fx.home, run.id).id).exit_evidence.signal_by_engine, true);
