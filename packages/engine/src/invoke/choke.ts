@@ -308,6 +308,24 @@ export class Launcher {
     return { entry: probe.entry, found_sha256: found, found_help: help };
   }
 
+  // One tick for every launcher exit of the same turn of the event loop:
+  // many launchers ending together (a restart's recovery, a burst of Stops)
+  // ask the scheduler once, which coalesces requests anyway.
+  private launcherTickPending = false;
+  watchLauncherExit(handle: RunHandle, launch: { launcherExited: Promise<void> }): void {
+    void launch.launcherExited.then(() => {
+      if (handle.ending) this.launcherExitTick();
+    });
+  }
+  launcherExitTick(): void {
+    if (this.launcherTickPending) return;
+    this.launcherTickPending = true;
+    setImmediate(() => {
+      this.launcherTickPending = false;
+      this.rt.services?.requestTick();
+    });
+  }
+
   // The run will never be spawned into by this incarnation.
   private never(handle: RunHandle, outcome: Outcome, reason: ReasonClass, phase: 'never' | 'aborted' = 'never', reasonText?: string, detail?: Record<string, unknown>): void {
     handle.phase = phase;
@@ -788,6 +806,13 @@ export class Launcher {
         }
       };
     }
+    // The launcher of a domain being closed or quarantined has exited (E79
+    // item 2): the engine asks for a tick, so that the domain is observed
+    // again, and terminated or its quarantine cleared, now rather than at
+    // the next scheduled tick. The tick changes no rule: it closes before it
+    // observes, a quarantine's re-observation only observes, and the domain
+    // is terminated only once nothing of this engine can still enter it.
+    this.watchLauncherExit(handle, launch);
     handle.sandbox = launch;
     handle.child = launch.child;
     handle.pid = launch.pid;
