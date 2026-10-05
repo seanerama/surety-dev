@@ -258,3 +258,35 @@ test('an upstream connect that completes after the close (the race the close can
   assert.equal(upClosed, 1, 'the late connection was destroyed');
   assert.deepEqual(proxy.entries.map((e) => [e.decision, e.ended, e.bytes_up, e.closed_at !== null]), [['accepted', 'run_ended', 0, true]], 'logged, ended with the run');
 });
+
+// ---- the budget check on the backend's terminal event (fix 3 of the review) ----
+
+const { budgetCheck } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+const { projectPolicy } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+
+test('on the terminal event an unknown usage is no stop; mid-run it is, as before', (t) => {
+  const db = store(t);
+  observe(db, [ZEROED]);
+  assert.equal(budgetCheck(db, { run: 'run_1', invocation: 'inv_1', terminal: true }), null);
+  assert.equal(budgetCheck(db, { run: 'run_1', invocation: 'inv_1' }), 'budget_usage_unknown');
+  assert.equal(budgetCheck(db, { run: 'run_1', invocation: 'inv_1', terminal: false }), 'budget_usage_unknown');
+});
+
+test("on the terminal event a limit passed is still a stop: the run's own on what is known", (t) => {
+  const db = store(t);
+  const over = projectPolicy(db, 'prj_1').budget_run_billable_tokens + 1;
+  observe(db, [{ input_tokens: over, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 10, usage_final: true }]);
+  assert.equal(budgetCheck(db, { run: 'run_1', invocation: 'inv_1', terminal: true }), 'budget_run_billable_tokens');
+});
+
+test("on the terminal event a limit passed is still a stop: the day's, with the run's usage unknown", (t) => {
+  const db = store(t);
+  observe(db, [ZEROED]);
+  const day = new Date().toISOString().slice(0, 10);
+  const over = projectPolicy(db, 'prj_1').budget_day_unknown_tokens + 1;
+  db.prepare(
+    `INSERT INTO ledger_rows (id, created_at, project, invocation, run, role, provider, model_requested, raw_usage, normalization_version, usage_complete, cost_status, day_utc, unknown_allowance_tokens)
+     VALUES ('led_0', ?, 'prj_1', 'inv_0', 'run_0', 'builder', 'claude', 'm', '{}', 'n', 0, 'unknown', ?, ?)`,
+  ).run(AT, day, over);
+  assert.equal(budgetCheck(db, { run: 'run_1', invocation: 'inv_1', terminal: true }), 'budget_day_unknown_tokens');
+});

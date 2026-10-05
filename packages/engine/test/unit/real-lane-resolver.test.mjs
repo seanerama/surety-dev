@@ -1,10 +1,7 @@
 // Developer tests for what Sean's second real-agent run found (2026-10-05):
 // (1) under the real lane the egress proxy resolves by the system's
-// resolver, not the harness's map, which the real lane never fills; (2) an
-// unknown usage observed on the backend's terminal event does not stop a run
-// that is ending by itself (it was recorded stopped / budget /
-// budget_usage_unknown), while every other budget answer stops as before;
-// (3) a failed exit's reason names what the engine saw of its cause, bounded
+// resolver, not the harness's map, which the real lane never fills; (2) the
+// budget check on the terminal event is in egress-zero.test.mjs; (3) a failed exit's reason names what the engine saw of its cause, bounded
 // and scrubbed. No name is resolved here and nothing is connected to: the
 // system resolver is compared by identity, never called.
 
@@ -16,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const seam = await import(join(dist, 'testing', 'seam.js'));
 const { activeResolver, systemResolver } = await import(join(dist, 'invoke', 'proxy', 'resolver.js'));
-const { budgetStopFor } = await import(join(dist, 'invoke', 'choke.js'));
 const { ClaudeStream } = await import(join(dist, 'invoke', 'adapters', 'claude.js'));
 const { exitCause, scrubText, EXIT_CAUSE_MAX } = await import(join(dist, 'invoke', 'exit-cause.js'));
 
@@ -57,17 +53,6 @@ test("the run's terminal line: a failure whose usage is unknown, observed on the
   assert.equal(terminalObs.length, 1);
   assert.equal(terminalObs[0].raw.usage_final, false, 'zeroed totals of a failure are no measurement: the usage is not final');
   for (const k of Object.keys(ZERO)) assert.equal(terminalObs[0].raw[k], undefined, `no ${k} is recorded as zero`);
-});
-
-test('a budget answer stops the run as before, except budget_usage_unknown on the terminal event', () => {
-  assert.equal(budgetStopFor('budget_usage_unknown', { terminal: true }), null, "on the backend's terminal event: the run ends by its exit");
-  assert.equal(budgetStopFor('budget_usage_unknown', { terminal: false }), 'budget_usage_unknown', 'mid-run: a stop, as before');
-  assert.equal(budgetStopFor('budget_usage_unknown'), 'budget_usage_unknown', 'the scripted protocol: a stop, as before');
-  for (const limit of ['budget_run_billable_tokens', 'budget_day_unknown_tokens', 'budget_day_verified_usd', 'budget_unreadable']) {
-    assert.equal(budgetStopFor(limit, { terminal: true }), limit, `${limit} on the terminal event is still a stop`);
-    assert.equal(budgetStopFor(limit, { terminal: false }), limit);
-  }
-  assert.equal(budgetStopFor(null, { terminal: true }), null);
 });
 
 test("a failed exit's cause: the terminal event and the proxy's refusals, as the engine saw them", () => {

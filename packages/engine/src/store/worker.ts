@@ -188,7 +188,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'journal.unfinished': (d, a: { project: string | null }) => unfinishedOperations(d, a.project ?? undefined),
   'nomination.due': (d) => nominationDue(d),
   'ledger.view': (d, a: { project: string; day: string | null }) => ledgerView(d, a),
-  'budget.check': (d, a: { run: string; invocation: string }) => budgetCheck(d, a),
+  'budget.check': (d, a: { run: string; invocation: string; terminal?: boolean }) => budgetCheck(d, a),
   'record.get': (d, a: { project: string; record: string }) => getRecord(d, a),
   'record.row': (d, a: { record: string }) => d.prepare('SELECT * FROM "records" WHERE "id" = ?').get(a.record) ?? null,
   'records.stored': (d) => storedRecords(d),

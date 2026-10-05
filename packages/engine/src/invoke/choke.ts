@@ -150,14 +150,6 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
-// The limit a budget check's answer stops the run for, or null (see
-// Choke.checkBudget): every limit stops it, except an unknown usage observed
-// on the backend's terminal event, after which nothing more is spent.
-export function budgetStopFor(limit: string | null, opts: { terminal?: boolean } = {}): string | null {
-  if (limit === 'budget_usage_unknown' && opts.terminal === true) return null;
-  return limit;
-}
-
 function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
@@ -1262,7 +1254,11 @@ export class Launcher {
     }
     let limit: string | null = null;
     try {
-      limit = await this.rt.read<string | null>('budget.check', { run, invocation: handle.claim.invocation });
+      // A real backend whose terminal event was read before the pause is
+      // checked as on that event (checkBudget); the scripted protocol as
+      // before.
+      const terminal = handle.adapterStream !== null && handle.terminal !== null;
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation: handle.claim.invocation, ...(terminal ? { terminal: true } : {}) });
     } catch {
       limit = 'budget_unreadable';
     }
@@ -1419,27 +1415,22 @@ export class Launcher {
   //
   // The backend's terminal event is its last word: what it observes is the
   // invocation's usage as the backend totals it, and nothing is spent after
-  // it. A terminal observation that leaves the usage unknown
-  // (`budget_usage_unknown`: a failure written before or without a model
-  // call, whose zeroed totals are no measurement) is not a reason to stop a
-  // run that is ending by itself: the stop would only race its exit and
-  // label it a budget stop (Sean's second real-agent run, where the backend
-  // never reached its provider). The run ends by its exit, and its ledger
-  // row keeps the usage unknown, the allowance charged. A limit passed is
-  // still a stop.
+  // it. On it the check does not answer `budget_usage_unknown` (a failure
+  // written before or without a model call, whose zeroed totals are no
+  // measurement): a stop would only race the exit of a run ending by
+  // itself and label it a budget stop (Sean's second real-agent run, where
+  // the backend never reached its provider). The run ends by its exit, and
+  // its ledger row keeps the usage unknown, the allowance charged. A limit
+  // passed (the run's on what is known, a day's) is still a stop.
   private async checkBudget(handle: RunHandle, opts: { terminal?: boolean } = {}): Promise<void> {
     if (handle.ending) return;
     const { run, invocation } = handle.claim;
     let limit: string | null;
     try {
-      limit = await this.rt.read<string | null>('budget.check', { run, invocation });
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation, ...(opts.terminal === true ? { terminal: true } : {}) });
     } catch (err) {
       log('budget check', err, { run });
       limit = 'budget_unreadable';
-    }
-    if (limit !== null && budgetStopFor(limit, opts) === null) {
-      log('budget check', new Error('the terminal event left the usage unknown: recorded unknown, and the run ends by its exit'), { run });
-      return;
     }
     // A budget stop decided on a usage line read while the lease was pending
     // its challenge is the run's end as decided (SEAM.md §130).

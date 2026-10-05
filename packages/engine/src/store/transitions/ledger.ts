@@ -653,7 +653,12 @@ export function exhaustedLimits(db: Db, project: string, opts: { check: boolean;
 // The check on a usage observation (D1 §13.3): the limit the run's
 // invocation, or the project's day, has passed with what was observed so
 // far; null if none.
-export function budgetCheck(db: Db, args: { run: string; invocation: string }): string | null {
+// `terminal`: the check is on the backend's terminal event, after which it
+// spends nothing (Sean's second real-agent run): an unknown usage then is
+// not a reason to stop a run ending by itself, and is recorded unknown with
+// the run's ledger row; the run's own limit on what is known, and the day's
+// limits, are still checked, and a limit passed is still a stop.
+export function budgetCheck(db: Db, args: { run: string; invocation: string; terminal?: boolean }): string | null {
   const run = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string } | undefined;
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
@@ -666,7 +671,7 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string }): 
   // are checked.
   const observed = observationsOf(db, args.invocation).length > 0;
   const spent = billable(observedSoFar(db, args.invocation));
-  if (observed && spent === null) return 'budget_usage_unknown';
+  if (observed && spent === null && args.terminal !== true) return 'budget_usage_unknown';
   if (spent !== null && spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
