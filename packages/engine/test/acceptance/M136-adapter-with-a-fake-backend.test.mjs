@@ -450,7 +450,7 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     assert.deepEqual([done.status, k.passed], ['succeeded', true], `the backend's planted config does not change the canary's verdict (${JSON.stringify(done.canaries)})`);
   });
 
-  test('S2 (the review): a backend that sends SIGUSR1 to its siblings (the probe\'s action children among them), in its own pid namespace only, cannot leave the canary passing with an action unverified: the probe\'s children are hardened, so every action is still witnessed and denied and the canary passes; a child whose report the signal altered fails it', async (t) => {
+  test('S2 (the review, hardening): a backend that sends SIGUSR1 to its siblings (the probe\'s action children among them), in its own pid namespace only, never leaves the canary passing with a wrong verdict: either the canary fails, or it passes with every action witnessed, its expected outcome, and corroborated host-side where checked', async (t) => {
     const { fx, fake, project } = await fakeFixture(t);
     fake.set({ signal_probe: true });
     const attempt = await qualify(fx, body(fake, project));
@@ -458,14 +458,17 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 600_000 });
     const { k, ev } = containmentCapabilities(fx, done);
     assert.ok((ev.actions ?? []).length > 0, `the fixture is live: the engine ran its actions (${JSON.stringify(ev.actions)})`);
-    // The probe's action children must run hardened against the signal: a
-    // backend that signals them cannot disturb the check. On the fixed engine
-    // SIGUSR1 is a no-op (the init runs each child with --disable-sigusr1) and
-    // the canary passes cleanly; on c4a7f7f the children are unhardened and
-    // the signal opens their inspector and disrupts the check (here it ended
-    // containment_failed). So "the canary still passes, every action
-    // witnessed and denied, through the signalling" separates fixed from not.
-    assert.ok(ev.actions.every((a) => a.witnessed === true && a.outcome === a.expected), `every action witnessed with its expected outcome despite the signal (${JSON.stringify(ev.actions)})`);
-    assert.deepEqual([done.status, k.passed], ['succeeded', true], `a backend signalling the probe's children does not disturb the check: the children run hardened against SIGUSR1 (E86 review S2) (${JSON.stringify(done.canaries)})`);
+    // A regression guard (the driver's ruling): a hostile signal may make the
+    // check fail closed (with the children hardened, SIGUSR1's default action
+    // may end a child, which fails the canary), but a pass must never rest on
+    // a verdict the signal could have altered.
+    if (k.passed === true) {
+      for (const a of ev.actions) {
+        assert.deepEqual([a.witnessed, a.outcome], [true, a.expected], `a passing canary: ${a.name} witnessed with its expected outcome (${JSON.stringify(a)})`);
+        if (a.host?.checked === true) assert.equal(a.host.agrees, true, `a passing canary: ${a.name} corroborated host-side (${JSON.stringify(a.host)})`);
+      }
+    } else {
+      assert.equal(done.status, 'failed', `a canary that does not pass fails the attempt (${JSON.stringify(done.canaries)})`);
+    }
   });
 });
