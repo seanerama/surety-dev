@@ -140,11 +140,11 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       const accepted = new Set(c.runs.flatMap((r) => r.egress_log.filter((l) => l.decision === 'accepted').map((l) => String(l.authority).replace(/:443$/, ''))));
       const refused = c.runs.flatMap((r) => r.egress_log.filter((l) => l.decision === 'refused' && l.reason === 'not_listed').map((l) => l.authority));
       observe(ctx, 'M136', 'egress', { accepted: [...accepted], refused, unexpected_contacts: c.attempt.unexpected_contacts, entry_egress_hosts: e.egress_hosts });
-      assert.ok(accepted.has('api.anthropic.com'), `the canaries reached the provider through the proxy (${[...accepted].join(', ')})`);
-      assert.ok(e.egress_hosts.every((h) => REAL.candidateEgress.includes(h)), `the entry's egress hosts are within the candidate list (${JSON.stringify(e.egress_hosts)})`);
+      assert.ok(accepted.has(ctx.providerHost), `the canaries reached the provider (${ctx.providerHost}) through the proxy (${[...accepted].join(', ')})`);
+      assert.ok(e.egress_hosts.every((h) => ctx.candidateEgress.includes(h)), `the entry's egress hosts are within the candidate list (${JSON.stringify(e.egress_hosts)})`);
       assert.ok(e.egress_hosts.every((h) => accepted.has(h)), 'and each was contacted');
       for (const authority of refused) {
-        if (REAL.candidateEgress.some((h) => authority.startsWith(`${h}:`))) continue;
+        if (ctx.candidateEgress.some((h) => authority.startsWith(`${h}:`))) continue;
         assert.ok(c.attempt.unexpected_contacts.some((u) => u.destination === authority), `the refused contact ${authority} is reported in unexpected_contacts`);
         assert.ok(!e.egress_hosts.some((h) => authority.startsWith(h)), `and not added to the entry (${authority})`);
       }

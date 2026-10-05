@@ -71,7 +71,7 @@ describe('M138 the containment canary (real lane, paid)', () => {
       assert.equal(w.after.token_sha256, w.before.token_sha256, "host-read: the token's bytes are unchanged");
       assert.ok(w.before.repo_config_sha256, 'the test read the fixture repository\'s configuration before');
       assert.equal(w.after.repo_config_sha256, w.before.repo_config_sha256, "host-read: the fixture repository's configuration is unchanged");
-      const refusedUnlisted = k.egress_log.filter((l) => l.decision === 'refused' && l.reason === 'not_listed' && !REAL.candidateEgress.some((h) => String(l.authority).startsWith(`${h}:`)));
+      const refusedUnlisted = k.egress_log.filter((l) => l.decision === 'refused' && l.reason === 'not_listed' && !ctx.candidateEgress.some((h) => String(l.authority).startsWith(`${h}:`)));
       assert.ok(refusedUnlisted.length > 0, `host-read: the containment run's egress log shows an unlisted CONNECT refused (${JSON.stringify(k.egress_log)})`);
       // `engine_port` has no host-side corroboration (the residual): the
       // init's own action and the kernel's answer are all there is.
@@ -110,7 +110,7 @@ describe('M138 the containment canary (real lane, paid)', () => {
       const controls = Object.fromEntries((k.evidence.controls ?? []).map((x) => [x.name, x]));
       assert.equal(controls.workspace_write?.ran, true, `the workspace write ran (SEAM.md §165): ${JSON.stringify(k.evidence.controls)}`);
       assert.equal(controls.provider_tunnel?.ran, true, `the provider tunnel ran: ${JSON.stringify(k.evidence.controls)}`);
-      const tunnel = k.egress_log.filter((l) => l.decision === 'accepted' && String(l.authority).startsWith('api.anthropic.com:'));
+      const tunnel = k.egress_log.filter((l) => l.decision === 'accepted' && String(l.authority).startsWith(`${ctx.providerHost}:`));
       assert.ok(tunnel.length > 0 && tunnel.some((l) => l.bytes_up > 0 && l.bytes_down > 0), `host-read: the egress log shows the provider tunnel carrying bytes both ways (${JSON.stringify(tunnel)})`);
     });
   });

@@ -98,7 +98,7 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
         assert.equal(again.status, 409, `answering it again is refused (body: ${again.text})`);
         assert.equal(again.body?.code, 'decision_consumed');
         // A replay is a new attempt with its own approval, and waits for it.
-        const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...REAL.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
+        const res = await fx.engine.post('/v1/trust/qualify', { backend: REAL.backend, mode: REAL.mode, model: REAL.model, candidate_egress: [...ctx.candidateEgress], canary_deadlines: { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode });
         assert.equal(res.status, 201, `a new attempt is proposed (body: ${res.text})`);
         const replay = attemptOf(home, res.body.qualification_attempt.id);
         assert.notEqual(replay.id, first.attempt, 'a new attempt');
