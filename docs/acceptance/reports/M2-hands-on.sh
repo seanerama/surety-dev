@@ -354,7 +354,13 @@ wait_for_sean qualification_approval "$QA"
 
 say "6. The canaries run, one at a time, each in its own sandbox and control group"
 SHOWN=
-for i in $(seq 1 600); do
+# As long as the attempt's own canary deadlines allow, plus 20 minutes (found
+# by the E79 rehearsal: a fixed 600 looks of 3 s each could give up before
+# canaries of 900, 600 and 900 seconds had ended).
+LIMIT=$(( $(dbq "SELECT canary_deadlines FROM qualification_attempts WHERE id = '$QA'" | jq '[.[]] | add') + 1200 ))
+note "Waiting up to $LIMIT s for the attempt to end."
+STARTED=$SECONDS
+while [ $((SECONDS - STARTED)) -lt "$LIMIT" ]; do
   tick "$FIXTURE"
   STATUS=$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")
   CG=$(dbq "SELECT d.cgroup_path FROM execution_domains d JOIN invocation_receipts r ON r.run = d.run WHERE r.qualification_attempt = '$QA' AND d.observation IS NOT 'terminated' ORDER BY d.created_at DESC LIMIT 1")
