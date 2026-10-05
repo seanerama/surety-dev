@@ -269,7 +269,10 @@ wait_run_end() { # project, work item, seconds
   for i in $(seq 1 $(( $3 / 10 ))); do
     r=$(run_of "$2")
     if [ -n "$r" ] && [ "$(dbq "SELECT state FROM runs WHERE id = '$r'")" = ended ]; then
-      S "$API/v1/projects/$1/runs/$r" | jq '.run | {id, role, state, outcome, reason_class, reason_text, exit_class}'
+      S "$API/v1/projects/$1/runs/$r" | jq '.run | {id, role, state, outcome, reason_class, exit_class}'
+      # The reason as the engine recorded it (the run read does not carry it,
+      # SEAM.md section 17; found by the E85 rehearsal, where it printed null).
+      echo "   reason recorded: $(dbq "SELECT COALESCE(reason_text, '(none)') FROM runs WHERE id = '$r'")"
       return 0
     fi
     tick "$1"; sleep 10
