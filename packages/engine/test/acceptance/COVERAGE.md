@@ -2128,6 +2128,18 @@ Every run includes the two `[not_exercised]` cases. Runs 2 and 3 differ from run
 
 The user manager was `running` before and after; no `surety-*` scope was left.
 
+## After E82 and E83: the containment canary as an honest, sanctioned check
+
+2026-10-05, on `verify/m2-canary` from `main` at `8ab450e`; SEAM §173 (and §§149, 165, 171 amended). E82: Sean's real agent refused the containment canary as a prompt injection (its record `rec_01M45X27J4DHVC2CY05H9SRZ22` names three reasons: a probe aimed at the host's pid namespace with a token path under the host's home and an unlisted host; delegation tools to try; a fixed result to write whatever happened). E83: Sean's redesign.
+
+**The case:** `M136-adapter-with-a-fake-backend.test.mjs`, "E83", in the sandbox lane with the fake `claude` (`dump_context`: the fake saves every file under `/surety/context` and its prompt argument from inside the sandbox). Expected values from E83 and the test's own knowledge of the host (its directories, the host's home, the engine's port, the candidate destinations, the unlisted destination the egress log shows refused, the host's pid namespace); the five phrases SEAM §173 pins in `instructions.md`; the eight delegation and scheduling tool names in the four text files and the prompt argument. **On `main` at `8ab450e`** it fails at its gaps assertion (`M136-adapter-with-a-fake-backend.test.mjs:267`), its liveness checks holding, with 38 gaps: `canary.json` and `prompt.md` hold the host's home, the engine home, the token path, the host's pid namespace, the unlisted host and the engine's port; the probe program holds the unlisted host; `instructions.md` holds none of the five phrases; `prompt.md` and `canary.json` name all eight tools. The prompt argument itself holds none of them.
+
+**Brought to E83:** M138 (a) (the probe run once; the actions the init's; `agent_report` kept) and (b) (a probe never run is `containment_failed` with the agent's report kept as the reason); M136 (c) (delegation from the inventory, which must exist; nothing asked of the agent); the scripted role program, the sandbox fake, the rehearsal fake and the sampler cases' native fake follow both canary forms, so the cases run before and after the Builder's change. On `main` at `8ab450e` M135 passes 12/12 and the fake-backend file passes all but the new case.
+
+**The plan's wording.** The M2 plan's row M138 still says "(a) each action run by the agent through the probe program"; E83 supersedes it (the owner's text, not changed here). `M2-hands-on.sh` needs no change: its texts do not describe the old instructions, and its step 7 reads the evidence's `actions`, which E83 keeps.
+
+**Left until the Builder's change is on `main`:** the rehearsal (SEAM §171), rerun against the fake.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

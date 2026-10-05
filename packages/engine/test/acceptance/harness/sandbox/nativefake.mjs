@@ -58,7 +58,9 @@ let canary;
 try { canary = JSON.parse(fs.readFileSync('/surety/context/canary.json', 'utf8')); } catch { out({ type: 'result', subtype: 'error_during_execution', is_error: true }); process.exit(1); }
 out({ type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_' + canary.kind, model, usage: { input_tokens: 800, cache_creation_input_tokens: 100, cache_read_input_tokens: 0, output_tokens: 50 }, content: [] } });
 const finish = () => {
-  fs.writeFileSync('/surety/out/result.json', JSON.stringify(canary.result));
+  // E83 (SEAM.md §173): the containment canary prescribes no result; this
+  // fake runs no probe (the sampler cases need none) and says so.
+  fs.writeFileSync('/surety/out/result.json', JSON.stringify(canary.result ?? { status: 'completed', summary: 'the probe program was not run by this fake', probe_output: '' }));
   out({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.002, modelUsage: { [model]: { inputTokens: 800, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 100 } } });
   process.exit(0);
 };
