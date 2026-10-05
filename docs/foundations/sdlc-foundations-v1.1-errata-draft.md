@@ -1498,3 +1498,13 @@ Not chosen: re-running the exhaustion lane on `mini-hp01`; the test harness swee
 4. **Question for Sean (R12.2):** does "every commit on the integration branch is the engine's with run and role trailers" include the engine's own bootstrap and policy commits, which belong to no run? **Driver's default:** they are the engine's commits and are judged as such (author and committer the engine, no agent's), without run trailers; the journey's trailer check starts from the journey's first run.
 
 ---
+
+## E81. The rehearsal's fixes and the launcher-exit tick merged; M2 ready again for the real-agent run (provisional, 2026-10-05)
+
+**Status: provisional.** The driver's record under Sean's delegation; item 3 lists what is Sean's.
+
+1. **The launcher-exit tick** (E79 item 2) merged at `4c2e3d6`: the engine requests a tick when the launcher of a quarantined or closing domain exits (SEAM §170); exits within one turn of the event loop request a single tick. Objection 019 upheld (M115 S1 and (h) accept the domain removed by that tick; S1 now checks at every read that no termination is recorded while the launcher lives). The driver's rerun: `--slice 13` 1,019 of 1,019, unit 217.
+2. **The rehearsal's two engine findings fixed** (E80 item 3), merged at `f03d717`: each role is told every result field the engine reads from it, the Reviewer receives the candidate's diff, its open findings and the sign-offs its tier requires, the fix Builder its finding (and a lookup that never found a Reviewer's or Verifier's candidate is fixed: their packages had no candidate at all before); the host sampler follows SEAM §172 (a fork that has not exec'd and is under 1 s old is not a second backend, by the kernel's `PF_FORKNOEXEC` flag and its start time; unreadable counts as a backend); a containment canary whose control did not run is `containment_failed` (SEAM §165). The driver's rerun: `--slice 14` 1,037 of 1,038, the one failure M141 (b) by design (51 report facts pending), unit 232 in 44 files.
+3. **What M2 waits on, all Sean's:** the real-agent run (`claude setup-token` into a private file, `docs/acceptance/reports/M2-hands-on.sh`, the two approvals, the hands-on checks); the `claude-sonnet-5-5` prices; whether `--safe-mode` stays; the defaults `DISABLE_UPDATES=1`, the pinned copy's naming (E76) and §172's 1 s fork bound; R12.2 and the engine's setup commits (E80 item 4); whether automated use fits his plan; the D3 brief for Astra. **Noted from the rehearsal:** the native fakes are compiled with the host's C compiler at test time, as the power-loss shim already was; a Builder twice started a real-lane file by mistake, refused each time by the file's own preflight before anything started.
+
+---
