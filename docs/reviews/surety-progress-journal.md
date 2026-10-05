@@ -173,3 +173,53 @@ Main `4c2e3d6`; builder `build/m2-real-findings` `5378369`.
 Main `4c2e3d6`; builder `build/m2-real-findings` `5378369`.
 
 - No build changes since 00:50: heads and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 01:30:06 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches (only `main` remains).
+
+- Committed: main merged the rehearsal's two engine fixes (`f03d717`) and recorded E81 readiness for Sean's real-agent run; the journal-only commit is not build progress.
+- Newly recorded tests, not run here: driver `--slice 14` 1,037/1,038 (M141 (b) pending real-lane facts), unit 232/232; real-agent lane remains pending.
+- Main is clean except pre-existing untracked `docs/architecture/m1.html`. Progress checks now run every 30 minutes.
+
+## 2026-10-05 02:00:27 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 01:30: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 02:30:46 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 02:00: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 03:00:15 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 02:30: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 03:30:38 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 03:00: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 04:00:33 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 03:30: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 04:30:01 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 04:00: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 05:00:09 -0500 CDT
+
+Main `aa00544`; no active builder or verifier worktrees/branches.
+
+- No build changes since 04:30: head and worktree states are unchanged; no new recorded tests.
