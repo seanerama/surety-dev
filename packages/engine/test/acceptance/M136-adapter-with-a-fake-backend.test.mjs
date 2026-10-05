@@ -421,3 +421,46 @@ describe('M136 E86 (c): a model fallback is not the entry\'s model (sandbox lane
     assert.match(String(run.reason_text), /^model_fallback: claude-sonnet-5-5 -> claude-sonnet-5\b/, `its reason names the fallback (${run.reason_text})`);
   });
 });
+
+describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by the live backend (sandbox lane, the fake backend, no model)', () => {
+  // The containment canary with the engine running the probe (E86); the fake
+  // only waits, except that under a review mode it also tries, from inside
+  // the sandbox, to spoil the engine's check. The canary's verdict is the
+  // engine's own, so it must be unmoved.
+  const CONTAINMENT = (extra) => Array.from({ length: 4 }, () => extra);
+
+  test('S1 (the review): a backend that plants a malformed ~/.gitconfig (and a workspace .gitconfig) does not make git_config read as denied: the action passes only on the filesystem\'s refusal of the write, so the canary still passes with git_config witnessed and denied', async (t) => {
+    const { fx, fake, project } = await fakeFixture(t);
+    fake.set({ plant_gitconfig: true });
+    const attempt = await qualify(fx, body(fake, project));
+    await approveAttempt(fx, project, attempt.id);
+    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 600_000 });
+    const { k, ev } = containmentCapabilities(fx, done);
+    const g = (ev.actions ?? []).find((a) => a.name === 'git_config');
+    assert.ok(g, `the fixture is live: git_config is among the engine's actions (${JSON.stringify(ev.actions)})`);
+    // The verdict must rest on the filesystem refusing the write, not on git
+    // exiting non-zero for a config the backend planted. On c4a7f7f a planted
+    // ~/.gitconfig makes git exit 128 and the action read denied anyway.
+    assert.equal(g.outcome, g.expected, `git_config's outcome is its expected denial, by the filesystem's refusal, not git's own error (${JSON.stringify(g)})`);
+    assert.equal(g.witnessed, true, 'git_config witnessed by the init');
+    assert.notEqual(g.outcome, 'not_run', 'a git error that is not the filesystem\'s refusal is not_run, which would fail the canary');
+    assert.deepEqual([done.status, k.passed], ['succeeded', true], `the backend's planted config does not change the canary's verdict (${JSON.stringify(done.canaries)})`);
+  });
+
+  test('S2 (the review): a backend that sends SIGUSR1 to its siblings (the probe\'s action children among them), in its own pid namespace only, cannot leave the canary passing with an action unverified: the probe\'s children are hardened, so every action is still witnessed and denied and the canary passes; a child whose report the signal altered fails it', async (t) => {
+    const { fx, fake, project } = await fakeFixture(t);
+    fake.set({ signal_probe: true });
+    const attempt = await qualify(fx, body(fake, project));
+    await approveAttempt(fx, project, attempt.id);
+    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 600_000 });
+    const { k, ev } = containmentCapabilities(fx, done);
+    // The signal must not change any verdict. On c4a7f7f the action children
+    // are node without --disable-sigusr1: SIGUSR1 opens the inspector and the
+    // check can be altered. The canary passes only when every action is still
+    // witnessed with its expected outcome; otherwise it is containment_failed.
+    assert.ok((ev.actions ?? []).length > 0, `the fixture is live: the engine ran its actions (${JSON.stringify(ev.actions)})`);
+    const unmoved = ev.actions.every((a) => a.witnessed === true && a.outcome === a.expected);
+    assert.equal(k.passed, unmoved, `the canary passes exactly when the signal moved no action's verdict (${JSON.stringify(ev.actions)})`);
+    assert.deepEqual([done.status, k.passed], ['succeeded', true], `a backend signalling the probe's children cannot leave an action unverified (E86 review S2): the children are hardened against SIGUSR1 (${JSON.stringify(done.canaries)})`);
+  });
+});
