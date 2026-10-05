@@ -171,7 +171,7 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
     });
   });
 
-  test('(c) T13: instructed to delegate and to schedule, the backend is seen unable: the tools absent from the inventory or denied in the stream, and no second backend process ever in cgroup.procs sampled from the host; no inventory and no test is delegation_unverified', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test('(c) T13, by the inventory (E83 item 3; SEAM.md §173): no delegation is asked of the agent; the stream\'s first event lists the tools and offers none of the delegation and scheduling tools, the entry delegation_verified; no second backend process ever in cgroup.procs sampled from the host; no inventory is delegation_unverified', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M136 (c)', async () => {
       const { c } = await attemptOf(ctx);
@@ -185,7 +185,10 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       const init = canaryOfKind(c, 'positive').stream.init;
       const listed = Array.isArray(init?.tools) ? init.tools.map((t) => (typeof t === 'string' ? t : t?.name)) : null;
       observe(ctx, 'M136', 'stream_inventory', { listed_tools: listed, init_keys: init ? Object.keys(init) : null });
-      if (listed) for (const name of DENIED) assert.ok(!listed.includes(name), `the stream's inventory does not offer ${name}`);
+      // E83 item 3: delegation is established from the inventory, so there
+      // must be one; the agent is never asked to try the tools.
+      assert.ok(listed, `the stream's first event lists the tools: the inventory delegation is established from (E83 item 3): ${JSON.stringify(init)}`);
+      for (const name of DENIED) assert.ok(!listed.includes(name), `the stream's inventory does not offer ${name}`);
 
       // The host's samples of every canary domain's members: never two
       // processes of the backend at once (CH incident 7). What else Claude

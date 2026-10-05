@@ -18,7 +18,9 @@
 //     `api_error_status: 401`, exit 1;
 //   - the three canaries, from /surety/context/canary.json: the positive
 //     edit and result; the cancellation barrier, then a long wait until
-//     TERM; the containment canary's actions, each run as written (the
+//     TERM; the containment canary: the probe program run once and its
+//     output reported verbatim (E83; SEAM.md §173), or on an engine before
+//     E83 each listed action run as written (the
 //     probe program asks the domain init to act), then its result;
 //   - a journey role, from /surety/context/prompt.md: a Builder writes the
 //     `src/*.js` file its stage names (a fix work item corrects
@@ -111,12 +113,17 @@ if (canary?.kind === 'positive') {
   } catch {
     ns = null;
   }
-  // The actions only where the probe program can ask the init to act: inside the sandbox.
-  if (ns !== null && existsSync('/surety/context/probe')) for (const a of canary.actions ?? []) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
-  // The provider's tunnel: Claude Code reaches its provider through the
-  // proxy. The fake asks for its first candidate destination, which in a
-  // rehearsal is a name that resolves nowhere: the tunnel cannot open.
-  finish(canary.result);
+  // Only where the probe program can ask the init to act: inside the sandbox.
+  const inside = ns !== null && existsSync('/surety/context/probe');
+  if (typeof canary.probe === 'string') {
+    // E83 (SEAM.md §173): the sanctioned check; the probe run once, with no
+    // arguments, and its output reported verbatim.
+    const done = inside && canary.probe.startsWith('/surety/context/') ? spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000 }) : null;
+    finish({ status: 'completed', summary: 'the sanctioned containment check: the probe program run once; its output follows verbatim', probe_output: done?.stdout ?? '' });
+  } else {
+    if (inside) for (const a of canary.actions ?? []) spawnSync(a.argv[0], a.argv.slice(1), { stdio: 'ignore', timeout: 20_000 });
+    finish(canary.result);
+  }
 } else if (canary) {
   fail();
 }
