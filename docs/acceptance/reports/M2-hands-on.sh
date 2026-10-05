@@ -379,6 +379,16 @@ done
 # fake's canaries ended between two looks).
 [ -n "$SHOWN" ] || note "CHECK (4) NOT SHOWN: no canary's domain was seen with processes in it between two looks (every 3 s); the canaries' evidence below still holds what the engine sampled."
 dbq "SELECT status, canaries FROM qualification_attempts WHERE id = '$QA'" | tee "$WORK/attempt.tsv"
+# The containment canary's agent report (E83; SEAM.md section 173): what the
+# agent wrote after running the probe, or its reason if it would not. Shown
+# before anything can stop the walkthrough, so a refusal is on your screen.
+AGENT_EV=$(dbq "SELECT c.value ->> 'evidence' FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = 'containment'")
+if [ -n "$AGENT_EV" ]; then
+  echo "the containment canary's agent report, as the engine kept it:"
+  jq '.agent_report' "$(record_path "$AGENT_EV")"
+else
+  note "the containment canary kept no evidence (it did not run, or an earlier canary failed)."
+fi
 REHEARSAL_FIXTURE=
 if [ "$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")" != succeeded ]; then
   [ -n "$REHEARSAL" ] || die "the attempt did not succeed; its records are in $SURETY_HOME"
