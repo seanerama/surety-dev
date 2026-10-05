@@ -2116,6 +2116,18 @@ Every run includes the two `[not_exercised]` cases. Runs 2 and 3 differ from run
 
 **What the rehearsal found in the engine** (not changed here; reported to the coordinator): a role's context package gives a real agent no way to produce what the gates read. `RESULT_SCHEMA` names only `status` and `summary`; no role is told `findings` (with `check`), `signoffs` or `dispositions`; a Reviewer is given neither the open findings' ids nor the candidate's diff (D2 §1.3 lists the diff), and a fix Builder is not told its finding. The fake passes path one only because it was written knowing the fields. Also: the host sampler counts any member whose executable is the pinned binary, so a fork of the backend sampled before its `exec` reads as a second backend (the first native fake, forking at its start, failed `delegation_unverified` this way; Claude Code starts a child process for each command its Bash tool runs, and a child is the backend's image until its `exec`; how wide that window is for Claude Code was not measured).
 
+## After the E79 rehearsal: its two engine findings as cases
+
+2026-10-05, on `verify/m2-real-findings` from `main` at `50c4a73`; SEAM §172. Both run in the sandbox lane with no model; neither touches the real `claude`.
+
+**Finding 1, what a role is told** (D2 §1.3). `M125-handover.test.mjs` (e): M01's fix loop in the sandbox lane, the Verifier, the Reviewer (one open finding) and the fix Builder each dumping its package. The expected fields are section 68's, by role; never read from the engine. **On `main` at `50c4a73`** (`node --test --test-name-pattern '^\(e\) what the gates read'`): it fails at its gaps assertion (`M125-handover.test.mjs:298`), every "the fixture is live" check holding before it, with fifteen gaps: the Verifier's schema names none of `findings`, `severity_changes`, `applicability`, `proposal`; the Reviewer's none of `findings`, `signoffs`, `dispositions`, `severity_changes`, `assessments`, `proposal_approval`; the Reviewer's package holds neither the open finding's id nor its message, and lists no `diff` (it lists `prompt`, `instructions`, `result_schema`); the fix Builder's holds neither the id nor the message of its finding. The Builder's schema already names `checkpoint` and `nominate`.
+
+**Finding 2, what the sampler counts** (D2 §7.2). `M136-adapter-with-a-fake-backend.test.mjs` S3 (a), (b), (c), each on a production-mode engine of its own with a native fake (SEAM §172 says why). **On `main` at `50c4a73`**, the whole file twice: S3 (a) fails at the second-backend assertion (`M136-adapter-with-a-fake-backend.test.mjs:187`) with `"a second backend process appeared in the domain (at most 2 at once)"`, `max_backend` 2, after its liveness checks held (the engine identified the fake; the test's own samples saw an unexec'd fork beside it); S3 (b) and (c) pass, as the controls of the rule's other half must. The three take about 30 s together.
+
+**Found on the way:** S1 (b) of the same file read the attempt's status at once after the positive canary's ledger row and once saw `running`; it now waits for the attempt to end (its own commit). A shared engine for the three S3 cases did not work: the third attempt's containment canary was stopped `budget_day_unknown_tokens` before its fork, which the case's liveness check caught.
+
+The user manager was `running` before and after; no `surety-*` scope was left.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
