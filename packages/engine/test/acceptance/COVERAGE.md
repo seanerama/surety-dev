@@ -1985,6 +1985,75 @@ Those M127 cases asserted no failure mode, but they did depend on what the netwo
 - **M128 (a)/(b):** 0 of 1. The error: `arm fault {"point":"egress_connect_hang","address":"198.51.100.20"} → 400 {"code":"invalid_value","reason":"Unknown fault."...}`.
 - **M127 (a) to (e) and (g)/(h):** 0 of 2, the same error for `192.0.2.10` and for `203.0.113.30`.
 
+## M2 slice 14 (engine side, closing run)
+
+The Verifier's closing pass of slice 14, 2026-10-05, on `verify/m2-s14-close` from `main` at `1c3267f`. That revision has the slice-14 engine side (`c3a2651`, E77 item 2) and the harness fault `egress_connect_hang` (`1c3267f`, E77 item 3). Nothing changed in the working copy's tests during the runs; only the report files were edited while they ran.
+
+**Nothing paid ran.** No real `claude` ran with a prompt, `--lane real` was not invoked, and the exhaust lane was not run here.
+
+Before the runs: the user manager was `running`, no `surety-*` scope was present, and `free -m` showed 13 104 MB available.
+
+**1. `npm run build && npm run test:unit`.** 214 of 214 tests passed in 41 files ("unit: 41 file(s) passed."). The report is `test-results/unit-2026-10-05T03-04-02-092Z.log`, not tracked.
+
+**2. `node scripts/run-tests.mjs acceptance --slice 13`**, in the background, alone in this working copy:
+
+```
+ℹ tests 1018
+ℹ suites 253
+ℹ pass 1018
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2548624.739433
+acceptance: 162 file(s) passed.
+EXIT=0
+```
+
+The report is `test-results/acceptance-slice13-2026-10-05T03-04-30-989Z.log`, not tracked. M127, M128 (with `egress_connect_hang`), M115 and M118 passed within it. No case failed, so none was investigated or rerun.
+
+**3. The slice-14 no-cost files**, each run alone with `node --test` afterwards:
+
+| File | Lane | Result |
+|---|---|---|
+| `M125-handover` (objection 016) | sandbox (slice 12, changed in 14) | 3 of 3 |
+| `M133-memory-admission-reserves-the-limit` (option B) | sandbox | 1 of 1 |
+| `M136-adapter-with-a-fake-backend` (the review's S1, S2) | sandbox | 4 of 4 |
+| `M137-cancellation-canary-negatives` (M137 (b)) | sandbox | 2 of 2 |
+| `M140-credential-never-echoed` (the review's S3) | kernel | 1 of 1 |
+| `M142-hands-on-script` | no engine | 5 of 5 |
+| `M141-report-qualified-facts` | no engine | **1 of 2, by design.** (a) passed; (b) failed with `the real lane has not run: the M2 report is a skeleton (51 pending facts)`. The report had 51 pending facts after this pass's edits. |
+
+**Every slice-14 case's state:**
+
+| Row | Case(s) | File | State |
+|---|---|---|---|
+| M136 | (a) to (d) | `M136-positive-canary` | real lane: written, `node --check` only, **not run** |
+| M136 | S1 (a), (b); S2 (a), (b) | `M136-adapter-with-a-fake-backend` | passed (sandbox) |
+| M137 | (a), (c) | `M137-cancellation-canary` | real lane: written, **not run** |
+| M137 | (b), both negatives | `M137-cancellation-canary-negatives` | passed (sandbox) |
+| M138 | (a) to (c) | `M138-containment-canary` | real lane: written, **not run** |
+| M139 | (a), (b) | `M139-unauthenticated-canary` | real lane: written, **not run** |
+| M140 | (a) to (e) | `M140-real-backend-journey` | real lane: written, **not run** |
+| M140 | S3 | `M140-credential-never-echoed` | passed (kernel) |
+| M141 | (a) | `M141-report-qualified-facts` | passed |
+| M141 | (b) | same | fails until the report is final, by design |
+| M142 | (a) to (e) | `M142-hands-on-script` | passed; Sean's own run of the script has not been made |
+| M133 (option B) | one case | `M133-memory-admission-reserves-the-limit` | passed (sandbox) |
+
+**Not run here:**
+- the real lane (Sean's);
+- the exhaust lane (`mini-hp01`, E69; last run per E73, before option B);
+- the full `npm test`, which fails at M141 (b) by design while the report is a skeleton.
+
+**After the runs:**
+- the user manager was `running`;
+- no `surety-*` scope;
+- no process of this working copy;
+- `free -m` showed 13 075 MB available.
+
+Two leftovers were found, both from before this pass: `/dev/shm/surety-probe-479295dcfa04` and `/tmp/surety-probe-479295dcfa04/`, dated 2026-10-04 08:05 local time, of an earlier engine whose home tag is `479295dcfa04`. This run made neither. I left them in place: the engine sweeps its own tag's leftovers at that home's next start.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

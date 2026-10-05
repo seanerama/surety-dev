@@ -16,7 +16,7 @@ BS §1's conditions, and where each stands at the time of writing:
 
 | Condition | State |
 |---|---|
-| `npm test` exits zero on `main` for the kernel and sandbox lanes, every M2 row with executable tests and none skipped | **Not established.** Every row now has a file (rows M136 to M140 in the real lane, M141 and M142 in slice 14), so the full run can be made; it has not been run on any revision. The slices' runs are in section 13. |
+| `npm test` exits zero on `main` for the kernel and sandbox lanes, every M2 row with executable tests and none skipped | **Not established.** Every row has a file. At the closing pass of slice 14 (`1c3267f`) the unit suite and `--slice 13` passed whole and every slice-14 no-cost file passed except M141 (b), which fails by design until this report is final; so `npm test` cannot exit zero before the real lane (section 13). |
 | The real lane's rows (the three canaries and the journey) passed under a qualification attempt Sean approved, records retained | **Not run.** [[PENDING real lane: the `--lane real` run's date, revision and per-file result; from the runner's report and `state.json`]] |
 | The host qualification and the trust entry for Claude Code `active` with their evidence | **Host: active at every sandbox-lane start since slice 12** (section 5). **Entry: none.** [[PENDING real lane: the entry's id and `activated_by`; from `observed/activation.json`]] |
 | The M2 acceptance report written | This skeleton. |
@@ -25,9 +25,10 @@ BS §1's conditions, and where each stands at the time of writing:
 
 | What | Revision |
 |---|---|
-| Engine and tests at the time of writing | `main` at `872afe9` (2026-10-04): slices 10 to 13 merged and the M133 (g) fix (E73) |
-| The slice-14 cases | `verify/m2-s14` (this branch); merged at [[PENDING merge: the merge commit; from `git log main`]] |
-| The engine side of slice 14 | `build/m2-s14`; merged at [[PENDING merge: the merge commit; from `git log main`]] |
+| Engine and tests at the closing pass of slice 14 | `main` at `1c3267f` (2026-10-05): slices 10 to 14 merged without the real lane (E77) |
+| Slices 10 to 13 closed | `main` at `872afe9` (2026-10-04), with the M133 (g) fix (E73) |
+| The slice-14 cases | merged at `165344d`; amended at `8a9c105` (M141), `3af2a16` (objection 015), `890c875` (E74, the review's S1 to S3), `72e9654` (objection 016, option B), `97195aa` (objection 017), `26d6880` (objection 018), `a980d16` (`egress_connect_hang`) |
+| The engine side of slice 14 | merged at `c3a2651` (E77 item 2); the hang fault at `1c3267f` (E77 item 3) |
 | The revision the real lane ran | [[PENDING real lane: the revision; from the runner's report header and `git rev-parse HEAD` at the run]] |
 | The contract files | `packages/engine/test/acceptance/contract/` at the same revision as the tests |
 
@@ -149,7 +150,9 @@ Each run below was made and its output kept by the session named; this report re
 | `--slice 13`, the slice-14 Verifier's run after the manifest change | `verify/m2-s14` at `f3deecb` | 1 018 of 1 018 in 162 files, none skipped (unit suite not run) | COVERAGE.md, "M2 slice 14", "Checks" |
 | M137 (b), the cancellation canary's negatives (sandbox lane, new in slice 14) | `main` at `872afe9` | 2 of 2 | COVERAGE.md, "M2 slice 14" |
 | The exhaustion lane on `mini-hp01` (bare metal, Arch-based, kernel 7.1.9, Node 22.22.0) | `main` at `36f1539`, then the fix | `M110-host-checks-and-scope` 4 of 4, `M112` 6 of 6, `M116` 4 of 4; `M130-exit-classes-limits` 2 of 2; `M133-resource-limits` 8 of 9, then 9 of 9 against the fix, P20 passed with `isolation_probe_exhaustion` true; every OOM kill confined to a test domain's or a P20 box's memory cgroup; the staging containers up throughout | E73 |
-| The full `npm test` | — | **not run on any revision** | — |
+| The closing pass of slice 14: `npm run test:unit`, then `--slice 13` | `main` at `1c3267f` (slice 14's engine side and the hang fault merged) | unit 214 of 214 in 41 files; `--slice 13` 1 018 of 1 018 in 162 files, none skipped | COVERAGE.md, "M2 slice 14 (engine side, closing run)" |
+| The slice-14 no-cost files, each alone, same revision | `main` at `1c3267f` | M125 3/3, M133 option B 1/1, M136 with a fake backend 4/4, M137 (b) 2/2, M140 credential never echoed 1/1, M142 5/5; M141 1/2, its (b) failing by design (the report is a skeleton) | same |
+| The full `npm test` | — | **not run on any revision**; it fails at M141 (b) by design until this report is final | — |
 
 ## 14. The real lane's runs
 
@@ -232,6 +235,9 @@ These are open at the time of writing; each is a decision, with options and the 
 5. *The driver's default: as written.* **The day's 25 USD split across projects** (10 / 6 / 9, SEAM §161). Recommendation: as written; raise a project's limit only by policy, which is a widening and asks you.
 6. **The price of `claude-sonnet-5-5`** in the engine's table (2 / 10 / 0.20 USD per million, as cached on 2026-09-25), used for the attempt's estimate; in the subscription mode the ledger's figures are Claude Code's own `total_cost_usd`. Confirm the list rates.
 7. **Whether automated use fits your subscription's terms** is yours to check (E74 item 1).
+8. **`DISABLE_UPDATES`'s value** (objection 016). The documentation read names the variable without a value; M125 (b) pins `1` by its sibling's convention (the driver's default, E76 item 1).
+9. **The `<version>` in the pinned copy's name** (objection 016). The tests take the first word of the binary's own `--version` (the driver's default, E76 item 1).
+10. **The engine requesting a tick when a quarantined domain's launcher exits** (E77 item 1). It is recorded as a later improvement and not built; recovery waits for the next scheduled tick.
 
 ## 22. How to read the suite
 

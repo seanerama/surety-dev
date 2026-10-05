@@ -203,3 +203,38 @@ Settled by slice 14's cases, once they pass: the slice-13 part-2 entry "`auth_fa
 | Entry | Row(s) | Class | Claimed where | Record |
 |---|---|---|---|---|
 | **A run paused just past its lease and still heartbeating is renewed without a fresh challenge on a host whose wall clock steps back.** The engine judges lease expiry on the wall clock (kept by Sean). This host's clock steps back about every 31.6 s, by 0.6 s to 2.9 s measured. So a pause slightly longer than `lease_ttl` can leave the lease unexpired by the engine's clock, and the role's heartbeats renew it with no challenge. M118 (a) and (b) pause until the lease has expired on the engine's own clock, so they do not show this case. | M118 (a), (b) | C (Sean's decision) | none | E76 item 3; objection 017 |
+
+## At the close of slice 14 (the engine side merged; the real lane not run)
+
+**Written by:** the Verifier's closing pass of slice 14, 2026-10-05, on `verify/m2-s14-close` from `main` at `1c3267f`.
+
+**What is merged:**
+- the slice-14 cases at `165344d`, amended through `8a9c105`, `3af2a16`, `890c875`, `72e9654`, `97195aa`, `26d6880` and `a980d16`;
+- the engine side at `c3a2651` (E77 item 2);
+- the harness fault `egress_connect_hang` at `1c3267f` (E77 item 3).
+
+The closing run is in `packages/engine/test/acceptance/COVERAGE.md`, "M2 slice 14 (engine side, closing run)".
+
+**Nothing paid has run.** No real backend has met a model, no attempt has been approved, no entry exists, and the hands-on script has not been run. Every entry above about the real lane stands. This table brings them to the merged state.
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **The real lane has not run.** Every item D2 §4.5 lists as established by the canaries is class B: the credential's delivery, usage events and granularity, terminal events, the tool surface and delegation, what Claude Code writes despite its flags, exit statuses, and TERM to exit. Also class B: whether Claude Code accepts the engine's derived session id, and the real-backend journey (both paths, R12.1 to R12.4). The real-lane files are written and checked with `node --check` only. | M136 to M140 | B | Sean's run of `--lane real`; the report | BS §1; E74, E77 |
+| **What the subscription mode loads without `--bare`** (hooks, plugins, CLAUDE.md discovery) from an empty volatile home, and that the token arrives through `CLAUDE_CODE_OAUTH_TOKEN`, are for the canaries to establish. The tests expect both and assume neither. | M136 (b) | B until run | M136 | E74 item 1; objection 016 |
+| **The engine-owned pinned copy is proven only with stand-ins and the fake.** That the copy of the real binary runs from `<home>/backends/` was observed by hand for `--version` only (a copy of 2.1.289 with an empty `HOME`); M136 (b) checks the copy against the test's own hash at the real run. | M136 (b) | B until run | M136 | E74 item 3; objection 016 |
+| **Two expected values rest on defaults, pending Sean:** `DISABLE_UPDATES` is pinned at `1` by convention (the documentation read names it without a value), and `<version>` in the pinned copy's name is the first word of `--version`. | M125 (b), M136 (b) | — (a record) | Sean confirms | E76 item 1; objection 016 |
+| **In the subscription mode the dollar figures are Claude Code's own estimates.** `total_cost_usd` is recorded `estimated`. The hard limit is the subscription's usage limits, which Sean's own Claude use shares; there is no dollar cap on the token. | M136 (d), M140 (d) | C (Sean's decision) | none | E74 item 1; E75 item 4 |
+| **A leaked subscription token reaches the subscription account**, which Sean revokes. The egress proxy contains it to the provider. Whether automated use fits his plan's terms is his to check. | — | C; A for the terms | none | E74 item 1 |
+| **The `api_key` mode is built and not claimed** in M2. | M136 to M140 | B | a later qualification | E74 item 1; E75 item 4 |
+| **A run paused just past its lease and still heartbeating is renewed without a fresh challenge** on a host whose wall clock steps back. Lease expiry is judged on the wall clock (Sean's rule). M118 (a) and (b) pause until the lease has expired on the engine's clock. | M118 (a), (b) | C (Sean's decision) | none | E76 item 3; objection 017 |
+| **A quarantined domain whose own launcher exits is observed again only at the next scheduled tick.** The engine does not request a tick when that launcher exits, so recovery can wait up to `tick_interval`. M115 (e) waits for the launcher to leave before its tick. | M115 (e) | C (a later improvement, not built) | a later slice | E77 item 1; objection 018 |
+| **The proxy's connect timeout is shown with a connect the harness holds**, never over a real network. `egress_connect_hang` keeps the connect to a named documentation address unconnected until `egress_connect_timeout` ends it. A real network's answer to such an address, `EHOSTUNREACH` on this host and logged `connect_failed`, has no case. | M127 (a) to (e), (h); M128 (b) | B (`connect_failed` over a real network) | none planned | E77 item 3; SEAM §169 |
+| **M141 fails while the report is a skeleton**, by design ("the real lane has not run: the M2 report is a skeleton (N pending facts)"). So `--slice 14` and `npm test` fail at M141 (b) until the real lane has run and the report is final. | M141 | — (a record) | the final report | the driver's decision on report question 3 |
+| **The hands-on walkthrough has not been made.** | M142 | B | Sean's run of `M2-hands-on.sh` | BS §10 |
+| **Memory admission option B is built and pinned by configuration only.** No case fills memory on this host. That the reservation holds under real pressure rests on the exhaustion lane's aggregate case (M133 (f), on `mini-hp01`), which was run before option B. | M133 | B (option B under real pressure) | the exhaustion lane, when it is run again | E75 item 3; E73 |
+
+Settled since the entries above:
+- `barrier_not_reached` has its sandbox-lane case (M137 (b)).
+- The review's S1 to S3 are pinned with a fake `claude` and fixed.
+- M118 (c)'s defect is fixed (E76 item 3).
+- Objections 015 to 018 are answered.
