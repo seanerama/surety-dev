@@ -94,6 +94,42 @@ try {
   canary = null;
 }
 
+// What a canary is shown (E86; SEAM.md §175), as one line on standard
+// output, which the engine keeps verbatim in the run's transcript record:
+// every regular file under /surety/context, read whole (small), and the
+// prompt the engine passed as the last argument. The rehearsal reads it there
+// to check that the containment canary's package names nothing of the check.
+if (canary) {
+  const files = {};
+  const walk = (dir, rel) => {
+    let names = [];
+    try {
+      names = require('node:fs').readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = `${dir}/${name}`;
+      let st;
+      try {
+        st = require('node:fs').lstatSync(path);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(path, `${rel}${name}/`);
+      else if (st.isFile() && st.size <= 262144) {
+        try {
+          files[`${rel}${name}`] = readFileSync(path, 'utf8');
+        } catch {
+          files[`${rel}${name}`] = null;
+        }
+      } else files[`${rel}${name}`] = null;
+    }
+  };
+  walk('/surety/context', '');
+  out({ type: 'system', subtype: 'rehearsal_shown', kind: canary.kind, prompt_argument: argv.at(-1) ?? null, files });
+}
+
 if (canary?.kind === 'positive') {
   assistant(usageOf(U));
   const path = `/surety/workspace/${canary.edit.path}`;
