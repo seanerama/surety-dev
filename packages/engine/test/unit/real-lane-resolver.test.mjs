@@ -94,3 +94,43 @@ test('the cause is bounded and holds no credential or header value', () => {
   assert.equal(scrubText('Proxy-Authorization: Basic dXNlcjpwYXNz'), 'Proxy-Authorization: [removed]');
   assert.equal(scrubText('token sk-abcdef123456 here'), 'token [removed] here');
 });
+
+// The review of a53dea9: quoted (JSON) header values, every cookie pair,
+// and a held secret across a cut, from the Reviewer's scrub.mjs.
+test('the scrub: JSON-quoted header values, every cookie value, Token schemes, key shapes', () => {
+  const cases = [
+    ['{"x-api-key":"k3y-VALUE-123456"}', ['k3y-VALUE-123456']],
+    ['"authorization": "Token abcdef123456"', ['abcdef123456']],
+    ['{"Authorization":"Bearer abc.def","other":1}', ['abc.def']],
+    ['Cookie: sess=ABC; other=SECRET2', ['ABC', 'SECRET2']],
+    ["set-cookie: a=1; b='two'", ['a=1', "'two'"]],
+    ['auth with sk-ant-oat01-ABCdef_123', ['sk-ant-oat01-ABCdef_123']],
+    ['proxy-authorization: Basic dXNlcjpwYXNz', ['dXNlcjpwYXNz']],
+    ['token ghp_ABCDEFGHIJKLMNOP1234 here', ['ghp_ABCDEFGHIJKLMNOP1234']],
+    ['a key 0123456789abcdefABCDEF0123456789abcd in text', ['0123456789abcdefABCDEF0123456789abcd']],
+  ];
+  for (const [text, gone] of cases) {
+    const out = scrubText(text);
+    for (const g of gone) assert.ok(!out.includes(g), `${JSON.stringify(text)} -> ${JSON.stringify(out)} still holds ${g}`);
+  }
+  // What names the cause is kept.
+  assert.equal(scrubText(ERROR_TEXT), ERROR_TEXT);
+  assert.equal(scrubText('resolve_failed: api.anthropic.com:443'), 'resolve_failed: api.anthropic.com:443');
+});
+
+test('a held secret across the cut: redacted before the text is bounded, and no fragment of a cut word is kept', async () => {
+  const { holdSecret } = await import(join(dist, 'records', 'redact.js'));
+  const { bounded } = await import(join(dist, 'invoke', 'exit-cause.js'));
+  // Not key-shaped: only the held secret's redaction removes it.
+  const secret = `plainsecret${'z'.repeat(29)}`;
+  holdSecret('test/unit-cut', secret);
+  for (const pad of [200, 220, 230, 235, 239]) {
+    const stream = new ClaudeStream({ costAs: 'reported' });
+    stream.feed(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${'x '.repeat(pad / 2)}${secret} after`, usage: ZERO, modelUsage: {} }));
+    const cause = exitCause(stream.summary(), []);
+    assert.ok(!cause.includes(secret.slice(0, 8)), `pad ${pad}: no prefix of the held secret (${cause.slice(-60)})`);
+  }
+  assert.equal(bounded('abc defghijkl', 8), 'abc…', 'a word the cut goes through is dropped');
+  assert.equal(bounded('abc defg hij', 9), 'abc defg…');
+  assert.equal(bounded('short', 9), 'short');
+});
