@@ -196,6 +196,22 @@ export class DomainProxy {
     return out;
   }
 
+  // What the log shows of the domain's egress once the proxy is closed (E85;
+  // SEAM.md §174): whether it is complete (never cut at its bound, whole in
+  // its record, every entry closed: no tunnel still open), and how many
+  // tunnels it accepted and bytes it carried up.
+  account(): { complete: boolean; entries: number; accepted: number; bytes_up: number } {
+    const text = this.recordText();
+    const cut = this.truncated || text.includes('"truncated":true');
+    const open = this.tunnels.size > 0 || this.entries.some((e) => e.closed_at === null);
+    return {
+      complete: this.closing && !cut && !open,
+      entries: this.entries.length,
+      accepted: this.entries.filter((e) => e.decision === 'accepted').length,
+      bytes_up: this.entries.reduce((n, e) => n + (Number.isFinite(e.bytes_up) ? e.bytes_up : Number.POSITIVE_INFINITY), 0),
+    };
+  }
+
   // Room in the log for one more entry; false (and the log truncated, the
   // run cancelled) once the bound is reached.
   private admit(entry: EgressEntry): boolean {

@@ -189,17 +189,89 @@ function observedSoFar(db: Db, invocation: string): Normalized {
 // observed is kept, and the remainder is unknown.
 const ENGINE_ENDED = ['stopped', 'timed_out', 'abandoned', 'recovered'];
 
+// ---- a known zero by the egress evidence (E85, Sean's rule; SEAM.md §174) -------------
+//
+// A real backend's usage is a known zero, whatever it reported or failed to,
+// only when the engine's own evidence proves that nothing reached any
+// provider: (a) every domain of the invocation was a sandbox whose only
+// network path is the engine's egress proxy, as recorded for it (launched
+// through the launcher, which gives each domain a network namespace of its
+// own, on a validated mount plan published as a record, its cgroup placed,
+// not the probe profile, whose echo endpoint is reachable, and terminated);
+// (b) each domain's egress log is complete (written whole as its record, not
+// cut at its bound, no tunnel still open), as the engine that closed its
+// proxy accounted for it; (c) no tunnel was accepted to any destination and
+// no byte went up; (d) the backend's own report does not contradict zero:
+// no observation, or none with a count or cost other than 0. Otherwise the
+// usage is what the observations say, unknown included. The row's
+// `normalization_version` names the basis, and its `raw_usage` keeps the
+// evidence (`zero_basis`).
+export const EGRESS_ZERO_BASIS = 'egress-evidence-zero-1';
+
+export type EgressAccount = { domain: string; egress_log: string | null; complete: boolean; entries: number; accepted: number; bytes_up: number };
+
+const realInvocation = (db: Db, invocation: string): boolean => {
+  const receipt = db.prepare('SELECT "trust_entry", "qualification_attempt", "provider" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as
+    | { trust_entry: string | null; qualification_attempt: string | null; provider: string }
+    | undefined;
+  return (receipt?.trust_entry ?? null) !== null || ((receipt?.qualification_attempt ?? null) !== null && receipt?.provider !== 'scripted');
+};
+
+// The basis of a known zero, or why there is none.
+export function egressZeroBasis(
+  db: Db,
+  invocation: string,
+  evidence: readonly EgressAccount[],
+  observations: { raw: Record<string, unknown> }[],
+): { basis: Record<string, unknown> } | { none: string } {
+  if (!realInvocation(db, invocation)) return { none: 'not a real backend' };
+  const domains = db
+    .prepare('SELECT "id", "status", "profile", "cgroup_path", "launch_binding", "mount_plan_record" FROM "execution_domains" WHERE "invocation" = ? ORDER BY "id"')
+    .all(invocation) as { id: string; status: string; profile: string; cgroup_path: string | null; launch_binding: string | null; mount_plan_record: string | null }[];
+  if (domains.length === 0) return { none: '(a) no domain is recorded' };
+  const used: Record<string, unknown>[] = [];
+  for (const d of domains) {
+    // (a)
+    if (d.status !== 'terminated') return { none: `(a) domain ${d.id} is not terminated` };
+    if (d.profile === 'probe') return { none: `(a) domain ${d.id} ran the probe profile` };
+    if (d.cgroup_path === null || d.launch_binding === null || d.mount_plan_record === null) return { none: `(a) domain ${d.id} has no recorded sandbox (launch, cgroup or mount plan)` };
+    // (b)
+    const e = evidence.find((x) => x.domain === d.id);
+    if (!e) return { none: `(b) no egress account of domain ${d.id}` };
+    if (!e.complete || e.egress_log === null) return { none: `(b) the egress log of domain ${d.id} is not complete` };
+    if (!db.prepare(`SELECT 1 FROM "records" WHERE "id" = ? AND "kind" = 'egress_log' AND "missing_at" IS NULL`).get(e.egress_log)) return { none: `(b) the egress log record of domain ${d.id} is not there` };
+    // (c)
+    if (e.accepted !== 0) return { none: `(c) domain ${d.id} had ${e.accepted} tunnel(s) accepted` };
+    if (e.bytes_up !== 0) return { none: `(c) domain ${d.id} sent bytes up` };
+    used.push({ domain: d.id, egress_log: e.egress_log, entries: e.entries, accepted: 0, bytes_up: 0 });
+  }
+  // (d) every number the backend reported is 0.
+  for (const o of observations) {
+    for (const [key, v] of Object.entries(o.raw)) {
+      if (typeof v === 'number' && v !== 0) return { none: `(d) the backend reported ${key} ${v}` };
+    }
+  }
+  return { basis: { kind: EGRESS_ZERO_BASIS, observations: observations.length, domains: used } };
+}
+
 export function chargeInvocation(
   tx: Tx,
   run: { id: string; project: string; role: string; backend: string; model_requested: string; outcome: string | null },
   receipt: { id: string; turn: string | null },
+  egress: readonly EgressAccount[] = [],
 ): void {
   const exists = tx.db.prepare('SELECT 1 FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(receipt.id);
   if (exists) return;
   const obs = observationsOf(tx.db, receipt.id);
-  const raw = foldObservations(obs);
-  const n = obs.length === 0 ? NOTHING_OBSERVED : normalizeFor(run.backend, raw);
-  const complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') && terminalUsageObserved(run.backend, raw) ? 1 : 0;
+  let raw = foldObservations(obs);
+  let n = obs.length === 0 ? NOTHING_OBSERVED : normalizeFor(run.backend, raw);
+  let complete = obs.length > 0 && !ENGINE_ENDED.includes(run.outcome ?? '') && terminalUsageObserved(run.backend, raw) ? 1 : 0;
+  const zero = egressZeroBasis(tx.db, receipt.id, egress, obs);
+  if ('basis' in zero) {
+    raw = { ...raw, zero_basis: zero.basis };
+    n = { billable_in: 0, cached_in: 0, out: 0, model_observed: n.model_observed, cost_status: 'measured_zero', cost_usd: 0, normalization_version: EGRESS_ZERO_BASIS };
+    complete = 1;
+  }
   const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
   const id = tx.newId('led_');
   tx.db

@@ -43,7 +43,7 @@ import { type RunEnd, type RunHandle, type Runtime, expiryEnd, log } from '../ru
 import type { EndFacts } from '../store/transitions/runs.js';
 import { pausePoint, seamObserveDomain } from '../testing/seam.js';
 import { terminateDomain } from '../boundary/terminate.js';
-import { finishEgress } from '../invoke/proxy/egress.js';
+import { finishEgressAccount } from '../invoke/proxy/egress.js';
 import { redactText, redactValue } from '../records/redact.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 
@@ -240,7 +240,10 @@ export class RunEnder {
       }
     }
     await pausePoint('run_end.before_ended');
-    await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null, baseline });
+    // The egress evidence of the run's domains this engine closed (E85): a
+    // domain it did not close (an earlier incarnation's) has none.
+    const egress = handle?.egressEvidence ?? [];
+    await this.rt.engine('run.finish', { run, invocations, recovery: opts.recovery ?? null, baseline, egress });
     // What the domain's volatile filesystem held goes with the run.
     handle?.sandbox?.releaseVolatile();
     this.rt.handles.delete(run);
@@ -301,7 +304,7 @@ export class RunEnder {
       const egress = own.egress;
       own.egress = null;
       own.egressEntries = egress.entries.map((e) => ({ authority: e.authority, decision: e.decision, reason: e.reason, opened_at: e.opened_at, bytes_up: e.bytes_up, bytes_down: e.bytes_down }));
-      await finishEgress(this.rt, egress, { project: own.claim.project, run: own.claim.run });
+      own.egressEvidence.push(await finishEgressAccount(this.rt, egress, { project: own.claim.project, run: own.claim.run }));
     }
     const neverRan = row.launch_binding === null || (own !== undefined && !own.backendStarted && own.sandbox?.launcherExit !== null);
     return { terminated: true, refused: neverRan };
