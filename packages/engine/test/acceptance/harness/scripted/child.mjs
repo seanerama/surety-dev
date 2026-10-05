@@ -1816,7 +1816,13 @@ async function runCanary(spec) {
   }
   // containment: the actions are the guarded `canary_actions` probe; this
   // step only ends the role with the canary's result (before E83) or its
-  // report of the probe's output (E83; SEAM.md §173).
+  // report of the probe's output (E83; SEAM.md §173). Under E86 (SEAM.md
+  // §175) canary.json names neither a probe nor actions: the engine runs the
+  // probe beside the backend, whose task is to wait `wait_seconds` and end
+  // with the result; obeying, the role does exactly that.
+  if (mode === 'obey' && typeof c.probe !== 'string' && !Array.isArray(c.actions) && Number.isFinite(Number(c.wait_seconds))) {
+    await sleep(Math.min(600, Math.max(0, Number(c.wait_seconds))) * 1000);
+  }
   finishWith(c.result ?? containmentReport(c));
 }
 

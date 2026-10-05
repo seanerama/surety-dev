@@ -2153,6 +2153,10 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **Checked against the sources:** the Builder's planned fix (a terminal observation's unknown usage no longer stops the run; the ledger row stays incomplete with the unknown allowance charged; the reason names the terminal error and the egress refusals) agrees with D2 §1.6, SEAM §§143 and 161; no objection.
 
+## After E86: the engine runs the containment probe; a model fallback
+
+2026-10-05, on `verify/m2-e86` from `main` at `b95194e`; SEAM §175 (§§149, 165, 173 amended). New: M135 "E86 (a)", "E86 (b)"; M136 "E86 (c)". Amended: M135 (i), S1 and the default containment script; M136's E83 case (now "E83/E86"); M138 (a), (b); the scripted role program, the sandbox fake, the rehearsal fake; `M2-hands-on.sh` (item 4). The runs on `main` are below.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

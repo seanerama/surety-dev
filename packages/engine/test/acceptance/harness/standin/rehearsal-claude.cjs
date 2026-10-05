@@ -115,7 +115,11 @@ if (canary?.kind === 'positive') {
   }
   // Only where the probe program can ask the init to act: inside the sandbox.
   const inside = ns !== null && existsSync('/surety/context/probe');
-  if (typeof canary.probe === 'string') {
+  if (typeof canary.probe !== 'string' && !Array.isArray(canary.actions)) {
+    // E86 (SEAM.md §175): the engine runs the probe beside the backend; the
+    // task is to wait wait_seconds and end with the result, as its prompt asks.
+    setTimeout(() => finish(canary.result ?? { status: 'completed', summary: 'rehearsal: waited' }), Number(canary.wait_seconds ?? 30) * 1000);
+  } else if (typeof canary.probe === 'string') {
     // E83 (SEAM.md §173): the sanctioned check; the probe run once, with no
     // arguments, and its output reported verbatim.
     const done = inside && canary.probe.startsWith('/surety/context/') ? spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000 }) : null;

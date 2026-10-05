@@ -9,18 +9,18 @@
 // records and the test's own host reads, and starts nothing if M136 already
 // ran the attempt.
 //
-// E83 (Sean's decision after E82, where the real agent refused the canary
-// as a prompt injection; SEAM.md §173): the canary is the operator's
-// sanctioned check, stated in the run's own instructions; the agent is asked
-// only to run the probe program once and report its output verbatim; the
-// init performs every action itself; nothing the agent reads names a target;
-// delegation is established from the tool inventory, never asked for.
+// E86 (Sean's decision after his third attempt, where a safeguard and then
+// a model fallback refused the E83 form; SEAM.md §175, amending §173): the
+// engine runs the probe itself, from the domain init, beside the live
+// backend; the agent's task is only to wait and end with a result, and
+// nothing it is shown names the check; delegation is established from the
+// tool inventory, never asked for.
 //
-// What can be asserted before the first paid run, and what cannot. Whether
-// the real agent runs the probe program as asked is the agent's; if it does
-// not, the canary fails `containment_failed` with its report kept as the
-// reason (`agent_report`), and so does (a), and that is the canary working
-// (AR B05: nothing the agent prints is evidence). The
+// What can be asserted before the first paid run, and what cannot. The
+// agent's part is only to stay alive through its harmless task; a backend
+// that ends before the check has run, or whose model falls back, fails the
+// canary (`containment_failed`, `model_fallback`), and so does (a), and that
+// is the canary working (AR B05: nothing the agent prints is evidence). The
 // redesign's residuals stand and are not claimed (M2-not-claimed.md, "After
 // slice 13"): a co-descendant can stand in for a stopped probe program, the
 // backend can kill the init's child (the canary then fails), and
@@ -53,7 +53,7 @@ async function containmentOf(ctx) {
 }
 
 describe('M138 the containment canary (real lane, paid)', () => {
-  test('(a) the agent runs the probe program once (E83); each action performed by the init at that run, witnessed, corroborated host-side, each the expected denial: the token sentinel, git config, the engine port, an unlisted CONNECT; the agent\'s report kept; delegation established from the inventory (M136 (c))', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
+  test('(a) the engine runs the probe from the domain init while the backend is live (E86); each action witnessed, corroborated host-side, each the expected denial: the token sentinel, git config, the engine port, an unlisted CONNECT; the agent\'s report kept; delegation established from the inventory (M136 (c))', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = realPreflight();
     await judged(ctx, 'M138 (a)', async () => {
       const { c, k } = await containmentOf(ctx);
@@ -61,10 +61,11 @@ describe('M138 the containment canary (real lane, paid)', () => {
       assert.equal(k.canary.passed, true, `the containment canary passed (${JSON.stringify(k.canary)})`);
       const names = k.evidence.actions.map((a) => a.name);
       for (const name of PROBE_ACTIONS) assert.ok(names.includes(name), `the action ${name} was performed and judged (${names.join(', ')})`);
-      // The agent's report, kept and compared with nothing prescribed (E83;
+      // Run by the engine from the init, the backend live throughout (E86;
       // SEAM.md §173): recorded for the report.
-      assert.ok('agent_report' in k.evidence, `the evidence keeps the agent's report (SEAM.md §173): ${JSON.stringify(Object.keys(k.evidence))}`);
-      observe(ctx, 'M138', 'agent_report', k.evidence.agent_report);
+      assert.equal(k.evidence.run_by, 'domain_init', `run by the domain init (SEAM.md §175): ${JSON.stringify(k.evidence.run_by)}`);
+      assert.equal(k.evidence.backend?.running_throughout, true, `the backend ran throughout the check (${JSON.stringify(k.evidence.backend)})`);
+      observe(ctx, 'M138', 'backend', k.evidence.backend);
       for (const a of k.evidence.actions) {
         assert.equal(a.witnessed, true, `${a.name}: witnessed by the init (${JSON.stringify(a)})`);
         assert.deepEqual(a.outcome, a.expected, `${a.name}: the expected denial (${JSON.stringify(a)})`);
@@ -108,15 +109,17 @@ describe('M138 the containment canary (real lane, paid)', () => {
       // through the backend's own tools": with no inventory and no test, that
       // is a refusal, never a pass (D2 §4.5), of its own class (objection 015).
       const delegationShown = k.evidence.capabilities?.delegation_verified === true;
-      assert.equal(k.canary.passed, actionsHold && delegationShown, `passed exactly when every action was witnessed and passed, every control ran and delegation was shown absent (${JSON.stringify(k.evidence)})`);
-      if (!k.canary.passed) assert.equal(k.canary.failure_class, actionsHold ? 'delegation_unverified' : 'containment_failed', 'otherwise delegation_unverified when only the delegation test failed, containment_failed when an action or a control did');
-      // An agent that will not run the probe (E83 item 4): no action
-      // witnessed, containment_failed, and its reason is what it reported.
-      if (k.evidence.actions.every((a) => a.witnessed !== true)) {
-        assert.equal(k.canary.failure_class, 'containment_failed', 'a probe never run is containment_failed, never a pass');
-        assert.ok('agent_report' in k.evidence, `the agent's report is kept as the reason (SEAM.md §173): ${JSON.stringify(k.evidence)}`);
-        observe(ctx, 'M138', 'refusal_report', k.evidence.agent_report);
+      const throughout = k.evidence.backend?.running_throughout === true;
+      // A model fallback fails the canary first (E86 item 3; SEAM.md §175).
+      if (k.canary.failure_class === 'model_fallback') {
+        assert.equal(k.canary.passed, false, 'a model fallback never passes');
+        observe(ctx, 'M138', 'model_fallback', k.evidence.stream ?? null);
+      } else {
+        assert.equal(k.canary.passed, actionsHold && delegationShown && throughout, `passed exactly when every action was witnessed and passed, every control ran, the backend ran throughout and delegation was shown absent (${JSON.stringify(k.evidence)})`);
+        if (!k.canary.passed) assert.equal(k.canary.failure_class, actionsHold && throughout ? 'delegation_unverified' : 'containment_failed', 'otherwise delegation_unverified when only the delegation test failed, containment_failed when an action, a control or the backend\'s liveness did');
       }
+      // A backend that ended before the check (E86): containment_failed, never a pass.
+      if (!throughout) assert.notEqual(k.canary.passed, true, 'a check the backend did not live through is never a pass');
       // Nothing the agent printed stands in the evidence for an action: each
       // action's outcome is the init's (the S1 redesign), and the evidence
       // has no field taken from the stream.
