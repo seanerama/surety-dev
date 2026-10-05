@@ -58,6 +58,17 @@
 # Everything it makes is under one directory (SURETY_HANDS_ON_DIR, by
 # default ~/surety-hands-on-<date>), printed at the start and KEPT at the
 # end: the engine's records are the run's evidence. KEEP=0 removes it.
+#
+# The dress rehearsal (E79), never Sean's run: SURETY_REAL_REHEARSAL=1 runs
+# the same steps against the rehearsal's fake claude (built from
+# packages/engine/test/acceptance/harness/standin/), with a made-up token.
+# It refuses any binary that does not carry the fake's marker, is larger
+# than 1 MiB or lies inside Claude Code's own install directories. Its only
+# egress host is provider.rehearsal.invalid, so nothing reaches a provider
+# and the attempt fails on its provider-tunnel control, as expected; the
+# rehearsal then goes on with a labelled fixture entry in the api_key mode
+# (the fixture's only mode) so that steps 9 to 11 run too. Nothing it shows
+# is evidence for M2.
 
 set -euo pipefail
 
@@ -87,6 +98,24 @@ KEY_MODE=$(stat -c %a "$SURETY_REAL_CREDENTIAL_REF")
 [ -n "${SURETY_REAL_CLAUDE_BINARY:-}" ] || die "set SURETY_REAL_CLAUDE_BINARY to the Claude Code binary to qualify, by its own file. Nothing was started."
 [ -f "$SURETY_REAL_CLAUDE_BINARY" ] && [ ! -L "$SURETY_REAL_CLAUDE_BINARY" ] && [ -x "$SURETY_REAL_CLAUDE_BINARY" ] || die "SURETY_REAL_CLAUDE_BINARY must be an executable regular file, not a link. Nothing was started."
 [ -t 0 ] || die "run this from your terminal: it asks you before every paid step. Nothing was started."
+
+# The rehearsal switch (E79): only with the rehearsal's fake, checked by
+# content, size and place before anything starts.
+REHEARSAL=${SURETY_REAL_REHEARSAL:-}
+EGRESS_HOST=api.anthropic.com
+REHEARSAL_MARKER='SURETY REHEARSAL FAKE CLAUDE'
+if [ -n "$REHEARSAL" ]; then
+  [ "$REHEARSAL" = 1 ] || die "SURETY_REAL_REHEARSAL must be 1 or unset. Nothing was started."
+  FAKE_REAL=$(readlink -f "$SURETY_REAL_CLAUDE_BINARY")
+  WHY=
+  if [ "$(stat -c %s "$FAKE_REAL")" -gt 1048576 ]; then WHY="$WHY; it is larger than 1 MiB"
+  elif ! grep -qaF "$REHEARSAL_MARKER" "$FAKE_REAL"; then WHY="$WHY; it does not carry \"$REHEARSAL_MARKER\""; fi
+  case $FAKE_REAL in "$HOME/.local/share/claude"/*|"$HOME/.local/bin"/*) WHY="$WHY; it is inside Claude Code's own install directories" ;; esac
+  [ -z "$WHY" ] || die "the rehearsal switch works only with the rehearsal's fake claude, and $SURETY_REAL_CLAUDE_BINARY is not it${WHY}. Nothing was started."
+  EGRESS_HOST=provider.rehearsal.invalid
+  printf '\n%s\n# M2 HANDS-ON: DRESS REHEARSAL (SURETY_REAL_REHEARSAL=1)\n# The backend is the FAKE claude at %s: it runs no model and uses nothing.\n# The only egress host is %s: nothing reaches a provider.\n# Nothing here is evidence for M2.\n%s\n' \
+    "$(printf '#%.0s' $(seq 1 78))" "$FAKE_REAL" "$EGRESS_HOST" "$(printf '#%.0s' $(seq 1 78))"
+fi
 for tool in jq curl git node systemctl; do command -v "$tool" >/dev/null || die "$tool is needed. Nothing was started."; done
 [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] || die "start this from a login session (XDG_RUNTIME_DIR is not set). Nothing was started."
 [ "$(systemctl --user is-system-running 2>/dev/null || true)" = running ] || die "the user manager is not running (systemctl --user is-system-running). Nothing was started."
@@ -101,6 +130,7 @@ paid() {
   local what=$1 runs=$2 usd
   usd=$(awk -v r="$runs" -v t="$RUN_TOKENS" -v p="$OUT_USD_PER_MILLION" 'BEGIN { printf "%.2f", r * t * p / 1000000 }')
   printf '\n\033[1;33m!! PAID STEP: %s\033[0m\n' "$what"
+  [ -z "$REHEARSAL" ] || note "(REHEARSAL: the fake runs no model; this step uses nothing. The question is asked as it will be.)"
   note "It starts $runs real run(s) of Claude Code ($MODEL) on your Claude subscription, drawing on the usage allowance your own Claude use shares."
   note "At most, in billable tokens: $runs x $RUN_TOKENS tokens x $OUT_USD_PER_MILLION USD per million = $usd USD in Claude Code's own estimate,"
   note "plus cache reads (0.20 USD per million, not counted by the engine's limit) and any overshoot until a run's deadline."
@@ -146,6 +176,7 @@ start_engine() { # production | real-lane
   local -a args=(serve)
   [ "$1" = real-lane ] && args+=(--harness --harness-real-lane)
   args+=(--secret-file "$KEY_REF_NAME=$SURETY_REAL_CREDENTIAL_REF")
+  [ "$AUTH_MODE" != api_key ] || args+=(--provider-cap-usd "$KEY_REF_NAME=50")
   printf '{"api_port": %s, "tick_interval": %s}\n' "$PORT" "$([ "$1" = real-lane ] && echo 600 || echo 30)" > "$SURETY_HOME/config.json"
   ( cd "$SURETY_HOME" && exec env -i SURETY_HOME="$SURETY_HOME" PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME="$SURETY_HOME" LANG=C.UTF-8 TZ=UTC \
       XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}" \
@@ -275,9 +306,11 @@ git -C "$NOENTRY_REPO" checkout -q --detach
 P0=$(S -X POST "$API/v1/projects" -d "{\"name\": \"no-entry\", \"tier\": \"T2\", \"dev_repo_path\": \"$NOENTRY_REPO\", \"integration_branch\": \"main\"}" | jq -r '.project.id')
 [[ $P0 == proj_* ]] || die "no project"
 wait_registered "$P0"
+# The policy before the plan: the plan makes the stage's work eligible and
+# the engine dispatches it at once, under the backend the policy names then.
+S -X POST "$API/v1/projects/$P0/policy" -d '{"backend_builder": "claude", "preflight_refusals_max": 1}' | jq -c '{revision: .revision?}'
 S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P0\", \"requirements\": [{\"key\": \"R1\"}], \"stages\": [{\"number\": 1, \"goal\": \"anything\", \"implements\": [\"R1\"]}]}" > "$WORK/plan0.json"
 W0=$(jq -r '.stages[0].work_item' "$WORK/plan0.json")
-S -X POST "$API/v1/projects/$P0/policy" -d '{"backend_builder": "claude", "preflight_refusals_max": 1}' | jq -c '{revision: .revision?}'
 wait_run_end "$P0" "$W0" 120
 R0=$(run_of "$W0")
 S "$API/v1/projects/$P0/runs/$R0" | jq '.run | {id, state, outcome, reason_class, code, refusal}'
@@ -298,7 +331,7 @@ FIXTURE_CONFIG=$FIXTURE_REPO/.git/config; [ -f "$FIXTURE_CONFIG" ] || FIXTURE_CO
 TOKEN_BEFORE=$(sha256sum "$SURETY_HOME/api.token" | cut -c1-64)
 CONFIG_BEFORE=$(sha256sum "$FIXTURE_CONFIG" | cut -c1-64)
 env -i SURETY_HOME="$SURETY_HOME" PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME="$SURETY_HOME" LANG=C.UTF-8 \
-  "$NODE" "$CLI" qualify claude --mode one_shot_headless --model "$MODEL" --auth-mode "$AUTH_MODE" --egress api.anthropic.com | tee "$WORK/qualify.json"
+  "$NODE" "$CLI" qualify claude --mode one_shot_headless --model "$MODEL" --auth-mode "$AUTH_MODE" --egress "$EGRESS_HOST" | tee "$WORK/qualify.json"
 QA=$(jq -r '.qualification_attempt.id' "$WORK/qualify.json")
 [[ $QA == qa_* ]] || die "no attempt was proposed (see above)"
 S "$API/v1/decisions" | jq --arg q "$QA" '.decisions[] | select(.subject_id == $q) | .manifest | {binary_sha256, help_sha256, model, template_version, auth_mode, candidate_egress, canary_deadlines, spend}'
@@ -328,7 +361,21 @@ for i in $(seq 1 600); do
   sleep 3
 done
 dbq "SELECT status, canaries FROM qualification_attempts WHERE id = '$QA'" | tee "$WORK/attempt.tsv"
-[ "$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")" = succeeded ] || die "the attempt did not succeed; its records are in $SURETY_HOME"
+REHEARSAL_FIXTURE=
+if [ "$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")" != succeeded ]; then
+  [ -n "$REHEARSAL" ] || die "the attempt did not succeed; its records are in $SURETY_HOME"
+  # The rehearsal's expected failure, and only it: the positive and the
+  # cancellation canaries passed; the containment canary's actions all
+  # passed, delegation was shown absent, and the provider tunnel is the only
+  # control that did not run (no provider is reachable).
+  CANARIES=$(dbq "SELECT canaries FROM qualification_attempts WHERE id = '$QA'")
+  CEV=$(record_path "$(echo "$CANARIES" | jq -r '.[] | select(.kind == "containment") | .evidence')")
+  echo "$CANARIES" | jq -e 'map({(.kind): .passed}) | add | .positive == true and .cancellation == true and .containment == false' >/dev/null &&
+    jq -e '(.actions | length > 0 and all(.passed == true)) and .capabilities.delegation_verified == true and ([.controls[] | select(.ran != true) | .name] == ["provider_tunnel"])' "$CEV" >/dev/null ||
+    die "REHEARSAL: the attempt failed for more than the provider tunnel; its records are in $SURETY_HOME"
+  note "REHEARSAL: the attempt failed as expected: its provider-tunnel control could not run (no provider is reachable); every other canary check passed."
+  REHEARSAL_FIXTURE=1
+fi
 
 say "7. The containment evidence"
 CONT_EVIDENCE=$(dbq "SELECT c.value ->> 'evidence' FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = 'containment'")
@@ -344,10 +391,29 @@ check 5 "the containment evidence: the token unread, the repository configuratio
 
 say "8. Your second approval: trust_activation"
 note "Activating the entry launches nothing. It lets real roles be dispatched to it, each a paid run."
-ENTRY=$(dbq "SELECT trust_entry FROM qualification_attempts WHERE id = '$QA'")
-wait_for_sean trust_activation "$ENTRY"
-S "$API/v1/engine" | jq --arg e "$ENTRY" '{backends, entry: (.trust_entries[] | select(.id == $e) | {id, status, version, binary_sha256, usage_granularity, cost_reporting, enforceable_boundaries})}'
-stop_engine
+if [ -z "$REHEARSAL_FIXTURE" ]; then
+  ENTRY=$(dbq "SELECT trust_entry FROM qualification_attempts WHERE id = '$QA'")
+  wait_for_sean trust_activation "$ENTRY"
+  S "$API/v1/engine" | jq --arg e "$ENTRY" '{backends, entry: (.trust_entries[] | select(.id == $e) | {id, status, version, binary_sha256, usage_granularity, cost_reporting, enforceable_boundaries})}'
+  stop_engine
+else
+  # REHEARSAL ONLY: no entry was written, so the journey runs on an active
+  # entry the test mode's fixture installs, bound to the fake's script form
+  # (the fixture refuses an executable image and anything the engine's PATH
+  # names claude), in the api_key mode, the fixture's only one. Labelled;
+  # it stands for nothing of the real activation.
+  stop_engine
+  AUTH_MODE=api_key
+  KEY_REF_NAME=backend/claude/api_key
+  start_engine real-lane
+  FIXTURE_FAKE=$WORK/rehearsal-fake-backend
+  { printf '#!%s\n' "$NODE"; cat "$REPO/packages/engine/test/acceptance/harness/standin/rehearsal-claude.cjs"; } > "$FIXTURE_FAKE"
+  chmod 755 "$FIXTURE_FAKE"
+  ENTRY=$(S -X POST "$API/v1/harness/fixtures/trust-entry" -d "{\"backend\": \"claude\", \"status\": \"active\", \"binary\": {\"path\": \"$FIXTURE_FAKE\", \"sha256\": \"$(sha256sum "$FIXTURE_FAKE" | cut -c1-64)\"}, \"model\": \"$MODEL\", \"egress_hosts\": [\"$EGRESS_HOST\"]}" | jq -r '.trust_entry.id')
+  [[ $ENTRY == trust_* ]] || die "REHEARSAL: the fixture entry was not installed"
+  note "REHEARSAL: the journey runs on fixture entry $ENTRY (active, api_key mode, bound to the fake's script form); the real activation did not run."
+  stop_engine
+fi
 
 # ---------------------------------------------------------------------------------------
 say "9. The journey's first path, with Claude Code as Builder, Verifier and Reviewer"
@@ -367,10 +433,15 @@ unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 P=$(S -X POST "$API/v1/projects" -d "{\"name\": \"hands-on\", \"tier\": \"T2\", \"dev_repo_path\": \"$PROJ_REPO\", \"integration_branch\": \"main\"}" | jq -r '.project.id')
 [[ $P == proj_* ]] || die "no project"
 wait_registered "$P"
+# The policy before the plan (as in step 3).
+S -X POST "$API/v1/projects/$P/policy" -d '{"backend_builder": "claude", "backend_verifier": "claude", "backend_reviewer": "claude", "budget_run_billable_tokens": 300000, "budget_day_verified_usd": 6, "budget_day_unknown_tokens": 900000, "deadline_builder": 900, "deadline_verifier": 600, "deadline_reviewer": 600}' | jq -c '{revision: .revision?}'
 S -X POST "$API/v1/harness/fixtures/plan" -d "{\"project\": \"$P\", \"requirements\": [{\"key\": \"R1\", \"text\": \"src/greeting.js exports greeting(name), returning \\\"Hello, \\\" followed by name and \\\"!\\\".\"}], \"constraints\": [{\"key\": \"C1\", \"text\": \"Plain JavaScript modules with no dependencies.\"}], \"stages\": [{\"number\": 1, \"goal\": \"Implement R1: create src/greeting.js as R1 describes.\", \"implements\": [\"R1\"]}]}" > "$WORK/plan.json"
 STAGE=$(jq -r '.stages[0].id' "$WORK/plan.json"); BUILD=$(jq -r '.stages[0].work_item' "$WORK/plan.json")
 CHK=$(S -X POST "$API/v1/harness/fixtures/checks" -d "{\"project\": \"$P\", \"checks\": [{\"key\": \"login\", \"kind\": \"acceptance\", \"gate_kinds\": [\"stage\", \"alpha_authorize\"], \"requirements\": [\"R1\"]}]}" | jq -r '.checks[0].id')
-S -X POST "$API/v1/projects/$P/policy" -d '{"backend_builder": "claude", "backend_verifier": "claude", "backend_reviewer": "claude", "budget_run_billable_tokens": 300000, "budget_day_verified_usd": 6, "budget_day_unknown_tokens": 900000, "deadline_builder": 900, "deadline_verifier": 600, "deadline_reviewer": 600}' | jq -c '{revision: .revision?}'
+
+# Where the journey starts: after the engine's own setup commits (the
+# project's bootstrap and its policy revision, which no run makes).
+JOURNEY_BASE=$(git -C "$PROJ_REPO" rev-parse refs/heads/main)
 
 paid "the Builder's run on stage 1" 1
 tick "$P"
@@ -395,8 +466,11 @@ ENV=$(S -X POST "$API/v1/harness/fixtures/environment" -d "{\"project\": \"$P\",
 DAUTH=$(S -X POST "$API/v1/projects/$P/candidates/$C/authorizations" -d "{\"environment\": \"$ENV\", \"artifact_digest\": \"sha256:$(printf 'a%.0s' $(seq 1 64))\", \"config_identity\": \"config-1\", \"target_set\": [\"alpha-1\"]}" | jq -r '.authorization.id')
 S -X POST "$API/v1/projects/$P/candidates/$C/gates/alpha_authorize" -d "{\"authorization\": \"$DAUTH\"}" | jq '.evaluation | {outcome, reasons}'
 
-git -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$BASE..main"
-check 6 "every commit on the integration branch is the engine's, with Surety-Run and Surety-Role trailers, and none is the agent's" \
+echo "the engine's setup commits before the journey (no run makes them: they name the project, not a run):"
+git -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$BASE..$JOURNEY_BASE"
+echo "the journey's commits:"
+git -C "$PROJ_REPO" log --format='%h %an <%ae>%n%(trailers:only)' "$JOURNEY_BASE..main"
+check 6 "every commit of the journey on the integration branch is the engine's, with Surety-Run and Surety-Role trailers, and none is the agent's (the setup commits before it are the engine's too, with Surety-Project)" \
   "git -C $PROJ_REPO log --format='%h %an <%ae>%n%(trailers:only)' $BASE..main"
 
 echo "the ledger, as the engine reads it:"

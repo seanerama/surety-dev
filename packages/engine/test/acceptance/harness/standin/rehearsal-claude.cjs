@@ -140,7 +140,14 @@ if (role === 'builder') {
     write('src/session.js', readFileSync(ws('src/session.js'), 'utf8').replace('SESSION_LIFETIME * 1000 * 1000', 'SESSION_LIFETIME * 1000'));
     finish({ status: 'completed', summary: 'rehearsal: corrected the session lifetime to 30 minutes in milliseconds' });
   }
-  const files = [...new Set([...prompt.matchAll(/src\/([a-z]+)\.js/g)].map((m) => m[1]))];
+  // The file names the stage's goal or its requirements' texts name.
+  let texts = prompt;
+  try {
+    for (const f of require('node:fs').readdirSync('/surety/context/requirements')) texts += `\n${readFileSync(`/surety/context/requirements/${f}`, 'utf8')}`;
+  } catch {
+    // no requirement texts
+  }
+  const files = [...new Set([...texts.matchAll(/src\/([a-z]+)\.js/g)].map((m) => m[1]))];
   if (files.includes('farewell')) {
     // Slow work, to be stopped: usage first, then a long wait.
     process.on('SIGTERM', () => process.exit(143));
