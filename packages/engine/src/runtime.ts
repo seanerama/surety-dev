@@ -129,6 +129,10 @@ export interface RunHandle {
   // The domain's egress log entries, kept when its proxy closed (a
   // qualification canary's contacts, D2 §7.2).
   egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[] | null;
+  // Each of its domains' egress evidence once the domain is terminated and
+  // its proxy closed (E85): what the run's ledger row may rest a known zero
+  // on.
+  egressEvidence: import('./invoke/proxy/egress.js').EgressEvidence[];
   // A real backend's stream, as its adapter reads it (invoke/adapters/
   // claude.ts); null for the scripted protocol.
   adapterStream: ClaudeStream | null;
@@ -185,6 +189,7 @@ export function newHandle(claim: Claim): RunHandle {
     collecting: false,
     streamBound: null,
     egressEntries: null,
+    egressEvidence: [],
     adapterStream: null,
     sampler: null,
     samplingReport: null,

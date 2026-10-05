@@ -1003,10 +1003,13 @@ function resolverReport(): unknown {
 }
 
 // The resolver the egress proxy consults: the harness's in harness mode (the
-// system's is never consulted there), null (the system's) otherwise. A name
-// the map does not hold does not resolve.
+// system's is never consulted there), null (the system's) otherwise, and
+// null under the real lane (SEAM.md §164), whose real backend reaches its
+// real provider by name: the harness map is never filled there, and Sean's
+// second real-agent run found every name refused `resolve_failed` by it. A
+// name the map does not hold does not resolve.
 export function seamResolver(): { resolve(name: string): Promise<string[]> } | null {
-  if (!init.harness) return null;
+  if (!init.harness || realLane) return null;
   return {
     async resolve(name: string): Promise<string[]> {
       const key = name.toLowerCase().replace(/\.+$/, '');

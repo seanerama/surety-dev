@@ -4,6 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
@@ -794,7 +795,7 @@ export function quarantineRun(tx: Tx, args: { run: string; domains: string[]; pr
 // Idempotent: a run already ended is left as it is.
 export function finishRun(
   tx: Tx,
-  args: { run: string; invocations: Record<string, 'ended' | 'unknown' | 'refused'>; recovery: string | null; baseline?: Baseline | null },
+  args: { run: string; invocations: Record<string, 'ended' | 'unknown' | 'refused'>; recovery: string | null; baseline?: Baseline | null; egress?: EgressEvidence[] },
 ): { ended: boolean } {
   const run = mustRun(tx, args.run);
   if (run.state === 'ended') return { ended: false };
@@ -823,7 +824,7 @@ export function finishRun(
       | { exit_class: string | null; exit_evidence: string | null }
       | undefined;
     observe(tx, run, receipt.id, terminal, terminal === 'refused' ? null : (exit ?? null));
-    if (terminal !== 'refused') chargeInvocation(tx, run, receipt);
+    if (terminal !== 'refused') chargeInvocation(tx, run, receipt, args.egress ?? []);
   }
 
   // A run whose role ran on the real boundary and whose end recorded no

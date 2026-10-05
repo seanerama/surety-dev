@@ -49,6 +49,7 @@ import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream } from './adapters/claude.js';
+import { exitCause } from './exit-cause.js';
 import { startBackendSampler } from './sampler.js';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
@@ -1015,7 +1016,10 @@ export class Launcher {
     // run's result (D2 §1.4).
     if (cls === 'error_exit') {
       if (accepted) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result contradicts the failed exit' };
-      return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class error_exit: the backend failed without a result' };
+      // The cause, as far as the engine saw it: the backend's terminal
+      // event and the domain's egress refusals.
+      const cause = exitCause(handle.adapterStream?.summary() ?? null, handle.egressEntries);
+      return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}` };
     }
     await this.publishUnaccepted(handle, c);
     if (cls === 'resource_limit') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class resource_limit: the backend was ended by a resource limit of its domain (memory.events oom_kill rose)' };
@@ -1250,7 +1254,11 @@ export class Launcher {
     }
     let limit: string | null = null;
     try {
-      limit = await this.rt.read<string | null>('budget.check', { run, invocation: handle.claim.invocation });
+      // A real backend whose terminal event was read before the pause is
+      // checked as on that event (checkBudget); the scripted protocol as
+      // before.
+      const terminal = handle.adapterStream !== null && handle.terminal !== null;
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation: handle.claim.invocation, ...(terminal ? { terminal: true } : {}) });
     } catch {
       limit = 'budget_unreadable';
     }
@@ -1335,7 +1343,7 @@ export class Launcher {
     const { run, generation, invocation } = handle.claim;
     for (const u of r.usage) {
       const recorded = await this.recordUsage(handle, { run, generation, invocation, semantics: u.semantics, raw: redactValue(u.raw) });
-      if (recorded) await this.checkBudget(handle);
+      if (recorded) await this.checkBudget(handle, { terminal: r.terminal !== null });
     }
     if (r.terminal !== null) handle.terminal = r.terminal;
     // A protocol error (a second terminal event) is ignored with what it
@@ -1404,12 +1412,22 @@ export class Launcher {
   // that has passed a limit with what it has observed is stopped at this
   // boundary, through the run-end protocol. A check that cannot read the
   // ledger has failed, and the run does not go on without one (D1 §6.6).
-  private async checkBudget(handle: RunHandle): Promise<void> {
+  //
+  // The backend's terminal event is its last word: what it observes is the
+  // invocation's usage as the backend totals it, and nothing is spent after
+  // it. On it the check does not answer `budget_usage_unknown` (a failure
+  // written before or without a model call, whose zeroed totals are no
+  // measurement): a stop would only race the exit of a run ending by
+  // itself and label it a budget stop (Sean's second real-agent run, where
+  // the backend never reached its provider). The run ends by its exit, and
+  // its ledger row keeps the usage unknown, the allowance charged. A limit
+  // passed (the run's on what is known, a day's) is still a stop.
+  private async checkBudget(handle: RunHandle, opts: { terminal?: boolean } = {}): Promise<void> {
     if (handle.ending) return;
     const { run, invocation } = handle.claim;
     let limit: string | null;
     try {
-      limit = await this.rt.read<string | null>('budget.check', { run, invocation });
+      limit = await this.rt.read<string | null>('budget.check', { run, invocation, ...(opts.terminal === true ? { terminal: true } : {}) });
     } catch (err) {
       log('budget check', err, { run });
       limit = 'budget_unreadable';
