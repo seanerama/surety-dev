@@ -114,7 +114,10 @@ describe('M136 the Claude adapter with a fake backend: usage kept when the total
     assert.equal(row.usage_complete, 0, 'usage incomplete');
     const limit = await runLimit(fx, project);
     assert.equal(row.unknown_allowance_tokens, Math.max(0, limit - 161200), `the allowance charged on the remainder (${JSON.stringify(row)})`);
-    assert.equal(attemptOf(fx.home, attempt.id).status, 'failed', 'the failed positive canary fails the attempt');
+    // The attempt ends after the canary's ledger row is written: waited for,
+    // not read at once (a race seen 2026-10-05: it read `running`).
+    const ended = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 600_000 });
+    assert.equal(ended.status, 'failed', 'the failed positive canary fails the attempt');
   });
 
   test('S2 (a): an inventory listing a tool outside the template\'s --tools (Skill) is not delegation_verified; the attempt does not succeed', async (t) => {
