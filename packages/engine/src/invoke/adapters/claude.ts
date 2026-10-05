@@ -471,6 +471,10 @@ export interface BackendSampling {
   // The command lines of the members running the backend's binary, distinct,
   // bounded: what a second one was, if one appeared.
   backend_cmdlines: string[];
+  // Members seen running the binary beside the backend that had exec'd
+  // something else or gone by the next look: forks caught before their exec,
+  // not counted in max_backend (SEAM §171).
+  transient_backend: number;
 }
 
 export interface ClaudeCapabilities {

@@ -291,6 +291,7 @@ export class QualificationDriver {
                 max_members: Math.max(...samplings.map((x) => x.max_members)),
                 unclassified: Math.max(...samplings.map((x) => x.unclassified)),
                 backend_cmdlines: [...new Set(samplings.flatMap((x) => x.backend_cmdlines))].slice(0, 16),
+                transient_backend: samplings.reduce((n, x) => n + (x.transient_backend ?? 0), 0),
               };
         capabilities = claudeCapabilities(
           history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
