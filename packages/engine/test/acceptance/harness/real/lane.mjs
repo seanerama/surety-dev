@@ -33,7 +33,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -99,6 +99,7 @@ const ENV = Object.freeze({
   wait: 'SURETY_REAL_WAIT_MINUTES',
   rerun: 'SURETY_REAL_RERUN',
   pathTwo: 'SURETY_REAL_PATH_TWO',
+  rehearsal: 'SURETY_REAL_REHEARSAL',
 });
 
 const HOURS = 3_600_000;
@@ -166,6 +167,7 @@ export function realPreflight() {
   if (!bst.isFile()) fail(`${ENV.binary} must name the binary's own file, not a link to it (a link like ~/.local/bin/claude moves when Claude Code updates itself)`);
   if ((bst.mode & 0o111) === 0) fail(`${ENV.binary} must be executable`);
   const binarySha256 = sha256(readFileSync(binary));
+  const rehearsal = rehearsalGuard(env[ENV.rehearsal], binary);
 
   sandboxEnv(); // a login session with the user manager (SEAM.md §122): asserts, never skips
 
@@ -187,10 +189,42 @@ export function realPreflight() {
   }
   if (!isLink(link)) symlinkSync(binary, link);
 
-  const ctx = { runDir, keyRef, keyValue, authMode, credentialRef: REAL.authModes[authMode].ref, binary, binarySha256, binDir, waitMinutes: waitMinutes, pathTwo };
+  const candidateEgress = rehearsal ? [...REHEARSAL_EGRESS] : [...REAL.candidateEgress];
+  const ctx = { runDir, keyRef, keyValue, authMode, credentialRef: REAL.authModes[authMode].ref, binary, binarySha256, binDir, waitMinutes: waitMinutes, pathTwo, rehearsal, candidateEgress, providerHost: candidateEgress[0] };
   Object.defineProperty(ctx, 'keyValue', { enumerable: false }); // never serialized
   applyRerun(ctx);
   return ctx;
+}
+
+// ---- the dress rehearsal (E79 item 1; SEAM.md §170) ---------------------------------
+
+// The marker the rehearsal's fake carries (harness/standin/rehearsal-claude.mjs).
+export const REHEARSAL_MARKER = 'SURETY REHEARSAL FAKE CLAUDE';
+// The rehearsal's only candidate destination: a name that resolves nowhere,
+// so nothing leaves this machine for a provider (the provider-tunnel
+// control then fails, as expected in a rehearsal).
+export const REHEARSAL_EGRESS = Object.freeze(['provider.rehearsal.invalid']);
+
+// SURETY_REAL_REHEARSAL=1 lets the harness answer Sean's approvals itself,
+// and only for the rehearsal's fake: a script (not an executable image)
+// carrying the marker, outside Claude Code's own install directories, under
+// 1 MiB. Anything else refuses the run before anything starts. Without the
+// switch, nothing changes: the test waits for Sean.
+function rehearsalGuard(value, binary) {
+  if (value === undefined || value === '') return false;
+  if (value !== '1') fail('SURETY_REAL_REHEARSAL must be 1 or unset');
+  const real = realpathSync(binary);
+  const bytes = readFileSync(real);
+  const reasons = [];
+  if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) reasons.push('it is an executable image');
+  if (!bytes.subarray(0, 2).equals(Buffer.from('#!'))) reasons.push('it is not a script');
+  if (!bytes.includes(Buffer.from(REHEARSAL_MARKER))) reasons.push(`it does not carry "${REHEARSAL_MARKER}"`);
+  if (bytes.length > 1 << 20) reasons.push('it is larger than 1 MiB');
+  for (const dir of [join(homedir(), '.local', 'share', 'claude'), join(homedir(), '.local', 'bin')]) if (inside(real, dir)) reasons.push(`it is inside ${dir}`);
+  if (reasons.length > 0) fail(`the rehearsal switch works only with the rehearsal's fake claude, and ${binary} is not it: ${reasons.join('; ')}`);
+  const banner = `\n${'#'.repeat(78)}\n# SURETY REAL LANE: DRESS REHEARSAL (SURETY_REAL_REHEARSAL=1)\n# The backend is the FAKE claude at ${real}.\n# The harness answers qualification_approval and trust_activation ITSELF.\n# Nothing is sent to a provider: the only candidate destination is ${REHEARSAL_EGRESS[0]}.\n# Nothing here is evidence for M2.\n${'#'.repeat(78)}\n`;
+  process.stderr.write(banner);
+  return true;
 }
 
 function isLink(path) {
@@ -393,6 +427,12 @@ export async function waitForSean(ctx, fx, kind, subjectId, { what, facts = {} }
       return consumed;
     }
     const open = all.find((d) => d.status === 'open');
+    if (open && ctx.rehearsal && open.id !== shown) {
+      shown = open.id;
+      tellSean(ctx, `SURETY REAL LANE REHEARSAL: the harness answers ${kind} ${open.id} itself with "approve" (the backend is the rehearsal's fake; SURETY_REAL_REHEARSAL=1).\nWhat: ${what}`);
+      const res = await fx.engine.post(`/v1/decisions/${open.id}/answer`, { option: 'approve', preview_hash: open.preview_hash });
+      if (res.status !== 200) throw new Error(`rehearsal: answering ${kind} ${open.id} was refused (${res.status} ${res.text})`);
+    }
     if (open && open.id !== shown) {
       shown = open.id;
       tellSean(
