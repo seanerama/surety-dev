@@ -18,6 +18,7 @@
 // transaction until released, and another that holds the controlled clock's
 // offset, so both threads take the same time.
 
+import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -704,6 +705,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         mainFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
+        connectHangs.clear();
         await storeOp(OP.clearFaults, {});
         return { status: 200, body: { faults: [] } };
       },
@@ -917,6 +919,12 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
               if (!Number.isSafeInteger(ms) || ms < 1 || ms > 60_000) throw new Refusal(400, 'invalid_value', 'collect_slow takes delay_ms, 1 to 60000.', 'Send delay_ms.', { field: 'delay_ms' });
               setCollectSlow(ms);
               return { point: 'collect_slow', delay_ms: ms };
+            })()
+          : isObject(body) && body.point === 'egress_connect_hang'
+          ? (() => {
+              const f = parseConnectHang(body);
+              connectHangs.add(f.address);
+              return { point: 'egress_connect_hang', address: f.address };
             })()
           : isObject(body) && body.point === 'tick_step'
           ? armTickFault(body)
@@ -1361,6 +1369,33 @@ export function parseStreamSlow(body: unknown): { delayMs: number; remaining: nu
 
 export function setStreamSlow(value: { delayMs: number; remaining: number | null } | null): void {
   streamSlow = value;
+}
+
+// ---- egress_connect_hang (the M128 (b) follow-up) ----------------------------
+//
+// `{"point": "egress_connect_hang", "address": <numeric IPv4 or IPv6>}`
+// (SEAM.md §169): the egress proxy's connection to that validated address
+// never completes, so its connect timeout (`egress_connect_timeout`) is what
+// ends it, on any host, whatever the host's router answers. No packet is
+// sent: the proxy's socket is never connected. Standing: every attempt to
+// that address until the faults are cleared; arming another address adds
+// it. A no-op outside harness mode (SEAM.md §7).
+const connectHangs = new Set<string>();
+
+export function parseConnectHang(body: unknown): { address: string } {
+  const b = (isObject(body) ? body : {}) as Record<string, unknown>;
+  if (typeof b.address !== 'string' || isIP(b.address) === 0) throw new Refusal(400, 'invalid_value', 'egress_connect_hang takes a numeric IPv4 or IPv6 address.', 'Send {"point":"egress_connect_hang","address":<numeric address>}.', { field: 'address' });
+  return { address: b.address };
+}
+
+export function armConnectHang(address: string): void {
+  connectHangs.add(address);
+}
+
+// Whether the proxy's connection to `address` hangs; always false outside
+// harness mode.
+export function seamConnectHang(address: string): boolean {
+  return init.harness && connectHangs.has(address);
 }
 
 export function seamStreamDelay(): number {
