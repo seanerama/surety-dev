@@ -197,3 +197,9 @@ Settled by slice 14's cases, once they pass: the slice-13 part-2 entry "`auth_fa
 | **Background Bash under `--tools Bash`** is contained by the domain, not prevented. | M136 (c) | C | none | E74 item 3 |
 | **The review's three defects** (S1 incomplete totals recorded complete, S2 delegation verified on a deny-list and on a blind sampler, S3 a credential echoed) are pinned by sandbox- and kernel-lane cases with a fake `claude`; their real-lane behaviour is the canaries'. | M136, M140 (e) | — (a record) | `M136-adapter-with-a-fake-backend`, `M140-credential-never-echoed` | E74 item 2; SEAM §167 |
 
+
+**After E76** (2026-10-04: M118's cause; objection 017):
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **A run paused just past its lease and still heartbeating is renewed without a fresh challenge on a host whose wall clock steps back.** The engine judges lease expiry on the wall clock (kept by Sean). This host's clock steps back about every 31.6 s, by 0.6 s to 2.9 s measured. So a pause slightly longer than `lease_ttl` can leave the lease unexpired by the engine's clock, and the role's heartbeats renew it with no challenge. M118 (a) and (b) pause until the lease has expired on the engine's own clock, so they do not show this case. | M118 (a), (b) | C (Sean's decision) | none | E76 item 3; objection 017 |
