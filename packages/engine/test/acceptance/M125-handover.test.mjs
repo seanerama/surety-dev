@@ -16,6 +16,10 @@
 // must be absent); a resumed run's is rebuilt from records; neither ever holds the raw
 // report on the trigger. A binary whose hash is not the entry's is refused
 // before any launcher starts.
+// (e) (the E79 rehearsal's finding 1; D2 §1.3): the package tells each role
+// what the engine reads from its result, as SEAM.md §68 lists it, and gives
+// a Reviewer the open findings it may disposition by id and the candidate's
+// diff, and a fix Builder the finding it fixes.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -32,12 +36,15 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { sha256Hex, waitFor } from './harness/engine.mjs';
-import { installGatedPlan } from './harness/gates.mjs';
-import { addGitProject } from './harness/gitruns.mjs';
+import { consume, openDecision } from './harness/decisions.mjs';
+import { PROTECTED_FILES, check, findingsOf, installChecks, installGatedPlan, passAll } from './harness/gates.mjs';
+import { PERMITTED_EDIT, addGitProject, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { createProject, workItemsOf } from './harness/journal.mjs';
+import { makeProjectRepo } from './harness/repos.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { readRun } from './harness/reads.mjs';
 import { holdSecret } from './harness/records.mjs';
-import { assertRunEnded, requestTick, resumeWork, runsOf, waitForRun, waitForRunState } from './harness/runs.mjs';
+import { assertRunEnded, requestTick, resumeWork, runsOf, tickUntil, waitForRun, waitForRunState } from './harness/runs.mjs';
 import { domainOf, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { environFromMemory, members } from './harness/sandbox/procs.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
@@ -286,6 +293,119 @@ describe('M125 what is handed over', () => {
     assert.deepEqual(eventsNamed(fx.home, 'domain.placed').filter((e) => e.subject?.run === run.id), [], 'no launcher was placed');
     assert.deepEqual(ledgerRows(fx.home, project).filter((r) => r.run === run.id), [], 'no ledger row');
     assert.equal(standIn.launches().length, 0, 'the stand-in never ran');
+  });
+
+  test("(e) what the gates read (D2 §1.3; SEAM.md §68): each role's result schema names every field the engine reads from that role's result; a Reviewer's package holds the open finding's id and the candidate's diff; a fix Builder's holds the finding it fixes", async (t) => {
+    // The fields by role, from SEAM.md §68's table ("From") and sections 13
+    // and 26 (status, summary, checkpoint, nominate): what the engine reads
+    // from a result, which a real agent learns only from its package. For a
+    // field whose items the engine reads by name, the item keys of §68's
+    // "Form" that the engine requires. Never taken from the engine's source.
+    const BASE = ['status', 'summary'];
+    const FIELDS = {
+      builder: [...BASE, 'checkpoint', 'nominate'],
+      verifier: [...BASE, 'findings', 'severity_changes', 'applicability', 'proposal'],
+      reviewer: [...BASE, 'findings', 'signoffs', 'dispositions', 'severity_changes', 'assessments', 'proposal_approval'],
+    };
+    const ITEM_KEYS = {
+      findings: ['category', 'severity', 'message', 'check'],
+      signoffs: ['scope'],
+      dispositions: ['finding', 'disposition'],
+      severity_changes: ['finding', 'to'],
+      assessments: ['assessment', 'verdict'],
+      applicability: ['finding', 'candidate', 'reason', 'evidence'],
+    };
+    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login' };
+
+    // The fix loop of M01's second path (E43), in the sandbox lane, each role
+    // scripted to dump its package before it reports.
+    const fx = await sandboxEngine(t);
+    fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
+    const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
+    const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'what-the-gates-read', tier: 'T2' });
+    const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+    const checks = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+    fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);
+    const build = await runToEnd(fx, project, plan.stages[0].work_item);
+    assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
+    const [candidate] = await waitForCandidates(fx, project);
+    const letThrough = async (work) => consume(fx, project, await openDecision(fx, project, 'blocker', work.id), 'continue');
+    const dumpOf = (item, what) => {
+      const [launch] = fx.scripted.launches({ work_item: item });
+      assert.ok(launch?.invocation, `${what} was launched`);
+      const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+      assert.ok(dump, `${what} dumped its package`);
+      assertManifest(dump, what);
+      return dump;
+    };
+    const ended = (item, what) => tickUntil(fx.engine, project, () => {
+      const [run] = runsOf(fx.home, item);
+      return run?.state === 'ended' ? run : undefined;
+    }, { what: `${what} to end` });
+
+    const verification = workItemsOf(fx.home, project).find((w) => w.kind === 'verification' && w.subject?.candidate === candidate.id);
+    assert.ok(verification, 'the nomination registered verification work');
+    fx.scripted.script(verification.id, [roleThat([step.probe('context_dump')], { findings: [FINDING] })]);
+    await letThrough(verification);
+    await ended(verification.id, 'the Verifier\'s run');
+    const [found] = findingsOf(fx.home, project);
+    assert.ok(found?.status === 'open', `the fixture is live: the Verifier's finding is recorded, open (${JSON.stringify(found)})`);
+
+    await passAll(fx.engine, project, candidate.id, [checks.login]);
+    const review = await tickUntil(fx.engine, project, () => workItemsOf(fx.home, project).find((w) => w.kind === 'review' && w.subject?.candidate === candidate.id), { max: 4, what: 'the engine to queue the review' });
+    fx.scripted.script(review.id, [roleThat([step.probe('context_dump')], { dispositions: [{ finding: found.id, disposition: 'fix' }] })]);
+    await letThrough(review);
+    const reviewRun = await ended(review.id, 'the Reviewer\'s run');
+    assert.deepEqual([reviewRun.outcome, reviewRun.reason_class], ['completed', 'none'], `the fixture is live: the Reviewer's run was accepted (${reviewRun.reason_text})`);
+    const fix = workItemsOf(fx.home, project).find((w) => w.kind === 'fix');
+    assert.ok(fix, 'the fixture is live: the engine registered the fix work for the disposition (E43)');
+    fx.scripted.script(fix.id, [roleThat([step.probe('context_dump')])]);
+    await letThrough(fix);
+    await ended(fix.id, 'the fix\'s Builder run');
+
+    // What each package tells, and what it lacks; every gap in one list.
+    const gaps = [];
+    const schemaOf = (dump, what) => {
+      const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+      const entry = manifest.files.find((f) => f.kind === 'result_schema');
+      const text = entry && dump.files.find((f) => f.name === entry.path)?.text;
+      if (!text) {
+        gaps.push(`${what}: no result_schema file`);
+        return null;
+      }
+      return JSON.parse(text);
+    };
+    const checkSchema = (dump, role, what) => {
+      const schema = schemaOf(dump, what);
+      if (schema === null) return;
+      const props = schema.properties ?? {};
+      for (const field of FIELDS[role]) {
+        if (!(field in props)) {
+          gaps.push(`${what}: the result schema does not name ${field}`);
+          continue;
+        }
+        const keys = ITEM_KEYS[field];
+        const itemProps = props[field]?.items?.properties ?? {};
+        for (const k of keys ?? []) if (!(k in itemProps)) gaps.push(`${what}: the result schema's ${field} items do not name ${k}`);
+      }
+    };
+    const holds = (dump, text) => dump.files.some((f) => typeof f.text === 'string' && f.text.includes(text));
+    const listedKinds = (dump) => JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text).files.map((f) => f.kind);
+
+    const v = dumpOf(verification.id, 'the Verifier\'s run');
+    checkSchema(v, 'verifier', 'the Verifier');
+    const r = dumpOf(review.id, 'the Reviewer\'s run');
+    checkSchema(r, 'reviewer', 'the Reviewer');
+    if (!holds(r, found.id)) gaps.push(`the Reviewer: no file of its package holds the open finding's id ${found.id}, which a disposition names`);
+    if (!holds(r, FINDING.message)) gaps.push('the Reviewer: no file of its package holds the open finding\'s message');
+    const diffs = JSON.parse(r.files.find((f) => f.name === 'manifest.json').text).files.filter((f) => f.kind === 'diff');
+    if (diffs.length === 0) gaps.push(`the Reviewer: its manifest lists no diff (D2 §1.3: "for a Reviewer the candidate's diff"; it lists ${JSON.stringify(listedKinds(r))})`);
+    else if (!diffs.some((d) => (r.files.find((f) => f.name === d.path)?.text ?? '').includes(PERMITTED_EDIT.path))) gaps.push(`the Reviewer: its diff does not show the candidate's change to ${PERMITTED_EDIT.path}`);
+    const b = dumpOf(fix.id, 'the fix\'s Builder run');
+    checkSchema(b, 'builder', 'the fix Builder');
+    if (!holds(b, found.id)) gaps.push(`the fix Builder: no file of its package holds the finding it fixes (${found.id})`);
+    if (!holds(b, FINDING.message)) gaps.push('the fix Builder: no file of its package holds the message of the finding it fixes');
+    assert.deepEqual(gaps, [], `each role is told what the engine reads from its result, and the Reviewer and the fix Builder what they act on (D2 §1.3; SEAM.md §68)`);
   });
 });
 
