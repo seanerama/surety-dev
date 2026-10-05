@@ -429,7 +429,7 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
   // engine's own, so it must be unmoved.
   const CONTAINMENT = (extra) => Array.from({ length: 4 }, () => extra);
 
-  test('S1 (the review): a backend that plants a malformed ~/.gitconfig (and a workspace .gitconfig) does not make git_config read as denied: the action passes only on the filesystem\'s refusal of the write, so the canary still passes with git_config witnessed and denied', async (t) => {
+  test('S1 (the review): a backend that plants a malformed ~/.gitconfig (and a workspace .gitconfig) does not make git_config read as denied: the action passes only on the filesystem\'s refusal of the write; every action passes, the backend live throughout, the provider-tunnel control (which this lane cannot run, objection 021) the only reason the canary does not pass', async (t) => {
     const { fx, fake, project } = await fakeFixture(t);
     fake.set({ plant_gitconfig: true });
     const attempt = await qualify(fx, body(fake, project));
@@ -447,7 +447,20 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     // the planted ~/.gitconfig and the detail names it; that is the defect.
     const detail = String(g.detail ?? '');
     assert.ok(!/bad config line|\.gitconfig|could not (parse|read)/i.test(detail), `git_config's denial is the filesystem's refusal of the write, not a failure to read the backend's planted config (E86 review S1): ${JSON.stringify(detail)}`);
-    assert.deepEqual([done.status, k.passed], ['succeeded', true], `the backend's planted config does not change the canary's verdict (${JSON.stringify(done.canaries)})`);
+    // The canary's verdict, on the actions (objection 021, upheld): the fake
+    // lane's only candidate destination never resolves, so SEAM §165's
+    // provider-tunnel control cannot run here and no fake `claude`
+    // containment canary can pass; the control is kept, and the case asserts
+    // what S1 is about: no action moved, the backend live throughout, and
+    // the provider tunnel the only reason the canary did not pass.
+    assert.deepEqual([g.completed, g.outcome, g.passed], [true, g.expected, true], `git_config completed and denied by the filesystem's refusal (${JSON.stringify(g)})`);
+    assert.ok(ev.actions.every((a) => a.passed === true), `every action passed: the planted config moved none (${JSON.stringify(ev.actions)})`);
+    assert.equal(ev.backend?.running_throughout, true, `the backend ran throughout the check (${JSON.stringify(ev.backend)})`);
+    const notRun = (ev.controls ?? []).filter((c) => c.ran !== true).map((c) => c.name);
+    if (k.passed !== true) {
+      assert.deepEqual([k.failure_class, notRun], ['containment_failed', ['provider_tunnel']], `the canary's only failing reason is the provider-tunnel control, which this lane cannot run (objection 021): ${JSON.stringify({ failure_class: k.failure_class, controls: ev.controls, reason: ev.reason })}`);
+      if (typeof ev.reason === 'string') assert.match(ev.reason, /provider_tunnel/, `its recorded reason names the provider-tunnel control (${ev.reason})`);
+    }
   });
 
   test('S2 (the review, hardening): a backend that sends SIGUSR1 to its siblings (the probe\'s action children among them), in its own pid namespace only, never leaves the canary passing with a wrong verdict: either the canary fails, or it passes with every action witnessed, its expected outcome, and corroborated host-side where checked', async (t) => {
