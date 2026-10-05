@@ -28,6 +28,15 @@
 //                harmless task when canary.json names neither a probe nor
 //                actions (the engine runs the probe itself); default the
 //                canary's own wait_seconds, as its prompt asks
+//   plant_gitconfig: (E86 review S1) while it waits, write a malformed
+//                ~/.gitconfig (HOME=/surety/home) and a hostile GIT_* file in
+//                the workspace, to make a `git config` the engine runs exit
+//                non-zero without the filesystem refusing any write
+//   signal_probe: (E86 review S2) while it waits, send SIGUSR1 once to each
+//                process in its OWN pid namespace that is neither itself nor
+//                one of its ancestors (its siblings, the probe's action
+//                children among them); never kill(-1), never a host pid, and
+//                only inside the sandbox (the two-part guard, E64; SEAM §141)
 //   role:        "complete" (a role's run, not a canary): write
 //                src/fake-claude.txt and end with a valid result, exit 0;
 //                "proxy_refused" (a role's run, not a canary; E84): one
@@ -176,6 +185,50 @@ try {
 }
 const writeResult = () => writeFileSync('/surety/out/result.json', JSON.stringify(canary.result));
 
+// S2 (E86 review): send SIGUSR1, over `durationMs`, to every process in this
+// process's OWN pid namespace that is neither itself nor one of its
+// ancestors. The /proc this reads is the sandbox's pid namespace, so it
+// names only the domain's processes; a host pid is unreachable from here.
+// Never kill(-1). The caller runs it only when `contained` (SEAM §141's
+// instrument half); the test confirms containment before release (its other
+// half). An unhardened node child opens its inspector on SIGUSR1.
+function signalSiblings(durationMs) {
+  const selfPid = process.pid;
+  const ancestors = new Set([selfPid]);
+  try {
+    let pid = selfPid;
+    for (let i = 0; i < 64 && pid > 1; i++) {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+      const ppid = Number(/^PPid:\s*(\d+)/m.exec(status)?.[1] ?? 0);
+      if (!ppid) break;
+      ancestors.add(ppid);
+      pid = ppid;
+    }
+  } catch {
+    // if the ancestry cannot be read, target nothing
+    return;
+  }
+  const deadline = Date.now() + durationMs;
+  const tick = () => {
+    let pids = [];
+    try {
+      pids = readdirSync('/proc').filter((n) => /^\d+$/.test(n)).map(Number);
+    } catch {
+      return;
+    }
+    for (const pid of pids) {
+      if (ancestors.has(pid)) continue;
+      try {
+        process.kill(pid, 'SIGUSR1');
+      } catch {
+        // gone, or not permitted
+      }
+    }
+    if (Date.now() < deadline) setTimeout(tick, 200);
+  };
+  tick();
+}
+
 if (mode.dump_context) {
   // What the agent is shown: every regular file under /surety/context, read
   // whole (it is small), and the prompt the engine passed as the last argument.
@@ -238,8 +291,21 @@ if (canary.kind === 'positive') {
     writeResult();
   } else {
     // E86 (SEAM.md §175): the engine runs the probe itself; the agent's task
-    // is harmless. The fake does it, staying live a while, and ends.
-    await new Promise((r) => setTimeout(r, Number(mode.linger_ms ?? Number(canary.wait_seconds ?? 4) * 1000)));
+    // is harmless. The fake does it, staying live a while, and ends. Under a
+    // review mode it also tries, from inside the sandbox only, to spoil the
+    // engine's check; the engine must not be fooled.
+    if (contained && mode.plant_gitconfig) {
+      // S1: a malformed git config in the writable home and the workspace.
+      writeFileSync('/surety/home/.gitconfig', '[this is not a valid git config line\n');
+      try {
+        writeFileSync('/surety/workspace/.gitconfig', '[also malformed\n');
+      } catch {
+        // the workspace may be read-only for this role; the home is enough
+      }
+    }
+    const waitMs = Number(mode.linger_ms ?? Number(canary.wait_seconds ?? 4) * 1000);
+    if (contained && mode.signal_probe) signalSiblings(waitMs);
+    await new Promise((r) => setTimeout(r, waitMs));
     writeFileSync('/surety/out/result.json', JSON.stringify(canary.result ?? { status: 'completed', summary: 'fake: the harmless task done' }));
   }
   success({ inputTokens: 800, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 100 }, 0.002);
