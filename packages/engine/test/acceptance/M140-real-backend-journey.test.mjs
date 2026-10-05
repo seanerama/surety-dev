@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { describe, test } from 'node:test';
 
 import { activation, homeOf } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent, terminalOutput, costStatusFor, dayTotalFor } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue, streamEvents, terminalEvent, terminalOutput, costStatusFor, dayTotalFor, egressBasis, egressProvesNothingSent } from './harness/real/lane.mjs';
 import { pathOne, pathTwo, stopCase } from './harness/real/journey.mjs';
 import { authorizationsOf } from './harness/gates.mjs';
 import { trailersOf, identityOf } from './harness/repos.mjs';
@@ -94,7 +94,18 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
       assert.deepEqual(s.outcome, ['stopped', 'human_stop'], 'the run ended stopped by the human');
       assert.equal(s.exit_class, 'engine_signaled', 'exit class engine_signaled');
       assert.equal(s.ledger.length, 1, 'one original ledger row');
-      assert.equal(s.ledger[0].usage_complete, 0, 'its usage incomplete, the allowance charged (D2 C4)');
+      // E85: a run stopped before it reached its provider is a known zero by
+      // the egress evidence, which the test reads itself; otherwise its usage
+      // is incomplete and the allowance charged (D2 C4).
+      const proof = egressProvesNothingSent(homeOf(ctx, 'home'), s.run);
+      observe(ctx, 'M140', 'stop_case_egress', proof);
+      if (proof.proven) {
+        const r = s.ledger[0];
+        assert.ok(egressBasis(r) && r.billable_in === 0 && r.out === 0 && r.cost_usd === 0 && Boolean(r.usage_complete), `nothing reached the provider (its egress record shows it): a known zero with the egress basis (E85): ${JSON.stringify(r)}`);
+      } else {
+        assert.ok(!egressBasis(s.ledger[0]), `a run whose egress does not prove nothing was sent is no zero by egress (E85): ${JSON.stringify(s.ledger[0])}`);
+        assert.equal(s.ledger[0].usage_complete, 0, 'its usage incomplete, the allowance charged (D2 C4)');
+      }
 
       // The key: in no file of the run directory (the engine homes, their
       // records, stores and logs, the repositories' files, the observations)

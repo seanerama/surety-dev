@@ -2149,6 +2149,8 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 - **"E85 (a)"**, a known zero by the egress evidence (E85, Sean's rule): **on `main`** it fails at `M136-adapter-with-a-fake-backend.test.mjs:343`: the row is `billable_in` null, `cost_usd` null, `cost_status` `unknown`, `usage_complete` false, `unknown_allowance_tokens` 1 500 000. **"E85 (b)"**, a tunnel accepted: unknown, the allowance charged, no egress basis; it **passes on `main`**, necessarily: an engine that never makes a zero already leaves the usage unknown there; it is the rule's other half, kept for the engine that applies it.
 
+- **"E85 (c)"**, the Reviewer's in-flight CONNECT (on `verify/m2-resolver-2` from `main` at `21f81b6`): the attempt must be in the egress record and the run no zero by egress. Written and committed; **not yet run** (the Builder's suite held the machine); its run on `a53dea9` is reported when the coordinator allows it. M140 (e) amended for E85 (a known zero accepted only on the test's own reading of the egress record); M140 (d) and M136 (d) unchanged (their runs reached the provider).
+
 **Checked against the sources:** the Builder's planned fix (a terminal observation's unknown usage no longer stops the run; the ledger row stays incomplete with the unknown allowance charged; the reason names the terminal error and the egress refusals) agrees with D2 §1.6, SEAM §§143 and 161; no objection.
 
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
