@@ -21,6 +21,17 @@
 // (a) An inventory listing `Skill` is not `delegation_verified`. (b) A
 // backend the sampler never identified is not `delegation_verified`.
 //
+// S3 (the E79 rehearsal's finding 2; D2 §4.5, §7.2; SEAM.md §172): the
+// host sampler counts a second backend process by what runs the qualified
+// binary as an invocation of it. (a) A backend that holds forks of itself
+// before their exec (as Claude Code opens one for each command it runs),
+// each held longer than a sample, is not seen as a second backend and is
+// delegation_verified; (b) a backend that starts a persisting second
+// instance of itself (exec'd) still is a second backend; (c) so is a fork
+// that stays unexec'd for longer than the rule allows. These three run on a
+// production-mode engine with a native fake (harness/sandbox/nativefake.mjs
+// says why); the fake is compiled with cc, as the power-loss shim is.
+//
 // SAFETY (SEAM.md §141): the fake runs the containment canary's actions only
 // when /surety/context exists and its pid namespace is not the host's, which
 // the test gives it; the actions are the engine's probe program asking the
@@ -37,6 +48,7 @@ import { ledgerRows } from './harness/ledger.mjs';
 import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
 import { FakeClaude } from './harness/sandbox/fakeclaude.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
+import { samplerAttempt, samplerEngine } from './harness/sandbox/nativefake.mjs';
 import { approveAttempt, attemptOf, canaryOf, canaryRuns, qualify, waitAttempt } from './harness/sandbox/qualify.mjs';
 import { withStore } from './harness/store.mjs';
 import { apiKeyRef } from './harness/trust.mjs';
@@ -143,5 +155,53 @@ describe('M136 the Claude adapter with a fake backend: usage kept when the total
     const { caps, ev } = containmentCapabilities(fx, done);
     assert.equal(caps?.delegation_verified, false, `a sampler that never saw the backend shows nothing absent: not delegation_verified (E74 item 3): ${JSON.stringify({ caps, sampling: ev.sampling ?? null })}`);
     assert.notEqual(done.status, 'succeeded', 'and the attempt does not succeed');
+  });
+});
+
+describe('M136 S3: the host sampler counts a second backend process, not a fork of the backend before its exec (sandbox lane, production-mode engine, native fake, no model)', () => {
+  // The rule pinned (SEAM.md §172): a member of the canary's domain whose
+  // executable is the qualified binary is a backend process, except a fork
+  // of it that has not exec'd (the kernel's PF_FORKNOEXEC, /proc/<pid>/stat
+  // field 9) and is younger than 1 s by its start time; such a fork older
+  // than 1 s counts. Two backend processes in one sample are a second
+  // backend.
+  // Each case on an engine of its own: the canaries of one attempt use a
+  // good part of the fixture project's day limit on unknown tokens, and a
+  // third attempt on one engine was stopped by it (found while writing
+  // these cases).
+  const SECOND = /second backend/i;
+  const engineFor = async (t) => {
+    const fx = await samplerEngine();
+    t.after(() => fx.cleanup());
+    return fx;
+  };
+  const live = (r, what) => {
+    assert.ok(r.caps?.sampling?.samples > 0 && r.caps.sampling.max_backend >= 1, `the fixture is live: the engine's sampler identified the native fake as the backend (${what}): ${JSON.stringify(r.caps?.sampling)}`);
+    assert.equal(canaryOf(r.attempt, 'positive')?.passed, true, `the fixture is live: the positive canary passed (${JSON.stringify(r.attempt.canaries)})`);
+  };
+
+  test('S3 (a): forks of the backend held 600 ms before their exec, three in turn, each longer than a sample: no second backend; delegation_verified', async (t) => {
+    const r = await samplerAttempt(await engineFor(t), { mode: 1, holdMs: 600, count: 3 });
+    live(r, 'fork windows');
+    assert.ok(r.host.forks_unexeced_seen >= 1, `the fixture is live: the test's own host samples saw the backend and an unexec'd fork of it at once (${JSON.stringify(r.host)})`);
+    assert.ok(!(r.caps.reasons ?? []).some((x) => SECOND.test(x)), `a fork before its exec is not a second backend process (SEAM.md §172): ${JSON.stringify({ reasons: r.caps.reasons, sampling: r.caps.sampling })}`);
+    assert.equal(r.caps.delegation_verified, true, `delegation verified absent: the inventory is the template's and the sampler saw one backend (${JSON.stringify(r.caps)})`);
+    assert.notEqual(r.k.failure_class, 'delegation_unverified', `the containment canary is not failed delegation_unverified for it (${JSON.stringify(r.k)})`);
+  });
+
+  test('S3 (b): a persisting second instance of the backend (exec\'d, 2.5 s): a second backend; not delegation_verified', async (t) => {
+    const r = await samplerAttempt(await engineFor(t), { mode: 2, holdMs: 2500 });
+    live(r, 'a second instance');
+    assert.ok(r.host.exec_seconds_seen >= 1, `the fixture is live: the test's own host samples saw two exec'd instances of the image at once (${JSON.stringify(r.host)})`);
+    assert.ok(r.caps.sampling.max_backend >= 2 && (r.caps.reasons ?? []).some((x) => SECOND.test(x)), `a second instance is a second backend process (D2 §7.2): ${JSON.stringify({ reasons: r.caps.reasons, sampling: r.caps.sampling })}`);
+    assert.equal(r.caps.delegation_verified, false, 'not delegation_verified');
+  });
+
+  test('S3 (c): a fork of the backend that stays unexec\'d 2.5 s (older than the rule\'s 1 s): a second backend; not delegation_verified', async (t) => {
+    const r = await samplerAttempt(await engineFor(t), { mode: 3, holdMs: 2500 });
+    live(r, 'a persisting fork');
+    assert.ok(r.host.forks_unexeced_seen >= 1, `the fixture is live: the test's own host samples saw the backend and its unexec'd fork at once (${JSON.stringify(r.host)})`);
+    assert.ok(r.caps.sampling.max_backend >= 2 && (r.caps.reasons ?? []).some((x) => SECOND.test(x)), `a fork that runs the backend's own code past 1 s is a second backend process (SEAM.md §172): ${JSON.stringify({ reasons: r.caps.reasons, sampling: r.caps.sampling })}`);
+    assert.equal(r.caps.delegation_verified, false, 'not delegation_verified');
   });
 });

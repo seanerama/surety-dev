@@ -16,7 +16,7 @@
 // must be absent); a resumed run's is rebuilt from records; neither ever holds the raw
 // report on the trigger. A binary whose hash is not the entry's is refused
 // before any launcher starts.
-// (e) (the E79 rehearsal's finding 1; D2 §1.3): the package tells each role
+// (e) (the E79 rehearsal's finding 1; D2 §1.3; SEAM.md §172): the package tells each role
 // what the engine reads from its result, as SEAM.md §68 lists it, and gives
 // a Reviewer the open findings it may disposition by id and the candidate's
 // diff, and a fix Builder the finding it fixes.
