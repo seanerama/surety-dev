@@ -2066,6 +2066,25 @@ Two leftovers were found, both from before this pass: `/dev/shm/surety-probe-479
 
 The user manager was `running` before and after each run. Afterwards no `surety-*` scope was listed.
 
+**After objection 019: S1 and (h) read the domain after the launcher-exit tick** (2026-10-05, on `verify/m2-tick-019` from `main` at `ce7d9f4`; `docs/acceptance/objections/019-M115-S1-h-read-the-domain-after-the-launcher-exit-tick.answer.md`).
+
+**The change.** Under SEAM §170 the launcher's exit brings the engine's own tick, which can clear the quarantine and remove the domain's directory before the test reads it. On the Builder's engine, S1 and (h) threw ENOENT.
+- **S1** keeps its two ticks with the launcher outstanding, unchanged. From the release to the launcher's exit, it now fails if a `domain.terminated` is recorded while the launcher is still alive.
+- **(h)** reads the role's exit on the host.
+- **Both** then take the domain as empty or removed. A removed domain requires the one `domain.terminated` already recorded. Both still send their tick and require one clearance (`assertClearedOnce`). Nothing else in the file changed.
+
+**Runs.** `M115-every-unknown-quarantines.test.mjs` was run alone with `node --test` on the Builder's tip `f842022`, in a detached scratch worktree after `npm ci` and `npm run build`, with this branch's file copied in:
+
+| Run | Result | S1 and (h): the domain after the exit | The launcher-exit case |
+|---|---|---|---|
+| 1 (23:44:08 to 23:45:29) | 12 of 12 passed | (no diagnostic yet) | ended 56 ms after the exit |
+| 2 (23:45:41 to 23:47:02) | 12 of 12 passed | removed; the engine's tick had cleared it | 56 ms |
+| 3 (23:47:02 to 23:48:21) | 12 of 12 passed | removed; the engine's tick had cleared it | 55 ms |
+
+Every run includes the two `[not_exercised]` cases. Runs 2 and 3 differ from run 1 by two `t.diagnostic` lines only.
+
+**What else was running.** Before runs 1 and 2, `ps` showed no other `run-tests` or `node --test` process, and no `surety-*` scope was listed. At the end of run 2 another session's `node --test` (a file under the driver's scratchpad, probably the rehearsal) was running and had a `surety-*` scope, so run 3 overlapped it. The user manager's journal shows three re-execs in the window, at 23:45:26, 23:46:59 and 23:48:18, one per run, each this run's own (h). The user manager was `running` before and after each run. Afterwards no `surety-*` scope was left and no test process was running.
+
 ## After E79 item 1: the dress rehearsal of the real lane
 
 2026-10-05, on `verify/m2-rehearsal` from `main` at `1677b76`, rebased onto `ce7d9f4`; E79 item 1 (Sean's choice); SEAM §171. Nothing here is evidence for M2: it ran against a fake Claude Code, with a made-up token and key, and no egress host but `provider.rehearsal.invalid`. The real `claude` was never run; its file was read only by the guard check, which refused it.
@@ -2096,6 +2115,18 @@ The user manager was `running` before and after each run. Afterwards no `surety-
 **Rehearsal-only failures, recorded, the assertions unchanged:** the provider tunnel cannot run offline, so the attempt fails and writes no entry: M136 (a) (status), (b), (c), M138 (a), (c). The assertions after those lines were judged on a scratch copy without them, against the same records (the containment canary's own capabilities standing for the entry's): M136 (a), (c), M138 (a), (b) passed; M136 (b) and M138 (c) cannot be judged without a provider. Path two real stops at "the Reviewer did not disposition the finding": a real agent is in the same place (below). CHECK (4) is not shown because the fake's canaries end within a second.
 
 **What the rehearsal found in the engine** (not changed here; reported to the coordinator): a role's context package gives a real agent no way to produce what the gates read. `RESULT_SCHEMA` names only `status` and `summary`; no role is told `findings` (with `check`), `signoffs` or `dispositions`; a Reviewer is given neither the open findings' ids nor the candidate's diff (D2 §1.3 lists the diff), and a fix Builder is not told its finding. The fake passes path one only because it was written knowing the fields. Also: the host sampler counts any member whose executable is the pinned binary, so a fork of the backend sampled before its `exec` reads as a second backend (the first native fake, forking at its start, failed `delegation_unverified` this way; Claude Code starts a child process for each command its Bash tool runs, and a child is the backend's image until its `exec`; how wide that window is for Claude Code was not measured).
+
+## After the E79 rehearsal: its two engine findings as cases
+
+2026-10-05, on `verify/m2-real-findings` from `main` at `50c4a73`; SEAM §172. Both run in the sandbox lane with no model; neither touches the real `claude`.
+
+**Finding 1, what a role is told** (D2 §1.3). `M125-handover.test.mjs` (e): M01's fix loop in the sandbox lane, the Verifier, the Reviewer (one open finding) and the fix Builder each dumping its package. The expected fields are section 68's, by role; never read from the engine. **On `main` at `50c4a73`** (`node --test --test-name-pattern '^\(e\) what the gates read'`): it fails at its gaps assertion (`M125-handover.test.mjs:298`), every "the fixture is live" check holding before it, with fifteen gaps: the Verifier's schema names none of `findings`, `severity_changes`, `applicability`, `proposal`; the Reviewer's none of `findings`, `signoffs`, `dispositions`, `severity_changes`, `assessments`, `proposal_approval`; the Reviewer's package holds neither the open finding's id nor its message, and lists no `diff` (it lists `prompt`, `instructions`, `result_schema`); the fix Builder's holds neither the id nor the message of its finding. The Builder's schema already names `checkpoint` and `nominate`.
+
+**Finding 2, what the sampler counts** (D2 §7.2). `M136-adapter-with-a-fake-backend.test.mjs` S3 (a), (b), (c), each on a production-mode engine of its own with a native fake (SEAM §172 says why). **On `main` at `50c4a73`**, the whole file twice: S3 (a) fails at the second-backend assertion (`M136-adapter-with-a-fake-backend.test.mjs:187`) with `"a second backend process appeared in the domain (at most 2 at once)"`, `max_backend` 2, after its liveness checks held (the engine identified the fake; the test's own samples saw an unexec'd fork beside it); S3 (b) and (c) pass, as the controls of the rule's other half must. The three take about 30 s together.
+
+**Found on the way:** S1 (b) of the same file read the attempt's status at once after the positive canary's ledger row and once saw `running`; it now waits for the attempt to end (its own commit). A shared engine for the three S3 cases did not work: the third attempt's containment canary was stopped `budget_day_unknown_tokens` before its fork, which the case's liveness check caught.
+
+The user manager was `running` before and after; no `surety-*` scope was left.
 
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
