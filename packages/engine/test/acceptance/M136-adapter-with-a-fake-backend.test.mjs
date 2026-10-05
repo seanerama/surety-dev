@@ -38,6 +38,13 @@
 // sandbox, names no target, states the sanctioned check in the run's own
 // instructions.md and asks for no delegation or scheduling.
 //
+// E84 (Sean's second real-agent attempt; SEAM.md §174): a role's run that
+// ends on its own, error_exit, after its provider could not be reached
+// through the proxy, is recorded by its exit class (D2 §1.6; SEAM.md §143:
+// failed / infra_error), never as a budget stop. Its ledger counts are not
+// asserted: whether all-zero usage from a synthetic message is known zero
+// or unknown is put to Sean.
+//
 // SAFETY (SEAM.md §141): the fake runs the containment canary's actions only
 // when /surety/context exists and its pid namespace is not the host's, which
 // the test gives it; the actions are the engine's probe program asking the
@@ -49,17 +56,20 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
+import { installGatedPlan } from './harness/gates.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { getPolicy } from './harness/journal.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
+import { requestTick, waitForRun } from './harness/runs.mjs';
+import { egressLogOf } from './harness/sandbox/egress.mjs';
 import { FakeClaude } from './harness/sandbox/fakeclaude.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { samplerAttempt, samplerEngine } from './harness/sandbox/nativefake.mjs';
 import { approveAttempt, attemptOf, canaryOf, canaryRuns, qualify, waitAttempt } from './harness/sandbox/qualify.mjs';
 import { hostPidNamespace } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
-import { apiKeyRef } from './harness/trust.mjs';
+import { BACKENDS, PARK_ON_REFUSAL, apiKeyRef, installTrustEntry, useBackend } from './harness/trust.mjs';
 
 const MODEL = 'claude-sonnet-5-5';
 // Names under .example only, never resolved (SEAM.md §132).
@@ -265,5 +275,35 @@ describe('M136 E83: what the containment canary\'s agent is shown (sandbox lane,
       for (const tool of TOOLS) if (new RegExp(`\\b${tool}\\b`).test(text(name))) gaps.push(`${name} names the tool ${tool}`);
     }
     assert.deepEqual(gaps, [], "what the containment canary's agent is shown names no target, states the sanctioned check and asks for no delegation (E83; SEAM.md §173)");
+  });
+});
+
+describe('M136 E84: a role run that ends error_exit on its own after its egress was refused (sandbox lane, the fake backend, no model)', () => {
+  test('E84: the provider unreachable through the proxy, the backend ends error_exit with an is_error result and zero usage: the run is failed / infra_error by its exit class, not stopped / budget', async (t) => {
+    const { fx, fake, project } = await fakeFixture(t);
+    fake.set({ role: 'proxy_refused', connect: `${EGRESS[0]}:443` });
+    await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: PARK_ON_REFUSAL });
+    await installTrustEntry(fx.engine, { binary: { path: fake.path, sha256: fake.sha256 } }, { status: 'active', model: MODEL, egress_hosts: [...EGRESS] });
+    const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: 'a stage the provider never hears of' }] });
+    const item = plan.stages[0].work_item;
+    await requestTick(fx.engine, project);
+    const run = await waitForRun(fx.home, item, { state: 'ended', timeoutMs: 300_000 });
+
+    // Live: the backend ran, its CONNECT was refused, and its usage was observed.
+    const log = egressLogOf(fx.home, run.id).entries;
+    assert.ok(log.some((l) => l.authority === `${EGRESS[0]}:443` && l.decision === 'refused'), `the fixture is live: the run's egress was refused (${JSON.stringify(log)})`);
+    const receipt = withStore(fx.home, (db) => db.prepare('SELECT * FROM "invocation_receipts" WHERE "run" = ?').get(run.id));
+    const obs = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" = 'ended'`).get(receipt.id));
+    assert.equal(obs?.exit_class, 'error_exit', `the fixture is live: the backend exited 1 on its own, exit class error_exit (D2 §1.6) (${JSON.stringify(obs)})`);
+    const usage = withStore(fx.home, (db) => db.prepare(`SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'invocation.usage' AND "subject" LIKE ?`).get(`%${receipt.id}%`)).n;
+    assert.ok(usage > 0, `the fixture is live: the engine observed the backend's usage events (${usage})`);
+
+    // The record names the cause: the exit class's outcome (SEAM.md §143),
+    // never a budget stop the engine did not make before the exit.
+    assert.deepEqual([run.outcome, run.reason_class], ['failed', 'infra_error'], `a run that ended error_exit on its own, with no accepted result, is failed / infra_error (D2 §1.6; SEAM.md §143), not a budget stop: ${JSON.stringify({ outcome: run.outcome, reason_class: run.reason_class, reason_text: run.reason_text })}`);
+    // And its reason names what ended it (SEAM.md §174; the wording is the
+    // engine's): the exit class, the refused egress or the backend's error.
+    const cause = [/error_exit/, new RegExp(EGRESS[0].replace(/\./g, '\\.')), /resolve_failed/, /ERR_PROXY_TUNNEL|api_error|API Error/];
+    assert.ok(typeof run.reason_text === 'string' && cause.some((re) => re.test(run.reason_text)), `the run's reason names its cause, not a budget: ${JSON.stringify(run.reason_text)}`);
   });
 });

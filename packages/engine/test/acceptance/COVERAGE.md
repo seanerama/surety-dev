@@ -2140,6 +2140,15 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **Left until the Builder's change is on `main`:** the rehearsal (SEAM §171), rerun against the fake.
 
+## After E84: the real lane's resolver, and a run's end after its provider was unreachable
+
+2026-10-05, on `verify/m2-resolver` from `main` at `b1dab5f`; SEAM §174 (and §§140, 164 amended). Both in the sandbox lane, no model, no network beyond loopback.
+
+- **`M127-egress-address-bound.test.mjs` (j)**, the resolver by mode. **On `main` at `b1dab5f`** it fails at `M127-egress-address-bound.test.mjs:193`: under `--harness-real-lane` the allowed name `localhost` was `refused` / `resolve_failed` with `resolved` `[]` (the harness map), where the system's resolver answers `::1`. Its plain-test-mode half passes (hermetic, unchanged). The real-lane switch is reachable on a sandbox engine with no real binary and no secret flags.
+- **`M136-adapter-with-a-fake-backend.test.mjs`, "E84"**, a run that ended `error_exit` on its own. **On `main`** it fails at `M136-adapter-with-a-fake-backend.test.mjs:303`, three runs out of three, with `{"outcome":"stopped","reason_class":"budget","reason_text":"budget_usage_unknown"}`, its liveness holding (the egress refused, the exit class `error_exit`, usage events observed): E84's record exactly.
+
+**Checked against the sources:** the Builder's planned fix (a terminal observation's unknown usage no longer stops the run; the ledger row stays incomplete with the unknown allowance charged; the reason names the terminal error and the egress refusals) agrees with D2 §1.6, SEAM §§143 and 161; no objection.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
