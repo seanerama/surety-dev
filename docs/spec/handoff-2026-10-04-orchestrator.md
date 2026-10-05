@@ -2,7 +2,7 @@
 
 **For:** a new Claude Code session taking over as Sean's owner-assistant and driver of the Verifier, Builder and Reviewer agents, possibly on another Claude account or machine. **Supersedes** `docs/spec/handoff-2026-10-03.md` (kept for history). Written from the repository and the previous orchestrator's notes so that it stands alone: nothing here depends on the previous session's memory, agents or scratch files.
 
-**The build is paused.** Sean paused it on 2026-10-04 to save usage. **Start no agent, test run or model call until Sean tells you to resume.** Reading the repository is fine.
+**Status (2026-10-05): everything in M2 that runs without a model is merged and closed (E77, E78). The build now waits on Sean's real-agent run** (`docs/acceptance/reports/M2-hands-on.sh`; see §3 item 5 and E78 item 4). Start no real-lane run and no model call; that run is his. §2 and §3 below describe the state at the 2026-10-04 pause; E75 to E78 record how objection 016, M118, memory admission and slice 14's merge were completed since.
 
 ---
 

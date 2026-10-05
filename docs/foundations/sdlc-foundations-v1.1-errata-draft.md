@@ -1464,3 +1464,14 @@ On `mini-hp01` (bare-metal, Arch-based, kernel 7.1.9; Node 22.22.0 installed in 
 **Next:** the hang fault and M128 (b); the closing Verifier pass on `main`; then the build stops for Sean's real-agent run (his subscription token from `claude setup-token`, his two approvals, the hands-on script).
 
 ---
+
+## E78. M2 is ready for Sean's real-agent run (provisional, 2026-10-05)
+
+**Status: provisional.** The driver's record under Sean's delegation; nothing decided here.
+
+1. **The network-dependent fixture is fixed** (E77 item 3): a harness fault, `egress_connect_hang` (SEAM §169), holds the proxy's connection to a named documentation-range address open until `egress_connect_timeout`; M128 (b) and M127 (a) to (e) and (h), which also depended on what the network answered, use it (`a980d16`, `1c3267f`).
+2. **The closing pass** on `main` at `1c3267f` (merged `3a1697d`): `--slice 13` 1,018 of 1,018 cases in 162 files, none skipped; unit 214 tests in 41 files; slice 14's no-cost files pass (M125, M133's option-B case, M136 with a fake backend, M137's negatives, M140's credential case, M142); M141 (b) fails by design until the real lane fills the report (51 facts pending). The real lane has not run, the exhaust lane was last run on `mini-hp01` before option B (E73), and `npm test` fails at M141 (b) until the real-agent run.
+3. **Leftovers:** two probe leftovers of a disposable test home from 2026-10-04 (`/dev/shm/surety-probe-479295dcfa04` and the `/tmp` directory of the same name, holding one socket), which the engine's own sweep can never reach because that home never starts again, were removed by exact name. Recorded as a later improvement: the test harness sweeps the probe leftovers of the homes it disposes of.
+4. **What M2 now waits on, all Sean's** (E74, E75): the real-agent run (`docs/acceptance/reports/M2-hands-on.sh`), for which he creates his subscription token with `claude setup-token` and saves it in a file only he can read, answers the two approvals (`qualification_approval`, `trust_activation`) as the run reaches them, and makes the hands-on checks; confirming the `claude-sonnet-5-5` prices; whether `--safe-mode` stays in the subscription template; the defaults `DISABLE_UPDATES=1` and the pinned copy's naming (E76 item 1); whether automated use fits his plan's terms; and, outside M2, handing the D3 review brief to Astra.
+
+---
