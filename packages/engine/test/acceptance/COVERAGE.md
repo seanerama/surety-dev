@@ -2066,6 +2066,56 @@ Two leftovers were found, both from before this pass: `/dev/shm/surety-probe-479
 
 The user manager was `running` before and after each run. Afterwards no `surety-*` scope was listed.
 
+**After objection 019: S1 and (h) read the domain after the launcher-exit tick** (2026-10-05, on `verify/m2-tick-019` from `main` at `ce7d9f4`; `docs/acceptance/objections/019-M115-S1-h-read-the-domain-after-the-launcher-exit-tick.answer.md`).
+
+**The change.** Under SEAM §170 the launcher's exit brings the engine's own tick, which can clear the quarantine and remove the domain's directory before the test reads it. On the Builder's engine, S1 and (h) threw ENOENT.
+- **S1** keeps its two ticks with the launcher outstanding, unchanged. From the release to the launcher's exit, it now fails if a `domain.terminated` is recorded while the launcher is still alive.
+- **(h)** reads the role's exit on the host.
+- **Both** then take the domain as empty or removed. A removed domain requires the one `domain.terminated` already recorded. Both still send their tick and require one clearance (`assertClearedOnce`). Nothing else in the file changed.
+
+**Runs.** `M115-every-unknown-quarantines.test.mjs` was run alone with `node --test` on the Builder's tip `f842022`, in a detached scratch worktree after `npm ci` and `npm run build`, with this branch's file copied in:
+
+| Run | Result | S1 and (h): the domain after the exit | The launcher-exit case |
+|---|---|---|---|
+| 1 (23:44:08 to 23:45:29) | 12 of 12 passed | (no diagnostic yet) | ended 56 ms after the exit |
+| 2 (23:45:41 to 23:47:02) | 12 of 12 passed | removed; the engine's tick had cleared it | 56 ms |
+| 3 (23:47:02 to 23:48:21) | 12 of 12 passed | removed; the engine's tick had cleared it | 55 ms |
+
+Every run includes the two `[not_exercised]` cases. Runs 2 and 3 differ from run 1 by two `t.diagnostic` lines only.
+
+**What else was running.** Before runs 1 and 2, `ps` showed no other `run-tests` or `node --test` process, and no `surety-*` scope was listed. At the end of run 2 another session's `node --test` (a file under the driver's scratchpad, probably the rehearsal) was running and had a `surety-*` scope, so run 3 overlapped it. The user manager's journal shows three re-execs in the window, at 23:45:26, 23:46:59 and 23:48:18, one per run, each this run's own (h). The user manager was `running` before and after each run. Afterwards no `surety-*` scope was left and no test process was running.
+
+## After E79 item 1: the dress rehearsal of the real lane
+
+2026-10-05, on `verify/m2-rehearsal` from `main` at `1677b76`, rebased onto `ce7d9f4`; E79 item 1 (Sean's choice); SEAM §171. Nothing here is evidence for M2: it ran against a fake Claude Code, with a made-up token and key, and no egress host but `provider.rehearsal.invalid`. The real `claude` was never run; its file was read only by the guard check, which refused it.
+
+**What ran**, each real-lane file with `node --test` under `SURETY_REAL_REHEARSAL=1`, disposable run directories and homes in the session's scratch directory, the user manager `running` before and after:
+- M139, M136, M137, M138 (subscription mode, the native fake), in the manifest's order, each file's expected judgement halt cleared before the next;
+- M140 (`SURETY_REAL_AUTH_MODE=api_key`, the fixture entry), path two both real and mixed;
+- `M2-hands-on.sh`, driven through a pseudo-terminal, three times end to end;
+- with no switch, the slice-14 files that cost nothing: M136-adapter-with-a-fake-backend 4/4, M137-cancellation-canary-negatives 2/2, M140-credential-never-echoed 1/1, M142-hands-on-script 5/5, M141 1/2 (its (b) fails on the skeleton report, as decided).
+
+**Defects the rehearsal found in the Verifier's code, each fixed on this branch:**
+
+| Where | What the rehearsal showed | Fix |
+|---|---|---|
+| the fake | an ES module does not load under the engine's pinned name `claude-<version>-<sha16>` (qualify refused `backend_refused`) | CommonJS |
+| `secretHits` (M139 (a)) | the init's execute-only node copies were counted as holding the credential | M132's verified exception, each instance checked |
+| the fake | the cancellation canary fell through into a journey role and ended at once (`barrier_not_reached`) | it waits for TERM |
+| M136 (a) | it read a canary `result` record no section promises | SEAM §165's `observed.result`; a published record, if any, must agree |
+| the fake | a script is never identified by the host sampler (exe is node), so the containment canary failed `delegation_unverified` | a native wrapper (`rehearsal-claude.c`) |
+| `rehearsalOnlyTunnel` | it called that failure "every other check passed" | it also requires delegation shown absent |
+| the attempt's host sampler | started after the approval wait, which notices the answer up to 5 s late: no samples at all, so M136 (c) could not see the backend | started before the wait |
+| `realProject` (M140) | the plan made the stage eligible and the engine dispatched it at once, before the policy named `claude`: path one refused `backend_refused` | the policy first |
+| `realProject` | a rerun of a journey step could not make its repository where the first try's was | a new directory per try |
+| path two | the stage implements R1 and R2 and only R1 had a check: both gates `ACCEPTANCE_SCOPE_INCOMPLETE` | a check for R2 |
+| M140 (c) | it judged from the fixture's first commit and failed on the engine's bootstrap and policy commits, which no run makes | run and role trailers judged from the journey's start; the setup commits judged as the engine's, recorded. Whether R12.2's "every commit" covers them is a question for Sean |
+| the hands-on script | the same two orderings (step 3's refusal came from the default backend, not from the missing entry); CHECK (3) printed nulls (the manifest is not in `GET /v1/decisions`); `[ -s ]` is always false on cgroupfs, so CHECK (4) never showed and step 10's Stop reached a run whose backend had already ended (`term_sent` false); `git log` opened a pager; the token search printed "nothing found" with files unread, and would have after a match too (grep exits 2); the attempt's wait could end before 900/600/900 s canaries | each fixed; an unread file is named, CHECK (4) not shown is said, a Stop is sent only to a domain seen with processes |
+
+**Rehearsal-only failures, recorded, the assertions unchanged:** the provider tunnel cannot run offline, so the attempt fails and writes no entry: M136 (a) (status), (b), (c), M138 (a), (c). The assertions after those lines were judged on a scratch copy without them, against the same records (the containment canary's own capabilities standing for the entry's): M136 (a), (c), M138 (a), (b) passed; M136 (b) and M138 (c) cannot be judged without a provider. Path two real stops at "the Reviewer did not disposition the finding": a real agent is in the same place (below). CHECK (4) is not shown because the fake's canaries end within a second.
+
+**What the rehearsal found in the engine** (not changed here; reported to the coordinator): a role's context package gives a real agent no way to produce what the gates read. `RESULT_SCHEMA` names only `status` and `summary`; no role is told `findings` (with `check`), `signoffs` or `dispositions`; a Reviewer is given neither the open findings' ids nor the candidate's diff (D2 §1.3 lists the diff), and a fix Builder is not told its finding. The fake passes path one only because it was written knowing the fields. Also: the host sampler counts any member whose executable is the pinned binary, so a fork of the backend sampled before its `exec` reads as a second backend (the first native fake, forking at its start, failed `delegation_unverified` this way; Claude Code starts a child process for each command its Bash tool runs, and a child is the backend's image until its `exec`; how wide that window is for Claude Code was not measured).
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)

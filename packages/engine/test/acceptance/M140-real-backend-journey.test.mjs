@@ -135,7 +135,24 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
       const home = homeOf(ctx, 'home');
       const seen = [];
       for (const p of paths) {
-        const commits = execFileSync('git', ['-C', p.repo, 'rev-list', `${p.base}..refs/heads/main`], { encoding: 'utf8' }).split('\n').filter(Boolean);
+        // The engine's setup commits before the journey (the bootstrap and
+        // the policy revision): the engine's own recorded revisions, naming
+        // the project; no run made them, so they carry no run or role
+        // trailer. (Found by the E79 rehearsal: judged from the fixture's
+        // first commit, this case failed on them. Whether R12.2's "every
+        // commit" means these too is put to Sean; until then they are
+        // judged as the engine's and not the agent's, and recorded.)
+        assert.ok(p.journey_base, `${p.name}: the journey's starting point on the integration branch was recorded`);
+        const setup = execFileSync('git', ['-C', p.repo, 'rev-list', `${p.base}..${p.journey_base}`], { encoding: 'utf8' }).split('\n').filter(Boolean);
+        for (const sha of setup) {
+          const trailers = trailersOf(p.repo, sha);
+          assert.deepEqual(trailers['Surety-Project'], [p.project], `${p.name} ${sha}: a setup commit names the project once (${JSON.stringify(trailers)})`);
+          assert.equal(trailers['Surety-Run'], undefined, `${p.name} ${sha}: a setup commit names no run`);
+          const revision = withStore(home, (db) => db.prepare('SELECT * FROM "revisions" WHERE "sha" = ? AND "project" = ?').get(sha, p.project));
+          assert.ok(revision, `${p.name} ${sha}: the engine recorded this setup commit as its own revision`);
+          seen.push({ path: p.name, sha, identity: identityOf(p.repo, sha), run: null, role: null, revision_kind: revision.kind, setup: true });
+        }
+        const commits = execFileSync('git', ['-C', p.repo, 'rev-list', `${p.journey_base}..refs/heads/main`], { encoding: 'utf8' }).split('\n').filter(Boolean);
         assert.ok(commits.length > 0, `${p.name}: the integration branch gained commits`);
         for (const sha of commits) {
           const trailers = trailersOf(p.repo, sha);

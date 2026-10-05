@@ -35,7 +35,7 @@ import { recordsOf } from './harness/records.mjs';
 import { addProject, addWork, answerDecision, assertRunEnded, assertRunQuarantined, requestTick, run as runRow, runsOf, stopRun, tick, waitForQuarantine, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, cgroupOfPid, daemonReexec, makeLeaf, makeUnreadable, moveIntoCgroup, populated, procsOf, removeCgroup, restoreReadable, waitCgroupGone } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, eventsOf, roleAlive, roleHolding, SANDBOX_CONFIG, sandboxEngine, updateDomain, waitForEvent } from './harness/sandbox/lane.mjs';
-import { hostProcess, memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
+import { hostProcess, isHostAlive, memberByInnerPid, waitHostGone } from './harness/sandbox/procs.mjs';
 import { cgroupSentinel } from './harness/sandbox/sentinel.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -308,18 +308,36 @@ describe('M115 every unknown quarantines', () => {
     // and runs nothing of the role; it leaves by itself. Whether it placed
     // itself on the way (D2 §3.2 lets a launcher be "itself a member" after
     // closure) is not pinned; that it is gone and the domain empty is.
+    //
+    // Objection 019: the launcher's exit now brings the engine's own tick
+    // (SEAM.md §170), which may terminate the domain and remove its directory
+    // before the test reads it. So the rule this case is about is kept across
+    // the window from the release to the exit as well: at every read, a
+    // `domain.terminated` already recorded while the launcher is still alive
+    // (host-read after the events, so it was alive when the event was
+    // written) is a termination while this engine's launcher is outstanding.
     const res = await fx.engine.post('/v1/harness/barriers/launcher.before_placement/release', {});
     assert.equal(res.status, 200, `the waiting launcher is released (${res.status} ${res.text})`);
-    await waitHostGone(launcher, { timeoutMs: 20_000 });
-    await waitFor(() => (populated(domain.cgroup_path) === 0 ? true : undefined), { timeoutMs: 10_000, what: 'the domain to read populated 0 once the launcher is gone' });
+    for (const started = now(); ; await sleep(50)) {
+      const recorded = eventsOf(fx.home, 'domain', domain.id, 'domain.terminated');
+      const alive = isHostAlive(launcher);
+      assert.ok(!(recorded.length > 0 && alive), `domain.terminated (seq ${recorded.map((e) => e.seq).join(', ')}) was recorded while this engine's launcher (host pid ${launcher}) was still alive: D2 §3.2, "populated 0 on a domain whose launcher is outstanding is not termination"`);
+      if (!alive) break;
+      assert.ok(now() - started < 20_000, `host pid ${launcher} (the released launcher) is gone within 20 s`);
+    }
+    // Gone: the domain is empty, or already removed by a clearance the
+    // engine's own tick made (objection 005's absence; only the engine
+    // removes it while its scope lives, and only after recording it).
+    const left = await waitFor(() => emptyOrRemoved(domain.cgroup_path), { timeoutMs: 10_000, what: 'the domain to be empty or removed once the launcher is gone' });
+    if (left === 'removed') assert.equal(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated').length, 1, "the domain's directory is gone only because the engine recorded its termination");
+    t.diagnostic(`S1: once the launcher was gone the domain was ${left}; ${eventsOf(fx.home, 'domain', domain.id, 'domain.terminated').length ? "the engine's own tick had already cleared it" : "not yet cleared before the test's tick"}`);
     assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.launch_authorized'), [], 'the released launcher was granted nothing');
     assert.deepEqual(fx.scripted.launches({ run: run.id }), [], 'and ran nothing of the role');
-    // Gone, and the domain empty; the engine clears nothing without observing.
-    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated'), [], 'no termination is recorded before the tick that observes it');
-    assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
 
     // The condition is lifted: the launcher has exited and the domain is
-    // empty with its launch closed. The next tick clears it, once.
+    // empty with its launch closed. The engine's own tick (SEAM.md §170) or
+    // the test's, whichever observes first, clears it, once; the other
+    // writes nothing more.
     await tick(fx.engine, project);
     const ended = await assertClearedOnce(fx, project, run.id, 'stopped', { launched: false });
     const terminated = eventsOf(fx.home, 'domain', domain.id, 'domain.terminated');
@@ -531,7 +549,7 @@ describe('M115 every unknown quarantines', () => {
     await waitForWork(fx.home, first, 'complete');
 
     const second = await addWork(fx.engine, project, 'verification');
-    const { run, domain, launch } = await roleHolding(fx, project, second, { on_term: 'exit' });
+    const { run, domain, launch, member } = await roleHolding(fx, project, second, { on_term: 'exit' });
     await armFault(fx.engine, { point: 'manager_unreachable', times: 1_000_000 });
     await stopRun(fx.engine, project, run.id);
     await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
@@ -544,8 +562,17 @@ describe('M115 every unknown quarantines', () => {
     assert.equal(populated(domain.cgroup_path), 1);
     assert.equal(kept.domains[0].observation, 'unknown', 'a manager restart is never evidence that domains died');
     fx.scripted.release(second);
-    for (let i = 0; i < 20 && populated(domain.cgroup_path) !== 0; i++) await sleep(500);
-    assert.equal(populated(domain.cgroup_path), 0, 'the fixture is live: the role exited by itself and the domain is empty');
+    // Objection 019: the role's exit ends the domain init, which is the
+    // launcher by exec (SEAM.md §125), and that exit brings the engine's own
+    // tick (§170), which may clear the quarantine and remove the directory
+    // before the test reads it. The role's exit is read on the host; the
+    // domain is then empty, or gone only because the engine recorded its
+    // termination. The engine's tick or the test's, whichever observes
+    // first, clears it once.
+    await waitHostGone(member.pid, { timeoutMs: 10_000 });
+    const left = await waitFor(() => emptyOrRemoved(domain.cgroup_path), { timeoutMs: 10_000, what: 'the domain to be empty or removed once the role has exited by itself' });
+    if (left === 'removed') assert.equal(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated').length, 1, "the fixture is live: the role exited by itself, and the domain's directory is gone only because the engine recorded its termination");
+    t.diagnostic(`(h): once the role had exited the domain was ${left}; ${eventsOf(fx.home, 'domain', domain.id, 'domain.terminated').length ? "the engine's own tick had already cleared it" : "not yet cleared before the test's tick"}`);
     await tick(fx.engine, project);
     await assertClearedOnce(fx, project, run.id, 'stopped');
     await waitForWork(fx.home, second, 'held');
