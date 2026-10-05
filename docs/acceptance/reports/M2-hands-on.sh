@@ -529,7 +529,31 @@ S "$API/v1/projects/$P/runs/$SR" | jq '.run | {id, state, outcome, reason_class,
 # ---------------------------------------------------------------------------------------
 say "11. The token is nowhere the engine or the repository keeps anything"
 note "grep reads the token from its file (-f), so it never appears on a command line."
-grep -rlFf "$SURETY_REAL_CREDENTIAL_REF" "$SURETY_HOME" "$PROJ_REPO" && die "the token was found (above)" || echo "   nothing found in files"
+# Matches, unreadable files and the verdict kept apart (found by the E79
+# rehearsal): grep exits 2 when a file cannot be read, even after a match,
+# so its status alone would report a found token, or an unread file, as
+# nothing found. An unread file is named, never counted as clean; the
+# engine's execute-only copies of node (mode 111, node's size) are named so.
+GREP_STATUS=0
+HITS=$(grep -rlFf "$SURETY_REAL_CREDENTIAL_REF" "$SURETY_HOME" "$PROJ_REPO" 2>"$WORK/token-grep.err") || GREP_STATUS=$?
+[ -z "$HITS" ] || { echo "$HITS"; die "the token was found in the files above"; }
+NODE_SIZE=$(stat -c %s "$(readlink -f "$NODE")")
+UNREAD=0
+while IFS= read -r line; do
+  f=${line#grep: }; f=${f%: Permission denied}
+  [ "$f" != "$line" ] || { echo "   grep: $line"; UNREAD=$((UNREAD + 1)); continue; }
+  if [ "$(stat -c %a "$f")" = 111 ] && [ "$(stat -c %s "$f")" = "$NODE_SIZE" ]; then
+    echo "   not read: $f (the engine's execute-only copy of node, mode 111, node's size)"
+  else
+    echo "   NOT READ, not shown to hold nothing: $f"
+  fi
+  UNREAD=$((UNREAD + 1))
+done < "$WORK/token-grep.err"
+case $GREP_STATUS in
+  1) echo "   nothing found in any file" ;;
+  2) [ "$UNREAD" -gt 0 ] && echo "   nothing found in the files that could be read; $UNREAD could not be read (listed above)" || die "grep failed (status 2) with nothing it could not read; see $WORK/token-grep.err" ;;
+  *) die "grep ended with status $GREP_STATUS; see $WORK/token-grep.err" ;;
+esac
 N=$(git -C "$PROJ_REPO" cat-file --batch-all-objects --batch | grep -cFf "$SURETY_REAL_CREDENTIAL_REF" || true)
 echo "   git objects holding it: $N"
 check 9 "grep of the token's value over the engine home and the repository finds nothing" \
