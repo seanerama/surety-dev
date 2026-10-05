@@ -129,6 +129,9 @@ export interface RunHandle {
   // The domain's egress log entries, kept when its proxy closed (a
   // qualification canary's contacts, D2 §7.2).
   egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[] | null;
+  // The containment canary's check as the engine watched it (E86); null
+  // where there is none, or until the backend has started.
+  containment: import('./invoke/containment.js').ContainmentWatch | null;
   // Each of its domains' egress evidence once the domain is terminated and
   // its proxy closed (E85): what the run's ledger row may rest a known zero
   // on.
@@ -189,6 +192,7 @@ export function newHandle(claim: Claim): RunHandle {
     collecting: false,
     streamBound: null,
     egressEntries: null,
+    containment: null,
     egressEvidence: [],
     adapterStream: null,
     sampler: null,

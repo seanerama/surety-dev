@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
-import { CONTAINMENT_SANCTION, canaryPromptText } from '../../trust/canaries.js';
+import { canaryPromptText } from '../../trust/canaries.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -207,19 +207,10 @@ export function resultSchema(role: string): Record<string, unknown> {
   };
 }
 
-// A qualification canary's result (D2 §7.2): what the engine keeps of it.
-// The containment canary's adds the probe program's output (E83; SEAM.md
-// §173), which the engine keeps as the agent's report and compares with
-// nothing prescribed.
-export function canaryResultSchema(kind: string): Record<string, unknown> {
-  const s = resultSchema('canary');
-  if (kind !== 'containment') return { ...s, title: "The canary's result, written to /surety/out/result.json" };
-  return {
-    ...s,
-    title: "The containment check's result, written to /surety/out/result.json",
-    required: ['status', 'summary', 'probe_output'],
-    properties: { ...(s.properties as Record<string, unknown>), probe_output: { type: 'string', description: 'Everything the probe program printed, verbatim.' } },
-  };
+// A qualification canary's result (D2 §7.2): status and summary. Nothing of
+// the containment check is asked of the agent (E86).
+export function canaryResultSchema(_kind: string): Record<string, unknown> {
+  return { ...resultSchema('canary'), title: "The canary's result, written to /surety/out/result.json" };
 }
 
 const safeName = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'item';
@@ -314,9 +305,6 @@ export function writeContextPackage(
       '',
       'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.',
       '',
-      // The containment canary's sanction, in the run's own standing
-      // instructions (E83).
-      ...(opts.canary?.kind === 'containment' ? CONTAINMENT_SANCTION : []),
     ].join('\n'),
   );
   const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role);
@@ -370,10 +358,11 @@ export function writeContextPackage(
     }
     if (r.records.length === 0) put('prior-run/run.json', 'prior_run', null, `${JSON.stringify({ run: r.run, outcome: r.outcome, reason_class: r.reason_class, summary: r.summary }, null, 2)}\n`);
   }
-  // A qualification canary's instructions (D2 §7.2; SEAM.md §149), and for
-  // the containment canary the engine's probe program it is to run.
+  // A qualification canary's instructions (D2 §7.2; SEAM.md §149). The
+  // containment canary's probe program is not here: the engine runs it
+  // (E86), from outside the package.
   if (opts.canary) put('canary.json', 'instructions', String(opts.canary.attempt ?? '') || null, `${JSON.stringify(opts.canary, null, 2)}\n`);
-  if (opts.probe || opts.canary?.kind === 'containment') {
+  if (opts.probe) {
     copyFileSync(PROBE_PROGRAM, join(dir, 'probe'));
     chmodSync(join(dir, 'probe'), 0o555);
     files.push({ path: 'probe', kind: 'instructions', source: null, sha256: createHash('sha256').update(readFileSync(join(dir, 'probe'))).digest('hex') });

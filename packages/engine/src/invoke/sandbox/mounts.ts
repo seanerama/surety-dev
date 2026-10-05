@@ -118,6 +118,9 @@ export interface PlanInput {
   node: string; // the engine's node, real path
   initNodeCopy: string; // execute-only copy, host path
   initScript: string; // domain-init.js, host path
+  // The containment canary's probe program (E86), bound read-only at
+  // /.init/probe.js for the domain init to run; null elsewhere.
+  probeProgram?: string | null;
   git?: GitViewInput | null;
   // Read-only binds over the workspace (the protected roots), each a path
   // relative to the workspace, the source a host path; `make` when the
@@ -288,6 +291,7 @@ export function buildPlan(input: PlanInput): Plan {
   b.dir('/.init');
   b.bind(input.initNodeCopy, { target: '/.init/node' });
   b.bind(input.initScript, { target: '/.init/init.js' });
+  if (input.probeProgram) b.bind(input.probeProgram, { target: '/.init/probe.js' });
   // (A unix socket is connected to through a read-only bind as through any
   // other: the bind keeps the role from replacing it, not from using it.)
   if (input.egressSocket) b.bind(input.egressSocket, { target: EGRESS_SOCKET, noexec: true });

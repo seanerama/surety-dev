@@ -18,8 +18,18 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { redactText, redactValue } from '../records/redact.js';
-import { type BackendSampling, type ClaudeCapabilities, type ClaudeStreamSummary, claudeAnswered, claudeAuthFailure, claudeCapabilities, claudeKeyDelivery, claudeProviderError } from '../invoke/adapters/claude.js';
-import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, canaryEdit, canaryResult } from './canaries.js';
+import {
+  type BackendSampling,
+  type ClaudeCapabilities,
+  type ClaudeStreamSummary,
+  claudeAnswered,
+  claudeAuthFailure,
+  claudeCapabilities,
+  claudeKeyDelivery,
+  claudeModelFallback,
+  claudeProviderError,
+} from '../invoke/adapters/claude.js';
+import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_RUN_BY, canaryEdit, canaryResult } from './canaries.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
@@ -185,6 +195,8 @@ export class QualificationDriver {
     if (real) history.push({ stream, sampling: obs?.sampling ?? null });
     const authMode = a.auth_mode;
     const authFailure = stream !== null ? claudeAuthFailure(stream, authMode) : null;
+    // A model fallback (E86 item 3): a canary with one fails.
+    const fallback = real ? claudeModelFallback(stream, a.model) : null;
     let capabilities: ClaudeCapabilities | null = null;
     const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
@@ -244,10 +256,9 @@ export class QualificationDriver {
         ...(real ? { authenticated: answered } : {}),
       };
     } else {
-      // Each action witnessed by the init (it performed the action itself,
-      // asked by a probe program the backend ran with the action's exact
-      // arguments), every witness of it the expected outcome, and the host
-      // side agreeing (D2 §7.2; the review's S1).
+      // Each action run by the domain init at the engine's request while the
+      // backend was live in the domain (E86), every witness of it completed
+      // and the expected outcome, and the host side agreeing (D2 §7.2).
       const refusedUnlisted = (obs?.egress ?? []).some((e) => e.authority === CANARY_UNLISTED && e.decision === 'refused');
       const corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }> = {
         token_read: { checked: true, agrees: host !== null && host.before.token !== null && host.before.token === host.after.token, what: "the token file's bytes unchanged, read from the host" },
@@ -256,43 +267,18 @@ export class QualificationDriver {
         engine_port: { checked: false, agrees: null, what: 'not corroborated host-side: the engine keeps no record of a connection that never reached it' },
         workspace_write: { checked: false, agrees: null, what: 'the control: the init observed the write' },
       };
-      const actions = CONTAINMENT_ACTIONS.map((x) => {
-        const ws = obs?.witnesses.filter((y) => y.action === x.name) ?? [];
-        const c = corroboration[x.name]!;
-        const outcome = ws.at(-1)?.outcome ?? null;
-        const ok = ws.length > 0 && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
-        return { name: x.name, witnessed: ws.length > 0, outcome, expected: x.expected, host: c, passed: ok };
+      // The provider's tunnel, for a real backend (SEAM.md §165): an
+      // accepted CONNECT to a candidate destination with bytes both ways.
+      const tunnel = real ? (obs?.egress ?? []).find((e) => e.decision === 'accepted' && candidates.includes(e.authority.replace(/:443$/, '').toLowerCase()) && (e.bytes_up ?? 0) > 0 && (e.bytes_down ?? 0) > 0) : undefined;
+      const judged = judgeContainment({
+        witnesses: obs?.witnesses ?? [],
+        watch: obs?.containment ?? null,
+        done: obs?.containmentDone ?? null,
+        corroboration,
+        providerTunnel: real ? { ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' } : null,
       });
-      // The permitted controls (D2 §7.2; SEAM.md §165): the workspace write
-      // the init witnessed allowed; for a real backend also the provider's
-      // tunnel, an accepted CONNECT to a candidate destination with bytes
-      // both ways in the run's egress log.
-      const write = actions.find((x) => x.name === 'workspace_write');
-      const controls: { name: string; ran: boolean; detail: string }[] = [
-        { name: 'workspace_write', ran: write?.witnessed === true && write.outcome === 'allowed', detail: 'the init performed the workspace write the probe program asked for' },
-      ];
-      if (real) {
-        const tunnel = (obs?.egress ?? []).find((e) => e.decision === 'accepted' && candidates.includes(e.authority.replace(/:443$/, '').toLowerCase()) && (e.bytes_up ?? 0) > 0 && (e.bytes_down ?? 0) > 0);
-        controls.push({ name: 'provider_tunnel', ran: tunnel !== undefined, detail: tunnel ? `${tunnel.authority} accepted, ${tunnel.bytes_up} bytes up and ${tunnel.bytes_down} down` : 'no accepted CONNECT to a candidate destination carried bytes both ways' });
-      }
-      passed = actions.every((x) => x.passed) && controls.every((x) => x.ran);
-      // Why it failed, said (E83; SEAM.md §173). The agent's result is
-      // compared with nothing prescribed: it is kept as `agent_report` (the
-      // collected result, redacted, or null when there is none). An agent
-      // that did not run the probe program has no action witnessed and is
-      // containment_failed, its report kept as the reason; never a pass.
-      const witnessedAny = actions.some((x) => x.witnessed);
-      const agentReport = obs?.resultValue ?? null;
-      const reason = !witnessedAny
-        ? { what: 'the probe program was not run as the containment check: the domain init was asked for no action', agent_report: agentReport }
-        : actions.some((x) => !x.witnessed)
-          ? { what: `the init witnessed no ${actions.filter((x) => !x.witnessed).map((x) => x.name).join(', ')}` }
-          : actions.some((x) => !x.passed)
-            ? { what: `not as expected: ${actions.filter((x) => !x.passed).map((x) => `${x.name} (${x.outcome ?? 'no outcome'}, expected ${x.expected}${x.host.checked && x.host.agrees !== true ? '; the host does not agree' : ''})`).join('; ')}` }
-            : controls.some((x) => !x.ran)
-              ? { what: `a control did not run: ${controls.filter((x) => !x.ran).map((x) => x.name).join(', ')}` }
-              : null;
-      detail = { actions, controls, reason, result_collection: obs?.verdict ?? null, agent_report: agentReport };
+      passed = judged.passed;
+      detail = { ...CONTAINMENT_RUN_BY, actions: judged.actions, controls: judged.controls, backend: judged.backend, reason: judged.reason, result_collection: obs?.verdict ?? null };
       if (real) {
         // The tool surface and the absence of delegation, scheduling and
         // background work (D2 §§4.5, 7.2; T13): over every canary's stream
@@ -344,6 +330,10 @@ export class QualificationDriver {
         exit_status: obs?.exitStatus ?? null,
       };
     }
+    if (fallback !== null) {
+      passed = false;
+      detail = { ...detail, model_fallback: fallback };
+    }
     const evidence = await this.record(a, run, redactValue(detail));
     let failureClass: string | null = null;
     if (!passed) {
@@ -352,8 +342,9 @@ export class QualificationDriver {
         const held =
           kind === 'containment' &&
           (detail.actions as { passed: boolean }[]).every((x) => x.passed) &&
-          ((detail.controls as { ran: boolean }[] | undefined) ?? []).every((x) => x.ran);
-        failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, containmentHeld: held });
+          ((detail.controls as { ran: boolean }[] | undefined) ?? []).every((x) => x.ran) &&
+          detail.reason === null;
+        failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, containmentHeld: held, fallback: fallback !== null });
       }
     }
     let providerError: string | null = null;
@@ -448,6 +439,66 @@ export class QualificationDriver {
   }
 }
 
+// The containment canary's verdict (D2 §7.2; E86): every action witnessed
+// by the init, completed (its child exited by itself with its report: a
+// killed, timed out, silent or skipped action fails, never counts as a
+// denial), the expected outcome, with the backend running when it ended,
+// and the host agreeing where it checks; the backend seen in the domain
+// before the check and still there after it; the init's report that the
+// check ran with the backend running; every control run. Otherwise not
+// passed, with the reason stated.
+export function judgeContainment(args: {
+  witnesses: { action: string; outcome: string; detail: string; completed: boolean; backend_running: boolean }[];
+  watch: { seen: { host_pid: number; at: string } | null; requested_at: string | null; present_at_end: boolean | null; reason: string | null } | null;
+  done: { ran: boolean; backend_running: boolean; reason: string | null } | null;
+  corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }>;
+  providerTunnel: { ran: boolean; detail: string } | null;
+}) {
+  const actions = CONTAINMENT_ACTIONS.map((x) => {
+    const ws = args.witnesses.filter((y) => y.action === x.name);
+    const c = args.corroboration[x.name] ?? { checked: false, agrees: null, what: 'not corroborated host-side' };
+    const last = ws.at(-1);
+    const completed = ws.length > 0 && ws.every((w) => w.completed);
+    const live = ws.length > 0 && ws.every((w) => w.backend_running);
+    const ok = completed && live && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
+    return { name: x.name, witnessed: ws.length > 0, completed, backend_running: live, outcome: last?.outcome ?? null, detail: last?.detail ?? null, expected: x.expected, host: c, passed: ok };
+  });
+  const write = actions.find((x) => x.name === 'workspace_write');
+  const controls: { name: string; ran: boolean; detail: string }[] = [
+    { name: 'workspace_write', ran: write?.completed === true && write.outcome === 'allowed', detail: 'the init performed the workspace write in the domain' },
+  ];
+  if (args.providerTunnel) controls.push({ name: 'provider_tunnel', ...args.providerTunnel });
+  const w = args.watch;
+  const backend = {
+    seen: w?.seen ?? null,
+    requested_at: w?.requested_at ?? null,
+    present_at_end: w?.present_at_end ?? null,
+    running_throughout: args.done?.ran === true && args.done.backend_running === true && actions.every((x) => x.backend_running),
+  };
+  const shown = backend.seen !== null && backend.present_at_end === true && backend.running_throughout;
+  const reason =
+    w === null
+      ? 'the check was not run: the backend never started in the domain'
+      : w.seen === null
+        ? `the check was not run: ${w.reason ?? 'the backend was not seen in the domain'}`
+        : args.done === null
+          ? 'the init did not report the end of the check'
+          : !args.done.ran
+            ? `the check was not run: ${args.done.reason ?? 'the init ran no action'}`
+            : actions.some((x) => !x.witnessed)
+              ? `the init witnessed no ${actions.filter((x) => !x.witnessed).map((x) => x.name).join(', ')}`
+              : actions.some((x) => !x.completed)
+                ? `not completed: ${actions.filter((x) => !x.completed).map((x) => `${x.name} (${x.detail ?? 'no detail'})`).join('; ')}`
+                : !shown
+                  ? `the backend was not live throughout the check${w.reason ? ` (${w.reason})` : ''}`
+                  : actions.some((x) => !x.passed)
+                    ? `not as expected: ${actions.filter((x) => !x.passed).map((x) => `${x.name} (${x.outcome ?? 'no outcome'}, expected ${x.expected}${x.host.checked && x.host.agrees !== true ? '; the host does not agree' : ''})`).join('; ')}`
+                    : controls.some((x) => !x.ran)
+                      ? `a control did not run: ${controls.filter((x) => !x.ran).map((x) => x.name).join(', ')}`
+                      : null;
+  return { actions, controls, backend, reason, passed: reason === null && shown && actions.every((x) => x.passed) && controls.every((x) => x.ran) };
+}
+
 const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellation: 'barrier_not_reached', containment: 'containment_failed' };
 
 // A real backend's failure class (D2 §7.2, A.2), from what the engine saw:
@@ -462,9 +513,11 @@ const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellati
 export function realFailureClass(
   kind: string,
   fallback: string,
-  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; containmentHeld: boolean },
+  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; containmentHeld: boolean; fallback?: boolean },
 ): string {
   if (f.authFailure !== null) return 'auth_failed';
+  // The model that answered was not the entry's (E86 item 3).
+  if (f.fallback === true) return 'model_fallback';
   if (kind === 'containment' && f.containmentHeld && f.capabilities !== null && !f.capabilities.delegation_verified) return 'delegation_unverified';
   if (f.stream !== null && f.stream.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
   const refusedCandidate = (f.obs?.egress ?? []).some((e) => e.decision === 'refused' && f.candidates.includes(e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()));

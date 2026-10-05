@@ -33,8 +33,12 @@ export interface BackendLaunch {
   stdin: string | null;
   // The egress forwarder the init starts before the backend (D2 §2.4).
   forwarder?: { port: number; socket: string } | null;
-  // A qualification canary's barrier and witness socket (D2 §7.2).
-  canary?: { barrier?: string | null; witness?: string | null; containment?: { targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; actions: string[] } | null } | null;
+  // A qualification canary's barrier, and the containment check the init
+  // runs at the engine's request (D2 §7.2; E86).
+  canary?: {
+    barrier?: string | null;
+    containment?: { program: string; actions: string[]; targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; action_timeout_ms: number; check_ms: number } | null;
+  } | null;
 }
 
 export interface ExitReport {
@@ -119,7 +123,12 @@ export class SandboxLaunch {
   volatile: VolatileHold | null = null;
   // What the init witnessed of a qualification canary (D2 §7.2): each
   // probe-program report it accepted, and the barrier file's appearance.
-  readonly witnesses: { action: string; outcome: string; pid: number; detail: string }[] = [];
+  readonly witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean }[] = [];
+  // The containment check (E86): when the engine asked the init for it, and
+  // the init's report that it ended.
+  containmentRequestedAt: string | null = null;
+  containmentDone: { ran: boolean; backend_running: boolean; reason: string | null; at: string } | null = null;
+  private containmentWaiters: (() => void)[] = [];
   barrierSeen = false;
   // When the init's report of the barrier reached the engine (SEAM.md §165).
   barrierAt: string | null = null;
@@ -184,6 +193,24 @@ export class SandboxLaunch {
 
   get alive(): boolean {
     return this.launcherExit === null;
+  }
+
+  // The engine's request for the containment check, on the init's channel
+  // (E86); resolves when the init reports it ended, or after `timeoutMs`.
+  requestContainment(timeoutMs: number): Promise<void> {
+    if (this.containmentRequestedAt === null) {
+      this.containmentRequestedAt = new Date().toISOString();
+      this.send({ t: 'containment' });
+    }
+    if (this.containmentDone !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      timer.unref?.();
+      this.containmentWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   private send(msg: Record<string, unknown>): boolean {
@@ -298,7 +325,20 @@ export class SandboxLaunch {
         this.resolveBackend();
         return;
       case 'witness':
-        this.witnesses.push({ action: String(m.action ?? ''), outcome: String(m.outcome ?? ''), pid: Number(m.pid), detail: String(m.detail ?? '').slice(0, 500) });
+        this.witnesses.push({
+          action: String(m.action ?? ''),
+          outcome: String(m.outcome ?? ''),
+          pid: typeof m.pid === 'number' ? m.pid : null,
+          detail: String(m.detail ?? '').slice(0, 500),
+          completed: m.completed === true,
+          backend_running: m.backend_running === true,
+        });
+        return;
+      case 'containment_done':
+        if (this.containmentDone === null) {
+          this.containmentDone = { ran: m.ran === true, backend_running: m.backend_running === true, reason: typeof m.reason === 'string' ? m.reason.slice(0, 300) : null, at: new Date().toISOString() };
+          for (const w of this.containmentWaiters.splice(0)) w();
+        }
         return;
       case 'barrier':
         if (!this.barrierSeen) {

@@ -703,92 +703,87 @@ async function canaryAction(name: string, t: Targets): Promise<{ outcome: string
   }
 }
 
-function report(socket: string, line: Obj): Promise<string> {
+// One action of the containment check as the domain init runs it (E86):
+// the probe program's `--canary-run <name>` in a child of the init, its
+// targets on its standard input, its report the last JSON line it prints.
+// Fails closed (E86): an action is `completed` only when its child exited 0
+// by itself with its report; a child killed (by a signal from anyone, the
+// backend included, which runs under the same uid), timed out, silent or
+// not started is not completed, its outcome `not_run`, its detail saying
+// why. Never an unwitnessed denial.
+export interface ActionRun {
+  outcome: string;
+  detail: string;
+  completed: boolean;
+  pid: number | null;
+  exit: { code: number | null; signal: string | null };
+}
+
+export function runCanaryAction(args: {
+  node: string;
+  program: string;
+  name: string;
+  targets: Record<string, unknown>;
+  env: Record<string, string>;
+  cwd: string;
+  timeoutMs: number;
+  // The child's pid, as soon as it is known (for a test's interference).
+  onSpawn?: (pid: number) => void;
+}): Promise<ActionRun> {
   return new Promise((resolve) => {
-    let sock: net.Socket;
+    let out = '';
+    let child: ReturnType<typeof spawn>;
+    let timedOut = false;
     try {
-      sock = net.connect(`\0${socket}`);
+      child = spawn(args.node, [args.program, '--canary-run', args.name], { cwd: args.cwd, env: args.env, stdio: ['pipe', 'pipe', 'ignore'] });
     } catch (err) {
-      resolve(errorOf(err));
+      resolve({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid: null, exit: { code: null, signal: null } });
       return;
     }
-    let answer = '';
+    const pid = child.pid ?? null;
+    if (pid !== null) args.onSpawn?.(pid);
+    child.stdin!.on('error', () => {});
+    child.stdin!.end(`${JSON.stringify(args.targets)}\n`);
     const timer = setTimeout(() => {
-      sock.destroy();
-      resolve('timeout');
-    }, 30_000);
-    sock.once('connect', () => sock.write(`${JSON.stringify(line)}\n`));
-    sock.on('data', (d: Buffer) => {
-      answer += d.toString('utf8');
-      if (answer.includes('\n')) {
-        clearTimeout(timer);
-        sock.destroy();
-        resolve(answer.trim());
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // gone
       }
+    }, args.timeoutMs);
+    child.stdout!.on('data', (d: Buffer) => {
+      if (out.length < 65536) out += d.toString('utf8');
     });
-    sock.once('error', (err) => {
+    let settled = false;
+    const done = (r: ActionRun) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve(errorOf(err));
+      resolve(r);
+    };
+    child.once('error', (err) => done({ outcome: 'not_run', detail: `the action could not be started: ${errorOf(err)}`, completed: false, pid, exit: { code: null, signal: null } }));
+    child.once('close', (code, signal) => {
+      const exit = { code: code ?? null, signal: signal ?? null };
+      let report: { outcome: string; detail: string } | null = null;
+      for (const line of out.split('\n').reverse()) {
+        try {
+          const m = JSON.parse(line) as Obj;
+          if (m.type === 'canary_action') {
+            report = { outcome: String(m.outcome ?? ''), detail: String(m.detail ?? '').slice(0, 500) };
+            break;
+          }
+        } catch {
+          // not a report line
+        }
+      }
+      if (timedOut) return done({ outcome: 'not_run', detail: `the action did not end within ${args.timeoutMs} ms and was killed`, completed: false, pid, exit });
+      if (signal !== null) return done({ outcome: 'not_run', detail: `the action was ended by ${signal} before it reported${report ? ` (it had reported ${report.outcome})` : ''}`, completed: false, pid, exit });
+      if (report === null) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} without a report`, completed: false, pid, exit });
+      if (code !== 0) return done({ outcome: 'not_run', detail: `the action exited ${String(code)} (it had reported ${report.outcome})`, completed: false, pid, exit });
+      done({ ...report, completed: true, pid, exit });
     });
   });
-}
-
-// The init's witness socket, if this domain has one: the abstract socket
-// the engine named after the domain, listed in the domain's own network
-// namespace's unix sockets only while a containment check can be asked for
-// (the domain marker in the environment picks it where there are several).
-function witnessName(): string | null {
-  let names: string[];
-  try {
-    names = readFileSync('/proc/net/unix', 'utf8')
-      .split('\n')
-      .map((l) => l.trim().split(/\s+/).at(-1) ?? '')
-      .filter((n) => /^@surety-witness-[A-Za-z0-9_-]+$/.test(n))
-      .map((n) => n.slice(1));
-  } catch {
-    return null;
-  }
-  const distinct = [...new Set(names)];
-  const domain = process.env.SURETY_DOMAIN;
-  if (domain && distinct.includes(`surety-witness-${domain}`)) return `surety-witness-${domain}`;
-  return distinct.length === 1 ? distinct[0]! : null;
-}
-
-// `probe`, with no argument, in a domain with a witness socket: what the
-// agent runs, once (E83; SEAM.md §173). It attempts
-// nothing itself: after its own check that it is in a sandbox, it asks the
-// domain init for the containment check, giving only its own pid, and
-// prints what the init answers, an outcome per action and nothing of any
-// target.
-async function containmentCheck(socket: string): Promise<number> {
-  const say = (line: string) => process.stdout.write(`${line}\n`);
-  say('Surety containment check');
-  // The host's pid namespace is not the agent's to know (E83): every other
-  // sign of the sandbox is checked; the actions' own runs check it too.
-  const reasons = containment('pid:[0]').reasons;
-  if (reasons.length > 0) {
-    say(`not run: this is not the engine's sandbox (${reasons.join('; ')})`);
-    return 2;
-  }
-  const answer = await report(socket, { type: 'containment_request', pid: process.pid });
-  type Answer = { actions?: { action?: unknown; outcome?: unknown }[]; refused?: unknown };
-  let parsed: Answer | null;
-  try {
-    parsed = JSON.parse(answer) as Answer;
-  } catch {
-    parsed = null;
-  }
-  if (parsed === null || !Array.isArray(parsed.actions)) {
-    say(`not run: the init answered ${typeof parsed?.refused === 'string' ? parsed.refused : JSON.stringify(answer.slice(0, 200))}`);
-    return 1;
-  }
-  const expected: Record<string, string> = { token_read: 'denied', git_config: 'denied', engine_port: 'denied', unlisted_connect: 'denied', workspace_write: 'allowed' };
-  for (const a of parsed.actions) {
-    const name = String(a.action ?? '');
-    say(`${name}: ${String(a.outcome ?? '')} (expected ${expected[name] ?? 'unknown'})`);
-  }
-  say('done');
-  return 0;
 }
 
 // `--canary-run <name>`: the init's child, the action itself.
@@ -813,16 +808,10 @@ async function canaryRun(name: string): Promise<void> {
   process.stdout.write(`${JSON.stringify({ type: 'canary_action', action: name, ...r })}\n`);
 }
 
-// Only as a program of its own, inside a sandbox: never imported for its
-// actions.
+// Only as a program of its own, inside a sandbox; imported by the domain
+// init for runCanaryAction alone.
 const asProgram = process.argv[1] !== undefined && /probe(\.js)?$/.test(process.argv[1]);
-const witness = asProgram && process.argv.length === 2 ? witnessName() : null;
-if (asProgram && witness !== null) {
-  void containmentCheck(witness).then(
-    (code) => setTimeout(() => process.exit(code), 20),
-    () => process.exit(70),
-  );
-} else if (asProgram && process.argv[2] === '--canary-run') {
+if (asProgram && process.argv[2] === '--canary-run') {
   void canaryRun(process.argv[3] ?? '').then(
     () => setTimeout(() => process.exit(0), 20),
     () => process.exit(70),
