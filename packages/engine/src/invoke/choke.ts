@@ -232,6 +232,11 @@ export class Launcher {
     // is chosen by the claim from the project's policy and the trust table
     // (D2 §4.1).
     const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
+    // The entry a dispatch would launch is checked before the claim (D2
+    // §§1.2, 7.3): its binary's bytes and its help, so that a mismatch is a
+    // refusal decided before admission and never waits behind another
+    // domain (D2 §3.7). The launch checks the bytes again (prepare).
+    const preflight = attempt === null ? await this.preflight(target.project, item.id) : null;
     // The run's base is the commit the registry expects the integration
     // branch at, or the checkpoint the work continues from (D1 §7.4); the
     // claim reads it in its own transaction.
@@ -246,9 +251,12 @@ export class Launcher {
       // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
       scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
       attempt,
+      preflight,
     });
     if (!claim) return false;
     const handle = newHandle(claim);
+    // The help was checked just now, for this very entry: not again.
+    if (preflight !== null && claim.trust_entry === preflight.entry && preflight.found_help !== null) handle.helpChecked = preflight.found_help;
     // The adapter that reads a real backend's stream (D2 §1.1): Claude
     // Code's for `claude`; the scripted protocol otherwise.
     // Under the subscription token the reported cost is Claude Code's own
@@ -279,6 +287,25 @@ export class Launcher {
     }
     if (ready && runs) void this.launch(handle, runs, target.repo);
     return true;
+  }
+
+  // The main thread's half of the check before the claim: the hash of the
+  // entry's binary and of its help, as found now (null where unreadable).
+  // Nothing where the item's backend has no active entry, or where the
+  // engine's test mode would refuse to run the binary at all (prepare
+  // refuses it then).
+  private async preflight(project: string, workItem: string): Promise<{ entry: string; found_sha256: string | null; found_help: string | null } | null> {
+    const probe = await this.rt.read<{ entry: string; backend: string; binary_path: string } | null>('dispatch.entry_probe', { project, workItem }).catch(() => null);
+    if (probe === null) return null;
+    if (seamRefuseEntryBinary(probe.binary_path, probe.backend, true) !== null) return null;
+    let found: string | null;
+    try {
+      found = createHash('sha256').update(await readFile(probe.binary_path)).digest('hex');
+    } catch {
+      found = null;
+    }
+    const help = found === null ? null : await helpHash(probe.binary_path, probe.backend).catch(() => null);
+    return { entry: probe.entry, found_sha256: found, found_help: help };
   }
 
   // The run will never be spawned into by this incarnation.
@@ -340,11 +367,13 @@ export class Launcher {
       }
       // Its help, the static check of D2 §7.2, unchanged since it was
       // qualified (D2 §7.3; SEAM.md §150): a different help revokes an entry.
-      let help: string | null = null;
-      try {
-        help = await helpHash(claim.entry.binary_path, claim.entry.backend);
-      } catch {
-        help = null;
+      let help: string | null = handle.helpChecked;
+      if (help === null) {
+        try {
+          help = await helpHash(claim.entry.binary_path, claim.entry.backend);
+        } catch {
+          help = null;
+        }
       }
       if (help !== null && help !== claim.entry.help_sha256) {
         if (claim.trust_entry !== null) {

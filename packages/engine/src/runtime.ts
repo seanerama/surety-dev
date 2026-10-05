@@ -136,6 +136,9 @@ export interface RunHandle {
   // (D2 §7.2), from the backend's start to its exit.
   sampler: Sampler | null;
   samplingReport: BackendSampling | null;
+  // The entry's help hash, as checked before this run's claim; null where
+  // the launch checks it itself.
+  helpChecked: string | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -185,6 +188,7 @@ export function newHandle(claim: Claim): RunHandle {
     adapterStream: null,
     sampler: null,
     samplingReport: null,
+    helpChecked: null,
   };
 }
 

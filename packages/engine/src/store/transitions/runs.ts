@@ -167,6 +167,11 @@ export interface ClaimArgs {
   // A qualification attempt's own dispatch of one of its canaries (D2 §7.2,
   // K10): the only way a canary's item is run.
   attempt?: string | null;
+  // The main thread's check of the entry this claim would dispatch to, made
+  // just before it (D2 §§1.2, 7.3): the binary's SHA-256 and its help hash
+  // as found (null where they could not be read). A mismatch is a refusal
+  // before launch, decided here, before any domain is admitted (D2 §3.7).
+  preflight?: { entry: string; found_sha256: string | null; found_help: string | null } | null;
 }
 
 export interface Claim {
@@ -244,6 +249,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   return null;
 }
 
+// The active entry a dispatch of this item would resolve to, for the main
+// thread's check of its binary and help before the claim (claimDispatch's
+// `preflight`); null where the item's backend has none.
+export function dispatchEntryProbe(db: Tx['db'], args: { project: string; workItem: string }): { entry: string; backend: string; binary_path: string } | null {
+  const item = db.prepare('SELECT "project", "kind" FROM "work_items" WHERE "id" = ?').get(args.workItem) as { project: string; kind: string } | undefined;
+  if (!item || item.project !== args.project) return null;
+  const role = ROLE_OF[item.kind];
+  if (!role) return null;
+  const r = resolveBackend(db, { project: item.project, role, scripted: null });
+  return r.kind === 'entry' ? { entry: r.entry.id, backend: r.backend, binary_path: r.entry.binary_path } : null;
+}
+
 export const CHAIN_BOUNDARY = 'chaining boundary';
 export const RESOURCE_ENVELOPE = 'resource_envelope';
 
@@ -285,9 +302,36 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   revokeDrifted(tx);
   const attempt = canary ? getAttempt(tx.db, args.attempt!) : undefined;
   if (canary && (!attempt || attempt.status !== 'running')) return null;
-  const backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
+  let backend: Resolution | { kind: 'attempt'; backend: string; version: string; model: string; attempt: AttemptRow } = attempt
     ? { kind: 'attempt', backend: attempt.backend, version: attempt.version, model: attempt.model, attempt }
     : resolveBackend(tx.db, { project: item.project, role, scripted: args.scripted });
+  // An entry whose binary or help no longer is what was qualified (as the
+  // main thread found it just now) is revoked and the dispatch refused
+  // before launch (D2 §§1.2, 7.3), before admission: a dispatch that would
+  // be refused takes no domain, so it is never held behind one.
+  if (backend.kind === 'entry' && args.preflight && args.preflight.entry === backend.entry.id) {
+    const e = backend.entry;
+    const pf = args.preflight;
+    const helpChanged = pf.found_help !== null && pf.found_help !== e.help_sha256;
+    if (pf.found_sha256 !== e.binary_sha256 || helpChanged) {
+      const binary = pf.found_sha256 !== e.binary_sha256;
+      revokeDrifted(tx, binary ? { entry: e.id, binaries: { [e.binary_path]: pf.found_sha256 } } : { entry: e.id, helps: { [e.binary_path]: pf.found_help } });
+      backend = {
+        kind: 'refused',
+        backend: backend.backend,
+        version: backend.version,
+        model: backend.model,
+        code: 'backend_refused',
+        reason: binary
+          ? `The binary at ${e.binary_path} ${pf.found_sha256 === null ? 'cannot be read' : 'is not the one the trust entry names'}.`
+          : `The help of ${e.binary_path} is not the one the qualification recorded.`,
+        what_to_do: binary ? 'Qualify the binary that is installed, or restore the one the entry names.' : 'Qualify the binary that is installed.',
+        subject: binary
+          ? { trust_entry: e.id, binary_path: e.binary_path, expected_sha256: e.binary_sha256, found_sha256: pf.found_sha256 }
+          : { trust_entry: e.id, binary_path: e.binary_path, expected_help_sha256: e.help_sha256, found_help_sha256: pf.found_help },
+      };
+    }
+  }
   // The resource envelope (D2 §3.7): a domain is admitted only within
   // max_concurrent_domains and the host's reserves; otherwise the work stays
   // eligible, nothing is written, and its read shows the hold. A dispatch
