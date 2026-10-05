@@ -3832,3 +3832,25 @@ Nothing allocates memory.
 
 On the Builder's `228cf5e` the case fails at the option-B assertion: the second item was `claimed` with a run, at 2 × 9 213 837 312 + 536 870 912 = 18 964 545 536 bytes against 13 582 368 768 available. The reading E75 replaces counted only the new domain's limit against the memory available now.
 
+
+## 169. The fault `egress_connect_hang`: a connect that never completes, without the network
+
+(Written 2026-10-05 on `verify/m2-s14-hang` from `main` at `c3a2651`; the driver's decision after M128 (b) failed in a rerun. D2 §2.4, A.7 `egress_connect_timeout`; sections 140, 61.)
+
+**Why.** M128 (b) needs a connection to a validated address that does not answer within `egress_connect_timeout` (1 s). It used a documentation address (`198.51.100.20`), expecting the packets to go nowhere and the connect to hang. On this host the router sometimes answers such an address with `EHOSTUNREACH`. That is measured: 3.1 s cold, faster once the kernel has cached the unreachable. The proxy then rightly logs `connect_failed`, not `connect_timeout`. What a real network does with a documentation address is not the engine's behaviour and is not something a case can rely on.
+
+**The fault.** `POST /v1/harness/faults` with `{"point": "egress_connect_hang", "address": "<numeric address>"}`, harness mode only:
+- **What it does.** While armed, every connection the egress proxy makes to that validated numeric address is held unconnected: no packet is sent (no SYN), or the socket is kept unconnected. `egress_connect_timeout` then ends it, exactly as it ends a connection that does not answer.
+- **What stays unchanged.** Everything around the connect: one resolution per attempt, the address policy, `decision` `accepted`, `address` the validated address, and `ended` `connect_timeout` with `limit` `{"key": "egress_connect_timeout", "value": <seconds>}` (section 140). So are the role's view (no tunnel), `domain.egress_refused` where section 140 records it, and the run going on.
+- **Lifetime.** It is standing: every attempt to that address while armed, any number of times, until `DELETE /v1/harness/faults` lifts it. Arming it again for another address adds that address.
+- **Refusals.** An `address` that is not a numeric IPv4 or IPv6 address is **400** `invalid_value` (`subject.field` `address`).
+- **Outside harness mode** there is no such fault and nothing in the proxy consults it.
+
+The address stays a documentation-range one in the cases, so that even an engine ignoring the fault reaches no real host.
+
+**Where it is armed.**
+- **M128 (b):** for `DOC.b`, the connect-timeout target.
+- **M127 (a) to (e):** for `DOC.a`, the address rebinding's first attempt connects to.
+- **M127 (h):** for `DOC.c`, the approved `egress_allow_extra` name's address.
+
+M127's cases did not assert how those connections end (only no tunnel, `accepted` and the address connected to). But their outcome depended on what the network answered, so each case now arms the fault for its own address and sends nothing. No other case of M127 or M128 connects to an address other than the engine's echo endpoint.
