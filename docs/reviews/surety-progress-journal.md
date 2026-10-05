@@ -111,3 +111,65 @@ Main `ce7d9f4`; builder `build/m2-tick` `f842022`; verifier `verify/m2-rehearsal
 - Committed: verifier fixed rehearsal canaries, token and manifest checks, and hands-on wait timing after rehearsal findings.
 - Uncommitted: verifier is documenting the fake-only rehearsal in SEAM §171 and correcting section references; builder and main heads are unchanged.
 - No new recorded test totals found; the real lane remains pending.
+
+## 2026-10-04 23:51:03 -0500 CDT
+
+Main `2a68815`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `50c4a73`; verifier `verify/m2-real-findings` `a0a3967`.
+
+- Committed: main merged the fake-only real-lane rehearsal, fourteen fixes and E80 findings; real lane remains pending.
+- Committed: objection 019 was upheld and M115 S1/(h) updated for the engine's launcher-exit tick.
+- Newly recorded tests, not run here: fake rehearsal checks 4/4, 2/2, 1/1, 5/5; M141 remains 1/2 on the skeleton. M115 passed 12/12 in three isolated runs.
+- Active worktrees are clean; main still has untracked `docs/architecture/m1.html`. The journal-only commit is not build progress.
+
+## 2026-10-04 23:51:42 -0500 CDT — correction to 23:51 entry
+
+Main `2a68815`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `50c4a73`; verifier `verify/m2-real-findings` `a0a3967`.
+
+- Verifier committed the first real-agent finding fix; builder's gate transition edit is now uncommitted. The earlier “active worktrees are clean” line no longer describes the live state.
+
+## 2026-10-05 00:00:20 -0500 CDT
+
+Main `2a68815`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `90ef3f6`; verifier `verify/m2-real-findings` `a0a3967`.
+
+- Committed: real-findings builder completed role result schemas/context for the first rehearsal finding (`216fa3d`) and changed sampler handling of pre-exec forks for the second (`90ef3f6`).
+- Uncommitted: verifier is adding M136 native-fake acceptance cases for transient forks and second backends; main still has untracked `docs/architecture/m1.html`.
+- No new recorded test results found; checks here were read-only. Main and tick builder heads are unchanged.
+
+## 2026-10-05 00:10:38 -0500 CDT
+
+Main `04fef0e`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `f5b336d`.
+
+- Committed: main merged M125 role-context and M136 transient-fork acceptance cases, plus the S1 race fix; real-findings builder refined fork sampling and canary classification.
+- Newly recorded tests, not run here: M125 (e) failed with 15 gaps; M136 S3 (a) failed on the prior main, while (b) and (c) passed.
+- Active builder worktrees are clean; main retains only the journal edit and untracked `docs/architecture/m1.html`.
+
+## 2026-10-05 00:20:01 -0500 CDT
+
+Main `04fef0e`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `f5b336d`.
+
+- No build changes since the previous entry: heads and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 00:30:07 -0500 CDT
+
+Main `04fef0e`; builders `build/m2-tick` `acf2141`, `build/m2-real-findings` `f5b336d`.
+
+- No build changes since the 00:20 entry: heads and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 00:40:16 -0500 CDT
+
+Main `4c2e3d6`; builder `build/m2-real-findings` `5378369`.
+
+- Committed: main merged the launcher-exit tick for closing or quarantined domains, with a unit case; the builder merged that main head.
+- Builder worktree is clean; main retains its journal edit and untracked `docs/architecture/m1.html`. No new recorded test results found.
+
+## 2026-10-05 00:50:11 -0500 CDT
+
+Main `4c2e3d6`; builder `build/m2-real-findings` `5378369`.
+
+- No build changes since 00:40: heads and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-05 01:00:14 -0500 CDT
+
+Main `4c2e3d6`; builder `build/m2-real-findings` `5378369`.
+
+- No build changes since 00:50: heads and worktree states are unchanged; no new recorded tests.
