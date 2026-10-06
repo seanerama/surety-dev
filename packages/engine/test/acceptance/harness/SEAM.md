@@ -3959,3 +3959,14 @@ E82's agent gave three reasons, in its own result: it was asked to run a probe a
 - `M136-adapter-with-a-fake-backend.test.mjs` "E86 review S1" and "S2": a fake backend that, while it waits, plants a malformed `~/.gitconfig` (S1) or signals its siblings in its own pid namespace (S2, guarded in two halves per section 141); the canary's verdict is the engine's own and is unmoved. On `build/m2-e86` at `c4a7f7f` S1 fails (the planted config makes `git_config` read as denied by git's error); S2 passes there (the canary fails closed) and stays as a regression guard.
 
 The scripted role program and the fakes follow both forms: under E86 (`canary.json` naming neither a probe nor actions), obeying the containment canary is waiting `wait_seconds` and ending with `result`; the default canary script obeys.
+
+## 176. What resolves a finding, told to the roles of the fix loop (E87)
+
+(Written 2026-10-06 on `verify/m2-path2-instructions` from `main` at `3f1f483`. E87: in Sean's real-lane rerun, path two of M140 (b) was not established: the real Verifier (`run_01M47VHMWNRD63Q9VRY55WTR04`) found the seeded defect but left the finding's `check` empty, and nothing in its package told it that the field decides resolution or which checks there are. Sean's decision: fix the instructions, then rerun path two only. The Builder's design approved by the driver. D1 §9.3 (5); sections 68, 74 (Resolution), 172; row M125.)
+
+**What the gates read** is section 74's Resolution: a finding is resolved only when it was reported with `check`, dispositioned `fix`, and that check passes after the disposition; a finding without `check` can never be resolved. A real agent learns this only from its package, so:
+- **The Verifier's and the Reviewer's prompts** name the result field `check` (as the prompt names `findings` and `dispositions`), and list every check of the effective protected version, one line each, holding its key, the keys of the requirements it covers and its gate kinds, the required ones marked with the word `required`. None of a check's definition is given. With no checks, the prompt says so (not asserted).
+- **The fix Builder's prompt** names the key of the check whose passing resolves its finding.
+- The wording, the result schema's description of `check`, the Reviewer's sentence on what shows a `fix` done, the fix Builder's task line, the statement that the check is protected, and what a fix Builder is told of a finding with no check are the engine's; the case does not read them.
+
+**The case:** `M125-handover.test.mjs` (f), the fix loop of case (e) (shared as `fixLoopPackages`) with two checks in the protected version: `login` (required, acceptance, covering `R1`, gates `stage` and `alpha_authorize`) and `style` (not required, `security_lint`, gate `stage`). Each role dumps its package; the prompt is the manifest's `prompt` file; every gap in one assertion.
