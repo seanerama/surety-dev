@@ -238,3 +238,23 @@ Settled since the entries above:
 - The review's S1 to S3 are pinned with a fake `claude` and fixed.
 - M118 (c)'s defect is fixed (E76 item 3).
 - Objections 015 to 018 are answered.
+
+## After the real lane (2026-10-06)
+
+**Written by:** the Verifier, 2026-10-06, on `verify/m2-report` with `main` at `e69f4d9` merged, completing the M2 report. Sean's real-lane suite passed 16 of 16 in the run directory `~/surety-real-lane-20261006T050755Z` (M2 report, section 14). This brings the entries above to that state.
+
+**Settled by the real lane:**
+- "The real lane has not run": it ran. The canaries established D2 §4.5's items for Claude Code 2.1.289 on this host (M2 report, section 7), except what loads without `--bare` beyond the stream's events (below).
+- `auth_failed` is shown in the real lane (M139), with an invalid subscription token: `error_exit`, 401, the provider error kept, the row `unknown`.
+- The token arrives through `CLAUDE_CODE_OAUTH_TOKEN`, and the engine's pinned copy matched the test's own hash (M136 (b)).
+- The hands-on walkthrough was made (Sean's fourth attempt, M142).
+- M141's skeleton failure: the report is final.
+
+| Entry | Row(s) | Class | Claimed where | Record |
+|---|---|---|---|---|
+| **What the subscription mode loads without `--bare`** beyond the stream's events (hooks, plugins, CLAUDE.md discovery) is not established; the stream showed no hook or plugin event. | M136 (b) | B | none planned | M2 report, section 7 |
+| **A finding without `check` can never be resolved, and nothing requires one.** The Verifier's and the Reviewer's packages ask for it and list the checks, and an unknown key is an invalid result (M125 (f), (g)); a real agent may still leave it empty, as the first try of path two did. | M125 (f), (g); M140 (b) | B | none planned | E87 items 9 to 11 |
+| **A finding resolves when the check it names passes, whether or not that check covers the defect** (F2). | M125 (g); M140 (b) | open, Sean's | the M2 report, question 15 | E87 item 11 |
+| **`runs.model_observed` is null on every run** while each ledger row records the observed model (Q14). | M140 | — (not claimed) | none in M2 | E87 item 5 |
+| **The real journey's check executions are fixtures** (D3's runner is not built): the check `login` was recorded passed by the test, in path one and path two alike, and is evidence of nothing about the code. | M140 (a), (b) | B | D3 | the M2 report, section 15 |
+| **The real lane ran once, on this host, with one version and one model** (2.1.289, `claude-sonnet-5-5`), in three passes over one run directory (E87 items 9, 12). | M136 to M140 | B (anything else) | a later qualification | the M2 report, sections 2, 14 |
