@@ -20,6 +20,11 @@
 // what the engine reads from its result, as SEAM.md §68 lists it, and gives
 // a Reviewer the open findings it may disposition by id and the candidate's
 // diff, and a fix Builder the finding it fixes.
+// (f) (E87, Sean's real-lane rerun: a real Verifier left `check` empty, so
+// path two could never resolve its finding; SEAM.md §74, Resolution): the
+// Verifier's and the Reviewer's prompts name the field `check` and list
+// every check of the protected version, by key, with its requirements and
+// gate kinds, the required ones marked; the fix Builder's names its check.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -317,51 +322,7 @@ describe('M125 what is handed over', () => {
     };
     const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login' };
 
-    // The fix loop of M01's second path (E43), in the sandbox lane, each role
-    // scripted to dump its package before it reports.
-    const fx = await sandboxEngine(t);
-    fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
-    const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
-    const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'what-the-gates-read', tier: 'T2' });
-    const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
-    const checks = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
-    fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);
-    const build = await runToEnd(fx, project, plan.stages[0].work_item);
-    assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
-    const [candidate] = await waitForCandidates(fx, project);
-    const letThrough = async (work) => consume(fx, project, await openDecision(fx, project, 'blocker', work.id), 'continue');
-    const dumpOf = (item, what) => {
-      const [launch] = fx.scripted.launches({ work_item: item });
-      assert.ok(launch?.invocation, `${what} was launched`);
-      const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
-      assert.ok(dump, `${what} dumped its package`);
-      assertManifest(dump, what);
-      return dump;
-    };
-    const ended = (item, what) => tickUntil(fx.engine, project, () => {
-      const [run] = runsOf(fx.home, item);
-      return run?.state === 'ended' ? run : undefined;
-    }, { what: `${what} to end` });
-
-    const verification = workItemsOf(fx.home, project).find((w) => w.kind === 'verification' && w.subject?.candidate === candidate.id);
-    assert.ok(verification, 'the nomination registered verification work');
-    fx.scripted.script(verification.id, [roleThat([step.probe('context_dump')], { findings: [FINDING] })]);
-    await letThrough(verification);
-    await ended(verification.id, 'the Verifier\'s run');
-    const [found] = findingsOf(fx.home, project);
-    assert.ok(found?.status === 'open', `the fixture is live: the Verifier's finding is recorded, open (${JSON.stringify(found)})`);
-
-    await passAll(fx.engine, project, candidate.id, [checks.login]);
-    const review = await tickUntil(fx.engine, project, () => workItemsOf(fx.home, project).find((w) => w.kind === 'review' && w.subject?.candidate === candidate.id), { max: 4, what: 'the engine to queue the review' });
-    fx.scripted.script(review.id, [roleThat([step.probe('context_dump')], { dispositions: [{ finding: found.id, disposition: 'fix' }] })]);
-    await letThrough(review);
-    const reviewRun = await ended(review.id, 'the Reviewer\'s run');
-    assert.deepEqual([reviewRun.outcome, reviewRun.reason_class], ['completed', 'none'], `the fixture is live: the Reviewer's run was accepted (${reviewRun.reason_text})`);
-    const fix = workItemsOf(fx.home, project).find((w) => w.kind === 'fix');
-    assert.ok(fix, 'the fixture is live: the engine registered the fix work for the disposition (E43)');
-    fx.scripted.script(fix.id, [roleThat([step.probe('context_dump')])]);
-    await letThrough(fix);
-    await ended(fix.id, 'the fix\'s Builder run');
+    const { found, v, r, b } = await fixLoopPackages(t, { checks: [check('login', { requirements: ['R1'] })], finding: FINDING });
 
     // What each package tells, and what it lacks; every gap in one list.
     const gaps = [];
@@ -392,22 +353,108 @@ describe('M125 what is handed over', () => {
     const holds = (dump, text) => dump.files.some((f) => typeof f.text === 'string' && f.text.includes(text));
     const listedKinds = (dump) => JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text).files.map((f) => f.kind);
 
-    const v = dumpOf(verification.id, 'the Verifier\'s run');
     checkSchema(v, 'verifier', 'the Verifier');
-    const r = dumpOf(review.id, 'the Reviewer\'s run');
     checkSchema(r, 'reviewer', 'the Reviewer');
     if (!holds(r, found.id)) gaps.push(`the Reviewer: no file of its package holds the open finding's id ${found.id}, which a disposition names`);
     if (!holds(r, FINDING.message)) gaps.push('the Reviewer: no file of its package holds the open finding\'s message');
     const diffs = JSON.parse(r.files.find((f) => f.name === 'manifest.json').text).files.filter((f) => f.kind === 'diff');
     if (diffs.length === 0) gaps.push(`the Reviewer: its manifest lists no diff (D2 §1.3: "for a Reviewer the candidate's diff"; it lists ${JSON.stringify(listedKinds(r))})`);
     else if (!diffs.some((d) => (r.files.find((f) => f.name === d.path)?.text ?? '').includes(PERMITTED_EDIT.path))) gaps.push(`the Reviewer: its diff does not show the candidate's change to ${PERMITTED_EDIT.path}`);
-    const b = dumpOf(fix.id, 'the fix\'s Builder run');
     checkSchema(b, 'builder', 'the fix Builder');
     if (!holds(b, found.id)) gaps.push(`the fix Builder: no file of its package holds the finding it fixes (${found.id})`);
     if (!holds(b, FINDING.message)) gaps.push('the fix Builder: no file of its package holds the message of the finding it fixes');
     assert.deepEqual(gaps, [], `each role is told what the engine reads from its result, and the Reviewer and the fix Builder what they act on (D2 §1.3; SEAM.md §68)`);
   });
+  test("(f) what resolves a finding (E87; SEAM.md §74, Resolution): the Verifier's and the Reviewer's prompts tell them to name a finding's check, and list every check of the protected version by key, with the requirements it covers and the gates it serves, the required ones marked; the fix Builder's names the check that shows its finding fixed", async (t) => {
+    // Sean's real-lane rerun (run_01M47VHMWNRD63Q9VRY55WTR04): the real
+    // Verifier found the seeded defect but left `check` empty, so the fix
+    // loop could never resolve it (a finding is resolved only when reported
+    // with `check`, dispositioned `fix`, and that check passes after the
+    // disposition). Asserted on the prompt the engine builds, by keys, field
+    // names and lines, never by phrase: the list is read line by line, so a
+    // check's key, its requirement keys and its gate kinds share a line.
+    const LOGIN = check('login', { requirements: ['R1'] });
+    const STYLE = check('style', { kind: 'security_lint', gates: ['stage'], required: false });
+    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login' };
+    const { v, r, b } = await fixLoopPackages(t, { checks: [LOGIN, STYLE], finding: FINDING });
+
+    const gaps = [];
+    const promptOf = (dump) => {
+      const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+      const entry = manifest.files.find((f) => f.kind === 'prompt');
+      return (entry && dump.files.find((f) => f.name === entry.path)?.text) ?? '';
+    };
+    // The result field `check` named as a field (as the prompt names
+    // `findings` and `dispositions`), not the word "check".
+    const FIELD = /`check`|findings(\[\])?\.check\b|"check"/;
+    const listLine = (text, c) => text.split('\n').find((l) => new RegExp(`(^|[^\\w-])${c.key}([^\\w-]|$)`).test(l) && c.requirements.every((q) => l.includes(q)) && c.gate_kinds.every((g) => l.includes(g)));
+    const checkList = (dump, what) => {
+      const text = promptOf(dump);
+      if (!FIELD.test(text)) gaps.push(`${what}: its prompt does not name the result field \`check\`, which a finding must carry to be resolved`);
+      for (const c of [LOGIN, STYLE]) {
+        const line = listLine(text, c);
+        if (!line) gaps.push(`${what}: its prompt has no line listing the check ${c.key} with its requirements ${JSON.stringify(c.requirements)} and gate kinds ${JSON.stringify(c.gate_kinds)}`);
+        else if (c.required !== false && !/\brequired\b/i.test(line)) gaps.push(`${what}: the required check ${c.key} is not marked required (${JSON.stringify(line)})`);
+      }
+    };
+    checkList(v, 'the Verifier');
+    checkList(r, 'the Reviewer');
+    if (!promptOf(b).includes(LOGIN.key)) gaps.push(`the fix Builder: its prompt does not name the check ${LOGIN.key} whose passing resolves its finding`);
+    assert.deepEqual(gaps, [], 'each role is told what resolves a finding: its check, by a key the prompt lists (E87; SEAM.md §74)');
+  });
 });
+
+// The fix loop of M01's second path (E43), in the sandbox lane, each role
+// scripted to dump its package before it reports: the Verifier reports
+// `finding`, the Reviewer dispositions it `fix`, the fix's Builder runs.
+// `checks` are the protected version's checks; the required ones pass.
+// Returns the recorded finding and the three packages.
+async function fixLoopPackages(t, { checks, finding }) {
+  const fx = await sandboxEngine(t);
+  fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
+  const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
+  const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'what-the-gates-read', tier: 'T2' });
+  const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+  const ids = (await installChecks(fx.engine, project, checks)).id;
+  fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);
+  const build = await runToEnd(fx, project, plan.stages[0].work_item);
+  assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
+  const [candidate] = await waitForCandidates(fx, project);
+  const letThrough = async (work) => consume(fx, project, await openDecision(fx, project, 'blocker', work.id), 'continue');
+  const dumpOf = (item, what) => {
+    const [launch] = fx.scripted.launches({ work_item: item });
+    assert.ok(launch?.invocation, `${what} was launched`);
+    const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+    assert.ok(dump, `${what} dumped its package`);
+    assertManifest(dump, what);
+    return dump;
+  };
+  const ended = (item, what) => tickUntil(fx.engine, project, () => {
+    const [run] = runsOf(fx.home, item);
+    return run?.state === 'ended' ? run : undefined;
+  }, { what: `${what} to end` });
+
+  const verification = workItemsOf(fx.home, project).find((w) => w.kind === 'verification' && w.subject?.candidate === candidate.id);
+  assert.ok(verification, 'the nomination registered verification work');
+  fx.scripted.script(verification.id, [roleThat([step.probe('context_dump')], { findings: [finding] })]);
+  await letThrough(verification);
+  await ended(verification.id, 'the Verifier\'s run');
+  const [found] = findingsOf(fx.home, project);
+  assert.ok(found?.status === 'open', `the fixture is live: the Verifier's finding is recorded, open (${JSON.stringify(found)})`);
+
+  await passAll(fx.engine, project, candidate.id, checks.filter((c) => c.required !== false).map((c) => ids[c.key]));
+  const review = await tickUntil(fx.engine, project, () => workItemsOf(fx.home, project).find((w) => w.kind === 'review' && w.subject?.candidate === candidate.id), { max: 4, what: 'the engine to queue the review' });
+  fx.scripted.script(review.id, [roleThat([step.probe('context_dump')], { dispositions: [{ finding: found.id, disposition: 'fix' }] })]);
+  await letThrough(review);
+  const reviewRun = await ended(review.id, 'the Reviewer\'s run');
+  assert.deepEqual([reviewRun.outcome, reviewRun.reason_class], ['completed', 'none'], `the fixture is live: the Reviewer's run was accepted (${reviewRun.reason_text})`);
+  const fix = workItemsOf(fx.home, project).find((w) => w.kind === 'fix');
+  assert.ok(fix, 'the fixture is live: the engine registered the fix work for the disposition (E43)');
+  fx.scripted.script(fix.id, [roleThat([step.probe('context_dump')])]);
+  await letThrough(fix);
+  await ended(fix.id, 'the fix\'s Builder run');
+  return { found, v: dumpOf(verification.id, 'the Verifier\'s run'), r: dumpOf(review.id, 'the Reviewer\'s run'), b: dumpOf(fix.id, 'the fix\'s Builder run') };
+}
 
 // The package's manifest (SEAM.md §139) agrees with its files.
 function assertManifest(dump, what) {
