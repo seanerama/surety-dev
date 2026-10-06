@@ -67,7 +67,9 @@ export function obeyingCanaries(fx, { positive, cancellation, containment } = {}
   const times = (one) => Array.from({ length: 8 }, () => one);
   fx.scripted.canaryScript('positive', positive ?? times({ steps: [step.canary('obey')] }));
   fx.scripted.canaryScript('cancellation', cancellation ?? times({ steps: [step.canary('obey')], on_term: 'exit' }));
-  fx.scripted.canaryScript('containment', containment ?? times({ steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] }));
+  // The containment canary: its guarded actions where the engine asks for
+  // them (before E86), then obeying (under E86: wait, then the result).
+  fx.scripted.canaryScript('containment', containment ?? times({ steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('obey')] }));
 }
 
 // A sandbox-lane engine, a stand-in built to run the scripted role program

@@ -128,6 +128,11 @@ export interface ClaudeStreamSummary {
   // The per-call usage counted until the bound on message ids was reached;
   // beyond it only the terminal totals count.
   usage_ids_truncated: boolean;
+  // A model fallback (E86 item 3): each `system/model_refusal_fallback`
+  // event, and every model the stream names (an assistant message's model,
+  // `<synthetic>` aside; the result's modelUsage keys).
+  fallbacks: { original_model: string | null; fallback_model: string | null; trigger: string | null; scope: string | null; category: string | null }[];
+  models_seen: string[];
 }
 
 export interface ClaudeLine {
@@ -167,6 +172,8 @@ export class ClaudeStream {
     results: 0,
     protocol_errors: [],
     usage_ids_truncated: false,
+    fallbacks: [],
+    models_seen: [],
   };
   private readonly seen = new Set<string>();
 
@@ -234,7 +241,17 @@ export class ClaudeStream {
       if (name !== null) this.deny(name, str(m.tool_use_id), 'event');
     } else if (m.subtype === 'api_retry') {
       if (this.s.api_retries.length < MAX_LIST) this.s.api_retries.push({ error: str(m.error, 64), status: count(m.error_status) });
+    } else if (m.subtype === 'model_refusal_fallback') {
+      if (this.s.fallbacks.length < MAX_LIST) {
+        this.s.fallbacks.push({ original_model: str(m.original_model), fallback_model: str(m.fallback_model), trigger: str(m.trigger, 64), scope: str(m.scope, 64), category: str(m.api_refusal_category, 64) });
+      }
+      this.model(str(m.fallback_model));
     }
+  }
+
+  private model(name: string | null): void {
+    if (name === null || name === '<synthetic>' || name === '' || this.s.models_seen.includes(name) || this.s.models_seen.length >= MAX_LIST) return;
+    this.s.models_seen.push(name);
   }
 
   private deny(tool_name: string, tool_use_id: string | null, source: 'event' | 'result'): void {
@@ -248,6 +265,7 @@ export class ClaudeStream {
     if (error !== null && this.s.assistant_errors.length < MAX_LIST) this.s.assistant_errors.push(error);
     const msg = isObject(m.message) ? m.message : null;
     if (msg === null) return;
+    this.model(str(msg.model));
     const subagent = typeof m.parent_tool_use_id === 'string';
     if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
@@ -324,6 +342,7 @@ export class ClaudeStream {
       }
     }
     const totals = resultTotals(m);
+    for (const name of totals?.models ?? []) this.model(name);
     const cost = count(m.total_cost_usd);
     this.s.result = {
       subtype,
@@ -356,6 +375,17 @@ export class ClaudeStream {
     const raw: Record<string, unknown> = { ...known, usage_final: complete, usage_scope: totals.scope };
     if (cost !== null) raw[this.opts.costAs === 'estimated' ? 'total_cost_usd_estimate' : 'total_cost_usd'] = cost;
     if (totals.models.length > 0) raw.model = totals.models.join(',');
+    // Each model's own counts and cost as the backend reported them (E86
+    // item 3: a fallback's usage is charged as observed, per model).
+    const perModel = isObject(m.modelUsage) ? m.modelUsage : null;
+    if (totals.models.length > 1 && perModel !== null) {
+      raw.model_usage = Object.fromEntries(
+        totals.models.map((name) => {
+          const u = isObject(perModel[name]) ? (perModel[name] as Record<string, unknown>) : {};
+          return [name, { input_tokens: count(u.inputTokens), cache_creation_input_tokens: count(u.cacheCreationInputTokens), cache_read_input_tokens: count(u.cacheReadInputTokens), output_tokens: count(u.outputTokens), cost_usd: count(u.costUSD) }];
+        }),
+      );
+    }
     out.usage.push({ semantics: 'cumulative', raw });
   }
 }
@@ -387,6 +417,20 @@ function resultTotals(m: Record<string, unknown>): { tokens: Record<TokenKey, nu
     return { tokens, models: [], scope: 'main_loop' };
   }
   return null;
+}
+
+// A model fallback (E86 item 3, provisional): the stream shows a model other
+// than the entry's, by a `model_refusal_fallback` event or by a model it
+// named; null where it shows none. Its text names the fallback.
+export function claudeModelFallback(s: ClaudeStreamSummary | null, entryModel: string): { text: string; fallbacks: ClaudeStreamSummary['fallbacks']; models: string[] } | null {
+  if (s === null) return null;
+  const others = s.models_seen.filter((m) => m !== entryModel);
+  if (s.fallbacks.length === 0 && others.length === 0) return null;
+  const f = s.fallbacks[0];
+  const text = f
+    ? `model_fallback: ${f.original_model ?? entryModel} -> ${f.fallback_model ?? others[0] ?? 'another model'} (${f.trigger ?? 'unknown trigger'}${f.category ? `, ${f.category}` : ''}${f.scope ? `, scope ${f.scope}` : ''})`
+    : `model_fallback: ${entryModel} -> ${others.join(', ')} (named in the stream)`;
+  return { text: text.slice(0, 300), fallbacks: s.fallbacks, models: s.models_seen };
 }
 
 // ---- what a canary makes of a stream (D2 §7.2) ------------------------------------

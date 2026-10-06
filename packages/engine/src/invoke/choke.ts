@@ -48,8 +48,10 @@ import { GOVERNED_FILE } from '../protected/set.js';
 import { materialize, screenWorkspace } from './sandbox/materialize.js';
 import { canaryEdit } from '../trust/canaries.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
-import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream } from './adapters/claude.js';
+import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
 import { exitCause } from './exit-cause.js';
+import { type ContainmentWatch, watchContainment } from './containment.js';
+import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
 import { startBackendSampler } from './sampler.js';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
@@ -65,7 +67,11 @@ export interface CanaryObservation {
   // The result file as collected, parsed, redacted; null where none was.
   resultValue: unknown;
   editObserved: { type: 'file' | 'symlink' | 'fifo' | 'other' | 'missing'; sha256?: string; bytes?: number } | null;
-  witnesses: { action: string; outcome: string; pid: number; detail: string }[];
+  witnesses: { action: string; outcome: string; pid: number | null; detail: string; completed: boolean; backend_running: boolean; hardening: string[] }[];
+  // The containment check (E86): what the engine saw of the backend around
+  // it, and the init's report of its end.
+  containment: ContainmentWatch | null;
+  containmentDone: { ran: boolean; backend_running: boolean; reason: string | null; at: string } | null;
   barrierSeen: boolean;
   // When the init reported the barrier (SEAM.md §165), null where it did not.
   barrierAt: string | null;
@@ -92,6 +98,8 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     resultValue: collectedValue(c),
     barrierAt: launch?.barrierAt ?? null,
     witnesses: launch ? [...launch.witnesses] : [],
+    containment: handle.containment === null ? null : { ...handle.containment },
+    containmentDone: launch?.containmentDone ?? null,
     barrierSeen: launch?.barrierSeen ?? false,
     termToExitMs: launch?.termToExitMs() ?? null,
     egress: handle.egressEntries ?? [],
@@ -150,6 +158,23 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
+// A finding's `check` must name a check of the project's effective
+// protected version (the review of b72b9cc, F1; SEAM.md §74): the key the
+// fix loop resolves the finding by. The reason a result fails it, naming
+// the unknown key (bounded), or null. `keys` null: the project has no
+// effective version, so no key can be named.
+export function unknownCheck(result: RunResult, keys: readonly string[] | null): string | null {
+  for (const f of result.report?.findings ?? []) {
+    if (f.check === undefined || f.check === null) continue;
+    if (keys !== null && keys.includes(f.check)) continue;
+    const named = JSON.stringify(String(f.check).slice(0, 80));
+    return keys === null
+      ? `a finding names the check ${named}, but the project has no effective protected version, so no check can be named`
+      : `a finding names the check ${named}, which is not a check of the project (${keys.length > 0 ? `its checks: ${keys.slice(0, 20).join(', ')}` : 'it has none'})`;
+  }
+  return null;
+}
+
 function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
@@ -552,7 +577,7 @@ export class Launcher {
       }
     } catch (err) {
       log('launch', err, { run: handle.claim.run, phase: handle.phase });
-      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
+      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle), { afterExit: true });
       else this.never(handle, 'failed', 'infra_error');
     } finally {
       handle.settle();
@@ -771,8 +796,24 @@ export class Launcher {
         plan: () => prepared!.plan,
         backend: () => prepared!.backend,
         // The launch was recorded with the grant (SEAM.md §125).
-        started: async () => {
+        started: async (nsPid: number) => {
           handle.backendStarted = true;
+          // The containment canary (E86): once the host sees the backend in
+          // the domain, the engine asks the init for the check.
+          if (claim.attempt?.kind === 'containment' && claim.cgroup_path !== null) {
+            const cgroupPath = claim.cgroup_path;
+            const watch: ContainmentWatch = { ns_pid: nsPid, seen: null, requested_at: null, present_at_end: null, ended_at: null, reason: 'the check had not ended' };
+            handle.containment = watch;
+            void watchContainment({
+              cgroupPath,
+              nsPid,
+              backendExited: () => launch.exitReport !== null || handle.ending,
+              request: (ms) => launch.requestContainment(ms),
+              seenWithinMs: 30_000,
+              checkMs: CONTAINMENT_CHECK_MS + 10_000,
+              into: watch,
+            }).catch((err) => log('containment check', err, { run: claim.run }));
+          }
           // A real backend's canary: the host samples the domain's members
           // from the backend's start (D2 §7.2; M136 (c)).
           if (claim.attempt !== null && handle.adapterStream !== null && claim.entry !== null && claim.cgroup_path !== null) {
@@ -909,6 +950,12 @@ export class Launcher {
     // An end already decided (a Stop, a deadline, a stream bound) is the
     // run-end protocol's, which collects what is unaccepted.
     if (handle.ending || !this.rt.services) return;
+    // The backend's own exit, its output drained and every line of it acted
+    // on (a budget stop from its terminal line included, the review of
+    // 662cd7f, S3), with no end decided: if it exited 0 by itself, its exit
+    // decides the run's end until that end is decided (Q13; S1, S2).
+    const report = handle.sandbox?.exitReport ?? null;
+    if (report !== null && report.code === 0 && report.signal === null && report.startFailed !== true) handle.exitedFirst = true;
     handle.collecting = true;
     let terminated = false;
     try {
@@ -922,12 +969,16 @@ export class Launcher {
       // Unknown termination: nothing is collected at all (D2 §3.4); the
       // run-end protocol quarantines it.
       handle.collecting = false;
-      this.rt.requestEnd(handle, {
-        outcome: 'failed',
-        reason: 'infra_error',
-        reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
-        ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
-      });
+      this.rt.requestEnd(
+        handle,
+        {
+          outcome: 'failed',
+          reason: 'infra_error',
+          reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
+          ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
+        },
+        { afterExit: true },
+      );
       return;
     }
     const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
@@ -935,12 +986,22 @@ export class Launcher {
     const collected = await this.collectOnce(handle);
     handle.collecting = false;
     if (handle.ending) return;
-    const end = await this.decideAfterExit(handle, cls, collected);
-    if (end === 'accept') {
+    const decided = await this.decideAfterExit(handle, cls, collected);
+    // The exit's end is decided: from here a Stop, an Abandon or a deadline
+    // takes its course as before (S1; SEAM.md §47).
+    handle.exitedFirst = false;
+    // A Stop or an Abandon confirmed after the exit (S2): it applied to the
+    // work, which the store holds when the run ends. The run's outcome
+    // follows the exit only when the exit is clean and its result accepted;
+    // for any other end the command takes its course.
+    const pending = handle.controlAfterExit;
+    if (decided === 'accept') {
       this.childDone(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    const end: RunEnd =
+      pending === null ? decided : pending === 'stop' ? { outcome: 'stopped', reason: 'human_stop' } : { outcome: 'abandoned', reason: 'human_abandon' };
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 
   // What the result and the exit class give (D2 §1.6; SEAM.md §143's
@@ -985,6 +1046,16 @@ export class Launcher {
       return { outcome: 'failed', reason: 'infra_error', reasonText: `secret_refused: the secret screen refused ${hits.join(', ')}; nothing of it was published` };
     }
     if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
+    // A model fallback (E86 item 3): the work is not the entry's model's, so
+    // its result is not accepted as the entry's work.
+    const fallback = claim.entry !== null ? claudeModelFallback(handle.adapterStream?.summary() ?? null, claim.entry.model) : null;
+    if (cls === 'clean' && fallback !== null) {
+      // Kept as unaccepted, never the run's result.
+      await this.publishUnaccepted(handle, c);
+      await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
+      handle.result = { valid: false };
+      return { outcome: 'failed', reason: 'invalid_result', reasonText: fallback.text };
+    }
     if (cls === 'clean') {
       // The result is the run's to take or refuse: never also unaccepted.
       c.unacceptedDone = true;
@@ -992,7 +1063,7 @@ export class Launcher {
         if (c.verdict.outcome === 'invalid') {
           await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
           handle.result = { valid: false };
-          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason})` };
+          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason}${handle.invalidDetail ? `: ${handle.invalidDetail}` : ''})` };
         }
         return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with its terminal success event and left no result file' };
       }
@@ -1019,7 +1090,7 @@ export class Launcher {
       // The cause, as far as the engine saw it: the backend's terminal
       // event and the domain's egress refusals.
       const cause = exitCause(handle.adapterStream?.summary() ?? null, handle.egressEntries);
-      return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}` };
+      return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}${fallback ? `; ${fallback.text}` : ''}` };
     }
     await this.publishUnaccepted(handle, c);
     if (cls === 'resource_limit') return { outcome: 'failed', reason: 'infra_error', reasonText: 'exit class resource_limit: the backend was ended by a resource limit of its domain (memory.events oom_kill rose)' };
@@ -1125,6 +1196,15 @@ export class Launcher {
         value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
       } catch {
         value = null;
+      }
+      if (value !== null && (value.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run: claim.run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          value = null;
+        }
       }
       verdict = value === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     }
@@ -1250,7 +1330,7 @@ export class Launcher {
     if (facts.deadline_at !== null && nowMs() >= Date.parse(facts.deadline_at)) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline', asIs: true });
-      return true;
+      return handle.ending;
     }
     let limit: string | null = null;
     try {
@@ -1265,7 +1345,7 @@ export class Launcher {
     if (limit !== null) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, asIs: true });
-      return true;
+      return handle.ending;
     }
     // The backend's exit report, read after the pause: the backend exited
     // while the engine was stopped, and the run ends by its exit with what
@@ -1390,7 +1470,16 @@ export class Launcher {
       if (handle.ending) return;
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
-      const result = parseResult(sent, handle.claim.role);
+      let result = parseResult(sent, handle.claim.role);
+      if (result !== null && (result.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          result = null;
+        }
+      }
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
       // A valid result is kept as a record, published before anything
@@ -1460,7 +1549,9 @@ export class Launcher {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) {
           log('usage', err, { run, attempt: attempt + 1, lost: true });
-          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' });
+          // Never a complete ledger row without an observation (the review
+          // of 662cd7f, M1): this stop is taken after the exit too.
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' }, { afterExit: true });
           return false;
         }
         log('usage', err, { run, attempt: attempt + 1, retry_in_ms: retryIn });
@@ -1513,7 +1604,7 @@ export class Launcher {
       this.rt.services.accept(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 }
 

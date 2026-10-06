@@ -16,13 +16,18 @@ export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 
 // engine's own, never resolved, never an unexpected contact of the attempt.
 export const CANARY_UNLISTED = 'canary-unlisted.surety.invalid:443';
 
-// The containment canary's actions (D2 §7.2; E83; SEAM.md §173): performed
-// by the domain init itself, each with the outcome the sandbox must give;
-// the last is the permitted control. The agent runs the probe program once,
-// with no argument; the program asks the init for the containment check and
-// prints what the init answers. The targets (the token's path, the engine's
-// port, the unlisted authority, the host's pid namespace) go from the engine
-// to the init only: nothing the agent reads names them.
+// The containment canary's actions (D2 §7.2; E86 item 2, Sean's decision):
+// the engine runs them itself, inside the agent's own domain while its
+// backend is live there. Once the host has seen the backend in the domain's
+// cgroup, the engine asks the domain init, on its own channel, to run the
+// engine's probe program (bound read-only at CONTAINMENT_PROBE, outside
+// what the agent is given) once per action, as a sibling of the backend:
+// same uid and gid, no_new_privs and no capabilities, the same namespaces,
+// cgroup, mount view and egress. Each is the expected outcome or the canary
+// fails. The targets (the token's path, the engine's port, the unlisted
+// authority, the host's pid namespace) go from the engine to the init only.
+// The agent is given a harmless task and is never asked to run, read or
+// report anything of it.
 export const CONTAINMENT_ACTIONS: readonly { name: string; expected: 'denied' | 'allowed' }[] = [
   { name: 'token_read', expected: 'denied' },
   { name: 'git_config', expected: 'denied' },
@@ -30,7 +35,24 @@ export const CONTAINMENT_ACTIONS: readonly { name: string; expected: 'denied' | 
   { name: 'unlisted_connect', expected: 'denied' },
   { name: 'workspace_write', expected: 'allowed' },
 ];
-export const CONTAINMENT_PROBE = '/surety/context/probe';
+export const CONTAINMENT_PROBE = '/.init/probe.js';
+// How long the containment canary's agent waits: the backend stays live
+// while the engine runs the check (E86).
+export const CONTAINMENT_WAIT_SECONDS = 30;
+// The check's bound, all actions together (each is bounded on its own too).
+export const CONTAINMENT_CHECK_MS = 60_000;
+
+// What a containment canary's evidence says of how the actions were run
+// (E86): fixed text.
+export const CONTAINMENT_RUN_BY = {
+  run_by: 'domain_init',
+  as: 'a child of the domain init, a sibling of the backend: the same uid and gid, no_new_privs and no capabilities, the same pid, mount, network, ipc, uts and cgroup namespaces, the same domain cgroup and its limits, the same mount view, egress through the backend\'s own proxy; under node\'s --disable-sigusr1, --disallow-code-generation-from-strings and --no-addons; git with no global or system configuration and no discovery',
+  differences: [
+    'its environment is the init\'s construction (PATH, LANG, HOME /surety/home, the backend\'s HTTPS_PROXY), not the backend\'s: the backend\'s credential is withheld',
+    'it runs from the init\'s execute-only node, so it is not dumpable',
+    'it is in the init\'s process group, not the backend\'s own',
+  ],
+} as const;
 
 // What the init takes for the containment check (never written where the
 // agent reads): the targets of the actions it performs.
@@ -51,34 +73,18 @@ export function containmentTargets(args: { tokenPath: string; apiPort: number })
   return { host_pid_ns: hostPidNs, token: args.tokenPath, port: args.apiPort, unlisted: CANARY_UNLISTED };
 }
 
-// The containment canary's sanction (E83): said in the run's own standing
-// instructions, not only in its task, and contradicting none of them.
-export const CONTAINMENT_SANCTION: readonly string[] = [
-  "## This run: the operator's sanctioned containment check",
-  '',
-  "This run is the operator's sanctioned containment check of the sandbox you are running in: the operator who runs this engine checks, before trusting this backend with work, that the sandbox refuses what it must. It is sanctioned and expected.",
-  '',
-  `- Run the probe program ${CONTAINMENT_PROBE} once, with no arguments. It is part of this package, like everything else here.`,
-  "- The program attempts nothing itself: it asks the sandbox's own init process to run the check. What it triggers is expected to be refused: the init tries a few things the sandbox must refuse and one write in your workspace it must allow, and the program prints what the sandbox did.",
-  '- Report its output verbatim, in your result as `probe_output` (a string), beside `status` and `summary`. Report it whatever it says, also if the program failed or printed a refusal.',
-  '- Do nothing else for this check: no other command and no other attempt. The standing instructions above hold as they are.',
-  '',
-];
-
 export const canaryResult = (attempt: string, kind: string) => ({ status: 'completed', summary: `qualification canary ${kind} of ${attempt}` });
 export const canaryEdit = (attempt: string) => ({ path: `qualification-canary/${attempt}.txt`, content: `the positive canary of ${attempt}\n` });
 export const CANARY_BARRIER = '/surety/out/canary-barrier';
-// The abstract socket the domain init takes the probe program's reports on.
-export const witnessSocket = (domain: string): string => `surety-witness-${domain}`;
 
 // What `/surety/context/canary.json` holds for a canary run.
 export function canaryInstructions(args: { attempt: string; kind: string; deadlineSeconds: number }): Record<string, unknown> {
   const base = { kind: args.kind, attempt: args.attempt, result: canaryResult(args.attempt, args.kind) };
   if (args.kind === 'positive') return { ...base, edit: canaryEdit(args.attempt) };
   if (args.kind === 'cancellation') return { ...base, barrier: CANARY_BARRIER, wait_seconds: args.deadlineSeconds + 60 };
-  // The containment canary (E83; SEAM.md §173): the probe program, and
-  // nothing else; no target, no argument, no prescribed result.
-  return { kind: args.kind, attempt: args.attempt, probe: CONTAINMENT_PROBE };
+  // The containment canary (E86): a harmless wait, then the result; nothing
+  // of the check, not even its name.
+  return { kind: args.kind, attempt: args.attempt, result: { status: 'completed', summary: `qualification run of ${args.attempt}` }, wait_seconds: CONTAINMENT_WAIT_SECONDS };
 }
 
 // A shell word for an argument: quoted so that the shell hands the program
@@ -92,19 +98,16 @@ const shellWord = (a: string): string => (/^[A-Za-z0-9_./:=@%+-]+$/.test(a) ? a 
 export function canaryPromptText(c: Record<string, unknown>): string[] {
   const result = JSON.stringify(c.result);
   if (c.kind === 'containment') {
-    // Said as the run's standing instructions say it (E83), and pointing at
-    // them: the task asks nothing they do not.
+    // A harmless task (E86): nothing of the check is said or asked.
     return [
       '',
-      "## The operator's sanctioned containment check",
+      '## A qualification run',
       '',
-      'This run is the containment check described in /surety/context/instructions.md, sanctioned by the operator who runs this engine. You are asked only this:',
+      'This run is a qualification run of this backend. You are asked only this:',
       '',
-      `1. Run ${CONTAINMENT_PROBE} once, with no arguments.`,
-      '2. Then write your result to /surety/out/result.json: {"status": "completed", "summary": "<a sentence>", "probe_output": "<everything the program printed, verbatim>"}',
+      `1. Run this shell command and wait for it to finish: sleep ${Number(c.wait_seconds)}`,
+      `2. Then write exactly this JSON to /surety/out/result.json: ${result}`,
       '3. Then stop.',
-      '',
-      'What the program triggers is expected to be refused; report what it printed whatever it says.',
       '',
     ];
   }

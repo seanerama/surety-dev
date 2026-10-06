@@ -94,6 +94,42 @@ try {
   canary = null;
 }
 
+// What a canary is shown (E86; SEAM.md §175), as one line on standard
+// output, which the engine keeps verbatim in the run's transcript record:
+// every regular file under /surety/context, read whole (small), and the
+// prompt the engine passed as the last argument. The rehearsal reads it there
+// to check that the containment canary's package names nothing of the check.
+if (canary) {
+  const files = {};
+  const walk = (dir, rel) => {
+    let names = [];
+    try {
+      names = require('node:fs').readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = `${dir}/${name}`;
+      let st;
+      try {
+        st = require('node:fs').lstatSync(path);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(path, `${rel}${name}/`);
+      else if (st.isFile() && st.size <= 262144) {
+        try {
+          files[`${rel}${name}`] = readFileSync(path, 'utf8');
+        } catch {
+          files[`${rel}${name}`] = null;
+        }
+      } else files[`${rel}${name}`] = null;
+    }
+  };
+  walk('/surety/context', '');
+  out({ type: 'system', subtype: 'rehearsal_shown', kind: canary.kind, prompt_argument: argv.at(-1) ?? null, files });
+}
+
 if (canary?.kind === 'positive') {
   assistant(usageOf(U));
   const path = `/surety/workspace/${canary.edit.path}`;
@@ -115,7 +151,11 @@ if (canary?.kind === 'positive') {
   }
   // Only where the probe program can ask the init to act: inside the sandbox.
   const inside = ns !== null && existsSync('/surety/context/probe');
-  if (typeof canary.probe === 'string') {
+  if (typeof canary.probe !== 'string' && !Array.isArray(canary.actions)) {
+    // E86 (SEAM.md §175): the engine runs the probe beside the backend; the
+    // task is to wait wait_seconds and end with the result, as its prompt asks.
+    setTimeout(() => finish(canary.result ?? { status: 'completed', summary: 'rehearsal: waited' }), Number(canary.wait_seconds ?? 30) * 1000);
+  } else if (typeof canary.probe === 'string') {
     // E83 (SEAM.md §173): the sanctioned check; the probe run once, with no
     // arguments, and its output reported verbatim.
     const done = inside && canary.probe.startsWith('/surety/context/') ? spawnSync(canary.probe, [], { encoding: 'utf8', timeout: 60_000 }) : null;
@@ -175,7 +215,32 @@ if (role === 'builder') {
   const defect = existsSync(ws('src/session.js')) && readFileSync(ws('src/session.js'), 'utf8').includes('SESSION_LIFETIME * 1000 * 1000');
   finish({ status: 'completed', summary: 'rehearsal: verified', ...(defect ? { findings: [{ category: 'security', severity: 'critical', message: 'src/session.js accepts expired sessions: the lifetime is compared a thousand times too long (R1)', check: 'login' }] } : {}) });
 } else if (role === 'reviewer') {
-  finish({ status: 'completed', summary: 'rehearsal: reviewed', signoffs: [{ scope: 'candidate' }] });
+  // The open findings its package names (E79's first finding, fixed: a
+  // Reviewer is given their ids): each is dispositioned `fix`; with none
+  // open, the candidate is signed off.
+  let pkg = '';
+  const walk = (dir) => {
+    let names = [];
+    try {
+      names = require('node:fs').readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const path = `${dir}/${n}`;
+      try {
+        const st = require('node:fs').lstatSync(path);
+        if (st.isDirectory()) walk(path);
+        else if (st.isFile() && st.size <= 262144) pkg += `\n${readFileSync(path, 'utf8')}`;
+      } catch {
+        // unreadable: skipped
+      }
+    }
+  };
+  walk('/surety/context');
+  const open = [...new Set(pkg.match(/fnd_[0-9A-HJKMNP-TV-Z]{26}/g) ?? [])];
+  if (open.length > 0) finish({ status: 'completed', summary: 'rehearsal: reviewed; the open findings to fix', dispositions: open.map((finding) => ({ finding, disposition: 'fix' })) });
+  else finish({ status: 'completed', summary: 'rehearsal: reviewed', signoffs: [{ scope: 'candidate' }] });
 } else {
   finish({ status: 'completed', summary: `rehearsal: ${role}` });
 }

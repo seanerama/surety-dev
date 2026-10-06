@@ -149,10 +149,31 @@ describe('M136 the positive canary; delegation verified absent (real lane, paid)
       assert.ok(accepted.has(ctx.providerHost), `the canaries reached the provider (${ctx.providerHost}) through the proxy (${[...accepted].join(', ')})`);
       assert.ok(e.egress_hosts.every((h) => ctx.candidateEgress.includes(h)), `the entry's egress hosts are within the candidate list (${JSON.stringify(e.egress_hosts)})`);
       assert.ok(e.egress_hosts.every((h) => accepted.has(h)), 'and each was contacted');
+      // The engine's own containment check is not the backend's contact
+      // (E86; SEAM.md §149 as amended, §175): the domain init makes one
+      // unlisted CONNECT in the containment run, between its first and last
+      // host-side reads of the backend. Its target never leaves the init
+      // (§173), so the evidence names no authority; as M135 "E86 (b)" does,
+      // the case takes it from the containment run's egress log, and excuses
+      // one refusal there only where the evidence attests the check (run_by
+      // domain_init; unlisted_connect completed, denied, corroborated by the
+      // proxy's log) and the refusal lies inside the check's window. Every
+      // other refused off-list contact, in any canary's run, is the
+      // backend's and must be reported.
+      const k = canaryOfKind(c, 'containment');
+      const check = k?.evidence?.actions?.find((a) => a.name === 'unlisted_connect');
+      const reads = (k?.evidence?.backend?.host_reads ?? []).map((h) => Date.parse(h.at)).filter(Number.isFinite);
+      const attested = k?.evidence?.run_by === 'domain_init' && check?.completed === true && check?.outcome === 'denied' && check?.host?.checked === true && check?.host?.agrees === true && reads.length >= 2;
+      const inWindow = (l) => attested && Date.parse(l.opened_at) >= Math.min(...reads) && Date.parse(l.opened_at) <= Math.max(...reads);
+      const offList = (l) => l.decision === 'refused' && l.reason === 'not_listed' && !ctx.candidateEgress.some((h) => String(l.authority).startsWith(`${h}:`));
+      const reported = (authority) => c.attempt.unexpected_contacts.some((u) => u.destination === authority);
+      const unreported = c.runs.flatMap((r) => r.egress_log.filter(offList).filter((l) => !reported(l.authority)).map((l) => ({ kind: r.kind, authority: l.authority, opened_at: l.opened_at, in_window: r.kind === 'containment' && inWindow(l) })));
+      const engineCheck = unreported.find((u) => u.in_window) ?? null;
+      observe(ctx, 'M136', 'engine_check_connect', { attested, host_reads: k?.evidence?.backend?.host_reads ?? null, excused: engineCheck });
+      assert.deepEqual(unreported.filter((u) => u !== engineCheck), [], `every refused off-list contact but the engine's own check is reported in unexpected_contacts (${JSON.stringify(c.attempt.unexpected_contacts)}; the check attested: ${attested})`);
       for (const authority of refused) {
         if (ctx.candidateEgress.some((h) => authority.startsWith(`${h}:`))) continue;
-        assert.ok(c.attempt.unexpected_contacts.some((u) => u.destination === authority), `the refused contact ${authority} is reported in unexpected_contacts`);
-        assert.ok(!e.egress_hosts.some((h) => authority.startsWith(h)), `and not added to the entry (${authority})`);
+        assert.ok(!e.egress_hosts.some((h) => authority.startsWith(h)), `the refused contact ${authority} is not added to the entry`);
       }
 
       // Provider files: every writable location, with the no-persistence

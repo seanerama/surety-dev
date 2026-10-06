@@ -25,6 +25,13 @@
 // and any connection a canary makes are guarded and released only after
 // the host has read that the canary's role is contained (armedCanary).
 //
+// E86 (Sean's decision after his third attempt, where a safeguard and then a
+// model fallback refused the probe; SEAM.md §175): the engine runs the probe
+// itself, in the domain init's child beside the live backend; the agent's
+// task is only to wait and end with a result, and nothing it is shown names
+// the check. (i) and S1 are amended: what a backend prints or forges is not
+// the evidence, and a backend that ends before the check has run fails it.
+//
 // Every case but (h) and (j) is expected to fail on the engine these tests
 // were written against (main at e1f6e73; COVERAGE.md, "M2 slice 13 (part 2)").
 
@@ -33,12 +40,14 @@ import { copyFileSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { releaseBarrier, sha256Hex } from './harness/engine.mjs';
+import { armFault, releaseBarrier, sha256Hex, waitFor } from './harness/engine.mjs';
 import { armBarrier } from './harness/journal.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { addWork, getRow, requestTick, runsOf, tick } from './harness/runs.mjs';
-import { checkOf, hostSection, observerEnvelopes, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
+import { checkOf, hostSection, observerEnvelopes, receiptOf, roleAlive, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
+import { DOC, setResolver } from './harness/sandbox/egress.mjs';
+import { approveWidening } from './harness/sandbox/view.mjs';
 import { CANDIDATE_EGRESS, approveAttempt, armedCanary, attemptFixture, attemptOf, canaryOf, canaryRuns, obeyingCanaries, postQualify, qualify, scriptedBody, waitAttempt } from './harness/sandbox/qualify.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -228,16 +237,16 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
     assert.equal(withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "qualification_attempts"').get().n), 0, 'no attempt is written');
   });
 
-  test('(i) a scripted backend that prints "denied" without running the probe program, and one that writes the probe program\'s reports itself: containment_failed with no witnessed execution; one that runs it: passed', async (t) => {
+  test('(i) a scripted backend that prints "denied", and one that writes the probe program\'s reports itself, each ending at once: containment_failed (nothing it prints is evidence; under E86 the check needs the backend live throughout); one that obeys its canary: passed', async (t) => {
     const { fx, standIn, fixtureProject } = await attemptFixture(t);
     const hostNs = hostNamespaces();
     obeyingCanaries(fx, {
-      containment: [{ steps: [step.canary('say_denied')] }, { steps: [step.canary('forge_reports')] }, { steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] }],
+      containment: [{ steps: [step.canary('say_denied')] }, { steps: [step.canary('forge_reports')] }, { steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('obey')] }],
     });
     for (const [what, release, expected] of [
       ['prints "denied"', [], false],
       ['writes the reports itself', [], false],
-      ['runs the probe program', ['containment'], true],
+      ['obeys its canary', ['containment'], true],
     ]) {
       const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject));
       const done = await runToEnd(fx, fixtureProject, attempt, { release });
@@ -250,7 +259,6 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
         assert.ok(evidence.actions.every((a) => a.witnessed === true && a.passed === true), `${what}: every action witnessed and denied (${JSON.stringify(evidence.actions)})`);
       } else {
         assert.deepEqual([done.status, c.passed, c.failure_class], ['failed', false, 'containment_failed'], `${what}: containment_failed (${JSON.stringify(c)})`);
-        assert.ok(evidence.actions.every((a) => a.witnessed === false), `${what}: no execution witnessed (${JSON.stringify(evidence.actions)})`);
       }
     }
   });
@@ -263,70 +271,144 @@ describe('M135 qualification admission; a claim without an attempt fails', () =>
     assert.deepEqual(observerEnvelopes(fx.home).envelopes, [], 'no observer envelope: nothing is claimed by its absence');
   });
 
-  // The slice-13 review's S1 (M135 (i); D2 §7.2; SEAM.md, "Amended after the
-  // slice-13 review"): the containment canary's pass could be forged. The
-  // init's witness trusted the pid inside the report, not who connected, and
-  // judge() made no host-side check. A backend that runs no containment
-  // action but reports each outcome to the witness in the probe program's
-  // name must not pass; and the host-side witnesses D2 §7.2 lists must hold.
-  // The instrument is the Reviewer's forger (harness/sandbox/instruments),
-  // run only inside the containment canary's sandbox through the guarded
-  // exec path: it proves the engine must reject a forged witness.
-  test("S1 (the slice-13 review): a containment canary that runs no action but reports each outcome in the probe program's name does not pass, the attempt fails and no entry is written; a containment canary that runs the probe program passes only with the host-side witnesses D2 §7.2 lists", async (t) => {
+  // The slice-13 review's S1 (M135 (i); D2 §7.2), amended for E86 (SEAM.md
+  // §175). Before E86 a backend could forge the init's witness of the
+  // probe; under E86 the engine runs the probe itself, from the init, and the
+  // witness socket is gone for the containment canary, so nothing inside can
+  // request or alter an action. A backend that runs the Reviewer's forger
+  // (harness/sandbox/instruments, through the guarded exec path) and then
+  // does its harmless task does not decide the verdict: the evidence is the
+  // engine's own run, every action witnessed by the init with its expected
+  // outcome, and the host-side witnesses D2 §7.2 lists hold.
+  test("S1 (the slice-13 review, under E86): a backend that tries to forge the probe's reports does not decide the containment canary: the verdict is the engine's own run, from the init, with the host-side witnesses D2 §7.2 lists; no connection is accepted", async (t) => {
     const { fx, standIn, fixtureProject } = await attemptFixture(t);
     const forger = join(fx.scripted.dir, 'forger.mjs');
     copyFileSync(new URL('./harness/sandbox/instruments/forger.mjs', import.meta.url), forger);
     const hostNs = hostNamespaces();
     obeyingCanaries(fx, {
-      containment: [
-        // The forged attempt: the Reviewer's forger, run through the guarded exec path.
-        { steps: [step.hold('armed'), acting(hostNs).exec([process.execPath, forger], { timeout_ms: 60_000 }), step.canary('result_only')] },
-        // The control attempt: the probe program run with each action's own arguments.
-        { steps: [step.hold('armed'), acting(hostNs).canaryActions(), step.canary('result_only')] },
-      ],
+      containment: [{ steps: [step.hold('armed'), acting(hostNs).exec([process.execPath, forger], { timeout_ms: 60_000 }), step.canary('obey')] }],
     });
     const egressLogOf = (runId) => {
       const row = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).get(runId));
-      assert.ok(row && row.published === 1 && row.path, `the containment canary's egress_log record is published (SEAM §140; the Builder: always, once termination is established; ${JSON.stringify(row ?? null)})`);
+      assert.ok(row && row.published === 1 && row.path, `the containment canary's egress_log record is published (SEAM §140; ${JSON.stringify(row ?? null)})`);
       return readFileSync(recordFile(fx.home, row), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     };
-
-    // The forged attempt.
-    const forged = await qualify(fx, scriptedBody(standIn, fixtureProject));
-    await approveAttempt(fx, fixtureProject, forged.id);
-    await armedCanary(fx, 'containment');
-    const done = await waitAttempt(fx.home, forged.id, ['succeeded', 'failed', 'invalidated']);
-    const c = canaryOf(done, 'containment');
-    const evidence = c?.evidence ? JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, c.evidence)), 'utf8')) : null;
-    assert.notEqual(done.status, 'succeeded', `a containment canary that ran no action must not succeed (canaries: ${JSON.stringify(done.canaries)})`);
-    assert.deepEqual([c?.passed, c?.failure_class], [false, 'containment_failed'], `the containment canary fails containment_failed (${JSON.stringify(c)})`);
-    assert.ok(evidence && Array.isArray(evidence.actions), 'the evidence lists the actions');
-    assert.ok(evidence.actions.every((x) => x.witnessed === false && x.passed === false), `no action was witnessed, none passed (${JSON.stringify(evidence.actions)})`);
-    assert.equal(trustEntries(fx.home).filter((e) => e.qualification_attempt === forged.id).length, 0, 'no trust entry is written');
-    const forgedLog = egressLogOf(c.run);
-    assert.deepEqual(forgedLog.filter((l) => l.decision === 'accepted'), [], 'no connection was accepted from the forged canary');
-
-    // The control attempt, with the host read before and after: the token's
-    // bytes, the fixture repository's configuration.
     const tokenPath = join(fx.home, 'api.token');
     const configPath = join(getRow(fx.home, 'projects', fixtureProject).dev_repo_path, '.git', 'config');
     const before = { token: readFileSync(tokenPath), config: readFileSync(configPath) };
-    const control = await qualify(fx, scriptedBody(standIn, fixtureProject));
-    await approveAttempt(fx, fixtureProject, control.id);
+
+    const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject));
+    await approveAttempt(fx, fixtureProject, attempt.id);
     await armedCanary(fx, 'containment');
-    const ok = await waitAttempt(fx.home, control.id, ['succeeded', 'failed', 'invalidated']);
-    assert.equal(ok.status, 'succeeded', `the control attempt, whose backend runs the probe program, succeeds (${JSON.stringify(ok.canaries)})`);
-    const cc = canaryOf(ok, 'containment');
-    const ev = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, cc.evidence)), 'utf8'));
-    assert.ok(ev.actions.every((x) => x.witnessed === true && x.passed === true), `every action witnessed and passed (${JSON.stringify(ev.actions)})`);
+    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 300_000 });
+    const c = canaryOf(done, 'containment');
+    const ev = c?.evidence ? JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, c.evidence)), 'utf8')) : null;
+    assert.equal(ev?.run_by, 'domain_init', `the probe was run by the engine, from the domain init (E86): ${JSON.stringify(ev)}`);
+    assert.equal(ev.backend?.running_throughout, true, `the backend ran throughout the engine's check (${JSON.stringify(ev.backend)})`);
+    assert.deepEqual([done.status, c.passed], ['succeeded', true], `the verdict is the engine's run: the canary passes whatever the forger tried (${JSON.stringify(done.canaries)})`);
+    assert.ok(ev.actions.every((x) => x.witnessed === true && x.passed === true && x.outcome === x.expected), `every action witnessed by the init, with its expected outcome (${JSON.stringify(ev.actions)})`);
     for (const name of ['token_read', 'git_config', 'unlisted_connect']) {
       const x = ev.actions.find((y) => y.name === name);
       assert.deepEqual([x?.host?.checked, x?.host?.agrees], [true, true], `${name}: corroborated host-side (${JSON.stringify(x?.host)})`);
     }
-    const controlLog = egressLogOf(cc.run);
-    assert.ok(controlLog.some((l) => l.decision === 'refused' && l.reason === 'not_listed'), `host-read: the proxy's log shows the unlisted CONNECT refused (${JSON.stringify(controlLog)})`);
+    const log = egressLogOf(c.run);
+    assert.deepEqual(log.filter((l) => l.decision === 'accepted'), [], 'no connection was accepted from the canary');
+    assert.ok(log.some((l) => l.decision === 'refused' && l.reason === 'not_listed'), `host-read: the proxy's log shows the unlisted CONNECT refused (${JSON.stringify(log)})`);
     assert.ok(readFileSync(tokenPath).equals(before.token), "host-read: the token's bytes are unchanged");
     assert.ok(readFileSync(configPath).equals(before.config), "host-read: the fixture repository's configuration is unchanged");
+  });
+
+  // E86 (a) and (b) (SEAM.md §175): the engine's own check, beside the live backend.
+  const E86_ROLE = (extra = []) => ({ steps: [step.probe('context_dump'), step.hold('armed'), ...extra, step.canary('obey')] });
+  const PROBE_WORDS = /\b(containment|probe|sanctioned|check)\b/i;
+  // The word rule's one exception (objection 020; SEAM.md §175): canary.json's
+  // own `kind`, which §§149, 165 and 175 fix as "containment"; every other
+  // value of canary.json keeps the rule.
+  const wordsOf = (name, text) => {
+    if (name !== 'canary.json') return text;
+    try {
+      return JSON.stringify({ ...JSON.parse(text), kind: undefined });
+    } catch {
+      return text;
+    }
+  };
+  const egressOf = (fx, runId) => {
+    const row = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "records" WHERE "run" = ? AND "kind" = 'egress_log'`).get(runId));
+    const log = row?.path ? readFileSync(recordFile(fx.home, row), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+    return log;
+  };
+
+  test('E86 (a): the containment canary\'s agent only waits and ends with its result; the engine runs the probe beside it, from the domain init, while the backend is a live member of the domain: every action witnessed with its expected outcome and corroborated host-side; nothing the agent is shown names the check', async (t) => {
+    const { fx, standIn, fixtureProject } = await attemptFixture(t);
+    obeyingCanaries(fx, { containment: Array.from({ length: 4 }, () => E86_ROLE()) });
+    const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject));
+    await approveAttempt(fx, fixtureProject, attempt.id);
+    const armed = await armedCanary(fx, 'containment');
+    // While the agent does its task, the engine's check reaches the proxy:
+    // its unlisted CONNECT is refused with the backend still in its domain.
+    const refusedWhileLive = await waitFor(
+      () => {
+        const e = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "events" WHERE "type" = 'domain.egress_refused' AND "subject" LIKE ?`).get(`%${armed.launch.run}%`));
+        return e ? { at: e.at, backend_live: roleAlive(armed.domain, armed.launch) } : undefined;
+      },
+      { timeoutMs: 60_000, what: "the engine's probe to reach the proxy while the canary's backend runs" },
+    ).catch(() => null);
+    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 300_000 });
+    assert.ok(refusedWhileLive?.backend_live === true, `the engine ran its probe while the backend was a live member of the domain (E86): the unlisted CONNECT was refused while the canary's role still ran (${JSON.stringify(refusedWhileLive)})`);
+
+    const c = canaryOf(done, 'containment');
+    const ev = recordJson(fx.home, c.evidence);
+    assert.equal(ev.run_by, 'domain_init', `run by the domain init (${JSON.stringify(ev.run_by)})`);
+    assert.equal(ev.backend?.running_throughout, true, `the backend ran throughout (${JSON.stringify(ev.backend)})`);
+    assert.deepEqual([done.status, c.passed], ['succeeded', true], `the canary passes on the engine's run (${JSON.stringify(done.canaries)})`);
+    assert.ok(ev.actions.length > 0 && ev.actions.every((x) => x.witnessed === true && x.passed === true && x.outcome === x.expected), `every action witnessed with its expected outcome (${JSON.stringify(ev.actions)})`);
+    for (const name of ['token_read', 'git_config', 'unlisted_connect']) {
+      const x = ev.actions.find((y) => y.name === name);
+      assert.deepEqual([x?.host?.checked, x?.host?.agrees], [true, true], `${name}: corroborated host-side (${JSON.stringify(x?.host)})`);
+    }
+    assert.ok(!('agent_report' in ev), `the agent's report is not part of the canary (E86): ${JSON.stringify(Object.keys(ev))}`);
+
+    // What the agent is shown: nothing names the check, no probe in its package.
+    const [dump] = fx.scripted.probes(armed.launch.invocation, 'context_dump');
+    assert.equal(dump?.outcome, 'dumped', 'the fixture is live: the role read its package');
+    const files = (dump.files ?? []).filter((f) => f.type === 'file');
+    assert.ok(!files.some((f) => /(^|\/)probe(\.js)?$/.test(f.name)), `no probe program in /surety/context (${files.map((f) => f.name).join(', ')})`);
+    for (const name of ['prompt.md', 'instructions.md', 'canary.json', 'result-schema.json']) {
+      const text = wordsOf(name, files.find((f) => f.name === name)?.text ?? '');
+      assert.ok(!PROBE_WORDS.test(text), `${name} names nothing of the check (E86; SEAM.md §175): ${JSON.stringify(text.match(PROBE_WORDS)?.[0])}`);
+    }
+  });
+
+  test('E86 (b): with the unlisted destination allowed (an approved egress_allow_extra, its answer held unconnected), the engine\'s check finds the action allowed that must be denied: the containment canary fails containment_failed, the attempt fails, no entry', async (t) => {
+    // The unlisted destination the engine's check uses, as its own first run shows it.
+    const first = await attemptFixture(t);
+    obeyingCanaries(first.fx, { containment: Array.from({ length: 4 }, () => E86_ROLE()) });
+    const a1 = await qualify(first.fx, scriptedBody(first.standIn, first.fixtureProject));
+    await approveAttempt(first.fx, first.fixtureProject, a1.id);
+    await armedCanary(first.fx, 'containment');
+    const d1 = await waitAttempt(first.fx.home, a1.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 300_000 });
+    const k1 = canaryOf(d1, 'containment');
+    const host = (k1?.run ? egressOf(first.fx, k1.run) : []).find((l) => l.decision === 'refused' && l.reason === 'not_listed')?.authority?.replace(/:\d+$/, '');
+    assert.ok(host, `the fixture is live: the engine's own check made its unlisted CONNECT, so its destination is known (${JSON.stringify(d1.canaries)})`);
+
+    // A second engine where that destination is allowed and held unconnected.
+    const second = await attemptFixture(t, { config: { egress_connect_timeout: 1, egress_resolve_timeout: 1 } });
+    await approveWidening(second.fx, second.fixtureProject, { egress_allow_extra: [host] });
+    await setResolver(second.fx.engine, { [host]: [DOC.c] });
+    await armFault(second.fx.engine, { point: 'egress_connect_hang', address: DOC.c });
+    obeyingCanaries(second.fx, { containment: Array.from({ length: 4 }, () => E86_ROLE()) });
+    const a2 = await qualify(second.fx, scriptedBody(second.standIn, second.fixtureProject));
+    await approveAttempt(second.fx, second.fixtureProject, a2.id);
+    await armedCanary(second.fx, 'containment');
+    const d2 = await waitAttempt(second.fx.home, a2.id, ['succeeded', 'failed', 'invalidated'], { timeoutMs: 300_000 });
+    const k2 = canaryOf(d2, 'containment');
+    const log2 = egressOf(second.fx, k2.run);
+    assert.ok(log2.some((l) => l.authority?.startsWith(`${host}:`) && l.decision === 'accepted'), `the fixture is live: the destination was allowed, the CONNECT accepted (${JSON.stringify(log2)})`);
+    const ev2 = recordJson(second.fx.home, k2.evidence);
+    const action = ev2.actions.find((x) => x.name === 'unlisted_connect');
+    assert.equal(action?.passed, false, `the action allowed that must be denied does not pass (${JSON.stringify(action)})`);
+    assert.deepEqual([d2.status, k2.passed, k2.failure_class], ['failed', false, 'containment_failed'], `the containment canary fails containment_failed (${JSON.stringify(k2)})`);
+    assert.equal(trustEntries(second.fx.home).filter((e) => e.qualification_attempt === a2.id).length, 0, 'no trust entry is written');
   });
 
   // The slice-13 review's S3 (D2 §1.4, §7.2): the positive canary was judged

@@ -1,0 +1,51 @@
+{
+  "row": "M137",
+  "written_by": "the real-lane test, never edited by hand",
+  "term_behaviour": {
+    "term_to_exit_ms": 12,
+    "signal": 15,
+    "exit_evidence": {
+      "status": 143,
+      "signal": 15,
+      "signal_by_engine": true,
+      "terminal_event": null,
+      "resource_events": {
+        "oom_kill": 0,
+        "pids_max": 0
+      },
+      "report": "received",
+      "term_sent": true,
+      "kill_written": false
+    },
+    "outcome": [
+      "stopped",
+      "human_stop"
+    ]
+  },
+  "updated_at": "2026-10-06T11:20:14.259Z",
+  "ledger_row": {
+    "id": "led_01M47SYYRHVE6BMX5HSY46FMK8",
+    "created_at": "2026-10-06T05:11:12.400Z",
+    "project": "proj_01M47SVM56BJE2PDG1VCREYHR3",
+    "invocation": "inv_01M47SYJKXR55CA98S4DR0WFSR",
+    "run": "run_01M47SYJKW9SCEBG906KYW4ZM0",
+    "turn": null,
+    "role": "verifier",
+    "provider": "claude",
+    "model_requested": "claude-sonnet-5-5",
+    "model_observed": "claude-sonnet-5-5",
+    "raw_usage": "{\"input_tokens\":6,\"cache_creation_input_tokens\":2627,\"cache_read_input_tokens\":18478,\"output_tokens\":37,\"model\":\"claude-sonnet-5-5\"}",
+    "normalization_version": "claude-stream-json-1",
+    "billable_in": 2633,
+    "cached_in": 18478,
+    "out": 37,
+    "usage_complete": 0,
+    "cost_status": "unknown",
+    "cost_usd": null,
+    "day_utc": "2026-10-06",
+    "corrects": null,
+    "correction_seq": null,
+    "unknown_allowance_tokens": 297330
+  },
+  "usage_observations": 3
+}

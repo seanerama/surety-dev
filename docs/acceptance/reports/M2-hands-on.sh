@@ -382,16 +382,33 @@ done
 # fake's canaries ended between two looks).
 [ -n "$SHOWN" ] || note "CHECK (4) NOT SHOWN: no canary's domain was seen with processes in it between two looks (every 3 s); the canaries' evidence below still holds what the engine sampled."
 dbq "SELECT status, canaries FROM qualification_attempts WHERE id = '$QA'" | tee "$WORK/attempt.tsv"
-# The containment canary's agent report (E83; SEAM.md section 173): what the
-# agent wrote after running the probe, or its reason if it would not. Shown
-# before anything can stop the walkthrough, so a refusal is on your screen.
-AGENT_EV=$(dbq "SELECT c.value ->> 'evidence' FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = 'containment'")
-if [ -n "$AGENT_EV" ]; then
-  echo "the containment canary's agent report, as the engine kept it:"
-  jq '.agent_report' "$(record_path "$AGENT_EV")"
-else
-  note "the containment canary kept no evidence (it did not run, or an earlier canary failed)."
-fi
+# Why each canary ended as it did, shown before anything can stop the
+# walkthrough (E86 item 4): its verdict, and for a canary whose agent wrote
+# no result, the backend's own final message from its transcript (the
+# engine's record, already screened for secrets; cut at 800 characters),
+# with any model fallback the stream recorded.
+for KIND in positive cancellation containment; do
+  CROW=$(dbq "SELECT c.value ->> 'run', COALESCE(c.value ->> 'passed', ''), COALESCE(c.value ->> 'failure_class', '') FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = '$KIND'")
+  [ -n "$CROW" ] || { note "$KIND canary: did not run"; continue; }
+  CRUN=$(echo "$CROW" | cut -f1); CPASS=$(echo "$CROW" | cut -f2); CFAIL=$(echo "$CROW" | cut -f3)
+  echo "$KIND canary: passed=$CPASS ${CFAIL:+failure_class=$CFAIL}"
+  [ "$CPASS" = 1 ] || [ "$CPASS" = true ] && continue
+  # Why it failed, as the engine recorded it in the canary's evidence (found
+  # by the E86 rehearsal: the class alone did not say which check failed).
+  CEVID=$(dbq "SELECT c.value ->> 'evidence' FROM qualification_attempts q, json_each(q.canaries) c WHERE q.id = '$QA' AND c.value ->> 'kind' = '$KIND'")
+  if [ -n "$CEVID" ]; then
+    CREASON=$(jq -r '.reason // empty' "$(record_path "$CEVID")" 2>/dev/null || true)
+    [ -z "$CREASON" ] || echo "   the engine's reason: $CREASON"
+  fi
+  if [ -n "$(dbq "SELECT id FROM records WHERE run = '$CRUN' AND kind IN ('result', 'unaccepted_result') LIMIT 1")" ]; then
+    note "its agent wrote a result (kept in the engine's records)."
+  fi
+  CT=$(dbq "SELECT id FROM records WHERE run = '$CRUN' AND kind = 'transcript' ORDER BY rowid LIMIT 1")
+  if [ -z "$CT" ]; then note "no transcript was recorded for it."; continue; fi
+  echo "   the backend's final message (its transcript, cut at 800 characters):"
+  grep '^{' "$(record_path "$CT")" | jq -rs '([.[] | select(.type == "result") | .result | strings] | last) // ([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text] | last) // "(none in its transcript)"' | head -c 800; echo
+  grep '^{' "$(record_path "$CT")" | jq -c 'select(.type == "system" and .subtype == "model_refusal_fallback") | {original_model, fallback_model, trigger, api_refusal_category}' | sed 's/^/   model fallback: /'
+done
 REHEARSAL_FIXTURE=
 if [ "$(dbq "SELECT status FROM qualification_attempts WHERE id = '$QA'")" != succeeded ]; then
   [ -n "$REHEARSAL" ] || die "the attempt did not succeed; its records are in $SURETY_HOME"

@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
-import { CONTAINMENT_SANCTION, canaryPromptText } from '../../trust/canaries.js';
+import { canaryPromptText } from '../../trust/canaries.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -42,6 +42,10 @@ export type ContextFacts = {
     diff_base: { revision: string | null; from: string | null };
   } | null;
   finding?: FindingFacts | null;
+  // The project's checks (E87), for a Verifier, a Reviewer and a fix Builder.
+  checks?: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null;
+  // false: no effective protected version, so the checks cannot be read.
+  checks_known?: boolean | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
 
@@ -106,7 +110,10 @@ const FIELDS: Record<string, Record<string, unknown>> = {
         message: { type: 'string', description: 'What is wrong and where, so a Builder can fix it.' },
         scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
         sensitive_area: { type: 'string' },
-        check: { type: 'string', description: 'The key of the check whose passing shows the finding fixed.' },
+        check: {
+          type: 'string',
+          description: 'The key of the check whose passing shows the finding fixed. Required for the finding to be resolved by a fix; one of the keys listed in the prompt.',
+        },
       },
     },
   },
@@ -196,30 +203,32 @@ const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
   reviewer: { findings: FIELDS.findings!, ...REVIEWER_FIELDS },
 };
 
-export function resultSchema(role: string): Record<string, unknown> {
+// `checkKeys` (the review of b72b9cc, F1): the keys a finding's `check` may
+// name, the effective protected version's; given, `check` is an enum of
+// them, and with none (no checks, or none readable) it is left out.
+export function resultSchema(role: string, checkKeys?: readonly string[]): Record<string, unknown> {
+  const fields: Record<string, Record<string, unknown>> = { ...(ROLE_FIELDS[role] ?? {}) };
+  if (checkKeys !== undefined && fields.findings) {
+    const items = (fields.findings.items ?? {}) as { properties?: Record<string, unknown> };
+    const props: Record<string, unknown> = { ...(items.properties ?? {}) };
+    if (checkKeys.length > 0) props.check = { ...(props.check as Record<string, unknown>), enum: [...checkKeys] };
+    else delete props.check;
+    fields.findings = { ...fields.findings, items: { ...items, properties: props } };
+  }
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `The ${role}'s result, written to /surety/out/result.json`,
     type: 'object',
     required: ['status', 'summary'],
-    properties: { status: FIELDS.status, summary: FIELDS.summary, ...(ROLE_FIELDS[role] ?? {}) },
+    properties: { status: FIELDS.status, summary: FIELDS.summary, ...fields },
     additionalProperties: false,
   };
 }
 
-// A qualification canary's result (D2 §7.2): what the engine keeps of it.
-// The containment canary's adds the probe program's output (E83; SEAM.md
-// §173), which the engine keeps as the agent's report and compares with
-// nothing prescribed.
-export function canaryResultSchema(kind: string): Record<string, unknown> {
-  const s = resultSchema('canary');
-  if (kind !== 'containment') return { ...s, title: "The canary's result, written to /surety/out/result.json" };
-  return {
-    ...s,
-    title: "The containment check's result, written to /surety/out/result.json",
-    required: ['status', 'summary', 'probe_output'],
-    properties: { ...(s.properties as Record<string, unknown>), probe_output: { type: 'string', description: 'Everything the probe program printed, verbatim.' } },
-  };
+// A qualification canary's result (D2 §7.2): status and summary. Nothing of
+// the containment check is asked of the agent (E86).
+export function canaryResultSchema(_kind: string): Record<string, unknown> {
+  return { ...resultSchema('canary'), title: "The canary's result, written to /surety/out/result.json" };
 }
 
 const safeName = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'item';
@@ -244,6 +253,19 @@ export function writeContextPackage(
   // What a Verifier or a Reviewer reports against, and what a fix Builder
   // fixes (D2 §1.3): named in the prompt, given whole in the files.
   const review = facts?.candidate && facts.review ? facts.review : null;
+  // The project's checks by key (E87), never their content.
+  const checks = facts?.checks ?? null;
+  const checkList =
+    checks === null
+      ? []
+      : facts?.checks_known === false
+        ? ["The project's checks could not be read: it has no effective protected version. No finding can name a check until it has one."]
+        : checks.length === 0
+          ? ['The project has no checks in its effective protected version, so no finding can name one.']
+        : [
+            "The project's checks:",
+            ...checks.map((c) => `- \`${c.key}\`${c.required ? ' (required)' : ''}: covers ${c.requirements.length > 0 ? c.requirements.join(', ') : 'no requirement'}; gate kinds ${c.gate_kinds.length > 0 ? c.gate_kinds.join(', ') : 'none'}.`),
+          ];
   const open = review ? review.findings.filter((f) => f.status === 'open') : [];
   const diff = review && role === 'reviewer' ? (opts.diff ?? null) : null;
   const DIFF_STATE: Record<CandidateDiff['state'], string> = {
@@ -270,8 +292,17 @@ export function writeContextPackage(
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
               'Give every open finding a disposition in your result\'s `dispositions`: `fix` registers fix work for it; without a disposition the finding stays open and nothing is done about it. Record new findings in `findings`, and your sign-offs in `signoffs`.',
+              "A fix is shown done, and the finding resolved, when the finding's `check` passes after your disposition. A finding with no check cannot be resolved that way: if you raise one, name its check.",
+              '',
+              ...checkList,
             ]
-          : ['', 'Record what you find in your result\'s `findings`; name a listed finding by its id.']),
+          : [
+              '',
+              "Record what you find in your result's `findings`; name a listed finding by its id.",
+              "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks). Without one, a fix of the finding can never be shown, and the finding stays open.",
+              '',
+              ...checkList,
+            ]),
       ]
     : [];
   const fix = facts?.finding ?? null;
@@ -285,12 +316,21 @@ export function writeContextPackage(
         fix.message,
         '',
         'It is also in /surety/context/finding.json.',
+        '',
+        fix.check
+          ? `It is resolved when the check \`${fix.check}\` passes on the candidate after your change: make it pass by fixing the code. The check is protected: do not change it.`
+          : 'It names no check: describe in your summary what shows it fixed.',
+        ...(checkList.length > 0 ? ['', ...checkList] : []),
       ]
     : [];
   const prompt = [
     `# Your task (${role})`,
     '',
-    claim.attempt ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.' : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
+    claim.attempt
+      ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.'
+      : claim.work_kind === 'fix' && fix
+        ? 'Fix the finding below.'
+        : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
     '',
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
@@ -314,12 +354,10 @@ export function writeContextPackage(
       '',
       'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.',
       '',
-      // The containment canary's sanction, in the run's own standing
-      // instructions (E83).
-      ...(opts.canary?.kind === 'containment' ? CONTAINMENT_SANCTION : []),
     ].join('\n'),
   );
-  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role);
+  const keys = facts?.checks && (role === 'verifier' || role === 'reviewer') ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : undefined;
+  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys);
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(schema, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);
@@ -370,10 +408,11 @@ export function writeContextPackage(
     }
     if (r.records.length === 0) put('prior-run/run.json', 'prior_run', null, `${JSON.stringify({ run: r.run, outcome: r.outcome, reason_class: r.reason_class, summary: r.summary }, null, 2)}\n`);
   }
-  // A qualification canary's instructions (D2 §7.2; SEAM.md §149), and for
-  // the containment canary the engine's probe program it is to run.
+  // A qualification canary's instructions (D2 §7.2; SEAM.md §149). The
+  // containment canary's probe program is not here: the engine runs it
+  // (E86), from outside the package.
   if (opts.canary) put('canary.json', 'instructions', String(opts.canary.attempt ?? '') || null, `${JSON.stringify(opts.canary, null, 2)}\n`);
-  if (opts.probe || opts.canary?.kind === 'containment') {
+  if (opts.probe) {
     copyFileSync(PROBE_PROGRAM, join(dir, 'probe'));
     chmodSync(join(dir, 'probe'), 0o555);
     files.push({ path: 'probe', kind: 'instructions', source: null, sha256: createHash('sha256').update(readFileSync(join(dir, 'probe'))).digest('hex') });

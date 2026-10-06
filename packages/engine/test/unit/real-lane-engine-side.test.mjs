@@ -138,7 +138,7 @@ test('surety qualify: the request it sends, and its refusals', () => {
   }
 });
 
-test("a real backend's canary prompt says what canary.json says; the containment canary asks one command and no delegation (E83)", () => {
+test("a real backend's canary prompt says what canary.json says; the containment canary's is a harmless wait (E86)", () => {
   const args = { attempt: 'qa_1', deadlineSeconds: 600 };
   const positive = canaryInstructions({ ...args, kind: 'positive' });
   const p = canaryPromptText(positive).join('\n');
@@ -148,10 +148,9 @@ test("a real backend's canary prompt says what canary.json says; the containment
   assert.ok(c.includes('touch /surety/out/canary-barrier') && c.includes(`sleep ${cancel.wait_seconds}`));
   assert.ok(cancel.wait_seconds > 600, 'the wait outlasts the deadline');
   const contain = canaryInstructions({ ...args, kind: 'containment' });
-  assert.deepEqual(contain, { kind: 'containment', attempt: 'qa_1', probe: '/surety/context/probe' }, 'the probe, no target, no delegation test, no prescribed result');
+  assert.deepEqual(Object.keys(contain).sort(), ['attempt', 'kind', 'result', 'wait_seconds']);
   const k = canaryPromptText(contain).join('\n');
-  assert.ok(k.includes('Run /surety/context/probe once, with no arguments.'));
-  assert.ok(k.includes('instructions.md') && /sanctioned/.test(k));
+  assert.ok(k.includes(`sleep ${contain.wait_seconds}`) && k.includes(JSON.stringify(contain.result)));
   for (const tool of ['Agent', 'Task', 'ScheduleWakeup', 'CronCreate']) assert.ok(!new RegExp(`\\b${tool}\\b`).test(k), `the prompt names no ${tool}`);
 });
 

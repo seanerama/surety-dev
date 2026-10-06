@@ -124,11 +124,29 @@ export interface RunHandle {
   // backend's exit (D2 §1.4).
   collection: Promise<unknown> | null;
   collecting: boolean;
+  // The backend exited on its own before the engine decided to end the run
+  // (D2 §1.6; SEAM.md §143, Q13): the exit decides the run's end, by its
+  // class and result. No later cause (a Stop, an Abandon, a deadline, a
+  // budget) replaces it: a cancellation's cause stands only for an exit the
+  // engine signalled (`engine_signaled`).
+  // Why a result was not one the engine may take, where more than its form
+  // says it (a finding's check naming no check of the project: the review
+  // of b72b9cc, F1).
+  invalidDetail: string | null;
+  exitedFirst: boolean;
+  // A Stop or an Abandon confirmed while `exitedFirst` held (the review of
+  // 662cd7f, S2): it applied to the work; see Choke.collectAfterExit.
+  controlAfterExit: 'stop' | 'abandon' | null;
+  // Ends not taken after the exit, each logged once (M2).
+  endsNotTaken: Set<string>;
   // The stream's own bounds were exceeded (D2 §3.7): why.
   streamBound: string | null;
   // The domain's egress log entries, kept when its proxy closed (a
   // qualification canary's contacts, D2 §7.2).
   egressEntries: { authority: string; decision: string; reason: string | null; opened_at: string; bytes_up?: number; bytes_down?: number }[] | null;
+  // The containment canary's check as the engine watched it (E86); null
+  // where there is none, or until the backend has started.
+  containment: import('./invoke/containment.js').ContainmentWatch | null;
   // Each of its domains' egress evidence once the domain is terminated and
   // its proxy closed (E85): what the run's ledger row may rest a known zero
   // on.
@@ -187,8 +205,13 @@ export function newHandle(claim: Claim): RunHandle {
     streamResult: null,
     collection: null,
     collecting: false,
+    invalidDetail: null,
+    exitedFirst: false,
+    controlAfterExit: null,
+    endsNotTaken: new Set(),
     streamBound: null,
     egressEntries: null,
+    containment: null,
     egressEvidence: [],
     adapterStream: null,
     sampler: null,
@@ -205,7 +228,7 @@ export function newHandle(claim: Claim): RunHandle {
 export function earnedEnd(handle: RunHandle): RunEnd {
   if (handle.intended) return handle.intended;
   if (handle.resultLost !== null) return { outcome: 'failed', reason: 'infra_error', reasonText: handle.resultLost };
-  if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result' };
+  if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result', ...(handle.invalidDetail ? { reasonText: handle.invalidDetail } : {}) };
   if (handle.result?.valid === true && handle.exit?.code === 0) return { outcome: 'completed', reason: 'none' };
   return { outcome: 'failed', reason: 'infra_error' };
 }
@@ -367,8 +390,17 @@ export class Runtime {
   // here nothing renews the run's lease. The run-end protocol is idempotent;
   // if a step of it fails, the engine retries it (RunEnder), and the lease
   // that nothing renews expires as the backstop.
-  requestEnd(handle: RunHandle, end: RunEnd): void {
+  requestEnd(handle: RunHandle, end: RunEnd, opts: { afterExit?: boolean } = {}): void {
     if (handle.ending) return;
+    // After the backend's own exit only the exit's own end is taken (Q13).
+    if (handle.exitedFirst && opts.afterExit !== true) {
+      const key = `${end.outcome}/${end.reason}`;
+      if (!handle.endsNotTaken.has(key)) {
+        handle.endsNotTaken.add(key);
+        log('run end', new Error(`${key} not taken: the backend had exited 0 by itself, and its exit decides the run's end`), { run: handle.claim.run });
+      }
+      return;
+    }
     handle.ending = true;
     const asIs = end.asIs === true || handle.expiryExempt;
     const { decidedAt, ...rest } = end;
@@ -383,11 +415,23 @@ export class Runtime {
     return this.handles.get(run)?.ending === true;
   }
 
+  // Has the backend of this engine's run exited on its own before any end
+  // was decided (Q13)? A Stop or Abandon confirmed after that changes
+  // nothing: the exit decides.
+  exitedFirst(run: string): boolean {
+    return this.handles.get(run)?.exitedFirst === true;
+  }
+
   // Work a committed API command asked for (D1 §1.5, §8.4).
-  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string }[]): void {
+  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string; control?: string }[]): void {
     for (const effect of effects) {
       if (effect.kind === 'tick') this.services?.requestTick();
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
+      // A Stop or an Abandon confirmed after the backend's own exit (S2).
+      if (effect.kind === 'control_after_exit' && effect.run && (effect.control === 'stop' || effect.control === 'abandon')) {
+        const h = this.handles.get(effect.run);
+        if (h) h.controlAfterExit = effect.control;
+      }
       if (effect.kind === 'effect' && effect.intent) {
         const intent = effect.intent;
         void this.services
