@@ -5,7 +5,8 @@ import type { Database } from 'better-sqlite3';
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
-import type { CandidateRow } from './transitions/evidence.js';
+import { type CandidateRow, applies, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
+import { effectiveVersion } from './transitions/protected.js';
 import { type FindingRow, findingApplies, requiredSignoffs } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -160,6 +161,23 @@ export function contextFacts(db: Database, args: { run: string }) {
     };
   }
   // A fix's finding (D1 §9; F §6.2): the Builder is told what it fixes.
+  // The project's checks (E87): what a finding's `check` names, so that a
+  // Verifier, a Reviewer and a fix Builder know the keys the fix loop reads
+  // (SEAM.md §74, "Resolution"). Every check of the effective protected
+  // version: its key, the keys of the requirements it covers, its gate kinds,
+  // and whether the project's tier requires it; never its content.
+  let checks: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null = null;
+  if (role === 'verifier' || role === 'reviewer' || item.kind === 'fix') {
+    const version = effectiveVersion(db, item.project);
+    const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
+    const keyOf = (r: string): string =>
+      (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
+    checks = version
+      ? checksOfVersion(db, version.id)
+          .map((c) => ({ key: c.key, requirements: requirementsOf(c).map(keyOf), gate_kinds: gateKindsOf(c), required: applies(c, tier) }))
+          .sort((a, b) => Number(b.required) - Number(a.required) || a.key.localeCompare(b.key))
+      : [];
+  }
   const fixFinding = subjectId('finding');
   const finding = fixFinding === null ? undefined : (db.prepare('SELECT * FROM "findings" WHERE "id" = ? AND "project" = ?').get(fixFinding, item.project) as Finding | undefined);
   // A resumed run's context is rebuilt from the records of the run it
@@ -188,6 +206,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     candidate: candidate ? { id: candidate.id, revision: candidate.revision, acceptance_content_hash: (run.content_hash as string | null) ?? null } : null,
     review,
     finding: finding ? findingFacts(finding) : null,
+    checks,
     resumed,
   };
 }

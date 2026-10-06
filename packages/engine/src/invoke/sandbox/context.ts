@@ -42,6 +42,8 @@ export type ContextFacts = {
     diff_base: { revision: string | null; from: string | null };
   } | null;
   finding?: FindingFacts | null;
+  // The project's checks (E87), for a Verifier, a Reviewer and a fix Builder.
+  checks?: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
 
@@ -106,7 +108,10 @@ const FIELDS: Record<string, Record<string, unknown>> = {
         message: { type: 'string', description: 'What is wrong and where, so a Builder can fix it.' },
         scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
         sensitive_area: { type: 'string' },
-        check: { type: 'string', description: 'The key of the check whose passing shows the finding fixed.' },
+        check: {
+          type: 'string',
+          description: 'The key of the check whose passing shows the finding fixed. Required for the finding to be resolved by a fix; one of the keys listed in the prompt.',
+        },
       },
     },
   },
@@ -235,6 +240,17 @@ export function writeContextPackage(
   // What a Verifier or a Reviewer reports against, and what a fix Builder
   // fixes (D2 §1.3): named in the prompt, given whole in the files.
   const review = facts?.candidate && facts.review ? facts.review : null;
+  // The project's checks by key (E87), never their content.
+  const checks = facts?.checks ?? null;
+  const checkList =
+    checks === null
+      ? []
+      : checks.length === 0
+        ? ['The project has no checks in its effective protected version, so no finding can name one.']
+        : [
+            "The project's checks:",
+            ...checks.map((c) => `- \`${c.key}\`${c.required ? ' (required)' : ''}: covers ${c.requirements.length > 0 ? c.requirements.join(', ') : 'no requirement'}; gate kinds ${c.gate_kinds.length > 0 ? c.gate_kinds.join(', ') : 'none'}.`),
+          ];
   const open = review ? review.findings.filter((f) => f.status === 'open') : [];
   const diff = review && role === 'reviewer' ? (opts.diff ?? null) : null;
   const DIFF_STATE: Record<CandidateDiff['state'], string> = {
@@ -261,8 +277,17 @@ export function writeContextPackage(
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
               'Give every open finding a disposition in your result\'s `dispositions`: `fix` registers fix work for it; without a disposition the finding stays open and nothing is done about it. Record new findings in `findings`, and your sign-offs in `signoffs`.',
+              "A fix is shown done, and the finding resolved, when the finding's `check` passes after your disposition. A finding with no check cannot be resolved that way: if you raise one, name its check.",
+              '',
+              ...checkList,
             ]
-          : ['', 'Record what you find in your result\'s `findings`; name a listed finding by its id.']),
+          : [
+              '',
+              "Record what you find in your result's `findings`; name a listed finding by its id.",
+              "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks). Without one, a fix of the finding can never be shown, and the finding stays open.",
+              '',
+              ...checkList,
+            ]),
       ]
     : [];
   const fix = facts?.finding ?? null;
@@ -276,12 +301,21 @@ export function writeContextPackage(
         fix.message,
         '',
         'It is also in /surety/context/finding.json.',
+        '',
+        fix.check
+          ? `It is resolved when the check \`${fix.check}\` passes on the candidate after your change: make it pass by fixing the code. The check is protected: do not change it.`
+          : 'It names no check: describe in your summary what shows it fixed.',
+        ...(checkList.length > 0 ? ['', ...checkList] : []),
       ]
     : [];
   const prompt = [
     `# Your task (${role})`,
     '',
-    claim.attempt ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.' : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
+    claim.attempt
+      ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.'
+      : claim.work_kind === 'fix' && fix
+        ? 'Fix the finding below.'
+        : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
     '',
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
