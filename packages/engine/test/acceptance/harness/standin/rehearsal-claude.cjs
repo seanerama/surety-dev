@@ -215,7 +215,32 @@ if (role === 'builder') {
   const defect = existsSync(ws('src/session.js')) && readFileSync(ws('src/session.js'), 'utf8').includes('SESSION_LIFETIME * 1000 * 1000');
   finish({ status: 'completed', summary: 'rehearsal: verified', ...(defect ? { findings: [{ category: 'security', severity: 'critical', message: 'src/session.js accepts expired sessions: the lifetime is compared a thousand times too long (R1)', check: 'login' }] } : {}) });
 } else if (role === 'reviewer') {
-  finish({ status: 'completed', summary: 'rehearsal: reviewed', signoffs: [{ scope: 'candidate' }] });
+  // The open findings its package names (E79's first finding, fixed: a
+  // Reviewer is given their ids): each is dispositioned `fix`; with none
+  // open, the candidate is signed off.
+  let pkg = '';
+  const walk = (dir) => {
+    let names = [];
+    try {
+      names = require('node:fs').readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const path = `${dir}/${n}`;
+      try {
+        const st = require('node:fs').lstatSync(path);
+        if (st.isDirectory()) walk(path);
+        else if (st.isFile() && st.size <= 262144) pkg += `\n${readFileSync(path, 'utf8')}`;
+      } catch {
+        // unreadable: skipped
+      }
+    }
+  };
+  walk('/surety/context');
+  const open = [...new Set(pkg.match(/fnd_[0-9A-HJKMNP-TV-Z]{26}/g) ?? [])];
+  if (open.length > 0) finish({ status: 'completed', summary: 'rehearsal: reviewed; the open findings to fix', dispositions: open.map((finding) => ({ finding, disposition: 'fix' })) });
+  else finish({ status: 'completed', summary: 'rehearsal: reviewed', signoffs: [{ scope: 'candidate' }] });
 } else {
   finish({ status: 'completed', summary: `rehearsal: ${role}` });
 }
