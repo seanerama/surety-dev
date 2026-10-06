@@ -1,6 +1,6 @@
 # Surety M2 acceptance report
 
-**Status:** skeleton. **M2 is not accepted.** The real lane has not run: no real backend has been run against a model, no qualification attempt has been approved, and no trust entry exists. Every fact the real lane is to supply is marked `[[PENDING real lane: <what>; from <source>]]` and is to be filled from the run's records after Sean runs it. Nothing below is described as passing that was not run.
+**Status:** skeleton. **M2 is not accepted.** Sean's fourth attempt (the hands-on run, `M2-hands-on.sh`, 2026-10-06 01:45 to 01:49 UTC, home `~/surety-hands-on-20261006T014511Z`) qualified Claude Code against a model: its attempt succeeded, its entry was activated, and path one of the journey ran. The facts that run recorded are filled below from its records (the engine's store and `records/`, read on a copy; nothing in the home was changed). The real-lane test files (`--lane real`) have **not** run, so what only they produce stays pending: the invalid-token attempt (M139), path two (M140 (b)), their run directory's records, and a Stop of a live real process (the hands-on run did not show it, section 15). Every fact still to be supplied is marked `[[PENDING …]]`. Nothing below is described as passing that was not run.
 
 **Written by:** the Verifier of M2 slice 14, 2026-10-04, on branch `verify/m2-s14` from `main` at `872afe9`. **For:** Sean, the owner, before and after his real run and his hands-on run; and Astra. **Form:** the M1 report's (`M1-report.md`); what M2 does not claim follows `M1-not-claimed.md` and the running list `M2-not-claimed.md`. It decides nothing.
 
@@ -17,9 +17,9 @@ BS §1's conditions, and where each stands at the time of writing:
 | Condition | State |
 |---|---|
 | `npm test` exits zero on `main` for the kernel and sandbox lanes, every M2 row with executable tests and none skipped | **Not established.** Every row has a file. At the closing pass of slice 14 (`1c3267f`) the unit suite and `--slice 13` passed whole and every slice-14 no-cost file passed except M141 (b), which fails by design until this report is final; so `npm test` cannot exit zero before the real lane (section 13). |
-| The real lane's rows (the three canaries and the journey) passed under a qualification attempt Sean approved, records retained | **Not run.** [[PENDING real lane: the `--lane real` run's date, revision and per-file result; from the runner's report and `state.json`]] |
-| The host qualification and the trust entry for Claude Code `active` with their evidence | **Host: active at every sandbox-lane start since slice 12** (section 5). **Entry: none.** [[PENDING real lane: the entry's id and `activated_by`; from `observed/activation.json`]] |
-| The M2 acceptance report written | This skeleton. |
+| The real lane's rows (the three canaries and the journey) passed under a qualification attempt Sean approved, records retained | **The real-lane test files: not run.** [[PENDING real lane: the `--lane real` run's date, revision and per-file result; from the runner's report and `state.json`]] The hands-on run's attempt `qa_01M47E6BB5VX6C6218EEQBAKAR`, approved by Sean (decision answered 2026-10-06 01:45:42 UTC), succeeded with all three canaries; its records are in `~/surety-hands-on-20261006T014511Z/home` (sections 7, 15, 20). |
+| The host qualification and the trust entry for Claude Code `active` with their evidence | **Host:** active at every start of the hands-on run (section 5). **Entry:** `trust_01M47E8ED7P7HP7V450507H4M6`, `active`, `activated_by` `dec_01M47E8ED9EFATNWQR1GQTXWK2` (Sean's `trust_activation`, answered 2026-10-06 01:46:51 UTC), its evidence the attempt's three canary records (section 6). |
+| The M2 acceptance report written | This skeleton, with the hands-on run's facts filled. |
 
 ## 2. Revisions
 
@@ -29,6 +29,7 @@ BS §1's conditions, and where each stands at the time of writing:
 | Slices 10 to 13 closed | `main` at `872afe9` (2026-10-04), with the M133 (g) fix (E73) |
 | The slice-14 cases | merged at `165344d`; amended at `8a9c105` (M141), `3af2a16` (objection 015), `890c875` (E74, the review's S1 to S3), `72e9654` (objection 016, option B), `97195aa` (objection 017), `26d6880` (objection 018), `a980d16` (`egress_connect_hang`) |
 | The engine side of slice 14 | merged at `c3a2651` (E77 item 2); the hang fault at `1c3267f` (E77 item 3) |
+| The revision the hands-on run ran | **Not recorded by the run** (the engine records no revision; it reports version `0.0.0`). `main` was at `02558a1` ("ready for Sean's fourth attempt") when it ran. [[PENDING hands-on: the revision Sean's checkout held; from Sean]] |
 | The revision the real lane ran | [[PENDING real lane: the revision; from the runner's report header and `git rev-parse HEAD` at the run]] |
 | The contract files | `packages/engine/test/acceptance/contract/` at the same revision as the tests |
 
@@ -48,23 +49,23 @@ Observed by the Verifier on 2026-10-04 (the tools' own output; not a qualificati
 | Node | v22.22.0 |
 | git | 2.43.0 |
 | SQLite (through `better-sqlite3`) | 3.53.4 |
-| At the real run | [[PENDING real lane: the same facts as recorded at the run; from `observed/attempt.json` `host`]] |
+| At the hands-on run (2026-10-06), as the active host qualification `hq_01M47E8V1TQ3PCZHSHB51M5FA2` recorded them | `host_id` `1a2241c9653441439658410880ea14af`; kernel `6.6.87.2-microsoft-standard-WSL2`; `unshare`, `setpriv`, `mount` util-linux 2.39.3; `ip` iproute2-6.1.0, libbpf 1.3.0; systemd 255.4-1ubuntu8.17; node v22.22.0. The distribution, git and SQLite versions are not recorded by the run. |
 
 ## 4. The backend
 
 | What | Value |
 |---|---|
 | Installed on this host, 2026-10-04 (not qualified) | `~/.local/bin/claude` links to `~/.local/share/claude/versions/2.1.289` (`2.1.289 (Claude Code)`, SHA-256 `a186b99e4a9c88366cd49df2f7dad56c61fc306ef0140b19ee64b7c42a8d1348`); 2.1.286, 2.1.287 and 2.1.288 are also present (2.1.288: SHA-256 `0298068b686e7fdbaf9402a7a587bb7f49c0b0e084de09f69145a0719207640c`). The binary updated itself from 2.1.288 to 2.1.289 on 2026-10-03 at 18:24 local time. D2 was written against 2.1.288. |
-| The binary qualified: path, SHA-256, `--version` | [[PENDING real lane: `binary_path`, `binary_sha256`, `version`; from the entry in `observed/attempt.json`]] |
-| Help hash | [[PENDING real lane: `help_sha256`; from the entry]] |
-| Model | `claude-sonnet-5-5` for every canary and every role (E59). [[PENDING real lane: the model the entry records; from the entry]] |
-| Template | The subscription mode's template, D2 §4.5's text without `--bare` (E74 item 1), a template version of its own. [[PENDING real lane: the template and version the entry records]] |
-| Auth mode | `subscription_token` (E74 item 1). [[PENDING real lane: `auth_mode` as the entry records it]] |
-| The binary's pin | The engine copies the qualified binary into its own home and pins the copy (E74 item 3, the driver's default), so neither Claude Code's updater nor its installer's pruning can change or remove it. [[PENDING real lane: the copy's path and SHA-256; from the entry]] |
+| The binary qualified: path, SHA-256, `--version` | `~/surety-hands-on-20261006T014511Z/home/backends/claude-2.1.289-a186b99e4a9c8836` (the engine's pinned copy), SHA-256 `a186b99e4a9c88366cd49df2f7dad56c61fc306ef0140b19ee64b7c42a8d1348`, `2.1.289 (Claude Code)` (the entry and the attempt) |
+| Help hash | `a58ca2282c01312250fc8d861088dae6e46340ad55346557fcdbc0053f415367` |
+| Model | `claude-sonnet-5-5` for every canary and every role (E59), as the entry records it; every transcript of the run shows only that model and no model fallback |
+| Template | `claude -p --safe-mode --setting-sources user --strict-mcp-config --output-format stream-json --verbose --model <m> --tools <role tools> --disallowed-tools Agent Task ScheduleWakeup Workflow --permission-mode bypassPermissions --no-session-persistence --session-id <uuid> <prompt>`, the credential in `CLAUDE_CODE_OAUTH_TOKEN`; template version `claude-subscription-1` |
+| Auth mode | `subscription_token`, as the entry records it |
+| The binary's pin | The engine's copy above, in its own home, of the same SHA-256 as the installed 2.1.289 (section 4's first row); the operator's install was not touched |
 
 ## 5. The host qualification
 
-The checks and probes below were **observed by the Verifier on 2026-10-04 at 08:22:58 UTC**, with a sandbox-lane engine (the test mode with `--harness-host-checks run`) on `main` at `872afe9`, started only to read them: row `hq_01M4304NNF317883GPK4K4JW4F`, `active`, eligible, no failed check; mechanism fingerprint `6355857210f11c9255570fa41244ba0641ec2fa68eb50b309298e003cc59e150`; the role profile's fingerprint `c1f0ad687d34c6466dac2e3acfd46b14be8f9f20ce318cde1159ffaaae641c8f`; `bootstrap_exception` false. The real lane's production start records its own row, which replaces this one for the report: [[PENDING real lane: the host qualification row in force during the attempt, its checks and probes; from `observed/attempt.json` `host.host_qualification_row`]].
+The checks and probes below were **observed by the Verifier on 2026-10-04 at 08:22:58 UTC**, with a sandbox-lane engine (the test mode with `--harness-host-checks run`) on `main` at `872afe9`, started only to read them: row `hq_01M4304NNF317883GPK4K4JW4F`, `active`, eligible, no failed check; mechanism fingerprint `6355857210f11c9255570fa41244ba0641ec2fa68eb50b309298e003cc59e150`; the role profile's fingerprint `c1f0ad687d34c6466dac2e3acfd46b14be8f9f20ce318cde1159ffaaae641c8f`; `bootstrap_exception` false. The hands-on run's production starts recorded their own rows; the one in force at the end, `hq_01M47E8V1TQ3PCZHSHB51M5FA2` (qualified 2026-10-06 01:46:53 UTC, `bootstrap_exception` false), records the same results as below: H1 to H12 passed, H13 not exercised, P1 to P19 passed each with its target seeded and its control, P20 not exercised (excused); H12 then read 12.1 GiB available and 539.3 GiB free. The entry was written under the row in force at the attempt, `hq_01M47E68WA25EPWTQ329HK903W` (lapsed at the next start, `engine_restart`, as every row before the last).
 
 | Check | Result | Observed |
 |---|---|---|
@@ -89,7 +90,26 @@ The checks and probes below were **observed by the Verifier on 2026-10-04 at 08:
 
 ## 6. The trust entry for Claude Code
 
-None exists. [[PENDING real lane: every field of the entry (backend, version, binary path and SHA-256, help SHA-256, mode, template and version, model, auth mode, capabilities, host id, host qualification, isolation, boundary, profile fingerprint, egress hosts, usage granularity and semantics, cost reporting, enforceable boundaries, result channel, session_qualified, provider files, term_to_exit_ms, qualification attempt, evidence records, evidence fingerprint, status, activated_by), each with its evidence record; from `observed/attempt.json` `attempt.entry`, `entry_evidence` and `observed/activation.json`]]
+`trust_01M47E8ED7P7HP7V450507H4M6`, written 2026-10-06 01:46:40 UTC by the hands-on run's attempt, from its store:
+
+| Field | Value |
+|---|---|
+| backend, version, mode | `claude`, `2.1.289 (Claude Code)`, `one_shot_headless` |
+| binary, help | section 4 |
+| template, version, model, auth mode | section 4 |
+| capabilities | tools `Bash, Edit, Glob, Grep, Read, Write`; denied `Agent, ScheduleWakeup, Task, Workflow`; features disabled `Agent, CronCreate, Monitor, RemoteTrigger, ScheduleWakeup, SendMessage, Task, Workflow`; `delegation_verified` true |
+| host id, host qualification | `1a2241c9653441439658410880ea14af`, `hq_01M47E68WA25EPWTQ329HK903W` |
+| isolation, boundary | `linux-namespaces-1`, `cgroup2-delegated-scope-1` |
+| profile fingerprint | `3eae8def1fb0ad5dc68542b1a86973bd7f7b29d6f06b8b16deb11003f8628ac2` |
+| egress hosts | `api.anthropic.com` |
+| usage granularity, semantics, cost reporting | `model_call`, `delta`, `reported` (the stream carries `total_cost_usd`; in this mode each ledger row records it `estimated`, section 8) |
+| enforceable boundaries | `invocation` by `dispatch_check`, overshoot `deadline`, evidence `rec_01M47E71PKY7K2CHTT94D20MRR` |
+| result channel, session_qualified | `file`, 0 |
+| provider files | locations `/surety/home/.claude`, `/surety/home/.claude.json`, `/surety/out/result.json`, `/tmp/cc-socks`, `/tmp/claude-1000`; persistence flags `--no-session-persistence`; excluded `/surety/home/.claude` |
+| term_to_exit_ms | 12 |
+| qualification attempt | `qa_01M47E6BB5VX6C6218EEQBAKAR` |
+| evidence records | `rec_01M47E71PKY7K2CHTT94D20MRR` (positive), `rec_01M47E78BZ8PZ928V6WKH9GWM4` (cancellation), `rec_01M47E8ECRFXYXXZCNF43TSQ9M` (containment); fingerprint `ab35d6b624df614d1a80446c52462c46f6367b4fa5816133f13dcf8225d92298` |
+| status, activated_by | `active`, `dec_01M47E8ED9EFATNWQR1GQTXWK2` (Sean, 2026-10-06 01:46:51 UTC) |
 
 ## 7. What the canaries established
 
@@ -97,17 +117,17 @@ D2 §4.5 lists what only the canaries establish for Claude Code. Each is class B
 
 | What | Established |
 |---|---|
-| The subscription token's delivery (the path Claude Code documents, established, not assumed) | [[PENDING real lane: `credential_delivery`; from the positive canary's evidence, M136 (b)]] |
-| What loads without `--bare` (hooks, plugins, CLAUDE.md discovery, from an empty volatile home) | [[PENDING real lane: from the canaries' streams and provider files]] |
-| Usage events and their granularity | [[PENDING real lane: `usage_granularity`, `usage_semantics`, the events carrying usage; from the entry and the positive canary's stream, M136 (b), (d)]] |
-| Terminal events (success, failure) | [[PENDING real lane: the terminal event's fields; from `observed/M136.json` `terminal_event`]] |
-| The tool surface; delegation verified absent | [[PENDING real lane: `capabilities`, the stream's inventory if any, the most backend processes per sample; from M136 (c)]] |
-| What it writes despite `--no-session-persistence` | [[PENDING real lane: `provider_files`; from M136 (b)]] |
-| Exit statuses | [[PENDING real lane: the canaries' `exit_evidence`; from `observed/attempt.json`]] |
-| TERM to exit | [[PENDING real lane: `term_to_exit_ms` and the signal that ended it; from M137 (a)]] |
-| Whether it accepts the engine's derived session id (SEAM §146) | [[PENDING real lane: from `observed/M136.json` `session_id`]] |
-| An unauthenticated backend | [[PENDING real lane: the failure class and the kept provider error; from M139 (a)]] |
-| Containment, by witnessed executions | [[PENDING real lane: each action's witness, outcome and host corroboration, and the controls; from M138]] |
+| The subscription token's delivery (the path Claude Code documents, established, not assumed) | Established: `CLAUDE_CODE_OAUTH_TOKEN`, by elimination (the stream's `apiKeySource` `"none"`, the only credential the engine gave the backend, no credential file written by the engine) (`rec_01M47E71PKY7K2CHTT94D20MRR`) |
+| What loads without `--bare` (hooks, plugins, CLAUDE.md discovery, from an empty volatile home) | The positive canary's stream: `system/ui_invalidate`, `system/init` (no MCP servers), `assistant` ×9, `rate_limit_event`, `user` ×6, `system/thinking_tokens` ×3, `result/success`; no hook or plugin event. Its provider files: section 6. What else loads is not recorded |
+| Usage events and their granularity | `model_call`, `delta` (the entry); the positive canary's stream carried usage at 4 steps and one terminal result |
+| Terminal events (success, failure) | Success: `result/success`, `is_error` false, `terminal_reason` `completed`, `total_cost_usd` 0.0317044, usage present, one model. A failure terminal event was not observed in this run |
+| The tool surface; delegation verified absent | The stream's inventory `Bash, Edit, Glob, Grep, Read, Write`, within the template's `--tools`; `delegation_verified` true by inventory; at most one backend process per sample (217 samples of the containment canary's domain) |
+| What it writes despite `--no-session-persistence` | Section 6's provider files |
+| Exit statuses | positive `clean` (status 0); cancellation `engine_signaled` (status 143, signal 15 sent by the engine); containment `clean` (status 0) |
+| TERM to exit | 12 ms; the backend exited on the engine's SIGTERM (status 143), the barrier `/surety/out/canary-barrier` witnessed by the init at 01:46:01.010 UTC |
+| Whether it accepts the engine's derived session id (SEAM §146) | Accepted (`session_id_accepted` true; the stream's session id `3d969a7c-5a35-4556-9420-3f61834e8d5f`) |
+| An unauthenticated backend | [[PENDING real lane: the failure class and the kept provider error; from M139 (a)]] (the hands-on run makes no invalid-token attempt) |
+| Containment, by witnessed executions | Under E86: the probe run by the domain init (`run_by` `domain_init`) beside the live backend (seen at 01:46:02.420 UTC, a member at both host reads, `running_throughout` true); each action witnessed, hardened, its expected outcome, and corroborated host-side where the engine checks: `token_read` denied (ENOENT; the token file's bytes unchanged), `git_config` denied (EACCES, the write refused; the fixture repository's configuration unchanged), `engine_port` denied (ECONNREFUSED; not corroborated host-side, as designed), `unlisted_connect` denied (403; the proxy's log shows it refused `not_listed`), `workspace_write` allowed (the control). Controls: the workspace write ran; the provider tunnel ran (`api.anthropic.com:443` accepted, 1981 bytes up, 5247 down) (`rec_01M47E8ECRFXYXXZCNF43TSQ9M`) |
 
 ## 8. The attempt's spend, and TERM to exit
 
@@ -115,24 +135,24 @@ D2 §4.5 lists what only the canaries establish for Claude Code. Each is class B
 |---|---|
 | The bounds Sean set (E59, E74) | 300 000 billable tokens a run; 25 USD a day on Claude Code's own estimates, split across the qualification fixture project (10), path one's project (6) and path two's (9) (SEAM §161); the hard limit is the subscription's usage limits, shared with Sean's own Claude use (E74 item 1). No dollar cap exists on the token; the 50 USD provider-side cap applies only to the `api_key` mode, not used in M2 |
 | The most the canaries' billable tokens can use | 3 × 300 000 × 10 USD per million = 9.00 USD at list rates (an estimate in this mode), plus cache reads and any overshoot until a canary's deadline |
-| The spend as estimated before approval | [[PENDING real lane: the attempt's `spend`; from `observed/attempt.json` `proposed`]] |
-| The spend as charged | [[PENDING real lane: each canary's ledger row and the day's totals; from `observed/attempt.json`]] |
-| The invalid-token attempt (M139) | [[PENDING real lane: its ledger row (cost unknown, not zero); from `observed/M139.json`]] |
-| `term_to_exit_ms` | [[PENDING real lane: from the cancellation canary]] |
+| The spend as estimated before approval | 9 USD, labelled `estimate`, overshoot `deadline`, no cap; basis: three canaries at the fixture project's `budget_run_billable_tokens`, at the model's output rate; price version `anthropic-list-2026-09-25-unconfirmed+cache-write-1.25x-input-derived` |
+| The spend as charged | The qualification fixture project: the positive canary 0.0317044 USD and the containment canary 0.0210254 USD (`estimated`, usage complete), the cancellation canary `unknown` (usage incomplete, stopped by the engine; 297 361 tokens of unknown allowance charged); 0.0527298 USD estimated in all. The hands-on project (the journey): Builder 0.0333388, Verifier 0.0415928, Reviewer 0.0489608, the stopped Builder 0.0298692 (`estimated`; its usage marked incomplete and 295 480 tokens of unknown allowance charged, section 21 question 13); 0.1537616 USD estimated in all. The run's total: 0.2064914 USD in Claude Code's own estimates |
+| The invalid-token attempt (M139) | [[PENDING real lane: its ledger row (cost unknown, not zero); from `observed/M139.json`]] (not part of the hands-on run) |
+| `term_to_exit_ms` | 12 |
 
 ## 9. The configuration in force
 
 D2 A.7's engine keys at their defaults (`contract/config.json`), the qualified configuration: `ui_bootstrap` false; `max_concurrent_domains` 2; `host_reserve_memory` 2 GiB; `host_reserve_disk` 5 GiB; `domain_memory_max` 8 GiB; `domain_tasks_max` 1024; `domain_writable_bytes` 4 GiB; `domain_writable_inodes` 200 000; `result_max_bytes` 1 MiB; `provider_files_max_bytes` 64 MiB; `collect_entries_max` 10 000; `collect_deadline` 60 s; `stream_line_max_bytes` 1 MiB; `stream_queue_max_bytes` 8 MiB; `egress_resolve_timeout` 5 s; `egress_connect_timeout` 10 s; `egress_tunnel_max_seconds` 1800 s; `egress_tunnels_max` 16; `egress_buffer_max_bytes` 1 MiB; `egress_log_max_bytes` 4 MiB; `pause_challenge_timeout` 5 s; `isolation_probe_exhaustion` false on this host (E69). Project keys at their defaults except the lane's (SEAM §161): `budget_run_boundary` `invocation`; `budget_hard_maximum` false; `egress_allow_extra` and `sandbox_read_paths` empty.
 
-In force during the real run: [[PENDING real lane: the engine's `config.json` and each project's policy revision; from the engine home and `GET /v1/projects/:p/policy` as recorded]].
+In force during the hands-on run: the engine home's `config.json` as kept, `{"api_port": 7302, "tick_interval": 600}` (written by the journey engine's start; the script writes `tick_interval` 30 for the production starts), so every A.7 key above at its default; the policy revisions recorded: the qualification fixture project `budget_run_billable_tokens` 300 000, `budget_day_verified_usd` 10, `budget_day_unknown_tokens` 900 000; the hands-on project the same with `budget_day_verified_usd` 6, every role `claude`, deadlines 900 / 600 / 600 s; the no-entry project `backend_builder` `claude`, `preflight_refusals_max` 1.
 
 ## 10. Egress
 
-The attempt proposes `api.anthropic.com` and nothing else. [[PENDING real lane: the hosts the canaries contacted, every refused destination and the attempt's `unexpected_contacts`; from `observed/M136.json` `egress`]]
+The attempt proposes `api.anthropic.com` and nothing else. In the hands-on run every role run and every canary contacted `api.anthropic.com:443` only, each CONNECT accepted (three per run). The one refused destination was the engine's own containment check, `canary-unlisted.surety.invalid:443`, refused `not_listed`. The attempt's `unexpected_contacts` is empty.
 
 ## 11. The bootstrap route during qualification
 
-`ui_bootstrap` is false by default (K3); the real lane's engines are started without it and M141 requires it false during qualification. [[PENDING real lane: `bootstrap_exception` as `GET /v1/engine` showed it at the attempt; from `observed/attempt.json` `host.engine_read`]]
+`ui_bootstrap` is false by default (K3); the real lane's engines are started without it and M141 requires it false during qualification. In the hands-on run `ui_bootstrap` was not set (`config.json` above), and every host qualification row recorded `bootstrap_exception` false, the one in force at the attempt included.
 
 ## 12. The execution observer
 
@@ -166,18 +186,18 @@ The real lane runs only by Sean's command (`node scripts/run-tests.mjs acceptanc
 | `M138-containment-canary` | M138 (a) to (c) | none beyond the attempt | [[PENDING real lane: date]] | [[PENDING real lane: per case]] |
 | `M140-real-backend-journey` | M140 (a) to (e) | path one 3 runs, the Stop 1, path two 6 | [[PENDING real lane: date]] | [[PENDING real lane: per case; path two real or mixed]] |
 
-Output kept: [[PENDING real lane: the runner's report under `test-results/` and the run directory's copy in `docs/acceptance/reports/M2-real-lane/`]].
+Output kept: [[PENDING real lane: the runner's report under `test-results/` and the run directory's copy in `docs/acceptance/reports/M2-real-lane/`]]. None of these files has run: the fourth attempt was the hands-on run (section 20), whose records are in `~/surety-hands-on-20261006T014511Z` and are not copied into the repository (section 21, question 11).
 
 ## 15. The real-backend journey
 
 | What | Value |
 |---|---|
-| Path one: commits, runs, gates, authorization | [[PENDING real lane: from `observed/M140.json` `path_one`, `commits`]] |
-| Path two: real or mixed; the finding, the fix, the gates | [[PENDING real lane: from `observed/M140.json` `path_two` or `path_two_mixed`]] |
-| The engine's commits (R12.2) | [[PENDING real lane: each commit with its trailers and identity; from `observed/M140.json` `commits`]] |
-| The ledger against the transcripts (R12.3) | [[PENDING real lane: from `observed/M140.json` `ledger_against_transcripts`]] |
-| The Stop (R12.4): `populated 0` read before the run read said ended | [[PENDING real lane: from `observed/M140.json` `stop_case`]] |
-| The subscription token's absence | [[PENDING real lane: the search's roots and repositories and its result; from `observed/M140.json` `key_search`]] |
+| Path one: commits, runs, gates, authorization | The hands-on run's path one (project `hands-on`, T2): Builder `run_01M47E8WKM0EGQ93DENA8BDR7G`, Verifier `run_01M47E9DYTH92716SXBGBCHQJ6`, Reviewer `run_01M47EA9V6GRZ0JHHKJSY6G21E`, each `completed`, exit class `clean`; the candidate's stage gate `not_satisfied` before the check's (fixture) execution and `satisfied` after it, the Reviewer's sign-off recorded, the Alpha authorization's gate `satisfied`; no finding |
+| Path two: real or mixed; the finding, the fix, the gates | [[PENDING real lane: from `observed/M140.json` `path_two` or `path_two_mixed`]] (the hands-on run has no path two) |
+| The engine's commits (R12.2) | In `~/surety-hands-on-20261006T014511Z/repo`, on `main` after the fixture's initial commit: `9c2aeeb` (bootstrap, `Surety-Project`), `8102a69` (policy revision 1, `Surety-Project`, `Surety-Policy-Revision`), and the journey's one commit `c41d5c4` (`Surety-Run` the Builder's run, `Surety-Role` builder, `Surety-Base`, `Surety-WorkItem`, `Surety-Kind` `stage_build`), each by `Surety Engine <engine@surety.invalid>`; none is the agent's |
+| The ledger against the transcripts (R12.3) | For each run that ended with a terminal event (the three canaries' two clean ones and the journey's four), the ledger row's billable, cached and output tokens and its cost equal the terminal event's `modelUsage` sums and `total_cost_usd` exactly, recorded `estimated`; the cancellation canary, ended by the engine before any terminal event, is `unknown` with its allowance charged, not zero |
+| The Stop (R12.4): `populated 0` read before the run read said ended | **Not shown by this run** (its CHECK (8) printed "not shown"). The Builder `run_01M47EB1MYFV3TT76JX60SW9Q2` finished its task on its own in 12 s (01:48:06 to 01:48:18 UTC, terminal event, exit status 0) and waited at the script's `boundary.before_terminated` barrier until Sean's Stop at 01:49:41; the engine then recorded `domain.terminated` (`populated 0`, `term_sent` false), exit class `clean`, and the run `stopped` / `human_stop`. No live process was stopped. The engine's live termination is shown by the cancellation canary (`engine_signaled`, `term_to_exit_ms` 12). [[PENDING real lane: a Stop of a live real process, `populated 0` read before the run read said ended; from `observed/M140.json` `stop_case`, or Sean's decision (section 21, question 12)]] |
+| The subscription token's absence | The script's search (step 11) over the engine home and the repository, reading the token from its file, found it nowhere, as Sean reported from its output; the script kept `~/surety-hands-on-20261006T014511Z/token-grep.err`, which lists the 5 files it could not read, each the engine's execute-only copy of node. The search's result itself is not kept in a file |
 
 What stays a fixture in the journey, labelled: the approved plan and its texts, the protected check's declaration and **its execution** (D3's runner is not built: the check is recorded passed by the test, as row M01 records it, and is evidence of nothing about the code), and the Alpha test target.
 
@@ -195,7 +215,7 @@ Each passes by asserting the host fact and its reason, and is **never counted as
 
 **D2 §8, class A** (outside the threat model): protection against root, a kernel exploit, the user's systemd manager, a compromised operator account, or Windows-side software on a WSL2 host; what the provider retains of what it is sent.
 
-**Class B as it stands after the real lane**: [[PENDING real lane: D2 §8 class B less what the canaries established; from section 7]]. Before the real lane, all of D2 §4.5's "established by the canaries" items are class B; Codex (not in M2, E59 item 6); a second host for anything but the exhaustion lane; every `not_exercised` case of section 16.
+**Class B as it stands after the hands-on run**: the hands-on run's canaries established, for Claude Code 2.1.289 on this host, section 7's items except one: the subscription token's delivery, the stream's usage and terminal-success events, the tool surface with delegation verified absent, what it writes despite `--no-session-persistence`, the exit statuses, TERM to exit, the derived session id, and containment by witnessed executions. Still class B: how an unauthenticated backend fails (M139, not run), a failure terminal event (not observed), and what loads without `--bare` beyond the stream's events. Before the hands-on run, all of D2 §4.5's "established by the canaries" items were class B; Codex (not in M2, E59 item 6); a second host for anything but the exhaustion lane; every `not_exercised` case of section 16.
 
 **Class C, verbatim from D2 §8** (under E74, "the role holds its provider key" reads "the role holds its subscription token": a leaked token reaches the subscription account, which Sean revokes; the egress proxy allows only the provider): Q2's limitation, as Sean decided it: the role holds its provider key, so the backend's reported usage is attributed evidence, not an independent meter of all the key could spend; a role can make extra provider calls through the allowed destination, and a hard maximum belongs to a provider-side limit on the key, not to the engine. The role can read that key, and can copy or encode it into its workspace or send it to an allowed host; the secret screen (§2.5) detects registered raw and escaped forms only, never an arbitrary encoding. The proxy restricts destinations, not content. At the `invocation` boundary, overshoot within one invocation is bounded only by the deadline (§4.2). A crash loses the volatile filesystem: the role's unsnapshotted workspace changes, its provider files and its unvalidated result are recorded missing and are not recovered, so a Resume starts from the last snapshot (E30 item 10 does not apply to real backends). The mount plan is validated before each launch; a socket or credential an operator's own software creates in an approved `sandbox_read_paths` directory after that validation is not caught. The role reads all of the repository's objects and refs (F §3.10.8). A same-uid process outside every domain can read the token file and replace a backend binary between the hash check and the exec. With `ui_bootstrap` on, any local uid can obtain the token (§2.6). Sessions, filter drivers, Git LFS, partial clones, repositories with alternates, and any host other than Linux are not supported. The optional execution observer (§3.9) is a qualification aid only: production monitoring and BPF-based enforcement are out of D2's scope, and no claim rests on an event the observer did not record.
 
@@ -222,7 +242,7 @@ Each passes by asserting the host fact and its reason, and is **never counted as
 
 ## 20. Hands-on run
 
-Sean runs `docs/acceptance/reports/M2-hands-on.sh` (row M142): it begins with step 0, his own `claude setup-token` into a mode-600 file (never pasted into the script), explains that the runs use his subscription's allowance shared with his own Claude use and how to revoke the token after M2, refuses to start without the token's reference and his confirmation, asks before every paid step saying what it can cost at most, waits for his two approvals, and prints checks (1) to (9) each with the command he can run himself. [[PENDING hands-on: the date, what he checked, and what surprised him; from Sean]]
+Sean runs `docs/acceptance/reports/M2-hands-on.sh` (row M142): it begins with step 0, his own `claude setup-token` into a mode-600 file (never pasted into the script), explains that the runs use his subscription's allowance shared with his own Claude use and how to revoke the token after M2, refuses to start without the token's reference and his confirmation, asks before every paid step saying what it can cost at most, waits for his two approvals, and prints checks (1) to (9) each with the command he can run himself. **The fourth attempt, 2026-10-06 01:45 to 01:49 UTC** (home `~/surety-hands-on-20261006T014511Z`), ran every step: the host qualification (CHECK (1)); a dispatch with no entry refused `backend_refused`, no process (CHECK (2)); `surety qualify` with its preview (CHECK (3)); Sean's approval; the three canaries passing with a canary's domain shown (CHECK (4)); the containment evidence (CHECK (5)); his activation; path one of the journey with its commits and its ledger against the transcripts (CHECKs (6), (7)); a Stop, whose run had already ended its processes, so CHECK (8) is not shown (section 15); the token searched for and found nowhere (CHECK (9)). The earlier attempts (E82, E84, E86) and why each stopped are in the errata. [[PENDING hands-on: what Sean checked himself, and what surprised him; from Sean]]
 
 ## 21. Questions for Sean
 
@@ -238,6 +258,10 @@ These are open at the time of writing; each is a decision, with options and the 
 8. **`DISABLE_UPDATES`'s value** (objection 016). The documentation read names the variable without a value; M125 (b) pins `1` by its sibling's convention (the driver's default, E76 item 1).
 9. **The `<version>` in the pinned copy's name** (objection 016). The tests take the first word of the binary's own `--version` (the driver's default, E76 item 1).
 10. **The engine requesting a tick when a quarantined domain's launcher exits** (E77 item 1). It is recorded as a later improvement and not built; recovery waits for the next scheduled tick.
+11. **What counts as the real lane's records for M141.** M141 (b) is met only by a final report whose real-lane test files have run, with their run directory (`state.json` and the observations of M136 to M140) copied to `docs/acceptance/reports/M2-real-lane/`. The fourth attempt was the hands-on run, which produces none of those, does no invalid-token attempt (M139) and has no path two (M140 (b)). Options: (a) run the real-lane files (`--lane real`), which repeats the attempt and the journey and adds M139 and path two; (b) accept the hands-on run as the real lane's evidence for what it covered, keep its home's records as the report's source (copied into the repository or not), and decide M139 and path two separately. M141 is unchanged until you decide; it fails by design meanwhile.
+12. **The Stop of a live real process (R12.4; CHECK (8)).** Not shown: the Builder of step 10 finished in 12 s, before the Stop. Options: (a) rerun step 10 alone with a task that keeps the backend busy for longer; (b) accept the cancellation canary's live termination (the engine's SIGTERM to a running real backend, exit within 12 ms, the domain read empty before the run ended) as R12.4's evidence. Recommendation: (a), since R12.4 is the human's Stop and the canary's is the engine's own.
+13. **Finding: the Stop recorded over a clean exit.** The Stop's run had exited `clean` with a terminal event and a result 83 s before the Stop (it waited at the script's barrier); the engine recorded it `stopped` / `human_stop`, its result an `unaccepted_result` and its usage incomplete with 295 480 tokens of unknown allowance charged, although the terminal event reported every count and the cost. SEAM §143 and D2 §1.6 give a `clean` exit with an accepted result the outcome `completed`, unless the engine began cancellation before the exit (here `term_sent` false). The Verifier reads this as an engine defect, made reachable by the script's barrier holding the natural end; a sandbox-lane case can be written on your word.
+14. **Finding: `runs.model_observed` is null on every run** of the hands-on run, while each ledger row records `model_observed` `claude-sonnet-5-5`. D1 A.3 lists the column as optional and no section pins when it is set. Whether the run should carry the observed model (as E86 item 3's fallback rule reads it) is yours; a case can follow.
 
 ## 22. How to read the suite
 
