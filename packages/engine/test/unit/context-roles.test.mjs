@@ -333,3 +333,71 @@ test('E87: with no checks in the effective version, the Verifier is told so plai
   withChecks(db, { none: true });
   assert.match(packageOf(t, contextFacts(db, { run: 'run_ver' })).read('prompt.md'), /The project has no checks in its effective protected version, so no finding can name one\./);
 });
+
+// ---- the review of b72b9cc: F1 (the check named is a check of the project), F3, F4 ----
+
+const { unknownCheck } = await import(join(dist, 'invoke', 'choke.js'));
+const { earnedEnd, newHandle } = await import(join(dist, 'runtime.js'));
+
+test("F1: the Verifier's and the Reviewer's result schema give a finding's check as an enum of the project's keys", (t) => {
+  const db = store(t);
+  withChecks(db);
+  for (const run of ['run_ver', 'run_rev']) {
+    const schema = JSON.parse(packageOf(t, contextFacts(db, { run }), { base: null, base_from: null, revision: 'b'.repeat(40), state: 'complete', text: '', detail: null }).read('result-schema.json'));
+    assert.deepEqual(schema.properties.findings.items.properties.check.enum, ['lint', 'login'], run);
+  }
+  assert.deepEqual(resultSchema('verifier', []).properties.findings.items.properties.check, undefined, 'with no keys, check is left out');
+  assert.ok(resultSchema('verifier').properties.findings.items.properties.check, 'without keys given, as before');
+});
+
+test('F1: with no checks, or no effective version, the schema allows no check', (t) => {
+  const none = store(t);
+  withChecks(none, { none: true });
+  assert.equal(JSON.parse(packageOf(t, contextFacts(none, { run: 'run_ver' })).read('result-schema.json')).properties.findings.items.properties.check, undefined);
+  const unread = store(t);
+  assert.equal(JSON.parse(packageOf(t, contextFacts(unread, { run: 'run_ver' })).read('result-schema.json')).properties.findings.items.properties.check, undefined);
+});
+
+test('F1: a finding naming an unknown key makes the result invalid, the reason naming it (bounded); a known key, or none, does not', () => {
+  const r = (check) => ({ summary: 's', checkpoint: false, nominate: false, report: { findings: [{ category: 'defect', severity: 'high', message: 'm', ...(check === undefined ? {} : { check }) }] } });
+  assert.equal(unknownCheck(r('login'), ['lint', 'login']), null);
+  assert.equal(unknownCheck(r(undefined), ['login']), null);
+  assert.equal(unknownCheck({ summary: 's', checkpoint: false, nominate: false }, null), null);
+  assert.match(unknownCheck(r('logn'), ['lint', 'login']), /names the check "logn", which is not a check of the project \(its checks: lint, login\)/);
+  assert.match(unknownCheck(r('login'), null), /no effective protected version, so no check can be named/);
+  assert.match(unknownCheck(r('login'), []), /it has none/);
+  assert.ok(unknownCheck(r('x'.repeat(500)), ['login']).length < 200, 'bounded');
+});
+
+test("F1: the run's end names why its result was not taken", (t) => {
+  const handle = newHandle({ run: 'r', project: 'p', work_item: 'w', work_kind: 'verification', role: 'verifier', domain: 'd', invocation: 'i', generation: 1, deadline_at: AT, attempt: null, entry: null });
+  handle.result = { valid: false };
+  handle.invalidDetail = 'a finding names the check "logn", which is not a check of the project (its checks: login)';
+  assert.deepEqual(earnedEnd(handle), { outcome: 'failed', reason: 'invalid_result', reasonText: handle.invalidDetail });
+});
+
+test('F3: with no effective protected version, the package says the checks could not be read, not that there are none', (t) => {
+  const db = store(t);
+  const facts = contextFacts(db, { run: 'run_ver' });
+  assert.equal(facts.checks_known, false);
+  const prompt = packageOf(t, facts).read('prompt.md');
+  assert.match(prompt, /The project's checks could not be read: it has no effective protected version\./);
+  assert.ok(!/The project has no checks/.test(prompt));
+});
+
+test("F4: a stage Builder's package has no check list", (t) => {
+  const db = store(t);
+  withChecks(db);
+  db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_stage', ?, 'prj_1', 9, 'stage_build', '{}', 'executing', 'test', 'wi_stage', 1, 0, 0, 0, 0)`,
+  ).run(AT);
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined)
+     VALUES ('run_stage', ?, 'prj_1', 9, 'wi_stage', 'builder', 'one_shot', 'executing', 'scripted', '1', 'm', ?, ?, 0)`,
+  ).run(AT, 'b'.repeat(40), AT);
+  const facts = contextFacts(db, { run: 'run_stage' });
+  assert.equal(facts.checks, null);
+  const prompt = packageOf(t, facts).read('prompt.md');
+  assert.ok(!/project's checks|`login`/.test(prompt), 'no list, no check key');
+});

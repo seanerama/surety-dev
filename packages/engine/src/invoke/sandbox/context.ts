@@ -44,6 +44,8 @@ export type ContextFacts = {
   finding?: FindingFacts | null;
   // The project's checks (E87), for a Verifier, a Reviewer and a fix Builder.
   checks?: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null;
+  // false: no effective protected version, so the checks cannot be read.
+  checks_known?: boolean | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
 
@@ -201,13 +203,24 @@ const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
   reviewer: { findings: FIELDS.findings!, ...REVIEWER_FIELDS },
 };
 
-export function resultSchema(role: string): Record<string, unknown> {
+// `checkKeys` (the review of b72b9cc, F1): the keys a finding's `check` may
+// name, the effective protected version's; given, `check` is an enum of
+// them, and with none (no checks, or none readable) it is left out.
+export function resultSchema(role: string, checkKeys?: readonly string[]): Record<string, unknown> {
+  const fields: Record<string, Record<string, unknown>> = { ...(ROLE_FIELDS[role] ?? {}) };
+  if (checkKeys !== undefined && fields.findings) {
+    const items = (fields.findings.items ?? {}) as { properties?: Record<string, unknown> };
+    const props: Record<string, unknown> = { ...(items.properties ?? {}) };
+    if (checkKeys.length > 0) props.check = { ...(props.check as Record<string, unknown>), enum: [...checkKeys] };
+    else delete props.check;
+    fields.findings = { ...fields.findings, items: { ...items, properties: props } };
+  }
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `The ${role}'s result, written to /surety/out/result.json`,
     type: 'object',
     required: ['status', 'summary'],
-    properties: { status: FIELDS.status, summary: FIELDS.summary, ...(ROLE_FIELDS[role] ?? {}) },
+    properties: { status: FIELDS.status, summary: FIELDS.summary, ...fields },
     additionalProperties: false,
   };
 }
@@ -245,8 +258,10 @@ export function writeContextPackage(
   const checkList =
     checks === null
       ? []
-      : checks.length === 0
-        ? ['The project has no checks in its effective protected version, so no finding can name one.']
+      : facts?.checks_known === false
+        ? ["The project's checks could not be read: it has no effective protected version. No finding can name a check until it has one."]
+        : checks.length === 0
+          ? ['The project has no checks in its effective protected version, so no finding can name one.']
         : [
             "The project's checks:",
             ...checks.map((c) => `- \`${c.key}\`${c.required ? ' (required)' : ''}: covers ${c.requirements.length > 0 ? c.requirements.join(', ') : 'no requirement'}; gate kinds ${c.gate_kinds.length > 0 ? c.gate_kinds.join(', ') : 'none'}.`),
@@ -341,7 +356,8 @@ export function writeContextPackage(
       '',
     ].join('\n'),
   );
-  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role);
+  const keys = facts?.checks && (role === 'verifier' || role === 'reviewer') ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : undefined;
+  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys);
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(schema, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);

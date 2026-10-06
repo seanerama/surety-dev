@@ -129,6 +129,10 @@ export interface RunHandle {
   // class and result. No later cause (a Stop, an Abandon, a deadline, a
   // budget) replaces it: a cancellation's cause stands only for an exit the
   // engine signalled (`engine_signaled`).
+  // Why a result was not one the engine may take, where more than its form
+  // says it (a finding's check naming no check of the project: the review
+  // of b72b9cc, F1).
+  invalidDetail: string | null;
   exitedFirst: boolean;
   // A Stop or an Abandon confirmed while `exitedFirst` held (the review of
   // 662cd7f, S2): it applied to the work; see Choke.collectAfterExit.
@@ -201,6 +205,7 @@ export function newHandle(claim: Claim): RunHandle {
     streamResult: null,
     collection: null,
     collecting: false,
+    invalidDetail: null,
     exitedFirst: false,
     controlAfterExit: null,
     endsNotTaken: new Set(),
@@ -223,7 +228,7 @@ export function newHandle(claim: Claim): RunHandle {
 export function earnedEnd(handle: RunHandle): RunEnd {
   if (handle.intended) return handle.intended;
   if (handle.resultLost !== null) return { outcome: 'failed', reason: 'infra_error', reasonText: handle.resultLost };
-  if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result' };
+  if (handle.result?.valid === false) return { outcome: 'failed', reason: 'invalid_result', ...(handle.invalidDetail ? { reasonText: handle.invalidDetail } : {}) };
   if (handle.result?.valid === true && handle.exit?.code === 0) return { outcome: 'completed', reason: 'none' };
   return { outcome: 'failed', reason: 'infra_error' };
 }

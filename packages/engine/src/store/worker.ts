@@ -90,7 +90,7 @@ import { notificationOutcome, notificationSending, notificationsDue } from './tr
 import { applicationFacts, beginApplication } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
-import { contextFacts, mountContext } from './reads.js';
+import { contextFacts, mountContext, runCheckKeys } from './reads.js';
 import {
   attemptTarget,
   attemptUsage,
@@ -213,6 +213,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'notify.due': (d, a: { project: string }) => notificationsDue(d, a),
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
   'context.facts': (d, a: { run: string }) => contextFacts(d, a),
+  'run.check_keys': (d, a: { run: string }) => runCheckKeys(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),

@@ -158,6 +158,23 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
+// A finding's `check` must name a check of the project's effective
+// protected version (the review of b72b9cc, F1; SEAM.md §74): the key the
+// fix loop resolves the finding by. The reason a result fails it, naming
+// the unknown key (bounded), or null. `keys` null: the project has no
+// effective version, so no key can be named.
+export function unknownCheck(result: RunResult, keys: readonly string[] | null): string | null {
+  for (const f of result.report?.findings ?? []) {
+    if (f.check === undefined || f.check === null) continue;
+    if (keys !== null && keys.includes(f.check)) continue;
+    const named = JSON.stringify(String(f.check).slice(0, 80));
+    return keys === null
+      ? `a finding names the check ${named}, but the project has no effective protected version, so no check can be named`
+      : `a finding names the check ${named}, which is not a check of the project (${keys.length > 0 ? `its checks: ${keys.slice(0, 20).join(', ')}` : 'it has none'})`;
+  }
+  return null;
+}
+
 function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
@@ -1046,7 +1063,7 @@ export class Launcher {
         if (c.verdict.outcome === 'invalid') {
           await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
           handle.result = { valid: false };
-          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason})` };
+          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason}${handle.invalidDetail ? `: ${handle.invalidDetail}` : ''})` };
         }
         return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with its terminal success event and left no result file' };
       }
@@ -1179,6 +1196,15 @@ export class Launcher {
         value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
       } catch {
         value = null;
+      }
+      if (value !== null && (value.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run: claim.run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          value = null;
+        }
       }
       verdict = value === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     }
@@ -1444,7 +1470,16 @@ export class Launcher {
       if (handle.ending) return;
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
-      const result = parseResult(sent, handle.claim.role);
+      let result = parseResult(sent, handle.claim.role);
+      if (result !== null && (result.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          result = null;
+        }
+      }
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
       // A valid result is kept as a record, published before anything
