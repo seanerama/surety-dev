@@ -366,6 +366,16 @@ async function reviewQueued(fx, P, candidate, label) {
 // engine pauses at `boundary.before_terminated` (it has read `populated 0`
 // and is about to record termination): there the test reads the domain's
 // `cgroup.events` itself and the run read, which must not yet say `ended`.
+//
+// The Stop must reach a live Builder (R12.4 is a Stop of a running real
+// process). In Sean's fourth attempt the hands-on script's Builder finished
+// its one-line file in 12 s, before the Stop, and the Stop ended nothing
+// live. So the stage begins with a deliberate wait the agent runs itself
+// (`sleep 180`), and just before the Stop the test reads from the host that
+// the Builder is still running: members in its domain, its launch not
+// closed, no terminal observation. If it is not, or if the backend turns out
+// to have exited on its own before the engine cancelled it, the case is
+// "not established", never a pass or a wrong verdict on the engine.
 export async function stopCase(ctx) {
   return realStep(ctx, 'stop_case', async () => {
     const one = stepValue(ctx, 'path_one');
@@ -373,7 +383,7 @@ export async function stopCase(ctx) {
     try {
       const plan = await installGatedPlan(fx.engine, one.project, {
         requirements: [{ key: 'R3', text: 'src/farewell.js exports farewell(name), returning "Goodbye, " followed by name and ".".' }],
-        stages: [{ number: 2, goal: 'Implement R3: create src/farewell.js as R3 describes.', implements: ['R3'] }],
+        stages: [{ number: 2, goal: 'First run the shell command `sleep 180` and wait for it to finish. Then implement R3: create src/farewell.js as R3 describes.', implements: ['R3'] }],
       });
       const item = plan.stages[0].work_item;
       await armBarrier(fx.engine, 'boundary.before_terminated', 'pause');
@@ -400,6 +410,24 @@ export async function stopCase(ctx) {
         if (usage > 0 && performance.now() - seenAt > 15_000) break;
         await new Promise((r) => setTimeout(r, 1_000));
       }
+      // The Builder must still be live when the Stop is sent.
+      const receiptNow = withStore(fx.home, (db) => db.prepare('SELECT * FROM "invocation_receipts" WHERE "run" = ?').get(run.id));
+      const terminalsNow = receiptNow ? withStore(fx.home, (db) => db.prepare(`SELECT COUNT(*) AS n FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" IN ('ended', 'unknown')`).get(receiptNow.id)).n : 0;
+      const liveNow = {
+        members: (() => {
+          try {
+            return procsOf(domain.cgroup_path).length;
+          } catch {
+            return 0;
+          }
+        })(),
+        launch_closed: eventsAboutRun(fx.home, run.id).some((e) => e.type === 'domain.launch_closed'),
+        terminal: terminalsNow > 0,
+        state: getRow(fx.home, 'runs', run.id)?.state ?? null,
+      };
+      if (!(liveNow.members > 0 && !liveNow.launch_closed && !liveNow.terminal && liveNow.state === 'executing')) {
+        notEstablished('the Stop case', 'the Builder had ended its processes before the Stop could be sent, so no live process was stopped', liveNow);
+      }
       const stopAsked = new Date().toISOString();
       await stopRun(fx.engine, one.project, run.id);
       await fx.engine.waitUntil('barrier:boundary.before_terminated', { timeoutMs: 120_000 });
@@ -412,6 +440,12 @@ export async function stopCase(ctx) {
       const ended = await tickWhile(fx, one.project, () => (getRow(fx.home, 'runs', run.id)?.state === 'ended' ? getRow(fx.home, 'runs', run.id) : undefined), { timeoutMs: 120_000, everyMs: 2_000, what: 'the stopped run to end' });
       const receipt = withStore(fx.home, (db) => db.prepare('SELECT * FROM "invocation_receipts" WHERE "run" = ?').get(run.id));
       const terminal = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" IN ('ended', 'unknown') ORDER BY "seq" DESC LIMIT 1`).get(receipt.id));
+      // A backend that exited on its own between the liveness read and the
+      // Stop (the engine sent it no TERM) is no Stop of a live process.
+      const evidence = terminal?.exit_evidence ? JSON.parse(terminal.exit_evidence) : null;
+      if (terminal?.exit_class !== 'engine_signaled' && evidence?.term_sent !== true) {
+        notEstablished('the Stop case', 'the Builder exited on its own before the engine cancelled it, so no live process was stopped', { exit_class: terminal?.exit_class ?? null, exit_evidence: evidence });
+      }
       const out = {
         project: one.project,
         run: run.id,
