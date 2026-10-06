@@ -30,9 +30,10 @@ import { describe, test } from 'node:test';
 
 import { releaseBarrier } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
-import { addGitProject } from './harness/gitruns.mjs';
-import { armBarrier, changePolicy } from './harness/journal.mjs';
-import { addProject, addWork, advanceClockInSteps, assertRunEnded, requestTick, run as runRow, stopRun, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
+import { armBarrier, changePolicy, journalBarrier } from './harness/journal.mjs';
+import { refOid } from './harness/repos.mjs';
+import { addProject, addWork, advanceClockInSteps, assertRunEnded, requestTick, run as runRow, stopRun, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { cgroupExists, populated, procsOf } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, eventsOf, firstSeq, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { hostProcess } from './harness/sandbox/procs.mjs';
@@ -285,5 +286,59 @@ describe('M129 the result is read after termination with closure; links are neve
     assert.notEqual(ended.result, null, 'the result is accepted as the run\'s result');
     const kinds = runRecords(fx.home, run.id).map((r) => r.kind);
     assert.ok(kinds.includes('result') && !kinds.includes('unaccepted_result'), `a result record, and no unaccepted_result (${JSON.stringify(kinds)})`);
+    // E87 S2 (the review of build/m2-q13): the Stop still holds the work, so
+    // nothing dispatches it again, though the run keeps its outcome.
+    await waitForWork(fx.home, item, 'held', { timeoutMs: 30_000 });
+    assert.equal(workItem(fx.home, item).status, 'held', 'the Stop confirmed in that window still holds the work (E87 S2)');
+  });
+
+  // E87 S2: Q13 is the backend's own clean exit only. After an error_exit the
+  // Stop takes its course as before: the run stopped, the work held.
+  test('Q13, error_exit (E87 S2): a role exits 1 without a result; a Stop confirmed before the termination is recorded takes its course: stopped / human_stop, the work held', async (t) => {
+    const fx = await sandboxEngine(t);
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    fx.scripted.script(item, [{ steps: [step.exit(1)] }]);
+    await armBarrier(fx.engine, 'boundary.before_terminated', 'pause');
+    await requestTick(fx.engine, project);
+    await fx.engine.waitUntil('barrier:boundary.before_terminated', { timeoutMs: 60_000 });
+    const run = await waitForRun(fx.home, item);
+    assert.equal(populated(domainOf(fx.home, run.id).cgroup_path), 0, 'the fixture is live: the role has exited before the Stop');
+    assert.equal(runRow(fx.home, run.id).state, 'executing', 'the fixture is live: the run is still executing when the Stop arrives');
+    await stopRun(fx.engine, project, run.id);
+    await releaseBarrier(fx.engine, 'boundary.before_terminated');
+    await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
+    const ended = runRow(fx.home, run.id);
+    assert.equal(terminalObservation(fx.home, receiptOf(fx.home, run.id).id)?.exit_class, 'error_exit', 'the fixture is live: exit class error_exit');
+    assert.deepEqual([ended.outcome, ended.reason_class], ['stopped', 'human_stop'], `after an error_exit the Stop takes its course (E87 S2): ${JSON.stringify({ outcome: ended.outcome, reason_class: ended.reason_class, reason_text: ended.reason_text })}`);
+    await waitForWork(fx.home, item, 'held', { timeoutMs: 30_000 });
+  });
+
+  // E87 S1: Q13 applies only until the exit's end is decided. A Stop that
+  // reaches the run while its work is integrating (the role exited clean,
+  // its snapshot committed, the integration's ref update held at
+  // journal.ref_update.intent_committed) takes SEAM §47's course: the
+  // integration is not made, the run stopped / human_stop, the work held.
+  test('Q13 after the exit is decided (E87 S1): a role exits clean with an edit; a Stop while its integration is held before the swap: the integration is not made, the run stopped / human_stop, the work held (SEAM §47)', async (t) => {
+    const fx = await sandboxEngine(t);
+    const project = await addGitProject(fx);
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [roleThat([permittedEdit()])]);
+    fx.scripted.defaultScript(script.complete());
+    const barrier = journalBarrier('ref_update', 'intent_committed');
+    await armBarrier(fx.engine, barrier, 'pause');
+    await requestTick(fx.engine, project.id);
+    await fx.engine.waitUntil(`barrier:${barrier}`, { timeoutMs: 120_000 });
+    const run = await waitForRun(fx.home, item);
+    assert.equal(workItem(fx.home, item).status, 'integrating', 'the fixture is live: the work is integrating, the role\'s exit decided');
+    await stopRun(fx.engine, project.id, run.id);
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.notEqual(runRow(fx.home, run.id).state, 'ended', 'the run is not ended while its integration is in flight');
+    await releaseBarrier(fx.engine, barrier);
+    await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
+    const ended = runRow(fx.home, run.id);
+    assert.deepEqual([ended.outcome, ended.reason_class], ['stopped', 'human_stop'], `a Stop after the exit's end is decided takes SEAM §47's course (E87 S1): ${JSON.stringify({ outcome: ended.outcome, reason_class: ended.reason_class })}`);
+    assert.equal(refOid(project.repo.path, project.repo.ref), project.base, 'the integration is not made: the branch has not moved');
+    await waitForWork(fx.home, item, 'held', { timeoutMs: 30_000 });
   });
 });

@@ -485,3 +485,27 @@ describe('M136 E86 review: the engine\'s containment probe cannot be spoiled by 
     }
   });
 });
+
+describe('M136 E87 S3: a run limit passed by the terminal usage line still stops the run, whatever the order of the exit and the line (sandbox lane, the fake backend, no model)', () => {
+  test('E87 S3: a backend whose terminal usage passes the run\'s billable limit and then exits clean at once is stopped / budget with its work parked; the exit is made to be taken before the line is processed (stream_slow), so the verdict does not depend on timing luck', async (t) => {
+    const { fx, fake, project } = await fakeFixture(t);
+    fake.set({ role: 'over_on_terminal' });
+    const LIMIT = 10000; // the contract's minimum; the terminal line reports 50 000
+    await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: { ...PARK_ON_REFUSAL, budget_run_billable_tokens: LIMIT } });
+    await installTrustEntry(fx.engine, { binary: { path: fake.path, sha256: fake.sha256 } }, { status: 'active', model: MODEL, egress_hosts: [...EGRESS] });
+    // Every stdout line is acted on 1.5 s late: the backend's exit is taken
+    // before its terminal usage line is processed (SEAM.md §157's fault).
+    await armFault(fx.engine, { point: 'stream_slow', delay_ms: 1500, times: 1_000 });
+    const plan = await installGatedPlan(fx.engine, project, { stages: [{ number: 1, goal: 'a stage whose last usage passes the run limit' }] });
+    await requestTick(fx.engine, project);
+    const run = await waitForRun(fx.home, plan.stages[0].work_item, { state: 'ended', timeoutMs: 300_000 });
+    const receipt = withStore(fx.home, (db) => db.prepare('SELECT * FROM "invocation_receipts" WHERE "run" = ?').get(run.id));
+    const obs = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" = 'ended'`).get(receipt.id));
+    const row = ledgerRows(fx.home, project).find((r) => r.run === run.id && r.corrects === null);
+    assert.ok(row && row.billable_in !== null && row.billable_in > LIMIT, `the fixture is live: the terminal usage passing the limit was observed and charged (${JSON.stringify(row)})`);
+    // The verdict (E85 item 3; E87 S3): a limit passed stops the run.
+    assert.deepEqual([run.outcome, run.reason_class], ['stopped', 'budget'], `a run limit passed by the terminal usage stops the run whatever the order of the exit and the line (E87 S3): ${JSON.stringify({ outcome: run.outcome, reason_class: run.reason_class, reason_text: run.reason_text, exit_class: obs?.exit_class })}`);
+    const work = withStore(fx.home, (db) => db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(plan.stages[0].work_item));
+    assert.equal(work.status, 'parked', `the work is parked behind the limit (${JSON.stringify({ status: work.status, blocker: work.blocker })})`);
+  });
+});

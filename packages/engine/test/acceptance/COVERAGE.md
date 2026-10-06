@@ -2167,6 +2167,13 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **M140 (e), the real lane's live Stop (R12.4), made robust against the same fast finish** (checked by `node --check` only; a real-lane file). It was not: its second stage asked only for a one-line file, which a real agent finishes in about 12 s, and it stopped the run 15 to 60 s after the agent appeared without checking that the Builder still ran, so a finished Builder would have failed (e) on its exit class as if the engine were wrong. `harness/real/journey.mjs` `stopCase` now gives the stage a deliberate wait the agent runs itself (`First run the shell command \`sleep 180\` and wait for it to finish.`), reads from the host just before the Stop that the Builder is live (members in its domain, its launch not closed, no terminal observation, the run executing), and reports "not established" (never a pass, never a verdict on the engine) if it is not, or if the backend turns out to have exited on its own before the engine cancelled it (exit class not `engine_signaled` and no TERM sent).
 
+## E87: the review of `build/m2-q13`
+
+2026-10-06, on `verify/m2-q13-review` from `main` at `c15fbe6`; SEAM §143 amended (the driver's provisional rulings, E87). The cases, written first and run once the machine was free:
+- **S2:** M129 "Q13" also requires the work `held` after the Stop; new "Q13, error_exit": a role that exits 1, a Stop before the termination is recorded: `stopped` / `human_stop`, the work `held`.
+- **S1:** M129 "Q13 after the exit is decided": a clean exit with an edit, the integration held at `journal.ref_update.intent_committed`, a Stop: the integration not made, `stopped` / `human_stop`, the work `held` (SEAM §47).
+- **S3:** M136 "E87 S3": the fake's terminal usage passes a run limit of 10 000 and it exits clean at once; `stream_slow` makes the exit be taken before the line is processed; the run must be `stopped` / `budget`, its work `parked`.
+
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
 (This section was headed "Slice-7 row" until the journey became a slice-5 target, in the pass after slice 6 was verified; the older paragraphs at the head of this file call it that.)
