@@ -1,0 +1,2998 @@
+{
+  "row": "M140",
+  "written_by": "the real-lane test, never edited by hand",
+  "path_one": {
+    "api_mismatches": [],
+    "ledger_read": {
+      "day": null,
+      "rows": [
+        {
+          "id": "led_01M47VEAPW5475XP5FE67G8RH9",
+          "created_at": "2026-10-06T05:37:04.731Z",
+          "invocation": "inv_01M47VDZT6KQRSRACYGGB8NCD6",
+          "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+          "turn": null,
+          "role": "builder",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 4088,
+          "cached_in": 35167,
+          "out": 894,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.032305400000000005,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M47VF3HHPFVSR3DCCKN88SVA",
+          "created_at": "2026-10-06T05:37:30.160Z",
+          "invocation": "inv_01M47VEP82RG7MQ7SGCZCVVP84",
+          "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+          "turn": null,
+          "role": "verifier",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 5636,
+          "cached_in": 47302,
+          "out": 1134,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0433204,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M47VFX26EHTMAG7B1FNHZMPC",
+          "created_at": "2026-10-06T05:37:56.293Z",
+          "invocation": "inv_01M47VFF5F4EAG19KMM0DY4RCH",
+          "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+          "turn": null,
+          "role": "reviewer",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 7208,
+          "cached_in": 40792,
+          "out": 1052,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0474904,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        }
+      ],
+      "totals": {
+        "invocations": 3,
+        "billable_in": 16932,
+        "cached_in": 123261,
+        "out": 3080,
+        "usage_incomplete": 0,
+        "reported_usd": null,
+        "estimated_usd": 0.1231162,
+        "unknown_cost_invocations": 0,
+        "unknown_cost_tokens": null,
+        "unknown_allowance_tokens": null
+      },
+      "by_role": {
+        "builder": {
+          "invocations": 1,
+          "billable_in": 4088,
+          "cached_in": 35167,
+          "out": 894,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.0323054,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        },
+        "reviewer": {
+          "invocations": 1,
+          "billable_in": 7208,
+          "cached_in": 40792,
+          "out": 1052,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.0474904,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        },
+        "verifier": {
+          "invocations": 1,
+          "billable_in": 5636,
+          "cached_in": 47302,
+          "out": 1134,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.0433204,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        }
+      },
+      "budget": {
+        "exhausted": []
+      },
+      "budget_day": {
+        "day": "2026-10-06",
+        "reported_usd": 0,
+        "estimated_usd": 0.1231162,
+        "unknown_cost_tokens": 0,
+        "unknown_allowance_tokens": 0
+      }
+    },
+    "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+    "repo": "/home/smahoney/surety-real-lane-20261006T050755Z/repos/real-journey-one",
+    "base": "5991601086d9859f7aa6cc1b5a239c82c5670fd0",
+    "journey_base": "04669686d9e77d3abbe77e817c64a1a73ca6a565",
+    "candidate": "cand_01M47VEANYFVCC4N8NWJT4B177",
+    "runs": [
+      {
+        "id": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+        "role": "builder",
+        "work_item": "wi_01M47VDZ9PT559BN72M127PA4X",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M47VEAPW5475XP5FE67G8RH9",
+            "created_at": "2026-10-06T05:37:04.731Z",
+            "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+            "invocation": "inv_01M47VDZT6KQRSRACYGGB8NCD6",
+            "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+            "turn": null,
+            "role": "builder",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":4078,\"cache_read_input_tokens\":35167,\"output_tokens\":894,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.032305400000000005}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 4088,
+            "cached_in": 35167,
+            "out": 894,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.032305400000000005,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M47VEP814AHWBEM2SD26SV8Y",
+        "role": "verifier",
+        "work_item": "wi_01M47VEANYFVCC4N8NWJT4B17A",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M47VF3HHPFVSR3DCCKN88SVA",
+            "created_at": "2026-10-06T05:37:30.160Z",
+            "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+            "invocation": "inv_01M47VEP82RG7MQ7SGCZCVVP84",
+            "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5624,\"cache_read_input_tokens\":47302,\"output_tokens\":1134,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0433204}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 5636,
+            "cached_in": 47302,
+            "out": 1134,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0433204,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+        "role": "reviewer",
+        "work_item": "wi_01M47VF9QE2586EJW2W2TRDNBP",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M47VFX26EHTMAG7B1FNHZMPC",
+            "created_at": "2026-10-06T05:37:56.293Z",
+            "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+            "invocation": "inv_01M47VFF5F4EAG19KMM0DY4RCH",
+            "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+            "turn": null,
+            "role": "reviewer",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7198,\"cache_read_input_tokens\":40792,\"output_tokens\":1052,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0474904}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 7208,
+            "cached_in": 40792,
+            "out": 1052,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0474904,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      }
+    ],
+    "findings": [],
+    "stage_gate": "satisfied",
+    "alpha_gate": "satisfied",
+    "authorization": "dauth_01M47VG1WE3HKJH3Y069GG7KS8"
+  },
+  "updated_at": "2026-10-06T11:22:34.109Z",
+  "path_one_domain_samples": [
+    {
+      "at": "2026-10-06T05:36:54.072Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": []
+    },
+    {
+      "at": "2026-10-06T05:36:55.074Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:36:56.075Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:36:57.076Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:36:58.078Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:36:59.080Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:00.081Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:01.083Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:02.084Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:03.086Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:04.087Z",
+      "domain": "dom_01M47VDZT7BJ86A15CA4HHCY90",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "members": [
+        {
+          "pid": 3257412,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257434,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257464,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:17.102Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:18.103Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:19.104Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:20.106Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:21.106Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:22.107Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:23.108Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:24.109Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:25.111Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:26.112Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:27.112Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:28.112Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:29.114Z",
+      "domain": "dom_01M47VEP82RG7MQ7SGCZCVVP86",
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "members": [
+        {
+          "pid": 3257726,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3257741,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3257780,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:43.130Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:44.132Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:45.135Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:46.135Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:47.136Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:48.137Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:49.139Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:50.140Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:51.142Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:52.143Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:53.144Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:54.145Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-06T05:37:55.147Z",
+      "domain": "dom_01M47VFF5F4EAG19KMM0DY4RCK",
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "members": [
+        {
+          "pid": 3258084,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 3258103,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 3258156,
+          "argv": [
+            "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    }
+  ],
+  "stop_case": {
+    "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+    "run": "run_01M47VG5GXGTCG2JHJWQ7M6JJ7",
+    "domain": "dom_01M47VG5GZKB1EZ8PEZGJ7XBPW",
+    "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ccd277be6da3a18f-inc_01M47VG2C8HV6QPFJHA2DGWH0G.scope/dom_01M47VG5GZKB1EZ8PEZGJ7XBPW",
+    "stop_asked_at": "2026-10-06T05:38:22.297Z",
+    "at_barrier": {
+      "populated": 0,
+      "run_read": "finalizing",
+      "at": "2026-10-06T05:38:23.969Z"
+    },
+    "outcome": [
+      "stopped",
+      "human_stop"
+    ],
+    "exit_class": "engine_signaled",
+    "exit_evidence": {
+      "status": 143,
+      "signal": 15,
+      "signal_by_engine": true,
+      "terminal_event": null,
+      "resource_events": {
+        "oom_kill": 0,
+        "pids_max": 0
+      },
+      "report": "received",
+      "term_sent": true,
+      "kill_written": false
+    },
+    "events": [
+      {
+        "seq": 431,
+        "type": "run.created"
+      },
+      {
+        "seq": 432,
+        "type": "run.claimed"
+      },
+      {
+        "seq": 434,
+        "type": "invocation.receipt"
+      },
+      {
+        "seq": 435,
+        "type": "operation.intended"
+      },
+      {
+        "seq": 436,
+        "type": "git.journal_intended"
+      },
+      {
+        "seq": 437,
+        "type": "operation.attempt_started"
+      },
+      {
+        "seq": 438,
+        "type": "git.journal_applied"
+      },
+      {
+        "seq": 439,
+        "type": "git.journal_confirmed"
+      },
+      {
+        "seq": 440,
+        "type": "operation.succeeded"
+      },
+      {
+        "seq": 441,
+        "type": "git.journal_finalized"
+      },
+      {
+        "seq": 442,
+        "type": "operation.finalized"
+      },
+      {
+        "seq": 443,
+        "type": "invocation.status"
+      },
+      {
+        "seq": 445,
+        "type": "record.written"
+      },
+      {
+        "seq": 446,
+        "type": "domain.placed"
+      },
+      {
+        "seq": 447,
+        "type": "domain.launch_authorized"
+      },
+      {
+        "seq": 448,
+        "type": "invocation.status"
+      },
+      {
+        "seq": 449,
+        "type": "run.started"
+      },
+      {
+        "seq": 451,
+        "type": "invocation.usage"
+      },
+      {
+        "seq": 452,
+        "type": "invocation.usage"
+      },
+      {
+        "seq": 457,
+        "type": "run.finalizing"
+      },
+      {
+        "seq": 459,
+        "type": "domain.launch_closed"
+      },
+      {
+        "seq": 460,
+        "type": "record.written"
+      },
+      {
+        "seq": 462,
+        "type": "domain.terminated"
+      },
+      {
+        "seq": 463,
+        "type": "record.written"
+      },
+      {
+        "seq": 464,
+        "type": "record.written"
+      },
+      {
+        "seq": 466,
+        "type": "invocation.status"
+      },
+      {
+        "seq": 467,
+        "type": "ledger.row"
+      },
+      {
+        "seq": 468,
+        "type": "run.ended"
+      }
+    ],
+    "ledger": [
+      {
+        "id": "led_01M47VGR51Q6K65GQK5ZEBMWQK",
+        "created_at": "2026-10-06T05:38:24.032Z",
+        "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+        "invocation": "inv_01M47VG5GY2S9ZSZK4F5ARAVPR",
+        "run": "run_01M47VG5GXGTCG2JHJWQ7M6JJ7",
+        "turn": null,
+        "role": "builder",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":4,\"cache_creation_input_tokens\":1328,\"cache_read_input_tokens\":11746,\"output_tokens\":32,\"model\":\"claude-sonnet-5-5\"}",
+        "normalization_version": "claude-stream-json-1",
+        "billable_in": 1332,
+        "cached_in": 11746,
+        "out": 32,
+        "usage_complete": 0,
+        "cost_status": "unknown",
+        "cost_usd": null,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": 298636
+      }
+    ],
+    "ledger_read": {
+      "day": null,
+      "rows": [
+        {
+          "id": "led_01M47VEAPW5475XP5FE67G8RH9",
+          "created_at": "2026-10-06T05:37:04.731Z",
+          "invocation": "inv_01M47VDZT6KQRSRACYGGB8NCD6",
+          "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+          "turn": null,
+          "role": "builder",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 4088,
+          "cached_in": 35167,
+          "out": 894,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.032305400000000005,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M47VF3HHPFVSR3DCCKN88SVA",
+          "created_at": "2026-10-06T05:37:30.160Z",
+          "invocation": "inv_01M47VEP82RG7MQ7SGCZCVVP84",
+          "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+          "turn": null,
+          "role": "verifier",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 5636,
+          "cached_in": 47302,
+          "out": 1134,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0433204,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M47VFX26EHTMAG7B1FNHZMPC",
+          "created_at": "2026-10-06T05:37:56.293Z",
+          "invocation": "inv_01M47VFF5F4EAG19KMM0DY4RCH",
+          "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+          "turn": null,
+          "role": "reviewer",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 7208,
+          "cached_in": 40792,
+          "out": 1052,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0474904,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M47VGR51Q6K65GQK5ZEBMWQK",
+          "created_at": "2026-10-06T05:38:24.032Z",
+          "invocation": "inv_01M47VG5GY2S9ZSZK4F5ARAVPR",
+          "run": "run_01M47VG5GXGTCG2JHJWQ7M6JJ7",
+          "turn": null,
+          "role": "builder",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1",
+          "billable_in": 1332,
+          "cached_in": 11746,
+          "out": 32,
+          "usage_complete": false,
+          "cost_status": "unknown",
+          "cost_usd": null,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": 298636
+        }
+      ],
+      "totals": {
+        "invocations": 4,
+        "billable_in": 18264,
+        "cached_in": 135007,
+        "out": 3112,
+        "usage_incomplete": 1,
+        "reported_usd": null,
+        "estimated_usd": 0.1231162,
+        "unknown_cost_invocations": 1,
+        "unknown_cost_tokens": 1364,
+        "unknown_allowance_tokens": 298636
+      },
+      "by_role": {
+        "builder": {
+          "invocations": 2,
+          "billable_in": 5420,
+          "cached_in": 46913,
+          "out": 926,
+          "usage_incomplete": 1,
+          "reported_usd": null,
+          "estimated_usd": 0.0323054,
+          "unknown_cost_invocations": 1,
+          "unknown_cost_tokens": 1364,
+          "unknown_allowance_tokens": 298636
+        },
+        "reviewer": {
+          "invocations": 1,
+          "billable_in": 7208,
+          "cached_in": 40792,
+          "out": 1052,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.0474904,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        },
+        "verifier": {
+          "invocations": 1,
+          "billable_in": 5636,
+          "cached_in": 47302,
+          "out": 1134,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.0433204,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        }
+      },
+      "budget": {
+        "exhausted": []
+      },
+      "budget_day": {
+        "day": "2026-10-06",
+        "reported_usd": 0,
+        "estimated_usd": 0.1231162,
+        "unknown_cost_tokens": 1364,
+        "unknown_allowance_tokens": 298636
+      }
+    }
+  },
+  "stop_case_egress": {
+    "proven": false,
+    "why": "a connection was attempted or carried bytes",
+    "entries": [
+      {
+        "authority": "api.anthropic.com:443",
+        "decision": "accepted",
+        "reason": null,
+        "resolved": [
+          "160.79.104.10",
+          "2607:6bc0::10"
+        ],
+        "address": "160.79.104.10",
+        "opened_at": "2026-10-06T05:38:05.663Z",
+        "closed_at": "2026-10-06T05:38:05.855Z",
+        "bytes_up": 1981,
+        "bytes_down": 5247,
+        "ended": "closed",
+        "limit": null
+      },
+      {
+        "authority": "api.anthropic.com:443",
+        "decision": "accepted",
+        "reason": null,
+        "resolved": [
+          "160.79.104.10",
+          "2607:6bc0::10"
+        ],
+        "address": "160.79.104.10",
+        "opened_at": "2026-10-06T05:38:05.663Z",
+        "closed_at": "2026-10-06T05:38:05.941Z",
+        "bytes_up": 1986,
+        "bytes_down": 5222,
+        "ended": "closed",
+        "limit": null
+      },
+      {
+        "authority": "api.anthropic.com:443",
+        "decision": "accepted",
+        "reason": null,
+        "resolved": [
+          "160.79.104.10",
+          "2607:6bc0::10"
+        ],
+        "address": "160.79.104.10",
+        "opened_at": "2026-10-06T05:38:06.092Z",
+        "closed_at": "2026-10-06T05:38:23.842Z",
+        "bytes_up": 40494,
+        "bytes_down": 9415,
+        "ended": "closed",
+        "limit": null
+      }
+    ]
+  },
+  "key_search": {
+    "roots": [
+      "/home/smahoney/surety-real-lane-20261006T050755Z"
+    ],
+    "repos": [
+      "/home/smahoney/surety-real-lane-20261006T050755Z/repos/real-journey-one",
+      "/home/smahoney/surety-real-lane-20261006T050755Z/home/qualification/fixture"
+    ],
+    "hits": 0
+  },
+  "commits": [
+    {
+      "path": "path_one",
+      "sha": "04669686d9e77d3abbe77e817c64a1a73ca6a565",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": null,
+      "role": null,
+      "revision_kind": "engine_commit",
+      "setup": true
+    },
+    {
+      "path": "path_one",
+      "sha": "b6fb1f033f50b6637f3a23a1025c12e011a1183f",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": null,
+      "role": null,
+      "revision_kind": "engine_commit",
+      "setup": true
+    },
+    {
+      "path": "path_one",
+      "sha": "9d6d08588b35813ecb4ba8436dd1f8aef0d7c77b",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "role": "builder",
+      "revision_kind": "engine_commit"
+    },
+    {
+      "path": "path_two",
+      "sha": "b3e29287306f59ad325cfa3b3fc57d023eb771b4",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": null,
+      "role": null,
+      "revision_kind": "engine_commit",
+      "setup": true
+    },
+    {
+      "path": "path_two",
+      "sha": "cf68454b5cfe0ada742d441ec4fcef366ec4ee5d",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": null,
+      "role": null,
+      "revision_kind": "engine_commit",
+      "setup": true
+    },
+    {
+      "path": "path_two",
+      "sha": "2570857e4faccb2a62f13eabb2d3b9b92278e2f1",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+      "role": "builder",
+      "revision_kind": "engine_commit"
+    },
+    {
+      "path": "path_two",
+      "sha": "fcc09f2566648a44be74a180ee0988530075a68b",
+      "identity": "Surety Engine|engine@surety.invalid|Surety Engine|engine@surety.invalid",
+      "run": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+      "role": "builder",
+      "revision_kind": "engine_commit"
+    }
+  ],
+  "ledger_against_transcripts": [
+    {
+      "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+      "role": "builder",
+      "row": {
+        "id": "led_01M47VEAPW5475XP5FE67G8RH9",
+        "created_at": "2026-10-06T05:37:04.731Z",
+        "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+        "invocation": "inv_01M47VDZT6KQRSRACYGGB8NCD6",
+        "run": "run_01M47VDZT5CZ45ZEZY52YWQNWF",
+        "turn": null,
+        "role": "builder",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":4078,\"cache_read_input_tokens\":35167,\"output_tokens\":894,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.032305400000000005}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 4088,
+        "cached_in": 35167,
+        "out": 894,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.032305400000000005,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.032305400000000005,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 4078,
+          "cache_read_input_tokens": 35167,
+          "output_tokens": 894,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4078,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 894,
+            "cacheReadInputTokens": 35167,
+            "cacheCreationInputTokens": 4078,
+            "webSearchRequests": 0,
+            "costUSD": 0.032305400000000005,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 0,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+      "role": "verifier",
+      "row": {
+        "id": "led_01M47VF3HHPFVSR3DCCKN88SVA",
+        "created_at": "2026-10-06T05:37:30.160Z",
+        "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+        "invocation": "inv_01M47VEP82RG7MQ7SGCZCVVP84",
+        "run": "run_01M47VEP814AHWBEM2SD26SV8Y",
+        "turn": null,
+        "role": "verifier",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5624,\"cache_read_input_tokens\":47302,\"output_tokens\":1134,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0433204}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 5636,
+        "cached_in": 47302,
+        "out": 1134,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.0433204,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.0433204,
+        "usage": {
+          "input_tokens": 12,
+          "cache_creation_input_tokens": 5624,
+          "cache_read_input_tokens": 47302,
+          "output_tokens": 1134,
+          "output_tokens_details": {
+            "thinking_tokens": 19
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 5624,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 12,
+            "outputTokens": 1134,
+            "cacheReadInputTokens": 47302,
+            "cacheCreationInputTokens": 5624,
+            "webSearchRequests": 0,
+            "costUSD": 0.0433204,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 19,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+      "role": "reviewer",
+      "row": {
+        "id": "led_01M47VFX26EHTMAG7B1FNHZMPC",
+        "created_at": "2026-10-06T05:37:56.293Z",
+        "project": "proj_01M47VDYTD6HF6E98DNCRZ1G24",
+        "invocation": "inv_01M47VFF5F4EAG19KMM0DY4RCH",
+        "run": "run_01M47VFF5E631BCS7FRGSQZYZZ",
+        "turn": null,
+        "role": "reviewer",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7198,\"cache_read_input_tokens\":40792,\"output_tokens\":1052,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0474904}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 7208,
+        "cached_in": 40792,
+        "out": 1052,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.0474904,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.0474904,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 7198,
+          "cache_read_input_tokens": 40792,
+          "output_tokens": 1052,
+          "output_tokens_details": {
+            "thinking_tokens": 53
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 7198,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 1052,
+            "cacheReadInputTokens": 40792,
+            "cacheCreationInputTokens": 7198,
+            "webSearchRequests": 0,
+            "costUSD": 0.0474904,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 53,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+      "role": "builder",
+      "row": {
+        "id": "led_01M48F39RTCQHAVTAJ13YAVMKK",
+        "created_at": "2026-10-06T11:20:34.839Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F2VDD95CD09GY8TCZDEPV",
+        "run": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+        "turn": null,
+        "role": "builder",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":4728,\"cache_read_input_tokens\":34326,\"output_tokens\":1137,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.037167200000000004}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 4738,
+        "cached_in": 34326,
+        "out": 1137,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.037167200000000004,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.037167200000000004,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 4728,
+          "cache_read_input_tokens": 34326,
+          "output_tokens": 1137,
+          "output_tokens_details": {
+            "thinking_tokens": 176
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4728,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 1137,
+            "cacheReadInputTokens": 34326,
+            "cacheCreationInputTokens": 4728,
+            "webSearchRequests": 0,
+            "costUSD": 0.037167200000000004,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 176,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F3GZ770X1KXQT5KGH78G7",
+      "role": "verifier",
+      "row": {
+        "id": "led_01M48F3Z91BDN4ES72HF460Q8K",
+        "created_at": "2026-10-06T11:20:56.864Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F3GZ8VFY49JXA5BVVMJJF",
+        "run": "run_01M48F3GZ770X1KXQT5KGH78G7",
+        "turn": null,
+        "role": "verifier",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5764,\"cache_read_input_tokens\":47718,\"output_tokens\":1313,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.045753600000000005}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 5776,
+        "cached_in": 47718,
+        "out": 1313,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.045753600000000005,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.045753600000000005,
+        "usage": {
+          "input_tokens": 12,
+          "cache_creation_input_tokens": 5764,
+          "cache_read_input_tokens": 47718,
+          "output_tokens": 1313,
+          "output_tokens_details": {
+            "thinking_tokens": 104
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 5764,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 12,
+            "outputTokens": 1313,
+            "cacheReadInputTokens": 47718,
+            "cacheCreationInputTokens": 5764,
+            "webSearchRequests": 0,
+            "costUSD": 0.045753600000000005,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 104,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+      "role": "reviewer",
+      "row": {
+        "id": "led_01M48F4QEPTPHH08PPV6KW5GND",
+        "created_at": "2026-10-06T11:21:21.621Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F48KHN7XQRTYTFM0KQ2T6",
+        "run": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+        "turn": null,
+        "role": "reviewer",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7477,\"cache_read_input_tokens\":41066,\"output_tokens\":1117,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.04931119999999999}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 7487,
+        "cached_in": 41066,
+        "out": 1117,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.04931119999999999,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.04931119999999999,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 7477,
+          "cache_read_input_tokens": 41066,
+          "output_tokens": 1117,
+          "output_tokens_details": {
+            "thinking_tokens": 136
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 7477,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 1117,
+            "cacheReadInputTokens": 41066,
+            "cacheCreationInputTokens": 7477,
+            "webSearchRequests": 0,
+            "costUSD": 0.04931119999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 136,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+      "role": "builder",
+      "row": {
+        "id": "led_01M48F57X15W4QAR8BCBHCV7AD",
+        "created_at": "2026-10-06T11:21:38.464Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F4YYN44QV0A2XD3V2X4H5",
+        "run": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+        "turn": null,
+        "role": "builder",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":3876,\"cache_read_input_tokens\":35929,\"output_tokens\":814,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0308498}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 3886,
+        "cached_in": 35929,
+        "out": 814,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.0308498,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.0308498,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 3876,
+          "cache_read_input_tokens": 35929,
+          "output_tokens": 814,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3876,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 814,
+            "cacheReadInputTokens": 35929,
+            "cacheCreationInputTokens": 3876,
+            "webSearchRequests": 0,
+            "costUSD": 0.0308498,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 0,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F5MRYB3NA91ZFZ29BFQDQ",
+      "role": "verifier",
+      "row": {
+        "id": "led_01M48F5Z2TGQZBRS7JSQCAKYXJ",
+        "created_at": "2026-10-06T11:22:02.201Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F5MRZNF4GKMGFPKBBAC24",
+        "run": "run_01M48F5MRYB3NA91ZFZ29BFQDQ",
+        "turn": null,
+        "role": "verifier",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5952,\"cache_read_input_tokens\":49252,\"output_tokens\":1100,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.044682400000000004}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 5964,
+        "cached_in": 49252,
+        "out": 1100,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.044682400000000004,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.044682400000000004,
+        "usage": {
+          "input_tokens": 12,
+          "cache_creation_input_tokens": 5952,
+          "cache_read_input_tokens": 49252,
+          "output_tokens": 1100,
+          "output_tokens_details": {
+            "thinking_tokens": 20
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 5952,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 12,
+            "outputTokens": 1100,
+            "cacheReadInputTokens": 49252,
+            "cacheCreationInputTokens": 5952,
+            "webSearchRequests": 0,
+            "costUSD": 0.044682400000000004,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 20,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    },
+    {
+      "run": "run_01M48F6CJ1E5DC7HQMJRD23251",
+      "role": "reviewer",
+      "row": {
+        "id": "led_01M48F6T75YK4TY0BQP3W15KRY",
+        "created_at": "2026-10-06T11:22:29.988Z",
+        "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+        "invocation": "inv_01M48F6CJ25EGT3395S48WE04D",
+        "run": "run_01M48F6CJ1E5DC7HQMJRD23251",
+        "turn": null,
+        "role": "reviewer",
+        "provider": "claude",
+        "model_requested": "claude-sonnet-5-5",
+        "model_observed": "claude-sonnet-5-5",
+        "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7529,\"cache_read_input_tokens\":40734,\"output_tokens\":1132,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0496028}",
+        "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+        "billable_in": 7539,
+        "cached_in": 40734,
+        "out": 1132,
+        "usage_complete": 1,
+        "cost_status": "estimated",
+        "cost_usd": 0.0496028,
+        "day_utc": "2026-10-06",
+        "corrects": null,
+        "correction_seq": null,
+        "unknown_allowance_tokens": null
+      },
+      "terminal": {
+        "total_cost_usd": 0.0496028,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 7529,
+          "cache_read_input_tokens": 40734,
+          "output_tokens": 1132,
+          "output_tokens_details": {
+            "thinking_tokens": 73
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 7529,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "outputTokens": 1132,
+            "cacheReadInputTokens": 40734,
+            "cacheCreationInputTokens": 7529,
+            "webSearchRequests": 0,
+            "costUSD": 0.0496028,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 73,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        }
+      }
+    }
+  ],
+  "spend": {
+    "bound_usd_per_day": 25,
+    "limits": {
+      "qualification": 10,
+      "pathOne": 6,
+      "pathTwo": 9
+    }
+  },
+  "path_two": {
+    "api_mismatches": [],
+    "ledger_read": {
+      "day": null,
+      "rows": [
+        {
+          "id": "led_01M48F39RTCQHAVTAJ13YAVMKK",
+          "created_at": "2026-10-06T11:20:34.839Z",
+          "invocation": "inv_01M48F2VDD95CD09GY8TCZDEPV",
+          "run": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+          "turn": null,
+          "role": "builder",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 4738,
+          "cached_in": 34326,
+          "out": 1137,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.037167200000000004,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M48F3Z91BDN4ES72HF460Q8K",
+          "created_at": "2026-10-06T11:20:56.864Z",
+          "invocation": "inv_01M48F3GZ8VFY49JXA5BVVMJJF",
+          "run": "run_01M48F3GZ770X1KXQT5KGH78G7",
+          "turn": null,
+          "role": "verifier",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 5776,
+          "cached_in": 47718,
+          "out": 1313,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.045753600000000005,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M48F4QEPTPHH08PPV6KW5GND",
+          "created_at": "2026-10-06T11:21:21.621Z",
+          "invocation": "inv_01M48F48KHN7XQRTYTFM0KQ2T6",
+          "run": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+          "turn": null,
+          "role": "reviewer",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 7487,
+          "cached_in": 41066,
+          "out": 1117,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.04931119999999999,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M48F57X15W4QAR8BCBHCV7AD",
+          "created_at": "2026-10-06T11:21:38.464Z",
+          "invocation": "inv_01M48F4YYN44QV0A2XD3V2X4H5",
+          "run": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+          "turn": null,
+          "role": "builder",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 3886,
+          "cached_in": 35929,
+          "out": 814,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0308498,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M48F5Z2TGQZBRS7JSQCAKYXJ",
+          "created_at": "2026-10-06T11:22:02.201Z",
+          "invocation": "inv_01M48F5MRZNF4GKMGFPKBBAC24",
+          "run": "run_01M48F5MRYB3NA91ZFZ29BFQDQ",
+          "turn": null,
+          "role": "verifier",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 5964,
+          "cached_in": 49252,
+          "out": 1100,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.044682400000000004,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        },
+        {
+          "id": "led_01M48F6T75YK4TY0BQP3W15KRY",
+          "created_at": "2026-10-06T11:22:29.988Z",
+          "invocation": "inv_01M48F6CJ25EGT3395S48WE04D",
+          "run": "run_01M48F6CJ1E5DC7HQMJRD23251",
+          "turn": null,
+          "role": "reviewer",
+          "provider": "claude",
+          "model_requested": "claude-sonnet-5-5",
+          "model_observed": "claude-sonnet-5-5",
+          "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+          "billable_in": 7539,
+          "cached_in": 40734,
+          "out": 1132,
+          "usage_complete": true,
+          "cost_status": "estimated",
+          "cost_usd": 0.0496028,
+          "day_utc": "2026-10-06",
+          "corrects": null,
+          "correction_seq": null,
+          "unknown_allowance_tokens": null
+        }
+      ],
+      "totals": {
+        "invocations": 6,
+        "billable_in": 35390,
+        "cached_in": 249025,
+        "out": 6613,
+        "usage_incomplete": 0,
+        "reported_usd": null,
+        "estimated_usd": 0.257367,
+        "unknown_cost_invocations": 0,
+        "unknown_cost_tokens": null,
+        "unknown_allowance_tokens": null
+      },
+      "by_role": {
+        "builder": {
+          "invocations": 2,
+          "billable_in": 8624,
+          "cached_in": 70255,
+          "out": 1951,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.068017,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        },
+        "reviewer": {
+          "invocations": 2,
+          "billable_in": 15026,
+          "cached_in": 81800,
+          "out": 2249,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.098914,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        },
+        "verifier": {
+          "invocations": 2,
+          "billable_in": 11740,
+          "cached_in": 96970,
+          "out": 2413,
+          "usage_incomplete": 0,
+          "reported_usd": null,
+          "estimated_usd": 0.090436,
+          "unknown_cost_invocations": 0,
+          "unknown_cost_tokens": null,
+          "unknown_allowance_tokens": null
+        }
+      },
+      "budget": {
+        "exhausted": []
+      },
+      "budget_day": {
+        "day": "2026-10-06",
+        "reported_usd": 0,
+        "estimated_usd": 0.257367,
+        "unknown_cost_tokens": 0,
+        "unknown_allowance_tokens": 0
+      }
+    },
+    "mixed": false,
+    "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+    "repo": "/home/smahoney/surety-real-lane-20261006T050755Z/repos/real-journey-two-2",
+    "base": "d8b3a766d938c96dc369cd7fb792934c607896e4",
+    "journey_base": "b3e29287306f59ad325cfa3b3fc57d023eb771b4",
+    "candidates": [
+      "cand_01M48F39QRCY9DA995620JFQPY",
+      "cand_01M48F57TF39KSV4XAK7CMZH84"
+    ],
+    "finding": {
+      "id": "fnd_01M48F3Z7BVTMMP6MQESSK17TH",
+      "created_at": "2026-10-06T11:20:56.810Z",
+      "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+      "seq": 1,
+      "scope": "candidate",
+      "subject_id": "cand_01M48F39QRCY9DA995620JFQPY",
+      "candidate": "cand_01M48F39QRCY9DA995620JFQPY",
+      "source_run": "run_01M48F3GZ770X1KXQT5KGH78G7",
+      "source_role": "verifier",
+      "category": "defect",
+      "message": "src/session.js isSessionValid: the window is computed as SESSION_LIFETIME * 1000 * 1000. SESSION_LIFETIME is already in seconds, so the extra factor of 1000 makes the window about 20.8 days (1,800,000,000 ms) instead of 30 minutes (1,800,000 ms). Expired sessions are reported valid, which breaks R1. Fix: use SESSION_LIFETIME * 1000.",
+      "check": "login",
+      "proposed_severity": "high",
+      "effective_severity": "high",
+      "severity_history": "[]",
+      "sensitive_area": null,
+      "status": "resolved",
+      "disposition": "fix",
+      "disposition_authority": "reviewer",
+      "disposition_by": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+      "disposition_at": "2026-10-06T11:21:21.567Z",
+      "disposition_seq": 2,
+      "linked_issue": null,
+      "defer_target": null,
+      "reevaluations": "[]",
+      "alpha_exception": null,
+      "resolution_verification": "{\"evaluation\":\"gate_01M48F670HFRD48AYRT5X1ZGSW\",\"check_result\":\"cr_01M48F666FKYBZXHYGQW8FBDKF\"}",
+      "proposed_disposition": null,
+      "proposed_severity_change": null,
+      "proposed_alpha_exception": null
+    },
+    "blocked_on_first": {
+      "outcome": "not_satisfied",
+      "reasons": [
+        {
+          "code": "FINDING_BLOCKING",
+          "subjects": [
+            "fnd_01M48F3Z7BVTMMP6MQESSK17TH"
+          ]
+        },
+        {
+          "code": "SIGNOFF_MISSING",
+          "subjects": [
+            "cand_01M48F39QRCY9DA995620JFQPY"
+          ]
+        }
+      ]
+    },
+    "fix": "wi_01M48F4QD04M3M1EWXEN74M569",
+    "runs": [
+      {
+        "id": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+        "role": "builder",
+        "work_item": "wi_01M48F2TVEYWPV8C0AF1WJX7KX",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F39RTCQHAVTAJ13YAVMKK",
+            "created_at": "2026-10-06T11:20:34.839Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F2VDD95CD09GY8TCZDEPV",
+            "run": "run_01M48F2VDCXBRTPM8P6W10RS9N",
+            "turn": null,
+            "role": "builder",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":4728,\"cache_read_input_tokens\":34326,\"output_tokens\":1137,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.037167200000000004}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 4738,
+            "cached_in": 34326,
+            "out": 1137,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.037167200000000004,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M48F3GZ770X1KXQT5KGH78G7",
+        "role": "verifier",
+        "work_item": "wi_01M48F39QRCY9DA995620JFQQ1",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F3Z91BDN4ES72HF460Q8K",
+            "created_at": "2026-10-06T11:20:56.864Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F3GZ8VFY49JXA5BVVMJJF",
+            "run": "run_01M48F3GZ770X1KXQT5KGH78G7",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5764,\"cache_read_input_tokens\":47718,\"output_tokens\":1313,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.045753600000000005}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 5776,
+            "cached_in": 47718,
+            "out": 1313,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.045753600000000005,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+        "role": "reviewer",
+        "work_item": "wi_01M48F43AYHV08CFKN3FXVD3HV",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F4QEPTPHH08PPV6KW5GND",
+            "created_at": "2026-10-06T11:21:21.621Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F48KHN7XQRTYTFM0KQ2T6",
+            "run": "run_01M48F48KGGXVK0JHMZGHJNGDA",
+            "turn": null,
+            "role": "reviewer",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7477,\"cache_read_input_tokens\":41066,\"output_tokens\":1117,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.04931119999999999}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 7487,
+            "cached_in": 41066,
+            "out": 1117,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.04931119999999999,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+        "role": "builder",
+        "work_item": "wi_01M48F4QD04M3M1EWXEN74M569",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F57X15W4QAR8BCBHCV7AD",
+            "created_at": "2026-10-06T11:21:38.464Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F4YYN44QV0A2XD3V2X4H5",
+            "run": "run_01M48F4YYN44QV0A2XD3V2X4GZ",
+            "turn": null,
+            "role": "builder",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":3876,\"cache_read_input_tokens\":35929,\"output_tokens\":814,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0308498}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 3886,
+            "cached_in": 35929,
+            "out": 814,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0308498,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M48F5MRYB3NA91ZFZ29BFQDQ",
+        "role": "verifier",
+        "work_item": "wi_01M48F57TGPFRYQ8VZKPVWHB8T",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F5Z2TGQZBRS7JSQCAKYXJ",
+            "created_at": "2026-10-06T11:22:02.201Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F5MRZNF4GKMGFPKBBAC24",
+            "run": "run_01M48F5MRYB3NA91ZFZ29BFQDQ",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5952,\"cache_read_input_tokens\":49252,\"output_tokens\":1100,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.044682400000000004}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 5964,
+            "cached_in": 49252,
+            "out": 1100,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.044682400000000004,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M48F6CJ1E5DC7HQMJRD23251",
+        "role": "reviewer",
+        "work_item": "wi_01M48F670HFRD48AYRT5X1ZGSZ",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M48F6T75YK4TY0BQP3W15KRY",
+            "created_at": "2026-10-06T11:22:29.988Z",
+            "project": "proj_01M48F2TCZKZ4FPTMZNGTDH09X",
+            "invocation": "inv_01M48F6CJ25EGT3395S48WE04D",
+            "run": "run_01M48F6CJ1E5DC7HQMJRD23251",
+            "turn": null,
+            "role": "reviewer",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":7529,\"cache_read_input_tokens\":40734,\"output_tokens\":1132,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0496028}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 7539,
+            "cached_in": 40734,
+            "out": 1132,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0496028,
+            "day_utc": "2026-10-06",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      }
+    ],
+    "stage_gate": "satisfied",
+    "alpha_gate": "satisfied",
+    "authorization": "dauth_01M48F6XHK8Q47FE28Q3FAFTMG",
+    "fix_status": "complete"
+  },
+  "path_two_kind": "real: every role Claude Code"
+}

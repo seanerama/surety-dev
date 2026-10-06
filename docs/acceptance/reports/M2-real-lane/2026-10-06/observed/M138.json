@@ -1,0 +1,312 @@
+{
+  "row": "M138",
+  "written_by": "the real-lane test, never edited by hand",
+  "evidence": {
+    "run_by": "domain_init",
+    "as": "a child of the domain init, a sibling of the backend: the same uid and gid, no_new_privs and no capabilities, the same pid, mount, network, ipc, uts and cgroup namespaces, the same domain cgroup and its limits, the same mount view, egress through the backend's own proxy; under node's --disable-sigusr1, --disallow-code-generation-from-strings and --no-addons; git with no global or system configuration and no discovery",
+    "differences": [
+      "its environment is the init's construction (PATH, LANG, HOME /surety/home, the backend's HTTPS_PROXY), not the backend's: the backend's credential is withheld",
+      "it runs from the init's execute-only node, so it is not dumpable",
+      "it is in the init's process group, not the backend's own"
+    ],
+    "hardening": [
+      "--disable-sigusr1",
+      "--disallow-code-generation-from-strings",
+      "--no-addons"
+    ],
+    "actions": [
+      {
+        "name": "token_read",
+        "witnessed": true,
+        "completed": true,
+        "hardened": true,
+        "hardening": [
+          "--disable-sigusr1",
+          "--disallow-code-generation-from-strings",
+          "--no-addons"
+        ],
+        "backend_running": true,
+        "outcome": "denied",
+        "detail": "ENOENT",
+        "expected": "denied",
+        "host": {
+          "checked": true,
+          "agrees": true,
+          "what": "the token file's bytes unchanged, read from the host"
+        },
+        "passed": true
+      },
+      {
+        "name": "git_config",
+        "witnessed": true,
+        "completed": true,
+        "hardened": true,
+        "hardening": [
+          "--disable-sigusr1",
+          "--disallow-code-generation-from-strings",
+          "--no-addons"
+        ],
+        "backend_running": true,
+        "outcome": "denied",
+        "detail": "status 4; direct open for writing EACCES; unchanged; error: could not write config file /surety/git/config: Device or resource busy\n",
+        "expected": "denied",
+        "host": {
+          "checked": true,
+          "agrees": true,
+          "what": "the fixture repository's configuration unchanged, read from the host"
+        },
+        "passed": true
+      },
+      {
+        "name": "engine_port",
+        "witnessed": true,
+        "completed": true,
+        "hardened": true,
+        "hardening": [
+          "--disable-sigusr1",
+          "--disallow-code-generation-from-strings",
+          "--no-addons"
+        ],
+        "backend_running": true,
+        "outcome": "denied",
+        "detail": "ECONNREFUSED",
+        "expected": "denied",
+        "host": {
+          "checked": false,
+          "agrees": null,
+          "what": "not corroborated host-side: the engine keeps no record of a connection that never reached it"
+        },
+        "passed": true
+      },
+      {
+        "name": "unlisted_connect",
+        "witnessed": true,
+        "completed": true,
+        "hardened": true,
+        "hardening": [
+          "--disable-sigusr1",
+          "--disallow-code-generation-from-strings",
+          "--no-addons"
+        ],
+        "backend_running": true,
+        "outcome": "denied",
+        "detail": "status 403",
+        "expected": "denied",
+        "host": {
+          "checked": true,
+          "agrees": true,
+          "what": "the proxy's log shows the unlisted CONNECT refused by its list (not_listed)"
+        },
+        "passed": true
+      },
+      {
+        "name": "workspace_write",
+        "witnessed": true,
+        "completed": true,
+        "hardened": true,
+        "hardening": [
+          "--disable-sigusr1",
+          "--disallow-code-generation-from-strings",
+          "--no-addons"
+        ],
+        "backend_running": true,
+        "outcome": "allowed",
+        "detail": "written",
+        "expected": "allowed",
+        "host": {
+          "checked": false,
+          "agrees": null,
+          "what": "the control: the init observed the write"
+        },
+        "passed": true
+      }
+    ],
+    "controls": [
+      {
+        "name": "workspace_write",
+        "ran": true,
+        "detail": "the init performed the workspace write in the domain"
+      },
+      {
+        "name": "provider_tunnel",
+        "ran": true,
+        "detail": "api.anthropic.com:443 accepted, 1981 bytes up and 5250 down"
+      }
+    ],
+    "backend": {
+      "seen_at": "2026-10-06T05:11:13.407Z",
+      "pid": 3253728,
+      "ns_pid": 25,
+      "requested_at": "2026-10-06T05:11:13.407Z",
+      "host_reads": [
+        {
+          "at": "2026-10-06T05:11:13.407Z",
+          "member": true
+        },
+        {
+          "at": "2026-10-06T05:11:13.681Z",
+          "member": true
+        }
+      ],
+      "running_throughout": true
+    },
+    "reason": null,
+    "result_collection": "accepted",
+    "capabilities": {
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "Write"
+      ],
+      "inventory": true,
+      "denied": [
+        "Agent",
+        "ScheduleWakeup",
+        "Task",
+        "Workflow"
+      ],
+      "features_disabled": [
+        "Agent",
+        "CronCreate",
+        "Monitor",
+        "RemoteTrigger",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Task",
+        "Workflow"
+      ],
+      "delegation_verified": true,
+      "basis": "inventory",
+      "present": [],
+      "attempts": [],
+      "background_bash": {
+        "count": 0,
+        "class": "C",
+        "note": "Bash run in the background under --tools Bash is recorded, not refused: it stays in the domain and ends with it"
+      },
+      "beyond_template": [],
+      "sampling": {
+        "samples": 257,
+        "max_backend": 1,
+        "max_members": 5,
+        "unclassified": 0,
+        "backend_cmdlines": [
+          "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836 -p --safe-mode --setting-sources user --strict-mcp-config --output-format stream-json --verbose --model claude-sonnet-5-5 --tools Read,Edit,Write,Bash,Glob,Grep "
+        ],
+        "transient_backend": 0
+      },
+      "reasons": []
+    },
+    "stream": {
+      "init": {
+        "tools": [
+          "Bash",
+          "Edit",
+          "Glob",
+          "Grep",
+          "Read",
+          "Write"
+        ],
+        "model": "claude-sonnet-5-5",
+        "permission_mode": "bypassPermissions",
+        "api_key_source": "none",
+        "version": "2.1.289",
+        "session_id": "c80c0ad5-d825-420b-a612-3403c37b9e99",
+        "mcp_servers": []
+      },
+      "credential_delivery": {
+        "variable": "CLAUDE_CODE_OAUTH_TOKEN",
+        "api_key_source": "none",
+        "established": true,
+        "basis": "the model answered with init.apiKeySource \"none\", and CLAUDE_CODE_OAUTH_TOKEN was the only credential the engine gave the backend (by elimination)"
+      },
+      "protocol_errors": [],
+      "session_id_accepted": true,
+      "usage_steps": 5,
+      "results": 1,
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "total_cost_usd": 0.0226698,
+        "usage_present": true,
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "terminal_reason": "completed"
+      },
+      "types": {
+        "system/ui_invalidate": 1,
+        "system/init": 1,
+        "assistant": 7,
+        "rate_limit_event": 1,
+        "user": 5,
+        "system/task_started": 1,
+        "tool_progress": 1,
+        "system/task_notification": 1,
+        "result/success": 1
+      },
+      "tool_uses": [
+        "Read",
+        "Read",
+        "Read",
+        "Bash",
+        "Write"
+      ],
+      "denials": [],
+      "auth_failure": null
+    },
+    "sampling": {
+      "samples": 160,
+      "max_backend": 1,
+      "max_members": 5,
+      "unclassified": 0,
+      "backend_cmdlines": [
+        "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836 -p --safe-mode --setting-sources user --strict-mcp-config --output-format stream-json --verbose --model claude-sonnet-5-5 --tools Read,Edit,Write,Bash,Glob,Grep "
+      ],
+      "transient_backend": 0
+    },
+    "exit_status": 0
+  },
+  "updated_at": "2026-10-06T11:20:14.737Z",
+  "backend": {
+    "seen_at": "2026-10-06T05:11:13.407Z",
+    "pid": 3253728,
+    "ns_pid": 25,
+    "requested_at": "2026-10-06T05:11:13.407Z",
+    "host_reads": [
+      {
+        "at": "2026-10-06T05:11:13.407Z",
+        "member": true
+      },
+      {
+        "at": "2026-10-06T05:11:13.681Z",
+        "member": true
+      }
+    ],
+    "running_throughout": true
+  },
+  "engine_port": {
+    "name": "engine_port",
+    "witnessed": true,
+    "completed": true,
+    "hardened": true,
+    "hardening": [
+      "--disable-sigusr1",
+      "--disallow-code-generation-from-strings",
+      "--no-addons"
+    ],
+    "backend_running": true,
+    "outcome": "denied",
+    "detail": "ECONNREFUSED",
+    "expected": "denied",
+    "host": {
+      "checked": false,
+      "agrees": null,
+      "what": "not corroborated host-side: the engine keeps no record of a connection that never reached it"
+    },
+    "passed": true
+  }
+}

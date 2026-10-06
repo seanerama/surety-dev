@@ -1,0 +1,222 @@
+{
+  "row": "M136",
+  "written_by": "the real-lane test, never edited by hand",
+  "session_id": {
+    "receipt": "c9f58f01-8fb4-4188-8696-942aa0aac3b1",
+    "stream_init_session_id": "c9f58f01-8fb4-4188-8696-942aa0aac3b1",
+    "accepted": true
+  },
+  "updated_at": "2026-10-06T11:20:13.965Z",
+  "pinned_binary": {
+    "path": "/home/smahoney/surety-real-lane-20261006T050755Z/home/backends/claude-2.1.289-a186b99e4a9c8836",
+    "mode": "500",
+    "source": {
+      "at": "2026-10-06T05:09:23.507Z",
+      "path": "/home/smahoney/.local/share/claude/versions/2.1.289",
+      "sha256": "a186b99e4a9c88366cd49df2f7dad56c61fc306ef0140b19ee64b7c42a8d1348",
+      "version_output": "2.1.289 (Claude Code)",
+      "version": "2.1.289"
+    }
+  },
+  "credential_delivery": {
+    "auth_mode": "subscription_token",
+    "variable": "CLAUDE_CODE_OAUTH_TOKEN",
+    "established": true,
+    "how": "the model answered with init.apiKeySource \"none\", and CLAUDE_CODE_OAUTH_TOKEN was the only credential the engine gave the backend (by elimination); the engine wrote no credential file, the credential reached the backend only in CLAUDE_CODE_OAUTH_TOKEN"
+  },
+  "egress": {
+    "accepted": [
+      "api.anthropic.com"
+    ],
+    "refused": [
+      "canary-unlisted.surety.invalid:443"
+    ],
+    "unexpected_contacts": [],
+    "entry_egress_hosts": [
+      "api.anthropic.com"
+    ]
+  },
+  "stream_inventory": {
+    "listed_tools": [
+      "Bash",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Read",
+      "Write"
+    ],
+    "init_keys": [
+      "type",
+      "subtype",
+      "cwd",
+      "session_id",
+      "tools",
+      "mcp_servers",
+      "model",
+      "permissionMode",
+      "slash_commands",
+      "terminal_slash_commands",
+      "apiKeySource",
+      "claude_code_version",
+      "output_style",
+      "agents",
+      "skills",
+      "plugins",
+      "capabilities",
+      "analytics_disabled",
+      "product_feedback_disabled",
+      "uuid",
+      "messaging_socket_path",
+      "fast_mode_state",
+      "fast_mode_disabled_reason",
+      "per_turn_effort_active",
+      "view_mode"
+    ]
+  },
+  "backend_processes_per_sample_max": 1,
+  "ledger_row": {
+    "id": "led_01M47SYJ1Y8PJXB4F1NR2DE4QG",
+    "created_at": "2026-10-06T05:10:59.389Z",
+    "project": "proj_01M47SVM56BJE2PDG1VCREYHR3",
+    "invocation": "inv_01M47SY52EZCA7N4CMMAC1JFPK",
+    "run": "run_01M47SY52D3FBZHF09VVF96597",
+    "turn": null,
+    "role": "verifier",
+    "provider": "claude",
+    "model_requested": "claude-sonnet-5-5",
+    "model_observed": "claude-sonnet-5-5",
+    "raw_usage": "{\"input_tokens\":8,\"cache_creation_input_tokens\":4103,\"cache_read_input_tokens\":26094,\"output_tokens\":971,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.031356800000000004}",
+    "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+    "billable_in": 4111,
+    "cached_in": 26094,
+    "out": 971,
+    "usage_complete": 1,
+    "cost_status": "estimated",
+    "cost_usd": 0.031356800000000004,
+    "day_utc": "2026-10-06",
+    "corrects": null,
+    "correction_seq": null,
+    "unknown_allowance_tokens": null
+  },
+  "terminal_event": {
+    "duration_api_ms": 11710,
+    "stop_reason": "end_turn",
+    "session_id": "c9f58f01-8fb4-4188-8696-942aa0aac3b1",
+    "total_cost_usd": 0.031356800000000004,
+    "usage": {
+      "input_tokens": 8,
+      "cache_creation_input_tokens": 4103,
+      "cache_read_input_tokens": 26094,
+      "output_tokens": 971,
+      "output_tokens_details": {
+        "thinking_tokens": 238
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 4103,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 971,
+        "cacheReadInputTokens": 26094,
+        "cacheCreationInputTokens": 4103,
+        "webSearchRequests": 0,
+        "costUSD": 0.031356800000000004,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 238,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 7,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "I did what `prompt.md` asked, and both writes succeeded. I didn't run any other checks.\n\n- **Canary file:** I created `/surety/workspace/qualification-canary/qa_01M47SVP3RV032ZA6AQSHAC98M.txt`. Its content is `the positive canary of qa_01M47SVP3RV032ZA6AQSHAC98M` plus a trailing newline, matching `edit.content` in `canary.json`.\n- **Result:** I wrote `/surety/out/result.json` with `{\"status\":\"completed\",\"summary\":\"qualification canary positive of qa_01M47SVP3RV032ZA6AQSHAC98M\"}`.\n\nI made no git commits or other changes, as the instructions require.",
+    "ttft_ms": 2120,
+    "type": "result",
+    "duration_ms": 11783,
+    "uuid": "c60e1a77-1f76-4c3e-a77d-21555e66b305",
+    "ttft_stream_ms": 1946,
+    "time_to_request_ms": 45,
+    "first_content_frame_ms": 1946,
+    "queued_turn_count": 0,
+    "result_index": 0
+  },
+  "terminal_output_scope": "all_models",
+  "engine_check_connect": {
+    "attested": true,
+    "host_reads": [
+      {
+        "at": "2026-10-06T05:11:13.407Z",
+        "member": true
+      },
+      {
+        "at": "2026-10-06T05:11:13.681Z",
+        "member": true
+      }
+    ],
+    "excused": {
+      "kind": "containment",
+      "authority": "canary-unlisted.surety.invalid:443",
+      "opened_at": "2026-10-06T05:11:13.605Z",
+      "in_window": true
+    }
+  },
+  "provider_files": {
+    "locations": [
+      "/surety/home/.claude",
+      "/surety/home/.claude.json",
+      "/surety/out/result.json",
+      "/tmp/cc-socks",
+      "/tmp/claude-1000"
+    ],
+    "persistence_flags": [
+      "--no-session-persistence"
+    ],
+    "excluded": [
+      "/surety/home/.claude"
+    ]
+  }
+}
