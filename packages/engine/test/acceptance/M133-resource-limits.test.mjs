@@ -58,6 +58,17 @@ import { assertRefused } from './harness/fixtures.mjs';
 
 const MIB = 1024 * 1024;
 const LATENCY = CONTRACT.engine.api_latency_bound.default;
+// Memory admission (option B; E75 item 3; SEAM.md §168) reserves the
+// configured domain_memory_max for every admitted domain, beside
+// host_reserve_memory: at the defaults (8 GiB, 2 GiB) one domain needs
+// 10 GiB available and (f)'s two need 18. The cases mean their own limits,
+// so they configure domain_memory_max at the contract's minimum (512 MiB,
+// above the harness cap of 64 MiB the domains run under): one domain then
+// needs 2.5 GiB available, two 3 GiB, which mini-hp01 (16 GB) has (E85
+// item 8). host_reserve_memory keeps its default. The engine's admission is
+// unchanged; what each case holds or admits is what it names.
+const ADMIT = Object.freeze({ domain_memory_max: CONTRACT.engine.domain_memory_max.min });
+assert.ok(ADMIT.domain_memory_max >= CAPS.memory_max, 'the configured domain_memory_max is at least the harness cap');
 
 // The role's probe entries of one action, in order.
 const entries = (fx, armed, action) => fx.scripted.eventsOfInvocation(armed.launch.invocation, 'probe').filter((e) => e.action === action);
@@ -142,7 +153,7 @@ describe('M133 resource limits, each alone and under aggregate pressure', () => 
   test('(e) admission, by configuration only: max_concurrent_domains 1 with two projects; host_reserve_memory above the free memory; host_reserve_disk above the free space: the work held as resource_envelope, nothing admitted beyond the reserve', async (t) => {
     // max_concurrent_domains 1.
     {
-      const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1 } });
+      const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1, ...ADMIT } });
       const a = (await addProject(fx)).id;
       const b = (await addProject(fx)).id;
       const first = await roleHolding(fx, a, await addLimitedWork(fx, a), { on_term: 'exit' });
@@ -162,7 +173,7 @@ describe('M133 resource limits, each alone and under aggregate pressure', () => 
       ['host_reserve_memory', reserveMemory, memAvailable],
       ['host_reserve_disk', CONTRACT.engine.host_reserve_disk.max, null],
     ]) {
-      const fx = await sandboxEngine(t, { config: { [key]: value } });
+      const fx = await sandboxEngine(t, { config: { ...ADMIT, [key]: value } });
       const freeNow = free ?? Number(statfsSync(fx.home).bavail) * Number(statfsSync(fx.home).bsize);
       assert.ok(value > freeNow, `the fixture is live: ${key} ${value} is above what the host has free (${freeNow})`);
       const project = (await addProject(fx)).id;
@@ -176,7 +187,7 @@ describe('M133 resource limits, each alone and under aggregate pressure', () => 
   });
 
   test('(f) aggregate: two domains at their memory, storage and output limits; a third project held; a Stop, a refusal and the ledger recorded meanwhile; /v1/health within api_latency_bound', async (t) => {
-    const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2 } });
+    const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2, ...ADMIT } });
     const roles = [];
     for (let i = 0; i < 2; i++) {
       const project = (await addGitProject(fx)).id;
@@ -217,7 +228,7 @@ describe('M133 resource limits, each alone and under aggregate pressure', () => 
   });
 
   test('(g) stream_line_max_bytes and stream_queue_max_bytes: a line over the bound, and a queue over the bound, each cancels the run with the transcript truncated', async (t) => {
-    const fx = await sandboxEngine(t, { config: { stream_line_max_bytes: CONTRACT.engine.stream_line_max_bytes.min, stream_queue_max_bytes: CONTRACT.engine.stream_queue_max_bytes.min } });
+    const fx = await sandboxEngine(t, { config: { stream_line_max_bytes: CONTRACT.engine.stream_line_max_bytes.min, stream_queue_max_bytes: CONTRACT.engine.stream_queue_max_bytes.min, ...ADMIT } });
     const cases = [
       { key: 'stream_line_max_bytes', flood: { lines: 1, line_bytes: CONTRACT.engine.stream_line_max_bytes.min + 2 } },
       { key: 'stream_queue_max_bytes', flood: { lines: 2048, line_bytes: 1024 }, fault: { point: 'stream_slow', delay_ms: 20, times: 1_000_000 } },

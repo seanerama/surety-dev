@@ -2153,6 +2153,10 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **Checked against the sources:** the Builder's planned fix (a terminal observation's unknown usage no longer stops the run; the ledger row stays incomplete with the unknown allowance charged; the reason names the terminal error and the egress refusals) agrees with D2 §1.6, SEAM §§143 and 161; no objection.
 
+## After E85 item 8: M133's admission by configuration
+
+2026-10-05, on `verify/m2-m133-config` from `main` at `989a0c1`. Memory admission (option B, E75 item 3; SEAM §168) reserves `domain_memory_max` for every admitted domain beside `host_reserve_memory`: at the defaults one domain needs 10 GiB available and (f)'s two need 18, so (f) and (g) could not launch where less was free. `M133-resource-limits.test.mjs` now configures `domain_memory_max` at the contract's minimum (512 MiB, above the 64 MiB harness cap) in (e) (its `max_concurrent_domains` block and both reserve blocks, so each is held only by the limit it names), (f) and (g); `host_reserve_memory` keeps its default (one domain then needs 2.5 GiB available, two 3 GiB; mini-hp01 has 16 GB). Each case asserts what it asserted. (a) to (d) and P20 are unchanged: each admits one domain at the defaults (10 GiB). Checked by `node --check` only: the file is exhaust-lane (E69) and is run on mini-hp01.
+
 ## After E86: the engine runs the containment probe; a model fallback
 
 2026-10-05, on `verify/m2-e86` from `main` at `b95194e`; SEAM §175 (§§149, 165, 173 amended). New: M135 "E86 (a)", "E86 (b)"; M136 "E86 (c)". Amended: M135 (i), S1 and the default containment script; M136's E83 case (now "E83/E86"); M138 (a), (b); the scripted role program, the sandbox fake, the rehearsal fake; `M2-hands-on.sh` (item 4).
