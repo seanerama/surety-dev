@@ -37,7 +37,11 @@
 //                one of its ancestors (its siblings, the probe's action
 //                children among them); never kill(-1), never a host pid, and
 //                only inside the sandbox (the two-part guard, E64; SEAM §141)
-//   role:        "complete" (a role's run, not a canary): write
+//   role:        "over_on_terminal" (E87 S3): one per-call usage under any
+//                run limit, then the result file and a terminal result whose
+//                modelUsage passes a low run limit (50 000 input tokens),
+//                and exit 0 at once;
+//                "complete" (a role's run, not a canary): write
 //                src/fake-claude.txt and end with a valid result, exit 0;
 //                "proxy_refused" (a role's run, not a canary; E84): one
 //                CONNECT to `connect` through HTTPS_PROXY (inside the sandbox
@@ -114,6 +118,14 @@ const insideSandbox = () => {
     return false;
   }
 };
+
+if (mode.role === 'over_on_terminal' && !existsSync('/surety/context/canary.json')) {
+  // E87 S3: the limit is passed only by the terminal usage line.
+  assistant('msg_o_1', { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 10 });
+  writeFileSync('/surety/out/result.json', JSON.stringify({ status: 'completed', summary: 'fake: done, the terminal usage over the limit' }));
+  success({ inputTokens: 50000, outputTokens: 200, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }, 0.12);
+  process.exit(0);
+}
 
 if (mode.role === 'complete' && !existsSync('/surety/context/canary.json')) {
   // A role's run that does its work and ends with a valid result.
