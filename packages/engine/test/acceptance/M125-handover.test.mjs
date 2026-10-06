@@ -25,6 +25,10 @@
 // Verifier's and the Reviewer's prompts name the field `check` and list
 // every check of the protected version, by key, with its requirements and
 // gate kinds, the required ones marked; the fix Builder's names its check.
+// (g) (E87, the review of build/m2-path2, F1): the Verifier's result schema
+// gives a finding's `check` as an enum of the effective version's keys; a
+// finding naming another key is failed / invalid_result, naming it, and no
+// finding is stored.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -401,6 +405,50 @@ describe('M125 what is handed over', () => {
     checkList(r, 'the Reviewer');
     if (!promptOf(b).includes(LOGIN.key)) gaps.push(`the fix Builder: its prompt does not name the check ${LOGIN.key} whose passing resolves its finding`);
     assert.deepEqual(gaps, [], 'each role is told what resolves a finding: its check, by a key the prompt lists (E87; SEAM.md §74)');
+  });
+
+  test("(g) a finding's check is a key of the effective version (E87, the review of build/m2-path2, F1): the Verifier's result schema gives findings.items.check as an enum of the version's check keys; a finding naming another key is an invalid result, failed / invalid_result naming the key, and no finding is stored", async (t) => {
+    // F1: a `check` outside the version's keys was stored and then skipped
+    // by the gate, so the finding could never resolve and nothing said why.
+    // The driver's provisional ruling: the schema says which keys there are,
+    // and a result naming another violates it. A valid key is recorded as
+    // before (cases (e) and (f), M01's second path).
+    const CHECKS = [check('login', { requirements: ['R1'] }), check('style', { kind: 'security_lint', gates: ['stage'], required: false })];
+    const UNKNOWN = 'login check';
+    const fx = await sandboxEngine(t);
+    fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
+    const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
+    const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'an-unknown-check', tier: 'T2' });
+    const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+    await installChecks(fx.engine, project, CHECKS);
+    fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);
+    const build = await runToEnd(fx, project, plan.stages[0].work_item);
+    assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
+    const [candidate] = await waitForCandidates(fx, project);
+    const verification = workItemsOf(fx.home, project).find((w) => w.kind === 'verification' && w.subject?.candidate === candidate.id);
+    assert.ok(verification, 'the nomination registered verification work');
+    const finding = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: UNKNOWN };
+    fx.scripted.script(verification.id, [roleThat([step.probe('context_dump')], { findings: [finding] })]);
+    await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
+    const run = await tickUntil(fx.engine, project, () => {
+      const [r] = runsOf(fx.home, verification.id);
+      return r?.state === 'ended' ? r : undefined;
+    }, { what: 'the Verifier\'s run to end' });
+
+    // The published schema: the version's keys, and only they, as the
+    // allowed values of a finding's check.
+    const [launch] = fx.scripted.launches({ work_item: verification.id });
+    const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+    assertManifest(dump, 'the Verifier\'s run');
+    const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+    const schemaPath = manifest.files.find((f) => f.kind === 'result_schema')?.path;
+    const schema = JSON.parse(dump.files.find((f) => f.name === schemaPath)?.text ?? 'null');
+    const allowed = schema?.properties?.findings?.items?.properties?.check?.enum;
+    assert.deepEqual(Array.isArray(allowed) ? [...allowed].sort() : allowed, CHECKS.map((c) => c.key).sort(), `the result schema gives findings.items.check as an enum of the effective version's keys (${JSON.stringify(schema?.properties?.findings?.items?.properties?.check)})`);
+
+    assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `a finding naming a check outside the version is an invalid result (${run.reason_text})`);
+    assert.ok(String(run.reason_text ?? '').includes(UNKNOWN), `its reason names the unknown key "${UNKNOWN}" (${run.reason_text})`);
+    assert.deepEqual(findingsOf(fx.home, project), [], 'no finding is stored');
   });
 });
 
