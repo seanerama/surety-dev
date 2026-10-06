@@ -32,7 +32,7 @@ import { releaseBarrier } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
 import { addGitProject } from './harness/gitruns.mjs';
 import { armBarrier, changePolicy } from './harness/journal.mjs';
-import { addProject, addWork, advanceClockInSteps, assertRunEnded, requestTick, run as runRow, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
+import { addProject, addWork, advanceClockInSteps, assertRunEnded, requestTick, run as runRow, stopRun, waitForRun, waitForRunState, waitForWork } from './harness/runs.mjs';
 import { cgroupExists, populated, procsOf } from './harness/sandbox/cgroup.mjs';
 import { assertEngineInScope, domainOf, eventsOf, firstSeq, receiptOf, sandboxEngine, terminalObservation } from './harness/sandbox/lane.mjs';
 import { hostProcess } from './harness/sandbox/procs.mjs';
@@ -252,5 +252,38 @@ describe('M129 the result is read after termination with closure; links are neve
     const c = await collectionOf(fx, project, run.id);
     assert.deepEqual([c.outcome, c.reason, c.bytes_read], ['accepted', null, written.bytes], `result_collection: accepted, the whole file read (${JSON.stringify(c)})`);
     assert.deepEqual(recordJson(fx.home, runRow(fx.home, run.id).result), VALID_RESULT, 'the result record is the file\'s value');
+  });
+
+  // Q13 (Sean's fourth attempt; the M2 report's section 21, question 13):
+  // the hands-on script's Stop reached a Builder that had already exited
+  // clean with its result, held at boundary.before_terminated; the engine
+  // recorded it stopped / human_stop, its result unaccepted, its usage
+  // incomplete. D2 §1.6: a cancellation's cause keeps the outcome only when
+  // the engine began cancelling before the exit (engine_signaled); SEAM.md
+  // §143: a clean exit with an accepted file is the run's result, completed.
+  test('Q13: a role exits clean with its result; a Stop confirmed after the exit and before the engine records the termination does not turn it into a stop: the run is completed with its result accepted, exit class clean, no unaccepted_result', async (t) => {
+    const fx = await sandboxEngine(t);
+    const project = (await addProject(fx)).id;
+    const item = await addWork(fx.engine, project, 'verification');
+    fx.scripted.script(item, [script.complete()]);
+    await armBarrier(fx.engine, 'boundary.before_terminated', 'pause');
+    await requestTick(fx.engine, project);
+    await fx.engine.waitUntil('barrier:boundary.before_terminated', { timeoutMs: 60_000 });
+    const run = await waitForRun(fx.home, item);
+    const domain = domainOf(fx.home, run.id);
+    assert.equal(populated(domain.cgroup_path), 0, 'the fixture is live: the role has exited, the domain empty, before the Stop');
+    assert.deepEqual(eventsOf(fx.home, 'domain', domain.id, 'domain.terminated'), [], 'the fixture is live: termination is not yet recorded');
+    assert.equal(runRow(fx.home, run.id).state, 'executing', 'the fixture is live: the run is still executing when the Stop arrives');
+
+    await stopRun(fx.engine, project, run.id);
+    await releaseBarrier(fx.engine, 'boundary.before_terminated');
+    await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
+
+    const ended = runRow(fx.home, run.id);
+    assert.equal(terminalObservation(fx.home, receiptOf(fx.home, run.id).id)?.exit_class, 'clean', 'exit class clean: the engine signalled nothing before the exit');
+    assert.deepEqual([ended.outcome, ended.reason_class], ['completed', 'none'], `a Stop after a clean exit does not override the exit's outcome (D2 §1.6; SEAM.md §143): ${JSON.stringify({ outcome: ended.outcome, reason_class: ended.reason_class, reason_text: ended.reason_text })}`);
+    assert.notEqual(ended.result, null, 'the result is accepted as the run\'s result');
+    const kinds = runRecords(fx.home, run.id).map((r) => r.kind);
+    assert.ok(kinds.includes('result') && !kinds.includes('unaccepted_result'), `a result record, and no unaccepted_result (${JSON.stringify(kinds)})`);
   });
 });
