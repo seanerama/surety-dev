@@ -388,10 +388,13 @@ export async function stopCase(ctx) {
       const item = plan.stages[0].work_item;
       await armBarrier(fx.engine, 'boundary.before_terminated', 'pause');
       const run = await tickWhile(fx, one.project, () => runsOf(fx.home, item)[0], { timeoutMs: 120_000, everyMs: 3_000, what: 'the second stage\'s Builder run' });
-      const domain = await tickWhile(
+      const seen = await tickWhile(
         fx,
         one.project,
         () => {
+          // A Builder that ends before it is ever seen live (its launch
+          // closed) is no live process to stop: "not established" below.
+          if (eventsAboutRun(fx.home, run.id).some((e) => e.type === 'domain.launch_closed')) return { ended: true };
           const d = withStore(fx.home, (db) => db.prepare('SELECT * FROM "execution_domains" WHERE "run" = ?').get(run.id));
           if (!d?.cgroup_path) return undefined;
           try {
@@ -402,6 +405,8 @@ export async function stopCase(ctx) {
         },
         { timeoutMs: 180_000, everyMs: 1_000, what: 'the agent to be a member of its domain' },
       );
+      if (seen.ended) notEstablished('the Stop case', 'the Builder ended its processes before it was ever seen live, so no live process could be stopped');
+      const domain = seen;
       // Let it work a little, so a usage observation can exist (bounded: the
       // run is stopped at the latest 60 s after the agent appears).
       const seenAt = performance.now();
