@@ -158,6 +158,23 @@ export interface DispatchTarget {
 //
 // From slice 5 it may also carry what a Verifier or a Reviewer reports
 // (findings, sign-offs, ...; SEAM.md §68), each field in its form.
+// A finding's `check` must name a check of the project's effective
+// protected version (the review of b72b9cc, F1; SEAM.md §74): the key the
+// fix loop resolves the finding by. The reason a result fails it, naming
+// the unknown key (bounded), or null. `keys` null: the project has no
+// effective version, so no key can be named.
+export function unknownCheck(result: RunResult, keys: readonly string[] | null): string | null {
+  for (const f of result.report?.findings ?? []) {
+    if (f.check === undefined || f.check === null) continue;
+    if (keys !== null && keys.includes(f.check)) continue;
+    const named = JSON.stringify(String(f.check).slice(0, 80));
+    return keys === null
+      ? `a finding names the check ${named}, but the project has no effective protected version, so no check can be named`
+      : `a finding names the check ${named}, which is not a check of the project (${keys.length > 0 ? `its checks: ${keys.slice(0, 20).join(', ')}` : 'it has none'})`;
+  }
+  return null;
+}
+
 function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
@@ -560,7 +577,7 @@ export class Launcher {
       }
     } catch (err) {
       log('launch', err, { run: handle.claim.run, phase: handle.phase });
-      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
+      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle), { afterExit: true });
       else this.never(handle, 'failed', 'infra_error');
     } finally {
       handle.settle();
@@ -933,6 +950,12 @@ export class Launcher {
     // An end already decided (a Stop, a deadline, a stream bound) is the
     // run-end protocol's, which collects what is unaccepted.
     if (handle.ending || !this.rt.services) return;
+    // The backend's own exit, its output drained and every line of it acted
+    // on (a budget stop from its terminal line included, the review of
+    // 662cd7f, S3), with no end decided: if it exited 0 by itself, its exit
+    // decides the run's end until that end is decided (Q13; S1, S2).
+    const report = handle.sandbox?.exitReport ?? null;
+    if (report !== null && report.code === 0 && report.signal === null && report.startFailed !== true) handle.exitedFirst = true;
     handle.collecting = true;
     let terminated = false;
     try {
@@ -946,12 +969,16 @@ export class Launcher {
       // Unknown termination: nothing is collected at all (D2 §3.4); the
       // run-end protocol quarantines it.
       handle.collecting = false;
-      this.rt.requestEnd(handle, {
-        outcome: 'failed',
-        reason: 'infra_error',
-        reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
-        ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
-      });
+      this.rt.requestEnd(
+        handle,
+        {
+          outcome: 'failed',
+          reason: 'infra_error',
+          reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
+          ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
+        },
+        { afterExit: true },
+      );
       return;
     }
     const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
@@ -959,12 +986,22 @@ export class Launcher {
     const collected = await this.collectOnce(handle);
     handle.collecting = false;
     if (handle.ending) return;
-    const end = await this.decideAfterExit(handle, cls, collected);
-    if (end === 'accept') {
+    const decided = await this.decideAfterExit(handle, cls, collected);
+    // The exit's end is decided: from here a Stop, an Abandon or a deadline
+    // takes its course as before (S1; SEAM.md §47).
+    handle.exitedFirst = false;
+    // A Stop or an Abandon confirmed after the exit (S2): it applied to the
+    // work, which the store holds when the run ends. The run's outcome
+    // follows the exit only when the exit is clean and its result accepted;
+    // for any other end the command takes its course.
+    const pending = handle.controlAfterExit;
+    if (decided === 'accept') {
       this.childDone(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    const end: RunEnd =
+      pending === null ? decided : pending === 'stop' ? { outcome: 'stopped', reason: 'human_stop' } : { outcome: 'abandoned', reason: 'human_abandon' };
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 
   // What the result and the exit class give (D2 §1.6; SEAM.md §143's
@@ -1026,7 +1063,7 @@ export class Launcher {
         if (c.verdict.outcome === 'invalid') {
           await this.recordResult(handle, false, null, null).catch((err) => log('result', err, { run: claim.run }));
           handle.result = { valid: false };
-          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason})` };
+          return { outcome: 'failed', reason: 'invalid_result', reasonText: `the result file is not a result the engine may take (${c.verdict.reason}${handle.invalidDetail ? `: ${handle.invalidDetail}` : ''})` };
         }
         return { outcome: 'failed', reason: 'infra_error', reasonText: 'the backend exited 0 with its terminal success event and left no result file' };
       }
@@ -1160,6 +1197,15 @@ export class Launcher {
       } catch {
         value = null;
       }
+      if (value !== null && (value.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run: claim.run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          value = null;
+        }
+      }
       verdict = value === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     }
     if (performance.now() - began > bounds.deadlineMs) verdict = { outcome: 'invalid', reason: 'deadline', bytes_read: verdict.bytes_read };
@@ -1284,7 +1330,7 @@ export class Launcher {
     if (facts.deadline_at !== null && nowMs() >= Date.parse(facts.deadline_at)) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline', asIs: true });
-      return true;
+      return handle.ending;
     }
     let limit: string | null = null;
     try {
@@ -1299,7 +1345,7 @@ export class Launcher {
     if (limit !== null) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, asIs: true });
-      return true;
+      return handle.ending;
     }
     // The backend's exit report, read after the pause: the backend exited
     // while the engine was stopped, and the run ends by its exit with what
@@ -1424,7 +1470,16 @@ export class Launcher {
       if (handle.ending) return;
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
-      const result = parseResult(sent, handle.claim.role);
+      let result = parseResult(sent, handle.claim.role);
+      if (result !== null && (result.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
+        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run }).then((r) => r.keys, () => undefined);
+        // Checks that cannot be read judge no key: the result is not taken.
+        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, keys);
+        if (unknown !== null) {
+          handle.invalidDetail = redactText(unknown);
+          result = null;
+        }
+      }
       const valid = result !== null;
       if (valid) await pausePoint('run.result_received');
       // A valid result is kept as a record, published before anything
@@ -1494,7 +1549,9 @@ export class Launcher {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) {
           log('usage', err, { run, attempt: attempt + 1, lost: true });
-          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' });
+          // Never a complete ledger row without an observation (the review
+          // of 662cd7f, M1): this stop is taken after the exit too.
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' }, { afterExit: true });
           return false;
         }
         log('usage', err, { run, attempt: attempt + 1, retry_in_ms: retryIn });
@@ -1547,7 +1604,7 @@ export class Launcher {
       this.rt.services.accept(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 }
 

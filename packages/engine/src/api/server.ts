@@ -317,6 +317,8 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             // What the running engine has decided of the run, read when the
             // command is sent; the store runs commands in the order sent.
             decided: state.runtime?.endDecided(run) ?? false,
+            // Its backend has exited on its own (Q13): the exit decides.
+            exited: state.runtime?.exitedFirst(run) ?? false,
           }),
         };
       }

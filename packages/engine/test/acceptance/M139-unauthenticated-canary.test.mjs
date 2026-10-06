@@ -28,7 +28,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { collectAttempt, homeOf, wrongKeyAttempt } from './harness/real/attempt.mjs';
-import { REAL, REAL_TEST_TIMEOUT_MS, judged, observe, productionEngine, realPreflight, realStep, secretHits, stepValue, wrongKeyFile } from './harness/real/lane.mjs';
+import { REAL, REAL_TEST_TIMEOUT_MS, egressBasis, egressProvesNothingSent, judged, observe, productionEngine, realPreflight, realStep, secretHits, stepValue, wrongKeyFile } from './harness/real/lane.mjs';
 import { attemptOf } from './harness/sandbox/qualify.mjs';
 import { withStore } from './harness/store.mjs';
 import { eventsNamed, trustEntries } from './harness/trust.mjs';
@@ -72,8 +72,26 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
     assert.equal(positive.ledger.length, 1, `the canary's invocation is charged once (${JSON.stringify(positive.ledger)})`);
     const [row] = positive.ledger;
     observe(ctx, 'M139', 'ledger_row', row);
-    assert.equal(row.cost_usd, null, `the cost is unknown (null), not zero: ${JSON.stringify(row)}`);
-    assert.equal(row.cost_status, 'unknown', `cost_status is unknown: ${JSON.stringify(row)}`);
+    // E85: a known zero only where the run's egress record, read by the
+    // test itself, proves that nothing reached the provider (as in a
+    // rehearsal, whose fake connects to nothing); Claude Code with an invalid
+    // credential reaches the provider to be refused, so in a real run the
+    // cost is unknown, never zero.
+    const proof = egressProvesNothingSent(home, positive.run.id);
+    observe(ctx, 'M139', 'egress_proof', proof);
+    // A zero by egress is the row's own claim (its basis names the egress
+      // evidence); the test then checks that claim against the record it reads
+      // itself. Without that basis the old rule holds: E85's condition (d), a
+      // backend that reported usage, keeps the usage unknown even when nothing
+      // left the domain (found by the real-lane rehearsal).
+      if (egressBasis(row)) {
+        assert.ok(proof.proven, `a zero by the egress evidence needs the run's egress record to show nothing sent (E85): ${JSON.stringify(proof)}`);
+      assert.ok(egressBasis(row) && row.cost_usd === 0 && Boolean(row.usage_complete), `nothing reached the provider (its egress record shows it): a known zero with the egress basis (E85): ${JSON.stringify(row)}`);
+    } else {
+      assert.ok(!egressBasis(row), `a run whose egress does not prove nothing was sent is no zero by egress (E85): ${JSON.stringify(row)}`);
+      assert.equal(row.cost_usd, null, `the cost is unknown (null), not zero: ${JSON.stringify(row)}`);
+      assert.equal(row.cost_status, 'unknown', `cost_status is unknown: ${JSON.stringify(row)}`);
+    }
 
     // The invalid credential, and the real one, are absent from everything this home holds.
     assert.deepEqual(secretHits(wrong.value, { roots: [home] }), [], 'the invalid credential is in no file under its engine home');
