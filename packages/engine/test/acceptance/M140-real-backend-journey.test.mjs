@@ -99,7 +99,13 @@ describe('M140 the real-backend journey (real lane, paid)', () => {
       // is incomplete and the allowance charged (D2 C4).
       const proof = egressProvesNothingSent(homeOf(ctx, 'home'), s.run);
       observe(ctx, 'M140', 'stop_case_egress', proof);
-      if (proof.proven) {
+      // A zero by egress is the row's own claim (its basis names the egress
+      // evidence); the test then checks that claim against the record it reads
+      // itself. Without that basis the old rule holds: E85's condition (d), a
+      // backend that reported usage, keeps the usage unknown even when nothing
+      // left the domain (found by the real-lane rehearsal).
+      if (egressBasis(s.ledger[0])) {
+        assert.ok(proof.proven, `a zero by the egress evidence needs the run's egress record to show nothing sent (E85): ${JSON.stringify(proof)}`);
         const r = s.ledger[0];
         assert.ok(egressBasis(r) && r.billable_in === 0 && r.out === 0 && r.cost_usd === 0 && Boolean(r.usage_complete), `nothing reached the provider (its egress record shows it): a known zero with the egress basis (E85): ${JSON.stringify(r)}`);
       } else {

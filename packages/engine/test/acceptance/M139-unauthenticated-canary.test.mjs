@@ -79,7 +79,13 @@ describe('M139 an unauthenticated canary (real lane; no tokens spent)', () => {
     // cost is unknown, never zero.
     const proof = egressProvesNothingSent(home, positive.run.id);
     observe(ctx, 'M139', 'egress_proof', proof);
-    if (proof.proven) {
+    // A zero by egress is the row's own claim (its basis names the egress
+      // evidence); the test then checks that claim against the record it reads
+      // itself. Without that basis the old rule holds: E85's condition (d), a
+      // backend that reported usage, keeps the usage unknown even when nothing
+      // left the domain (found by the real-lane rehearsal).
+      if (egressBasis(row)) {
+        assert.ok(proof.proven, `a zero by the egress evidence needs the run's egress record to show nothing sent (E85): ${JSON.stringify(proof)}`);
       assert.ok(egressBasis(row) && row.cost_usd === 0 && Boolean(row.usage_complete), `nothing reached the provider (its egress record shows it): a known zero with the egress basis (E85): ${JSON.stringify(row)}`);
     } else {
       assert.ok(!egressBasis(row), `a run whose egress does not prove nothing was sent is no zero by egress (E85): ${JSON.stringify(row)}`);
