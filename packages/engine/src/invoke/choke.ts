@@ -862,8 +862,6 @@ export class Launcher {
     // it waits, with the role's lines, for the tick's fresh challenge (D2
     // §3.5; `regrant`).
     const takeExit = () => {
-      // Its own exit, before any end the engine decided (Q13).
-      if (!handle.ending) handle.exitedFirst = true;
       launch.ackExit();
       const report = launch.exitReport;
       handle.exit = report === null ? { code: null, signal: null } : { code: report.code, signal: report.signal === null ? null : String(report.signal) };
@@ -935,6 +933,12 @@ export class Launcher {
     // An end already decided (a Stop, a deadline, a stream bound) is the
     // run-end protocol's, which collects what is unaccepted.
     if (handle.ending || !this.rt.services) return;
+    // The backend's own exit, its output drained and every line of it acted
+    // on (a budget stop from its terminal line included, the review of
+    // 662cd7f, S3), with no end decided: if it exited 0 by itself, its exit
+    // decides the run's end until that end is decided (Q13; S1, S2).
+    const report = handle.sandbox?.exitReport ?? null;
+    if (report !== null && report.code === 0 && report.signal === null && report.startFailed !== true) handle.exitedFirst = true;
     handle.collecting = true;
     let terminated = false;
     try {
@@ -965,11 +969,21 @@ export class Launcher {
     const collected = await this.collectOnce(handle);
     handle.collecting = false;
     if (handle.ending) return;
-    const end = await this.decideAfterExit(handle, cls, collected);
-    if (end === 'accept') {
+    const decided = await this.decideAfterExit(handle, cls, collected);
+    // The exit's end is decided: from here a Stop, an Abandon or a deadline
+    // takes its course as before (S1; SEAM.md §47).
+    handle.exitedFirst = false;
+    // A Stop or an Abandon confirmed after the exit (S2): it applied to the
+    // work, which the store holds when the run ends. The run's outcome
+    // follows the exit only when the exit is clean and its result accepted;
+    // for any other end the command takes its course.
+    const pending = handle.controlAfterExit;
+    if (decided === 'accept') {
       this.childDone(handle);
       return;
     }
+    const end: RunEnd =
+      pending === null ? decided : pending === 'stop' ? { outcome: 'stopped', reason: 'human_stop' } : { outcome: 'abandoned', reason: 'human_abandon' };
     this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 
@@ -1290,7 +1304,7 @@ export class Launcher {
     if (facts.deadline_at !== null && nowMs() >= Date.parse(facts.deadline_at)) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'timed_out', reason: 'deadline', asIs: true });
-      return true;
+      return handle.ending;
     }
     let limit: string | null = null;
     try {
@@ -1305,7 +1319,7 @@ export class Launcher {
     if (limit !== null) {
       dropGate();
       this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, asIs: true });
-      return true;
+      return handle.ending;
     }
     // The backend's exit report, read after the pause: the backend exited
     // while the engine was stopped, and the run ends by its exit with what
@@ -1500,7 +1514,9 @@ export class Launcher {
         const retryIn = RESULT_RETRY_MS[attempt];
         if ((err as { code?: unknown }).code !== 'store_error' || retryIn === undefined) {
           log('usage', err, { run, attempt: attempt + 1, lost: true });
-          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' });
+          // Never a complete ledger row without an observation (the review
+          // of 662cd7f, M1): this stop is taken after the exit too.
+          this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: 'budget_unreadable' }, { afterExit: true });
           return false;
         }
         log('usage', err, { run, attempt: attempt + 1, retry_in_ms: retryIn });

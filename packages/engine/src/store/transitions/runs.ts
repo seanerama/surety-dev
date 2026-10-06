@@ -888,6 +888,21 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     )
     .get(run.id) as { state: string } | undefined;
   const integrationPending = integration !== undefined && integration.state !== 'failed';
+  // A Stop or an Abandon confirmed after the backend's own exit (Q13; the
+  // review of 662cd7f, S2): it applied to the work. Whatever the run's
+  // outcome, the work is held (Stop) or under its dispatch hold (Abandon),
+  // as a Stop or an Abandon during validating leaves it (SEAM.md §47).
+  const afterExit = tx.db
+    .prepare(
+      `SELECT "kind" FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "kind" IN ('stop_confirm', 'abandon_confirm') AND "status" = 'consumed'
+         AND json_extract("answer", '$.applied_to') = 'work' ORDER BY "consumed_at" LIMIT 1`,
+    )
+    .get(run.id) as { kind: string } | undefined;
+  if (afterExit && item.status !== 'verifying' && !['stopped', 'abandoned'].includes(run.outcome ?? '')) {
+    if (afterExit.kind === 'stop_confirm') transitionWork(tx, item, 'held', {}, { ...cause, cause: 'stop_after_exit' });
+    else transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon_after_exit' });
+    return;
+  }
   switch (run.outcome) {
     case 'completed':
       // A Verifier's or a Reviewer's work is complete with its accepted run.

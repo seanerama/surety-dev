@@ -12,7 +12,12 @@ import type { Tx } from './tx.js';
 
 // What a command hands back to the main thread besides its reply: work that
 // must start once the transaction has committed.
-export type Effect = { kind: 'tick' } | { kind: 'end_run'; run: string } | { kind: 'journal'; project: string } | { kind: 'effect'; intent: string };
+export type Effect =
+  | { kind: 'tick' }
+  | { kind: 'end_run'; run: string }
+  | { kind: 'journal'; project: string }
+  | { kind: 'effect'; intent: string }
+  | { kind: 'control_after_exit'; run: string; control: 'stop' | 'abandon' };
 
 export interface CommandResult {
   status: number;
@@ -32,15 +37,34 @@ const CONFIRM = { stop: 'stop_confirm', abandon: 'abandon_confirm' } as const;
 
 // The effect of consuming a stop_confirm or abandon_confirm: the run-end
 // protocol begins (its lease is closing when this commits).
-function applyControl(tx: Tx, kind: Control, runId: string, exited = false): CommandResult {
-  // The backend had already exited on its own (Q13; D2 §1.6; SEAM.md §143):
-  // its exit decides the run's end, by its class and its result. The
-  // confirmation is consumed and changes nothing: there is nothing left to
-  // stop, and a cancellation's cause stands only for an exit the engine
-  // signalled.
+function applyControl(tx: Tx, kind: Control, runId: string, exited = false, decision: string | null = null): CommandResult {
+  // The backend had already exited 0 by itself, its end not yet decided
+  // (Q13, as the review of 662cd7f narrowed it; D2 §1.6; SEAM.md §143): the
+  // command applies to the work, not to the run's outcome. The run's outcome
+  // follows the backend's exit (completed, its result accepted, when the
+  // exit is clean); the work is held (a Stop) or put under its dispatch hold
+  // (an Abandon) when the run ends, and if the exit's end is anything but a
+  // clean, accepted result the command takes its course. Recorded on the
+  // consumed confirmation (`answer.applied_to`), which the run's end reads.
   if (exited) {
     const run = getRun(tx, runId)!;
-    return { status: 200, body: { run: { id: runId, state: run.state, outcome: run.outcome ?? null, ended_by: 'backend_exit' } } };
+    if (decision !== null) {
+      tx.db
+        .prepare(`UPDATE "decisions" SET "answer" = json_set(COALESCE("answer", '{}'), '$.applied_to', 'work', '$.after_backend_exit', json('true')) WHERE "id" = ?`)
+        .run(decision);
+    }
+    return {
+      status: 200,
+      body: {
+        run: { id: runId, state: run.state, outcome: run.outcome ?? null },
+        applied: {
+          to: 'work',
+          reason: "the run's backend had exited by itself: the run's outcome follows that exit",
+          work: kind === 'stop' ? 'held when the run ends' : 'under its dispatch hold when the run ends',
+        },
+      },
+      effects: [{ kind: 'control_after_exit', run: runId, control: kind }],
+    };
   }
   const ended = beginEnd(tx, {
     run: runId,
@@ -52,7 +76,7 @@ function applyControl(tx: Tx, kind: Control, runId: string, exited = false): Com
 
 wireControl((tx: Tx, d: DecisionRow, kind: Control, exited?: boolean) => {
   const run = getRun(tx, d.subject_id)!;
-  const result = applyControl(tx, kind, run.id, exited === true);
+  const result = applyControl(tx, kind, run.id, exited === true, d.id);
   return { ...result, body: { decision: { id: d.id, status: 'consumed' }, ...(result.body as object) } };
 });
 
@@ -107,7 +131,7 @@ export function controlRun(tx: Tx, args: { project: string; run: string; kind: C
   const now = KINDS[kind].preview(tx, open);
   if (args.previewHash !== open.preview_hash || now === null || currentPreview(open, now.manifest, now.options) !== open.preview_hash) throw stale(open);
   consumeDecision(tx, open, 'confirm', null);
-  return applyControl(tx, args.kind, run.id, args.exited === true);
+  return applyControl(tx, args.kind, run.id, args.exited === true, open.id);
 }
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §§17, 76).

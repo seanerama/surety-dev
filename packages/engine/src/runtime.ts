@@ -130,6 +130,11 @@ export interface RunHandle {
   // budget) replaces it: a cancellation's cause stands only for an exit the
   // engine signalled (`engine_signaled`).
   exitedFirst: boolean;
+  // A Stop or an Abandon confirmed while `exitedFirst` held (the review of
+  // 662cd7f, S2): it applied to the work; see Choke.collectAfterExit.
+  controlAfterExit: 'stop' | 'abandon' | null;
+  // Ends not taken after the exit, each logged once (M2).
+  endsNotTaken: Set<string>;
   // The stream's own bounds were exceeded (D2 §3.7): why.
   streamBound: string | null;
   // The domain's egress log entries, kept when its proxy closed (a
@@ -197,6 +202,8 @@ export function newHandle(claim: Claim): RunHandle {
     collection: null,
     collecting: false,
     exitedFirst: false,
+    controlAfterExit: null,
+    endsNotTaken: new Set(),
     streamBound: null,
     egressEntries: null,
     containment: null,
@@ -382,7 +389,11 @@ export class Runtime {
     if (handle.ending) return;
     // After the backend's own exit only the exit's own end is taken (Q13).
     if (handle.exitedFirst && opts.afterExit !== true) {
-      log('run end', new Error(`${end.outcome} / ${end.reason} not taken: the backend had already exited, and its exit decides the run's end`), { run: handle.claim.run });
+      const key = `${end.outcome}/${end.reason}`;
+      if (!handle.endsNotTaken.has(key)) {
+        handle.endsNotTaken.add(key);
+        log('run end', new Error(`${key} not taken: the backend had exited 0 by itself, and its exit decides the run's end`), { run: handle.claim.run });
+      }
       return;
     }
     handle.ending = true;
@@ -407,10 +418,15 @@ export class Runtime {
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
-  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string }[]): void {
+  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string; control?: string }[]): void {
     for (const effect of effects) {
       if (effect.kind === 'tick') this.services?.requestTick();
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
+      // A Stop or an Abandon confirmed after the backend's own exit (S2).
+      if (effect.kind === 'control_after_exit' && effect.run && (effect.control === 'stop' || effect.control === 'abandon')) {
+        const h = this.handles.get(effect.run);
+        if (h) h.controlAfterExit = effect.control;
+      }
       if (effect.kind === 'effect' && effect.intent) {
         const intent = effect.intent;
         void this.services
