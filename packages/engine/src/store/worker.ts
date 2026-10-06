@@ -154,10 +154,10 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.policy_submit': (tx, a) => submitPolicy(tx, a),
   'project.create': (tx, a) => ({ status: 201, body: bootstrapProject(tx, a), effects: [{ kind: 'journal', project: a.id }] }),
   'project.tick': (tx, a: { project: string }) => requestTick(tx, a),
-  'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
-    controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash, decided: a.decided }),
-  'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean }) =>
-    controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided }),
+  'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean; exited?: boolean }) =>
+    controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash, decided: a.decided, exited: a.exited === true }),
+  'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean; exited?: boolean }) =>
+    controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided, exited: a.exited === true }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
   'decision.answer': (tx, a) => answerDecision(tx, a),
   'trust.qualify': (tx, a) => qualify(tx, a),

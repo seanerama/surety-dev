@@ -92,7 +92,8 @@ export class Acceptor {
           failures = -1;
           continue;
         }
-        if (end) this.rt.requestEnd(handle, { ...end, ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}) });
+        // The acceptance of what the role left is its exit's own end (Q13).
+        if (end) this.rt.requestEnd(handle, { ...end, ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}) }, { afterExit: true });
         return;
       } catch (err) {
         log('acceptance step', err, { run, failures: failures + 1 });

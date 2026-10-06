@@ -48,6 +48,9 @@ type Db = Tx['db'];
 export interface Facts {
   head?: string | null;
   found?: string | null;
+  // A Stop's or an Abandon's run: its backend had already exited on its own
+  // (Q13), as the running engine knows it.
+  exited?: boolean;
 }
 
 export interface Preview {
@@ -344,15 +347,15 @@ function controlSpec(kind: 'stop_confirm' | 'abandon_confirm'): KindSpec {
     preview: controlPreview(kind),
     manifest: (tx, d) => controlManifest(tx, d.subject_id, kind),
     reraise: false,
-    answer(tx, d, option, note) {
+    answer(tx, d, option, note, facts) {
       consumeDecision(tx, d, option, note);
-      return beginControl(tx, d, kind === 'stop_confirm' ? 'stop' : 'abandon');
+      return beginControl(tx, d, kind === 'stop_confirm' ? 'stop' : 'abandon', facts?.exited === true);
     },
   };
 }
 
 // Set by control.ts: the run-end protocol begun for a confirmed Stop or Abandon.
-let beginControl: (tx: Tx, d: DecisionRow, kind: 'stop' | 'abandon') => CommandResult = () => {
+let beginControl: (tx: Tx, d: DecisionRow, kind: 'stop' | 'abandon', exited?: boolean) => CommandResult = () => {
   throw new Error('control is not wired');
 };
 export function wireControl(fn: typeof beginControl): void {
@@ -1445,6 +1448,7 @@ export function decisionSubjectRead(db: Db, args: { project: string; decision: s
     | { id: string; project: string; kind: string; subject_type: string; subject_id: string; status: string }
     | undefined;
   if (!d || d.project !== args.project) return null;
+  if (d.kind === 'stop_confirm' || d.kind === 'abandon_confirm') return { kind: d.kind, oob: null, run: d.subject_type === 'run' ? d.subject_id : null };
   if (d.kind !== 'out_of_band_change') return { kind: d.kind, oob: null };
   const row = oobRow(db, d.subject_id);
   if (!row) return { kind: d.kind, oob: null };
