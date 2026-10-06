@@ -32,7 +32,16 @@ const CONFIRM = { stop: 'stop_confirm', abandon: 'abandon_confirm' } as const;
 
 // The effect of consuming a stop_confirm or abandon_confirm: the run-end
 // protocol begins (its lease is closing when this commits).
-function applyControl(tx: Tx, kind: Control, runId: string): CommandResult {
+function applyControl(tx: Tx, kind: Control, runId: string, exited = false): CommandResult {
+  // The backend had already exited on its own (Q13; D2 §1.6; SEAM.md §143):
+  // its exit decides the run's end, by its class and its result. The
+  // confirmation is consumed and changes nothing: there is nothing left to
+  // stop, and a cancellation's cause stands only for an exit the engine
+  // signalled.
+  if (exited) {
+    const run = getRun(tx, runId)!;
+    return { status: 200, body: { run: { id: runId, state: run.state, outcome: run.outcome ?? null, ended_by: 'backend_exit' } } };
+  }
   const ended = beginEnd(tx, {
     run: runId,
     outcome: kind === 'stop' ? 'stopped' : 'abandoned',
@@ -41,9 +50,9 @@ function applyControl(tx: Tx, kind: Control, runId: string): CommandResult {
   return { status: 200, body: { run: { id: runId, state: ended.state, outcome: ended.outcome } }, effects: [{ kind: 'end_run', run: runId }] };
 }
 
-wireControl((tx: Tx, d: DecisionRow, kind: Control) => {
+wireControl((tx: Tx, d: DecisionRow, kind: Control, exited?: boolean) => {
   const run = getRun(tx, d.subject_id)!;
-  const result = applyControl(tx, kind, run.id);
+  const result = applyControl(tx, kind, run.id, exited === true);
   return { ...result, body: { decision: { id: d.id, status: 'consumed' }, ...(result.body as object) } };
 });
 
@@ -59,7 +68,7 @@ wireControl((tx: Tx, d: DecisionRow, kind: Control) => {
 // whether or not it has recorded that yet (E27 item 5). The decided outcome
 // stands, and the command is refused as for a run that has ended (SEAM.md
 // §24). A quarantined run is refused `quarantined` (D1 §11.5; SEAM.md §80).
-export function controlRun(tx: Tx, args: { project: string; run: string; kind: Control; previewHash: string | undefined; decided?: boolean }): CommandResult {
+export function controlRun(tx: Tx, args: { project: string; run: string; kind: Control; previewHash: string | undefined; decided?: boolean; exited?: boolean }): CommandResult {
   const run = getRun(tx, args.run);
   if (!run || run.project !== args.project) throw notFound('run', args.run);
   if (run.quarantined === 1 && run.state !== 'ended') {
@@ -98,7 +107,7 @@ export function controlRun(tx: Tx, args: { project: string; run: string; kind: C
   const now = KINDS[kind].preview(tx, open);
   if (args.previewHash !== open.preview_hash || now === null || currentPreview(open, now.manifest, now.options) !== open.preview_hash) throw stale(open);
   consumeDecision(tx, open, 'confirm', null);
-  return applyControl(tx, args.kind, run.id);
+  return applyControl(tx, args.kind, run.id, args.exited === true);
 }
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §§17, 76).

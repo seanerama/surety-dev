@@ -560,7 +560,7 @@ export class Launcher {
       }
     } catch (err) {
       log('launch', err, { run: handle.claim.run, phase: handle.phase });
-      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle));
+      if (handle.phase === 'spawned') this.rt.requestEnd(handle, earnedEnd(handle), { afterExit: true });
       else this.never(handle, 'failed', 'infra_error');
     } finally {
       handle.settle();
@@ -862,6 +862,8 @@ export class Launcher {
     // it waits, with the role's lines, for the tick's fresh challenge (D2
     // §3.5; `regrant`).
     const takeExit = () => {
+      // Its own exit, before any end the engine decided (Q13).
+      if (!handle.ending) handle.exitedFirst = true;
       launch.ackExit();
       const report = launch.exitReport;
       handle.exit = report === null ? { code: null, signal: null } : { code: report.code, signal: report.signal === null ? null : String(report.signal) };
@@ -946,12 +948,16 @@ export class Launcher {
       // Unknown termination: nothing is collected at all (D2 §3.4); the
       // run-end protocol quarantines it.
       handle.collecting = false;
-      this.rt.requestEnd(handle, {
-        outcome: 'failed',
-        reason: 'infra_error',
-        reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
-        ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
-      });
+      this.rt.requestEnd(
+        handle,
+        {
+          outcome: 'failed',
+          reason: 'infra_error',
+          reasonText: "the termination of the run's domain could not be established after the backend's exit; nothing it left was collected",
+          ...(handle.exitAt ? { decidedAt: handle.exitAt } : {}),
+        },
+        { afterExit: true },
+      );
       return;
     }
     const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
@@ -964,7 +970,7 @@ export class Launcher {
       this.childDone(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 
   // What the result and the exit class give (D2 §1.6; SEAM.md §143's
@@ -1547,7 +1553,7 @@ export class Launcher {
       this.rt.services.accept(handle);
       return;
     }
-    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt });
+    this.rt.requestEnd(handle, handle.exitAt === null ? end : { ...end, decidedAt: end.decidedAt ?? handle.exitAt }, { afterExit: true });
   }
 }
 

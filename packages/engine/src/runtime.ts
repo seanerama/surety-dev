@@ -124,6 +124,12 @@ export interface RunHandle {
   // backend's exit (D2 §1.4).
   collection: Promise<unknown> | null;
   collecting: boolean;
+  // The backend exited on its own before the engine decided to end the run
+  // (D2 §1.6; SEAM.md §143, Q13): the exit decides the run's end, by its
+  // class and result. No later cause (a Stop, an Abandon, a deadline, a
+  // budget) replaces it: a cancellation's cause stands only for an exit the
+  // engine signalled (`engine_signaled`).
+  exitedFirst: boolean;
   // The stream's own bounds were exceeded (D2 §3.7): why.
   streamBound: string | null;
   // The domain's egress log entries, kept when its proxy closed (a
@@ -190,6 +196,7 @@ export function newHandle(claim: Claim): RunHandle {
     streamResult: null,
     collection: null,
     collecting: false,
+    exitedFirst: false,
     streamBound: null,
     egressEntries: null,
     containment: null,
@@ -371,8 +378,13 @@ export class Runtime {
   // here nothing renews the run's lease. The run-end protocol is idempotent;
   // if a step of it fails, the engine retries it (RunEnder), and the lease
   // that nothing renews expires as the backstop.
-  requestEnd(handle: RunHandle, end: RunEnd): void {
+  requestEnd(handle: RunHandle, end: RunEnd, opts: { afterExit?: boolean } = {}): void {
     if (handle.ending) return;
+    // After the backend's own exit only the exit's own end is taken (Q13).
+    if (handle.exitedFirst && opts.afterExit !== true) {
+      log('run end', new Error(`${end.outcome} / ${end.reason} not taken: the backend had already exited, and its exit decides the run's end`), { run: handle.claim.run });
+      return;
+    }
     handle.ending = true;
     const asIs = end.asIs === true || handle.expiryExempt;
     const { decidedAt, ...rest } = end;
@@ -385,6 +397,13 @@ export class Runtime {
   // confirmed after that is refused (SEAM.md §24).
   endDecided(run: string): boolean {
     return this.handles.get(run)?.ending === true;
+  }
+
+  // Has the backend of this engine's run exited on its own before any end
+  // was decided (Q13)? A Stop or Abandon confirmed after that changes
+  // nothing: the exit decides.
+  exitedFirst(run: string): boolean {
+    return this.handles.get(run)?.exitedFirst === true;
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
