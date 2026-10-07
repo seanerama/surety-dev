@@ -1602,3 +1602,16 @@ Then the rehearsal is rerun against the fake, and Sean runs one more attempt (al
 1. **M2 is accepted.** Every condition of BS §1 is met: `npm test` on `main` 1,055 of 1,055 in 168 files, none skipped (E87 item 13); the real lane's rows passed 16 of 16 under the attempt Sean approved, its records retained and copied (E87 item 12; `docs/acceptance/reports/M2-real-lane/2026-10-06/`); the host qualification and the entry for Claude Code `active` with their evidence; the M2 report final (`docs/acceptance/reports/M2-report.md`, M141 passing). Sean chose to rerun the exhaustion lane on current code first; it passed on mini-hp01 (E87 item 14). The claim M2 supports is the report's section 1: on this host, with the recorded versions and limits, the engine ran one real backend, Claude Code on Sean's subscription, through the complete journey, the engine making every commit, the backend unable to reach the control plane, every process it started observed gone, and its usage recorded as the provider reported it. What it does not claim is the report's section 17 and `M2-not-claimed.md`.
 2. **Open for Sean, none blocking:** the report's questions 1 to 10 (the driver's defaults stand until he answers) and 15 (F2: resolution does not check that the named check covers the defect); the report's section 19, a draft; the D3 review brief for Astra.
 3. **Sean revokes the subscription token** in his Claude account settings and deletes `~/.config/surety/claude-subscription.token`; the real lane needs a new token, made the same way, when it next runs.
+
+---
+
+## E89. What comes after M2: D3 and M3; three of D3's own choices (decided by Sean, 2026-10-06)
+
+**Status: decided by Sean.**
+
+1. **Next: D3, then M3, the check runner.** Every gate in M1 and M2 passed on check results a test recorded; no engine component has run a check. D3 (draft 1, `docs/design/sdlc-design-D3-checks.md`) designs the runner, the protected path at runtime, the diff classifier and validation scope. Sean hands Astra the D3 review brief (`docs/reviews/D3/sdlc-design-D3-review-brief-astra.md`); meanwhile the driver prepared the decisions (`docs/design/sdlc-design-D3-decisions-prep.md`). Deferred: dogfooding (until checks are real), a second backend or the API-key mode, the UI.
+2. **Three of D3's own choices, accepted** (the sheet's Part 3, ahead of Astra's review; revisited only if her review raises one):
+   - a check's writes go to an overlay discarded with its domain, the protected inputs strictly read-only (D3 §2.2, the deviation from the brief's R1);
+   - a Builder's objection to a check (`requirement_conflict` / `contract_conflict`) stops automatic repair and comes to Sean with `correct_check`, `change_spec`, `retry`, `cancel`, the check staying in force (D3 §5 X2);
+   - only the `direct` runner class is designed and qualified for M3; `container` and `remote` stay refused (D3 §2.8).
+3. **Open, after Astra's review:** D3's Q1 to Q7, the corrections L1 to L5, and F2 (the M2 report's question 15), each with the driver's recommendation on the sheet.

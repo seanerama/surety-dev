@@ -30,6 +30,8 @@ These change rules already built; each comes with its tests. **Recommendation: a
 
 ## Part 3. Choices D3 made that you should see (not in its question list)
 
+**Decided by Sean, 2026-10-06 (E89 item 2): the first three below are accepted.**
+
 - **A check's writes go to a scratch layer that is thrown away** (§2.2), instead of a read-only source with declared writable paths, as the brief asked. Toolchains write caches and reports in places nobody declares correctly; discarding gives the same protection: nothing a check writes reaches the candidate, the checkout or another check. The protected inputs stay strictly read-only. **Recommendation: accept.**
 - **A Builder can object to a check** (X2): a finding that a check contradicts the requirement or the contract stops automatic repair and comes to you with four choices (have the Verifier correct the check, change the spec, retry, cancel); the check stays in force meanwhile. **Recommendation: accept**; the alternative (park the work at its next failure) is the harm M1 listed as not handled.
 - **Only the `direct` runner** (a check in a sandbox on the engine's own host) is designed and qualified; `container` and `remote` stay refused. **Recommendation: accept** for M3.
