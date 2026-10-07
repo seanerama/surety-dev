@@ -223,3 +223,24 @@ Main `aa00544`; no active builder or verifier worktrees/branches.
 Main `aa00544`; no active builder or verifier worktrees/branches.
 
 - No build changes since 04:30: head and worktree states are unchanged; no new recorded tests.
+
+## 2026-10-06 18:36:35 -0500 CDT — one-off restart check
+
+Main `952f5c6`; no linked builder or verifier worktrees. Old build/verify branches remain, but none is ahead of main. Main has untracked `docs/architecture/m1.html` and `docs/reviews/surety-overnight-2026-10-05.html`.
+
+- Since `aa00544`, M2's real Claude Code journey reached path two and its fix loop, and Sean accepted M2 in E88 (`docs/acceptance/reports/M2-report.md` §§1, 14–15; `docs/foundations/sdlc-foundations-v1.1-errata-draft.md` E87–E88). The earlier rehearsals used fakes; the accepted real lane records 16/16 and copies `state.json` plus observations under `docs/acceptance/reports/M2-real-lane/2026-10-06/`.
+- Recorded runs only, not independently rerun here: full `npm test` on main `a2aefbf` passed 1,055/1,055, none skipped; the exhaustion lane on `mini-hp01` at `b7a3215` passed 11/11 (`M2-report.md` §13; E87 items 13–14). No test logs are present in this checkout; this check read the committed report and records.
+- M2 is accepted, but its claim is scoped to this host/backend; no deployment claim (`M2-report.md` §§1, 17). D3's check runner/classifier design and decision sheet are prepared at `952f5c6`, awaiting Astra's review and Sean's choices, including F2: a named check can pass without the engine proving it covers the finding (`docs/design/sdlc-design-D3-decisions-prep.md`; `M2-report.md` question 15). No D3 implementation or acceptance is recorded.
+
+## 2026-10-06 21:04:15 -0500 CDT
+
+Main `fdc4070`; no linked builder or verifier worktrees. Ten-minute progress checks resumed.
+
+- Since 18:36, E89 (`fdc4070`, 21:03) records D3 then M3 as next and Sean's acceptance of three D3 choices; no implementation or newer recorded test evidence. This check did not run tests.
+- In the past ten hours, commits are the D3 decision sheet (18:35) and E89 (21:03); M2 acceptance was earlier at 07:46. Astra's D3 review, then Sean's remaining Q1–Q7, L1–L5 and F2 decisions, are next.
+
+## 2026-10-06 21:13:50 -0500 CDT
+
+Main `fdc4070`; no active builder or verifier worktree.
+
+- No build changes since 21:04: head and worktree states are unchanged; no newly recorded tests.
