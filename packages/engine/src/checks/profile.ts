@@ -16,7 +16,7 @@
 // names egress before slice 17): the network namespace has only loopback.
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Builder, DEV_NODES, ETC_FILES, type Plan, SYSTEM_TREES, type Tools, WORKSPACE, esc, hostMountPoints, overlayPath, parents, systemRoot } from '../invoke/sandbox/mounts.js';
@@ -65,6 +65,10 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
   // ancestor frees the pathname); slice 17 replaces it with an immutable
   // input namespace.
   for (const [path] of input.manifest) b.bind(join(input.protectedDir, path), { target: join(WORKSPACE, path) });
+  // Their targets, made under the overlay before the root is pivoted to,
+  // never through a link (S1): with `inputTargetConflict` refusing a plan
+  // whose source has one, nothing is created outside the domain's own area.
+  for (const e of b.late) if (e.path.startsWith(`${WORKSPACE.slice(1)}/`)) e.nofollow = true;
   for (const p of input.readPaths) {
     for (const d of parents(p)) b.dir(d);
     b.bind(p);
@@ -88,6 +92,33 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
     initScript: '/.init/init.js',
     workspaceMount: 'surety/workspace',
   };
+}
+
+// Why a check's input targets cannot be made in the workspace, or null (S1):
+// each input's pathname is created under the overlay, whose lower layer is
+// the candidate's source projection, so every ancestor that exists there
+// must be a directory (never a link, a file or anything else), and the
+// target itself must not exist there. Read without following links.
+export function inputTargetConflict(source: string, manifest: ManifestEntry[]): string | null {
+  for (const [path] of manifest) {
+    const parts = path.split('/');
+    if (parts.some((p) => p === '' || p === '.' || p === '..')) return `the input ${path} is not a plain relative path`;
+    let at = source;
+    for (let i = 0; i < parts.length; i++) {
+      at = join(at, parts[i]!);
+      let st;
+      try {
+        st = lstatSync(at);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') break;
+        return `the source projection at ${parts.slice(0, i + 1).join('/')} cannot be read: ${(err as Error).message}`;
+      }
+      const last = i === parts.length - 1;
+      if (last) return `the candidate's source has ${path} itself, where the input is presented`;
+      if (st.isSymbolicLink() || !st.isDirectory()) return `the candidate's source has ${parts.slice(0, i + 1).join('/')} as ${st.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, an ancestor of the input ${path}`;
+    }
+  }
+  return null;
 }
 
 // The profile's fingerprint (D3 §2.8): its rules, not one domain's paths,

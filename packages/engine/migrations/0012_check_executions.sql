@@ -50,7 +50,9 @@ BEGIN SELECT RAISE(ABORT, 'check_executions: a terminal execution never changes 
 -- D3 A.3, added to check_results.
 ALTER TABLE check_results ADD COLUMN execution TEXT REFERENCES check_executions(id);
 ALTER TABLE check_results ADD COLUMN not_run_reason TEXT CHECK (not_run_reason IN ('definition_invalid', 'toolchain_missing', 'materialization_failed', 'mount_plan_refused', 'isolation_unqualified', 'runner_unqualified', 'environment_unbound', 'exec_failed'));
-ALTER TABLE check_results ADD COLUMN orphans INTEGER NOT NULL DEFAULT 0 CHECK (orphans IN (0, 1));
+-- `orphans` null: the init's observation was not received or could not be
+-- read; unknown, which never passes (L4).
+ALTER TABLE check_results ADD COLUMN orphans INTEGER DEFAULT 0 CHECK (orphans IN (0, 1));
 ALTER TABLE check_results ADD COLUMN output_dropped_bytes INTEGER;
 ALTER TABLE check_results ADD COLUMN runner_qualification TEXT REFERENCES host_qualifications(id);
 CREATE UNIQUE INDEX check_results_one_per_execution ON check_results(execution) WHERE execution IS NOT NULL;

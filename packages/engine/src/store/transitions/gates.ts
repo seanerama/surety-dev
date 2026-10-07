@@ -63,7 +63,7 @@ interface ResultRow {
   invalidated_at: string | null;
   execution: string | null;
   not_run_reason: string | null;
-  orphans: number;
+  orphans: number | null;
 }
 
 export interface FindingRow {
@@ -192,7 +192,7 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
   let state: CheckState;
   if (top.execution_established === 0) state = 'skipped';
   // L4: other processes alive at the check's own exit fail it too.
-  else if (top.signaled === 1 || top.deadline_hit === 1 || top.orphans === 1 || top.exit_status === null || top.exit_status !== 0) state = 'failed';
+  else if (top.signaled === 1 || top.deadline_hit === 1 || top.orphans !== 0 || top.exit_status === null || top.exit_status !== 0) state = 'failed';
   else state = 'passed';
   return { state, decider: top };
 }

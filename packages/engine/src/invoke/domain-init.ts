@@ -29,7 +29,7 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -130,6 +130,8 @@ interface Entry {
   // (the git view's index).
   source?: string;
   mode?: number;
+  // Made with no link followed at any component (mounts.ts).
+  nofollow?: boolean;
 }
 
 interface Plan {
@@ -202,7 +204,36 @@ function run(cmd: string, args: string[]): void {
 
 let mknod: string | null = null;
 
+// An entry made with no link followed (S1): each component found as a
+// directory or made one, the file created exclusively with O_NOFOLLOW;
+// anything else refuses the setup. Nothing outside `root` is reached.
+function makeNoFollow(root: string, e: Entry): void {
+  const parts = e.path.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) throw new Error(`${e.path} is not a plain relative path`);
+  let at = root;
+  const last = parts.length - 1;
+  for (let i = 0; i < parts.length; i++) {
+    at = join(at, parts[i]!);
+    const final = i === last;
+    let st;
+    try {
+      st = lstatSync(at);
+    } catch {
+      st = null;
+    }
+    if (!final || e.kind === 'dir') {
+      if (st === null) mkdirSync(at, { mode: 0o755 });
+      else if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${e.path}: ${parts.slice(0, i + 1).join('/')} is not a directory`);
+      continue;
+    }
+    if (e.kind !== 'file') throw new Error(`${e.path}: only directories and files are made without following links`);
+    if (st !== null) throw new Error(`${e.path} exists already`);
+    closeSync(openSync(at, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, e.mode ?? 0o644));
+  }
+}
+
 function make(root: string, e: Entry): void {
+  if (e.nofollow === true) return makeNoFollow(root, e);
   const at = join(root, e.path);
   mkdirSync(dirname(at), { recursive: true });
   if (e.kind === 'chardev') {
@@ -441,6 +472,17 @@ function others(): number[] {
   return out;
 }
 
+// How many other processes the pid namespace holds, or null when /proc
+// cannot be read: an unread count is unknown, never zero (L4).
+function othersCount(): number | null {
+  try {
+    readdirSync('/proc');
+  } catch {
+    return null;
+  }
+  return others().length;
+}
+
 function leaveWhenAlone(): void {
   const timer = setInterval(() => {
     if (others().length === 0) {
@@ -621,7 +663,7 @@ async function init(): Promise<void> {
     // L4: at the check's own exit, before its output is drained or anything
     // is torn down, whether another process remains in the domain (process 1
     // inherits them).
-    if (spec.check === true) send({ t: 'orphans', count: others().length });
+    if (spec.check === true) send({ t: 'orphans', count: othersCount() });
     const started = Date.now();
     const leave = setInterval(() => {
       if (outputEnded || Date.now() - started >= 2000) {

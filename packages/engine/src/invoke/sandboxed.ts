@@ -118,6 +118,9 @@ export class SandboxLaunch {
   private readonly challenges = new Map<string, (r: ChallengeResponse) => void>();
   // Messages to drop before acting on them (the seam's `init_report_lost`).
   dropExitReport = false;
+  // The init said the backend's output ended (its `eof`), rather than the
+  // output stopping with the launcher.
+  outputEof = false;
   // The launch is closed (D2 §3.2): the engine takes the sandbox no further.
   // An authorized launcher that has not yet started the backend gets no
   // plan, no backend and no start, and waits for termination.
@@ -310,6 +313,7 @@ export class SandboxLaunch {
         if (typeof m.d === 'string') this.output.write(Buffer.from(m.d, 'base64'));
         return;
       case 'eof':
+        this.outputEof = true;
         this.output.end();
         return;
       case 'orphans':

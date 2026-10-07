@@ -10,16 +10,15 @@
 //               ids of their input manifests; each execution binds only its
 //               own check's manifest from here.
 //
-// With engine git only: entries into a private index (`update-index
-// --index-info`) and `checkout-index --prefix`, which writes no `.git`, runs
-// no repository code (filter drivers are switched off by git/exec.ts) and
-// contacts no remote. A tree is built in a private staging directory, made
+// With engine git only (`ls-tree`, `cat-file`): every file is its blob's
+// bytes exactly, whatever any attributes or configuration say; nothing writes
+// a `.git`, runs repository code or contacts a remote. A tree is built in a private staging directory, made
 // read-only, and becomes visible only once complete; a failed build removes
 // its partial state. It is shared by the executions of its triple and
 // removed when none still needs it. Main thread only.
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { git, repoContext } from '../git/exec.js';
@@ -95,20 +94,110 @@ export function removeTreeDir(home: string, dir: string): void {
   rmSync(real, { recursive: true, force: true });
 }
 
-async function checkoutInto(repo: string, scratch: string, lines: string[], prefix: string): Promise<void> {
-  mkdirSync(prefix, { recursive: true });
-  const index = join(scratch, `checktree-index-${randomBytes(8).toString('hex')}`);
+interface BlobEntry {
+  mode: string;
+  oid: string;
+  path: string;
+}
+
+// Each entry written at <prefix>/<path> with exactly its blob's bytes (a
+// symlink, 120000, as a link whose target is the blob): read from the object
+// store with `cat-file`, never through `checkout-index`, so no attributes
+// file of the work tree, of `.git/info`, or of the revision itself, and no
+// configuration (`core.autocrlf`, `core.eol`), converts anything. No path
+// component is followed through a link, and nothing is created outside
+// `prefix`. Returns the bytes written.
+async function writeBlobs(repo: string, entries: BlobEntry[], prefix: string, maxBytes: number): Promise<number> {
+  mkdirSync(prefix, { recursive: true, mode: 0o700 });
+  if (entries.length === 0) return 0;
   const ctx = repoContext(repo);
-  const env = { GIT_INDEX_FILE: index };
-  try {
-    if (lines.length > 0) {
-      const add = await git(ctx, ['update-index', '-z', '--index-info'], { env, input: lines.join('') });
-      if (add.code !== 0) throw new MaterializationFailed(`git update-index: ${add.stderr.trim().slice(0, 300) || (add.timedOut ? 'deadline' : 'failed')}`);
-      const out = await git(ctx, ['-c', 'core.autocrlf=false', '-c', 'core.symlinks=true', 'checkout-index', '-a', '-f', `--prefix=${prefix}/`], { env });
-      if (out.code !== 0) throw new MaterializationFailed(`git checkout-index: ${out.stderr.trim().slice(0, 300) || (out.timedOut ? 'deadline' : 'failed')}`);
+  const unique = [...new Set(entries.map((e) => e.oid))];
+  const sizes = new Map<string, number>();
+  for (let i = 0; i < unique.length; i += 1000) {
+    const batch = unique.slice(i, i + 1000);
+    const r = await git(ctx, ['cat-file', '--batch-check'], { input: `${batch.join('\n')}\n` });
+    if (r.code !== 0) throw new MaterializationFailed(`git cat-file --batch-check: ${r.stderr.trim().slice(0, 300) || (r.timedOut ? 'deadline' : 'failed')}`);
+    for (const line of r.stdout.split('\n')) {
+      const [oid, type, size] = line.split(' ');
+      if (oid && type === 'blob' && size !== undefined) sizes.set(oid, Number(size));
     }
+  }
+  let total = 0;
+  for (const e of entries) {
+    const size = sizes.get(e.oid);
+    if (size === undefined) throw new MaterializationFailed(`the blob ${e.oid} of ${e.path} cannot be read`);
+    total += size;
+  }
+  if (total > maxBytes) throw new MaterializationFailed(`the tree holds ${total} bytes, more than checktree_max_bytes (${maxBytes})`);
+  const cap = 8 * 1024 * 1024;
+  const bytes = new Map<string, Buffer>();
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let currentBytes = 0;
+  for (const oid of unique) {
+    const size = sizes.get(oid)!;
+    if (current.length > 0 && currentBytes + size > cap) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(oid);
+    currentBytes += size;
+  }
+  if (current.length > 0) batches.push(current);
+  const write = async (batch: string[]) => {
+    const want = batch.reduce((n, o) => n + sizes.get(o)! + 128, 0);
+    const r = await git(ctx, ['cat-file', '--batch'], { input: `${batch.join('\n')}\n`, outputCap: want });
+    if (r.code !== 0) throw new MaterializationFailed(`git cat-file --batch: ${r.stderr.trim().slice(0, 300) || (r.timedOut ? 'deadline' : 'failed')}`);
+    let at = 0;
+    for (const oid of batch) {
+      const nl = r.bytes.indexOf(0x0a, at);
+      const header = nl < 0 ? [] : r.bytes.subarray(at, nl).toString('utf8').split(' ');
+      if (header[0] !== oid || header[1] !== 'blob') throw new MaterializationFailed(`git cat-file did not give the blob ${oid}`);
+      const size = Number(header[2]);
+      bytes.set(oid, Buffer.from(r.bytes.subarray(nl + 1, nl + 1 + size)));
+      at = nl + 1 + size + 1;
+    }
+    for (const e of entries) {
+      const content = bytes.get(e.oid);
+      if (content === undefined) continue;
+      placeEntry(prefix, e, content);
+    }
+    for (const oid of batch) bytes.delete(oid);
+  };
+  for (const batch of batches) await write(batch);
+  return total;
+}
+
+// One entry under `root`, its parents made directory by directory, none
+// followed through a link: a component that exists as anything but a
+// directory refuses the build.
+export function placeEntry(root: string, e: BlobEntry, content: Buffer): void {
+  const parts = e.path.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) throw new MaterializationFailed(`the path ${e.path} is not a plain relative path`);
+  let at = root;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    let st;
+    try {
+      st = lstatSync(at);
+    } catch {
+      mkdirSync(at, { mode: 0o755 });
+      continue;
+    }
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new MaterializationFailed(`${e.path} lies under ${relative(root, at)}, which is not a directory`);
+  }
+  const target = join(at, parts.at(-1)!);
+  if (e.mode === '120000') {
+    symlinkSync(content.toString('utf8'), target);
+    return;
+  }
+  const fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, e.mode === '100755' ? 0o755 : 0o644);
+  try {
+    let off = 0;
+    while (off < content.length) off += writeSync(fd, content, off, content.length - off);
   } finally {
-    rmSync(index, { force: true });
+    closeSync(fd);
   }
 }
 
@@ -124,6 +213,7 @@ export async function materialize(args: {
   roots: string[];
   manifests: ManifestEntry[][];
   maxEntries: number;
+  maxBytes: number;
 }): Promise<CheckTree> {
   const root = treePath(args.home, args.project, args.revision, args.version);
   const made = { root, src: join(root, 'src'), protected: join(root, 'protected') };
@@ -136,7 +226,7 @@ export async function materialize(args: {
     const ctx = repoContext(args.repo);
     const listed = await git(ctx, ['ls-tree', '-r', '-z', '--full-tree', args.revision]);
     if (listed.code !== 0) throw new MaterializationFailed(`the revision ${args.revision} cannot be read: ${listed.stderr.trim().slice(0, 200) || (listed.timedOut ? 'deadline' : 'failed')}`);
-    const source: string[] = [];
+    const source: BlobEntry[] = [];
     let entries = 0;
     for (const record of listed.stdout.split('\0')) {
       if (record === '') continue;
@@ -149,16 +239,16 @@ export async function materialize(args: {
       // and the governed file is absent wherever it lies (D3 §1.5, B01).
       if (path === GOVERNED_FILE || path.endsWith(`/${GOVERNED_FILE}`) || isProtectedPath(path, args.roots)) continue;
       if (++entries > args.maxEntries) throw new MaterializationFailed(`the revision has more than checktree_max_entries (${args.maxEntries}) entries`);
-      source.push(`${mode} ${oid}\t${path}\0`);
+      source.push({ mode, oid, path });
     }
-    await checkoutInto(args.repo, args.scratch, source, join(staging, 'src'));
+    const written = await writeBlobs(args.repo, source, join(staging, 'src'), args.maxBytes);
     const inputs = new Map<string, ManifestEntry>();
     for (const m of args.manifests) for (const e of m) inputs.set(e[0], e);
-    await checkoutInto(
+    await writeBlobs(
       args.repo,
-      args.scratch,
-      [...inputs.values()].map(([path, , mode, oid]) => `${mode} ${oid}\t${path}\0`),
+      [...inputs.values()].map(([path, , mode, oid]) => ({ mode, oid, path })),
       join(staging, 'protected'),
+      args.maxBytes - written,
     );
     seal(staging);
     try {
@@ -200,4 +290,29 @@ export function listTrees(home: string, project: string): { revision: string; ve
     return [];
   }
   return names.filter((n) => TREE_NAME.test(n)).map((n) => ({ revision: n.slice(0, 40), version: n.slice(41) }));
+}
+
+// At start: a staging directory a build left when the engine stopped part
+// way is never a tree, and goes (D3 §2.4). Retention of whole trees is the
+// rule above (an execution live, or a current candidate at the revision
+// under the version in effect); since no candidate's `superseded_by` is
+// written yet, a tree lives until its version changes, and slice 17's
+// `checktrees_max_bytes` admission must be able to remove trees no live
+// execution holds (`releaseTree`) to make room.
+export function removeStagingLeftovers(home: string): number {
+  let projects: string[];
+  try {
+    projects = readdirSync(checktreesDir(home)).filter((p) => PROJECT_ID.test(p));
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const p of projects) {
+    for (const name of readdirSync(join(checktreesDir(home), p))) {
+      if (!/^\.staging-[0-9a-f]{16}$/.test(name)) continue;
+      removeTreeDir(home, join(checktreesDir(home), p, name));
+      removed++;
+    }
+  }
+  return removed;
 }

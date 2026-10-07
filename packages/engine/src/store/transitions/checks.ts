@@ -258,8 +258,12 @@ export function registerDue(tx: Tx, args: { project: string }): number {
   for (const r of rows) {
     const candidate = getCandidate(tx.db, r.id)!;
     if (unreadAncestry(tx.db, args.project, candidate)) continue;
-    for (const d of JSON.parse(r.checks_due) as { trigger: Trigger; version: string }[]) {
-      const set = registrationSet(tx.db, args.project, candidate, d.version);
+    // Under the version effective now: one stored with the due mark may
+    // since have been superseded.
+    const effective = effectiveVersion(tx.db, args.project);
+    if (!effective) continue;
+    for (const d of JSON.parse(r.checks_due) as { trigger: Trigger }[]) {
+      const set = registrationSet(tx.db, args.project, candidate, effective.id);
       made += registerExecutions(tx, { project: args.project, candidate, checks: set.checks, trigger: d.trigger }).filter((x) => x.created).length;
     }
     tx.db.prepare('UPDATE "candidates" SET "checks_due" = NULL WHERE "id" = ?').run(r.id);
@@ -602,7 +606,8 @@ export interface ResultFields {
   exit_status: number | null;
   signaled: boolean;
   deadline_hit: boolean;
-  orphans: boolean;
+  // null: unknown (unreported or unreadable), which never passes (L4).
+  orphans: boolean | null;
   not_run_reason: string | null;
   output: string | null;
   output_dropped_bytes: number | null;

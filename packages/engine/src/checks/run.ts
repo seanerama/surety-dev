@@ -39,7 +39,7 @@ import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamMainFault } 
 import { hostIdentity } from '../trust/host.js';
 import { MaterializationFailed, listTrees, materialize, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
-import { buildCheckPlan } from './profile.js';
+import { buildCheckPlan, inputTargetConflict } from './profile.js';
 import type { Definition, Governed } from './schema.js';
 
 let tools: ResolvedTools | null = null;
@@ -86,7 +86,7 @@ const sha256File = (path: string): string | null => {
   }
 };
 
-class Supervisor implements DomainHolder {
+export class Supervisor implements DomainHolder {
   readonly claim: { domain: string };
   sandbox: SandboxLaunch | null = null;
   backendStarted = false;
@@ -94,9 +94,14 @@ class Supervisor implements DomainHolder {
   quarantined = false;
   private authorized = false;
   private execFailed: Record<string, unknown> | null = null;
-  private orphans = false;
+  // What the init reported at the check's own exit (L4): true or false, or
+  // null while unreported or unreadable, which is never a pass.
+  private orphans: boolean | null = null;
   private cancelAt: number | null = null;
   private cancelCause: 'deadline' | 'lease' | null = null;
+  // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
+  private leaseLost = false;
+  private released = false;
   private reportAt: number | null = null;
   private capture: OutputCapture;
   private outputDone: Promise<void> = Promise.resolve();
@@ -135,6 +140,16 @@ class Supervisor implements DomainHolder {
       output: null,
       output_dropped_bytes: null,
     } satisfies ResultFields);
+    await this.release();
+  }
+
+  // The check trees nothing references any more go, once this execution's
+  // domain is established terminated (never from a quarantine or a failure
+  // whose termination is unknown).
+  async release(): Promise<void> {
+    if (this.released) return;
+    this.released = true;
+    await releaseUnreferenced(this.rt, this.a.project, this.a.execution);
   }
 
   async run(): Promise<void> {
@@ -175,12 +190,18 @@ class Supervisor implements DomainHolder {
         roots: a.roots,
         manifests: a.manifests,
         maxEntries: checkLimits().checktree_max_entries,
+        maxBytes: checkLimits().checktree_max_bytes,
       });
     } catch (err) {
       if (err instanceof MaterializationFailed) return this.notRun('materialization_failed', err.message);
       throw err;
     }
     await pausePoint('checks.materialized');
+    // Every input's target, and each of its ancestors, must be a directory
+    // of the source projection or absent there (S1): a link or a file at
+    // one refuses the plan before any launcher starts.
+    const conflict = inputTargetConflict(tree.src, a.manifest);
+    if (conflict !== null) return this.notRun('mount_plan_refused', conflict);
     // The domain's cgroup, only while its launch is not closed (D2 §3.2),
     // and only at this domain's directory in this engine's own scope.
     const scope = this.rt.scope;
@@ -194,11 +215,7 @@ class Supervisor implements DomainHolder {
     const limits = { memoryMax: this.rt.setting('domain_memory_max'), tasksMax: this.rt.setting('domain_tasks_max') };
     const inode = createDomainCgroup(may.cgroup_path, limits);
     await this.engine('domain.cgroup_created', { domain: a.domain, inode });
-    try {
-      await this.launch(def, governed, tree, readPaths, limits);
-    } finally {
-      await releaseUnreferenced(this.rt, a.project, a.execution);
-    }
+    await this.launch(def, governed, tree, readPaths, limits);
   }
 
   private async launch(def: Definition, governed: Governed, tree: { src: string; protected: string }, readPaths: string[], limits: { memoryMax: number; tasksMax: number }): Promise<void> {
@@ -302,21 +319,22 @@ class Supervisor implements DomainHolder {
         backend: () => backend,
         started: async (pid) => {
           this.backendStarted = true;
-          await this.engine('checks.init_report', { execution: a.execution, kind: 'started', detail: { pid } });
-          // `timeout_s` from the check's own start; never extended.
-          deadline = setTimeout(() => {
+          // `timeout_s` from the arrival of the init's `started` report; never
+          // extended, and disarmed once the check has exited by itself.
+          deadline = armDeadline(def.timeout_s * 1000, () => launch.exitReport !== null || launch.dropExitReport, () => {
             if (this.cancelAt === null) {
               this.cancelAt = performance.now();
               this.cancelCause = 'deadline';
             }
             fireDeadline();
-          }, def.timeout_s * 1000);
-          deadline.unref?.();
+          });
+          await this.engine('checks.init_report', { execution: a.execution, kind: 'started', detail: { pid } });
         },
         setupFailed: (detail) => log('check launch', new Error(`the sandbox could not be built: ${detail}`), { execution: a.execution }),
         report: (kind, detail) => {
           if (kind === 'orphans') {
-            this.orphans = typeof detail.count === 'number' && detail.count > 0;
+            // A count the init could not read, or none, is unknown.
+            this.orphans = typeof detail.count === 'number' && Number.isInteger(detail.count) && detail.count >= 0 ? detail.count > 0 : null;
             void this.engine('checks.init_report', { execution: a.execution, kind: 'orphans', detail }).catch((err) => log('check report', err, { execution: a.execution }));
           } else this.execFailed = detail;
         },
@@ -331,14 +349,21 @@ class Supervisor implements DomainHolder {
     });
     void launch.backendDone.then(() => {
       if (launch.exitReport !== null && this.reportAt === null) this.reportAt = performance.now();
+      if (deadline !== null) clearTimeout(deadline);
     });
     // The check lease, renewed while supervised (D3 §2.5).
     const renew = setInterval(() => {
       void this.engine<boolean>('checks.renew', { execution: a.execution, generation: a.lease_generation, incarnation: rt.incarnation })
         .then((ok) => {
-          if (ok || this.cancelAt !== null) return;
-          this.cancelAt = performance.now();
-          this.cancelCause = 'lease';
+          if (ok || this.leaseLost) return;
+          // The check lease lapsed (the engine paused past it, D2 §3.5): the
+          // execution ends with no verdict, `interrupted` once its domain's
+          // closure is observed. Never a test failure, and never a pass.
+          this.leaseLost = true;
+          if (this.cancelAt === null && launch.exitReport === null) {
+            this.cancelAt = performance.now();
+            this.cancelCause = 'lease';
+          }
           fireDeadline();
         })
         .catch((err) => log('check lease', err, { execution: a.execution }));
@@ -372,6 +397,7 @@ class Supervisor implements DomainHolder {
         return;
       }
       await this.collect();
+      await this.release();
     } finally {
       clearInterval(renew);
       if (deadline !== null) clearTimeout(deadline);
@@ -388,6 +414,7 @@ class Supervisor implements DomainHolder {
     if (!verdict.terminated) return false;
     this.quarantined = false;
     await this.collect();
+    await this.release();
     return true;
   }
 
@@ -398,38 +425,87 @@ class Supervisor implements DomainHolder {
     await this.engine('checks.collecting', { execution: a.execution });
     await pausePoint('collect.before_read');
     const report = launch.exitReport;
-    const execFailed = report?.startFailed === true || (this.execFailed !== null && !this.backendStarted);
-    if (!this.backendStarted && !execFailed) {
-      // Neither `started` nor `exec_failed`: whether it started is not
-      // known, so no row (D3 §2.6).
-      await this.engine('checks.interrupt', { execution: a.execution, why: 'the domain ended with neither a started nor an exec_failed report' });
+    const pre = decideResult({
+      leaseLost: this.leaseLost,
+      authorized: this.authorized,
+      started: this.backendStarted,
+      execFailed: this.execFailed !== null,
+      report,
+      cancelAt: this.cancelAt,
+      cancelCause: this.cancelCause,
+      reportAt: this.reportAt,
+      orphans: this.orphans,
+    });
+    if (pre.kind === 'interrupt') {
+      await this.engine('checks.interrupt', { execution: a.execution, why: pre.why });
       return;
     }
-    await Promise.race([this.outputDone, new Promise((r) => setTimeout(r, 2000))]);
+    const whole = await Promise.race([this.outputDone.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 2000))]);
+    // What was dropped is known only when the init said the output ended:
+    // otherwise bytes may be missing that nothing counted.
+    const dropped = whole && launch.outputEof ? this.capture.dropped : null;
     let output: string | null = null;
     try {
       output = await writeWholeRecord(this.rt, { project: a.project, run: null, kind: 'check_output', content: this.capture.bytes() });
     } catch (err) {
       log('check output', err, { execution: a.execution });
     }
-    const established = this.authorized && this.backendStarted;
-    const cancelledFirst = this.cancelAt !== null && (this.reportAt === null || this.reportAt >= this.cancelAt);
-    const own = report !== null && report.startFailed !== true && !cancelledFirst;
-    const fields: ResultFields = execFailed
-      ? { execution: a.execution, established: false, exit_status: null, signaled: false, deadline_hit: false, orphans: false, not_run_reason: 'exec_failed', output, output_dropped_bytes: this.capture.dropped }
-      : {
-          execution: a.execution,
-          established,
-          exit_status: own && report!.signal === null ? report!.code : null,
-          signaled: (own && report!.signal !== null) || this.cancelAt !== null,
-          deadline_hit: this.cancelCause === 'deadline',
-          orphans: this.orphans,
-          not_run_reason: null,
-          output,
-          output_dropped_bytes: this.capture.dropped,
-        };
+    const fields: ResultFields = { execution: a.execution, ...pre.fields, output, output_dropped_bytes: dropped };
     await this.engine('checks.record', fields);
   }
+}
+
+// A check's deadline (D3 §2.5): armed when the init's `started` report
+// arrives, firing `fire` after `ms` unless the check has exited by itself
+// by then (`exited`), and disarmed by clearing it once it has.
+export function armDeadline(ms: number, exited: () => boolean, fire: () => void): NodeJS.Timeout {
+  const t = setTimeout(() => {
+    if (!exited()) fire();
+  }, ms);
+  t.unref?.();
+  return t;
+}
+
+export interface Observed {
+  leaseLost: boolean;
+  authorized: boolean;
+  started: boolean;
+  execFailed: boolean;
+  report: { code: number | null; signal: number | null; startFailed?: boolean } | null;
+  cancelAt: number | null;
+  cancelCause: 'deadline' | 'lease' | null;
+  reportAt: number | null;
+  orphans: boolean | null;
+}
+
+// What an execution established, from what the engine itself observed of
+// it (D3 §§2.6, 2.7): never from anything check code wrote.
+// - a lapsed check lease: no verdict, `interrupted` (D2 §3.5's case);
+// - neither `started` nor `exec_failed`: not known to have started, no row;
+// - `exec_failed`: not established, skipped;
+// - otherwise established with its launch authorized and `started` seen;
+//   the exit status is the check's own only when its exit report reached
+//   the engine before the engine began cancelling it; a deadline sets
+//   `deadline_hit` and `signaled`; `orphans` unknown stays unknown (null),
+//   which never passes.
+export function decideResult(o: Observed): { kind: 'interrupt'; why: string } | { kind: 'record'; fields: Omit<ResultFields, 'execution' | 'output' | 'output_dropped_bytes'> } {
+  if (o.leaseLost) return { kind: 'interrupt', why: 'the check lease lapsed: the engine did not hold the execution throughout' };
+  const execFailed = o.report?.startFailed === true || (o.execFailed && !o.started);
+  if (!o.started && !execFailed) return { kind: 'interrupt', why: 'the domain ended with neither a started nor an exec_failed report' };
+  if (execFailed) return { kind: 'record', fields: { established: false, exit_status: null, signaled: false, deadline_hit: false, orphans: false, not_run_reason: 'exec_failed' } };
+  const cancelledFirst = o.cancelAt !== null && (o.reportAt === null || o.reportAt >= o.cancelAt);
+  const own = o.report !== null && !cancelledFirst;
+  return {
+    kind: 'record',
+    fields: {
+      established: o.authorized && o.started,
+      exit_status: own && o.report!.signal === null ? o.report!.code : null,
+      signaled: (own && o.report!.signal !== null) || cancelledFirst,
+      deadline_hit: cancelledFirst && o.cancelCause === 'deadline',
+      orphans: o.orphans,
+      not_run_reason: null,
+    },
+  };
 }
 
 // Every check tree of the project no execution or current candidate
@@ -475,8 +551,11 @@ export class CheckRunner {
           // terminated if it can be, and the execution ends with no row.
           try {
             const d = await this.rt.read<DomainRow>('domain.row', { domain: a.domain });
-            const v = await terminateDomain({ rt: this.rt, d, incarnation: this.rt.incarnation, handle: s });
-            if (v.terminated) await this.rt.engine('checks.interrupt', { execution: a.execution, why: (err as Error).message });
+            const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt: this.rt, d, incarnation: this.rt.incarnation, handle: s });
+            if (v.terminated) {
+              await this.rt.engine('checks.interrupt', { execution: a.execution, why: (err as Error).message });
+              await s.release();
+            }
             else {
               s.quarantined = true;
               await this.rt.engine('checks.quarantine', { execution: a.execution, why: v.unknown ?? 'termination not established' });
@@ -498,7 +577,10 @@ export class CheckRunner {
 // established first; then it ends `interrupted` with no row. One whose
 // termination cannot be established stays quarantined. Its registration
 // again, as trigger `recovery`, is slice 18's.
-export async function recoverChecks(rt: Runtime): Promise<void> {
+// `priorUnknown`: per prior incarnation, why its domains are unknown (its
+// supervisor leaf could not be closed, D2 §3.3); such a domain is never taken
+// for terminated, so its execution stays quarantined.
+export async function recoverChecks(rt: Runtime, priorUnknown: ReadonlyMap<string, string> = new Map()): Promise<void> {
   const live = await rt.read<{ id: string; domain: string | null }[]>('checks.live');
   for (const x of live) {
     try {
@@ -514,7 +596,8 @@ export async function recoverChecks(rt: Runtime): Promise<void> {
         continue;
       }
       const owner = await rt.read<{ incarnation: string } | null>('checks.domain_owner', { domain: d.id });
-      const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt, d, incarnation: owner?.incarnation ?? rt.incarnation, handle: undefined });
+      const known = owner === null ? 'the domain has no recorded owner' : (priorUnknown.get(owner.incarnation) ?? null);
+      const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt, d, incarnation: owner?.incarnation ?? rt.incarnation, handle: undefined, knownUnknown: known });
       if (v.terminated) await rt.engine('checks.interrupt', { execution: x.id, why: 'the engine restarted during the execution' });
       else await rt.engine('checks.quarantine', { execution: x.id, why: v.unknown ?? 'termination not established' });
     } catch (err) {

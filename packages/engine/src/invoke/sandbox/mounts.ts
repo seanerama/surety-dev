@@ -44,6 +44,10 @@ export interface Entry {
   content?: string;
   source?: string;
   mode?: number;
+  // Made without following a link at any component, each component created
+  // or found as a directory, the file created exclusively: an entry inside a
+  // tree the engine did not write itself (a check's input targets).
+  nofollow?: boolean;
 }
 
 export interface Tools {

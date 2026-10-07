@@ -437,10 +437,9 @@ function expandInputs(inputs: string[] | undefined, roots: readonly string[], en
   const members = new Map<string, TreeEntry>();
   const files = entries.filter((x) => x.type !== 'tree');
   if (inputs === undefined) {
-    // The default (Q3 (a)): every file under the roots but the governed
-    // file. Only regular files are files here; a symlink or a submodule
-    // entry is never a default member, and naming one is refused below.
-    for (const x of files) if (x.path !== GOVERNED_FILE && isProtectedPath(x.path, roots) && isRegular(x)) members.set(x.path, x);
+    // The default (Q3 (a)): every entry under the roots but the governed
+    // file; a link or a submodule there is refused below (B01).
+    for (const x of files) if (x.path !== GOVERNED_FILE && isProtectedPath(x.path, roots)) members.set(x.path, x);
   } else {
     inputs.forEach((input, n) => {
       const at = `/inputs/${n}`;
@@ -601,7 +600,10 @@ export function parseDefinition(file: string, stem: string, text: string, govern
         else egress.push(x);
       });
   }
-  if (e.list.length > 0) return { definition: null, manifest, errors: e.list };
+  // A link or a submodule among the inputs (B01) is an error of the version,
+  // which then satisfies no gate; the definition is still discovered, so
+  // nothing is dropped silently.
+  if (e.list.some((x) => x.code !== 'input_not_regular')) return { definition: null, manifest, errors: e.list };
   const definition: Definition = {
     schema: 1,
     key: stem,
@@ -620,7 +622,7 @@ export function parseDefinition(file: string, stem: string, text: string, govern
     ...(inputs !== undefined ? { inputs } : {}),
     egress,
   };
-  return { definition, manifest, errors: [] };
+  return { definition, manifest, errors: e.list };
 }
 
 // ---- fingerprints -------------------------------------------------------------------

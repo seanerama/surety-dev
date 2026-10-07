@@ -66,7 +66,10 @@ test('a definition: defaults, the key, covers by kind, engine variables, and inp
     { path: 'src/app.js', type: 'blob', mode: '100644', oid: 'e'.repeat(40) },
   ];
   const g = withProbe();
-  const ok = parseDefinition('.surety/checks/defs/s.json', 's', smoke('s'), g, entries);
+  const linked = parseDefinition('.surety/checks/defs/s.json', 's', smoke('s'), g, entries);
+  assert.deepEqual(linked.errors, [{ path: '.surety/checks/defs/s.json', code: 'input_not_regular' }], 'a link under the roots is refused under default inputs');
+  assert.ok(linked.definition, 'and the definition is still discovered');
+  const ok = parseDefinition('.surety/checks/defs/s.json', 's', smoke('s'), g, entries.filter((e) => e.mode !== '120000'));
   assert.deepEqual(ok.errors, []);
   assert.deepEqual(
     { origin: ok.definition.origin, cwd: ok.definition.cwd, runner_class: ok.definition.runner_class, egress: ok.definition.egress, requires: ok.definition.requires },
@@ -77,11 +80,12 @@ test('a definition: defaults, the key, covers by kind, engine variables, and inp
     ['.surety/checks/data.txt', '.surety/checks/run.sh'],
     'default inputs: every regular file under the roots but the governed file',
   );
-  const codes = (text, stem = 'x') => parseDefinition(`.surety/checks/defs/${stem}.json`, stem, text, g, entries).errors.map((e) => e.code);
+  const regular = entries.filter((e) => e.mode !== '120000');
+  const codes = (text, stem = 'x', within = regular) => parseDefinition(`.surety/checks/defs/${stem}.json`, stem, text, g, within).errors.map((e) => e.code);
   assert.deepEqual(codes(smoke('y')), ['key_mismatch']);
   assert.deepEqual(codes(smoke('x', { covers: { criteria: ['R1.1'] } })), ['covers_not_allowed']);
   assert.deepEqual(codes(smoke('x', { env: { SURETY_X: '1' } })), ['invalid_value']);
-  assert.deepEqual(codes(smoke('x', { inputs: ['.surety/checks/link'] })), ['input_not_regular']);
+  assert.deepEqual(codes(smoke('x', { inputs: ['.surety/checks/link'] }), 'x', entries), ['input_not_regular']);
   assert.deepEqual(codes(smoke('x', { inputs: ['src/app.js'] })), ['input_outside_roots']);
   assert.deepEqual(codes(smoke('x', { inputs: [GOV] })), ['invalid_value']);
   assert.deepEqual(codes(smoke('x', { command: ['other'] })), ['program_not_allowed']);
@@ -158,7 +162,7 @@ test('a check tree: the source projection without the roots or .git, the inputs 
   const oid = execFileSync('git', ['-C', repo, 'rev-parse', `${head}:.surety/checks/expect.txt`]).toString().trim();
   const project = `proj_${'0'.repeat(26)}`;
   const version = `pv_${'1'.repeat(26)}`;
-  const args = { home, scratch: join(home, 'tmp'), repo, project, revision: head, version, roots: ['.surety/checks/'], manifests: [[['.surety/checks/expect.txt', 'blob', '100644', oid]]], maxEntries: 1000 };
+  const args = { home, scratch: join(home, 'tmp'), repo, project, revision: head, version, roots: ['.surety/checks/'], manifests: [[['.surety/checks/expect.txt', 'blob', '100644', oid]]], maxEntries: 1000, maxBytes: 1 << 30 };
   const tree = await materialize(args);
   assert.equal(readFileSync(join(tree.src, 'src/app.js'), 'utf8'), 'export const a = 1;\n');
   assert.equal(existsSync(join(tree.src, '.surety')), false, 'the candidate copy of the protected paths is never in the projection');

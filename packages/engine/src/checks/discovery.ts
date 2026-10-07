@@ -128,8 +128,19 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
   }
   const { governed, errors: govErrors } = parseGoverned(govText);
   errors.push(...govErrors);
-  // The definitions directory: its direct entries.
+  // The definitions directory: its direct entries. The directory itself, or
+  // any directory above it, that is a link, a submodule or a file is a
+  // discovery error, never a project with no checks.
   const dir = governed.check_discovery.definitions;
+  const segments = dir.replace(/\/+$/, '').split('/');
+  for (let i = 1; i <= segments.length; i++) {
+    const at = segments.slice(0, i).join('/');
+    const e = entries.find((x) => x.path === at);
+    if (e !== undefined && e.type !== 'tree') {
+      errors.push({ path: i === segments.length ? dir : at, code: 'not_regular_file' });
+      return { governed, checks: [], errors };
+    }
+  }
   const direct = new Map<string, SizedEntry>();
   for (const e of entries) {
     if (!e.path.startsWith(dir)) continue;
@@ -179,6 +190,8 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
     const parsed = parseDefinition(r.path, r.stem, text, governed, plain);
     errors.push(...parsed.errors);
     if (parsed.definition === null) continue;
+    // (A definition with only input_not_regular errors is discovered, its
+    // manifest the regular members; the version's errors hold its gates.)
     const d = parsed.definition;
     checks.push({
       key: d.key,

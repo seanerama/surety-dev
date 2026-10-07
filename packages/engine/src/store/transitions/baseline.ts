@@ -303,7 +303,7 @@ export function insertExecutionResult(
     exit_status: number | null;
     signaled: boolean;
     deadline_hit: boolean;
-    orphans: boolean;
+    orphans: boolean | null;
     not_run_reason: string | null;
     output: string | null;
     output_dropped_bytes: number | null;
@@ -337,7 +337,7 @@ export function insertExecutionResult(
       a.finished_at,
       a.execution,
       a.not_run_reason,
-      a.orphans ? 1 : 0,
+      a.orphans === null ? null : a.orphans ? 1 : 0,
       a.output_dropped_bytes,
       a.runner_qualification,
     );

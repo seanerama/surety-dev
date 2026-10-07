@@ -1153,7 +1153,7 @@
           "enum": "CheckResultsNotRunReason"
         },
         "orphans": {
-          "required": true
+          "required": false
         },
         "output_dropped_bytes": {
           "required": false

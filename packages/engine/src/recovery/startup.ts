@@ -31,6 +31,7 @@ import type { RunEnder } from '../runs/end.js';
 import { reconcileProject } from '../scheduler/tick.js';
 import { closePriorSupervisors, removeEndedAreas } from '../boundary/terminate.js';
 import { recoverChecks } from '../checks/run.js';
+import { removeStagingLeftovers } from '../checks/checktree.js';
 import type { RunRow } from '../store/transitions/runs.js';
 
 export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Journal): Promise<{ runs: number }> {
@@ -48,7 +49,8 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
 
   // Check executions a prior incarnation left (D3 §2.6): never recorded as
   // run or not run; their domains' closure established first.
-  await recoverChecks(rt).catch((err) => log('recovery', err, { what: 'check executions' }));
+  removeStagingLeftovers(rt.home);
+  await recoverChecks(rt, ender.priorUnknown).catch((err) => log('recovery', err, { what: 'check executions' }));
 
   const runs = await rt.engine<RunRow[]>('run.unended');
   const recovery = { recovery: rt.incarnation };
