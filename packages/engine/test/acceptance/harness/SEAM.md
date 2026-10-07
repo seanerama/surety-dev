@@ -1524,7 +1524,7 @@ The expected table is `../contract/decisions.json` (the eleven enabled decision 
 
 **The protected set** of a revision is every file under the protected roots. The roots are those the governed file of the effective protected version names; a root is a path prefix ending in `/`.
 
-**The fingerprint** of a revision is SHA-256, in lower-case hex, of the UTF-8 JSON text (no white space) of the array of `[path, blob id]` pairs of the protected set, sorted by path. Nothing of any file's content is projected into it. `protectedFingerprint` in `gates.mjs` computes it from `git ls-tree`; the tests compare `protected_versions.fingerprint` with that and never read the engine's computation. A repository with no file under its roots has the fingerprint of `[]`.
+**The fingerprint** of a revision is SHA-256, in lower-case hex, of the UTF-8 JSON text (no white space) of the manifest of the protected set: the array of `[path, type, mode, object id]` of every entry under the roots and the governed file, sorted by path (*amended in M3 slice 17, D3 L6: section 196; it was the mode-free array of `[path, blob id]` pairs, which section 197 calls the mode-free scheme*). Nothing of any file's content is projected into it. `protectedFingerprint` in `gates.mjs` computes it from `git ls-tree`; the tests compare `protected_versions.fingerprint` with that and never read the engine's computation. A repository with no file under its roots and no governed file has the fingerprint of `[]`.
 
 **Versions.** `protected_versions` holds one row per version: `seq`, `fingerprint`, `change_kind`, `proposal`, `approver_authority`, `authorized` (0 or 1), `effective_from`, `superseded_by`, `check_ids`. Creating a project, through `POST /v1/projects` or the fixture installer, records its first version: `change_kind` `initial`, `authorized` 1, `effective_from` set, the fingerprint of the integration branch's commit under the roots its governed file names. The **effective version** of a project is the one row that is authorized, has `effective_from`, and has no `superseded_by`; the tests require exactly one at every moment (`effectiveVersion`). The only writer of a later authorized version is the application of an approved proposal (section 69).
 
@@ -4252,6 +4252,103 @@ The rows declare their checks with the checks fixture of section 67, as before. 
 - **M208 (a)'s runner id and qualification** are the sandbox lane's (row M201 (b)); a scripted result carries the label `test_fixture` and no qualification (section 190).
 - **M208 (d)'s repair**: no repair is triggered by any check result before slice 21 (D3 §2.10); slice 21's M234 (f) covers a superseded candidate's result.
 
+---
+
+# M3 slice 17: the protected inputs
+
+Sections 195 to 202 were written with the slice-17 acceptance tests (2026-10-07; `verify/m3-s17` from `main` at `8b516c0`): rows M210 to M215 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.3. They follow D3 draft 2 (§§1.1, 1.3, 1.5, 2.2 to 2.4, A.4, A.7; L6, Q3, Q6, Q11), E89 to E94, and Sean's decision for this slice recorded as E95 (below). Every earlier section stands; what this pass changes in them is in section 202.
+
+## 195. What the slice-17 tests assume throughout
+
+- **Lanes.** M210 is the kernel lane (section 177). M211 to M215 are the sandbox lane (section 122), under the runner qualification fixture (section 181).
+- **E95, how "inputs are immutable at their pathnames" is verified** (D3 B01; rows M212, M213): **structurally.** While a check runs, held at its release file, the test reads that check process's mount table from the host (`/proc/<pid>/mountinfo`, the pid from the domain's `cgroup.procs`, as M201 (b) finds it) and requires what section 198 says, and that the projection is exact (section 199). One plain control uses the check program: a write to an input fails, a write to an ordinary source file succeeds and is not kept. No case has the check program rename, relink, exchange or replace a path; Astra's T02 attempt cases are not written, by Sean's decision, to be revisited at slice 18's runner self-test (`../COVERAGE.md`).
+- **The fingerprint changes once** (L6): every fingerprint a test computes is section 196's; the accepted rows that compare fingerprints are updated (section 202, `../COVERAGE.md`).
+
+## 196. The fingerprint over the manifest (L6), and the candidate's own
+
+(D3 §1.1, §1.3, §1.5, §7.1 L6, A.3; rows M210, M211, and every accepted row that reads a fingerprint.)
+
+**The protected fingerprint** of a revision under a set of roots is SHA-256, in lower-case hex, of the UTF-8 JSON text (no white space) of the **manifest** of its protected set: the array of `[path, type, mode, object id]` of every entry of `git ls-tree -r` at the revision whose path is under a root or is the governed file, sorted by path, `type` and `mode` as `git ls-tree` prints them (`blob`, `100644`, `100755`, `120000`; `commit`, `160000`). This replaces section 66's `[path, blob id]` pairs. So a regular file replaced by a symlink with the same blob id, or an executable bit changed, changes it. `protectedFingerprint` in `gates.mjs` computes it; `legacyProtectedFingerprint` computes the former value, for section 197 only. `protected_versions.fingerprint` holds it for every version a store holds once section 197's migration has run.
+
+**The check fingerprint** (`checks.definition_hash`, section 178) hashes the check's input manifest with its modes: an input whose executable bit differs gives another check fingerprint. Its exact form stays the engine's.
+
+**The candidate's own fingerprint** (D3 §1.5). Every execution records on `check_executions.candidate_protected_fingerprint` the protected fingerprint of the candidate's revision **under the roots of the protected version the execution is bound to** (section 66: roots are judged by the authorized set), so a candidate whose copy of the protected paths differs from the effective version's shows it. †
+
+## 197. Versions recorded under the mode-free scheme, and the Q11 migration
+
+(D3 §7.4 Q11 (a), E91 item 2; M3 plan §2.6 "how a test drives an engine start with a fingerprint recorded under the old scheme"; row M210 (c).)
+
+**The legacy fingerprint fixture** (harness only, section 7's rules). `POST /v1/harness/fixtures/legacy-fingerprint` with `{"protected_version": "pv_…"}` → **200** `{"protected_version": {"id", "fingerprint"}}`. The engine replaces the version's recorded fingerprint with the value the mode-free scheme gives for the version's own authorized protected set (SHA-256 of the sorted `[path, blob id]` pairs of its blobs under its roots and the governed file, as the engine computed it before slice 17), and marks the version as recorded under that scheme, as a store written before slice 17 holds it; the answer's `fingerprint` is that value. An unknown version is **404** `not_found`. It changes nothing else, and the running engine does not recompute it.
+
+**No comparison across schemes** (Q11, "meanwhile"). While a version is recorded under the mode-free scheme, a comparison of its fingerprint with one over the manifest is unreadable, never equal: a gate evaluation of a candidate of its project carries `PROTECTED_PATH_UNAUTHORIZED` (section 66, "A protected set that cannot be read").
+
+**The migration** runs at an engine start, before anything reads a fingerprint. Each version recorded under the mode-free scheme is recomputed over the manifest from its authorized tree (the tree the engine authorized it from; how the engine finds it is the engine's). A version whose tree cannot be read then has an **unreadable** fingerprint: the protected-version read (section 178) shows `"fingerprint": null`; every gate evaluation of its project while it is the effective version carries `PROTECTED_PATH_UNAUTHORIZED`, also once the repository answers again within that engine run. The test makes a tree unreadable by making the whole repository unreadable for the start (`makeUnreadable`, section 32), restoring it as soon as the engine is up. Not pinned: what is stored in `protected_versions.fingerprint` for an unreadable fingerprint, and whether a later start retries it.
+
+## 198. The immutable input namespace, read from the host (E95)
+
+(D3 §2.2, §7.1 L6, B01; AD §9; E89 item 2; rows M212, M213; `checks/fixtures.mjs`, `assertImmutableAt`, `mountAt`, `mountsOfPid`.)
+
+**What a case reads.** The held check program's host pid (section 182), and `/proc/<pid>/mountinfo` read from the host. Mount points there are as the check sees them (after `pivot_root`). **The mount a path lies on** is, of the mount points that are the path or one of its ancestors, the longest; of mounts stacked at that point, the top one.
+
+**What is required, for each input of the check's manifest.** The input's workspace pathname (`/surety/workspace/<path>`) and every directory from it up to, and not including, `/surety/workspace` each lie on a mount that is (1) read-only (`ro` in its mount options or its super options), (2) mounted at a point strictly below `/surety/workspace`, so it is not the workspace's writable overlay, and (3) not an overlay with an upper layer. Then no rename, removal, exchange or replacement at any of those paths is possible: a read-only mount refuses changes under it, and a mount point cannot be renamed or removed from its parent. An ancestor that exists only as a mount target (`.surety/checks/expect` in M212) and one that also holds source (`.surety`, beside `.surety/README.md`) are both covered. How the engine builds this is its own (D3 §2.2 fixes the property, not the construction); the input's bytes are read through the program's digest and compared with the blob's (section 199).
+
+**The control** (D3 §2.2, E89 item 2). The program's `write` mode opens each named existing workspace-relative file for writing (no create, no truncate) and writes one line, `SURETY-CHECK-WROTE` and a line feed, at its start; then it writes `SURETY-CHECK-WRITE <json>`: `{"results": [{"path", "outcome"}], "after": {<path>: <sha256>}}`, `outcome` `ok` or the error code. A write to an input is refused, `EROFS` or `EACCES`, and the input still reads the protected bytes. A write to an ordinary source file of the candidate (one under no input's ancestors) succeeds in the domain and does not persist: no file under `checktrees/` holds the written bytes, the project's checkout is clean, and an operator's re-run of the check on the same candidate reads the blob's bytes.
+
+**The program's acting modes and their guard** (BS3 §4 rule 1; E64). Section 182's program gains `--host-ns pid:[n],net:[n],mnt:[n]` and two modes, `write` (above) and `fetch` (section 201). Each acts only if the program's own pid, network and mount namespaces are each not the host's named ones, pid 1's `comm` is no system init (`systemd`, `init`, `launchd`), and it sees at most 16 processes; any read that fails is a refusal: `SURETY-CHECK refused <reasons>`, exit 94, nothing done (section 141's guard). The test's half: a test releases a held program into either mode only after `assertContained` (section 141) has read its containment from the host. Verified without an engine (2026-10-07): on the host each mode refused; inside `unshare -Urpfmn --mount-proc`, told the host's namespaces, `write` wrote a scratch file and `fetch` reported `ENETUNREACH` for a proxy on 127.0.0.1 and nothing without `HTTPS_PROXY`.
+
+## 199. The projection, read through the program
+
+(D3 §§1.3, 1.5, 2.2, Q3; B01; rows M211 (M213 (f)), M213.)
+
+A check's view is read from its report (section 182): the regular files under its working directory. **The protected paths it sees** are those of them under the roots of the version it is bound to, and the governed file wherever it lies. They are exactly the paths of the check's input manifest on the version read (section 178), each once; each reads its blob's bytes at the version (digest against `git cat-file blob`); a protected path not in the manifest that it is told to digest reads `error:ENOENT`. The governed file is seen nowhere, also when it lies outside every root (the source projection included). The candidate's source (`README.md`, `src/app.js`) is beside them. Under a candidate whose own protected copy and roots differ from the effective version's, the same holds for the effective version's manifest (M211).
+
+## 200. The check tree's bounds, and the bound for all trees
+
+(D3 §2.4, A.7; T17; D2 §3.7; BS3 §4 rule 4; row M214.)
+
+- **Host-side reads** stay layout-free (section 182): the tests walk `$SURETY_HOME/checktrees/` and find files by their SHA-256 (`checktreeFiles`, `filesHolding`), and require no entry named `.git`.
+- **One tree per triple.** Two executions of one (project, revision, version) running at once (the project's `max_concurrent_checks` 2) read one tree: exactly one file under `checktrees/` holds a source file unique to the candidate, and one holds its input, neither with a write bit. Once the candidate is superseded (section 192) and nothing runs on it, no file holds that source: its tree is gone. Not pinned: whether it goes earlier.
+- **Each bound refuses the tree** with `materialization_failed` (D3 §2.7), `execution_established` 0, and leaves nothing of it under `checktrees/`: more source entries than `checktree_max_entries` (1001 zero-byte files at the minimum, 1000), more bytes than `checktree_max_bytes` (a file of 64 MiB and one byte at the minimum, 64 MiB; zeros, refused before anything is written), and a git that does not answer (section 32's `holdGit`, `git_deadline` 10 s) reached at the barrier **`checks.before_materialize`** (in the engine after the execution's admission and toolchain resolution, before the tree is built; section 18's rules). The cases set `check_infra_retries_max` 0, so slice 18's recovery registration adds nothing.
+- **While a materialization waits on git** (D2 §3.7), `GET /v1/engine` and a Stop of another project's held run (section 17's two requests) are each answered within two seconds. "A cancellation" of the plan's (f) is read as that Stop. †
+- **`--harness-checktrees-max-bytes <n>`** (harness mode only; refused otherwise as every harness flag): sets `checktrees_max_bytes` to `<n>` bytes for this start, below its configured range (A.7's minimum is 64 MiB), the configuration key keeping its range. A tree whose build would take the trees in use past it is not built: `materialization_failed`, nothing of it left, while the tree in use is unaffected. The case sets 100 KiB with trees of about 60 KiB each. How the engine counts a tree's bytes (file sizes or blocks) is its own; the case's margins hold for either.
+- (d)'s large definition traversal is discovery's cap of 512 definitions (D3 §1.4), row M203 (b).
+
+## 201. The environment and egress of a check
+
+(D3 §§2.2, 2.3, 2.6, 1.1, A.4; Q6; D2 §2.4; sections 140, 169; row M215.)
+
+- **The environment** of the check's own process, read from the host (`/proc/<pid>/environ`), is exactly: `PATH` (the `runner_config.direct.path` joined with `:`), `HOME=/surety/home`, `TMPDIR=/tmp`, `LANG=C.UTF-8`, `TZ=UTC`, `CI=true`, the `runner_config.direct.env` variables, the definition's `env` variables, `SURETY_CHECK` (the key), `SURETY_CANDIDATE`, `SURETY_SOURCE_REVISION`, `SURETY_PROTECTED_VERSION` (the version's id), `SURETY_DOMAIN` (the domain marker, section 13) and, only when the definition names `egress`, `HTTPS_PROXY`. No variable of the engine's own environment reaches it (the case gives the engine parent-only sentinels), and no value holds the API token. The domain init is not dumpable by design, so its environment is not read.
+- **The network.** The check's network namespace has only `lo` (`/proc/<pid>/net/dev`, host-read). With `egress`, `HTTPS_PROXY` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`, the forwarder of section 140, and the allow list of the domain's proxy is exactly the definition's `egress` (a subset of `runner_config.direct.egress_allow`, A.4): a host the governed list allows and the definition does not name is refused **403**, `not_listed`. The harness resolver (section 140) and `egress_connect_hang` (section 169) apply to a check domain's proxy as to a role's.
+- **The program's `fetch` mode** (guarded, section 198): with no `HTTPS_PROXY` it attempts nothing; otherwise, per host, one connection to the proxy and one `CONNECT <host>:443 HTTP/1.1`, reading the status line for at most 15 s; then `SURETY-CHECK-FETCH <json>`: `{"proxy": <HTTPS_PROXY or null>, "results": [{"host", "status": <status line or null>, "error": <null or how it ended>}]}`.
+- **The check domain's `egress_log`** (section 140's form): one record per check domain whose definition names `egress`, `kind` `egress_log`, the project's, `run` null, published once the domain is terminated. `domain.egress_refused` events name `subject.domain` the check's domain.
+- **Direct exec** (D3 §2.6). An argument full of shell metacharacters is one element of the check process's argument vector, unchanged (host-read `/proc/<pid>/cmdline`), and no member of the domain is a shell.
+- **Toolchain** (D3 §2.7, Q6). Every execution records `toolchain` `{"name", "path", "sha256"}`, the resolved program and the hash of its bytes, pinned or not; a pinned `sha256` that differs is `toolchain_missing` with the found hash recorded.
+
+## 202. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Section 66: the fingerprint is section 196's (L6); a version recorded under the mode-free scheme is section 197's.
+- Section 182: the program gains `--host-ns`, `write` and `fetch`, guarded (section 198); it is no longer "writes no file, connects nowhere" in those two modes.
+- Section 178: the version read's `fingerprint` is `null` when unreadable (section 197).
+- Section 7's harness routes gain `legacy-fingerprint`; section 1's flags gain `--harness-checktrees-max-bytes`; section 18's barriers list `checks.before_materialize` (named in the M3 plan §2.3 and present since slice 15).
+- Sections 140 and 169 apply to check domains (section 201).
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| How immutability is verified | Structurally, from the host's mount table (section 198) | E95, Sean's decision for this slice |
+| The fingerprint's form † | `[path, type, mode, object id]` per entry, sorted, the governed file included (section 196) | L6 names the manifest; `ls-tree`'s forms are section 178's |
+| The candidate's fingerprint's roots † | The bound version's roots (section 196) | Section 66: roots are judged by the authorized set |
+| The old-scheme start (M3 plan §2.6) | The legacy fingerprint fixture, then a restart (section 197) | Q11 (a) needs a store with mode-free values; nothing else writes one now |
+| An unreadable fingerprint on the read | `null` (section 197) | Unknown is a value; the store's form stays the engine's |
+| `checktrees_max_bytes` below range | `--harness-checktrees-max-bytes` (section 200) | Ruling 5 of the coordinator's brief; BS3 §4 rule 4 |
+| "A cancellation" during preparation † | A Stop of another project's held run (section 200) | D2 §3.7: cancellation stays recordable while another domain is held up; no check route cancels an execution |
+| The check domain's egress log | `run` null, the project's (section 201) | A check is not a run (D3 §2.1) |
+
+**Deferred or not written** (`../COVERAGE.md`, "M3 slice 17"):
+- **M212 (b) to (d) and Astra's T02 attempt cases** (rename, removal, exchange, replacement, symlink redirection, a hard link, by the check program): not written, by Sean's decision (E95); revisited at slice 18's runner self-test, whose B01 cases D3 §2.8 requires.
+- **M210 (a)'s `input_changed`**: the classifier's observation, row M226 (slice 19).
+- **M213 (g)**: `M201-source-symlink-refused.test.mjs` (section 188). **M213 (f)**: read on M211's execution.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" and "M3 slice 16".
+See `../COVERAGE.md`, "M3 slice 15", "M3 slice 16" and "M3 slice 17".

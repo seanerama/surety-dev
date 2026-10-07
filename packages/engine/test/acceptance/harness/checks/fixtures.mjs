@@ -1,5 +1,5 @@
-// Fixtures, commands and reads for the M3 rows of slice 15 (M201 to M205;
-// SEAM.md §§177 to 185): projects whose protected set holds a governed file
+// Fixtures, commands and reads for the M3 rows of slices 15 and 17 (M201 to
+// M205, M210 to M215; SEAM.md §§177 to 185, 195 to 202): projects whose protected set holds a governed file
 // and check definitions, the requirement index through the plan fixture,
 // the runner qualification fixture, the protected-version read, the
 // candidate's check executions (store and routes), the gate read's per-check
@@ -11,17 +11,21 @@
 // by any slice-15 case.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { installProject, sha256Hex, waitFor } from '../engine.mjs';
-import { askingForTicks, GOVERNED_FILE } from '../gates.mjs';
+import { askingForTicks, GOVERNED_FILE, installGatedPlan } from '../gates.mjs';
+import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { hasIdForm } from '../ids.mjs';
 import { recordFile } from '../records.mjs';
 import { makeProjectRepo, refOid, gitQuiet } from '../repos.mjs';
 import { hasTable, withStore } from '../store.mjs';
+import { hostNamespaces } from '../scripted.mjs';
 import { procsOf } from '../sandbox/cgroup.mjs';
 import { hostProcess } from '../sandbox/procs.mjs';
+import { parseMountinfo } from '../sandbox/view.mjs';
 
 export { GOVERNED_FILE };
 export const DEFS_DIR = '.surety/checks/defs/';
@@ -357,4 +361,163 @@ export const fileHolding = (entries, content) => entries.some((e) => e.type === 
 
 export const machineId = () => readFileSync('/etc/machine-id', 'utf8').trim();
 
+// ---- slice 17: the protected inputs (SEAM.md §§195 to 202) -----------------------------------
+
+export const WORKSPACE = '/surety/workspace';
+
+// The guard's input for the program's acting modes (SEAM.md §198): the host's
+// pid, network and mount namespaces as this test process reads its own.
+export function guardArgs() {
+  const ns = hostNamespaces();
+  return ['--host-ns', `${ns.pid},${ns.net},${ns.mnt}`];
+}
+
+// The exact bytes of a blob at a revision, and their SHA-256, read with
+// engine-style git (no work tree, no hooks).
+export const blobBytes = (repo, rev, path) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-C', repo, 'cat-file', 'blob', `${rev}:${path}`], { maxBuffer: 1 << 26 });
+export const blobSha = (repo, rev, path) => sha256Hex(blobBytes(repo, rev, path));
+
+// The regular files a program's report saw, as a set of workspace paths.
+export const reportedFiles = (report) => new Set(report.entries.filter((e) => e.type === 'file').map((e) => e.path));
+
+// A tagged line of the program's output (SEAM.md §§198, 201), parsed.
+export function programLine(text, tag) {
+  const line = text.split('\n').find((l) => l.startsWith(`${tag} `));
+  assert.ok(line, `the check program wrote its ${tag} line (output: ${JSON.stringify(text.slice(0, 600))})`);
+  return JSON.parse(line.slice(tag.length + 1));
+}
+
+// The mount table of a host process, read from the host (/proc/<pid>/mountinfo),
+// each entry with its mount id and parent id.
+export function mountsOfPid(pid) {
+  const lines = readFileSync(`/proc/${pid}/mountinfo`, 'utf8').split('\n').filter(Boolean);
+  return parseMountinfo(lines).map((m) => {
+    const [id, parent] = m.line.split(' ');
+    return { ...m, id, parent };
+  });
+}
+
+const under = (path, point) => point === '/' || path === point || path.startsWith(`${point}/`);
+
+// The mount a path lies on in a mount table: of the mount points that are the
+// path or one of its ancestors, the longest; of several mounts stacked at it,
+// the top one (the one no other mount at that point names as its parent).
+export function mountAt(mounts, path) {
+  const holding = mounts.filter((m) => under(path, m.point));
+  if (holding.length === 0) return null;
+  const longest = Math.max(...holding.map((m) => m.point.length));
+  const stack = holding.filter((m) => m.point.length === longest);
+  return stack.find((m) => !stack.some((o) => o.parent === m.id)) ?? stack.at(-1);
+}
+
+const readOnly = (m) => m.options.includes('ro') || m.superopts.split(',').includes('ro');
+
+// E95, the structural reading of "inputs are immutable at their pathnames"
+// (D3 §2.2, B01; SEAM.md §198): the input's pathname and every directory from
+// it up to, and not including, /surety/workspace lie on a read-only mount
+// whose mount point is below /surety/workspace, so none of them is on the
+// workspace's writable overlay or its upper layer, and no rename, removal or
+// replacement at any of those paths is possible. Returns the mounts read.
+export function assertImmutableAt(mounts, input, what) {
+  const parts = input.split('/');
+  const seen = [];
+  for (let i = parts.length; i >= 1; i--) {
+    const path = `${WORKSPACE}/${parts.slice(0, i).join('/')}`;
+    const m = mountAt(mounts, path);
+    assert.ok(m, `${what}: host-read, ${path} lies on some mount of the check's mount table`);
+    assert.ok(
+      m.point.startsWith(`${WORKSPACE}/`),
+      `${what}: host-read, ${path} lies on a mount of its own below ${WORKSPACE}, not on the workspace's writable overlay (it lies on ${m.point}, ${m.fstype}, ${m.options.join(',')})`,
+    );
+    assert.ok(readOnly(m), `${what}: host-read, the mount ${path} lies on (${m.point}, ${m.fstype}) is read-only (options ${m.options.join(',')}; super ${m.superopts})`);
+    assert.ok(!(m.fstype === 'overlay' && /(^|,)upperdir=/.test(m.superopts)), `${what}: host-read, the mount ${path} lies on is no overlay with an upper layer (${m.superopts})`);
+    seen.push({ path, point: m.point, fstype: m.fstype, options: m.options });
+  }
+  return seen;
+}
+
+// The interfaces of a host process's network namespace (/proc/<pid>/net/dev).
+export function interfacesOfPid(pid) {
+  return readFileSync(`/proc/${pid}/net/dev`, 'utf8')
+    .split('\n')
+    .slice(2)
+    .map((l) => l.trim().split(':')[0])
+    .filter(Boolean);
+}
+
+// Every regular file under $SURETY_HOME/checktrees/, host-read, with its mode
+// and SHA-256; [] when there is no such directory. No link followed.
+export function checktreeFiles(home) {
+  const root = join(home, 'checktrees');
+  if (!existsSync(root)) return [];
+  const out = [];
+  const visit = (dir) => {
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const full = join(dir, name);
+      let st;
+      try {
+        st = lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) visit(full);
+      else if (st.isFile()) {
+        let sha = null;
+        try {
+          sha = sha256Hex(readFileSync(full));
+        } catch {
+          sha = null;
+        }
+        out.push({ path: full, name, mode: st.mode & 0o7777, size: st.size, sha });
+      }
+    }
+  };
+  visit(root);
+  return out;
+}
+
+export const filesHolding = (files, content) => files.filter((f) => f.sha === sha256Hex(content));
+
+// The egress_log records of a project's check domains (SEAM.md §201): kind
+// egress_log, the project's, `run` null; each with its parsed entries.
+export function checkEgressLogs(home, project) {
+  const rows = withStore(home, (db) => db.prepare(`SELECT * FROM "records" WHERE "kind" = 'egress_log' AND "project" = ? AND "run" IS NULL ORDER BY rowid`).all(project));
+  return rows.map((row) => ({
+    row,
+    entries: row.path === null ? [] : readFileSync(recordFile(home, row), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)),
+  }));
+}
+
+// The latest execution of a key for a candidate that has reached a terminal
+// status (recorded, cancelled or interrupted), asking for ticks meanwhile.
+export const terminalExecution = (fx, project, candidate, key, what) =>
+  askingForTicks(
+    fx,
+    project,
+    () => {
+      const x = executionsOf(fx.home, candidate).filter((e) => e.key === key).at(-1);
+      return x && ['recorded', 'cancelled', 'interrupted'].includes(x.status) ? x : undefined;
+    },
+    what ?? `the ${key} check's execution to reach a terminal status`,
+  );
+
 export { hasIdForm, waitFor };
+
+// A one-stage plan with no requirement, whose Builder writes the permitted
+// edit (and `steps`, if given) and asks for the nomination; the stage is
+// built, integrated and nominated. Returns {plan, stage, candidate}.
+export async function buildStage(fx, project, { steps = [permittedEdit()] } = {}) {
+  const plan = await installGatedPlan(fx.engine, project.id, { requirements: [], stages: [{ number: 1, goal: 'the first stage', implements: [] }] });
+  const [stage] = plan.stages;
+  fx.scripted.script(stage.work_item, [roleThat(steps, { nominate: true })]);
+  const build = await runToEnd(fx, project.id, stage.work_item);
+  assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the Builder's run was accepted (${build.reason_text})`);
+  const candidates = await waitForCandidates(fx, project.id);
+  return { plan, stage: stage.id, candidate: candidates.at(-1) };
+}

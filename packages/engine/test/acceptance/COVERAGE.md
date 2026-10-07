@@ -2204,6 +2204,56 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 2026-10-06, on `verify/m2-report` from `main` at `02558a1`. `docs/acceptance/reports/M2-report.md` is filled from the fourth attempt's records (`~/surety-hands-on-20261006T014511Z/home`, its store read on a copy; nothing there changed): the host qualification at the run, the binary and its pin, the entry with every field and its evidence, what the canaries established (all but M139's), the spend as estimated and as charged, `term_to_exit_ms`, the configuration and policies in force, egress, `bootstrap_exception`, path one with its commits and its ledger against the transcripts, and the token's absence. It stays a skeleton: the real-lane test files have not run, so M139, path two, their run directory's records, a Stop of a live process (CHECK (8) not shown) and the revision Sean's checkout held remain pending. **M141 alone:** (a) passes; (b) fails by design, "the M2 report is a skeleton (21 pending facts)". **M142 alone:** 5 of 5. Findings put to Sean in the report's section 21 (questions 11 to 14): what counts as the real lane's records for M141; the Stop of a live process; the Stop recorded over a clean exit (a likely engine defect, SEAM §143, D2 §1.6); `runs.model_observed` null on every run.
 
+## M3 slice 17: the protected inputs (M3 build spec §9; E92; E95)
+
+2026-10-07, by the Verifier of slice 17 on `verify/m3-s17`, cut from `main` at `8b516c0`. Rows M210 to M215 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.3: M210 kernel, M211 to M215 sandbox. The seam's §§195 to 202 fix what the plan's §2.6 and D3 leave to the tests. **E95** (Sean's decision for this slice, to be recorded in the errata by the driver): "inputs cannot change at their pathnames" (D3 B01; M212, M213) is verified structurally, from the host-read mount table of the held check, with one plain write control; no case has the check program rename, relink or replace paths.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M210 | kernel | `M210-input-identity-and-the-fingerprint-migration.test.mjs` | (a) a regular input, the same blob 100755, the same blob as a symlink: three protected fingerprints, two check fingerprints, the modes in the manifest; (b) the symlink input `input_not_regular`; (c) the legacy fixture on two versions, no cross-scheme comparison before the restart, the restart with one repository unreadable: one recomputed, one unreadable with `PROTECTED_PATH_UNAUTHORIZED` | written |
+| M210 | | (a) `input_changed` | | **deferred → 19**, row M226 (the classifier's observation; the coordinator's ruling 2) |
+| M211 | sandbox | `M211-the-candidates-copy-is-ignored.test.mjs` | the candidate's copy, a planted protected file and narrowed roots adopted out of band; the effective sentinel read, `candidate_protected_fingerprint`, the effective version bound; **and M213 (f)** on the same execution | written |
+| M212 | sandbox | `M212-inputs-are-immutable-at-their-pathnames.test.mjs` | held: the input and its three ancestors on read-only mounts below `/surety/workspace` (E95); the input's bytes; released: (a)'s write refused, (e) a source write succeeds and does not persist (checktrees, the checkout, an operator re-run) | written |
+| M212 | | (b) rename, removal, exchange, replacement; (c) symlink redirection; (d) a hard link; Astra's T02 attempt cases | | **not done, by Sean's decision (E95)**; to be revisited at slice 18's runner self-test, whose B01 cases D3 §2.8 requires |
+| M213 | sandbox | `M213-the-manifest-is-projected-exactly.test.mjs` | (a) declared, (b) overlapping directories, each member once, (c) a directory containing the governed file, (d) default inputs, (e) roots that leave the governed file outside | written; **a control**: passes on `main` |
+| M213 | | (f) a candidate whose root layout differs | | in M211's file (one execution reads both rows) |
+| M213 | | (g) a symlinked mount-target ancestor | | `M201-source-symlink-refused.test.mjs` (slice 15 review, S1), unchanged |
+| M214 | sandbox | `M214-the-check-tree-and-bounded-preparation.test.mjs` | (a) with (e); (b) one shared read-only tree, gone after supersession; (c), (d), (f) entries, bytes per tree and a held git, the API and a Stop answered meanwhile; `checktrees_max_bytes` under the harness flag | written; (a) to (f) **controls** (pass on `main`); the all-trees case fails |
+| M214 | | (d) a large definition traversal | | discovery's cap, M203 (b) (513 definitions) |
+| M215 | sandbox | `M215-environment-egress-direct-exec.test.mjs` | (a) the environment host-read; (b) no egress: only loopback, no proxy; (b) a declared host through the proxy and logged, an undeclared one 403 `not_listed`; (c) metacharacters literal, no shell; (d) a differing pin `toolchain_missing`, path and hash recorded pinned or not | written; (a), (b) without egress, (c), (d) **controls** |
+
+**The L6 straddle** (plan question 3 (a); M3 plan §4.3; E92 item 2 (3)). `protectedFingerprint` in `harness/gates.mjs` now hashes the `[path, type, mode, object id]` manifest of the roots and the governed file (SEAM §196; it hashed `[path, blob id]` pairs); `legacyProtectedFingerprint` keeps the former value for M210 (c) only. SEAM §66 is amended. Each change keeps its row's assertion:
+
+| File | Was | Now | Why |
+|---|---|---|---|
+| `M35-separate-governed-policy-file.test.mjs` | header and one message: "SHA-256 over the sorted (path, blob id) list" | the `[path, type, mode, object id]` manifest | L6; the comparisons are unchanged |
+| `M28-replayed-result-against-new-protected-set.test.mjs`, `M123-protected-set-read-only.test.mjs` | the fingerprint comparison's message | names the L6 manifest (SEAM §196) | the comparison now reads the new form through `protectedFingerprint` |
+| `harness/gates.mjs`, `assertApplied` (rows M37, M41, M53, M54, M55, M57, M106) | the applied version's fingerprint compared with the mode-free value | compared with the manifest value | the same function; no file of those rows edited |
+
+The former insufficient case is pinned as refused by M210 (a): three sets with equal `[path, blob id]` pairs and different types or modes must have three fingerprints. On `main` (still mode-free) each comparison fails, as intended: M35 2 of 6 cases, M28 1 of 1, M37 3 of 3, M41 1 of 5, M53 3 of 8, M54 3 of 6, M55 1 of 5, M57 1 of 2, M106 1 of 4, M123 5 of 5, each at the fingerprint assertion and nowhere else.
+
+**Readings for Sean** (each marked † in SEAM §202):
+
+| What | Reading | Why it needs a word |
+|---|---|---|
+| The protected fingerprint's exact form | `[path, type, mode, object id]` of every `ls-tree -r` entry under the roots and the governed file, sorted by path | L6 names the manifest, not the serialization; the tests need one |
+| `candidate_protected_fingerprint` | Under the roots of the version the execution is bound to | D3 §1.5 says "the candidate's own fingerprint"; a candidate whose governed file narrows its roots (M211) gives another value under its own roots |
+| "A cancellation" in M214 (f) | A Stop of another project's held run while a materialization waits on git | No route cancels a check execution; D2 §3.7 asks that cancellation stay recordable while another domain is held up |
+| An unreadable fingerprint | Stays unreadable for the rest of that engine run, the repository answering again; the read shows `null` | Q11 (a) recomputes once, at the migration; whether a later start retries is left open |
+| E95's consequence for source beside an input | A source file in a directory that is an input's ancestor (`.surety/README.md` beside `.surety/checks/`; in practice `.surety/policy.json`) is presented on a read-only mount | Every directory up to `/surety/workspace` must be on a read-only mount (E95); M212 requires that file present with its bytes, not writable |
+| The source-write control writes an existing file | On `main` the write is refused `EACCES` (the check tree's files are sealed 0444 and the overlay presents those modes); the control, per the coordinator's ruling, requires it to succeed | The plan's M212 (e) says "a source write succeeds"; whether a check may overwrite (not only create) source files in its overlay is the reading this fixes |
+
+**What was run.** `npm ci` and `npm run build` on `8b516c0` in the worktree. Each file run alone with `node --test`, never two at once, after checking that no other test process ran; no exhaust or real file, no `--lane`. On `main`'s engine:
+
+| File | Cases | First failing assertion, or control |
+|---|---|---|
+| M210 | 0 of 2 | (a) the regular project's version fingerprint is the mode-free value, not the manifest's (the rest of (a) and (b), the manifest's modes, the two check fingerprints and `input_not_regular`, pass on `main`, run with that assertion removed in a scratch copy). (c) the legacy fixture route, 404 (this slice's, SEAM §197) |
+| M211 | 0 of 1 | `candidate_protected_fingerprint` is null. Everything before it passes (the effective sentinel is read); everything after it, M213 (f) included, passes in a scratch copy without that assertion |
+| M212 | 0 of 1 | `/surety/workspace/.surety/checks/expect` lies on the workspace overlay (`rw`): the input file itself is a read-only bind, its ancestors are not. With the structural assertion removed (scratch), the source write fails `EACCES` (above); with that removed too, the rest passes: the input write is refused, the input keeps its bytes, nothing persists, the re-run reads the blob |
+| M213 | 5 of 5 | **control**: the projection is already exact on `main` |
+| M214 | 3 of 4 | (a)+(e), (b), (c)+(d)+(f) **controls**; the all-trees case: the engine refuses to start, `unknown flag --harness-checktrees-max-bytes` (this slice's, SEAM §200) |
+| M215 | 4 of 5 | (a), (b) without egress, (c), (d) **controls**; the egress case: no `HTTPS_PROXY` in the `net` check's environment (`main` binds no proxy for a check) |
+
 ## M3 slice 16: which result decides (M3 build spec §9; E92)
 
 2026-10-07, by the Verifier of slice 16 on `verify/m3-s16`, cut from `main` at `72072e6`. Rows M206 to M209 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.2, all kernel lane. The seam's §§189 to 194 fix what the plan's §2.6 and D3 leave to the tests for these rows. The plan's letters are the cases.

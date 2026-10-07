@@ -5,8 +5,10 @@
 // The governed settings (the protected roots, check commands, the required
 // set) live in `.surety/checks/protected-policy.json`, inside the protected
 // roots. `.surety/policy.json` holds only ungoverned settings. The protected
-// fingerprint is SHA-256 over the sorted (path, blob id) list of the
-// protected roots, with no projection of any field. So an ordinary setting
+// fingerprint is SHA-256 over the sorted manifest of the protected roots,
+// [path, type, mode, object id] per entry (D3 §7.1 L6; M3 slice 17, the L6
+// straddle: it was the mode-free [path, blob id] list), with no projection
+// of any field. So an ordinary setting
 // leaves the fingerprint alone; a governed one changes it and takes the
 // protected route; a roots change is judged by the roots that are
 // authorized, not by the ones it proposes; and a protected set nobody
@@ -60,7 +62,7 @@ describe('M35 the governed policy file is separate from the ordinary one', () =>
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx, { files: protectedFiles() });
     const authorized = effectiveVersion(fx.home, project.id);
-    assert.equal(authorized.fingerprint, protectedFingerprint(project.repo.path, project.base), 'the fingerprint is SHA-256 over the sorted (path, blob id) list of the protected roots');
+    assert.equal(authorized.fingerprint, protectedFingerprint(project.repo.path, project.base), 'the fingerprint is SHA-256 over the sorted [path, type, mode, object id] manifest of the protected roots (L6)');
 
     await changePolicy(fx.engine, project.id, { budget_run_billable_tokens: 500_000 });
     const head = refOid(project.repo.path, project.repo.ref);

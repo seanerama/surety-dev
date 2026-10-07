@@ -29,13 +29,36 @@ export const GOVERNED_FILE = '.surety/checks/protected-policy.json';
 export const GOVERNED_KEYS = ['protected_paths', 'check_commands', 'check_discovery', 'runner_config', 'result_collection', 'required_checks'];
 
 // The protected fingerprint of a revision, computed here and never read from
-// the engine (build spec §6 correction 3): SHA-256, in lower-case hex, of the
-// JSON text of the array of [path, blob id] pairs of every file under the
-// protected roots, sorted by path. No field of any file is projected.
+// the engine (build spec §6 correction 3; D3 §1.3, §7.1 L6; SEAM.md §§66,
+// 196): SHA-256, in lower-case hex, of the JSON text of the protected set's
+// manifest, the array of [path, type, mode, object id] entries of every
+// entry under the protected roots and of the governed file, sorted by path,
+// `type` and `mode` as `git ls-tree` prints them. Type and mode are part of
+// identity: a regular file replaced by a symlink with the same blob id, or an
+// executable bit changed, changes the fingerprint (M3 slice 17, the L6
+// straddle; COVERAGE.md). No field of any file's content is projected.
+export function protectedManifest(repo, rev, roots = [PROTECTED_ROOT]) {
+  return Object.entries(listTree(repo, rev))
+    .map(([path, entry]) => {
+      const [mode, type, oid] = entry.split(' ');
+      return [path, type, mode, oid];
+    })
+    .filter(([path]) => path === GOVERNED_FILE || roots.some((root) => path.startsWith(root)))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 export function protectedFingerprint(repo, rev, roots = [PROTECTED_ROOT]) {
+  return createHash('sha256').update(JSON.stringify(protectedManifest(repo, rev, roots))).digest('hex');
+}
+
+// The mode-free fingerprint recorded before slice 17 (RN R2 as built; D3
+// §1.1; L6 corrects it): SHA-256 of the JSON text of the sorted [path, blob
+// id] pairs of the blobs under the roots. Only row M210 (c) reads it, as the
+// value a version recorded under the old scheme holds (SEAM.md §197).
+export function legacyProtectedFingerprint(repo, rev, roots = [PROTECTED_ROOT]) {
   const pairs = Object.entries(listTree(repo, rev))
     .map(([path, entry]) => [path, ...entry.split(' ').slice(1)])
-    .filter(([path, type]) => type === 'blob' && roots.some((root) => path.startsWith(root)))
+    .filter(([path, type]) => type === 'blob' && (path === GOVERNED_FILE || roots.some((root) => path.startsWith(root))))
     .map(([path, , oid]) => [path, oid])
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return createHash('sha256').update(JSON.stringify(pairs)).digest('hex');
