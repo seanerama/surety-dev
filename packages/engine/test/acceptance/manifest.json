@@ -204,6 +204,12 @@
       "M205-what-establishes-a-result.test.mjs",
       "M201-materialization-is-the-revision.test.mjs",
       "M201-source-symlink-refused.test.mjs"
+    ],
+    "16": [
+      "M206-registration-decides-one-sequence.test.mjs",
+      "M207-reuse-bounded-history-beside-the-result.test.mjs",
+      "M208-frozen-bindings-and-supersession.test.mjs",
+      "M209-the-gates-own-ref-reads.test.mjs"
     ]
   },
   "sandbox": [

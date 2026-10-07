@@ -59,26 +59,37 @@ async function reuseHistory(t) {
   const project = ctx.project.id;
   const alpha1 = await alphaTarget(fx, ctx);
   const elsewhere = await addEnvironment(fx.engine, project, { name: 'elsewhere', targets: ['other-1'] });
-  const k = (
-    await installChecks(
-      fx.engine,
-      project,
-      CASES.map((key) => check(key, { gates: ['alpha_authorize'], requirements: ['R1'], runner_class: 'direct', ...(key === 'environment' ? { requires: ['environment', 'artifact_digest'] } : {}) })),
-    )
-  ).id;
-
-  // Candidate 1's executions. Each exits zero; two are bound to a runner class or an environment the scope does not have.
+  const declare = async (keys) =>
+    (
+      await installChecks(
+        fx.engine,
+        project,
+        keys.map((key) => check(key, { gates: ['alpha_authorize'], requirements: ['R1'], runner_class: 'direct', ...(key === 'environment' ? { requires: ['environment', 'artifact_digest'] } : {}) })),
+      )
+    ).id;
   const prior = {};
   const execute = async (key, fields = {}) => (prior[key] = await postResult(fx.engine, project, { candidate: ctx.candidate.id, check: k[key], exit_status: 0, ...fields }));
+
+  // Candidate 1's execution of a check declared before the source change. It exits zero.
+  const k = await declare(['plain']);
   await execute('plain', { output: 'plain: ok\n' });
+  const stored = { plain: checkResult(fx.home, prior.plain.id) };
+
+  // A source change and a new candidate. The other checks are declared after
+  // its nomination, so it registers none of them: a registration of the
+  // later candidate would make each `missing` whatever is reused (L7; M3
+  // slice 16, SEAM.md §§189, 191; COVERAGE.md "M3 slice 16"). Candidate 1's
+  // executions of them follow; two are bound to a runner class or an
+  // environment the scope does not have.
+  const c2 = await successor(fx, ctx);
+  Object.assign(k, await declare(CASES.filter((key) => key !== 'plain')));
   await execute('reused');
   await execute('runner', { runner_class: 'container' });
   await execute('environment', { environment: elsewhere, artifact_digest: ARTIFACT });
   await execute('unassessed');
-  const stored = Object.fromEntries(Object.entries(prior).map(([key, result]) => [key, checkResult(fx.home, result.id)]));
+  for (const key of ['reused', 'runner', 'environment', 'unassessed']) stored[key] = checkResult(fx.home, prior[key].id);
 
-  // A source change, a new candidate, and the reuse entries offered for it.
-  const c2 = await successor(fx, ctx);
+  // The reuse entries offered for the new candidate.
   const offer = (key, fields) => reuseEvidence(fx.engine, { project, candidate: c2.id, check: k[key], ...fields });
   await offer('reused', { check_result: prior.reused.id, assessed: true });
   await offer('runner', { check_result: prior.runner.id, assessed: true });

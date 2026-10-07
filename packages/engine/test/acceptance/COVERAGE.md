@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+M3 slice 16, "which result decides", 2026-10-07, on branch `verify/m3-s16` from `main` at `72072e6` (`docs/spec/M3-build-spec.md` §9; `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.2). Four new kernel-lane files for rows M206 to M209, listed under a new slice `16` in `manifest.json`. `harness/SEAM.md` gains §§189 to 194, among them the scripted check boundary of the kernel lane (§190), candidate supersession and the refusal Q9 decides (§192), and the reason codes `CANDIDATE_SUPERSEDED` and `REF_UNREAD`. New harness: `harness/checks/selection.mjs`. Two accepted files change for the slice's corrections (L7: M41's fixture order; Q9: one assertion of M52), with no assertion weakened. Deferred: M207 (c)'s infrastructure retry to slice 18. What was run, and the readings left for Sean, are in the section "M3 slice 16" below. The paragraph that follows is the previous pass's.
+
 The M3 slice-15 review, 2026-10-07, on `verify/m3-s15-review` from `main` at `70c28cf` (the review of `build/m3-s15` at `a9aae9b`; two serious findings and two discovery cases). One failing case per finding, in the form of earlier review passes: **S2** `M201-materialization-is-the-revision.test.mjs` (the check tree is the revision's blob bytes, whatever the work tree or a `.gitattributes` asks); **S1** `M201-source-symlink-refused.test.mjs` (a symlink ancestor of an input in the source is `mount_plan_refused`, with no host write; reachable via an adopted out-of-band symlink commit, the candidate's set then unauthorized); and in `M203-…` two discovery cases, (c) a symlink and a submodule under the roots are `input_not_regular` under default inputs, and (d) a definitions directory that is a symlink, a submodule or a file is a discovery error, never zero checks with no error. Two files added to slice 15 and the `sandbox` list; M203 edited in place. `harness/SEAM.md` §188 records them. **What was run**, after the driver's `--slice 15` had finished: each file alone with `node --test`, in a scratch worktree at `a9aae9b` with only this pass's six paths on top. Before each run no other test process was running. After each, no `surety-*` scope and no engine or check-program process remained. The scratch worktree was removed afterwards.
 
 - **S2: fails for its reason.** The protected input's reported SHA-256 is not its blob's (`813588fc…` where the blob is `b329c7dc…`): the build converted it.
@@ -2199,6 +2201,48 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 ## The M2 report after Sean's fourth attempt (the hands-on run)
 
 2026-10-06, on `verify/m2-report` from `main` at `02558a1`. `docs/acceptance/reports/M2-report.md` is filled from the fourth attempt's records (`~/surety-hands-on-20261006T014511Z/home`, its store read on a copy; nothing there changed): the host qualification at the run, the binary and its pin, the entry with every field and its evidence, what the canaries established (all but M139's), the spend as estimated and as charged, `term_to_exit_ms`, the configuration and policies in force, egress, `bootstrap_exception`, path one with its commits and its ledger against the transcripts, and the token's absence. It stays a skeleton: the real-lane test files have not run, so M139, path two, their run directory's records, a Stop of a live process (CHECK (8) not shown) and the revision Sean's checkout held remain pending. **M141 alone:** (a) passes; (b) fails by design, "the M2 report is a skeleton (21 pending facts)". **M142 alone:** 5 of 5. Findings put to Sean in the report's section 21 (questions 11 to 14): what counts as the real lane's records for M141; the Stop of a live process; the Stop recorded over a clean exit (a likely engine defect, SEAM §143, D2 §1.6); `runs.model_observed` null on every run.
+
+## M3 slice 16: which result decides (M3 build spec §9; E92)
+
+2026-10-07, by the Verifier of slice 16 on `verify/m3-s16`, cut from `main` at `72072e6`. Rows M206 to M209 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.2, all kernel lane. The seam's §§189 to 194 fix what the plan's §2.6 and D3 leave to the tests for these rows. The plan's letters are the cases.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M206 | kernel | `M206-registration-decides-one-sequence.test.mjs` (slice 16) | (b) with (c): an old pass and an assessed reuse pass, a newer registration that stales the satisfied evaluation, then queued, materializing, running, quarantined, interrupted and cancelled; (a) with (d): two registrations, the later recorded first, a fixture result between; (e) the watermark (T06) | written |
+| M207 | kernel | `M207-reuse-bounded-history-beside-the-result.test.mjs` (slice 16) | (c) two failures then a pass: count, identities, states, triggers and the link; nothing relabelled; then (b) an application invalidates every result of the old version and creates no reuse entry | written |
+| M207 | kernel | (a) a reuse entry at the same, a changed fingerprint, a changed version | | **covered by M41's two blocks**: a check's fingerprint is a function of its version's tree (D3 §1.3), so a changed fingerprint at the same version cannot be built; the changed version is SEAM §103's case |
+| M207 | kernel | (c) the infrastructure retry beside the operator request | | **deferred → 18**: the `recovery` registration is slice 18's (D3 §2.7; E93 item 1). Written there as a case of M207's file or of M216, reading `history.executions[].trigger.source` `recovery` |
+| M208 | kernel | `M208-frozen-bindings-and-supersession.test.mjs` (slice 16) | (b), (c), (a) the version superseded; (b), (c) the candidate superseded; (d) the refusal (Q9) with old-source bindings, an assessed reuse and a post-disposition pass | written; (a)'s runner id and qualification are the sandbox lane's (M201 (b)), and (d)'s "no repair" is slice 21's (M234 (f)) |
+| M209 | kernel, real git | `M209-the-gates-own-ref-reads.test.mjs` (slice 16) | (a) four cases: each ref moved and deleted, each gate kind first to look at each ref; (b) git held, then released; (c) the race of the application's finalizer with the fact read | written |
+
+**The slice-16 straddle** (plan question 3 (a); M3 plan §4.3). Each change keeps its row's assertion:
+
+| File | Was | Now | Why |
+|---|---|---|---|
+| `M41-typed-evidence-reuse.test.mjs`, first block | All seven checks declared, and candidate 1's results recorded, before candidate 2 was nominated | `plain` as before; the six reuse checks declared after candidate 2's nomination, then candidate 1's results and the entries | Under L7 candidate 2's nomination registers every required check it can, and that newer registration makes each `missing` whatever is reused (SEAM §191): the former case is M206 (b), pinned as now refused. `plain` keeps the "unchanged by the later nomination" reading |
+| `M52-finding-applicability-exclusion-manifest.test.mjs`, first case | Candidate 1, after candidate 2, blocked by `FINDING_BLOCKING` alone | `CANDIDATE_SUPERSEDED` naming candidate 2 beside `FINDING_BLOCKING` naming the finding | Q9 (SEAM §192): candidate 2's nomination supersedes candidate 1. The finding still blocks it, which is what the case is about |
+
+Read and left unchanged, since §192 computes every other reason of a refused evaluation as before: M105 (evaluates candidate 1 after its successor; every assertion reads one reason's subjects or `not_satisfied`), M38 (`c1after`'s scope), M74 (reads the old candidate, evaluates nothing). No other accepted file evaluates a candidate after its successor.
+
+**Readings for Sean** (each marked † in SEAM §194):
+
+| What | Reading | Why it needs a word |
+|---|---|---|
+| When a candidate is superseded | At the nomination of its successor on the lineage it opened, in that finalizer; `candidate.superseded` | D1 A.3 and A.6 name `superseded_by` and the event and no trigger; D3 §2.5 and Q9 rely on it; the as-built engine never sets it. The plan's §4.3 reads it this way. It also means a reused result always comes from a superseded candidate: M206 (b) and M208 (d) read reuse as evidence of the later candidate, not as the superseded one's authorization |
+| The reason of a superseded candidate's evaluation | `CANDIDATE_SUPERSEDED`, subjects the successor, beside the other reasons | Q9 (a) names no code; D1 A.4 is closed, so the code joins it |
+| The reason of an evaluation refused on an unread ref | `REF_UNREAD`, subjects the ref | M3 plan §2.6 leaves it to the Verifier; it joins D1 A.4 |
+| "Recorded and `stale`" (M208 (c)) | Recorded under its frozen bindings and deciding nothing current; the state is not pinned | A newer registration at the new bindings exists (the application registers one), so by L7 the check is `missing`, not `stale`; for the candidate, Q9 refuses the evaluation rather than staling the result |
+
+**What was run.** `npm ci` and `npm run build` on `72072e6` in the worktree. Each file was then run alone with `node --test`, never two at once, after checking that no other test process was running. All four are kernel lane; no sandbox, exhaust or real file was run. Results on `main`'s engine:
+
+| File | Cases | First failing assertion |
+|---|---|---|
+| M206 | 0 of 3 | (b), (c): at the queued condition, `own` is `passed` where `missing` is expected: the older pass decides over the newer registration. Before it, the fixture was live (both passes decided, the gate satisfied) and the registration staled the evaluation, which `main` already does. (a), (d) and (e): at the scripted check boundary, 404 (the route is this slice's, §190); in (a), (d) the fixture result's deciding over an older queued registration and the one sequence passed first |
+| M207 | 0 of 1 | At the scripted check boundary, 404. No assertion of the row is reachable on `main` without it |
+| M208 | 0 of 3 | (d): candidate 1's `superseded_by` is null after candidate 2's nomination: `main` never supersedes a candidate. The two (b), (c) cases: at the scripted check boundary, 404, before the supersession |
+| M209 | 0 of 6 | Each (a) case: the first evaluation carries no reason at all (it is satisfied, and the Alpha cases issued the authorization), where `OUT_OF_BAND_CHANGE` is expected. (b): the held evaluation carries `PROTECTED_PATH_UNAUTHORIZED` only, no `REF_UNREAD`. (c): arming `gate.facts_read`, 400 unknown barrier (this slice's, §193); before it the application was paused with the branch moved |
+
+The two changed accepted files, alone on `main`'s engine: M41 5 of 5; M52 4 of 5, the one failure at the new assertion (`CANDIDATE_SUPERSEDED` absent), as intended.
 
 ## M3 slice 15: the walking check (M3 build spec §9; E92)
 

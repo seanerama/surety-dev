@@ -81,7 +81,13 @@ describe('M52 the finding_applicability_exclusion manifest', () => {
     // The finding is what it was, and candidate 1 is still blocked by it.
     assert.deepEqual([finding(fx.home, found.id).status, finding(fx.home, found.id).effective_severity], ['open', 'high'], 'an exclusion changes no severity and resolves nothing');
     await passAll(fx.engine, project, c1.id, [k.login]);
-    blockedBy(await (await alphaTarget(fx, ctx, c1, { environment: alpha.environment })).evaluate(), found);
+    // M3 slice 16 (Q9; SEAM.md §192; COVERAGE.md "M3 slice 16"): candidate 1
+    // is superseded by candidate 2, so its evaluation is also refused,
+    // naming its successor; the finding blocks it as before.
+    const old = await (await alphaTarget(fx, ctx, c1, { environment: alpha.environment })).evaluate();
+    assert.deepEqual(reasonCodes(old), ['CANDIDATE_SUPERSEDED', 'FINDING_BLOCKING'], 'candidate 1: refused as superseded, and blocked by the finding');
+    assert.deepEqual(reasonSubjects(old, 'CANDIDATE_SUPERSEDED'), [c2.id], 'naming its successor');
+    assert.deepEqual(reasonSubjects(old, 'FINDING_BLOCKING'), [found.id], 'the exclusion approved for candidate 2 excludes nothing for candidate 1');
   });
 
   test('the finding is raised to Critical between preview and answer: the approval is refused, nothing is excluded, and the next generation binds the finding as it now is', async (t) => {
