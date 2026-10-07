@@ -161,12 +161,24 @@ export function nextExecutionSeq(tx: Tx, project: string): number {
   const row = tx.db.prepare('SELECT "seq_counters" FROM "projects" WHERE "id" = ?').get(project) as { seq_counters: string } | undefined;
   if (!row) throw notFound('project', project);
   const counters = JSON.parse(row.seq_counters) as Record<string, number>;
-  const { a } = tx.db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) AS a FROM "check_results" WHERE "project" = ?').get(project) as { a: number };
-  const { b } = tx.db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) AS b FROM "check_executions" WHERE "project" = ?').get(project) as { b: number };
-  const next = Math.max((counters.executions ?? 0) + 1, a + 1, b + 1);
+  const next = executionSeqHigh(tx.db, project) + 1;
   counters.executions = next;
   tx.db.prepare('UPDATE "projects" SET "seq_counters" = ? WHERE "id" = ?').run(JSON.stringify(counters), project);
   return next;
+}
+
+// The highest number the project's one sequence has given (L7): to a
+// registration, to a fixture result, or kept in the counter. A `fix`
+// disposition takes it as its watermark (D3 §2.11; T06), so an execution
+// registered before the disposition never counts as after it, however late
+// its result is recorded.
+export function executionSeqHigh(db: Db, project: string): number {
+  const row = db.prepare('SELECT "seq_counters" FROM "projects" WHERE "id" = ?').get(project) as { seq_counters: string } | undefined;
+  if (!row) throw notFound('project', project);
+  const counters = JSON.parse(row.seq_counters) as Record<string, number>;
+  const { a } = db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) AS a FROM "check_results" WHERE "project" = ?').get(project) as { a: number };
+  const { b } = db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) AS b FROM "check_executions" WHERE "project" = ?').get(project) as { b: number };
+  return Math.max(counters.executions ?? 0, a, b);
 }
 
 // One registration per candidate, trigger identity and key (D3 §2.5): a
@@ -253,10 +265,15 @@ export function registerForTrigger(tx: Tx, args: { project: string; candidate: s
 // The Checks step's half of L2: every due registration whose facts are now
 // read is made, and the due mark cleared in the same transaction.
 export function registerDue(tx: Tx, args: { project: string }): number {
+  // Before anything is admitted: queued executions whose binding was
+  // superseded end with no row (D3 §2.5; T15).
+  cancelSuperseded(tx, args.project);
   const rows = tx.db.prepare('SELECT "id", "checks_due" FROM "candidates" WHERE "project" = ? AND "checks_due" IS NOT NULL').all(args.project) as { id: string; checks_due: string }[];
   let made = 0;
   for (const r of rows) {
     const candidate = getCandidate(tx.db, r.id)!;
+    // A superseded candidate is owed nothing more (slice 16 review m5).
+    if (candidate.superseded_by) continue;
     if (unreadAncestry(tx.db, args.project, candidate)) continue;
     // Under the version effective now: one stored with the due mark may
     // since have been superseded.
@@ -290,6 +307,14 @@ export function registerAtApplication(tx: Tx, args: { project: string; proposal:
 export function requestChecks(tx: Tx, args: { project: string; candidate: string; body: unknown }): { status: number; body: unknown } {
   const candidate = getCandidate(tx.db, args.candidate);
   if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
+  // A superseded candidate's results authorize nothing (D3 §2.5; Q9): no
+  // execution is registered for it (slice 16 review m5).
+  if (candidate.superseded_by) {
+    throw new Refusal(409, 'illegal_transition', `Candidate ${candidate.id} is superseded by ${candidate.superseded_by}.`, `Request the checks of ${candidate.superseded_by}.`, {
+      candidate: candidate.id,
+      superseded_by: candidate.superseded_by,
+    });
+  }
   const b = args.body === undefined || args.body === null ? {} : args.body;
   if (typeof b !== 'object' || Array.isArray(b)) throw new Refusal(400, 'invalid_value', 'The body must be a JSON object.', 'Send {"keys"?: [<key>], "request_key"?: <string>}.', { field: null });
   const body = b as Record<string, unknown>;
@@ -454,6 +479,7 @@ export function admitExecution(
   tx: Tx,
   args: { project: string; incarnation: string; scope: string; hostId: string },
 ): Admission | null {
+  cancelSuperseded(tx, args.project);
   const q = runnerQualification(tx.db);
   if (q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
   const { n } = tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "status" IN (${LIVE.map(() => '?').join(', ')})`).get(args.project, ...LIVE) as { n: number };
@@ -616,7 +642,7 @@ export interface ResultFields {
 // The result row of an execution (D3 §§2.6, 2.7, A.3), once its domain's
 // termination with closure is observed (or, for a known not-run, its domain
 // closed with nothing launched). Recorded once.
-export function recordExecutionResult(tx: Tx, args: ResultFields): { check_result: string } | null {
+export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runner_id?: string } = {}): { check_result: string } | null {
   const x = tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(args.execution) as Record<string, unknown> | undefined;
   if (!x) throw notFound('check execution', args.execution);
   if (x.status === 'recorded' && typeof x.result === 'string') return { check_result: x.result };
@@ -628,7 +654,7 @@ export function recordExecutionResult(tx: Tx, args: ResultFields): { check_resul
     source_revision: x.source_revision as string,
     protected_version: x.protected_version as string,
     runner_class: x.runner_class as string,
-    runner_id: (x.runner_id as string | null) ?? 'direct',
+    runner_id: label.runner_id ?? (x.runner_id as string | null) ?? 'direct',
     runner_qualification: (x.runner_qualification as string | null) ?? null,
     execution_seq: x.execution_seq as number,
     started_at: (x.started_at as string | null) ?? null,
@@ -638,6 +664,118 @@ export function recordExecutionResult(tx: Tx, args: ResultFields): { check_resul
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, args.execution);
   releaseCheckLease(tx, args.execution);
   return { check_result: id };
+}
+
+// ---- cancellation and supersession (D3 §2.5 "Supersession"; T15; SEAM.md §192) ------------
+
+// Cancelled with no row: the execution never ran, so nothing is claimed of
+// the check, and no superseded evidence is restored (L7). Only from
+// `queued` or `materializing` (A.5).
+export function cancelExecution(tx: Tx, args: { execution: string; why: string }): boolean {
+  const x = mustExecution(tx.db, args.execution);
+  if (x.status !== 'queued' && x.status !== 'materializing') return false;
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
+  releaseCheckLease(tx, x.id);
+  tx.emit('check.cancelled', { project: x.project, candidate: x.candidate, check_execution: x.id }, { from: x.status, why: args.why });
+  markStale(tx, { candidate: x.candidate });
+  return true;
+}
+
+// Every queued execution of the project whose candidate or protected version
+// is superseded is cancelled before launch. One already past `queued` is not:
+// it is recorded under its frozen bindings, which then decide nothing current.
+export function cancelSuperseded(tx: Tx, project: string): number {
+  const rows = tx.db
+    .prepare(
+      `SELECT x."id", c."superseded_by" AS "by_candidate", v."superseded_by" AS "by_version" FROM "check_executions" x
+       JOIN "candidates" c ON c."id" = x."candidate" JOIN "protected_versions" v ON v."id" = x."protected_version"
+       WHERE x."project" = ? AND x."status" = 'queued' AND (c."superseded_by" IS NOT NULL OR v."superseded_by" IS NOT NULL) ORDER BY x."execution_seq"`,
+    )
+    .all(project) as { id: string; by_candidate: string | null; by_version: string | null }[];
+  for (const r of rows) {
+    cancelExecution(tx, { execution: r.id, why: r.by_version !== null ? `its protected version was superseded by ${r.by_version}` : `its candidate was superseded by ${r.by_candidate}` });
+  }
+  return rows.length;
+}
+
+// ---- the scripted check boundary (kernel lane; SEAM.md §190) ---------------------------------
+
+// D3 A.5, one step at a time.
+const SCRIPTED_STEPS: Record<string, string[]> = {
+  queued: ['materializing', 'cancelled'],
+  materializing: ['running', 'quarantined', 'interrupted', 'cancelled'],
+  running: ['collecting', 'quarantined', 'interrupted'],
+  quarantined: ['collecting', 'interrupted'],
+  collecting: ['recorded'],
+};
+
+export interface ScriptedStep {
+  execution: string;
+  to: string;
+  result: { exit_status: number | null; signaled: boolean; deadline_hit: boolean; orphans: boolean } | null;
+  output: string | null;
+  // The label a recorded result carries as its runner: the caller's, since
+  // no runner ran (E92 item 2; objection 025).
+  runner_id: string;
+}
+
+// Move one execution one step through the engine's own transitions, so that
+// whatever the engine does on that change (staling, and in later slices the
+// repair and recovery reconciliations) happens in this transaction. A
+// recorded result carries the registration's number and frozen bindings,
+// `execution_established` true, no runner qualification and the caller's
+// label as its runner (no runner ran; E92 item 2).
+export function scriptExecutionStep(tx: Tx, args: ScriptedStep): { execution: { id: string; status: string }; check_result: { id: string; execution_seq: number } | null } {
+  const x = tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(args.execution) as (ExecutionRow & { execution_seq: number }) | undefined;
+  if (!x) throw notFound('check execution', args.execution);
+  if (!(SCRIPTED_STEPS[x.status] ?? []).includes(args.to)) {
+    throw new Refusal(409, 'illegal_transition', `A check execution in ${x.status} cannot move to ${args.to} in one step.`, 'Move it one step of D3 A.5 at a time.', {
+      execution: x.id,
+      status: x.status,
+      to: args.to,
+    });
+  }
+  let result: { id: string; execution_seq: number } | null = null;
+  const why = 'the scripted check boundary';
+  switch (args.to) {
+    case 'materializing':
+    case 'running':
+    case 'collecting':
+      tx.db.prepare('UPDATE "check_executions" SET "status" = ? WHERE "id" = ?').run(args.to, x.id);
+      if (args.to === 'running') tx.db.prepare('UPDATE "check_executions" SET "started_at" = ? WHERE "id" = ? AND "started_at" IS NULL').run(tx.at, x.id);
+      break;
+    case 'quarantined':
+      quarantineExecution(tx, { execution: x.id, why });
+      break;
+    case 'interrupted':
+      interruptExecution(tx, { execution: x.id, why });
+      break;
+    case 'cancelled':
+      cancelExecution(tx, { execution: x.id, why });
+      break;
+    case 'recorded': {
+      const r = args.result!;
+      const made = recordExecutionResult(
+        tx,
+        {
+          execution: x.id,
+          established: true,
+          exit_status: r.exit_status,
+          signaled: r.signaled,
+          deadline_hit: r.deadline_hit,
+          orphans: r.orphans,
+          not_run_reason: null,
+          output: args.output,
+          output_dropped_bytes: null,
+        },
+        { runner_id: args.runner_id },
+      );
+      if (made !== null) result = { id: made.check_result, execution_seq: x.execution_seq };
+      break;
+    }
+  }
+  const now = mustExecution(tx.db, x.id);
+  return { execution: { id: now.id, status: now.status }, check_result: result };
 }
 
 // Is a check tree still referenced (D3 §2.4)? By any execution of its

@@ -43,6 +43,7 @@ import { appendCorrection } from '../store/transitions/ledger.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
 import type { ResultInput } from '../store/transitions/baseline.js';
 import type { ProtectedSet } from '../store/transitions/protected.js';
+import type { ScriptedStep } from '../store/transitions/checks.js';
 import { type Discovery, discover, protectedVersionAt } from '../checks/discovery.js';
 import {
   type PlanBody,
@@ -53,6 +54,9 @@ import {
   installAlphaException,
   installCheckResult,
   installClassification,
+  executionProject,
+  installScriptedStep,
+  parseScriptedStep,
   parseClassification,
   parseRunnerQualification,
   installRunnerQualification,
@@ -121,6 +125,8 @@ const MAIN_BARRIERS: readonly string[] = [
   // M3 plan §2.3: around a check tree's materialization.
   'checks.before_materialize',
   'checks.materialized',
+  // SEAM.md §193: an evaluation's facts read, its transaction not begun.
+  'gate.facts_read',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -663,6 +669,8 @@ const OP = {
   armFault: 'harness.arm_fault',
   clearFaults: 'harness.clear_faults',
   correction: 'harness.ledger_correction',
+  executionProject: 'harness.execution_project',
+  scriptedStep: 'harness.scripted_step',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -915,6 +923,23 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       return storeOp(OP.fixtureResult, { args: { ...result, output }, actor: hooks.actor });
     });
   }
+  // SEAM.md §190: the scripted check boundary of the kernel lane, one A.5
+  // step per call through the engine's own transitions.
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'check-execution' && post) {
+    return route(200, async (body) => {
+      const step = parseScriptedStep(body);
+      const project = (await storeOp(OP.executionProject, { execution: step.execution })) as string | null;
+      if (project === null) throw new Refusal(404, 'not_found', `No check execution "${step.execution}".`, 'Name an execution the engine registered.', { execution: step.execution });
+      // A recorded result names its output record, an empty one when none
+      // was given (D3 §2.6); it is published before the result names it.
+      let output: string | null = null;
+      if (step.to === 'recorded') {
+        const { writeWholeRecord } = await import('../records/files.js');
+        output = await writeWholeRecord(hooks.runtime(), { project, run: null, kind: 'check_output', content: Buffer.from(step.outputText ?? '') });
+      }
+      return storeOp(OP.scriptedStep, { args: { execution: step.execution, to: step.to, result: step.result, output }, actor: hooks.actor });
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'runner-qualification') {
     return route(201, async (body) => {
       parseRunnerQualification(body);
@@ -1163,6 +1188,10 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
     case OP.clearFaults:
       faults.length = 0;
       return { cleared: true };
+    case OP.executionProject:
+      return executionProject(store(), a.execution as string);
+    case OP.scriptedStep:
+      return installScriptedStep(store(), a.actor, a.args as unknown as Omit<ScriptedStep, 'runner_id'>);
     case OP.correction:
       return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:
@@ -1357,6 +1386,10 @@ export function setRealLane(on: boolean): void {
   realLane = on && init.harness;
 }
 export const seamRealLane = (): boolean => init.harness && realLane;
+// SEAM.md §190: an execution the scripted check boundary moved out of
+// `queued` has no domain (the engine's admission allocates one in the same
+// transaction), and only that route moves it: restart recovery leaves it.
+export const seamScriptedExecution = (domain: string | null): boolean => init.harness && domain === null;
 
 // A dispatch's launch of an entry's binary: as seamRefuseBinary, except
 // that under the real lane an active entry's binary may be launched.

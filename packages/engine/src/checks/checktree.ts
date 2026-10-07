@@ -295,9 +295,9 @@ export function listTrees(home: string, project: string): { revision: string; ve
 // At start: a staging directory a build left when the engine stopped part
 // way is never a tree, and goes (D3 §2.4). Retention of whole trees is the
 // rule above (an execution live, or a current candidate at the revision
-// under the version in effect); since no candidate's `superseded_by` is
-// written yet, a tree lives until its version changes, and slice 17's
-// `checktrees_max_bytes` admission must be able to remove trees no live
+// under the version in effect); a candidate's tree goes once a later
+// nomination supersedes it and no execution holds it (slice 16), and slice
+// 17's `checktrees_max_bytes` admission must be able to remove trees no live
 // execution holds (`releaseTree`) to make room.
 export function removeStagingLeftovers(home: string): number {
   let projects: string[];

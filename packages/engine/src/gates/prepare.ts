@@ -11,7 +11,10 @@
 //   whole, so that evidence that is gone is reported missing.
 
 import { repoContext } from '../git/exec.js';
-import { isAncestor } from '../git/repo.js';
+import { isAncestor, readRefs } from '../git/repo.js';
+import type { RefFact } from '../store/transitions/gates.js';
+import { pausePoint } from '../testing/seam.js';
+import { type RefJudgement, type RegistryGeneration, allUnread, judgeRefs, sameGeneration } from './refs.js';
 import { protectedSetAt } from '../protected/set.js';
 import { readRecordBytes } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
@@ -63,6 +66,36 @@ export interface GateFacts {
   // What could not be read (E41 item 2): an unknown is never a pass, so each
   // of these makes the evaluation not satisfied.
   unreadable: { head: boolean; ancestry: boolean; records: string[] };
+  // The gate's own reads of its registered refs (D3 §5 X1).
+  refs: RefFact[];
+}
+
+// Read the integration branch's ref and the candidate's nomination ref, and
+// record a change the registry cannot account for as an integrity
+// observation before the evaluation's transaction (D3 §5 X1; N02). The
+// registry's generation is read before and after git; only a read across
+// which it held still is judged, so the engine's own journaled write is
+// never reported. If it moved during the read, the read is made again, at
+// most three times; if it never held still, every ref is unread. A ref git
+// did not list is absent only when verified (git/repo.ts refAbsent). An
+// unsuccessful read records nothing and is passed on as unread.
+export async function readGateRefs(rt: Runtime, project: string, candidate: string, repo: string): Promise<RefFact[]> {
+  const ctx = repoContext(repo);
+  let before = await rt.read<RegistryGeneration[]>('gate.ref_registry', { project, candidate });
+  let judged: RefJudgement[] | null = null;
+  for (let attempt = 0; attempt < 3 && judged === null; attempt++) {
+    const found = await readRefs(ctx, before.map((r) => r.ref));
+    const after = await rt.read<RegistryGeneration[]>('gate.ref_registry', { project, candidate });
+    // Judged only against a generation that held still across the read.
+    if (found === null || sameGeneration(before, after)) judged = judgeRefs(before, after, found);
+    else before = after;
+  }
+  // The registry moved during every read: nothing read can be judged, so
+  // every ref is unread and nothing is recorded (m2).
+  judged ??= allUnread(before);
+  const changes = judged.flatMap((j) => (j.change === null ? [] : [j.change]));
+  if (changes.length > 0) await rt.engine('gate.observe_refs', { project, changes });
+  return judged.map((j) => j.fact);
 }
 
 // The facts of one evaluation of `candidate`. Never throws for what git or a
@@ -87,8 +120,22 @@ export async function gateFacts(rt: Runtime, project: string, candidate: string)
       unreadable.records.push(r.id);
     }
   }
+  const refs = await readGateRefs(rt, project, candidate, facts.repo);
+  // The protected fingerprint at the integration branch's ref as read (D3
+  // §5 X1), not at the registry's expected value. Absent or unread, the
+  // head is not shown authorized (SEAM.md §66).
+  // Known residual (driver's ruling, slice 16 O2): when these facts are read
+  // before an engine-owned ref update and the evaluation's transaction runs
+  // after its finalizer, this fingerprint is of the earlier generation; the
+  // gate fails closed (PROTECTED_PATH_UNAUTHORIZED) and may emit a false
+  // `protected.unauthorized_detected`. Not reconciled here.
+  const integration = refs.find((r) => r.ref.startsWith('refs/heads/'));
+  const head = integration?.read === 'value' ? integration.oid : null;
   let headFingerprint: string | null = null;
-  if (facts.head !== null && facts.roots !== null) headFingerprint = (await protectedSetAt(facts.repo, facts.head, facts.roots))?.fingerprint ?? null;
+  if (head !== null && facts.roots !== null) headFingerprint = (await protectedSetAt(facts.repo, head, facts.roots))?.fingerprint ?? null;
   unreadable.head = headFingerprint === null;
-  return { headFingerprint, head: facts.head, unreadable };
+  // A test may hold the evaluation here, its facts read and its
+  // transaction not begun (SEAM.md §193).
+  await pausePoint('gate.facts_read');
+  return { headFingerprint, head, unreadable, refs };
 }

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { Runtime } from '../runtime.js';
 import type { IntegrityFacts, IntegrityReport } from '../store/transitions/integrity.js';
 import { type GitContext, repoContext, worktreeContext } from './exec.js';
-import { checkoutBaseline, listWorktrees, readAllRefs } from './repo.js';
+import { checkoutBaseline, listWorktrees, readRefs } from './repo.js';
 import { canonicalPath, worktreeMetadata } from './worktree.js';
 
 const same = (a: string, b: string) => a === b || (canonicalPath(a) ?? a) === (canonicalPath(b) ?? b);
@@ -22,15 +22,21 @@ const same = (a: string, b: string) => a === b || (canonicalPath(a) ?? a) === (c
 export async function observeIntegrity(rt: Runtime, project: string): Promise<void> {
   const facts = await rt.engine<IntegrityFacts>('integrity.facts', { project });
   const ctx = repoContext(facts.repo);
-  const refs = await readAllRefs(ctx);
+  const refs = await readRefs(ctx, facts.registry.map((r) => r.ref));
   const list = refs === null ? null : await listWorktrees(ctx);
-  if (refs === null || list === null) {
+  // A registered ref git did not list and whose absence is not verified
+  // (a broken or unreadable loose ref, D3 §5 X1, N02) is not taken for
+  // deleted: the repository is observed as not readable, as when the listing
+  // fails, never as clean and never as a deletion.
+  const unknownRef = refs !== null && [...refs.values()].some((r) => r.state === 'unknown');
+  if (refs === null || list === null || unknownRef) {
     await rt.engine('integrity.record', { project, unreadable: true } satisfies IntegrityReport);
     return;
   }
   const report: Required<IntegrityReport> = { project, unreadable: false, refs: [], checkouts: [], released: [], added: [] };
   for (const row of facts.registry) {
-    const found = refs.get(row.ref) ?? null;
+    const read = refs.get(row.ref)!;
+    const found = read.state === 'ok' ? read.oid : null;
     if (found === row.expected_oid) continue;
     if (found !== null && (facts.moving[row.ref] ?? []).includes(found)) continue;
     report.refs.push({ registry: row.id, expected: row.expected_oid, found });

@@ -9,7 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
-import { proposalHasErrors } from './checks.js';
+import { executionSeqHigh, proposalHasErrors } from './checks.js';
 import { type Policy, wideningKeys } from '../../config/project-policy.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -792,7 +792,9 @@ export function recordDisposition(
   f: FindingRow,
   args: { disposition: 'fix' | 'defer' | 'accept'; authority: 'reviewer' | 'human'; by: string; linked_issue: string | null; defer_target: string | null },
 ): void {
-  const { n } = tx.db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) AS n FROM "check_results" WHERE "project" = ?').get(f.project) as { n: number };
+  // The watermark from the project's one sequence, registrations included
+  // (L7; T06), never from the highest result recorded.
+  const n = executionSeqHigh(tx.db, f.project);
   tx.db
     .prepare(
       `UPDATE "findings" SET "status" = 'dispositioned', "disposition" = ?, "disposition_authority" = ?, "disposition_by" = ?, "disposition_at" = ?, "disposition_seq" = ?,

@@ -30,11 +30,56 @@ export async function readAllRefs(ctx: GitContext): Promise<Map<string, string> 
   return refs;
 }
 
+// One ref: its object, verified absent, or unknown. `for-each-ref` skips a
+// broken or unreadable loose ref and still exits 0, so a ref missing from
+// the listing is `missing` only when its absence is verified (refAbsent);
+// otherwise it is unknown, never taken for deleted (D3 §5 X1, N02).
 export async function readRef(ctx: GitContext, ref: string): Promise<RefRead> {
+  return (await readRefs(ctx, [ref]))?.get(ref) ?? { state: 'unknown' };
+}
+
+// The named refs, each read as readRef reads one, from one listing; null
+// when the listing itself could not be made.
+export async function readRefs(ctx: GitContext, names: string[]): Promise<Map<string, RefRead> | null> {
   const refs = await readAllRefs(ctx);
-  if (refs === null) return { state: 'unknown' };
-  const oid = refs.get(ref);
-  return oid === undefined ? { state: 'missing' } : { state: 'ok', oid };
+  if (refs === null) return null;
+  const out = new Map<string, RefRead>();
+  for (const name of names) {
+    const oid = refs.get(name);
+    if (oid !== undefined) out.set(name, { state: 'ok', oid });
+    else out.set(name, (await refAbsent(ctx, name)) ? { state: 'missing' } : { state: 'unknown' });
+  }
+  return out;
+}
+
+const REF_FILE_MAX = 64 * 1024;
+const PACKED_REFS_MAX = 64 * 1024 * 1024;
+
+// Is the ref verifiably absent? Only if git resolves it to nothing, cleanly
+// (`rev-parse --verify --quiet` exits 1 with nothing on its error stream),
+// there is no loose file at its path in the common directory (no component
+// of the path refused: a link, a non-directory, an unreadable entry), no
+// packed-refs line names it, and the repository keeps no reftable. Any doubt
+// is false: the ref's state is then unknown.
+export async function refAbsent(ctx: GitContext, ref: string): Promise<boolean> {
+  if (!/^refs\/[^\0\s]+$/.test(ref) || ref.split('/').some((p) => p === '' || p === '.' || p === '..')) return false;
+  const r = await git(ctx, ['rev-parse', '--verify', '--quiet', '--end-of-options', ref]);
+  if (r.code !== 1 || r.stderr.trim() !== '' || r.stdout.trim() !== '') return false;
+  try {
+    lstatSync(join(ctx.commonDir, 'reftable'));
+    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+  }
+  if (readRegular(ctx.commonDir, ref, REF_FILE_MAX).state !== 'absent') return false;
+  const packed = readRegular(ctx.commonDir, 'packed-refs', PACKED_REFS_MAX);
+  if (packed.state === 'absent') return true;
+  if (packed.state !== 'read') return false;
+  for (const line of packed.bytes.toString('utf8').split('\n')) {
+    if (line.startsWith('#') || line.startsWith('^')) continue;
+    if (line.slice(line.indexOf(' ') + 1) === ref) return false;
+  }
+  return true;
 }
 
 // Does the object exist? null when the object store cannot be read. A

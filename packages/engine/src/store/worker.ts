@@ -85,7 +85,7 @@ import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js
 import { chainBoundary, resumeWork } from './transitions/work.js';
 import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, nominationAncestryPairs, recordAncestry } from './transitions/evidence.js';
-import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from './transitions/gates.js';
+import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationFacts, beginApplication } from './transitions/protected.js';
@@ -235,6 +235,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     return row ? { repo: row.dev_repo_path } : null;
   },
   'gate.facts': (d, a: { project: string; candidate: string }) => gateFactsRead(d, a),
+  'gate.ref_registry': (d, a: { project: string; candidate: string }) => gateRefRegistry(d, a),
   'gates.due': (d, a: { project: string }) => dueStageGates(d, a),
   'candidate.revision': (d, a: { candidate: string }) => (d.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ?').get(a.candidate) as { revision: string } | undefined)?.revision ?? null,
   'decision.subject': (d, a: { project: string; decision: string }) => decisionSubjectRead(d, a),
@@ -326,6 +327,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'record.audited': (tx, a) => recordAudited(tx, a),
   'ancestry.record': (tx, a) => recordAncestry(tx, a),
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
+  'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),

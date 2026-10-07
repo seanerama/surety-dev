@@ -14,7 +14,7 @@ import type { IntentResult, IntentSpec } from './journal.js';
 import { integrationRef, projectRepoRow } from './repo.js';
 import type { Tx } from './tx.js';
 import type { Discovery } from '../../checks/discovery.js';
-import { registerAtApplication, writeVersionDiscovery } from './checks.js';
+import { cancelSuperseded, registerAtApplication, writeVersionDiscovery } from './checks.js';
 
 type Db = Tx['db'];
 
@@ -337,6 +337,8 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   // The new version's checks, registered in the transaction that invalidates
   // the old results (D3 §2.5, §3.5; L2).
   registerAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // Queued executions of the superseded version never launch (T15).
+  cancelSuperseded(tx, op.project);
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
   return { version: v.id };
 }
