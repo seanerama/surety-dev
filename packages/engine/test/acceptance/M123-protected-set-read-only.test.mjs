@@ -57,7 +57,7 @@ async function protectedProject(t) {
   const fx = await sandboxEngine(t);
   const project = await addGitProject(fx, { tier: 'T1', files: FILES });
   const version = effectiveVersion(fx.home, project.id);
-  assert.equal(version.fingerprint, protectedFingerprint(project.repo.path, project.base, ROOTS), 'the targets are seeded: the effective protected version covers both roots');
+  assert.equal(version.fingerprint, protectedFingerprint(project.repo.path, project.base, ROOTS), 'the targets are seeded: the effective protected version covers both roots (its fingerprint over the L6 manifest, SEAM.md §196)');
   return { fx, project, version };
 }
 

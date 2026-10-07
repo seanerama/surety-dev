@@ -210,6 +210,14 @@
       "M207-reuse-bounded-history-beside-the-result.test.mjs",
       "M208-frozen-bindings-and-supersession.test.mjs",
       "M209-the-gates-own-ref-reads.test.mjs"
+    ],
+    "17": [
+      "M210-input-identity-and-the-fingerprint-migration.test.mjs",
+      "M211-the-candidates-copy-is-ignored.test.mjs",
+      "M212-inputs-are-immutable-at-their-pathnames.test.mjs",
+      "M213-the-manifest-is-projected-exactly.test.mjs",
+      "M214-the-check-tree-and-bounded-preparation.test.mjs",
+      "M215-environment-egress-direct-exec.test.mjs"
     ]
   },
   "sandbox": [
@@ -245,7 +253,12 @@
     "M201-check-journey-path-one.test.mjs",
     "M205-what-establishes-a-result.test.mjs",
     "M201-materialization-is-the-revision.test.mjs",
-    "M201-source-symlink-refused.test.mjs"
+    "M201-source-symlink-refused.test.mjs",
+    "M211-the-candidates-copy-is-ignored.test.mjs",
+    "M212-inputs-are-immutable-at-their-pathnames.test.mjs",
+    "M213-the-manifest-is-projected-exactly.test.mjs",
+    "M214-the-check-tree-and-bounded-preparation.test.mjs",
+    "M215-environment-egress-direct-exec.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

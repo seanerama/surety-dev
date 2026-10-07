@@ -63,7 +63,7 @@ describe('M28 a replayed result is validated against the protected set in force 
     assert.deepEqual(parentsOf(repo, applied), [base], 'by one protected commit on the run\'s base');
     assert.deepEqual(changedPaths(repo, base, applied), { [GOVERNED_FILE]: 'M' }, 'which changes the governed file and nothing else');
     assert.deepEqual(JSON.parse(fileAt(repo, applied, GOVERNED_FILE)).protected_paths, ROOTS_AFTER, 'the governed file now names docs/policy/ as a root');
-    assert.equal(version.fingerprint, protectedFingerprint(repo, applied, ROOTS_AFTER), 'the new effective version covers both roots: the rules file is in the protected set in force at integration');
+    assert.equal(version.fingerprint, protectedFingerprint(repo, applied, ROOTS_AFTER), 'the new effective version covers both roots: the rules file is in the protected set in force at integration (its fingerprint over the L6 manifest, SEAM.md §196)');
     assert.deepEqual([version.superseded_by, effectiveVersion(fx.home, project.id).id], [null, version.id]);
     assert.equal(proposalsOf(fx.home, project.id).find((row) => row.id === proposal.id).resulting_version, version.id);
     const before = { registry: registryOf(fx.home, project.id), revisions: revisionsOf(fx.home, { project: project.id }).length };
