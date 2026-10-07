@@ -113,7 +113,8 @@ describe('M206 registration decides; one sequence', () => {
     assert.deepEqual(entryOf(first, k.own).deciding, { execution: b, result: rb.id, execution_seq: seqB }, 'the deciding execution is the later registration');
 
     // Then the earlier registration finishes, passing, after it.
-    const ra = await recordExit(fx.engine, a, 0);
+    // `a` is running: it is moved on from there (objection 024).
+    const ra = (await drive(fx.engine, a, ['collecting', 'recorded'], { exit_status: 0 })).check_result;
     assert.equal(ra.execution_seq, seqA, "the earlier registration's result carries its own sequence");
     const second = await stageGate(fx, ctx);
     assert.equal(second.check_states[k.own], 'failed', 'an earlier registration finishing later changes nothing: registration orders, not completion or timestamps');
