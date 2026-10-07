@@ -345,6 +345,11 @@
       "applied",
       "rejected"
     ],
+    "ProtectedVersionsFingerprintScheme": [
+      "pairs",
+      "manifest",
+      "unreadable"
+    ],
     "AuthMode": [
       "api_key",
       "subscription_token"
@@ -595,6 +600,7 @@
       "protected.rejected",
       "protected.applied",
       "protected.unauthorized_detected",
+      "protected.fingerprint_recomputed",
       "check.result",
       "gate.scope_built",
       "gate.evaluated",
@@ -2708,6 +2714,13 @@
         },
         "governed": {
           "required": false
+        },
+        "fingerprint_scheme": {
+          "required": true,
+          "enum": "ProtectedVersionsFingerprintScheme"
+        },
+        "authorized_revision": {
+          "required": false
         }
       }
     },
@@ -4457,6 +4470,9 @@
     },
     "protected.unauthorized_detected": {
       "owner": "store/transitions/gates.ts"
+    },
+    "protected.fingerprint_recomputed": {
+      "owner": "store/transitions/protected.ts"
     },
     "check.result": {
       "owner": "store/transitions/baseline.ts"
