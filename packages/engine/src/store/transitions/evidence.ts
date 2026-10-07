@@ -133,6 +133,36 @@ export const requirementsOf = (c: CheckRow): string[] => JSON.parse(c.requiremen
 // the project's tier.
 export const applies = (c: CheckRow, tier: string): boolean => c.required === 1 && (c.tier_floor === null || TIER_RANK[c.tier_floor]! <= TIER_RANK[tier]!);
 
+// The required checks of one gate of a candidate under a protected version
+// (D3 §4.2, as far as slice 15 builds it): the version's required checks that
+// list the gate kind, at the project's tier, covering no requirement or a
+// requirement the gate obliges (at `stage` the delivered requirements its
+// stage implements, elsewhere every delivered requirement). One function for
+// every consumer: check registration (D3 §2.5) and the scope (B04).
+export function requiredSet(
+  db: Db,
+  args: { project: string; candidate: CandidateRow; kind: string; stage: string | null; version: string },
+): { required: CheckRow[]; obligations: string[]; delivery: Delivery; tier: string } {
+  const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
+  const delivery = deliveryOf(db, args.project, args.candidate);
+  const ofTier = checksOfVersion(db, args.version).filter((c) => applies(c, tier) && gateKindsOf(c).includes(args.kind));
+  const obligations = args.kind === 'stage' ? delivery.delivered.filter((r) => (delivery.implementsOf.get(args.stage ?? '') ?? []).includes(r)) : delivery.delivered;
+  const required = ofTier.filter((c) => requirementsOf(c).length === 0 || requirementsOf(c).some((r) => obligations.includes(r)));
+  return { required, obligations, delivery, tier };
+}
+
+// The (stage revision, candidate revision) facts a candidate's required sets
+// need that git has not yet answered: a delivery read from an unrecorded
+// ancestry would be a guess (D3 §2.5, L2).
+export function unreadAncestry(db: Db, project: string, candidate: CandidateRow): boolean {
+  const stages = db.prepare('SELECT "integrated_revision" FROM "stages" WHERE "project" = ? AND "integrated_revision" IS NOT NULL').all(project) as { integrated_revision: string }[];
+  return stages.some(
+    (s) =>
+      s.integrated_revision !== candidate.revision &&
+      !db.prepare('SELECT 1 FROM "revision_ancestry" WHERE "project" = ? AND "ancestor" = ? AND "descendant" = ?').get(project, s.integrated_revision, candidate.revision),
+  );
+}
+
 // The acceptance content of a candidate (D1 §3.4): its revision, the
 // effective protected fingerprint, the requirements delivered to it and the
 // checks its obligations require, whatever the gate kind, so that one
@@ -173,4 +203,18 @@ export function predecessors(db: Db, candidate: CandidateRow): string[] {
     lineage = prior?.lineage ?? null;
   }
   return out;
+}
+
+// The (stage revision, revision to nominate) pairs whose ancestry a due
+// nomination's registration will need, not yet recorded: read before the
+// nomination is intended, so that its finalizer registers from facts frozen
+// at intent (D3 §2.5, L2).
+export function nominationAncestryPairs(db: Db, args: { project: string }): { ancestor: string; descendant: string }[] {
+  const due = db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null } | undefined;
+  if (!due?.nomination_due) return [];
+  const revision = (JSON.parse(due.nomination_due) as { revision: string }).revision;
+  const stages = db.prepare('SELECT DISTINCT "integrated_revision" AS r FROM "stages" WHERE "project" = ? AND "integrated_revision" IS NOT NULL').all(args.project) as { r: string }[];
+  return stages
+    .filter((s) => s.r !== revision && !db.prepare('SELECT 1 FROM "revision_ancestry" WHERE "project" = ? AND "ancestor" = ? AND "descendant" = ?').get(args.project, s.r, revision))
+    .map((s) => ({ ancestor: s.r, descendant: revision }));
 }

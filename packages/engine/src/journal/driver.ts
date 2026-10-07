@@ -191,8 +191,15 @@ export class Journal {
   }
 
   private async finalize(op: OpDetail): Promise<Settled> {
+    // The operation's own barriers (SEAM.md §184): a nomination's or a
+    // protected application's ref update, confirmed, before and after its
+    // finalizer.
+    const purpose = op.kind === 'ref_update' ? (op.inputs as { purpose?: string }).purpose : undefined;
+    const named = purpose === 'nomination' ? 'nomination' : purpose === 'protected' ? 'protected_application' : null;
+    if (named !== null) await pausePoint(`${named}.before_finalizer`);
     const receipts = await this.rt.engine<Record<string, unknown>>('journal.finalize', { operation: op.id });
     await pausePoint(`journal.${op.kind}.finalizer_committed`);
+    if (named !== null) await pausePoint(`${named}.finalized`);
     return { op: await this.detail(op.id), end: 'finalized', receipts };
   }
 

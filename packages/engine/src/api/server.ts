@@ -271,6 +271,18 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'environments' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environments.list', args: { project } }) }) };
       }
+      // D3 A.7; SEAM.md §§178, 180: a protected version as discovery read it,
+      // and a candidate's check executions; reads.
+      if (rest.length === 2 && rest[0] === 'protected-versions' && get) {
+        const version = decodeSegment(rest[1]!);
+        if (version === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'protected.version', args: { project, version } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'checks' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.executions', args: { project, candidate } }) }) };
+      }
       // The latest recorded evaluation; a read, which evaluates nothing.
       if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && get) {
         const candidate = decodeSegment(rest[1]!);
@@ -383,6 +395,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             return { project, candidate, kind, stage: body.stage, authorization: body.authorization, ...facts };
           },
         };
+      }
+      // D3 A.7: operator-requested executions of a candidate's required checks.
+      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'checks' && post) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'command', name: 'candidate.request_checks', args: (b) => ({ project, candidate, body: b }) };
       }
       if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'authorizations' && post) {
         const candidate = decodeSegment(rest[1]!);

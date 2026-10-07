@@ -43,7 +43,7 @@ import { appendCorrection } from '../store/transitions/ledger.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
 import type { ResultInput } from '../store/transitions/baseline.js';
 import type { ProtectedSet } from '../store/transitions/protected.js';
-import { protectedSetAt } from '../protected/set.js';
+import { type Discovery, discover, protectedVersionAt } from '../checks/discovery.js';
 import {
   type PlanBody,
   type ProjectBody,
@@ -53,6 +53,8 @@ import {
   installAlphaException,
   installCheckResult,
   installClassification,
+  parseClassification,
+  proposalTree,
   installEnvironment,
   installObservation,
   installFixtureChecks,
@@ -75,7 +77,9 @@ import {
 } from './fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
-const WORKER_BARRIERS = ['migration.before_commit'] as const;
+const WORKER_BARRIERS = ['migration.before_commit', 'checks.registered'] as const;
+// Worker barriers a test may also arm while the engine runs (SEAM.md §184).
+const WORKER_RUNTIME_BARRIERS: readonly string[] = ['checks.registered'];
 const JOURNAL_KINDS = ['ref_update', 'commit_tree', 'worktree_add', 'worktree_remove'] as const;
 const JOURNAL_BOUNDARIES = ['intent_committed', 'effect_applied', 'receipt_committed', 'probe_confirmed', 'finalizer_committed', 'reconciled'] as const;
 const MAIN_BARRIERS: readonly string[] = [
@@ -107,6 +111,11 @@ const MAIN_BARRIERS: readonly string[] = [
   // before a qualification attempt dispatches a canary.
   'collect.before_read',
   'qualification.before_dispatch',
+  // SEAM.md §184: a nomination's and a protected application's finalizer.
+  'nomination.before_finalizer',
+  'nomination.finalized',
+  'protected_application.before_finalizer',
+  'protected_application.finalized',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -209,7 +218,9 @@ function parseBarrier(value: string, slot: number): BarrierSpec | null {
   return { name, action, slot };
 }
 
-const registry = new Map<string, { spec: BarrierSpec; state: BarrierState; resume?: () => void }>();
+const registry = new Map<string, { spec: BarrierSpec; state: BarrierState; resume?: () => void; cell?: Int32Array }>();
+// Worker barriers armed while the engine runs (worker side).
+const runtimeWorkerBarriers = new Map<string, { action: BarrierAction; cell: Int32Array }>();
 
 // The command line's --harness flag, --harness-barrier values and
 // --harness-scripted directory. Returns a usage problem to report, or null.
@@ -311,10 +322,18 @@ function listBarriers(): { name: string; action: BarrierAction; state: BarrierSt
 
 // POST /v1/harness/barriers (SEAM.md §33): arm a main-thread barrier while
 // the engine runs, or arm it again after it fired or was released.
-function armBarrier(body: unknown): { barriers: ReturnType<typeof listBarriers> } {
+function armBarrier(body: unknown, arm: (spec: { name: string; action: BarrierAction; cell: SharedArrayBuffer }) => Promise<unknown>): Promise<{ barriers: ReturnType<typeof listBarriers> }> | { barriers: ReturnType<typeof listBarriers> } {
   const b = isObject(body) ? body : {};
   const name = b.name;
   const action = b.action;
+  if (typeof name === 'string' && WORKER_RUNTIME_BARRIERS.includes(name) && (action === 'pause' || action === 'kill')) {
+    const existing = registry.get(name);
+    if (existing && existing.state === 'waiting') throw new Refusal(409, 'illegal_transition', `Barrier "${name}" is waiting.`, 'Release it first.', { barrier: name });
+    // Reached in the store worker: armed there, with its own release cell.
+    const cell = new SharedArrayBuffer(4);
+    registry.set(name, { spec: { name, action, slot: -1 }, state: 'armed', cell: new Int32Array(cell) });
+    return arm({ name, action, cell }).then(() => ({ barriers: listBarriers() }));
+  }
   if (typeof name !== 'string' || !(MAIN_BARRIERS.includes(name) || LAUNCHER_BARRIERS.includes(name)) || (action !== 'pause' && action !== 'kill')) {
     throw new Refusal(400, 'invalid_value', 'Unknown barrier or action.', 'Send {"name": <a barrier the engine reaches on its main thread>, "action": "pause"|"kill"}.', { field: 'name' });
   }
@@ -347,6 +366,11 @@ function releaseBarrier(name: string): void {
   entry.state = 'released';
   if (entry.resume) {
     entry.resume();
+    return;
+  }
+  if (entry.cell) {
+    Atomics.store(entry.cell, 0, 1);
+    Atomics.notify(entry.cell, 0);
     return;
   }
   const cells = new Int32Array(init.shared!);
@@ -618,6 +642,8 @@ const OP = {
   fixtureEnvironment: 'harness.fixture_environment',
   fixtureObservation: 'harness.fixture_observation',
   fixtureClassification: 'harness.fixture_classification',
+  proposalTree: 'harness.proposal_tree',
+  armWorkerBarrier: 'harness.arm_worker_barrier',
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
@@ -685,7 +711,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     return { restricted: true, handler: async () => ({ status: 200, body: { barriers: listBarriers() } }) };
   }
   if (s.length === 1 && s[0] === 'barriers' && post) {
-    return { restricted: true, handler: async () => ({ status: 200, body: armBarrier(await hooks.body()) }) };
+    return { restricted: true, handler: async () => ({ status: 200, body: await armBarrier(await hooks.body(), (spec) => storeOp(OP.armWorkerBarrier, spec)) }) };
   }
   if (s.length === 3 && s[0] === 'barriers' && s[2] === 'release' && post) {
     return {
@@ -819,7 +845,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       if (head === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository or its integration branch could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
       const checkouts = await integrationCheckouts(hooks.scratch(), b.dev_repo_path, b.integration_branch);
       if (checkouts === null) throw new Refusal(409, 'repo_unreadable', 'The fixture repository could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
-      const protectedSet = await protectedSetAt(b.dev_repo_path, head);
+      const protectedSet = await protectedVersionAt(b.dev_repo_path, head);
       if (protectedSet === null) throw new Refusal(409, 'repo_unreadable', 'The protected set of the fixture repository could not be read.', 'Check the fixture repository.', { path: b.dev_repo_path });
       return storeOp(OP.fixtureProject, { body: b, head, checkouts, protectedSet, actor: hooks.actor });
     });
@@ -885,7 +911,16 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'environment') return route(201, (body) => storeOp(OP.fixtureEnvironment, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'observation') return route(201, (body) => storeOp(OP.fixtureObservation, { body, actor: hooks.actor }));
-  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') return route(200, (body) => storeOp(OP.fixtureClassification, { body, actor: hooks.actor }));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') {
+    return route(200, async (body) => {
+      // The class is the fixture's; the discovery of the proposal's tree is
+      // the engine's, frozen at classification (D3 §1.4; SEAM.md §177).
+      const parsed = parseClassification(body);
+      const where = (await storeOp(OP.proposalTree, { proposal: parsed.proposal })) as { repo: string; tree: string } | null;
+      const discovery = where === null ? null : await discover(where.repo, where.tree);
+      return storeOp(OP.fixtureClassification, { body, discovery, actor: hooks.actor });
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'approval') return route(201, (body) => storeOp(OP.fixtureApproval, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'evidence-reuse') return route(201, (body) => storeOp(OP.fixtureReuse, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'alpha-exception') {
@@ -1082,7 +1117,12 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
     case OP.fixtureObservation:
       return installObservation(store(), a.actor, a.body);
     case OP.fixtureClassification:
-      return installClassification(store(), a.actor, a.body);
+      return installClassification(store(), a.actor, a.body, (a.discovery as Discovery | null | undefined) ?? null);
+    case OP.armWorkerBarrier:
+      runtimeWorkerBarriers.set(a.name as string, { action: a.action as BarrierAction, cell: new Int32Array(a.cell as SharedArrayBuffer) });
+      return { armed: a.name };
+    case OP.proposalTree:
+      return proposalTree(store(), a.proposal as string);
     case OP.fixtureApproval:
       return installScopeApproval(store(), a.actor, a.body);
     case OP.fixtureAlphaException:
@@ -1119,6 +1159,19 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
 // kills itself at.
 export function barrier(name: string): void {
   if (!init.harness) return;
+  const armed = runtimeWorkerBarriers.get(name);
+  if (armed !== undefined) {
+    // Fires once (SEAM.md §18).
+    runtimeWorkerBarriers.delete(name);
+    if (armed.action === 'kill') {
+      post?.({ seam: 'barrier', name, state: 'fired' });
+      process.kill(process.pid, 'SIGKILL');
+      return;
+    }
+    post?.({ seam: 'barrier', name, state: 'waiting' });
+    while (Atomics.load(armed.cell, 0) === 0) Atomics.wait(armed.cell, 0, 0);
+    return;
+  }
   const spec = init.barriers.find((b) => b.name === name);
   if (!spec) return;
   if (spec.action === 'kill') {

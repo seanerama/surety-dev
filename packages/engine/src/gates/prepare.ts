@@ -40,6 +40,23 @@ export async function ensureAncestry(rt: Runtime, project: string): Promise<void
   if (found.length > 0) await rt.engine('ancestry.record', { project, pairs: found });
 }
 
+// The ancestry facts a due nomination's registration needs, asked of git
+// and recorded before the nomination is intended (D3 §2.5, L2). An answer git
+// cannot give is not recorded: the finalizer then records `checks_due`.
+export async function ensureNominationAncestry(rt: Runtime, project: string): Promise<void> {
+  const pairs = await rt.read<{ ancestor: string; descendant: string }[]>('ancestry.nomination_pairs', { project });
+  if (pairs.length === 0) return;
+  const repo = await rt.read<{ repo: string } | null>('project.repo', { project });
+  if (!repo) return;
+  const ctx = repoContext(repo.repo);
+  const found: { ancestor: string; descendant: string; is_ancestor: boolean }[] = [];
+  for (const p of pairs) {
+    const answer = await isAncestor(ctx, p.ancestor, p.descendant);
+    if (answer !== null) found.push({ ...p, is_ancestor: answer });
+  }
+  if (found.length > 0) await rt.engine('ancestry.record', { project, pairs: found });
+}
+
 export interface GateFacts {
   headFingerprint: string | null;
   head: string | null;

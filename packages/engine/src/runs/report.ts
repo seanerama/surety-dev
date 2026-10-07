@@ -58,7 +58,12 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
 // it invalid (D2 §5 C1: an Alpha exception proposal is a Reviewer's).
 const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer' };
 
+// Fields no role's result may carry: no role registers a check execution or
+// records a result (D3 §2.5; SEAM.md §180).
+const REFUSED_FIELDS = ['check_results', 'check_executions', 'check_result', 'check_execution'];
+
 export function fieldAllowed(result: Record<string, unknown>, role: string): boolean {
+  if (REFUSED_FIELDS.some((f) => result[f] !== undefined)) return false;
   return Object.entries(ROLE_ONLY).every(([field, only]) => result[field] === undefined || role === only);
 }
 

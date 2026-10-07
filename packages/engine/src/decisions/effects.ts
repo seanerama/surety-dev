@@ -18,6 +18,7 @@ import { commitId } from '../journal/effects.js';
 import type { Policy } from '../config/project-policy.js';
 import { preparePolicyCommit } from '../projects/commands.js';
 import { protectedSetAt } from '../protected/set.js';
+import { type Discovery, discover } from '../checks/discovery.js';
 import { nowIso } from '../clock.js';
 import { type Runtime, log } from '../runtime.js';
 import type { ApplicationFacts } from '../store/transitions/protected.js';
@@ -258,7 +259,12 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
       const rebased = await rebaseTree(facts.repo, facts.proposal.base_revision, facts.proposal.tree_id, head, rt.scratch);
       tree = rebased === 'unknown' || rebased.conflict !== null ? null : rebased.tree;
     }
-    const set = tree === null ? null : await protectedSetAt(facts.repo, tree);
+    const plain = tree === null ? null : await protectedSetAt(facts.repo, tree);
+    // The new version's checks: the discovery frozen at classification, or,
+    // for a proposal classification never discovered, the applied tree's.
+    const frozen = await rt.read<Discovery | null>('protected.proposal_discovery', { proposal });
+    const discovery = plain === null ? null : (frozen ?? (await discover(facts.repo, tree!)));
+    const set = plain === null || discovery === null ? null : { ...plain, discovery };
     if (tree === null || set === null) {
       log('protected application', new Error(`proposal ${proposal} cannot be applied onto ${head}`), { proposal });
       if (intent) await rt.engine('intent.revalidate', { intent, facts: { head } });

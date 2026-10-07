@@ -14,6 +14,7 @@ import type { IntentSpec, OpDetail } from './journal.js';
 import { intendOperation } from './journal.js';
 import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
 import type { Tx } from './tx.js';
+import { registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 
 export interface WorkspaceInputs {
@@ -279,6 +280,8 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   if (due.nomination_due !== null && (JSON.parse(due.nomination_due) as { revision: string }).revision === inputs.new_oid) {
     tx.db.prepare('UPDATE "projects" SET "nomination_due" = NULL WHERE "id" = ?').run(op.project);
   }
+  // The nomination's checks, registered in its finalizer (D3 §2.5; L2).
+  registerAtNomination(tx, { project: op.project, candidate });
   return { candidate, verification: verification.work_item.id };
 }
 

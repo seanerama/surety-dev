@@ -71,6 +71,8 @@ export interface GitResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  // The standard output's bytes, as git wrote them (a blob's exact content).
+  bytes: Buffer;
 }
 
 export interface GitOptions {
@@ -273,7 +275,7 @@ export async function git(ctx: GitContext, args: string[], opts: GitOptions = {}
   const started = performance.now();
   const drivers = await filterDrivers(ctx, env, deadlineMs);
   if (drivers === null) {
-    return { code: -1, stdout: '', stderr: 'the filter drivers of this working copy could not be read from git, so the command was not run', timedOut: false };
+    return { code: -1, stdout: '', stderr: 'the filter drivers of this working copy could not be read from git, so the command was not run', timedOut: false, bytes: Buffer.alloc(0) };
   }
   return run(ctx, args, { ...env, ...filterOverrides(drivers) }, opts.input, Math.max(1, deadlineMs - (performance.now() - started)));
 }
@@ -327,9 +329,11 @@ function run(ctx: GitContext, args: string[], env: NodeJS.ProcessEnv, input: str
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const bytes = Buffer.concat(out);
       resolvePromise({
         code: timedOut || cut ? null : code,
-        stdout: Buffer.concat(out).toString('utf8'),
+        stdout: bytes.toString('utf8'),
+        bytes,
         stderr: Buffer.concat(err).toString('utf8') + extraErr,
         timedOut: timedOut || cut,
       });

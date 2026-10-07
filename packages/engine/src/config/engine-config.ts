@@ -14,6 +14,7 @@ import {
   ENGINE_BOOLEANS,
   ENGINE_FIXED,
   ENGINE_KEYS,
+  ENGINE_AT_LEAST,
   ENGINE_NUMBERS,
   type EngineKey,
   numberInSpec,
@@ -79,6 +80,8 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
       if (!given) values[key] = spec.default;
       else if (numberInSpec(value, spec)) values[key] = value;
       else throw invalidValue(key, `must be ${spec.integer ? 'an integer' : 'a number'} from ${spec.min} to ${spec.max}`);
+      const floor = ENGINE_AT_LEAST[key];
+      if (floor !== undefined && (values[key] as number) < (values[floor] as number)) throw invalidValue(key, `may not be below ${floor} (${values[floor] as number})`);
     }
   }
   return { values: values as EngineConfig['values'], sources };

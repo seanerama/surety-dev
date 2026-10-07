@@ -12,6 +12,7 @@ import { canonical, notFound, sha256 } from './common.js';
 import { getCandidate, markStale } from './evidence.js';
 import { getProposal, mustEffective } from './protected.js';
 import type { Tx } from './tx.js';
+import { nextExecutionSeq, recomputeIndexErrors } from './checks.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the fixture request.', { field });
 
@@ -77,6 +78,26 @@ export function requirementIds(tx: Tx, projectId: string, keys: string[], field:
     if (!row) throw invalid(field, `names the requirement "${key}", which the approved spec does not have`);
     return row.id;
   });
+}
+
+// The requirement index's fields (D3 §4.5, A.3), each row's requirement
+// created if the spec had none, then the versions' errors recomputed against
+// the index (SEAM.md §179).
+export function registerRequirementIndex(
+  tx: Tx,
+  args: { project: string; rows: { key: string; phase: number | null; sensitive_areas: string[]; criteria: string[] }[] },
+): { id: string; key: string; criteria: string[]; sensitive_areas: string[] }[] {
+  const made = ensureRequirements(tx, { project: args.project, keys: args.rows.map((r) => r.key) });
+  const out: { id: string; key: string; criteria: string[]; sensitive_areas: string[] }[] = [];
+  for (const r of args.rows) {
+    const id = made.find((m) => m.key === r.key)!.id;
+    tx.db
+      .prepare('UPDATE "requirements" SET "criteria" = ?, "sensitive_areas" = ?, "assigned_phase" = COALESCE(?, "assigned_phase") WHERE "id" = ?')
+      .run(JSON.stringify(r.criteria), JSON.stringify(r.sensitive_areas), r.phase, id);
+    out.push({ id, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas });
+  }
+  recomputeIndexErrors(tx, args.project);
+  return out;
 }
 
 export function ensureModules(tx: Tx, args: { project: string; modules: { name: string; paths: string[]; sensitive_areas?: string[] }[] }): void {
@@ -179,7 +200,8 @@ export function recordCheckResult(tx: Tx, args: ResultInput, label: Record<strin
     const env = tx.db.prepare('SELECT "project" FROM "environments" WHERE "id" = ?').get(args.environment) as { project: string } | undefined;
     if (!env || env.project !== args.project) throw notFound('environment', args.environment);
   }
-  const { n } = tx.db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) + 1 AS n FROM "check_results" WHERE "project" = ?').get(args.project) as { n: number };
+  // The project's one sequence, shared with registrations (L7).
+  const n = nextExecutionSeq(tx, args.project);
   const id = tx.newId('cr_');
   tx.db
     .prepare(

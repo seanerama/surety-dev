@@ -9,6 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
+import { proposalHasErrors } from './checks.js';
 import { type Policy, wideningKeys } from '../../config/project-policy.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -1004,6 +1005,8 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
       const manifest = correctionManifest(tx, p.id, facts);
       const r = projectRepoRow(tx, p.project);
       const blockers = p.changes_required_set === 1 && manifest.scope_approval === null ? ['APPROVAL_MISSING'] : [];
+      // L5: while the proposal's discovery has errors only `reject` can be chosen.
+      if (proposalHasErrors(tx.db, p.project, p.id)) blockers.push('CHECK_DEFINITION_INVALID');
       return {
         manifest,
         options: [
