@@ -50,20 +50,34 @@ interface SizedEntry extends TreeEntry {
   size: number | null;
 }
 
+// Every entry of the tree, with no blob read: a blob absent from a partial
+// clone is no reason the tree cannot be listed (E37 item 1). Sizes are asked
+// only of the blobs discovery reads (`sizesOf`).
 async function listSized(ctx: GitContext, treeish: string): Promise<SizedEntry[] | null> {
-  const r = await git(ctx, ['ls-tree', '-r', '-t', '-l', '-z', '--full-tree', treeish]);
+  const r = await git(ctx, ['ls-tree', '-r', '-t', '-z', '--full-tree', treeish]);
   if (r.code !== 0) return null;
   const out: SizedEntry[] = [];
   for (const record of r.stdout.split('\0')) {
     if (record === '') continue;
     const tab = record.indexOf('\t');
-    const [mode, type, oid, size] = record
-      .slice(0, tab)
-      .split(' ')
-      .filter((x) => x.length > 0);
-    out.push({ mode: mode!, type: type!, oid: oid!, path: record.slice(tab + 1), size: size === '-' || size === undefined ? null : Number(size) });
+    const [mode, type, oid] = record.slice(0, tab).split(' ') as [string, string, string];
+    out.push({ mode, type, oid, path: record.slice(tab + 1), size: null });
   }
   return out;
+}
+
+// The sizes of blobs, by object id; null if git could not answer.
+async function sizesOf(ctx: GitContext, oids: string[]): Promise<Map<string, number> | null> {
+  const out = new Map<string, number>();
+  const unique = [...new Set(oids)];
+  if (unique.length === 0) return out;
+  const r = await git(ctx, ['cat-file', '--batch-check'], { input: `${unique.join('\n')}\n` });
+  if (r.code !== 0) return null;
+  for (const line of r.stdout.split('\n')) {
+    const [oid, type, size] = line.split(' ');
+    if (oid && type === 'blob' && size !== undefined) out.set(oid, Number(size));
+  }
+  return unique.every((o) => out.has(o)) ? out : null;
 }
 
 // The bytes of each blob, by object id, read in batches; null if git could
@@ -104,7 +118,10 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
   let govText: string | null = null;
   if (gov !== undefined) {
     if (gov.type !== 'blob' || gov.mode !== '100644') return { ...fatal(GOVERNED_FILE), errors: [{ path: GOVERNED_FILE, code: 'not_regular_file' }] };
-    if (gov.size !== null && gov.size > DEFINITION_MAX_BYTES) return { ...fatal(GOVERNED_FILE), errors: [{ path: GOVERNED_FILE, code: 'too_large' }] };
+    const size = await sizesOf(ctx, [gov.oid]);
+    if (size === null) return null;
+    gov.size = size.get(gov.oid)!;
+    if (gov.size > DEFINITION_MAX_BYTES) return { ...fatal(GOVERNED_FILE), errors: [{ path: GOVERNED_FILE, code: 'too_large' }] };
     const blobs = await readBlobs(ctx, [gov.oid]);
     if (blobs === null) return null;
     govText = blobs.get(gov.oid)!.toString('utf8');
@@ -124,6 +141,15 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
   const names = [...direct.keys()].sort();
   if (names.length > DEFINITIONS_MAX) errors.push({ path: dir, code: 'too_many' });
   const read: { path: string; stem: string; oid: string }[] = [];
+  const sizes = await sizesOf(
+    ctx,
+    names
+      .slice(0, DEFINITIONS_MAX)
+      .map((n) => direct.get(n)!)
+      .filter((e) => e.type === 'blob' && e.mode === '100644')
+      .map((e) => e.oid),
+  );
+  if (sizes === null) return null;
   for (const name of names.slice(0, DEFINITIONS_MAX)) {
     const e = direct.get(name)!;
     const path = `${dir}${name}`;
@@ -135,7 +161,7 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
       errors.push({ path, code: 'invalid_value' });
       continue;
     }
-    if (e.size === null || e.size > DEFINITION_MAX_BYTES) {
+    if ((sizes.get(e.oid) ?? Infinity) > DEFINITION_MAX_BYTES) {
       errors.push({ path, code: 'too_large' });
       continue;
     }
