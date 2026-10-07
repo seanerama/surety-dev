@@ -244,3 +244,12 @@ Main `fdc4070`; no linked builder or verifier worktrees. Ten-minute progress che
 Main `fdc4070`; no active builder or verifier worktree.
 
 - No build changes since 21:04: head and worktree states are unchanged; no newly recorded tests.
+
+## 2026-10-06 21:56:57 -0500 CDT
+
+Main `447c9df`; only the main worktree is registered. Monitoring resumed at 20-minute intervals.
+
+- Since 21:13, D3 draft 2 was committed and approved to build; E90 decides B01–B04 and F2 (c), and E91 decides Q8–Q11. Draft 2 substantively states immutable input path/manifest enforcement, conservative root-addition classification, latest-registration selection, tier inventory/cadence and criterion-bound finding resolution; these are build contracts, not implemented or newly tested claims.
+- No M3 build spec or acceptance plan is visible in tracked files, untracked files or an active linked worktree yet. Main's only pre-existing untracked files remain the two HTML artifacts. E91 explicitly puts the two M3 documents next for Sean's approval; drafting in progress is not a discrepancy.
+- The emerging M3 claims cannot yet be checked: M201-starting contracts with substantive T01–T20 cases, distinct kernel/sandbox/project versus real-agent evidence, registration→real check execution→gate as the first slice, and a final real-agent requirement with estimated cost await those documents. D3's Appendix C supplies contracts and lane distinctions, including F2/T20, but is not that acceptance plan or paid-run authorization.
+- No implementation changes or newer recorded test results were observed since the last entry; no tests, builds, model calls or paid backends were run for this check. D3 draft 2 explicitly records that it ran nothing.
