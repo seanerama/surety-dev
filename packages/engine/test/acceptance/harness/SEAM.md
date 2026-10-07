@@ -4349,6 +4349,181 @@ A check's view is read from its report (section 182): the regular files under it
 - **M210 (a)'s `input_changed`**: the classifier's observation, row M226 (slice 19).
 - **M213 (g)**: `M201-source-symlink-refused.test.mjs` (section 188). **M213 (f)**: read on M211's execution.
 
+---
+
+# M3 slice 18: what an execution establishes
+
+Sections 203 to 214 were written with the slice-18 acceptance tests (2026-10-07; `verify/m3-s18` from `main` at `95a2452`): rows M216 to M223 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.4, and the cases slices 15 to 17 deferred to this slice (M201 (f); M205 (d), (g), (i); M207 (c)). They follow D3 draft 2 (§§2.5 to 2.9, A.2, A.3, A.5 to A.7; L1, L4; B01), Astra's T05, T07, T08, T09, T18 and T19, E90 to E95, and the coordinator's rulings for this slice (the program's new modes; the test's own signal for M205 (d); M205 (g) in the exhaustion lane; the self-test's B01 evidence structural, as E95 decided; the `recovery` trigger for M207 (c) and M216). Every earlier section stands; what this pass changes in them is in section 214. † marks a reading for Sean.
+
+## 203. What the slice-18 tests assume throughout
+
+- **Lanes.** Kernel (section 177): `M207-the-infrastructure-retry-beside-the-request`, `M216-recovery-registrations-and-their-budget`, `M218-evidence-missing-apart-from-the-finding`, `M221-the-runner-fixture-only-in-harness-mode`. Sandbox (section 122): `M201-the-journey-qualified-by-the-self-test`, `M205-a-foreign-signal-and-forged-reports`, `M216-unknown-interrupted-and-every-point-of-a-start`, `M217`, `M218-output-and-evidence-presence`, `M219`, `M220`, `M221-the-runner-self-test-and-the-binding`, `M222` (section 211 says why M222 is not kernel). Project: `M223` (section 213), run with `npm test` and listed in the manifest's informational `sandbox` list (E92 item 2 (1)). Exhaustion: `M205-an-oom-kill-on-the-exhaustion-host`, under the manifest's `exhaust` key only (section 212).
+- **Order** (BS3 §4 rule 3). The files whose program floods, prints a held secret, ignores TERM, detaches a descendant or is signalled by the test (`M217`, `M218-output-and-evidence-presence`, `M205-a-foreign-signal-and-forged-reports`) are the last three of slice 18 in the manifest, after the non-destructive sandbox files.
+- **The runner's qualification.** Sandbox files use the runner qualification fixture (section 181) unless they say otherwise: `M201-the-journey-qualified-by-the-self-test` and `M221-the-runner-self-test-and-the-binding` use the self-test (section 208) and never the fixture; M219's `isolation_unqualified` case and M221 (b) need neither.
+- **`materializing` and `running`** (D3 A.5, "from `materializing` as well as from `running` once a domain is allocated"). An execution is `materializing` from its admission, through its check tree, its domain's allocation, placement and launch authorization, until the transaction that records the init's `started` report; it is `running` from that transaction. †
+- **Events of an execution's status** (D3 A.6): `check.quarantined`, `check.interrupted` and `check.cancelled` each have `subject` `{project, candidate, check_execution}`, as `check.registered` (section 180).
+
+## 204. Recovery registrations (D3 §2.7; T05)
+
+(D3 §2.5 "Triggers", §2.7, A.3 `retry_of`, `infra_retries`; rows M207 (c), M216 (a), (c), M219.)
+
+- **When.** An execution that ends `interrupted`, or is recorded `materialization_failed`, is registered again in the transaction that ends it (its `check.registered` event shares the `tx` of that transaction's `check.interrupted` or `check.result`). A domain's closure precedes it: the registration's `check.registered` comes after the interrupted execution's domain's `domain.terminated` in the events' sequence. Nothing else is registered again: a recorded established result, failed or passed, never is ("a genuine test failure is never retried"), and neither is any other not-run reason.
+- **The trigger** of the n-th retry of an original registration (n from 1): `{"source": "recovery", "id": <the original registration's trigger id>, "generation": <the original's generation + n>}`; `retry_of` the execution it retries (the original, or the (n−1)-th retry); `infra_retries` n. The original keeps `infra_retries` 0. †
+- **The budget.** At most `check_infra_retries_max` retries per original registration, counted from the store, so a restart resets nothing (M216 (c)). With the budget spent the check stays `missing`, its entry's `pending` the last interrupted execution.
+- **The scripted check boundary** (section 190): its step to `interrupted` is the engine's own transition and registers the retry as above; after a restart the retry stays `queued` until the route moves it.
+
+## 205. Unknown, interrupted, and every point of a start
+
+(D3 §§2.5, 2.6, A.5; L1; T07; D2 §§3.2 to 3.5; sections 125, 126, 128 to 130; row M216 (a), (b), (d); M205 (d).)
+
+- **Barriers for a check's start.** Section 125's launcher barriers (`launcher.before_placement`, `launcher.placed`, `launcher.before_authorization`, `launcher.authorized`) fire for a check domain's launcher as for a role's, and `collect.before_read` (section 152) for a check domain after its termination and before its output is read. New, in the engine: **`checks.before_started`** (the init's `started` report has arrived, the check's process exec'd, before the transaction that records the report); **`checks.started`** (after that transaction has committed); **`checks.exit_recorded`** (after the transaction that records the init's exit report, before the domain's termination begins). Section 200's `checks.before_materialize` stands. Since the role launcher and collection fire the shared barriers too, a case arms them only once the Builder's run is behind it (`armedForTheCheck`: held at `checks.before_materialize` first).
+- **A crash at each point** (the engine killed through the test's handle, then started again; `check_infra_retries_max` 0). Recovery establishes closure first (section 129). Then:
+
+| Point | The execution | Rows |
+|---|---|---|
+| `launcher.before_placement`, `launcher.placed`, `launcher.authorized`, `checks.before_started`, `checks.started` | `interrupted`, `not_run_reason` null | none |
+| `checks.exit_recorded`, `collect.before_read` | `recorded`, from the reports the init had made: `execution_established` true, `exit_status` as reported | exactly one |
+
+  On every path the execution's domain has `check_execution` the execution, `run` null, a `launch_binding` naming it where one was granted, and `domain.launch_closed` before `domain.terminated` before the execution's `check.interrupted` or `check.result`. **Not pinned:** whether the output captured before such a crash survives it; the cells after the exit report read the row and its status, not its output record. †
+- **"Cancel" at each point** (M3 plan M216 (b)). No route cancels a check execution (A.7). The one cancellation of an execution that has a domain is the engine's at `timeout_s`, which D3 §2.6 counts from `started`; M205 (h) and M217 (d) read it. Before `started` the cells are crashes only. †
+- **Unknown** (D2 §3.4; the instrument of section 128: the domain's `cgroup.events` made unreadable). While termination is unknown the execution is `quarantined` (from `running`, and from `materializing` once its domain is allocated), `check.quarantined` is emitted once, its domain is `quarantined`, no row is recorded and nothing is collected; the check is `missing` and its entry's `pending` is `{execution, status: "quarantined"}`. Once termination is observed: an execution whose exit report was recorded is `recorded`, one row; any other is `interrupted`, no row, and is registered again by section 204.
+- **The check lease after a pause** (D3 §2.5; D2 §3.5; section 130). As for a run: a fresh challenge on the check domain init's channel re-grants the lease of kind `check` on the same generation and emits **`check.lease_regranted`**: `subject` `{project, candidate, check_execution}`, `payload` as `run.lease_regranted`'s (`generation`, `expires_at`, `challenge {nonce, sent_at, answered_at, backend_state}`). A check whose `timeout_s` has passed is not re-granted: it is ended at its deadline (`deadline_hit` and `signaled`); the pause extends no `timeout_s`.
+- **The test's one signal** (M205 (d); the coordinator's ruling 2; E64). The test sends SIGKILL to the held check program's host pid only, after `assertContained`, having read the pid again from the domain's `cgroup.procs` and confirmed from `/proc/<pid>/cmdline` and its start time that it is the test's program holding at the test's release name (`killVerifiedProgram`); never a negative pid, 0, 1 or -1. The result: established, `signaled`, `exit_status` null, `deadline_hit` false, `failed`.
+
+## 206. Orphans and deadlines; the program's slice-18 modes
+
+(D3 §2.6, §7.1 L4; T08; BS3 §4 rule 1; rows M217, M205 (i), M218; `harness/checks/program.mjs`.)
+
+**The modes** (each guarded as section 198 says, released only after `assertContained`; none signals anything; every wait bounded):
+
+| Mode | What the program does |
+|---|---|
+| `ignore-term <max ms>` | installs a SIGTERM handler that writes one line, `SURETY-CHECK ignored SIGTERM`, and does not exit; writes `SURETY-CHECK ignoring SIGTERM`; waits at most 120 s; exits 99 |
+| `detach-child <ms>` | starts one child, the program's `child-sleep <ms>` (at most 120 s), detached in a session of its own with standard input, output and error closed; writes `SURETY-CHECK-DETACHED {"pid"}`; exits 0 at once |
+| `flood <bytes>` | section 207 |
+| `print <text>...` | writes each text and a line ending to standard output; exits 0 |
+| `alloc <cap bytes>` | section 212 (exhaustion lane only) |
+
+**Orphans.** A result has `orphans` 1 when the init reported, at the check's own exit and before draining its output, another process alive in the domain; `init_reports` then holds a report of kind `orphans`. A descendant that ends by itself during the teardown leaves `orphans` 1 (M217 (b): it sleeps 0.5 s, its standard output closed, so a reading after the drain would miss it). Afterwards no process the check started is left on the host (read by the program's path in `/proc/*/cmdline`). **Deadlines.** A program that ignores TERM past `timeout_s`: TERM, then after `terminate_grace` the kill; `deadline_hit` and `signaled`, `exit_status` null, and the row does not change afterwards.
+
+## 207. Output and evidence presence
+
+(D3 §2.6 "Output"; D1 §9.3 input 8, §14.2; T09; sections 57, 72, 152; rows M218, M207 (c).)
+
+- **`flood <bytes>`** writes `floor(bytes / 1024)` lines of exactly 1024 bytes, alternately to standard output and standard error, line `n` (from 0) being `O` (even n) or `E`, a space, `n` in ten digits, a space, then `o` or `e` up to the line ending; at most 16 GiB; then exit 0. A program that holds first writes `SURETY-CHECK released <name>` and a line ending before it.
+- **The record of an output past `output_max_bytes`** (n): its bytes begin with the first ⌊n/2⌋ bytes of the combined stream and end with its last ⌈n/2⌉; anything between them (a marker) is at most 256 bytes and not pinned; `output_dropped_bytes` is the stream's length less n. **Interleaving** is at the granularity of the program's writes: the kept lines are in the order written, both streams in one record. †
+- **No output**: an established result names an output record of zero bytes.
+- **A held secret in the output** (`POST /v1/harness/secrets`, section 57): the publication is refused; `check_results.output` is null; one **`evidence.secret_refused`** with `subject` `{project, check_execution}` and `payload.what` `check_output`; one finding `category` `security`, `effective_severity` `critical`, `status` `open`, of the project. The result is recorded otherwise as observed (output changes no field). No published record, event, result, execution row, finding or API answer holds the raw secret. (The definition that names the program's argument holds it, as the test's own protected text.)
+- **EVIDENCE_MISSING.** An evaluation that selects an established result naming no output record carries `EVIDENCE_MISSING` whose `subjects` include the result's id; one naming a missing or corrupt record names the record, as section 72 says. The reason stands whether or not a finding also blocks.
+- **The scripted check boundary's `output`** (section 190) passes the same screen and redactor as a collection.
+- **M218 (f)** "the engine and the program's own exit during a flood" is read as: the engine's termination of a check at `timeout_s` while it floods, and a program's own exit right after a flood larger than any pipe buffer; neither stalls the engine, each is recorded with a bounded record. †
+
+## 208. The runner self-test, its switch, and the runner binding
+
+(D3 §2.8, §2.5 "Binding at launch", §2.2 (B01), A.3 `host_qualifications.check_runner`; T18, T19; E95; rows M221, M201 (f).)
+
+- **When it runs.** Outside harness mode, at every engine start whose host qualification is active, after the host checks. In harness mode, only at a start that carries **`--harness-runner-self-test run`**; a harness-mode start without it runs no self-test and leaves `check_runner` null, so `direct` is unqualified until the runner qualification fixture (section 181). While a start's self-test is in progress no `direct` execution is admitted (it stays `queued`). †
+- **What it records**, once, when every case has been recorded: `host_qualifications.check_runner` = `{"profile_fingerprint", "self_test": [{"case", "control", "result", "evidence"?}], "qualified"}`, with no `test_fixture`. `result` is `passed`, `failed` or `not_exercised`; `passed` means the case and its control (`control`, a non-empty string naming it) each gave what D3 §2.8 requires. `qualified` is true exactly when every entry is `passed`.
+- **The cases**, by these names, in this order (the plan §2.6 left the names to the tests):
+
+| `case` | D3 §2.8's required result |
+|---|---|
+| `exit_zero` | exit 0: passed |
+| `exit_nonzero` | exit 1: failed |
+| `prints_passed_exits_nonzero` | output "passed" with exit 1: failed |
+| `foreign_signal` | a signal the engine did not send: failed |
+| `deadline` | past `timeout_s`: failed, `deadline_hit` |
+| `term_handled_after_cancel` | TERM handled with exit 0 after an engine cancellation: not passed |
+| `missing_program` | skipped |
+| `input_immutable` | B01: a protected input and its ancestors cannot change; the pathname reads the protected bytes; a source write succeeds and does not persist |
+| `orphan_stdout_closed` | an orphan with its standard output closed: failed |
+| `egress` | an undeclared egress refused while the declared one connects |
+
+- **`input_immutable`'s evidence is structural** (E95; the coordinator's ruling 4): `evidence` `{"inputs": [workspace-relative paths], "mountinfo": [lines]}`, `mountinfo` the lines of `/proc/<pid>/mountinfo` of the case's own check process, read from the host by the engine while it ran. At least one input lies two or more directories below the workspace. Each input and every directory up to `/surety/workspace` must satisfy section 198's rule in that table (the test applies `assertImmutableAt` to it). No case has a program rename, exchange, replace or relink a path (T02's attempt cases stay unwritten, E95).
+- **`--harness-runner-self-test-case <case>=<failed|not_exercised>`** (repeatable; harness mode only): the named case is recorded with that result whatever was observed (`not_exercised`: it is not run). One such case leaves `qualified` false (T18).
+- **`--harness-check-profile-variant <label>`** (harness mode only): the check profile's fingerprint folds in `<label>` for this start, as a change to the profile would (section 150's `--harness-mechanism-variant` for the host's mechanism).
+- **The binding at launch** (T19). An execution is bound when it is launched, not when it is registered, to the active host qualification and its `check_runner` then current: `check_executions.runner_qualification` and `runner_id` (section 182's form, the prefix of that qualification's `profile_fingerprint`) are set at launch, and its result carries the same; `toolchain` (section 201) is the program actually resolved. With no qualified runner then, the execution is recorded `runner_unqualified` (section 209). A recorded result is never changed by a later qualification.
+
+## 209. What cannot run, and NOW
+
+(D3 §2.7, A.2 `NotRunReason`, A.7 NOW cause; D1 §12.3; rows M219, M221 (b), M222, M223 (b).)
+
+- **A not-run row**: the execution `recorded` with `not_run_reason`, its `check_results` row `execution_established` 0, `exit_status` null, the same `not_run_reason`; the gate entry `state` `skipped` with `not_run_reason`.
+- **Instruments.** `definition_invalid`: a definition whose `cwd` is not a directory of the check tree †. `toolchain_missing`: a `check_commands` path absent, or a pinned `sha256` that differs (section 201). `mount_plan_refused`: `runner_config.direct.read_paths` naming the engine home. `materialization_failed`: section 200's entries bound, with section 204's retries. `isolation_unqualified`: an operator's re-run at a start whose `--harness-host-check H5=failed` leaves no active host qualification (the candidate built at a qualified start, since a Builder's run needs the sandbox). `runner_unqualified`: `check_runner` null or not qualified at launch. `environment_unbound`: section 211. `exec_failed`: M205 (e).
+- **NOW** (section 91) gains **`cause`**: when `state` is `refused` because a check of the project was recorded with a host-level reason (`toolchain_missing`, `mount_plan_refused`, `isolation_unqualified`, `runner_unqualified`), `cause` is `check_unrunnable`. Other causes' values, and when NOW leaves `refused`, are not pinned.
+- **Never attempted**: a registration still `queued` (behind the project's one check slot) has no row and no `not_run_reason`; the check is `missing` with `pending` `{execution, status: "queued"}`.
+
+## 210. Scheduling within the envelope
+
+(D3 §2.5 "Scheduling"; L2; D2 §3.7; sections 156, 168; row M220.)
+
+- **The hold.** The candidate's checks route (section 180) gains, per execution, **`hold`**: null, or for a `queued` execution the envelope does not admit, `{"code": "resource_envelope", "reason", "subject": {"limit": "max_concurrent_domains" | "host_reserve_memory" | "host_reserve_disk", …}}`, as section 156's `dispatch_hold`. No domain is allocated for it. Reached by configuration only, as section 156's cases. A hold by `max_concurrent_checks` is not pinned beyond "the second stays queued".
+- **Not a run.** A check of a project is admitted and recorded while a role's run of that project is `executing`.
+
+## 211. Runner classes, developer checks, the reserved environment
+
+(D3 §§2.8, 2.9, §5 X3; D1 §9.2; row M222.)
+
+- **The lane** †: the plan files M222 under the kernel lane, but `runner_unqualified` and `environment_unbound` are the runner's decisions at admission, which a kernel-lane engine never makes (section 177's runner switch) and the scripted check boundary does not script (section 190). So M222 is written in the sandbox lane; nothing of it runs a model.
+- A definition with `runner_class` `container` or `remote` is discovered; its executions carry that `runner_class` and are recorded `runner_unqualified`. A result of class `direct` recorded for such a check (the check-result fixture, section 67, with `runner_class` `direct`) never decides it.
+- A definition of `origin` `developer`, `kind` `smoke`, may be required; its result decides as any other; its command reads files outside the roots, which a Builder may change with no proposal. Whether it counts toward the kind inventory is slice 20's (M230).
+- A definition of `kind` `post_deploy_behavior` with `requires` `["environment", "artifact_digest"]` and `gate_kinds` `["alpha_authorize"]` is valid in M3 and is registered by the nomination, the operator route and a protected application like any required check; each such execution is recorded `environment_unbound`, with `environment` and `artifact_digest` null on the execution and the result.
+
+## 212. The OOM case on the exhaustion host (M205 (g))
+
+(E69; section 155; the coordinator's ruling 3; `M205-an-oom-kill-on-the-exhaustion-host.test.mjs`, manifest `exhaust` only.)
+
+- **`--harness-check-domain-limits <k>=<n>,…`** (harness mode only): `pids_max`, `memory_max`, `writable_bytes`, `writable_inodes`, any subset, each a positive integer in tasks or bytes; every check domain of this start gets them, below the configured minimums, as section 155's `domain_limits` does for a work item's domains; `memory.swap.max` 0. Held by the running engine; a restart forgets it. The case gives Sean's caps.
+- **`alloc <cap>`** (guarded): refuses a cap above 64 MiB and, when it can read `/sys/fs/cgroup/memory.max` from inside, a value above the cap; inside a check domain that file is normally absent (no cgroupfs), and then the test's host-side reading of the domain's limits is the bound, as section 155 says for the role program. It allocates 1 MiB at a time, every page touched, writing `SURETY-CHECK-ALLOC <bytes>` every 4 MiB, and stops by itself at twice the cap (128 MiB at most), exiting 97. †
+- **The test's half**: `assertContained`, then section 155's `assertDomainCaps` on the check domain, then the release.
+- **What is pinned**: `signaled`, `exit_status` null, `deadline_hit` false, `failed`; the check domain's `resource_events` (section 145's form) with `oom_kill` ≥ 1.
+
+## 213. The reference project (project lane)
+
+(BS3 §§3, 7; M3 plan §§2.1, 2.3; D3 §2.8, Appendix B; `harness/project/reference.mjs`; row M223, and M238 in slice 22.)
+
+- **Its files**, committed by the test: `.surety/checks/protected-policy.json` (`check_commands` `node` = the test's own `process.execPath`, `nodecopy` = a copy of it under the test's directory with its `sha256` pinned; `read_paths` the node installation's prefix unless it lies under the system directories, and the copy's directory; `path` the node binary's directory, `/usr/bin`, `/bin`), `.surety/checks/wrapper.mjs`, `.surety/checks/tests/sum.test.mjs`, a hanging test under a fresh name, and three definitions: `accept` (acceptance, covers R1.1, `node wrapper sum.test.mjs`), `copied` (smoke, the same through `nodecopy`), `hangs` (smoke, `timeout_s` 5). The Builder writes `src/sum.mjs`.
+- **The protective wrapper** runs `node --test --test-reporter=tap <files>` as its child, passes its output through, and exits with the runner's own status when that is not 0; 2 when the runner ended by a signal; 3 when the runner exited 0 but its TAP summary is missing or counts no test, or any failed, skipped, todo or cancelled test; otherwise 0.
+- **What M223 pins**: the acceptance check passes (exit 0) on correct source and fails with the runner's status 1 on broken source, the TAP lines in its output; the copy with changed bytes, then removed, is `toolchain_missing` with the found hash recorded, and NOW `refused`, `check_unrunnable`; the hanging check reaches `timeout_s` (`deadline_hit`, `signaled`) and no process with the hanging test's name is left on the host. The mutants, the root-hiding case and what the wrapper protects against are slice 22's (M238).
+
+## 214. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Section 1's flags: `--harness-runner-self-test`, `--harness-runner-self-test-case`, `--harness-check-profile-variant`, `--harness-check-domain-limits` (each a usage error without `--harness`; M221 (e)).
+- Section 18's barriers: `checks.before_started`, `checks.started`, `checks.exit_recorded`; section 125's launcher barriers and section 152's `collect.before_read` fire for check domains (section 205).
+- Section 91's `now` gains `cause` (section 209). Section 180's checks route gains `hold` (section 210).
+- Section 181: the runner qualification fixture is no longer the only way the sandbox lane qualifies `direct` (section 208).
+- Section 182's program gains the modes of section 206; it starts a process in `detach-child` only.
+- Section 190: the step to `interrupted` registers the recovery retry (section 204); the route's `output` is screened (section 207).
+- Section 130's re-grant applies to the check lease (`check.lease_regranted`, section 205).
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| A recovery registration's trigger † | `recovery`, the original's id, the original's generation + n; `retry_of`, `infra_retries` n (section 204) | T05: generation in the identity; D3 says the next generation of the original trigger and names the source `recovery` |
+| `materializing` versus `running` † | `running` from the recorded `started` (section 203) | A.5 lets a quarantine come from `materializing` once a domain is allocated |
+| The barriers of a start | three new `checks.*` points; D2's launcher barriers and `collect.before_read` for check domains (section 205) | M3 plan §2.3 names the points; T07 asks for each |
+| "Cancel" at each point † | the deadline only, from `started`; before it, crashes (section 205) | No cancellation route exists for a check execution (A.7) |
+| The output after a crash between the exit report and collection † | not pinned (section 205) | Whether the captured output survives is the Builder's construction; the row and its status are D3's |
+| The check lease's re-grant event | `check.lease_regranted`, `run.lease_regranted`'s payload (section 205) | A.6 names none; L1 binds every recovery path to the check execution |
+| The self-test switch in harness mode † | off unless `--harness-runner-self-test run`; no admission while it runs (section 208) | Each sandbox start would otherwise run ten check domains first; the slice-15 to slice-17 files keep the fixture |
+| The self-test case names (M3 plan §2.6) | the ten of section 208 | D3 §2.8's list, one name each |
+| The B01 case's evidence | the case's own mount table and its inputs (section 208) | E95: structural; the test applies section 198's rule to it |
+| `definition_invalid`'s instrument † | a `cwd` that is no directory of the check tree (section 209) | D3 §2.7 names the reason and no cause; discovery refuses everything else invalid before registration |
+| NOW's cause | `now.cause`, `check_unrunnable` (section 209) | A.7 adds the cause; section 91's `now` had no place for one |
+| The envelope's hold on a check | `hold` on the checks route, section 156's form (section 210) | D3 says "shows as `resource_envelope`" and names no read |
+| A refused output record | `output` null; `evidence.secret_refused` `what` `check_output`; EVIDENCE_MISSING naming the result (section 207) | D3 §2.6: refused, absent or missing; there is no record to name |
+| Interleaving † | at the granularity of the program's writes (section 207) | D3 says "interleaved" and nothing finer |
+| M218 (f) † | the engine's deadline during a flood, and a program's own exit at a flood's end (section 207) | The plan's "the engine and the program's own exit during a flood" |
+| M222's lane † | sandbox (section 211) | The not-run decisions are the runner's at admission |
+| `ignore-term`'s handler † | writes one line, does not exit (section 206) | The ruling says "does nothing"; the line is how the case sees the TERM arrived before the kill |
+| `alloc`'s bound inside a check domain † | the test's host-side reading of memory.max when the program cannot read it (section 212) | A check domain has no cgroupfs; section 155's precedent |
+
+**Deferred or not written** (`../COVERAGE.md`, "M3 slice 18"):
+- **Astra's T02 attempt cases and M212 (b) to (d)**: not written (E95). The self-test's B01 evidence is structural (section 208).
+- **M222 (b)'s "counts toward no kind"**: slice 20 (M230), with the kind inventory.
+- **M221 (b)'s "an optional observer never substitutes"** (T18, E57): no case; the engine has no optional observer of the self-test.
+- **M205 (i)'s writes "to the control descriptors"**: the ruling gives the program `print` only; the forged text goes to standard output. That check code cannot reach the init's channel is D2 §2.3's and M117's.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15", "M3 slice 16" and "M3 slice 17".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 18".

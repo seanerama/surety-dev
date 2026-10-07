@@ -218,6 +218,22 @@
       "M213-the-manifest-is-projected-exactly.test.mjs",
       "M214-the-check-tree-and-bounded-preparation.test.mjs",
       "M215-environment-egress-direct-exec.test.mjs"
+    ],
+    "18": [
+      "M207-the-infrastructure-retry-beside-the-request.test.mjs",
+      "M216-recovery-registrations-and-their-budget.test.mjs",
+      "M218-evidence-missing-apart-from-the-finding.test.mjs",
+      "M221-the-runner-fixture-only-in-harness-mode.test.mjs",
+      "M221-the-runner-self-test-and-the-binding.test.mjs",
+      "M201-the-journey-qualified-by-the-self-test.test.mjs",
+      "M219-what-cannot-run.test.mjs",
+      "M220-scheduling-within-the-envelope.test.mjs",
+      "M222-runner-classes-developer-checks-environment.test.mjs",
+      "M216-unknown-interrupted-and-every-point-of-a-start.test.mjs",
+      "M223-a-real-projects-toolchain.test.mjs",
+      "M217-orphans-and-deadlines.test.mjs",
+      "M218-output-and-evidence-presence.test.mjs",
+      "M205-a-foreign-signal-and-forged-reports.test.mjs"
     ]
   },
   "sandbox": [
@@ -258,11 +274,22 @@
     "M212-inputs-are-immutable-at-their-pathnames.test.mjs",
     "M213-the-manifest-is-projected-exactly.test.mjs",
     "M214-the-check-tree-and-bounded-preparation.test.mjs",
-    "M215-environment-egress-direct-exec.test.mjs"
+    "M215-environment-egress-direct-exec.test.mjs",
+    "M221-the-runner-self-test-and-the-binding.test.mjs",
+    "M201-the-journey-qualified-by-the-self-test.test.mjs",
+    "M219-what-cannot-run.test.mjs",
+    "M220-scheduling-within-the-envelope.test.mjs",
+    "M222-runner-classes-developer-checks-environment.test.mjs",
+    "M216-unknown-interrupted-and-every-point-of-a-start.test.mjs",
+    "M223-a-real-projects-toolchain.test.mjs",
+    "M217-orphans-and-deadlines.test.mjs",
+    "M218-output-and-evidence-presence.test.mjs",
+    "M205-a-foreign-signal-and-forged-reports.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
-    "M130-exit-classes-limits.test.mjs"
+    "M130-exit-classes-limits.test.mjs",
+    "M205-an-oom-kill-on-the-exhaustion-host.test.mjs"
   ],
   "real": [
     "M139-unauthenticated-canary.test.mjs",
