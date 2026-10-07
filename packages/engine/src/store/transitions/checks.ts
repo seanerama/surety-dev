@@ -272,6 +272,8 @@ export function registerDue(tx: Tx, args: { project: string }): number {
   let made = 0;
   for (const r of rows) {
     const candidate = getCandidate(tx.db, r.id)!;
+    // A superseded candidate is owed nothing more (slice 16 review m5).
+    if (candidate.superseded_by) continue;
     if (unreadAncestry(tx.db, args.project, candidate)) continue;
     // Under the version effective now: one stored with the due mark may
     // since have been superseded.
@@ -305,6 +307,14 @@ export function registerAtApplication(tx: Tx, args: { project: string; proposal:
 export function requestChecks(tx: Tx, args: { project: string; candidate: string; body: unknown }): { status: number; body: unknown } {
   const candidate = getCandidate(tx.db, args.candidate);
   if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
+  // A superseded candidate's results authorize nothing (D3 §2.5; Q9): no
+  // execution is registered for it (slice 16 review m5).
+  if (candidate.superseded_by) {
+    throw new Refusal(409, 'illegal_transition', `Candidate ${candidate.id} is superseded by ${candidate.superseded_by}.`, `Request the checks of ${candidate.superseded_by}.`, {
+      candidate: candidate.id,
+      superseded_by: candidate.superseded_by,
+    });
+  }
   const b = args.body === undefined || args.body === null ? {} : args.body;
   if (typeof b !== 'object' || Array.isArray(b)) throw new Refusal(400, 'invalid_value', 'The body must be a JSON object.', 'Send {"keys"?: [<key>], "request_key"?: <string>}.', { field: null });
   const body = b as Record<string, unknown>;

@@ -20,8 +20,8 @@ const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
-const { checkState, evaluateGate, observeGateRefs, gateRefRegistry } = await import(join(dist, 'store', 'transitions', 'gates.js'));
-const { cancelSuperseded, executionSeqHigh, nextExecutionSeq, scriptExecutionStep } = await import(join(dist, 'store', 'transitions', 'checks.js'));
+const { checkState, dueStageGates, evaluateGate, observeGateRefs, gateRefRegistry } = await import(join(dist, 'store', 'transitions', 'gates.js'));
+const { cancelSuperseded, executionSeqHigh, nextExecutionSeq, registerDue, requestChecks, scriptExecutionStep } = await import(join(dist, 'store', 'transitions', 'checks.js'));
 const { getCandidate } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
 const { effectiveVersion } = await import(join(dist, 'store', 'transitions', 'protected.js'));
 const { judgeRefs, sameGeneration } = await import(join(dist, 'gates', 'refs.js'));
@@ -247,11 +247,104 @@ test('the gate\'s observation is reconciled against the registry as it is now (N
 
 test('judging a read: unread is never a change; either generation and the journal\'s moving values account for a value', () => {
   const gen = (expected, moving = []) => [{ registry: 'ref_main', ref: 'refs/heads/main', expected, moving }];
+  const ok = (oid) => new Map([['refs/heads/main', { state: 'ok', oid }]]);
   assert.deepEqual(judgeRefs(gen(A), gen(A), null), [{ fact: { ref: 'refs/heads/main', read: 'unread', oid: null }, change: null }]);
-  assert.equal(judgeRefs(gen(A, [B]), gen(A, [B]), new Map([['refs/heads/main', B]]))[0].change, null, "the engine's own update in flight");
-  assert.equal(judgeRefs(gen(A, [B]), gen(B), new Map([['refs/heads/main', A]]))[0].change, null, 'read before the finalizer moved the registry');
-  assert.deepEqual(judgeRefs(gen(A), gen(A), new Map())[0], { fact: { ref: 'refs/heads/main', read: 'absent', oid: null }, change: { registry: 'ref_main', expected: A, found: null } });
-  assert.deepEqual(judgeRefs(gen(A), gen(A), new Map([['refs/heads/main', C]]))[0].change, { registry: 'ref_main', expected: A, found: C });
+  assert.deepEqual(judgeRefs(gen(A), gen(A), new Map([['refs/heads/main', { state: 'unknown' }]]))[0].change, null, 'an unverified absence is unread, not a deletion');
+  assert.equal(judgeRefs(gen(A, [B]), gen(A, [B]), ok(B))[0].change, null, "the engine's own update in flight");
+  assert.equal(judgeRefs(gen(A, [B]), gen(B), ok(A))[0].change, null, 'read before the finalizer moved the registry');
+  assert.deepEqual(judgeRefs(gen(A), gen(A), new Map([['refs/heads/main', { state: 'missing' }]]))[0], {
+    fact: { ref: 'refs/heads/main', read: 'absent', oid: null },
+    change: { registry: 'ref_main', expected: A, found: null },
+  });
+  assert.deepEqual(judgeRefs(gen(A), gen(A), ok(C))[0].change, { registry: 'ref_main', expected: A, found: C });
   assert.equal(sameGeneration(gen(A, [B]), gen(A, [B])), true);
   assert.equal(sameGeneration(gen(A, [B]), gen(B)), false);
+});
+
+// ---- the slice-16 review's minor findings (m3 to m5, m7) -------------------------------------
+
+// cand_1 superseded by cand_2 as the nomination finalizer does it: the row and the event.
+const supersede = (db) =>
+  transact(db, ENGINE_ACTOR, (tx) => {
+    tx.db.prepare(`UPDATE candidates SET superseded_by = 'cand_2' WHERE id = 'cand_1'`).run();
+    tx.emit('candidate.superseded', { project: 'prj_1', candidate: 'cand_1' }, { by: 'cand_2' });
+  });
+const reuse = (run, result) =>
+  run(`INSERT INTO evidence_reuse (id, created_at, project, candidate, "check", check_result, record, assessed) VALUES (?, ?, 'prj_1', 'cand_2', 'chk_1', ?, NULL, 1)`, `reuse_${result}`, AT, result);
+const resultOfExecution = (db, x) => db.prepare('SELECT id FROM check_results WHERE execution = ?').get(x).id;
+
+test('m3: a result an execution records after its candidate was superseded never counts through reuse; one recorded before does', (t) => {
+  const { db, run } = store(t);
+  register(db, { id: 'cx_before', candidate: 'cand_1', revision: A });
+  recordExit(db, 'cx_before', 0);
+  register(db, { id: 'cx_after', candidate: 'cand_1', revision: A });
+  for (const to of ['materializing', 'running']) step(db, 'cx_after', to);
+  supersede(db);
+  step(db, 'cx_after', 'collecting');
+  step(db, 'cx_after', 'recorded', { exit_status: 0, signaled: false, deadline_hit: false, orphans: false });
+  reuse(run, resultOfExecution(db, 'cx_after'));
+  assert.equal(stateOf(db).state, 'missing', 'the late result of the superseded candidate is not reused');
+  reuse(run, resultOfExecution(db, 'cx_before'));
+  assert.deepEqual([stateOf(db).state, stateOf(db).decider.execution], ['passed', 'cx_before'], 'the result recorded before the supersession still counts');
+});
+
+test("m3: the candidate's own pending registration blocks a reuse pass with a higher number", (t) => {
+  const { db, run } = store(t);
+  register(db, { id: 'cx_own' }); // cand_2, pending
+  register(db, { id: 'cx_other', candidate: 'cand_1', revision: A });
+  recordExit(db, 'cx_other', 0);
+  reuse(run, resultOfExecution(db, 'cx_other'));
+  const s = stateOf(db);
+  assert.deepEqual([s.state, s.pending, s.decider], ['missing', { execution: 'cx_own', status: 'queued' }, null]);
+  recordExit(db, 'cx_own', 1);
+  assert.deepEqual([stateOf(db).state, stateOf(db).decider.execution], ['passed', 'cx_other'], 'with its own result recorded, the later reuse pass decides as before');
+});
+
+test('m4: an evaluation carrying REF_UNREAD resolves no finding', (t) => {
+  const { db } = store(t);
+  register(db, { id: 'cx_pass' });
+  db.prepare(
+    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, category, message, "check", proposed_severity, effective_severity, status, disposition, disposition_authority, disposition_seq)
+     VALUES ('f_1', ?, 'prj_1', 1, 'project', 'prj_1', NULL, 'defect', 'm', 'login', 'medium', 'medium', 'dispositioned', 'fix', 'human', ?)`,
+  ).run(AT, 0);
+  recordExit(db, 'cx_pass', 0);
+  const unread = gate(db, 'cand_2', { refs: [{ ref: 'refs/heads/main', read: 'unread', oid: null }, READ_ALL('cand_2')[1]] });
+  assert.ok(reasonCodes(unread).includes('REF_UNREAD'));
+  assert.equal(db.prepare(`SELECT status FROM findings WHERE id = 'f_1'`).get().status, 'dispositioned', 'not resolved while a ref is unread');
+  gate(db, 'cand_2', { refs: READ_ALL('cand_2') });
+  assert.equal(db.prepare(`SELECT status FROM findings WHERE id = 'f_1'`).get().status, 'resolved', 'resolved once the refs are read');
+});
+
+test('m5: no execution is registered for a superseded candidate, by request or by a due mark', (t) => {
+  const { db } = store(t);
+  supersede(db);
+  assert.throws(
+    () => transact(db, ENGINE_ACTOR, (tx) => requestChecks(tx, { project: 'prj_1', candidate: 'cand_1', body: {} })),
+    (e) => e.status === 409 && e.code === 'illegal_transition' && e.subject?.superseded_by === 'cand_2',
+  );
+  db.prepare(`UPDATE candidates SET checks_due = ? WHERE id = 'cand_1'`).run(JSON.stringify([{ trigger: { source: 'nomination', id: 'cand_1', generation: 1 }, version: 'pv_1', at: AT }]));
+  assert.equal(transact(db, ENGINE_ACTOR, (tx) => registerDue(tx, { project: 'prj_1' })), 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM check_executions').get().n, 0);
+});
+
+test('m7: the engine does not evaluate a superseded candidate by itself', (t) => {
+  const { db, run } = store(t);
+  const item = (id, seq, kind, subject, status, triggerId) =>
+    run(
+      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+       VALUES (?, ?, 'prj_1', ?, ?, ?, ?, 'nomination', ?, 1, 0, 0, 0, 0)`,
+      id,
+      AT,
+      seq,
+      kind,
+      JSON.stringify(subject),
+      status,
+      triggerId,
+    );
+  item('wi_build', 1, 'stage_build', { stage: 'stage_1' }, 'verifying', 'build_1');
+  item('wi_ver', 2, 'verification', { candidate: 'cand_1' }, 'complete', 'cand_1');
+  run(`UPDATE candidates SET held_work = '["wi_build"]' WHERE id = 'cand_1'`);
+  assert.deepEqual(dueStageGates(db, { project: 'prj_1' }), [{ candidate: 'cand_1', stage: 'stage_1' }], 'the fixture is live: its stage gate is due');
+  supersede(db);
+  assert.deepEqual(dueStageGates(db, { project: 'prj_1' }), []);
 });

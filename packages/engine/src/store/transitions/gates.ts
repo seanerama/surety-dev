@@ -159,11 +159,18 @@ function executionsOf(db: Db, project: string, check: CheckRow, candidate: strin
     .prepare(`SELECT r.* FROM "check_results" r JOIN "checks" c ON c."id" = r."check" WHERE r."project" = ? AND r."candidate" = ? AND c."key" = ?`)
     .all(project, candidate, check.key) as ResultRow[];
   // A reuse entry counts only if it is assessed and names a result of the
-  // same check (correction 18; SEAM.md §73).
+  // same check (correction 18; SEAM.md §73), and never a result an engine
+  // execution recorded after its candidate was superseded (D3 §2.5, T15:
+  // such a result authorizes nothing; slice 16 review m3). Ordered by the
+  // event sequence, never by a timestamp. A fixture result is an
+  // observation of a past execution and is not affected (SEAM.md §189).
   const reused = db
     .prepare(
       `SELECT r.* FROM "evidence_reuse" e JOIN "check_results" r ON r."id" = e."check_result" JOIN "checks" c ON c."id" = r."check"
-       WHERE e."project" = ? AND e."candidate" = ? AND e."assessed" = 1 AND e."check_result" IS NOT NULL AND c."key" = ?`,
+       WHERE e."project" = ? AND e."candidate" = ? AND e."assessed" = 1 AND e."check_result" IS NOT NULL AND c."key" = ?
+       AND (r."execution" IS NULL OR NOT EXISTS (
+         SELECT 1 FROM "events" sup JOIN "events" rec ON rec."type" = 'check.result' AND json_extract(rec."subject", '$.check_result') = r."id"
+         WHERE sup."type" = 'candidate.superseded' AND json_extract(sup."subject", '$.candidate') = r."candidate" AND sup."seq" < rec."seq"))`,
     )
     .all(project, candidate, check.key) as ResultRow[];
   const seen = new Set(own.map((r) => r.id));
@@ -271,7 +278,13 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
   const items: Item[] = matching.map((r) => ({ seq: r.execution_seq, result: r }));
   for (const x of registrations) if (x.result === null || !usable.has(x.result)) items.push({ seq: x.execution_seq, registration: x });
   if (items.length === 0) return { state: all.length === 0 ? 'missing' : 'stale', decider: null, pending: null, history: null };
-  const top = items.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const latest = (list: Item[]) => list.reduce((a, b) => (b.seq > a.seq ? b : a));
+  // The candidate's own latest registration with no usable result blocks,
+  // whatever number a reuse entry's result has: a reuse entry never decides
+  // over it (slice 16 review m3). Otherwise the latest of all decides.
+  const own = items.filter((i) => i.registration !== undefined || i.result?.reused === false);
+  const ownTop = own.length > 0 ? latest(own) : null;
+  const top = ownTop?.registration !== undefined ? ownTop : latest(items);
   if (top.registration !== undefined) {
     // Its result exists and was invalidated: what it established no longer holds.
     if (top.registration.status === 'recorded') return { state: 'stale', decider: null, pending: null, history: null };
@@ -486,6 +499,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       ? [`refs/heads/${(db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { integration_branch: string }).integration_branch}`, nominationRef(candidate.seq)]
       : args.refs.filter((r) => r.read === 'unread').map((r) => r.ref);
   if (unreadRefs.length > 0) add('REF_UNREAD', unreadRefs);
+  // An evaluation that could not read its refs establishes nothing about
+  // the candidate's revision: it resolves no finding and completes no work
+  // (slice 16 review m4).
+  const refUnread = unreadRefs.length > 0;
   if (pending.length > 0) add('GIT_JOURNAL_PENDING', pending.map((op) => op.id));
 
   // (4) Every required check passed.
@@ -517,7 +534,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   for (const f of findings) {
     // A fix whose named check passes here, by an execution recorded after
     // the disposition, is resolved by this evaluation (SEAM.md §74).
-    if (f.disposition === 'fix' && f.check !== null && superseded === null) {
+    if (f.disposition === 'fix' && f.check !== null && superseded === null && !refUnread) {
       const named = checksOfVersion(db, scope.effective.id).find((c) => c.key === f.check);
       if (named) {
         const s = checkState(db, args.project, named, scope);
@@ -664,7 +681,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     for (const w of fixes) transitionWork(tx, getWorkItem(tx, w.id)!, 'complete', {}, { evaluation: id, finding: f.id });
   }
 
-  if (outcome === 'satisfied' && kind === 'stage') completeStageWork(tx, candidate, scope.stage!, id);
+  if (outcome === 'satisfied' && kind === 'stage' && !refUnread) completeStageWork(tx, candidate, scope.stage!, id);
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
   if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
@@ -808,6 +825,8 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
   const out: { candidate: string; stage: string }[] = [];
   const candidates = db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(args.project) as CandidateRow[];
   for (const c of candidates) {
+    // A superseded candidate's evaluation is refused (Q9): not evaluated by itself.
+    if (c.superseded_by) continue;
     const v = verificationOf(db, c.id);
     if (!v || v.status !== 'complete') continue;
     for (const w of heldByAncestry(db, c)) {

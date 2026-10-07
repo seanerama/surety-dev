@@ -8,6 +8,7 @@
 // generation expects, or one the engine's own unfinished journaled update is
 // moving the ref to, is the engine's own write, never out of band.
 
+import type { RefRead } from '../git/repo.js';
 import type { RefFact } from '../store/transitions/gates.js';
 
 export interface RegistryGeneration {
@@ -23,15 +24,17 @@ export interface RefJudgement {
   change: { registry: string; expected: string; found: string | null } | null;
 }
 
-// `found`: every ref of the repository, or null when git could not list them.
-export function judgeRefs(before: RegistryGeneration[], after: RegistryGeneration[], found: Map<string, string> | null): RefJudgement[] {
+// `found`: the registered refs as read (git/repo.ts readRefs: a value, a
+// verified absence, or unknown), or null when git could not list them.
+export function judgeRefs(before: RegistryGeneration[], after: RegistryGeneration[], found: Map<string, RefRead> | null): RefJudgement[] {
   const out: RefJudgement[] = [];
   for (const now of after) {
-    if (found === null) {
+    const read = found?.get(now.ref) ?? { state: 'unknown' as const };
+    if (read.state === 'unknown') {
       out.push({ fact: { ref: now.ref, read: 'unread', oid: null }, change: null });
       continue;
     }
-    const oid = found.get(now.ref) ?? null;
+    const oid = read.state === 'ok' ? read.oid : null;
     const fact: RefFact = oid === null ? { ref: now.ref, read: 'absent', oid: null } : { ref: now.ref, read: 'value', oid };
     const then = before.find((b) => b.registry === now.registry);
     const accounted = oid !== null && [now.expected, ...now.moving, ...(then ? [then.expected, ...then.moving] : [])].includes(oid);
@@ -39,6 +42,10 @@ export function judgeRefs(before: RegistryGeneration[], after: RegistryGeneratio
   }
   return out;
 }
+
+// Every ref unread: the registry's generation never held still across a
+// read, so what was read cannot be judged against one (N02).
+export const allUnread = (after: RegistryGeneration[]): RefJudgement[] => after.map((r) => ({ fact: { ref: r.ref, read: 'unread', oid: null }, change: null }));
 
 // Did the registry's generation of these refs change between two reads?
 export function sameGeneration(a: RegistryGeneration[], b: RegistryGeneration[]): boolean {

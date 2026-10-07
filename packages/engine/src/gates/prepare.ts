@@ -11,10 +11,10 @@
 //   whole, so that evidence that is gone is reported missing.
 
 import { repoContext } from '../git/exec.js';
-import { isAncestor, readAllRefs } from '../git/repo.js';
+import { isAncestor, readRefs } from '../git/repo.js';
 import type { RefFact } from '../store/transitions/gates.js';
 import { pausePoint } from '../testing/seam.js';
-import { type RegistryGeneration, judgeRefs, sameGeneration } from './refs.js';
+import { type RefJudgement, type RegistryGeneration, allUnread, judgeRefs, sameGeneration } from './refs.js';
 import { protectedSetAt } from '../protected/set.js';
 import { readRecordBytes } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
@@ -73,22 +73,26 @@ export interface GateFacts {
 // Read the integration branch's ref and the candidate's nomination ref, and
 // record a change the registry cannot account for as an integrity
 // observation before the evaluation's transaction (D3 §5 X1; N02). The
-// registry's generation is read before and after git; if it moved during
-// the read, the read is made again (at most three times) and judged against
-// both generations, so the engine's own journaled write is never reported.
-// An unsuccessful read records nothing and is passed on as unread.
-async function readGateRefs(rt: Runtime, project: string, candidate: string, repo: string): Promise<RefFact[]> {
+// registry's generation is read before and after git; only a read across
+// which it held still is judged, so the engine's own journaled write is
+// never reported. If it moved during the read, the read is made again, at
+// most three times; if it never held still, every ref is unread. A ref git
+// did not list is absent only when verified (git/repo.ts refAbsent). An
+// unsuccessful read records nothing and is passed on as unread.
+export async function readGateRefs(rt: Runtime, project: string, candidate: string, repo: string): Promise<RefFact[]> {
   const ctx = repoContext(repo);
   let before = await rt.read<RegistryGeneration[]>('gate.ref_registry', { project, candidate });
-  let found: Map<string, string> | null = null;
-  let after = before;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    found = await readAllRefs(ctx);
-    after = await rt.read<RegistryGeneration[]>('gate.ref_registry', { project, candidate });
-    if (found === null || sameGeneration(before, after)) break;
-    before = after;
+  let judged: RefJudgement[] | null = null;
+  for (let attempt = 0; attempt < 3 && judged === null; attempt++) {
+    const found = await readRefs(ctx, before.map((r) => r.ref));
+    const after = await rt.read<RegistryGeneration[]>('gate.ref_registry', { project, candidate });
+    // Judged only against a generation that held still across the read.
+    if (found === null || sameGeneration(before, after)) judged = judgeRefs(before, after, found);
+    else before = after;
   }
-  const judged = judgeRefs(before, after, found);
+  // The registry moved during every read: nothing read can be judged, so
+  // every ref is unread and nothing is recorded (m2).
+  judged ??= allUnread(before);
   const changes = judged.flatMap((j) => (j.change === null ? [] : [j.change]));
   if (changes.length > 0) await rt.engine('gate.observe_refs', { project, changes });
   return judged.map((j) => j.fact);
