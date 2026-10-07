@@ -1,8 +1,8 @@
 # Surety
 
-Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. The first milestone, M1, is being built now: the engine kernel on a scripted adapter, with no real backend.
+Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. M1 (the engine kernel on a scripted adapter) and M2 (Claude Code as a real backend under D2's isolation) are accepted; M3, the check runner of D3, is being built now.
 
-**Read `docs/spec/M1-build-spec.md` before changing anything.** It says what is being built, which design documents govern, and who may write what.
+**Read `docs/spec/M3-build-spec.md` before changing anything** (M1 and M2 are accepted; their specs, `docs/spec/M1-build-spec.md` and `docs/spec/M2-build-spec.md`, still govern what they built). It says what is being built, which design documents govern, and who may write what.
 
 ## Your role
 
@@ -24,14 +24,14 @@ If your prompt names no role, you are assisting Sean, the owner. Do not edit `pa
 npm install                                        # once
 npm run build                                      # tsc only
 npm run test:unit                                  # Builder's developer tests
-node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N (9 = everything merged so far)
+node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N (14 = all of M1 and M2; M3 is slices 15 to 22)
 node scripts/run-tests.mjs acceptance --lane real  # the paid real-backend lane, only by Sean's command (M2 plan §2.1)
 node scripts/run-tests.mjs acceptance --lane exhaust  # fork/memory/storage exhaustion, only on mini-hp01 with SURETY_EXHAUSTION_HOST set (E69); never here
 npm test                                           # unit, then the full kernel and sandbox suite
 node scripts/check-role-boundary.mjs <builder|verifier> main <branch>
 ```
 
-The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until every row of both plans (M01 to M74, M101 to M142) has a file and passes; use `--slice N` meanwhile. Real-lane files (manifest `real`) and exhaustion-lane files (manifest `exhaust`) never run in `npm test`.
+The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until every row of the three plans (M01 to M74, M101 to M142, M201 to M241) has a file and passes; use `--slice N` meanwhile. Real-lane files (manifest `real`) and exhaustion-lane files (manifest `exhaust`) never run in `npm test`.
 
 The boundary check sees commits only. Commit your work before running it.
 

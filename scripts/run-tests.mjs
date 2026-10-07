@@ -36,12 +36,14 @@ import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
 import { fileURLToPath } from 'node:url';
 
-// The acceptance rows: docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3 (M01 to M74)
-// and docs/acceptance/sdlc-M2-acceptance-plan.md §3 (M101 to M142).
+// The acceptance rows: docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3 (M01 to M74),
+// docs/acceptance/sdlc-M2-acceptance-plan.md §3 (M101 to M142) and
+// docs/acceptance/sdlc-M3-acceptance-plan.md §3 (M201 to M241).
 // Adding or removing a row is the owner's decision (build spec §9).
 const ROWS = [
   ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
   ...Array.from({ length: 42 }, (_, i) => `M${101 + i}`),
+  ...Array.from({ length: 41 }, (_, i) => `M${201 + i}`),
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 

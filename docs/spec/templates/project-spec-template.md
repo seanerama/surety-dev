@@ -74,7 +74,7 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 
 ## 5. Requirement index
 
-*[One row per requirement. This table is what the engine registers; keep it complete and consistent with section 4. Phase is a hint for the Architect's roadmap.]*
+*[One row per requirement. This table is what the engine registers; keep it complete and consistent with section 4. Phase is a hint for the Architect's roadmap. The engine parses it exactly (D3 §4.5): key `R<n>`; sensitive areas from the fixed list, or `none`; criteria `R<n>.<m>`, comma-separated, each of its own requirement's key and none repeated. A row that does not parse refuses the spec's approval and names the row. Each project check names the criteria it covers and each finding the criterion it breaks; a requirement with no criteria is uncertain and cannot be validated. How the Verifier declares checks under `.surety/checks/` is shown in D3 Appendix B.]*
 
 | Key | Title | Phase | Sensitive areas | Criteria |
 |---|---|---|---|---|
