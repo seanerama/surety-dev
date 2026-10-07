@@ -112,11 +112,21 @@ function placeOf(rt: Runtime, d: DomainRow, incarnation: string): string | null 
   return v.where === 'inside' ? null : `the recorded path is outside the verified hierarchy: ${v.detail}`;
 }
 
+// What termination needs of whatever holds the domain in this engine: a
+// run's handle, or a check execution's (L1: the check execution in the
+// invocation's place on every closure path).
+export interface DomainHolder {
+  claim: { domain: string };
+  sandbox: SandboxLaunch | null;
+  backendStarted: boolean;
+  terminal: RunHandle['terminal'];
+}
+
 export interface TerminateArgs {
   rt: Runtime;
   d: DomainRow;
   incarnation: string; // the incarnation that owned the domain
-  handle: RunHandle | undefined;
+  handle: DomainHolder | undefined;
   // An unknown established before (a prior supervisor leaf that could not be
   // closed; recovery); the domain is not terminated.
   knownUnknown?: string | null;

@@ -280,3 +280,72 @@ export function recordReuse(tx: Tx, args: { project: string; candidate: string; 
   markStale(tx, { candidate: candidate.id });
   return { reuse: { id } };
 }
+
+// The result row of an engine execution (D3 A.3), with `check.result` (A.6:
+// its payload gains `execution` and `not_run_reason`). Called by
+// checks.ts's recordExecutionResult only.
+export function insertExecutionResult(
+  tx: Tx,
+  a: {
+    project: string;
+    check: string;
+    candidate: string;
+    source_revision: string;
+    protected_version: string;
+    runner_class: string;
+    runner_id: string;
+    runner_qualification: string | null;
+    execution_seq: number;
+    started_at: string | null;
+    finished_at: string;
+    execution: string;
+    established: boolean;
+    exit_status: number | null;
+    signaled: boolean;
+    deadline_hit: boolean;
+    orphans: boolean;
+    not_run_reason: string | null;
+    output: string | null;
+    output_dropped_bytes: number | null;
+  },
+): string {
+  const id = tx.newId('cr_');
+  tx.db
+    .prepare(
+      `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
+         "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at",
+         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      tx.at,
+      a.project,
+      a.check,
+      a.candidate,
+      a.source_revision,
+      a.protected_version,
+      a.runner_class,
+      a.runner_id,
+      a.execution_seq,
+      a.established ? 1 : 0,
+      a.signaled ? 1 : 0,
+      a.deadline_hit ? 1 : 0,
+      a.exit_status,
+      a.output,
+      a.started_at,
+      a.finished_at,
+      a.execution,
+      a.not_run_reason,
+      a.orphans ? 1 : 0,
+      a.output_dropped_bytes,
+      a.runner_qualification,
+    );
+  tx.emit(
+    'check.result',
+    { project: a.project, check: a.check, candidate: a.candidate, check_result: id, check_execution: a.execution },
+    { execution_seq: a.execution_seq, exit_status: a.exit_status, execution: a.execution, not_run_reason: a.not_run_reason },
+  );
+  markStale(tx, { candidate: a.candidate });
+  return id;
+}

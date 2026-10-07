@@ -39,6 +39,8 @@ export interface BackendLaunch {
     barrier?: string | null;
     containment?: { program: string; actions: string[]; targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; action_timeout_ms: number; check_ms: number } | null;
   } | null;
+  // A check execution's own process (D3 §2.6; domain-init.ts).
+  check?: boolean;
 }
 
 export interface ExitReport {
@@ -72,6 +74,12 @@ export interface LaunchHooks {
   setupFailed(detail: string): void;
   // The launcher reached one of the wait points it was handed.
   reached?(name: string, action: string): void;
+  // A check domain's init reports beside the exit (D3 §2.6): the failed
+  // exec's errno, and `orphans` at the check's own exit.
+  report?(kind: 'orphans' | 'start_failed', detail: Record<string, unknown>): void;
+  // Asked when an exit report arrives: true makes it lost (the seam's
+  // `init_report_lost`, consulted at the report rather than at the launch).
+  dropExit?(): boolean;
 }
 
 export interface LaunchSpec {
@@ -304,13 +312,20 @@ export class SandboxLaunch {
       case 'eof':
         this.output.end();
         return;
+      case 'orphans':
+        this.hooks.report?.('orphans', { count: typeof m.count === 'number' ? m.count : null });
+        return;
+      case 'start_failed':
+        this.hooks.report?.('start_failed', { errno: typeof m.errno === 'string' ? m.errno : null, detail: String(m.detail ?? '').slice(0, 300) });
+        return;
       case 'exit':
         // Under the seam's `init_report_lost` the report is acknowledged and
         // lost here, before the engine knows of it. Otherwise the engine
         // acknowledges it when it acts on it (`ackExit`): the init stays
         // until then, so that an engine resumed from a pause can still ask
         // it (D2 §3.5).
-        if (this.dropExitReport) {
+        if (this.dropExitReport || (this.exitReport === null && this.hooks.dropExit?.() === true)) {
+          this.dropExitReport = true;
           this.send({ t: 'exit_ack' });
           return;
         }

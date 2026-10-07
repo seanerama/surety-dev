@@ -106,6 +106,7 @@ import {
 } from './transitions/qualification.js';
 import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
+  authorizeCheckLaunch,
   authorizeLaunch,
   boundaryDomains,
   cgroupCreated,
@@ -124,7 +125,26 @@ import {
   regrantLease,
 } from './transitions/boundary.js';
 import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
-import { freezeProposalDiscovery, proposalDiscovery, readCandidateExecutions, readVersion, registerDue, requestChecks } from './transitions/checks.js';
+import {
+  admitExecution,
+  freezeProposalDiscovery,
+  interruptExecution,
+  liveExecutions,
+  markCollecting,
+  proposalDiscovery,
+  quarantineExecution,
+  readCandidateExecutions,
+  readVersion,
+  recordExecutionResult,
+  recordInitReport,
+  recordToolchain,
+  registerDue,
+  renewCheckLease,
+  requestChecks,
+  runnerQualification,
+  setCheckRunner,
+  treeInUse,
+} from './transitions/checks.js';
 
 export interface WorkerData {
   file: string;
@@ -179,6 +199,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'protected.version': (d, a) => readVersion(d, a),
   'candidate.executions': (d, a) => readCandidateExecutions(d, a),
   'protected.proposal_discovery': (d, a: { proposal: string }) => proposalDiscovery(d, a.proposal),
+  'checks.tree_in_use': (d, a) => treeInUse(d, a),
+  'checks.live': (d) => liveExecutions(d),
+  'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,
+  'checks.qualification': (d) => runnerQualification(d),
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
@@ -303,6 +327,17 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'ancestry.record': (tx, a) => recordAncestry(tx, a),
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
+  'checks.admit': (tx, a) => admitExecution(tx, a),
+  'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),
+  'checks.init_report': (tx, a) => recordInitReport(tx, a),
+  'checks.toolchain': (tx, a) => recordToolchain(tx, a),
+  'checks.renew': (tx, a) => renewCheckLease(tx, a),
+  'checks.collecting': (tx, a) => markCollecting(tx, a),
+  'checks.quarantine': (tx, a) => quarantineExecution(tx, a),
+  'checks.interrupt': (tx, a) => interruptExecution(tx, a),
+  'checks.record': (tx, a) => recordExecutionResult(tx, a),
+  'checks.never_launched': (tx, a) => domainTerminated(tx, { domain: a.domain, observed: true, evidence: { never_launched: true } }),
+  'checks.set_runner': (tx, a) => setCheckRunner(tx, a),
   'protected.freeze_discovery': (tx, a) => freezeProposalDiscovery(tx, a),
   'decisions.review': (tx, a) => reviewDecisions(tx, a),
   'accept.record_report': (tx, a) => recordRunReport(tx, a),

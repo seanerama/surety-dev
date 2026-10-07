@@ -10,7 +10,7 @@ import type { Database } from 'better-sqlite3';
 import { Refusal } from '../refusal.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
 import type { Discovery } from '../checks/discovery.js';
-import { freezeProposalDiscovery } from '../store/transitions/checks.js';
+import { freezeProposalDiscovery, setCheckRunner } from '../store/transitions/checks.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
@@ -631,4 +631,21 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
       decision: f.status === 'proposed' ? decision : null,
     };
   });
+}
+
+// POST /v1/harness/fixtures/runner-qualification (SEAM.md §181; E92 item 2):
+// the active host qualification's runner marked qualified, labelled as the
+// harness's: no self-test ran. Every result recorded under it names this row.
+export function parseRunnerQualification(body: unknown): void {
+  const b = objectBody(body, ['runner_class']);
+  if (b.runner_class !== 'direct') throw invalid('runner_class', 'must be direct, the only class the fixture qualifies');
+}
+
+export function installRunnerQualification(db: Database, actor: Actor, profileFingerprint: string): { host_qualification: string } {
+  const id = transact(db, actor, (tx) => {
+    tx.stamp = { ...FIXTURE_LABEL };
+    return setCheckRunner(tx, { profile_fingerprint: profileFingerprint, self_test: [], qualified: true, ...FIXTURE_LABEL });
+  });
+  if (id === null) throw new Refusal(409, 'isolation_unqualified', 'There is no active host qualification, so the check runner cannot be qualified.', 'Start the engine on a host whose checks pass.', {});
+  return { host_qualification: id };
 }

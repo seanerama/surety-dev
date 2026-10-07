@@ -312,6 +312,10 @@ interface BackendSpec {
   // abstract socket on which the probe program asks for its actions, and the
   // exact argument array of each action as canary.json gives it.
   canary?: { barrier?: string | null; containment?: ContainmentSpec | null } | null;
+  // A check's own process (D3 §2.6): no standard input; standard output and
+  // error both relayed, interleaved as they arrive; and, at its exit, before
+  // anything is drained, whether any other process remains (`orphans`).
+  check?: boolean;
 }
 
 // The containment check the engine gives the init (E86): the probe
@@ -549,11 +553,11 @@ async function init(): Promise<void> {
     child = spawn(spec.argv[0]!, spec.argv.slice(1), {
       cwd: spec.cwd,
       env: spec.env,
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: spec.check === true ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'ignore'],
       detached: true,
     });
   } catch (err) {
-    send({ t: 'start_failed', detail: (err as Error).message });
+    send({ t: 'start_failed', detail: (err as Error).message, errno: (err as NodeJS.ErrnoException).code ?? null });
     exit = { code: null, signal: null };
     send({ t: 'exit', code: null, signal: null, start_failed: true });
     leaveWhenAlone();
@@ -561,7 +565,7 @@ async function init(): Promise<void> {
   }
   child.on('error', (err) => {
     if (backendPid === null) {
-      send({ t: 'start_failed', detail: err.message });
+      send({ t: 'start_failed', detail: err.message, errno: (err as NodeJS.ErrnoException).code ?? null });
       exit = { code: null, signal: null };
       send({ t: 'exit', code: null, signal: null, start_failed: true });
       leaveWhenAlone();
@@ -571,19 +575,30 @@ async function init(): Promise<void> {
     backendPid = child.pid;
     send({ t: 'started', pid: child.pid });
   }
-  child.stdin!.on('error', () => {});
-  child.stdin!.end(spec.stdin ?? '');
+  if (child.stdin) {
+    child.stdin.on('error', () => {});
+    child.stdin.end(spec.stdin ?? '');
+  }
   child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
-  child.stdout!.on('end', () => send({ t: 'eof' }));
+  // A check's standard error joins its output (D3 §2.6).
+  child.stderr?.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+  if (spec.check !== true) child.stdout!.on('end', () => send({ t: 'eof' }));
   // The init exits once the backend has (SEAM.md §126): its report written,
   // process 1 of the sandbox goes, and the kernel ends every process left in
   // its pid namespace, a daemon the backend started among them.
   // What the backend wrote before its exit is relayed first: the init waits
   // for its output to end, or a moment if a descendant holds it open.
   let outputEnded = false;
-  child.stdout!.on('end', () => {
-    outputEnded = true;
-  });
+  let streamsOpen = child.stderr ? 2 : 1;
+  const ended = () => {
+    streamsOpen -= 1;
+    if (streamsOpen === 0) {
+      outputEnded = true;
+      if (spec.check === true) send({ t: 'eof' });
+    }
+  };
+  child.stdout!.on('end', ended);
+  child.stderr?.on('end', ended);
   // The cancellation canary's barrier, observed by the init, not the stream.
   if (spec.canary?.barrier) {
     const barrier = spec.canary.barrier;
@@ -603,6 +618,10 @@ async function init(): Promise<void> {
   child.on('exit', (code, signal) => {
     exitAt = performance.now();
     exit = { code, signal: signalNumber(signal) };
+    // L4: at the check's own exit, before its output is drained or anything
+    // is torn down, whether another process remains in the domain (process 1
+    // inherits them).
+    if (spec.check === true) send({ t: 'orphans', count: others().length });
     const started = Date.now();
     const leave = setInterval(() => {
       if (outputEnded || Date.now() - started >= 2000) {

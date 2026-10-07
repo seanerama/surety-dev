@@ -54,6 +54,8 @@ import {
   installCheckResult,
   installClassification,
   parseClassification,
+  parseRunnerQualification,
+  installRunnerQualification,
   proposalTree,
   installEnvironment,
   installObservation,
@@ -116,6 +118,9 @@ const MAIN_BARRIERS: readonly string[] = [
   'nomination.finalized',
   'protected_application.before_finalizer',
   'protected_application.finalized',
+  // M3 plan §2.3: around a check tree's materialization.
+  'checks.before_materialize',
+  'checks.materialized',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -644,6 +649,7 @@ const OP = {
   fixtureClassification: 'harness.fixture_classification',
   proposalTree: 'harness.proposal_tree',
   armWorkerBarrier: 'harness.arm_worker_barrier',
+  runnerQualification: 'harness.runner_qualification',
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
@@ -909,6 +915,13 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       return storeOp(OP.fixtureResult, { args: { ...result, output }, actor: hooks.actor });
     });
   }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'runner-qualification') {
+    return route(201, async (body) => {
+      parseRunnerQualification(body);
+      const { checkProfileFingerprint } = await import('../checks/profile.js');
+      return storeOp(OP.runnerQualification, { fingerprint: checkProfileFingerprint(), actor: hooks.actor });
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'environment') return route(201, (body) => storeOp(OP.fixtureEnvironment, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'observation') return route(201, (body) => storeOp(OP.fixtureObservation, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') {
@@ -1118,6 +1131,8 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installObservation(store(), a.actor, a.body);
     case OP.fixtureClassification:
       return installClassification(store(), a.actor, a.body, (a.discovery as Discovery | null | undefined) ?? null);
+    case OP.runnerQualification:
+      return installRunnerQualification(store(), a.actor, a.fingerprint as string);
     case OP.armWorkerBarrier:
       runtimeWorkerBarriers.set(a.name as string, { action: a.action as BarrierAction, cell: new Int32Array(a.cell as SharedArrayBuffer) });
       return { armed: a.name };

@@ -15,6 +15,9 @@ import { notFound } from './common.js';
 import { type CandidateRow, type CheckRow, getCandidate, markStale, requiredSet, unreadAncestry } from './evidence.js';
 import { heldByAncestry } from './gates.js';
 import { effectiveVersion } from './protected.js';
+import { insertExecutionResult } from './baseline.js';
+import { envelopeHold } from './envelope.js';
+import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -384,4 +387,275 @@ export function readCandidateExecutions(db: Db, args: { project: string; candida
   if (!c || c.project !== args.project) throw notFound('candidate', args.candidate);
   const rows = db.prepare('SELECT * FROM "check_executions" WHERE "candidate" = ? ORDER BY "execution_seq"').all(args.candidate) as Record<string, unknown>[];
   return { ...head, executions: rows.map(executionView) };
+}
+
+// ---- the runner's qualification (D3 §2.8; A.3 host_qualifications.check_runner) --------
+
+export interface CheckRunnerState {
+  profile_fingerprint: string;
+  self_test: { case: string; control: string; result: string }[];
+  qualified: boolean;
+  [label: string]: unknown;
+}
+
+// The active host qualification and its runner state, or null without one.
+export function runnerQualification(db: Db): { id: string; check_runner: CheckRunnerState | null } | null {
+  const row = db.prepare(`SELECT "id", "check_runner" FROM "host_qualifications" WHERE "status" = 'active'`).get() as { id: string; check_runner: string | null } | undefined;
+  if (!row) return null;
+  return { id: row.id, check_runner: row.check_runner === null ? null : (JSON.parse(row.check_runner) as CheckRunnerState) };
+}
+
+// Record the runner's state on the active host qualification. Returns its
+// id, or null when there is none (the runner cannot be qualified then).
+export function setCheckRunner(tx: Tx, state: CheckRunnerState): string | null {
+  const q = runnerQualification(tx.db);
+  if (q === null) return null;
+  tx.db.prepare('UPDATE "host_qualifications" SET "check_runner" = ? WHERE "id" = ?').run(JSON.stringify(state), q.id);
+  return q.id;
+}
+
+// ---- one execution's life (D3 §§2.5 to 2.7, A.5; L1) ---------------------------------------
+
+const LIVE = ['materializing', 'running', 'collecting', 'quarantined'];
+
+export interface Admission {
+  execution: string;
+  project: string;
+  candidate: string;
+  revision: string;
+  version: string;
+  key: string;
+  definition: Record<string, unknown>;
+  manifest: [string, string, string, string][];
+  manifests: [string, string, string, string][][];
+  governed: Record<string, unknown> | null;
+  roots: string[];
+  repo: string;
+  domain: string;
+  cgroup_path: string;
+  lease_generation: number;
+  runner_id: string;
+  runner_qualification: string;
+  execution_seq: number;
+}
+
+const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
+
+// The Checks tick step's admission (D3 §2.5; L1, L2): the oldest queued
+// `direct` execution of the project, when the runner is qualified on this
+// host now, the project runs fewer than `max_concurrent_checks`, and the
+// resource envelope admits a domain. Its domain is allocated, owned by this
+// incarnation, and it holds a lease of kind `check`. null: nothing admitted.
+export function admitExecution(
+  tx: Tx,
+  args: { project: string; incarnation: string; scope: string; hostId: string },
+): Admission | null {
+  const q = runnerQualification(tx.db);
+  if (q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
+  const { n } = tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "status" IN (${LIVE.map(() => '?').join(', ')})`).get(args.project, ...LIVE) as { n: number };
+  const max = projectPolicy(tx.db, args.project).max_concurrent_checks ?? 1;
+  if (n >= max || envelopeHold(tx.db) !== null) return null;
+  const x = tx.db
+    .prepare(`SELECT * FROM "check_executions" WHERE "project" = ? AND "status" = 'queued' AND "runner_class" = 'direct' ORDER BY "execution_seq" LIMIT 1`)
+    .get(args.project) as Record<string, unknown> | undefined;
+  if (!x) return null;
+  const check = tx.db.prepare('SELECT * FROM "checks" WHERE "id" = ?').get(x.check) as { key: string; definition: string; input_manifest: string };
+  const version = tx.db.prepare('SELECT "roots", "governed" FROM "protected_versions" WHERE "id" = ?').get(x.protected_version) as { roots: string; governed: string | null };
+  const manifests = (tx.db.prepare('SELECT "input_manifest" FROM "checks" WHERE "protected_version" = ?').all(x.protected_version) as { input_manifest: string }[]).map(
+    (r) => JSON.parse(r.input_manifest) as [string, string, string, string][],
+  );
+  const repo = (tx.db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string }).dev_repo_path;
+  const domain = tx.newId('dom_');
+  const cgroup = `${args.scope}/${domain}`;
+  tx.db
+    .prepare(
+      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "check_execution", "status", "profile", "cgroup_path", "launch_state")
+       VALUES (?, ?, ?, NULL, NULL, ?, 'allocated', 'check', ?, 'authorizable')`,
+    )
+    .run(domain, tx.at, args.project, x.id, cgroup);
+  tx.db
+    .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "check_execution", "incarnation") VALUES (?, ?, ?, ?, NULL, ?, ?)`)
+    .run(tx.newId('proc_'), tx.at, args.project, domain, x.id, args.incarnation);
+  const lease = tx.newId('lease_');
+  tx.db
+    .prepare(
+      `INSERT INTO "leases" ("id", "created_at", "resource_kind", "resource_id", "owner_incarnation", "generation", "acquired_at", "renewed_at", "expires_at", "closing", "cleanup_authority")
+       VALUES (?, ?, 'check', ?, ?, 1, ?, ?, ?, 0, 0)`,
+    )
+    .run(lease, tx.at, x.id, args.incarnation, tx.at, tx.at, addSeconds(tx.at, engineSettings().lease_ttl));
+  const runner = `direct@${args.hostId}/${q.check_runner.profile_fingerprint.slice(0, 12)}`;
+  tx.db
+    .prepare(`UPDATE "check_executions" SET "status" = 'materializing', "domain" = ?, "lease" = ?, "runner_id" = ?, "runner_qualification" = ? WHERE "id" = ?`)
+    .run(domain, lease, runner, q.id, x.id);
+  return {
+    execution: x.id as string,
+    project: args.project,
+    candidate: x.candidate as string,
+    revision: x.source_revision as string,
+    version: x.protected_version as string,
+    key: check.key,
+    definition: JSON.parse(check.definition) as Record<string, unknown>,
+    manifest: JSON.parse(check.input_manifest) as [string, string, string, string][],
+    manifests,
+    governed: version.governed === null ? null : (JSON.parse(version.governed) as Record<string, unknown>),
+    roots: JSON.parse(version.roots) as string[],
+    repo,
+    domain,
+    cgroup_path: cgroup,
+    lease_generation: 1,
+    runner_id: runner,
+    runner_qualification: q.id,
+    execution_seq: x.execution_seq as number,
+  };
+}
+
+interface ExecutionRow {
+  id: string;
+  project: string;
+  candidate: string;
+  status: string;
+  domain: string | null;
+  lease: string | null;
+  init_reports: string;
+}
+
+const mustExecution = (db: Db, id: string): ExecutionRow => {
+  const x = db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(id) as ExecutionRow | undefined;
+  if (!x) throw notFound('check execution', id);
+  return x;
+};
+
+// Is the execution's check lease current for this incarnation and generation?
+export function checkLeaseCurrent(db: Db, args: { execution: string; incarnation: string; generation: number; at: string }): boolean {
+  const lease = db.prepare(`SELECT * FROM "leases" WHERE "resource_kind" = 'check' AND "resource_id" = ? AND "released_at" IS NULL`).get(args.execution) as
+    | { generation: number; closing: number; expires_at: string; owner_incarnation: string }
+    | undefined;
+  return lease !== undefined && lease.closing === 0 && lease.expires_at > args.at && lease.generation === args.generation && lease.owner_incarnation === args.incarnation;
+}
+
+// Renewed while supervised (D3 §2.5); never extends `timeout_s`.
+export function renewCheckLease(tx: Tx, args: { execution: string; generation: number; incarnation: string }): boolean {
+  if (!checkLeaseCurrent(tx.db, { ...args, at: tx.at })) return false;
+  tx.db
+    .prepare(`UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "resource_kind" = 'check' AND "resource_id" = ? AND "released_at" IS NULL`)
+    .run(tx.at, addSeconds(tx.at, engineSettings().lease_ttl), args.execution);
+  return true;
+}
+
+function releaseCheckLease(tx: Tx, execution: string): void {
+  tx.db.prepare(`UPDATE "leases" SET "released_at" = ? WHERE "resource_kind" = 'check' AND "resource_id" = ? AND "released_at" IS NULL`).run(tx.at, execution);
+}
+
+// The launch was authorized (boundary.ts, in the same transaction): the
+// execution is running in its domain.
+export function markLaunched(tx: Tx, args: { execution: string; domain: string }): void {
+  const x = mustExecution(tx.db, args.execution);
+  if (x.status !== 'materializing') return;
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'running' WHERE "id" = ?`).run(x.id);
+  tx.emit('check.launched', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: args.domain }, {});
+}
+
+// One of the init's reports (A.2 InitReport), as the engine received it on
+// the init's channel, never from anything check code wrote.
+export function recordInitReport(tx: Tx, args: { execution: string; kind: 'started' | 'exec_failed' | 'exit' | 'orphans'; detail: Record<string, unknown> | null }): void {
+  const x = mustExecution(tx.db, args.execution);
+  const reports = JSON.parse(x.init_reports) as { kind: string; at: string; detail: unknown }[];
+  reports.push({ kind: args.kind, at: tx.at, detail: args.detail });
+  tx.db.prepare('UPDATE "check_executions" SET "init_reports" = ? WHERE "id" = ?').run(JSON.stringify(reports), x.id);
+  if (args.kind === 'started') tx.db.prepare('UPDATE "check_executions" SET "started_at" = ? WHERE "id" = ? AND "started_at" IS NULL').run(tx.at, x.id);
+}
+
+// The program the execution runs, as resolved at launch (D3 §§1.1, 2.5, Q6).
+export function recordToolchain(tx: Tx, args: { execution: string; toolchain: { name: string; path: string; sha256: string | null } }): void {
+  tx.db.prepare('UPDATE "check_executions" SET "toolchain" = ? WHERE "id" = ?').run(JSON.stringify(args.toolchain), args.execution);
+}
+
+export function markCollecting(tx: Tx, args: { execution: string }): void {
+  const x = mustExecution(tx.db, args.execution);
+  if (x.status === 'running' || x.status === 'quarantined' || x.status === 'materializing') tx.db.prepare(`UPDATE "check_executions" SET "status" = 'collecting' WHERE "id" = ?`).run(x.id);
+}
+
+// Termination unknown (D2 §3.4): nothing collected, no row; the check is
+// missing meanwhile and the gate read names the execution (D3 §2.6).
+export function quarantineExecution(tx: Tx, args: { execution: string; why: string }): void {
+  const x = mustExecution(tx.db, args.execution);
+  if (x.status === 'quarantined' || !LIVE.includes(x.status)) return;
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'quarantined' WHERE "id" = ?`).run(x.id);
+  tx.emit('check.quarantined', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
+  markStale(tx, { candidate: x.candidate });
+}
+
+// Ended with no row (D3 §2.6): its domain's closure observed, and nothing
+// established about the check's own process.
+export function interruptExecution(tx: Tx, args: { execution: string; why: string }): void {
+  const x = mustExecution(tx.db, args.execution);
+  if (!LIVE.includes(x.status)) return;
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'interrupted', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
+  releaseCheckLease(tx, x.id);
+  tx.emit('check.interrupted', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
+  markStale(tx, { candidate: x.candidate });
+}
+
+export interface ResultFields {
+  execution: string;
+  established: boolean;
+  exit_status: number | null;
+  signaled: boolean;
+  deadline_hit: boolean;
+  orphans: boolean;
+  not_run_reason: string | null;
+  output: string | null;
+  output_dropped_bytes: number | null;
+}
+
+// The result row of an execution (D3 §§2.6, 2.7, A.3), once its domain's
+// termination with closure is observed (or, for a known not-run, its domain
+// closed with nothing launched). Recorded once.
+export function recordExecutionResult(tx: Tx, args: ResultFields): { check_result: string } | null {
+  const x = tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(args.execution) as Record<string, unknown> | undefined;
+  if (!x) throw notFound('check execution', args.execution);
+  if (x.status === 'recorded' && typeof x.result === 'string') return { check_result: x.result };
+  if (!LIVE.includes(x.status as string)) return null;
+  const id = insertExecutionResult(tx, {
+    project: x.project as string,
+    check: x.check as string,
+    candidate: x.candidate as string,
+    source_revision: x.source_revision as string,
+    protected_version: x.protected_version as string,
+    runner_class: x.runner_class as string,
+    runner_id: (x.runner_id as string | null) ?? 'direct',
+    runner_qualification: (x.runner_qualification as string | null) ?? null,
+    execution_seq: x.execution_seq as number,
+    started_at: (x.started_at as string | null) ?? null,
+    finished_at: tx.at,
+    ...args,
+  });
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, args.execution);
+  releaseCheckLease(tx, args.execution);
+  return { check_result: id };
+}
+
+// Is a check tree still referenced (D3 §2.4)? By any execution of its
+// triple not yet terminal, and, while its version is in effect, by a
+// candidate at its revision that has no successor: an operator's or a
+// recovery's registration of that candidate runs on the same tree.
+export function treeInUse(db: Db, args: { project: string; revision: string; version: string; except: string }): boolean {
+  const live = db
+    .prepare(
+      `SELECT 1 FROM "check_executions" WHERE "project" = ? AND "source_revision" = ? AND "protected_version" = ? AND "id" <> ?
+       AND "status" IN ('queued', 'materializing', 'running', 'collecting', 'quarantined') LIMIT 1`,
+    )
+    .get(args.project, args.revision, args.version, args.except);
+  if (live !== undefined) return true;
+  const current = db.prepare('SELECT 1 FROM "protected_versions" WHERE "id" = ? AND "superseded_by" IS NULL').get(args.version);
+  const candidate = db.prepare('SELECT 1 FROM "candidates" WHERE "project" = ? AND "revision" = ? AND "superseded_by" IS NULL').get(args.project, args.revision);
+  return current !== undefined && candidate !== undefined;
+}
+
+// Executions this incarnation must account for at start (D3 §2.6, T07):
+// every one past `queued` and not terminal.
+export function liveExecutions(db: Db): { id: string; project: string; status: string; domain: string | null; source_revision: string; protected_version: string }[] {
+  return db
+    .prepare(`SELECT "id", "project", "status", "domain", "source_revision", "protected_version" FROM "check_executions" WHERE "status" IN (${LIVE.map(() => '?').join(', ')}) ORDER BY "execution_seq"`)
+    .all(...LIVE) as { id: string; project: string; status: string; domain: string | null; source_revision: string; protected_version: string }[];
 }
