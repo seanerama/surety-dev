@@ -29,7 +29,8 @@ import { changedPaths, commitOnRef, fileAt, holdGit, refOid } from './harness/re
 import { answerDecision, scriptedEngine, tick, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
-const GOVERNED = { protected_paths: ['.surety/checks/'], check_commands: { login: ['node', '.surety/checks/login.mjs'] }, required_checks: ['login'] };
+// Valid under D3 A.4 since M3 slice 15 (objection 022; SEAM.md §187): `check_commands` entries are `{path}` objects, and no required key lacks a definition.
+const GOVERNED = { protected_paths: ['.surety/checks/'], check_commands: { login: { path: '/usr/bin/node' } } };
 const protectedFiles = (governed = GOVERNED) => ({ [GOVERNED_FILE]: `${JSON.stringify(governed, null, 2)}\n`, '.surety/checks/login.check.json': '{"expect": 200}\n' });
 
 // What makes a protected version the one it is. (Its check set is declared by a fixture and is not part of this.)
@@ -70,7 +71,7 @@ describe('M35 the governed policy file is separate from the ordinary one', () =>
   });
 
   for (const [field, value] of [
-    ['check_commands', { login: ['sh', '-c', 'true'] }],
+    ['check_commands', { login: { path: '/bin/sh' } }],
     ['required_checks', []],
   ]) {
     test(`a human edit of the governed field ${field} becomes a protected proposal and is not applied`, async (t) => {

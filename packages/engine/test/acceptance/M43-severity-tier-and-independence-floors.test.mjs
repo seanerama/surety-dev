@@ -175,7 +175,7 @@ describe('M43 a sign-off binds the content its run was started on', () => {
     const { run } = await runToHold(fx, project, item);
 
     // Meanwhile the owner tightens the protected checks: a governed edit, classified, approved and applied.
-    const edit = await fx.engine.post(`/v1/projects/${project}/policy`, { check_commands: { login: ['node', '.surety/checks/login.mjs'], audit: ['node', '.surety/checks/audit.mjs'] } });
+    const edit = await fx.engine.post(`/v1/projects/${project}/policy`, { check_commands: { login: { path: '/usr/bin/node' }, audit: { path: '/usr/bin/node' } } });
     assert.equal(edit.status, 202, `a governed edit becomes a proposal (body: ${edit.text})`);
     const proposal = edit.body.proposal.id;
     await classify(fx.engine, proposal, 'tightening');
