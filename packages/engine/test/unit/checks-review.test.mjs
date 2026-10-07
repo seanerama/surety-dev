@@ -202,7 +202,7 @@ test('3 and 4: a link or submodule under the roots is input_not_regular under de
     '.surety/checks/lib/link.js': { link: 'real.js' },
   });
   const d = await discover(r.repo, rev);
-  assert.deepEqual(d.errors, [{ path: '.surety/checks/defs/s.json', code: 'input_not_regular' }]);
+  assert.deepEqual(d.errors, [{ path: '.surety/checks/lib/link.js', code: 'input_not_regular' }]);
   assert.deepEqual(d.checks.map((c) => c.key), ['s'], 'the definition is still discovered, nothing dropped silently');
   r.g('rm', '-rq', '.surety/checks/defs');
   mkdirSync(join(r.repo, 'elsewhere'));

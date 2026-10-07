@@ -224,6 +224,10 @@ class Errors {
   at(pointer: string, code: DiscoveryErrorCode): void {
     this.list.push({ path: pointer === '' ? this.file : `${this.file}#${pointer}`, code });
   }
+  // An error about another entry of the tree, by its own path.
+  of(path: string, code: DiscoveryErrorCode): void {
+    this.list.push({ path, code });
+  }
 }
 
 // ---- the governed file (D3 §1.1, A.4) --------------------------------------------------
@@ -463,13 +467,15 @@ function expandInputs(inputs: string[] | undefined, roots: readonly string[], en
   let refused = false;
   for (const x of [...members.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     if (!isRegular(x)) {
+      // A symlink, a submodule or any other entry among the inputs (B01):
+      // under default inputs each is named by its own path.
+      if (inputs === undefined) e.of(x.path, 'input_not_regular');
       refused = true;
       continue;
     }
     out.push([x.path, x.type, x.mode, x.oid]);
   }
-  // A symlink, a submodule or any other entry among the inputs (B01).
-  if (refused) e.at(inputs === undefined ? '' : '/inputs', 'input_not_regular');
+  if (refused && inputs !== undefined) e.at('/inputs', 'input_not_regular');
   return out;
 }
 

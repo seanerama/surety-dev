@@ -210,7 +210,16 @@ export async function discover(repo: string, treeish: string): Promise<Discovery
       if (!defined.has(key)) errors.push({ path: `${GOVERNED_FILE}#/required_checks/${n}`, code: 'required_key_without_definition' });
     });
   }
-  return { governed, checks, errors };
+  // One error per path and code: a link under the roots is refused once,
+  // whatever number of definitions take it by default.
+  const seen = new Set<string>();
+  const unique = errors.filter((e) => {
+    const k = `${e.path}\u0000${e.code}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { governed, checks, errors: unique };
 }
 
 // A tree's protected set as a version records it: the roots and fingerprint

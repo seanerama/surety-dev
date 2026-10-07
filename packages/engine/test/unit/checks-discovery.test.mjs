@@ -67,7 +67,7 @@ test('a definition: defaults, the key, covers by kind, engine variables, and inp
   ];
   const g = withProbe();
   const linked = parseDefinition('.surety/checks/defs/s.json', 's', smoke('s'), g, entries);
-  assert.deepEqual(linked.errors, [{ path: '.surety/checks/defs/s.json', code: 'input_not_regular' }], 'a link under the roots is refused under default inputs');
+  assert.deepEqual(linked.errors, [{ path: '.surety/checks/link', code: 'input_not_regular' }], 'a link under the roots is refused under default inputs, by its own path');
   assert.ok(linked.definition, 'and the definition is still discovered');
   const ok = parseDefinition('.surety/checks/defs/s.json', 's', smoke('s'), g, entries.filter((e) => e.mode !== '120000'));
   assert.deepEqual(ok.errors, []);
