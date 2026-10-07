@@ -24,4 +24,12 @@ M2 slice 1, "hardening before a backend" (errata E48; `docs/spec/M2-slice-1-hard
 
 M2 slice 10, the kernel lane of the trust table (`docs/acceptance/sdlc-M2-acceptance-plan.md` §3.1, rows M101 to M109; E59), adds nine files listed under slice 10 of the manifest. `harness/trust.mjs` holds the fixture routes that install trust entries and qualification attempts for a real backend name, the engine-scoped decisions (`trust_activation`, `qualification_approval`: `GET /v1/decisions`, `POST /v1/decisions/:d/answer`), the reads of `GET /v1/engine`'s M2 fields, and `StandIn`, which writes `harness/standin/backend.mjs` as the test-owned executable a fixture entry binds the engine to: it records the argv and environment it was given and exits. `contract/config.json` gains D2 A.7's keys and `contract/decisions.json` the two trust kinds and the `alpha_exception` option; `harness/launch-lint.mjs` gains the boundary's named helper modules. The accepted M68 case opts in to the bootstrap route (K3) and three accepted cases have the human approve a tightening a Reviewer recommended (K8); `COVERAGE.md`, "M2 slice 10", records both. `harness/SEAM.md` §§113 to 121 state the contract and what was run.
 
+M3 slice 15, "the walking check" (`docs/acceptance/sdlc-M3-acceptance-plan.md` §3.1, rows M201 to M205; E92), adds five files listed under slice 15 of the manifest. `harness/checks/fixtures.mjs` holds:
+- projects whose protected set holds a governed file and check definitions, and commits of any git entry type;
+- the requirement index through the plan fixture, and the runner qualification fixture;
+- the protected-version read, the candidate's check executions (store and routes), and the gate's per-check entries;
+- for the sandbox lane, the installation of the check program and the host-side reads of its domain.
+
+`harness/checks/program.mjs` is the test-owned check program: benign by construction, it reports what it sees, waits for a release file, and exits with a status. `harness/SEAM.md` §§177 to 185 state the contract.
+
 Row M71's first file needs about 2 GiB of free space under the temporary directory while it runs, and removes it afterwards. On a host whose temporary directory is memory-backed, run the tests with `TMPDIR` set to a directory on a disk filesystem: from slice 6 the engine refuses a home on a memory-backed filesystem.

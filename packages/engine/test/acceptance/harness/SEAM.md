@@ -1,6 +1,6 @@
 # The test seam
 
-**Owner:** the Verifier (build spec §4). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). **Extended:** slice 4, 2026-10-02 (sections 52 to 64: rows M59 to M67 and the slice-4 cases of rows M02, M04, M12 and M61; one exit status added to section 1). **Extended:** slice 5, 2026-10-02 (sections 65 to 85: rows M35 to M58 and the slice-5 cases of rows M08, M09, M12, M24, M27, M61, M62, M64 and M65; section 65 lists what it changes in earlier sections; one sentence added to section 31 for the slice-3 review). **Extended:** slice 7, 2026-10-02 (section 86: row M01, the journey, which adds nothing to the contract). **Extended:** M2 slices 1 and 2, 2026-10-03 (sections 99 to 112), M2 slice 12, 2026-10-03 (sections 132 to 142: rows M119 to M128), and M2 slice 10, 2026-10-03 (sections 113 to 121: rows M101 to M109, the kernel lane of the trust table), and M2 slice 11, 2026-10-03 (sections 122 to 131: rows M110 to M118, the sandbox lane's boundary; amended the same day after the slice-11 review: the section "Amended after the slice-11 review" lists the changes). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
+**Owner:** the Verifier (build spec §4). **Extended:** M3 slice 15, 2026-10-07 (sections 177 to 185). **Written:** slice 1, 2026-10-01. **Amended:** 2026-10-01, after the slice-1 review (section 11). The owner's decisions on that review are cited below as E23, the erratum that records them. **Extended:** slice 2, 2026-10-01 (sections 12 to 20, and the amendments to sections 1, 6 and 7 that section 20 lists). **Amended:** 2026-10-01, after the slice-2 review (section 22 lists every change; the owner's decisions on that review are E25), and 2026-10-02, after the second (section 23; E27). **Extended:** slice 3, 2026-10-02, by the first of its two Verifier sessions (section 24: what the final slice-2 review carried forward, E28 and E29; sections 25 to 38: rows M19 to M25 and the slice-3 cases of earlier rows that concern snapshots, validation, commits and integrity). **Extended:** slice 3, 2026-10-02, by the second of its two Verifier sessions (sections 39 to 51: rows M26 to M34, and the slice-3 cases of rows M04, M09, M12 to M15 and M24 that pass through an integration; one flag added to section 1). **Extended:** slice 4, 2026-10-02 (sections 52 to 64: rows M59 to M67 and the slice-4 cases of rows M02, M04, M12 and M61; one exit status added to section 1). **Extended:** slice 5, 2026-10-02 (sections 65 to 85: rows M35 to M58 and the slice-5 cases of rows M08, M09, M12, M24, M27, M61, M62, M64 and M65; section 65 lists what it changes in earlier sections; one sentence added to section 31 for the slice-3 review). **Extended:** slice 7, 2026-10-02 (section 86: row M01, the journey, which adds nothing to the contract). **Extended:** M2 slices 1 and 2, 2026-10-03 (sections 99 to 112), M2 slice 12, 2026-10-03 (sections 132 to 142: rows M119 to M128), and M2 slice 10, 2026-10-03 (sections 113 to 121: rows M101 to M109, the kernel lane of the trust table), and M2 slice 11, 2026-10-03 (sections 122 to 131: rows M110 to M118, the sandbox lane's boundary; amended the same day after the slice-11 review: the section "Amended after the slice-11 review" lists the changes). Later slices extend it; a change to anything below is made by a Verifier session, normally in answer to an objection.
 
 This file states exactly what the engine must provide for the acceptance tests to observe it (build spec §8). The tests are the contract; this file says in prose what they rely on. Where the sources (build spec §2) left a name, code, format or range open, the Verifier fixed it here; section 10 lists those choices. Everything else follows D1 Appendix A as corrected by build spec §6.
 
@@ -3972,3 +3972,157 @@ The scripted role program and the fakes follow both forms: under E86 (`canary.js
 **The case:** `M125-handover.test.mjs` (f), the fix loop of case (e) (shared as `fixLoopPackages`) with two checks in the protected version: `login` (required, acceptance, covering `R1`, gates `stage` and `alpha_authorize`) and `style` (not required, `security_lint`, gate `stage`). Each role dumps its package; the prompt is the manifest's `prompt` file; every gap in one assertion.
 
 **A finding's check is a key of the effective version** (the review of `build/m2-path2`, F1; the driver's provisional ruling under E87). A `check` outside the version's keys was stored and then skipped by the gate, so the finding could never resolve and nothing said why. Each Verifier and Reviewer run's result schema gives `findings.items.check` as an `enum` of the effective protected version's check keys (every check, required or not). A result whose finding names any other key violates the schema: the run is `failed` / `invalid_result`, its `reason_text` naming the key, and no finding is stored. A valid key is recorded as before. **The case:** `M125-handover.test.mjs` (g): a scripted Verifier, the version holding `login` and `style`, reports a finding with `check` `login check`; its package's result schema lists exactly `login` and `style`; the run is `failed` / `invalid_result` naming `login check`; the project has no finding.
+
+---
+
+# M3 slice 15: the walking check
+
+Sections 177 to 185 were written with the slice-15 acceptance tests (2026-10-07; `verify/m3-s15` from `main` at `cfb5001`): rows M201 to M205 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.1, the first M3 slice (`docs/spec/M3-build-spec.md` §9). They follow D3 draft 2 (§§1.1 to 1.6, 2.1 to 2.7, 4.5, A.2 to A.7, L1, L2, L5, L7) and E89 to E92, and fix what the plan's §2.6 leaves to the tests for these rows. Where D3 left a name or a form open and a row needs it, the choice is listed in section 185 and the Builder may object. Every earlier section stands; what this pass changes in them is in section 185.
+
+## 177. What the slice-15 tests assume throughout
+
+- **Two lanes.** M202 to M204 are the **kernel lane** (section 113: scripted adapter, scripted execution boundary, `--harness-host-checks unrun`). M201 and M205 are the **sandbox lane** (section 122: `--harness-host-checks run`, the real `check` profile and boundary on this host). The project lane and the exhaustion lane have no slice-15 file (section 185, "Deferred").
+- **The runner switch** (BS3 §8). In a kernel-lane engine the engine **registers** check executions as D3 §2.5 says, and **admits none**: a registration stays `queued` however many ticks run, so no kernel-lane check runs and no result is recorded by the runner. The scripted check boundary, which a kernel-lane test enables to let executions run, is slice 16's to name. The fixture results of section 67 keep deciding as before; they take the project's one sequence (L7). In a sandbox-lane engine, executions are admitted by the "Checks" tick step (L2) and run in real `check` domains once `check_runner` is qualified (section 181).
+- **Discovery is the source of a version's checks.** A project created through `POST /v1/projects` or the fixture installer is discovered from its integration branch's tree (D3 §1.4); a proposal's tree is discovered at classification, by the classifier or, while the classifier is not built, by the classification fixture (section 67), whose class is the fixture's and whose discovery is the engine's. The checks fixture of section 67 stays, harness-only, and adds checks beside the discovered ones.
+- **Checks covering criteria need the index.** At project creation no requirement index is registered, so a definition naming a criterion carries `criterion_unknown` (D3 §3.4). The plan fixture's index (section 179) is a new approved spec revision: the effective version's discovery errors are recomputed against it in the fixture's transaction (D3 §1.4, "recomputed when the spec revision changes"). Kernel cases that do not need criteria use `smoke` checks, which cover none.
+- **Every result in M201 and M205 is the engine's.** No slice-15 case uses the check-result fixture.
+
+## 178. The governed file and definitions at runtime, and the protected-version read
+
+(D3 §§1.1 to 1.4, A.2 `DiscoveryError`, A.3, A.4; N04; rows M202, M203.)
+
+**`GET /v1/projects/:p/protected-versions/:v`** → **200** `{"served_at", "snapshot_seq", "version": {...}}`, a read as section 91 has them (nothing written). `version` has at least:
+
+| Key | Value |
+|---|---|
+| `id`, `seq`, `fingerprint`, `change_kind` | the stored ones |
+| `governed` | the six governed fields as discovery read them, **each absent field and each absent member taking A.4's default**: `protected_paths`, `check_discovery` (`{definitions}`), `check_commands`, `runner_config` (`{direct: {read_paths, path, env, egress_allow, timeout_max_s}}`), `result_collection` (`{output_max_bytes}`), and `required_checks`, which is **`null` when absent** (every check required) and the list otherwise. Units are in the member's name (`_s` seconds, `_bytes` bytes). What a member holds when its value was refused is not pinned, except that it is never the engine's bound (never clamped) |
+| `discovery_errors` | `protected_versions.discovery_errors`: `[{"path", "code"}]`, `code` a `DiscoveryError` |
+| `checks` | one entry per `checks` row of the version: `{"id", "key", "required": <bool>, "definition", "input_manifest", "definition_hash"}`; `definition` is the parsed definition with A.4's defaults (`origin`, `cwd`, `env`, `runner_class`, `requires`, `egress`); `input_manifest` the entries `[path, type, mode, object id]` sorted by path, `type` and `mode` as `git ls-tree` prints them (`blob`, `100644`); `definition_hash` the check fingerprint |
+
+A version of another project is **404** `not_found`. Not pinned: the order of `discovery_errors`; `definition.inputs` when defaulted (the manifest says what it expanded to); `covers`, `tier_floor`, `phase` when absent.
+
+**The path of a discovery error** is the repository path of the file the error is in, followed, when the error is about one member of that file, by `#` and an RFC 6901 JSON pointer to the member: `.surety/checks/protected-policy.json#/runner_config/direct/timeout_max_s`, `…#/required_checks/1`. An error about a file as a whole (`not_regular_file`, `too_large`, `not_json`, `key_mismatch`, and the definition-level errors of row M203) has the file's path; the pointer, if the engine gives one, follows it. An error about the definitions directory (`too_many`) has the directory's path, `.surety/checks/defs/`. The tests read errors by path prefix (`errorsAt`), and pin the pointer only for the governed file.
+
+**Codes the tests fix where D3 names no code:** an input naming the governed file is `invalid_value`; an engine variable in a definition's `env` (a name beginning `SURETY_` or one D3 §2.3 sets, `PATH` among them) is `invalid_value`; a symlink, a submodule entry and an executable blob (`100755`) in the definitions directory are each `not_regular_file`; a `container` or `remote` key under `runner_config` is `unknown_field` or `invalid_value`, which of the two not pinned.
+
+**Gates of a version with errors.** While the effective version has discovery errors, every evaluation of the project carries `ACCEPTANCE_SCOPE_INCOMPLETE` whose `subjects` include each error's `path` (D3 §1.4, §4.3), at `stage` and at `alpha_authorize`.
+
+**A proposal with errors** (L5). From slice 15 the `approve` option of a `check_correction_*` decision about a proposal whose discovery has errors lists the blocker `CHECK_DEFINITION_INVALID`, and an answer choosing it is refused **409** `illegal_transition` with no effect (section 69's rule for a blocked option). `reject` is unchanged.
+
+## 179. The requirement index through the plan fixture
+
+(D3 §4.5; E92 item 4; the spec template's section 5; rows M201, M204; M233 in slice 20 pins the malformed rows.)
+
+`POST /v1/harness/fixtures/plan` (sections 15, 67) takes **`requirement_index`**, a string: the requirement index table of the spec template's section 5 (`| Key | Title | Phase | Sensitive areas | Criteria |`, its separator row, one row per requirement). The engine registers it **through the same parser spec approval will use** (D3 §4.5): each row's requirement gets `requirements.criteria` and `requirements.sensitive_areas`. When `requirements` is sent too, its keys must be exactly the index's (it adds `text`); otherwise **400** `invalid_value`, `subject.field` `requirement_index`. A row the parser refuses is **400** `invalid_value` naming the row (the form of `subject` is slice 20's, M233), and nothing is installed. The answer's `requirements` entries gain `criteria` (`["R1.1", …]`, in index order) and `sensitive_areas` (`[]` for `none`). Without `requirement_index` the fixture is as before.
+
+## 180. Check executions: the store, registration, events and the candidate's checks routes
+
+(D3 §2.5, A.2, A.3, A.5, A.6, A.7; L2, L7; rows M201, M204, M205.)
+
+**The table** `check_executions`, with D3 A.3's columns; `trigger` is a JSON object `{"source", "id", "generation"}`, `init_reports` a JSON array of `{"kind", "at", "detail"}`, `toolchain` a JSON object. `check` names the `checks` row of the version the execution was registered under; the tests read a registration's key through it. `execution_seq` is drawn from the project's one sequence (L7). There is one registration per trigger identity `(source, id, generation, key)`.
+
+**Registration** writes the row `queued` and emits **`check.registered`**: `subject.project`, `subject.candidate`, `subject.check_execution`; `payload.key`, `payload.trigger`. The nomination's trigger is `("nomination", <candidate id>, 1)`; a protected application's is `("protected_application", <proposal id>, 1)`. Those two are pinned by source only. **`events.tx` is the identity of the transaction that wrote the event** (section 9 left it opaque; the engine's `tx_…`): events of one transaction share it, events of different transactions differ. Row M204 (b) reads "registered in the application's finalizer" as the `check.registered` events having the `tx` of the `protected.applied` event.
+
+**`GET /v1/projects/:p/candidates/:c/checks`** → **200** `{"served_at", "snapshot_seq", "executions": [...]}`, every execution of the candidate in `execution_seq` order, each with at least `id`, `check`, `key`, `execution_seq`, `status`, `trigger`, `not_run_reason`, `toolchain`, `runner_id`, `runner_qualification`, `domain` and `result` (D3 A.7).
+
+**`POST /v1/projects/:p/candidates/:c/checks`** with `{"keys"?: [key], "request_key"?: <string>}` registers operator-requested executions (trigger source `operator_request`): **202** `{"executions": [{"id", "check", "key"}]}`, one per named key, or per required check of the candidate when `keys` is absent. **A replay**: a request whose `request_key` equals an earlier request's for the same candidate registers nothing and is answered **200** with the executions the earlier one registered; two requests without a `request_key`, or with different ones, are two triggers. A key that is not in the candidate's required checks (the union of section 183's sets) is **400** `invalid_value`, `subject.field` `keys`; an unknown body key is **400** `unknown_field`; neither registers anything.
+
+**No role registers or records.** A role's result carrying `check_results` or `check_executions` (or any field naming a registration or a result) is `invalid_result` (section 13), and nothing is registered or recorded (D3 §2.5).
+
+**Which checks a nomination registers** (D3 §2.5). Each check of the union of the required set of the `stage` gate of every stage the candidate holds and the required set of its `alpha_authorize` gate, once. The required sets are section 70's, with D3 §4.2: a check whose gate kinds name neither gate, a check not in `required_checks`, and a check covering only criteria of a requirement that is not delivered are not registered.
+
+**A protected application** registers, in its finalizer's transaction, the new version's checks in the required sets of every candidate whose `superseded_by` is null; a candidate with `superseded_by` set gets none (D3 §2.5, §3.5).
+
+## 181. The runner qualification fixture
+
+(E92 item 2; M3 plan question 2; D3 §2.8, A.3 `host_qualifications.check_runner`; row M201; M221 (e) in slice 18 pins its absence outside harness mode.)
+
+**`POST /v1/harness/fixtures/runner-qualification`** with `{"runner_class": "direct"}` → **201** `{"host_qualification": <the active host_qualifications row's id>}`. It sets that row's **`check_runner`** to `{"profile_fingerprint": <the check profile's fingerprint, the engine's>, "self_test": [], "qualified": true, "test_fixture": true}`, and every event it causes has `payload.test_fixture = true`. From then until the engine stops, `direct` executions are dispatched as if the runner self-test had passed at this start. With no active host qualification it is **409** `isolation_unqualified` and changes nothing; another `runner_class` is **400** `invalid_value`. Like every harness route it does not exist outside harness mode (section 7); the engine never sets `test_fixture` itself. A result recorded under it names that row as `runner_qualification`, so a reader sees that its runner was qualified by a fixture and not by a self-test.
+
+## 182. The test-owned check program and its domain (sandbox lane)
+
+(BS3 §§4, 8; D3 §§1.3, 2.2, 2.4, 2.6; M3 plan §§2.3, 2.4; L1; rows M201, M205; `harness/checks/program.mjs`, `harness/checks/fixtures.mjs`.)
+
+**The program** is `harness/checks/program.mjs`, copied by `installCheckProgram` into `<test root>/checks/program.mjs` with a shebang naming the test's node, mode 0755, beside an empty `release/` and a file `not-executable` of mode 0644. The project's governed file names it in `check_commands` (`probe`) and names `<test root>/checks` and the node installation's prefix (unless it lies under the system directories) in `runner_config.direct.read_paths`; `noexec` names `not-executable`. The definition's `command[1..]` are its arguments (the file's header lists them). **It is benign:** it reads its working directory and the files it is told to digest, waits (bounded) for one release file, writes to standard output and exits with a status, or waits for SIGTERM and exits 0. It signals nothing, writes no file, opens no inherited descriptor, starts no process and connects nowhere. **No destructive instrument is a check program in slice 15** (section 185, "Deferred").
+
+**What it reports** is test instrumentation in its output record: a line `SURETY-CHECK-REPORT <json>` with `cwd`, `pid`, `git_present`, `entries` (every entry under its working directory, `{path, type}`, no link followed) and `digests`. The claims are corroborated from the host where they can be (below).
+
+**How a test finds an execution's domain** (M3 plan §2.6). `check_executions.domain` names the `execution_domains` row (L1): `profile` `check`, `check_execution` the execution, `run` and `invocation` null, `cgroup_path` the domain's directory as section 125 has it, `launch_binding` holding `check_execution` in the invocation's place. While a check runs, its program's host process is a member of that directory's `cgroup.procs`, its command line naming `program.mjs`; a test that needs to read it host-side has the program hold (`--hold <name>`) and releases it by creating `<test root>/checks/release/<name>`.
+
+**The check tree, host-read.** While a check runs, the tests walk `$SURETY_HOME/checktrees/` and require that no entry anywhere is named `.git`, and that some regular file holds the candidate's source as the candidate has it. The layout under `checktrees/` is the engine's.
+
+**The output record** is a `records` row of kind `check_output`, named by `check_results.output`, its bytes in the records directory (section 56).
+
+**What a result established** (D3 §2.6). `init_reports` holds the init's reports: kinds `started`, `exec_failed`, `exit`, `orphans`. An established result's execution has a domain with `launch_binding.check_execution` the execution and `launch_authorized_at` set, a `started` report, and the domain `terminated` with `observation` `terminated` and `launch_state` `closed`. A failed exec is a row with `execution_established` 0, `not_run_reason` `exec_failed`, an `exec_failed` report and no `started`. The fault `init_report_lost` (section 128) applies to a check domain's init as to a role's: the next exit report never reaches the engine.
+
+**`runner_id`** is `direct@<host id>/<prefix>`, `<host id>` the trimmed `/etc/machine-id` (section 116) and `<prefix>` at least eight lower-case hex characters, a prefix of `check_runner.profile_fingerprint` (D3 §2.8).
+
+## 183. Results and the gate's per-check entries
+
+(D3 §2.5, §2.6, A.7; L7; N03 is slice 16's; rows M201, M204, M205.)
+
+The evaluation route's answer (section 70) and the gate read (section 98) gain **`checks`**: an object with one entry per key of `check_states`, keyed by check id, each with at least:
+
+| Key | Value |
+|---|---|
+| `key` | the check's key |
+| `state` | as `check_states` |
+| `deciding` | `{"execution": <cx_ id, or null for a fixture result>, "result": <cr_ id>, "execution_seq"}`, the result that decided the state, or null when none did |
+| `not_run_reason` | the deciding result's, or null |
+| `pending` | `{"execution", "status"}`: the latest matching registration with no usable result, or null |
+| `due` | the candidate's `checks_due` (`{"trigger", "at"}`) when this check is owed by it, or null |
+
+The `checks` entry is stored with the evaluation, so the gate read shows what the evaluation recorded. `pending`, `due` and the history entry of N03 are named here so that slices 16 and 20 extend one object; no slice-15 case reads them. Not pinned: further keys.
+
+## 184. Barriers of slice 15
+
+Section 18's and section 33's rules (each fires once, the first time it is reached after it was armed; `pause` waits, `kill` makes the engine SIGKILL itself; arming while the engine runs is section 33's route).
+
+| Name | Fires |
+|---|---|
+| `checks.registered` | inside any transaction that registers check executions, after its `check_executions` rows are written and before it commits; a `kill` there rolls the whole transaction back |
+| `nomination.before_finalizer` | when a nomination's ref update is confirmed (its `confirmed` journal event durable) and its finalizer has not run |
+| `nomination.finalized` | after a nomination's finalizer transaction has committed |
+| `protected_application.before_finalizer` | when a protected application's ref update is confirmed and its finalizer has not run |
+| `protected_application.finalized` | after a protected application's finalizer transaction has committed |
+
+Unlike section 33's journal barriers, these four name the operation, not only the journal kind, so a test can stop a nomination and not the integration before it.
+
+## 185. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Section 9: `events.tx` is the transaction's identity (section 180).
+- Section 13's result: `check_results` and `check_executions` are invalid fields of any role's result (section 180).
+- Section 67: the plan fixture takes `requirement_index` (section 179); the classification fixture's proposal is discovered by the engine (section 177).
+- Section 69: `CHECK_DEFINITION_INVALID` is a blocker of `approve` (section 178).
+- Sections 70 and 98: evaluations and the gate read carry `checks` (section 183); a version with discovery errors gives `ACCEPTANCE_SCOPE_INCOMPLETE` naming each error's path (section 178).
+- Section 128's `init_report_lost` applies to check domains (section 182).
+- Section 7's harness routes gain the runner qualification fixture (section 181); section 18's barriers gain section 184's.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The version read † | `GET /v1/projects/:p/protected-versions/:v` (section 178) | The plan's "on the version read" names a read D3 does not; a version's governed values, errors and checks are what a person must see to correct a protected change. |
+| A governed field absent † | `null` for `required_checks`, A.4's default for the others (section 178) | `required_checks` has no default value, only a meaning (every check). |
+| A discovery error's path † | The file's path, `#` and an RFC 6901 pointer for a member error (section 178) | A.3 has one `path`; M202 (b) needs it to name the member. |
+| Codes D3 does not name † | Governed file as input, engine variable: `invalid_value`; symlink, submodule, executable in `defs/`: `not_regular_file`; `container`/`remote` key: either `unknown_field` or `invalid_value` (section 178) | The closest A.2 codes; the last is left open because D3 calls the classes both known and refused. |
+| The index through the fixture | `requirement_index` text on the plan fixture (section 179) | E92 item 4: the fixture registers through the parser; M233 needs row text. |
+| The operator replay † | `request_key` (section 180) | D3 §2.5 makes a replay register nothing; a client needs a way to say "the same request". |
+| `check.registered`'s subject and payload | `subject.{project, candidate, check_execution}`, `payload.{key, trigger}` (section 180) | A.6 names the type only. |
+| `events.tx` † | The transaction's identity (section 180) | D1 A.3 has the column for it; the engine as built writes one per transaction. |
+| The runner switch | Kernel lane registers and admits nothing (section 177) | BS3 §8; the scripted check boundary is slice 16's. |
+| The runner qualification fixture | Route, `check_runner.test_fixture`, 409 without a host qualification (section 181) | E92 item 2; the label travels with every result through `runner_qualification`. |
+| How a test reads an execution's domain | `check_executions.domain` → `execution_domains` (section 182) | M3 plan §2.6; L1's columns. |
+| The form of `runner_id` | `direct@<machine-id>/<≥ 8 hex of the profile fingerprint>` (section 182) | D3 §2.8 gives the form; the prefix length is the tests'. |
+| The gate read's per-check entry | `checks.<id>` with `deciding`, `not_run_reason`, `pending`, `due` (section 183) | M3 plan §2.6; one object that slices 16 and 20 extend. |
+| Barriers of the finalizers | Section 184's four names and `checks.registered` | M3 plan §2.3 names the points; the journal barriers cannot tell a nomination from an integration. |
+
+**Deferred** (`../COVERAGE.md`, "M3 slice 15"; each a decision for Sean):
+- **M205 (d), a foreign signal, and (i), forged reports on the control descriptors.** The M2 instruments for these are actions of the scripted role program (`harness/scripted/child.mjs`), which is driven by a launch request on its standard input and by scripts and a log in the scripted directory. A check domain gives its program only its arguments, a constructed environment and read-only `read_paths`. So those instruments cannot be a check program without a new harness capability, and none was built (the coordinator's instruction, 2026-10-07).
+- **M205 (g), the OOM kill (exhaustion lane).** The same reason: `allocateToLimit` is a scripted-role action; and a check domain's caps would need a harness override that does not exist yet. No exhaust-lane file is listed.
+- **M201 (f)**, the journey with no runner qualification fixture: slice 18, as the plan says, in a new file of row M201 listed under slice 18.
+- **M204 (f)**, a nomination whose required set needs the candidate's module facts: slice 20, where the sensitivity floors make the required set depend on modules, as a case added to `M204-triggers-registration-frozen-discovery.test.mjs` or a new file of row M204 listed under slice 20.
+
+## What was run
+
+See `../COVERAGE.md`, "M3 slice 15".

@@ -195,6 +195,13 @@
       "M136-adapter-with-a-fake-backend.test.mjs",
       "M140-credential-never-echoed.test.mjs",
       "M133-memory-admission-reserves-the-limit.test.mjs"
+    ],
+    "15": [
+      "M201-check-journey-path-one.test.mjs",
+      "M202-governed-schemas-and-required-set.test.mjs",
+      "M203-definitions-and-discovery-runs-nothing.test.mjs",
+      "M204-triggers-registration-frozen-discovery.test.mjs",
+      "M205-what-establishes-a-result.test.mjs"
     ]
   },
   "sandbox": [
@@ -226,7 +233,9 @@
     "M135-qualification-attempt.test.mjs",
     "M137-cancellation-canary-negatives.test.mjs",
     "M136-adapter-with-a-fake-backend.test.mjs",
-    "M133-memory-admission-reserves-the-limit.test.mjs"
+    "M133-memory-admission-reserves-the-limit.test.mjs",
+    "M201-check-journey-path-one.test.mjs",
+    "M205-what-establishes-a-result.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
