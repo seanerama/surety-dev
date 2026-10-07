@@ -1,5 +1,5 @@
 {
-  "$comment": "Verifier's expected closed configuration (build spec §6 correction 20; D1 A.9; Review B17; E18). Durations are integer seconds unless `unit` says otherwise. `fixed` keys accept only their default. Tests read expectations from this file, never from the engine. M2 (SEAM.md §115) adds the engine and project keys of D2 A.7, byte-valued keys in bytes (2 GiB = 2147483648): `ui_bootstrap` is false in qualified M2 (K3); `budget_hard_maximum` is a boolean whose value true is refused with `hard_cap_unenforceable`, not `invalid_value`; `budget_run_boundary` takes a BudgetBoundary; `egress_allow_extra` and `sandbox_read_paths` are widenings (`policy_widening`); the backend keys name the backend each role is dispatched to and the mode, as SEAM.md §116 says.",
+  "$comment": "Verifier's expected closed configuration (build spec §6 correction 20; D1 A.9; Review B17; E18). Durations are integer seconds unless `unit` says otherwise. `fixed` keys accept only their default. Tests read expectations from this file, never from the engine. M2 (SEAM.md §115) adds the engine and project keys of D2 A.7, byte-valued keys in bytes (2 GiB = 2147483648): `ui_bootstrap` is false in qualified M2 (K3); `budget_hard_maximum` is a boolean whose value true is refused with `hard_cap_unenforceable`, not `invalid_value`; `budget_run_boundary` takes a BudgetBoundary; `egress_allow_extra` and `sandbox_read_paths` are widenings (`policy_widening`); the backend keys name the backend each role is dispatched to and the mode, as SEAM.md §116 says. M3 slice 15 (D3 A.7; SEAM.md §186) adds the check runner's engine keys `check_timeout_max`, `check_output_max_bytes`, `checktree_max_bytes`, `checktree_max_entries`, `checktrees_max_bytes` and `check_infra_retries_max`, and the project key `max_concurrent_checks` (not a widening). `checktrees_max_bytes` has a second lower bound, `at_least`: it may not be below the effective `checktree_max_bytes`, and its `min` is the lowest value that bound can take. D3 A.7's `classifier_authority` (an object, `{mode, version?}`) is not listed yet: no slice-15 row reads it, and M07 compares values with `assert.equal`; the slice that builds it (19) adds it.",
   "engine": {
     "tick_interval": { "default": 30, "min": 5, "max": 600, "unit": "s" },
     "tick_budget": { "default": 20, "min": 5, "max": 300, "unit": "s" },
@@ -40,7 +40,13 @@
     "egress_tunnels_max": { "default": 16, "min": 1, "max": 128, "unit": "count" },
     "egress_buffer_max_bytes": { "default": 1048576, "min": 65536, "max": 16777216, "unit": "bytes" },
     "egress_log_max_bytes": { "default": 4194304, "min": 262144, "max": 67108864, "unit": "bytes" },
-    "pause_challenge_timeout": { "default": 5, "min": 1, "max": 30, "unit": "s" }
+    "pause_challenge_timeout": { "default": 5, "min": 1, "max": 30, "unit": "s" },
+    "check_timeout_max": { "default": 1800, "min": 10, "max": 10800, "unit": "s" },
+    "check_output_max_bytes": { "default": 1048576, "min": 65536, "max": 16777216, "unit": "bytes" },
+    "checktree_max_bytes": { "default": 2147483648, "min": 67108864, "max": 34359738368, "unit": "bytes" },
+    "checktree_max_entries": { "default": 200000, "min": 1000, "max": 2000000, "unit": "count" },
+    "checktrees_max_bytes": { "default": 8589934592, "min": 67108864, "max": 137438953472, "unit": "bytes", "at_least": "checktree_max_bytes" },
+    "check_infra_retries_max": { "default": 2, "min": 0, "max": 5, "unit": "count" }
   },
   "decision_target_defaults": {
     "$comment": "Effective defaults for the eleven decision kinds enabled in M1 (build spec §3) and the two D2 adds (A.7: 2 d each). D1 A.8 for nine; RN R4 adds two, given the targets of their siblings. null = no target (A.8 'none').",
@@ -87,6 +93,7 @@
     "backend_verifier": { "default": "scripted", "allowed": ["scripted", "claude", "codex"], "unit": "backend" },
     "backend_reviewer": { "default": "scripted", "allowed": ["scripted", "claude", "codex"], "unit": "backend" },
     "backend_architect": { "default": "scripted", "allowed": ["scripted", "claude", "codex"], "unit": "backend" },
-    "backend_mode": { "default": "one_shot_headless", "allowed": ["one_shot_headless", "session_headless"], "unit": "TrustMode" }
+    "backend_mode": { "default": "one_shot_headless", "allowed": ["one_shot_headless", "session_headless"], "unit": "TrustMode" },
+    "max_concurrent_checks": { "default": 1, "min": 1, "max": 8, "unit": "count" }
   }
 }

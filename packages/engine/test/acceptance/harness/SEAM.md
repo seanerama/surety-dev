@@ -4123,6 +4123,24 @@ Unlike section 33's journal barriers, these four name the operation, not only th
 - **M201 (f)**, the journey with no runner qualification fixture: slice 18, as the plan says, in a new file of row M201 listed under slice 18.
 - **M204 (f)**, a nomination whose required set needs the candidate's module facts: slice 20, where the sensitivity floors make the required set depend on modules, as a case added to `M204-triggers-registration-frozen-discovery.test.mjs` or a new file of row M204 listed under slice 20.
 
+## 186. D3's configuration keys (the slice-15 straddle, item 3)
+
+(D3 A.7; E92 item 3; `../contract/config.json`; rows M07, M73. Written 2026-10-07 on `verify/m3-s15-straddle` from `main` at `fb8b950`.)
+
+The closed configuration gains D3 A.7's keys, with A.7's defaults and ranges, durations in seconds and sizes in bytes:
+
+| Key | Scope | Default | Range |
+|---|---|---|---|
+| `check_timeout_max` | engine | 1800 s | 10 s to 10800 s |
+| `check_output_max_bytes` | engine | 1048576 | 65536 to 16777216 |
+| `checktree_max_bytes` | engine | 2147483648 | 67108864 to 34359738368 |
+| `checktree_max_entries` | engine | 200000 | 1000 to 2000000 |
+| `checktrees_max_bytes` | engine | 8589934592 | 67108864 to 137438953472, and not below the effective `checktree_max_bytes` (`at_least`) |
+| `check_infra_retries_max` | engine | 2 | 0 to 5 |
+| `max_concurrent_checks` | project | 1 | 1 to 8; not a widening |
+
+M07 ("exactly the closed key set", the defaults) and M73 (the executable contract's bounds) read them from the file, so an engine without them fails those rows. A value of `checktrees_max_bytes` below the effective `checktree_max_bytes` is refused `invalid_value` with `subject.field` `checktrees_max_bytes` (section 2); no case pins it yet. **`classifier_authority` is not listed:** its value is an object, M07 compares values with `assert.equal`, and nothing reads it before slice 19, whose Verifier adds it with the comparison it needs.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15".
