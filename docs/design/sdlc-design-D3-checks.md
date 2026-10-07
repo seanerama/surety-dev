@@ -219,7 +219,7 @@ Also decided: F2 option (c) (E90 item 4; §2.11, L8). E89 item 2's three choices
 
 ### 7.4 Questions raised by applying E90
 
-Each is a gap E90 does not settle. The text above takes the conservative reading meanwhile; none relaxes a gate.
+**Decided by Sean, 2026-10-06 (E91): Q8 to Q11 each as recommended, option (a); the text above already reads so.**
 
 | Q | Question | Options | Recommendation |
 |---|---|---|---|

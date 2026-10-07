@@ -1631,3 +1631,13 @@ Then the rehearsal is rerun against the fake, and Sean runs one more attempt (al
 3. **Corrections L1 to L5 accepted**, L1 to L3 with Astra's variants (her §4): L1's binding covers every launch, closure, recovery, resource and projection path; L2's registration and invalidation happen with the trigger (or a barrier before Gates), not only in the later tick step; L3 with B04. L4 observes descendants at the check's own exit, before teardown.
 4. **F2, option (c)** (Astra's recommendation; the M2 report's question 15): a finding names the criterion it breaks; only a required acceptance-origin check of the current scope that covers that criterion can resolve it, with the existing fix-candidate and post-disposition bindings and intact evidence; a finding with no such check stays unresolved and the missing verification is routed for correction; adequacy stays the Reviewer's. Astra's T20 is its acceptance obligation.
 5. **Provisional, under delegation:** Astra's non-blocking N01 to N04 are applied in draft 2 as she worded them (affected checks show obligation changes; a failed ref read is not an observed change; execution history beside the deciding result; schema defaults enumerated, Appendix B an example, M3 is the direct check runner and deployment later). Her T01 to T20 enter the M3 acceptance plan.
+
+---
+
+## E91. D3 draft 2; the questions its writing raised (decided by Sean, 2026-10-06)
+
+**Status: decided by Sean.**
+
+1. **D3 draft 2** (`a219917`, `docs/design/sdlc-design-D3-checks.md`) applies E89 and E90: B01 to B04 (B01 as correction L6, the protected and input identity a manifest of path, type, mode and object id; B03 as L7, selection over durable registrations; F2 (c) as L8, a finding resolving only through a required acceptance check of the scope that covers its named criterion), Q1 to Q7 decided, L1 to L5 with Astra's variants, N01 to N04, and Astra's T01 to T20 in Appendix C (C06 now expects root additions unclassifiable). Approved to build.
+2. **Q8 to Q11, each (a), as the draft wrote them:** Q8, a finding whose criterion no check covers registers `check_correction` work for the Verifier (chained work, waiting at the chain boundary); Q9, an evaluation of a superseded candidate is refused (not satisfied, names its successor, issues and completes nothing); Q10, a `fix`'s integration takes the highest of the project's tier and the tiers of the modules present at its revision for its cadence; Q11, a migration recomputes recorded protected fingerprints under L6, an unreadable tree leaving the version's fingerprint unreadable and its gates `PROTECTED_PATH_UNAUTHORIZED`.
+3. **Next:** the M3 build specification and acceptance plan, from D3 draft 2, for Sean's approval; then the slices, cases first.
