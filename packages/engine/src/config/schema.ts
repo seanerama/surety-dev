@@ -52,7 +52,18 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   egress_buffer_max_bytes: int(1_048_576, 65_536, 16_777_216),
   egress_log_max_bytes: int(4_194_304, 262_144, 67_108_864),
   pause_challenge_timeout: int(5, 1, 30),
+  // D3 A.7, the check runner (SEAM.md §186).
+  check_timeout_max: int(1800, 10, 10_800),
+  check_output_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  checktree_max_bytes: int(2_147_483_648, 67_108_864, 34_359_738_368),
+  checktree_max_entries: int(200_000, 1000, 2_000_000),
+  checktrees_max_bytes: int(8_589_934_592, 67_108_864, 137_438_953_472),
+  check_infra_retries_max: int(2, 0, 5),
 };
+
+// A numeric engine key that may not be below another's effective value
+// (SEAM.md §186: `at_least`).
+export const ENGINE_AT_LEAST: Record<string, string> = { checktrees_max_bytes: 'checktree_max_bytes' };
 
 export const ENGINE_FIXED: Record<string, number> = { body_cap: BODY_CAP, upload_cap: UPLOAD_CAP };
 
@@ -107,6 +118,13 @@ export const ENGINE_KEYS = [
   'egress_buffer_max_bytes',
   'egress_log_max_bytes',
   'pause_challenge_timeout',
+  // D3 A.7.
+  'check_timeout_max',
+  'check_output_max_bytes',
+  'checktree_max_bytes',
+  'checktree_max_entries',
+  'checktrees_max_bytes',
+  'check_infra_retries_max',
   // E69: the host is designated for the exhaustion probe P20.
   'isolation_probe_exhaustion',
 ] as const;
@@ -191,6 +209,8 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   snapshot_max_files: int(5000, 1, 100_000),
   snapshot_max_bytes: int(104_857_600, 1_048_576, 1_073_741_824),
   snapshot_max_file_bytes: int(10_485_760, 1024, 1_073_741_824),
+  // D3 A.7: check executions running at once; not a widening.
+  max_concurrent_checks: int(1, 1, 8),
 };
 
 // The finer a budget boundary, the earlier in this list (D2 A.2

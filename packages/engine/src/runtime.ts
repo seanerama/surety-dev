@@ -304,6 +304,9 @@ export class Runtime {
     mkdirSync(this.scratch, { recursive: true, mode: 0o700 });
   }
 
+  // The check runner (checks/run.ts), set once at startup.
+  checks: import('./checks/run.js').CheckRunner | null = null;
+
   // The incarnation scope (D2 §3.1), null when the engine runs without one.
   scope: Scope | null = null;
   private hostChecks: (() => Promise<unknown>) | null = null;

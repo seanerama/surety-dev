@@ -13,6 +13,8 @@ import { intendCommit } from './accept.js';
 import type { IntentResult, IntentSpec } from './journal.js';
 import { integrationRef, projectRepoRow } from './repo.js';
 import type { Tx } from './tx.js';
+import type { Discovery } from '../../checks/discovery.js';
+import { registerAtApplication, writeVersionDiscovery } from './checks.js';
 
 type Db = Tx['db'];
 
@@ -58,6 +60,9 @@ export interface ProposalRow {
 export interface ProtectedSet {
   roots: string[];
   fingerprint: string;
+  // What discovery read of the tree (D3 §1.4): the version's checks, governed
+  // values and errors. Absent where nothing was discovered.
+  discovery?: Discovery | null;
 }
 
 // The one effective version of a project: authorized, in effect, not
@@ -93,6 +98,7 @@ export function recordInitialVersion(tx: Tx, project: string, set: ProtectedSet,
        VALUES (?, ?, ?, 1, ?, '[]', 'initial', NULL, ?, 'human', ?, 1, ?, ?)`,
     )
     .run(id, tx.at, project, set.fingerprint, approvedBy, tx.at, tx.at, JSON.stringify(set.roots));
+  if (set.discovery) writeVersionDiscovery(tx, { project, version: id, discovery: set.discovery });
   return id;
 }
 
@@ -278,6 +284,8 @@ export function beginApplication(
       p.approved_at ?? tx.at,
       JSON.stringify(args.set.roots),
     );
+  // The discovery frozen for the proposal, the new version's checks (D3 §1.4).
+  if (args.set.discovery) writeVersionDiscovery(tx, { project: p.project, version, discovery: args.set.discovery });
   const inputs: ApplicationInputs = { purpose: 'protected', ref, ref_kind: 'integration', new_oid: args.sha, proposal: p.id, version, intent: args.intent };
   const follow: IntentSpec = {
     project: p.project,
@@ -326,6 +334,9 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   }
   markStale(tx, { project: op.project });
   if (inputs.intent) completeIntent(tx, inputs.intent);
+  // The new version's checks, registered in the transaction that invalidates
+  // the old results (D3 §2.5, §3.5; L2).
+  registerAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
   return { version: v.id };
 }

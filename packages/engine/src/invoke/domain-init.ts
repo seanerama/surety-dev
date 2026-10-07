@@ -29,7 +29,7 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -130,6 +130,8 @@ interface Entry {
   // (the git view's index).
   source?: string;
   mode?: number;
+  // Made with no link followed at any component (mounts.ts).
+  nofollow?: boolean;
 }
 
 interface Plan {
@@ -202,7 +204,36 @@ function run(cmd: string, args: string[]): void {
 
 let mknod: string | null = null;
 
+// An entry made with no link followed (S1): each component found as a
+// directory or made one, the file created exclusively with O_NOFOLLOW;
+// anything else refuses the setup. Nothing outside `root` is reached.
+function makeNoFollow(root: string, e: Entry): void {
+  const parts = e.path.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) throw new Error(`${e.path} is not a plain relative path`);
+  let at = root;
+  const last = parts.length - 1;
+  for (let i = 0; i < parts.length; i++) {
+    at = join(at, parts[i]!);
+    const final = i === last;
+    let st;
+    try {
+      st = lstatSync(at);
+    } catch {
+      st = null;
+    }
+    if (!final || e.kind === 'dir') {
+      if (st === null) mkdirSync(at, { mode: 0o755 });
+      else if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${e.path}: ${parts.slice(0, i + 1).join('/')} is not a directory`);
+      continue;
+    }
+    if (e.kind !== 'file') throw new Error(`${e.path}: only directories and files are made without following links`);
+    if (st !== null) throw new Error(`${e.path} exists already`);
+    closeSync(openSync(at, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, e.mode ?? 0o644));
+  }
+}
+
 function make(root: string, e: Entry): void {
+  if (e.nofollow === true) return makeNoFollow(root, e);
   const at = join(root, e.path);
   mkdirSync(dirname(at), { recursive: true });
   if (e.kind === 'chardev') {
@@ -312,6 +343,10 @@ interface BackendSpec {
   // abstract socket on which the probe program asks for its actions, and the
   // exact argument array of each action as canary.json gives it.
   canary?: { barrier?: string | null; containment?: ContainmentSpec | null } | null;
+  // A check's own process (D3 §2.6): no standard input; standard output and
+  // error both relayed, interleaved as they arrive; and, at its exit, before
+  // anything is drained, whether any other process remains (`orphans`).
+  check?: boolean;
 }
 
 // The containment check the engine gives the init (E86): the probe
@@ -437,6 +472,17 @@ function others(): number[] {
   return out;
 }
 
+// How many other processes the pid namespace holds, or null when /proc
+// cannot be read: an unread count is unknown, never zero (L4).
+function othersCount(): number | null {
+  try {
+    readdirSync('/proc');
+  } catch {
+    return null;
+  }
+  return others().length;
+}
+
 function leaveWhenAlone(): void {
   const timer = setInterval(() => {
     if (others().length === 0) {
@@ -549,11 +595,11 @@ async function init(): Promise<void> {
     child = spawn(spec.argv[0]!, spec.argv.slice(1), {
       cwd: spec.cwd,
       env: spec.env,
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: spec.check === true ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'ignore'],
       detached: true,
     });
   } catch (err) {
-    send({ t: 'start_failed', detail: (err as Error).message });
+    send({ t: 'start_failed', detail: (err as Error).message, errno: (err as NodeJS.ErrnoException).code ?? null });
     exit = { code: null, signal: null };
     send({ t: 'exit', code: null, signal: null, start_failed: true });
     leaveWhenAlone();
@@ -561,7 +607,7 @@ async function init(): Promise<void> {
   }
   child.on('error', (err) => {
     if (backendPid === null) {
-      send({ t: 'start_failed', detail: err.message });
+      send({ t: 'start_failed', detail: err.message, errno: (err as NodeJS.ErrnoException).code ?? null });
       exit = { code: null, signal: null };
       send({ t: 'exit', code: null, signal: null, start_failed: true });
       leaveWhenAlone();
@@ -571,19 +617,30 @@ async function init(): Promise<void> {
     backendPid = child.pid;
     send({ t: 'started', pid: child.pid });
   }
-  child.stdin!.on('error', () => {});
-  child.stdin!.end(spec.stdin ?? '');
+  if (child.stdin) {
+    child.stdin.on('error', () => {});
+    child.stdin.end(spec.stdin ?? '');
+  }
   child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
-  child.stdout!.on('end', () => send({ t: 'eof' }));
+  // A check's standard error joins its output (D3 §2.6).
+  child.stderr?.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+  if (spec.check !== true) child.stdout!.on('end', () => send({ t: 'eof' }));
   // The init exits once the backend has (SEAM.md §126): its report written,
   // process 1 of the sandbox goes, and the kernel ends every process left in
   // its pid namespace, a daemon the backend started among them.
   // What the backend wrote before its exit is relayed first: the init waits
   // for its output to end, or a moment if a descendant holds it open.
   let outputEnded = false;
-  child.stdout!.on('end', () => {
-    outputEnded = true;
-  });
+  let streamsOpen = child.stderr ? 2 : 1;
+  const ended = () => {
+    streamsOpen -= 1;
+    if (streamsOpen === 0) {
+      outputEnded = true;
+      if (spec.check === true) send({ t: 'eof' });
+    }
+  };
+  child.stdout!.on('end', ended);
+  child.stderr?.on('end', ended);
   // The cancellation canary's barrier, observed by the init, not the stream.
   if (spec.canary?.barrier) {
     const barrier = spec.canary.barrier;
@@ -603,6 +660,10 @@ async function init(): Promise<void> {
   child.on('exit', (code, signal) => {
     exitAt = performance.now();
     exit = { code, signal: signalNumber(signal) };
+    // L4: at the check's own exit, before its output is drained or anything
+    // is torn down, whether another process remains in the domain (process 1
+    // inherits them).
+    if (spec.check === true) send({ t: 'orphans', count: othersCount() });
     const started = Date.now();
     const leave = setInterval(() => {
       if (outputEnded || Date.now() - started >= 2000) {

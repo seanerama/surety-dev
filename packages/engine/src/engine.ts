@@ -36,6 +36,8 @@ import { seamHostChecks, seamQualifyMode, seamScopeBarrier } from './testing/sea
 import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
+import { CHECK_LIMIT_KEYS, setCheckLimits } from './checks/limits.js';
+import { CheckRunner } from './checks/run.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
@@ -253,6 +255,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
         git_deadline: config.values.git_deadline,
         decision_targets: config.values.decision_targets,
         ui_bootstrap: config.values.ui_bootstrap,
+        checks: Object.fromEntries(CHECK_LIMIT_KEYS.map((k) => [k, config.values[k]])),
       },
       // The resource envelope's admission (D2 §3.7), on the real boundary.
       envelope: checksRun && scope.scope !== null
@@ -271,8 +274,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   }
   state.completed.push('store');
 
+  setCheckLimits(config.values);
   configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home, incarnation: lock.incarnation_id });
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
+  runtime.checks = new CheckRunner(runtime);
   runtime.scope = scope.scope;
   const journal = new Journal(runtime);
   runtime.journal = journal;

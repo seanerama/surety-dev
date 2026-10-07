@@ -8,6 +8,9 @@ import { isAbsolute } from 'node:path';
 import type { Database } from 'better-sqlite3';
 
 import { Refusal } from '../refusal.js';
+import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
+import type { Discovery } from '../checks/discovery.js';
+import { freezeProposalDiscovery, setCheckRunner } from '../store/transitions/checks.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
@@ -26,6 +29,7 @@ import {
   recordCheckResult,
   recordReuse,
   recordScopeApproval,
+  registerRequirementIndex,
   requirementIds,
 } from '../store/transitions/baseline.js';
 import type { DecisionKind } from '../store/transitions/decisions.js';
@@ -130,6 +134,9 @@ export interface PlanBody {
   adrs: { key: string; text: string }[];
   constraints: { key: string; text: string }[];
   modules: { name: string; paths: string[]; sensitive_areas?: string[] }[];
+  // D3 §4.5 (SEAM.md §179): the requirement index, registered through the
+  // parser spec approval will use.
+  index: IndexRow[] | null;
 }
 
 const keyed = (v: unknown, field: string): { key: string; text: string }[] => {
@@ -148,7 +155,7 @@ const strings = (v: unknown, field: string): string[] => {
 };
 
 export function parsePlanBody(body: unknown): PlanBody {
-  const b = objectBody(body, ['project', 'stages', 'requirements', 'modules', 'adrs', 'constraints']);
+  const b = objectBody(body, ['project', 'stages', 'requirements', 'modules', 'adrs', 'constraints', 'requirement_index']);
   const project = str(b, 'project');
   if (!Array.isArray(b.stages) || b.stages.length === 0) throw invalid('stages', 'must be a non-empty array');
   const stages = b.stages.map((s: unknown, i: number) => {
@@ -180,12 +187,35 @@ export function parsePlanBody(body: unknown): PlanBody {
     const mo = objectBody(m, ['name', 'paths', 'sensitive_areas']);
     return { name: str(mo, 'name'), paths: strings(mo.paths, `modules[${i}].paths`), ...(mo.sensitive_areas !== undefined ? { sensitive_areas: strings(mo.sensitive_areas, `modules[${i}].sensitive_areas`) } : {}) };
   });
-  return { project, stages, requirements, requirementTexts, adrs, constraints, modules };
+  let index: IndexRow[] | null = null;
+  if (b.requirement_index !== undefined) {
+    if (typeof b.requirement_index !== 'string') throw invalid('requirement_index', 'must be the requirement index table as a string');
+    const parsed = parseRequirementIndex(b.requirement_index);
+    if (!parsed.ok) {
+      throw new Refusal(400, 'invalid_value', `"requirement_index" ${parsed.row === 0 ? 'is not a requirement index' : `row ${parsed.row} is refused`}: ${parsed.why}.`, 'Correct the index row.', {
+        field: 'requirement_index',
+        row: parsed.row,
+        text: parsed.text,
+      });
+    }
+    index = parsed.rows;
+    const keys = index.map((r) => r.key);
+    if (b.requirements !== undefined && (requirements.length !== keys.length || requirements.some((k) => !keys.includes(k)))) {
+      throw invalid('requirement_index', 'names other requirements than "requirements"');
+    }
+    if (b.requirements === undefined) requirements.push(...keys);
+  }
+  return { project, stages, requirements, requirementTexts, adrs, constraints, modules, index };
 }
 
 export function installFixturePlan(db: Database, actor: Actor, args: PlanBody & { baseRevision: string }) {
   return transact(db, actor, (tx) => {
-    const requirements = ensureRequirements(tx, { project: args.project, keys: args.requirements, texts: args.requirementTexts });
+    let requirements: { id: string; key: string; criteria?: string[]; sensitive_areas?: string[] }[] = ensureRequirements(tx, { project: args.project, keys: args.requirements, texts: args.requirementTexts });
+    if (args.index !== null) {
+      // A new approved spec revision: its index's fields, and the effective
+      // version's errors recomputed against it (SEAM.md §§177, 179).
+      requirements = registerRequirementIndex(tx, { project: args.project, rows: args.index });
+    }
     const adrs = ensureBaselineTexts(tx, { project: args.project, kind: 'adr', items: args.adrs });
     const constraints = ensureBaselineTexts(tx, { project: args.project, kind: 'constraint', items: args.constraints });
     ensureModules(tx, { project: args.project, modules: args.modules });
@@ -284,11 +314,28 @@ export function installEnvironment(db: Database, actor: Actor, body: unknown) {
 
 // POST /v1/harness/fixtures/classification: what D3's classifier would say
 // of a captured proposal (SEAM.md §§67, 69). The engine routes it.
-export function installClassification(db: Database, actor: Actor, body: unknown) {
+// The classification is the fixture's; the discovery of the proposal's tree
+// is the engine's, read on the main thread and frozen here (SEAM.md §177).
+export function parseClassification(body: unknown): { proposal: string; changeKind: string } {
+  const b = objectBody(body, ['proposal', 'change_kind']);
+  const changeKind = str(b, 'change_kind');
+  if (!['tightening', 'loosening', 'unclassifiable'].includes(changeKind)) throw invalid('change_kind', 'must be tightening, loosening or unclassifiable');
+  return { proposal: str(b, 'proposal'), changeKind };
+}
+
+export function proposalTree(db: Database, proposal: string): { repo: string; tree: string } | null {
+  const row = db.prepare('SELECT p."tree_id", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project" WHERE p."id" = ?').get(proposal) as
+    | { tree_id: string; dev_repo_path: string }
+    | undefined;
+  return row ? { repo: row.dev_repo_path, tree: row.tree_id } : null;
+}
+
+export function installClassification(db: Database, actor: Actor, body: unknown, discovery: Discovery | null = null) {
   const b = objectBody(body, ['proposal', 'change_kind']);
   const changeKind = str(b, 'change_kind');
   if (!['tightening', 'loosening', 'unclassifiable'].includes(changeKind)) throw invalid('change_kind', 'must be tightening, loosening or unclassifiable');
   return transact(db, actor, (tx) => {
+    if (discovery !== null) freezeProposalDiscovery(tx, { proposal: str(b, 'proposal'), discovery });
     const p = classifyProposal(tx, { proposal: str(b, 'proposal'), changeKind: changeKind as ChangeKind }, FIXTURE_LABEL);
     raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[changeKind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
     return { proposal: { id: p.id, status: p.status } };
@@ -584,4 +631,21 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
       decision: f.status === 'proposed' ? decision : null,
     };
   });
+}
+
+// POST /v1/harness/fixtures/runner-qualification (SEAM.md §181; E92 item 2):
+// the active host qualification's runner marked qualified, labelled as the
+// harness's: no self-test ran. Every result recorded under it names this row.
+export function parseRunnerQualification(body: unknown): void {
+  const b = objectBody(body, ['runner_class']);
+  if (b.runner_class !== 'direct') throw invalid('runner_class', 'must be direct, the only class the fixture qualifies');
+}
+
+export function installRunnerQualification(db: Database, actor: Actor, profileFingerprint: string): { host_qualification: string } {
+  const id = transact(db, actor, (tx) => {
+    tx.stamp = { ...FIXTURE_LABEL };
+    return setCheckRunner(tx, { profile_fingerprint: profileFingerprint, self_test: [], qualified: true, ...FIXTURE_LABEL });
+  });
+  if (id === null) throw new Refusal(409, 'isolation_unqualified', 'There is no active host qualification, so the check runner cannot be qualified.', 'Start the engine on a host whose checks pass.', {});
+  return { host_qualification: id };
 }

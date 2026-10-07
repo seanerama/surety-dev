@@ -17,6 +17,7 @@ import {
   ENGINE_BOOLEANS,
   ENGINE_FIXED,
   ENGINE_KEYS,
+  ENGINE_AT_LEAST,
   ENGINE_NUMBERS,
   PROJECT_OPTIONS,
   PROJECT_POLICY,
@@ -224,7 +225,7 @@ function configSection(): ContractDocument['config'] {
   const engine: Record<string, Record<string, unknown>> = {};
   for (const key of ENGINE_KEYS) {
     const number = ENGINE_NUMBERS[key];
-    if (number) engine[key] = { default: number.default, min: number.min, max: number.max, integer: number.integer };
+    if (number) engine[key] = { default: number.default, min: number.min, max: number.max, integer: number.integer, ...(ENGINE_AT_LEAST[key] ? { at_least: ENGINE_AT_LEAST[key] } : {}) };
     else if (ENGINE_FIXED[key] !== undefined) engine[key] = { default: ENGINE_FIXED[key], fixed: true };
     else if (ENGINE_BOOLEANS[key] !== undefined) engine[key] = { default: ENGINE_BOOLEANS[key], type: 'boolean' };
     else if (key === 'api_authority') engine[key] = { default: '127.0.0.1:<api_port>', allowed: ['127.0.0.1:<api_port>', 'localhost:<api_port>'] };

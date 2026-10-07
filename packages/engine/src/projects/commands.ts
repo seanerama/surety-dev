@@ -10,6 +10,7 @@ import { isAbsolute, join } from 'node:path';
 import { nowIso } from '../clock.js';
 import { type Policy, validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
 import { GOVERNED_FILE, GOVERNED_KEYS, governedText, protectedSetAt } from '../protected/set.js';
+import { protectedVersionAt } from '../checks/discovery.js';
 import { writeWholeRecord } from '../records/files.js';
 import { canonical } from '../store/transitions/common.js';
 import { commitContent, messageText } from '../git/commit.js';
@@ -92,7 +93,7 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
   }
   // The project's first protected version: the fingerprint of the branch's
   // commit under the roots its governed file names (SEAM.md §66).
-  const protectedSet = await protectedSetAt(repo, head.oid);
+  const protectedSet = await protectedVersionAt(repo, head.oid);
   if (protectedSet === null) throw repoUnreadable(repo);
   const id = newId('proj_');
   const identity = `${JSON.stringify({ id, name }, null, 2)}\n`;

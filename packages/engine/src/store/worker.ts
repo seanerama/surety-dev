@@ -80,10 +80,11 @@ import {
   storedRecords,
 } from './transitions/records.js';
 import { type EngineSettings, setEngineSettings } from './transitions/settings.js';
+import { setCheckLimits } from '../checks/limits.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
 import { captureRunProposal, recordRunReport } from './transitions/accept.js';
-import { ancestryPairs, recordAncestry } from './transitions/evidence.js';
+import { ancestryPairs, nominationAncestryPairs, recordAncestry } from './transitions/evidence.js';
 import { dueStageGates, evaluateGate, gateFactsRead, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
@@ -105,6 +106,7 @@ import {
 } from './transitions/qualification.js';
 import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
+  authorizeCheckLaunch,
   authorizeLaunch,
   boundaryDomains,
   cgroupCreated,
@@ -123,6 +125,26 @@ import {
   regrantLease,
 } from './transitions/boundary.js';
 import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
+import {
+  admitExecution,
+  freezeProposalDiscovery,
+  interruptExecution,
+  liveExecutions,
+  markCollecting,
+  proposalDiscovery,
+  quarantineExecution,
+  readCandidateExecutions,
+  readVersion,
+  recordExecutionResult,
+  recordInitReport,
+  recordToolchain,
+  registerDue,
+  renewCheckLease,
+  requestChecks,
+  runnerQualification,
+  setCheckRunner,
+  treeInUse,
+} from './transitions/checks.js';
 
 export interface WorkerData {
   file: string;
@@ -164,6 +186,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
   'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
   'authorization.propose': (tx, a) => proposeAuthorization(tx, a),
+  'candidate.request_checks': (tx, a) => ({ ...requestChecks(tx, a), effects: [{ kind: 'tick' }] }),
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
 };
 
@@ -173,6 +196,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'decisions.open': (d, a) => openDecisions(d, a),
   'candidate.read': (d, a) => readCandidate(d, a),
   'candidate.gate': (d, a) => readGate(d, a),
+  'protected.version': (d, a) => readVersion(d, a),
+  'candidate.executions': (d, a) => readCandidateExecutions(d, a),
+  'protected.proposal_discovery': (d, a: { proposal: string }) => proposalDiscovery(d, a.proposal),
+  'checks.tree_in_use': (d, a) => treeInUse(d, a),
+  'checks.live': (d) => liveExecutions(d),
+  'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,
+  'checks.qualification': (d) => runnerQualification(d),
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
@@ -195,6 +225,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.expirable': (d, a: { now: string }) => expirableRecords(d, a.now),
   'records.referenced': (d) => referencedRecords(d),
   'ancestry.pairs': (d, a: { project: string }) => ancestryPairs(d, a),
+  'ancestry.nomination_pairs': (d, a: { project: string }) => nominationAncestryPairs(d, a),
   // The engine's own qualification fixture project, by its repository.
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
@@ -295,6 +326,19 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'record.audited': (tx, a) => recordAudited(tx, a),
   'ancestry.record': (tx, a) => recordAncestry(tx, a),
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
+  'checks.register_due': (tx, a) => registerDue(tx, a),
+  'checks.admit': (tx, a) => admitExecution(tx, a),
+  'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),
+  'checks.init_report': (tx, a) => recordInitReport(tx, a),
+  'checks.toolchain': (tx, a) => recordToolchain(tx, a),
+  'checks.renew': (tx, a) => renewCheckLease(tx, a),
+  'checks.collecting': (tx, a) => markCollecting(tx, a),
+  'checks.quarantine': (tx, a) => quarantineExecution(tx, a),
+  'checks.interrupt': (tx, a) => interruptExecution(tx, a),
+  'checks.record': (tx, a) => recordExecutionResult(tx, a),
+  'checks.never_launched': (tx, a) => domainTerminated(tx, { domain: a.domain, observed: true, evidence: { never_launched: true } }),
+  'checks.set_runner': (tx, a) => setCheckRunner(tx, a),
+  'protected.freeze_discovery': (tx, a) => freezeProposalDiscovery(tx, a),
   'decisions.review': (tx, a) => reviewDecisions(tx, a),
   'accept.record_report': (tx, a) => recordRunReport(tx, a),
   'accept.capture_proposal': (tx, a) => captureRunProposal(tx, a),
@@ -370,6 +414,7 @@ function mutate(args: { name: string; args: unknown; actor: Actor; method: strin
 
 function open(args: { lock: LockRecord; settings: EngineSettings; scope?: string | null; envelope?: EnvelopeSettings | null }) {
   setEngineSettings({ ...args.settings, incarnation: args.lock.incarnation_id });
+  setCheckLimits(args.settings.checks ?? {});
   setEnvelope(args.envelope ?? null);
   const d = new Database(data.file);
   db = d;

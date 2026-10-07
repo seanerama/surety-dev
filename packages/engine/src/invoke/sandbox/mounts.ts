@@ -44,6 +44,10 @@ export interface Entry {
   content?: string;
   source?: string;
   mode?: number;
+  // Made without following a link at any component, each component created
+  // or found as a directory, the file created exclusively: an entry inside a
+  // tree the engine did not write itself (a check's input targets).
+  nofollow?: boolean;
 }
 
 export interface Tools {
@@ -153,16 +157,16 @@ export function hostMountPoints(): string[] {
 }
 
 export const unescape = (p: string): string => p.replace(/\\(\d{3})/g, (_, o: string) => String.fromCharCode(parseInt(o, 8)));
-const esc = (p: string): string => p.replace(/[\\ \t\n]/g, (c) => `\\${c.charCodeAt(0).toString(8).padStart(3, '0')}`);
+export const esc = (p: string): string => p.replace(/[\\ \t\n]/g, (c) => `\\${c.charCodeAt(0).toString(8).padStart(3, '0')}`);
 
 // An overlay's options take a path as given, separated by `,` and `:`: a path
 // holding either cannot be named there.
-function overlayPath(p: string): string {
+export function overlayPath(p: string): string {
   if (/[,:\\\s]/.test(p)) throw new Error(`the path ${p} cannot be named in an overlay's options`);
   return p;
 }
 
-class Builder {
+export class Builder {
   skeleton: Entry[] = [];
   fstab: string[] = [];
   readonly late: Entry[] = [];
@@ -247,18 +251,21 @@ class Builder {
   }
 }
 
-const rel = (p: string): string => relative('/', p);
+export const rel = (p: string): string => relative('/', p);
 
-function parents(path: string): string[] {
+export function parents(path: string): string[] {
   const out: string[] = [];
   for (let d = dirname(path); d !== '/' && d !== '.'; d = dirname(d)) out.unshift(d);
   return out;
 }
 
-export function buildPlan(input: PlanInput): Plan {
-  const stage = join(input.area, 'root');
-  const vol = join(input.area, 'vol');
-  const b = new Builder(stage, hostMountPoints());
+// What every domain's root holds beyond its own `/surety` (D2 §2.3; D3
+// §2.2): the system trees, the enumerated /etc, a minimal /dev with a
+// private devpts and /dev/shm, a private /proc, the engine's node, and the
+// domain init with its execute-only node under /.init (and, where given, the
+// probe program and the egress socket). Shared by the `role`, `probe` and
+// `check` profiles.
+export function systemRoot(b: Builder, input: Pick<PlanInput, 'shmBytes' | 'node' | 'initNodeCopy' | 'initScript' | 'probeProgram' | 'egressSocket'>): void {
   for (const t of SYSTEM_TREES) b.tree(t);
   // /etc: the enumerated files, and the engine's own `hosts` and `resolv.conf`.
   b.dir('/etc');
@@ -295,6 +302,13 @@ export function buildPlan(input: PlanInput): Plan {
   // (A unix socket is connected to through a read-only bind as through any
   // other: the bind keeps the role from replacing it, not from using it.)
   if (input.egressSocket) b.bind(input.egressSocket, { target: EGRESS_SOCKET, noexec: true });
+}
+
+export function buildPlan(input: PlanInput): Plan {
+  const stage = join(input.area, 'root');
+  const vol = join(input.area, 'vol');
+  const b = new Builder(stage, hostMountPoints());
+  systemRoot(b, input);
   // /surety: exactly context, workspace, git, home, out.
   b.dir('/surety');
   b.bind(input.context, { target: '/surety/context' });

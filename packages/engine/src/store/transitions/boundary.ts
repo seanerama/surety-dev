@@ -12,6 +12,7 @@ import { recordLaunch } from './runs.js';
 import { assertEdge } from './lifecycle.js';
 import { engineSettings } from './settings.js';
 import type { Tx } from './tx.js';
+import { checkLeaseCurrent, markLaunched } from './checks.js';
 
 type Db = Tx['db'];
 
@@ -139,6 +140,38 @@ export function authorizeLaunch(
   // the run and its work to `executing`: from here role code may run
   // (SEAM.md §125).
   recordLaunch(tx, { run: d.run, invocation: d.invocation, domain: d.id, pid: args.pid, pgid: args.pid, startTime: args.startTime });
+  return { granted: true, reason: null };
+}
+
+// The launch authorization of a check execution's domain (D3 §2.6; L1): as
+// a run's, with the check execution in the invocation's place. Granted in
+// this one transaction only if the domain, the execution, the incarnation
+// and the check lease's generation are all current and the launch is
+// `authorizable`. A grant makes the domain `launched`, completes its
+// ownership with the launcher's process, and the execution `running`.
+export function authorizeCheckLaunch(
+  tx: Tx,
+  args: { domain: string; execution: string; incarnation: string; generation: number; pid: number; startTime: string | null },
+): { granted: boolean; reason: string | null } {
+  const d = mustDomain(tx, args.domain) as DomainRow & { check_execution: string | null };
+  const refuse = (reason: string) => ({ granted: false, reason });
+  if (d.launch_state !== 'authorizable') return refuse(`the launch is ${d.launch_state}`);
+  if (d.status !== 'allocated') return refuse(`the domain is ${d.status}`);
+  if (d.check_execution !== args.execution) return refuse("the check execution is not the domain's");
+  const owner = tx.db.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(d.id) as { incarnation: string } | undefined;
+  if (!owner || owner.incarnation !== args.incarnation) return refuse('the incarnation is not the one that owns the domain');
+  if (!checkLeaseCurrent(tx.db, { execution: args.execution, incarnation: args.incarnation, generation: args.generation, at: tx.at })) return refuse('the check lease is not current');
+  const x = tx.db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(args.execution) as { status: string } | undefined;
+  if (x?.status !== 'materializing') return refuse(`the execution is ${x?.status ?? 'unknown'}`);
+  const binding = { check_execution: args.execution, incarnation: args.incarnation, lease_generation: args.generation };
+  assertEdge('LaunchState', d.launch_state, 'authorized', { domain: d.id });
+  assertEdge('DomainStatus', d.status, 'launched', { domain: d.id });
+  tx.db
+    .prepare(`UPDATE "execution_domains" SET "launch_state" = 'authorized', "launch_binding" = ?, "launch_authorized_at" = ?, "status" = 'launched' WHERE "id" = ?`)
+    .run(JSON.stringify(binding), tx.at, d.id);
+  tx.db.prepare('UPDATE "process_ownership" SET "containment_id" = ?, "pid" = ?, "pgid" = ?, "pid_start_time" = ? WHERE "domain" = ?').run(d.cgroup_path, args.pid, args.pid, args.startTime, d.id);
+  tx.emit('domain.launch_authorized', { project: d.project, domain: d.id, check_execution: args.execution }, { launch_binding: binding, cgroup_path: d.cgroup_path, launcher_pid: args.pid });
+  markLaunched(tx, { execution: args.execution, domain: d.id });
   return { granted: true, reason: null };
 }
 

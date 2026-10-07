@@ -19,17 +19,16 @@ import {
   type CandidateRow,
   type CheckRow,
   TIER_RANK,
-  applies,
   checksOfVersion,
   contentHash,
-  deliveryOf,
-  gateKindsOf,
   getCandidate,
   predecessors,
+  requiredSet,
   requirementsOf,
 } from './evidence.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
+import { discoveryErrorsOf, registerDue } from './checks.js';
 import { type OobRow, blockingObservation, candidateObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
@@ -62,6 +61,9 @@ interface ResultRow {
   exit_status: number | null;
   output: string | null;
   invalidated_at: string | null;
+  execution: string | null;
+  not_run_reason: string | null;
+  orphans: number | null;
 }
 
 export interface FindingRow {
@@ -125,17 +127,7 @@ export function buildScope(db: Db, args: { project: string; candidate: Candidate
   if (!project) throw notFound('project', args.project);
   const effective = effectiveVersion(db, args.project);
   if (!effective) throw new Refusal(409, 'illegal_transition', `Project ${args.project} has no effective protected version.`, 'Nothing was evaluated.', { project: args.project });
-  const { delivered, partial, implementsOf } = deliveryOf(db, args.project, args.candidate);
-  const tier = project.tier;
-  const ofTier = checksOfVersion(db, effective.id).filter((c) => applies(c, tier) && gateKindsOf(c).includes(args.kind));
-  let obligations: string[];
-  if (args.kind === 'stage') {
-    const implemented = implementsOf.get(args.stage!) ?? [];
-    obligations = delivered.filter((r) => implemented.includes(r));
-  } else {
-    obligations = delivered;
-  }
-  const required = ofTier.filter((c) => requirementsOf(c).length === 0 || requirementsOf(c).some((r) => obligations.includes(r)));
+  const { required, obligations, delivery, tier } = requiredSet(db, { project: args.project, candidate: args.candidate, kind: args.kind, stage: args.stage, version: effective.id });
   const uncovered = obligations.filter((r) => !required.some((c) => requirementsOf(c).includes(r)));
   const signoffs = requiredSignoffs(db, args.project, tier);
   return {
@@ -144,8 +136,8 @@ export function buildScope(db: Db, args: { project: string; candidate: Candidate
     stage: args.stage,
     tier,
     effective,
-    delivered,
-    partial,
+    delivered: delivery.delivered,
+    partial: delivery.partial,
     required,
     uncovered,
     environment: args.environment,
@@ -199,7 +191,8 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
   const top = matching.reduce((a, b) => (b.execution_seq > a.execution_seq ? b : a));
   let state: CheckState;
   if (top.execution_established === 0) state = 'skipped';
-  else if (top.signaled === 1 || top.deadline_hit === 1 || top.exit_status === null || top.exit_status !== 0) state = 'failed';
+  // L4: other processes alive at the check's own exit fail it too.
+  else if (top.signaled === 1 || top.deadline_hit === 1 || top.orphans !== 0 || top.exit_status === null || top.exit_status !== 0) state = 'failed';
   else state = 'passed';
   return { state, decider: top };
 }
@@ -268,8 +261,50 @@ export interface EvaluationBody {
   outcome: 'satisfied' | 'not_satisfied';
   reasons: Reason[];
   check_states: Record<string, CheckState>;
+  checks: Record<string, CheckEntry>;
   scope: string;
   stale: boolean;
+}
+
+// The gate read's entry for one required check (SEAM.md §183).
+export interface CheckEntry {
+  key: string;
+  state: CheckState;
+  deciding: { execution: string | null; result: string; execution_seq: number } | null;
+  not_run_reason: string | null;
+  pending: { execution: string; status: string } | null;
+  due: { trigger: unknown; at: string } | null;
+}
+
+function checkEntries(
+  db: Db,
+  scope: Scope,
+  states: Record<string, CheckState>,
+  deciders: Record<string, Execution | null>,
+  due: CheckEntry['due'],
+): Record<string, CheckEntry> {
+  const out: Record<string, CheckEntry> = {};
+  for (const c of scope.required) {
+    const d = deciders[c.id] ?? null;
+    // The latest registration at the scope's bindings with no usable result
+    // (L7; its effect on the state is slice 16's).
+    const latest = db
+      .prepare(
+        `SELECT "id", "status", "execution_seq" FROM "check_executions" WHERE "candidate" = ? AND "key" = ? AND "protected_version" = ? AND "source_revision" = ?
+         ORDER BY "execution_seq" DESC LIMIT 1`,
+      )
+      .get(scope.candidate.id, c.key, scope.effective.id, scope.candidate.revision) as { id: string; status: string; execution_seq: number } | undefined;
+    const pending = latest && latest.status !== 'recorded' && (d === null || latest.execution_seq > d.execution_seq) ? { execution: latest.id, status: latest.status } : null;
+    out[c.id] = {
+      key: c.key,
+      state: states[c.id]!,
+      deciding: d === null ? null : { execution: d.execution ?? null, result: d.id, execution_seq: d.execution_seq },
+      not_run_reason: d?.not_run_reason ?? null,
+      pending,
+      due,
+    };
+  }
+  return out;
 }
 
 interface AuthorizationRow {
@@ -307,7 +342,11 @@ export function evaluationTarget(db: Db, args: EvaluateArgs): { candidate: Candi
 export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: EvaluationBody } {
   const db = tx.db;
   const target = evaluationTarget(db, args);
-  const { candidate, kind } = target;
+  // A registration owed to a trigger whose facts are now read is made first
+  // (L2): the evaluation never consumes evidence older than it.
+  registerDue(tx, { project: args.project });
+  const { kind } = target;
+  const candidate = getCandidate(db, target.candidate.id)!;
   const now = nowIso();
   const scope = buildScope(db, {
     project: args.project,
@@ -326,7 +365,12 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
 
   // (1) The scope is complete. Delivery whose ancestry git could not tell
   // is not known, so the scope is not complete.
-  if (scope.required.length === 0 || scope.uncovered.length > 0 || unreadable.ancestry === true) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...scope.uncovered]);
+  // While the effective version has discovery errors every gate names them
+  // (D3 §1.4; SEAM.md §178).
+  const discoveryPaths = [...new Set(discoveryErrorsOf(db, scope.effective.id).map((e) => e.path))];
+  if (scope.required.length === 0 || scope.uncovered.length > 0 || unreadable.ancestry === true || discoveryPaths.length > 0) {
+    add('ACCEPTANCE_SCOPE_INCOMPLETE', [...scope.uncovered, ...discoveryPaths]);
+  }
 
   // (2) The protected path is authorized and effective. A protected set
   // that could not be read is not shown authorized.
@@ -352,11 +396,15 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // (4) Every required check passed.
   const states: Record<string, CheckState> = {};
   const deciders: Record<string, Execution | null> = {};
+  // A registration the candidate is owed (L2): its checks are missing.
+  const due = (db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { checks_due: string | null }).checks_due;
+  const dueMark = due === null ? null : (JSON.parse(due) as { trigger: unknown; at: string }[])[0] ?? null;
   for (const c of scope.required) {
-    const s = checkState(db, args.project, c, scope);
+    const s = dueMark !== null ? { state: 'missing' as const, decider: null } : checkState(db, args.project, c, scope);
     states[c.id] = s.state;
     deciders[c.id] = s.decider;
   }
+  const entries = checkEntries(db, scope, states, deciders, dueMark === null ? null : { trigger: dueMark.trigger, at: dueMark.at });
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
@@ -480,8 +528,8 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   tx.db
     .prepare(
       `INSERT INTO "gate_evaluations" ("id", "created_at", "project", "scope", "candidate", "gate_kind", "computed_at", "inputs_hash", "inputs_snapshot", "check_states",
-         "outcome", "reasons", "satisfiers", "stale", "stage", "authorization")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, ?, ?)`,
+         "outcome", "reasons", "satisfiers", "stale", "stage", "authorization", "checks")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?)`,
     )
     .run(
       id,
@@ -498,6 +546,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       JSON.stringify(reasons),
       scope.stage,
       target.authorization?.id ?? null,
+      JSON.stringify(entries),
     );
 
   // What the evaluation itself records about the findings it read.
@@ -523,13 +572,13 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (kind === 'stage') queueReview(tx, candidate, scope, states);
 
   tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
-  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, scope: scopeId, stale: false } };
+  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false } };
 }
 
 // The work a candidate holds by ancestry (E43): what it holds itself and what
 // every candidate before it on its lineage chain holds. After a fix, the
 // stage's work its first candidate held is held by the fix's candidate too.
-function heldByAncestry(db: Db, candidate: CandidateRow): string[] {
+export function heldByAncestry(db: Db, candidate: CandidateRow): string[] {
   const held = JSON.parse(candidate.held_work) as string[];
   for (const id of predecessors(db, candidate)) {
     const prior = getCandidate(db, id);

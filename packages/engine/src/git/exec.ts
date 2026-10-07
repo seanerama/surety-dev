@@ -71,6 +71,8 @@ export interface GitResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  // The standard output's bytes, as git wrote them (a blob's exact content).
+  bytes: Buffer;
 }
 
 export interface GitOptions {
@@ -80,6 +82,9 @@ export interface GitOptions {
   env?: Record<string, string>;
   // The operation this call performs an effect for, if any.
   operation?: string;
+  // A larger output bound than git_output_cap for this call (a blob read
+  // whole, bounded by the caller's own limit).
+  outputCap?: number;
 }
 
 const BASE_SETTINGS = [
@@ -269,17 +274,17 @@ export async function git(ctx: GitContext, args: string[], opts: GitOptions = {}
   const env = gitEnv(home, opts.operation, opts.env);
   // Measured on the monotonic clock: the query and the command share the
   // deadline.
-  if (!mayRunFilter(args)) return run(ctx, args, env, opts.input, deadlineMs);
+  if (!mayRunFilter(args)) return run(ctx, args, env, opts.input, deadlineMs, opts.outputCap);
   const started = performance.now();
   const drivers = await filterDrivers(ctx, env, deadlineMs);
   if (drivers === null) {
-    return { code: -1, stdout: '', stderr: 'the filter drivers of this working copy could not be read from git, so the command was not run', timedOut: false };
+    return { code: -1, stdout: '', stderr: 'the filter drivers of this working copy could not be read from git, so the command was not run', timedOut: false, bytes: Buffer.alloc(0) };
   }
   return run(ctx, args, { ...env, ...filterOverrides(drivers) }, opts.input, Math.max(1, deadlineMs - (performance.now() - started)));
 }
 
-function run(ctx: GitContext, args: string[], env: NodeJS.ProcessEnv, input: string | Buffer | undefined, deadlineMs: number): Promise<GitResult> {
-  const { outputCap } = gitSettings();
+function run(ctx: GitContext, args: string[], env: NodeJS.ProcessEnv, input: string | Buffer | undefined, deadlineMs: number, cap?: number): Promise<GitResult> {
+  const outputCap = Math.max(cap ?? 0, gitSettings().outputCap);
   return new Promise((resolvePromise) => {
     const child = spawn('git', [...BASE_SETTINGS, `--git-dir=${ctx.gitDir}`, `--work-tree=${ctx.workTree}`, ...args], {
       env,
@@ -327,9 +332,11 @@ function run(ctx: GitContext, args: string[], env: NodeJS.ProcessEnv, input: str
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const bytes = Buffer.concat(out);
       resolvePromise({
         code: timedOut || cut ? null : code,
-        stdout: Buffer.concat(out).toString('utf8'),
+        stdout: bytes.toString('utf8'),
+        bytes,
         stderr: Buffer.concat(err).toString('utf8') + extraErr,
         timedOut: timedOut || cut,
       });

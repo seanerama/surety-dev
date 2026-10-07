@@ -115,6 +115,12 @@ export const EVENT_OWNERS = {
   'domain.egress_refused': 'store/transitions/boundary.ts',
   // D2 A.5, the secret screen (M2 slice 13).
   'evidence.secret_refused': 'store/transitions/boundary.ts',
+  // D3 A.6, check executions (M3 slice 15).
+  'check.registered': 'store/transitions/checks.ts',
+  'check.launched': 'store/transitions/checks.ts',
+  'check.quarantined': 'store/transitions/checks.ts',
+  'check.interrupted': 'store/transitions/checks.ts',
+  'check.cancelled': 'store/transitions/checks.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

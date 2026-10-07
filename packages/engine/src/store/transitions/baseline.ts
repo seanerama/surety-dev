@@ -12,6 +12,7 @@ import { canonical, notFound, sha256 } from './common.js';
 import { getCandidate, markStale } from './evidence.js';
 import { getProposal, mustEffective } from './protected.js';
 import type { Tx } from './tx.js';
+import { nextExecutionSeq, recomputeIndexErrors } from './checks.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the fixture request.', { field });
 
@@ -77,6 +78,26 @@ export function requirementIds(tx: Tx, projectId: string, keys: string[], field:
     if (!row) throw invalid(field, `names the requirement "${key}", which the approved spec does not have`);
     return row.id;
   });
+}
+
+// The requirement index's fields (D3 §4.5, A.3), each row's requirement
+// created if the spec had none, then the versions' errors recomputed against
+// the index (SEAM.md §179).
+export function registerRequirementIndex(
+  tx: Tx,
+  args: { project: string; rows: { key: string; phase: number | null; sensitive_areas: string[]; criteria: string[] }[] },
+): { id: string; key: string; criteria: string[]; sensitive_areas: string[] }[] {
+  const made = ensureRequirements(tx, { project: args.project, keys: args.rows.map((r) => r.key) });
+  const out: { id: string; key: string; criteria: string[]; sensitive_areas: string[] }[] = [];
+  for (const r of args.rows) {
+    const id = made.find((m) => m.key === r.key)!.id;
+    tx.db
+      .prepare('UPDATE "requirements" SET "criteria" = ?, "sensitive_areas" = ?, "assigned_phase" = COALESCE(?, "assigned_phase") WHERE "id" = ?')
+      .run(JSON.stringify(r.criteria), JSON.stringify(r.sensitive_areas), r.phase, id);
+    out.push({ id, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas });
+  }
+  recomputeIndexErrors(tx, args.project);
+  return out;
 }
 
 export function ensureModules(tx: Tx, args: { project: string; modules: { name: string; paths: string[]; sensitive_areas?: string[] }[] }): void {
@@ -179,7 +200,8 @@ export function recordCheckResult(tx: Tx, args: ResultInput, label: Record<strin
     const env = tx.db.prepare('SELECT "project" FROM "environments" WHERE "id" = ?').get(args.environment) as { project: string } | undefined;
     if (!env || env.project !== args.project) throw notFound('environment', args.environment);
   }
-  const { n } = tx.db.prepare('SELECT COALESCE(MAX("execution_seq"), 0) + 1 AS n FROM "check_results" WHERE "project" = ?').get(args.project) as { n: number };
+  // The project's one sequence, shared with registrations (L7).
+  const n = nextExecutionSeq(tx, args.project);
   const id = tx.newId('cr_');
   tx.db
     .prepare(
@@ -257,4 +279,73 @@ export function recordReuse(tx: Tx, args: { project: string; candidate: string; 
     .run(id, tx.at, args.project, candidate.id, args.check, args.check_result, args.record, args.assessed ? 1 : 0);
   markStale(tx, { candidate: candidate.id });
   return { reuse: { id } };
+}
+
+// The result row of an engine execution (D3 A.3), with `check.result` (A.6:
+// its payload gains `execution` and `not_run_reason`). Called by
+// checks.ts's recordExecutionResult only.
+export function insertExecutionResult(
+  tx: Tx,
+  a: {
+    project: string;
+    check: string;
+    candidate: string;
+    source_revision: string;
+    protected_version: string;
+    runner_class: string;
+    runner_id: string;
+    runner_qualification: string | null;
+    execution_seq: number;
+    started_at: string | null;
+    finished_at: string;
+    execution: string;
+    established: boolean;
+    exit_status: number | null;
+    signaled: boolean;
+    deadline_hit: boolean;
+    orphans: boolean | null;
+    not_run_reason: string | null;
+    output: string | null;
+    output_dropped_bytes: number | null;
+  },
+): string {
+  const id = tx.newId('cr_');
+  tx.db
+    .prepare(
+      `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
+         "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at",
+         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      tx.at,
+      a.project,
+      a.check,
+      a.candidate,
+      a.source_revision,
+      a.protected_version,
+      a.runner_class,
+      a.runner_id,
+      a.execution_seq,
+      a.established ? 1 : 0,
+      a.signaled ? 1 : 0,
+      a.deadline_hit ? 1 : 0,
+      a.exit_status,
+      a.output,
+      a.started_at,
+      a.finished_at,
+      a.execution,
+      a.not_run_reason,
+      a.orphans === null ? null : a.orphans ? 1 : 0,
+      a.output_dropped_bytes,
+      a.runner_qualification,
+    );
+  tx.emit(
+    'check.result',
+    { project: a.project, check: a.check, candidate: a.candidate, check_result: id, check_execution: a.execution },
+    { execution_seq: a.execution_seq, exit_status: a.exit_status, execution: a.execution, not_run_reason: a.not_run_reason },
+  );
+  markStale(tx, { candidate: a.candidate });
+  return id;
 }
