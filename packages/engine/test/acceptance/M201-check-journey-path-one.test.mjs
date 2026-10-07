@@ -97,11 +97,15 @@ async function journey(t) {
   // (b) Each check runs in its domain and holds there; the test reads the domain and the check tree from the host, then releases it.
   const held = {};
   const trees = {};
+  const sourceSeen = {};
   const pending = { accept: 'accept', smoke: 'smoke' };
   while (Object.keys(pending).length > 0) {
     const h = await heldExecution(fx, project.id, candidate.id, pending);
     held[h.key] = h;
     trees[h.key] = checktreeEntries(fx.home);
+    // Read the bytes while the execution holds its tree: once candidate 2
+    // supersedes candidate 1 the engine may remove it (D3 §2.4; objection 026).
+    sourceSeen[h.key] = fileHolding(trees[h.key], PERMITTED_EDIT.content);
     delete pending[h.key];
     release(prog, h.key);
   }
@@ -128,7 +132,7 @@ async function journey(t) {
   const secondAlpha = await alphaTarget(fx, ctx2, second, { environment: alpha.environment });
   const secondAlphaEval = await secondAlpha.evaluate();
 
-  return { fx, prog, project, hostQualification, stage, candidate, held, trees, recorded, registeredAtNomination, route, stageEval, alphaEval, alpha, stageRead, alphaRead, second, secondRecorded, secondStage, secondAlpha, secondAlphaEval };
+  return { fx, prog, project, hostQualification, stage, candidate, held, trees, sourceSeen, recorded, registeredAtNomination, route, stageEval, alphaEval, alpha, stageRead, alphaRead, second, secondRecorded, secondStage, secondAlpha, secondAlphaEval };
 }
 
 describe('M201 the check journey, path one', () => {
@@ -169,7 +173,7 @@ describe('M201 the check journey, path one', () => {
       assert.ok(member.nspid.length >= 2, `${key}: host-read, in a pid namespace of its own`);
       const tree = J.trees[key];
       assert.deepEqual(tree.filter((e) => e.name === '.git').map((e) => e.path), [], `${key}: host-read, nothing named .git anywhere under checktrees/`);
-      assert.ok(fileHolding(tree, PERMITTED_EDIT.content), `${key}: host-read, a check tree holds the candidate's ${PERMITTED_EDIT.path}`);
+      assert.ok(J.sourceSeen[key], `${key}: host-read while the check ran, a check tree holds the candidate's ${PERMITTED_EDIT.path}`);
 
       const x = J.recorded[key];
       const result = resultRow(J.fx.home, x.result);
