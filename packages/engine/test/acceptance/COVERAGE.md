@@ -4,6 +4,10 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+The slice-15 straddle, items 1 and 2, 2026-10-07, on `verify/m3-s15-straddle` (objections 022 and 023, both upheld; answers in `docs/acceptance/objections/`). **023:** M201 (c) reads `read.evaluation`, where it read the read's envelope. **022:** the accepted fixtures are made valid under D3 A.4, and the former forms are pinned as refused. Each change is in the table "The slice-15 straddle" in the section "M3 slice 15" below. No row's assertion was weakened. On `main`'s engine the sixteen files the shared fixture reaches all pass, each run alone. M201 and M202 need the slice-15 engine and were not run. The paragraph that follows is the previous pass's.
+
+The slice-15 straddle, item 3, 2026-10-07, on `verify/m3-s15-straddle` from `main` at `fb8b950` (E92 item 3). `contract/config.json` gains D3 A.7's six engine keys of the check runner and the project key `max_concurrent_checks`, with A.7's defaults and ranges (`harness/SEAM.md` §186). `classifier_authority` is left for slice 19 (§186 says why). No test file changed. M07 and M73 read the file, so on an engine without the keys they now fail at "exactly the closed key set" and "the engine configuration keys". This is intended: the slice-15 build adds the keys. Nothing was run, since every file that reads the keys needs the new engine. The paragraph that follows is the previous pass's.
+
 M3 slice 15, "the walking check", 2026-10-07, on branch `verify/m3-s15` from `main` at `cfb5001` (`docs/spec/M3-build-spec.md` §9; `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.1; E92). Five new files for rows M201 to M205, listed under a new slice `15` in `manifest.json` (M201 and M205 also in the `sandbox` list). No exhaustion-lane file. `harness/SEAM.md` gains §§177 to 185. New harness: `harness/checks/fixtures.mjs` and `harness/checks/program.mjs`, a check program that is benign by construction. No existing test, harness module or assertion was changed. Deferred, each recorded in the section "M3 slice 15: the walking check" below with its reason: M205 (d), (g) and (i), whose M2 instruments cannot be a check program without a new harness capability (a decision for Sean); M201 (f) to slice 18; M204 (f) to slice 20. What was run is in that section. The paragraph that follows is the previous pass's.
 
 Last updated: M2 slice 2 closed, 2026-10-03, on branch `verify/m2-s2-close` (E55). The section "M2 slice 2: a first real project is usable and legible" gains the final run of `npm test` on the merged engine (`main` at `88b3067`: 125 of 125 unit tests in 27 files, 837 of 837 acceptance cases in 127 files, exit 0, no rerun), a "Not written, after the review" table (an Abandon confirmed while a write is ambiguous, E54 S3; the two slice-1 variants, which stay in the slice-1 section) and a table of the readings E54 and E55 leave for Sean (a staged file after `stash` leaving the work tree, pinned by the S2 case; the per-tick hash of every tracked file and a Stop while the operation is blocked, pinned by no case), with a pointer row in row M15's table. No test and no other row was changed. The paragraph that follows is the review pass's.
@@ -2215,6 +2219,23 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 | The scripted check boundary of the kernel lane | slice 16 |
 
 **The safety rule (E64; BS3 §4).** No slice-15 check program is destructive. `harness/checks/program.mjs` reads its working directory and the files it is told to digest, waits (bounded, 180 s) for a release file, writes to its standard output, and exits with a status or exits 0 on SIGTERM (bounded, 120 s). It signals nothing, writes no file, starts no process and connects nowhere. M201 and M205 change no cgroup. A test reads only the domain's `cgroup.procs` and the processes listed there.
+
+**The slice-15 straddle** (objection 022; D3 §§1.1, A.4; plan question 3 (a); SEAM §187). Each change keeps its row's assertion:
+
+| File | Was | Now | Why |
+|---|---|---|---|
+| `harness/gates.mjs` `PROTECTED_FILES` (M01, M28, M37, M41, M43, M49, M53, M54, M55, M57, M74, M106, M125) | `required_checks: ["login"]`, no `defs/login.json` | no `required_checks` | A required key with no definition is `required_key_without_definition`, which blocks every gate and every `approve` (M202 (d), (e)). Adding a `login` definition would collide with the checks fixture's `login` |
+| `M35-separate-governed-policy-file.test.mjs` `GOVERNED` | `check_commands: {login: [argv]}`, `required_checks: ["login"]` | `check_commands: {login: {path: "/usr/bin/node"}}`; the edited value `{login: {path: "/bin/sh"}}` | A.4's `{path}` form. The edits still change the governed file and are not applied |
+| `M36-capture-protected-only-proposal.test.mjs` `FILES` | `required_checks: ["login"]` | omitted | As `PROTECTED_FILES` |
+| `M123-protected-set-read-only.test.mjs` `FILES` | `required_checks: ["login"]` | omitted | As `PROTECTED_FILES` |
+| `M43-severity-tier-and-independence-floors.test.mjs`, the governed edit | `check_commands` as argument arrays | `{path: "/usr/bin/node"}` for `login` and `audit` | Otherwise the tightening's `approve` carries `CHECK_DEFINITION_INVALID` (L5) |
+| `M54-…`, "a loosening that changes the required set" | `["login"]` → `[]` | absent → `[]` | Follows from `PROTECTED_FILES`; both change the required set, and the case asserts the same blocker and application |
+| `M202-…` (b) | none | a new variant: an argument-array `check_commands` entry is `invalid_value` | The former form, pinned as refused (plan question 3 (a)) |
+| `M201-…` (c) | `gateCheckEntries(read)` | `gateCheckEntries(read.evaluation)` | Objection 023: the read's envelope is SEAM §98's |
+
+Run on `main`'s engine (`fb8b950`), each alone:
+- kernel lane: M35 6/6, M36 4/4, M37 3/3, M43 7/7, M53 8/8, M54 6/6, M55 5/5, M57 2/2, M106 4/4, M28 1/1, M49 5/5, M41 5/5, M74 4/4, M01 kernel journey 11/11;
+- sandbox lane: M123 5/5, M125 6/6.
 
 **What was run.** `npm ci` and `npm run build` on `cfb5001` in the worktree. Each new file was then run alone with `node --test`, never two at once, after checking that no other test process was running. Results on `main`'s engine, which has no runner:
 

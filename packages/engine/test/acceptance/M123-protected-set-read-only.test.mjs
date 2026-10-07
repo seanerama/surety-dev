@@ -43,7 +43,8 @@ import { step } from './harness/scripted.mjs';
 const ROOTS = ['.surety/checks/', 'acceptance/'];
 const CONTRACT = 'acceptance/contract.txt';
 const FILES = Object.freeze({
-  [GOVERNED_FILE]: `${JSON.stringify({ protected_paths: ROOTS, required_checks: ['login'] })}\n`,
+  // M3 slice 15 (objection 022; SEAM.md §187): no required key without a definition.
+  [GOVERNED_FILE]: `${JSON.stringify({ protected_paths: ROOTS })}\n`,
   [CHECK_FILE]: '{"expect": 200}\n',
   [CONTRACT]: 'the accepted contract\n',
 });

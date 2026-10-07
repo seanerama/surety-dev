@@ -28,7 +28,8 @@ import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
 const CHECK = '.surety/checks/login.check.json';
-const FILES = { [GOVERNED_FILE]: '{"protected_paths": [".surety/checks/"], "required_checks": ["login"]}\n', [CHECK]: '{"expect": 200}\n', 'src/app.js': 'export const app = 1;\n' };
+// M3 slice 15 (objection 022; SEAM.md §187): no required key without a definition.
+const FILES = { [GOVERNED_FILE]: '{"protected_paths": [".surety/checks/"]}\n', [CHECK]: '{"expect": 200}\n', 'src/app.js': 'export const app = 1;\n' };
 const tighter = step.write(CHECK, '{"expect": 200, "body": "ok"}\n');
 const RATIONALE = 'The check did not look at the response body.';
 const proposing = { proposal: { rationale: RATIONALE, requested_change_kind: 'tightening' } };

@@ -197,7 +197,7 @@ describe('M201 the check journey, path one', () => {
     for (const [what, evaluation, read] of [['stage', J.stageEval, J.stageRead], ['alpha_authorize', J.alphaEval, J.alphaRead]]) {
       assert.deepEqual([evaluation.outcome, evaluation.reasons], ['satisfied', []], `${what}: satisfied, no reason`);
       assert.deepEqual(Object.values(evaluation.check_states).sort(), ['passed', 'passed'], `${what}: both checks passed`);
-      const entries = gateCheckEntries(read);
+      const entries = gateCheckEntries(read.evaluation);
       for (const key of KEYS) {
         const entry = entryByKey(entries, key);
         assert.ok(entry, `${what}: the gate read names ${key}`);

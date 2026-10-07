@@ -4123,6 +4123,34 @@ Unlike section 33's journal barriers, these four name the operation, not only th
 - **M201 (f)**, the journey with no runner qualification fixture: slice 18, as the plan says, in a new file of row M201 listed under slice 18.
 - **M204 (f)**, a nomination whose required set needs the candidate's module facts: slice 20, where the sensitivity floors make the required set depend on modules, as a case added to `M204-triggers-registration-frozen-discovery.test.mjs` or a new file of row M204 listed under slice 20.
 
+## 186. D3's configuration keys (the slice-15 straddle, item 3)
+
+(D3 A.7; E92 item 3; `../contract/config.json`; rows M07, M73. Written 2026-10-07 on `verify/m3-s15-straddle` from `main` at `fb8b950`.)
+
+The closed configuration gains D3 A.7's keys, with A.7's defaults and ranges, durations in seconds and sizes in bytes:
+
+| Key | Scope | Default | Range |
+|---|---|---|---|
+| `check_timeout_max` | engine | 1800 s | 10 s to 10800 s |
+| `check_output_max_bytes` | engine | 1048576 | 65536 to 16777216 |
+| `checktree_max_bytes` | engine | 2147483648 | 67108864 to 34359738368 |
+| `checktree_max_entries` | engine | 200000 | 1000 to 2000000 |
+| `checktrees_max_bytes` | engine | 8589934592 | 67108864 to 137438953472, and not below the effective `checktree_max_bytes` (`at_least`) |
+| `check_infra_retries_max` | engine | 2 | 0 to 5 |
+| `max_concurrent_checks` | project | 1 | 1 to 8; not a widening |
+
+M07 ("exactly the closed key set", the defaults) and M73 (the executable contract's bounds) read them from the file, so an engine without them fails those rows. A value of `checktrees_max_bytes` below the effective `checktree_max_bytes` is refused `invalid_value` with `subject.field` `checktrees_max_bytes` (section 2); no case pins it yet. **`classifier_authority` is not listed:** its value is an object, M07 compares values with `assert.equal`, and nothing reads it before slice 19, whose Verifier adds it with the comparison it needs.
+
+## 187. The accepted fixtures under D3's schemas (objections 022 and 023)
+
+(D3 §§1.1, 1.4, A.4, L5; M3 plan §4.3, question 3 (a); E92 item 3; written 2026-10-07 on `verify/m3-s15-straddle`.)
+
+**What this changes in earlier sections.** Section 66's governed file, as the accepted fixtures write it:
+- No `required_checks` names a key that has no definition. `PROTECTED_FILES` in `gates.mjs`, and the governed files of M35, M36 and M123, now omit `required_checks`, so every discovered check is required, and these projects discover none.
+- `check_commands` entries are `{"path": <absolute>}` objects (M35, and M43's governed edit).
+
+The rows declare their checks with the checks fixture of section 67, as before. A definition for `login` would have made discovery declare a second `login` beside the fixture's. The former forms are refused: M202 (b) pins an argument-array `check_commands` entry as `invalid_value`, and M202 (e) a required key with no definition. **M201 (c)** reads the gate read's `evaluation` (objection 023): the read's envelope is section 98's.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15".
