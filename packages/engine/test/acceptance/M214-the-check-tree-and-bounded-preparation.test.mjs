@@ -8,7 +8,10 @@
 // no file, the candidate's source there; nothing planted ran; and each check
 // read its own project's bytes, never the other's.
 // (b) Two executions of one (project, revision, version) run at once: one
-// tree, its files read-only, shared; once the candidate is superseded and
+// tree, shared, its projected input read-only; each check writes the source
+// file in its discarded overlay, and nothing it wrote reaches the tree
+// (objection 027; the driver's ruling 1: source files keep their git modes
+// so the overlay can write them); once the candidate is superseded and
 // nothing runs on it, the tree is gone.
 // (c) with (d): each bound low. More entries than `checktree_max_entries`
 // (zero-byte files), more bytes than `checktree_max_bytes` (both at the
@@ -24,8 +27,11 @@
 // (d)'s "large definition traversal" is discovery's cap, M203 (b)'s 513
 // definitions (D3 §1.4).
 //
-// SAFETY: the check program (harness/checks/program.mjs) only reads its
-// workspace, holds at a release file, writes its output and exits 0. The
+// SAFETY: the check program (harness/checks/program.mjs) reads its
+// workspace, holds at a release file, writes its output and exits 0. In (b)
+// it also writes one line into an existing source file of its workspace,
+// through its guarded `write` mode (SEAM.md §198), released only after the
+// test has read its containment from the host (assertContained). The
 // planted hooks and filter programs only append to the test's own evidence
 // file. The held git is the test's own repository's (holdGit), let go
 // before the case ends. No storage is filled: the largest file is 64 MiB of
@@ -46,6 +52,7 @@ import { evidenceProgram, gitQuiet, holdGit, plantAllHooks, plantFilter, readEvi
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import { roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { step } from './harness/scripted.mjs';
+import { assertContained } from './harness/sandbox/view.mjs';
 import { askingForTicks } from './harness/gates.mjs';
 import {
   GOVERNED_FILE,
@@ -55,6 +62,7 @@ import {
   checktreeFiles,
   defPath,
   filesHolding,
+  guardArgs,
   heldExecution,
   holdArgs,
   installCheckProgram,
@@ -78,6 +86,18 @@ const MiB = 1024 * 1024;
 
 const readerOf = (key, prog, { hold = true } = {}) =>
   smoke(key, { command: ['probe', '--report', '--digest', DATA, '--digest', INPUT, ...(hold ? holdArgs(prog, key) : []), 'exit', '0'], inputs: [INPUT], gates: ['stage'], timeout: 300 });
+
+// A check that, released, writes one line into the source file DATA
+// through the program's guarded `write` mode (SEAM.md §198).
+const writerOf = (key, prog) =>
+  smoke(key, { command: ['probe', '--report', '--digest', DATA, '--digest', INPUT, ...holdArgs(prog, key), ...guardArgs(), 'write', DATA], inputs: [INPUT], gates: ['stage'], timeout: 300 });
+
+// What the program's write leaves in a file it could write (SEAM.md §198).
+const writtenOver = (bytes) => {
+  const b = Buffer.from(bytes);
+  Buffer.from('SURETY-CHECK-WROTE\n').copy(b, 0);
+  return b;
+};
 
 function assertNotRunMaterialization(fx, x, what) {
   assert.equal(x.status, 'recorded', `${what}: the execution is recorded (status ${x.status})`);
@@ -125,12 +145,12 @@ describe('M214 the check tree and bounded preparation', () => {
     assert.equal(readEvidence(evidence), null, '(a) no hook, filter driver or remote transport planted in the repository ran');
   });
 
-  test('(b) two executions of one triple at once share one read-only tree; once the candidate is superseded and nothing runs on it, the tree is gone', async (t) => {
+  test('(b) two executions of one triple at once share one tree, its input read-only; what each check writes to a source file never reaches it; once the candidate is superseded and nothing runs on it, the tree is gone', async (t) => {
     const fx = await sandboxEngine(t, { config: TWO_DOMAINS });
     const prog = installCheckProgram(fx.root);
     await qualifyRunnerByFixture(fx.engine);
     const DATA_1 = 'the first candidate\'s unique source\n';
-    const files = { [GOVERNED_FILE]: sandboxGoverned(prog), [DATA]: DATA_1, [INPUT]: 'the shared expectation, unique too\n', [defPath('one')]: readerOf('one', prog), [defPath('two')]: readerOf('two', prog) };
+    const files = { [GOVERNED_FILE]: sandboxGoverned(prog), [DATA]: DATA_1, [INPUT]: 'the shared expectation, unique too\n', [defPath('one')]: writerOf('one', prog), [defPath('two')]: writerOf('two', prog) };
     const project = await checkProject(fx, { files });
     await changePolicy(fx.engine, project.id, { max_concurrent_checks: 2 });
     const { candidate } = await buildStage(fx, project);
@@ -138,17 +158,20 @@ describe('M214 the check tree and bounded preparation', () => {
     const first = await heldExecution(fx, project.id, candidate.id, { one: 'one', two: 'two' });
     const other = first.key === 'one' ? 'two' : 'one';
     const second = await heldExecution(fx, project.id, candidate.id, { [other]: other });
+    for (const held of [first, second]) assertContained(held.domain, held.member, `the ${held.key} check program`);
     const treeFiles = checktreeFiles(fx.home);
     release(prog, 'one');
     release(prog, 'two');
     const holding = filesHolding(treeFiles, DATA_1);
     assert.equal(holding.length, 1, `host-read with both executions running: one tree holds the candidate's source, once (${holding.map((f) => f.path).join(', ')})`);
-    assert.equal(holding[0].mode & 0o222, 0, `its files are read-only (mode ${holding[0].mode.toString(8)})`);
     const inputs = filesHolding(treeFiles, files[INPUT]);
     assert.equal(inputs.length, 1, 'and holds the protected input once, for both executions');
-    assert.equal(inputs[0].mode & 0o222, 0, 'read-only too');
+    assert.equal(inputs[0].mode & 0o222, 0, `the projected input is read-only (mode ${inputs[0].mode.toString(8)})`);
     assert.notEqual(first.execution.id, second.execution.id);
     await waitRecorded(fx, project.id, candidate.id, ['one', 'two']);
+    // The source file the checks wrote in their overlays: nothing of it reaches the tree (E89 item 2).
+    // Whether the write succeeds in the domain is M212 (e)'s.
+    assert.deepEqual(filesHolding(checktreeFiles(fx.home), writtenOver(DATA_1)).map((f) => f.path), [], 'host-read: no file under checktrees/ holds what the checks wrote');
 
     // A successor whose source differs supersedes the candidate.
     const fix = await addItem(fx, project.id, 'fix');
