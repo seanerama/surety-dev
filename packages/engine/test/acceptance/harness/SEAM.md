@@ -4161,6 +4161,10 @@ The rows declare their checks with the checks fixture of section 67, as before. 
 
 **Manifest:** the two M201 files are added to slice 15 and the `sandbox` list; M203 is edited in place.
 
+**Two readings fixed while confirming the failures on `a9aae9b`** (`../COVERAGE.md`):
+- S2's attributes use `eol=crlf` and `ident` only: a `working-tree-encoding` attribute makes git's own `add` refuse a file without a BOM, which fails the fixture, not the engine.
+- S1's sentinel is at the input's resolved target (`<victim>/checks/expect.txt`, since `.surety` points at `<victim>`), and the test-owned directory's whole listing must be unchanged.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15".

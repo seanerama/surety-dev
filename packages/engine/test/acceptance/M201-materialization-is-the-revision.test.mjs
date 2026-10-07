@@ -6,8 +6,8 @@
 // byte-identical to its blob at the candidate's revision (source) or at the
 // effective protected version (input). The check tree holds blob bytes
 // whatever the project's own work tree, its `.git/info/attributes` or a
-// committed `.gitattributes` asks for: no eol, text, ident or
-// working-tree-encoding conversion is applied.
+// committed `.gitattributes` asks for: no eol, text or ident conversion
+// is applied.
 //
 // The review's finding (E64; the Reviewer's repro): the build materialized
 // with the project's main work tree in context, so the owner's checked-out
@@ -40,7 +40,11 @@ const EXPECT_BYTES = 'alpha\nbeta\n$Id$\n';
 const APP = 'src/app.txt';
 const APP_BYTES = 'one\ntwo\n$Id$\n';
 const COMMITTED_ATTRS = '.gitattributes';
-const CONVERT = '* text eol=crlf ident working-tree-encoding=UTF-16\n';
+// eol=crlf and ident rewrite these bytes on checkout but not on add, so the
+// fixture's own commit and the Builder's snapshot are unaffected. (A
+// working-tree-encoding attribute is left out: git's own add refuses a file
+// without a BOM under it, which would fail the fixture, not the engine.)
+const CONVERT = '* text eol=crlf ident\n';
 
 // The exact bytes of a blob at a revision, read with git (never through the
 // work tree): `git cat-file blob <rev>:<path>`.
@@ -49,7 +53,7 @@ function blobBytes(repo, rev, path) {
 }
 
 describe('M201 the check tree is the revision and the version, byte for byte', () => {
-  test('an uncommitted work-tree .gitattributes, .git/info/attributes, and a committed .gitattributes all asking for conversion: the materialized source and protected input are their blob bytes', async (t) => {
+  test('an uncommitted work-tree .gitattributes, .git/info/attributes, and a committed .gitattributes all asking for eol=crlf and ident: the materialized source and protected input are their blob bytes', async (t) => {
     const fx = await sandboxEngine(t);
     const prog = installCheckProgram(fx.root);
     // Hostile attributes in the project's own repository: a committed one (in

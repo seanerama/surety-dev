@@ -27,7 +27,7 @@
 // never runs, and if it runs (the defect) it only reads.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -42,6 +42,21 @@ import { askingForTicks } from './harness/gates.mjs';
 import { GOVERNED_FILE, checkProject, defPath, executionsOf, installCheckProgram, qualifyRunnerByFixture, resultRow, sandboxGoverned, smoke } from './harness/checks/fixtures.mjs';
 
 const EXPECT = '.surety/checks/expect.txt';
+
+// Every entry under `dir`, host-read, with its type, size and mtime; no link followed.
+function listing(dir) {
+  const out = [];
+  const visit = (d) => {
+    for (const name of readdirSync(d).sort()) {
+      const full = join(d, name);
+      const st = lstatSync(full);
+      out.push([full.slice(dir.length), st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : 'file', st.isDirectory() ? 0 : st.size, st.mtimeMs]);
+      if (st.isDirectory() && !st.isSymbolicLink()) visit(full);
+    }
+  };
+  visit(dir);
+  return out;
+}
 
 // Land a developer commit on the integration branch whose `.surety` is a
 // symlink to `target`, removing the protected files under it. Built with a
@@ -65,12 +80,16 @@ describe('M201 a symlink ancestor of an input in the source refuses the mount pl
     const fx = await sandboxEngine(t);
     const prog = installCheckProgram(fx.root);
 
-    // A directory the test owns, with a sentinel the init's setup would empty.
+    // A directory the test owns. With `.surety` -> victim, the input's mount
+    // target `.surety/checks/expect.txt` resolves to victim/checks/expect.txt:
+    // the sentinel is there, so a setup that follows the symlink would empty
+    // it; and the whole directory is listed, so one that creates anything
+    // there is seen too.
     const victim = join(fx.root, 'host-victim');
-    mkdirSync(victim, { recursive: true });
-    const sentinel = join(victim, EXPECT.split('/').at(-1));
+    mkdirSync(join(victim, 'checks'), { recursive: true });
+    const sentinel = join(victim, 'checks', 'expect.txt');
     writeFileSync(sentinel, 'PRECIOUS TEST-OWNED DATA\n');
-    const before = { bytes: readFileSync(sentinel), mtimeMs: statSync(sentinel).mtimeMs };
+    const before = { bytes: readFileSync(sentinel), mtimeMs: statSync(sentinel).mtimeMs, listing: listing(victim) };
 
     const files = {
       [GOVERNED_FILE]: sandboxGoverned(prog),
@@ -108,6 +127,7 @@ describe('M201 a symlink ancestor of an input in the source refuses the mount pl
     // Host-side, the sentinel outside the domain is untouched.
     assert.deepEqual(readFileSync(sentinel), before.bytes, 'the test-owned sentinel file outside the domain has its bytes (nothing was written through the symlink)');
     assert.equal(statSync(sentinel).mtimeMs, before.mtimeMs, 'and its mtime: the init created no mount target through the symlink');
+    assert.deepEqual(listing(victim), before.listing, 'and nothing was created, removed or changed anywhere in the test-owned directory');
 
     // The plan was refused: a row with execution_established false, mount_plan_refused, and no launcher placed for it.
     assert.equal(x.status, 'recorded', `the refused execution records a row (status ${x.status})`);
