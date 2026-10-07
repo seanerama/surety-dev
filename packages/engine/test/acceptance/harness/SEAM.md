@@ -4151,6 +4151,20 @@ M07 ("exactly the closed key set", the defaults) and M73 (the executable contrac
 
 The rows declare their checks with the checks fixture of section 67, as before. A definition for `login` would have made discovery declare a second `login` beside the fixture's. The former forms are refused: M202 (b) pins an argument-array `check_commands` entry as `invalid_value`, and M202 (e) a required key with no definition. **M201 (c)** reads the gate read's `evaluation` (objection 023): the read's envelope is section 98's.
 
+## 188. The M3 slice-15 review (findings S1, S2, and the discovery cases)
+
+(Written 2026-10-07 on `verify/m3-s15-review` from `main` at `70c28cf`; the review of `build/m3-s15` at `a9aae9b`. D3 §§1.5, 2.2, 2.4; E64.) One failing case per confirmed finding, in row M201's and M203's files, in the form of the slice-5 review (section 46).
+
+- **S2, the check tree is the revision's bytes** (`M201-materialization-is-the-revision.test.mjs`, sandbox). Every materialized file, source and protected input alike, is byte-identical to its blob at the revision (source) or at the effective version (input), whatever the project's own work tree, its `.git/info/attributes` or a committed `.gitattributes` asks for. The build applied the project work tree's conversions; the contract is blob bytes. Read through the check program's reported SHA-256 against the blob's own bytes.
+- **S1, a symlink ancestor in the source refuses the plan** (`M201-source-symlink-refused.test.mjs`, sandbox). A candidate whose source keeps a symlink at an ancestor of an input (for example `.surety`, above the protected root) is `mount_plan_refused` (D3 §2.2): no launcher starts, and nothing outside the domain is created or changed. The build created each input's mount target under the overlay before `pivot_root`, following symlinks, so it resolved and truncated a file outside the domain. **Reachability:** a Builder cannot write a protected-path symlink, so the test lands it on the integration branch as a developer commit and a person adopts it out of band (as section 66's M35 case does), then nominates a candidate on it; the candidate's protected set is then unauthorized, which the gate reports apart from this case. **E64:** the symlink points only at a directory the test owns under its temp directory; the case reads the test's sentinel host-side and requires its bytes and mtime unchanged.
+- **Discovery (i), (ii)** (two cases and one `for` of three in `M203-definitions-and-discovery-runs-nothing.test.mjs`): under default inputs a symlink and a submodule under the roots are each `input_not_regular`, never silently left out; a definitions directory that is a symlink, a submodule or a file is a discovery error, never zero checks with no error.
+
+**Manifest:** the two M201 files are added to slice 15 and the `sandbox` list; M203 is edited in place.
+
+**Two readings fixed while confirming the failures on `a9aae9b`** (`../COVERAGE.md`):
+- S2's attributes use `eol=crlf` and `ident` only: a `working-tree-encoding` attribute makes git's own `add` refuse a file without a BOM, which fails the fixture, not the engine.
+- S1's sentinel is at the input's resolved target (`<victim>/checks/expect.txt`, since `.surety` points at `<victim>`), and the test-owned directory's whole listing must be unchanged.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15".

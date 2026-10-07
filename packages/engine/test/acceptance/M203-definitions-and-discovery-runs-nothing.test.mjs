@@ -2,6 +2,12 @@
 // M3 plan §3.1 M203; D3-P02, D3-P03; T01; D3 §§1.3, 1.4, A.2 DiscoveryError,
 // A.4; SEAM.md §§177 to 185.
 //
+// Extended by the M3 slice 15 review (findings i, ii; SEAM.md §188):
+// (c) a symlink and a submodule under the roots, under default inputs, are
+// each input_not_regular, never silently left out; (d) a definitions
+// directory that is a symlink, a submodule or a file is a discovery error,
+// never zero checks with no error.
+//
 // (a) Each field of a definition invalid in turn is its discovery error at
 // the definition's path, never a dropped definition. (b) A hostile tree (a
 // symlink, a submodule and an executable in the definitions directory, a
@@ -101,4 +107,43 @@ describe('M203 definitions, and discovery runs nothing', () => {
       `513 definitions: a too_many discovery error at ${DEFS_DIR} (errors: ${JSON.stringify(version.discovery_errors.slice(0, 5))})`,
     );
   });
+
+  test('(c) under default inputs, a symlink and a submodule under the roots are each input_not_regular, never silently left out', async (t) => {
+    const fx = await scriptedEngine(t);
+    // The smoke check `s` of base() has no `inputs`, so it takes default
+    // inputs: every file under the roots but the governed file. A symlink and
+    // a submodule entry under the roots become members of its manifest.
+    const project = await checkProject(fx, {
+      files: base(),
+      entries: { '.surety/checks/link.js': { link: 'real.js' }, '.surety/checks/real.js': 'export const x = 1;\n', '.surety/checks/sub': { gitlink: 'a'.repeat(40) } },
+    });
+    const version = await versionOf(fx, project);
+    const irregular = version.discovery_errors.filter((e) => e.code === 'input_not_regular');
+    for (const path of ['.surety/checks/link.js', '.surety/checks/sub']) {
+      assert.ok(
+        irregular.some((e) => e.path === path || e.path.startsWith(`${path}#`) || e.path.includes(path)),
+        `${path}: an input_not_regular discovery error, so the non-regular member is not silently left out of the default inputs (errors: ${JSON.stringify(version.discovery_errors)})`,
+      );
+    }
+  });
+
+  for (const [label, entry] of [
+    ['a symlink', { link: '../elsewhere' }],
+    ['a submodule', { gitlink: 'b'.repeat(40) }],
+    ['a regular file', 'not a directory\n'],
+  ]) {
+    test(`(d) a definitions directory that is ${label} is a discovery error, never zero checks with no error`, async (t) => {
+      const fx = await scriptedEngine(t);
+      // The governed file omits check_discovery, so the definitions directory
+      // is the default, .surety/checks/defs/. Here that path is not a
+      // directory. Discovery must say so, not read it as an empty set.
+      const defsNoSlash = DEFS_DIR.replace(/\/$/, '');
+      const files = { [GOVERNED_FILE]: governedText({ check_commands: KERNEL_COMMANDS }), [DATA]: 'protected data\n' };
+      const project = await checkProject(fx, { files, entries: { [defsNoSlash]: entry, 'elsewhere/keep.txt': 'kept\n' } });
+      const version = await versionOf(fx, project);
+      const atDefs = version.discovery_errors.filter((e) => e.path === DEFS_DIR || e.path === defsNoSlash || e.path.startsWith(DEFS_DIR));
+      assert.ok(atDefs.length > 0, `${label}: a discovery error at the definitions directory (errors: ${JSON.stringify(version.discovery_errors)})`);
+      assert.equal(version.checks.length === 0 && version.discovery_errors.length === 0, false, `${label}: never zero checks with no error (checks: ${version.checks.length}, errors: ${version.discovery_errors.length})`);
+    });
+  }
 });
