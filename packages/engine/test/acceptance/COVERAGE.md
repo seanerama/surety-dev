@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+M3 slice 15, "the walking check", 2026-10-07, on branch `verify/m3-s15` from `main` at `cfb5001` (`docs/spec/M3-build-spec.md` §9; `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.1; E92). Five new files for rows M201 to M205, listed under a new slice `15` in `manifest.json` (M201 and M205 also in the `sandbox` list). No exhaustion-lane file. `harness/SEAM.md` gains §§177 to 185. New harness: `harness/checks/fixtures.mjs` and `harness/checks/program.mjs`, a check program that is benign by construction. No existing test, harness module or assertion was changed. Deferred, each recorded in the section "M3 slice 15: the walking check" below with its reason: M205 (d), (g) and (i), whose M2 instruments cannot be a check program without a new harness capability (a decision for Sean); M201 (f) to slice 18; M204 (f) to slice 20. What was run is in that section. The paragraph that follows is the previous pass's.
+
 Last updated: M2 slice 2 closed, 2026-10-03, on branch `verify/m2-s2-close` (E55). The section "M2 slice 2: a first real project is usable and legible" gains the final run of `npm test` on the merged engine (`main` at `88b3067`: 125 of 125 unit tests in 27 files, 837 of 837 acceptance cases in 127 files, exit 0, no rerun), a "Not written, after the review" table (an Abandon confirmed while a write is ambiguous, E54 S3; the two slice-1 variants, which stay in the slice-1 section) and a table of the readings E54 and E55 leave for Sean (a staged file after `stash` leaving the work tree, pinned by the S2 case; the per-tick hash of every tracked file and a Stop while the operation is blocked, pinned by no case), with a pointer row in row M15's table. No test and no other row was changed. The paragraph that follows is the review pass's.
 
 After the M2 slice-2 review, 2026-10-03, on branch `verify/m2-s2-review` (E31; the review's findings S1 to S3). Three cases, one per confirmed finding: a staged file kept by `stash` and taken by `adopt` (one case in each block of row M46's file; `harness/repos.mjs` `trackedTree` now starts from the checkout's index), and a Stop confirmed while a run's branch update is ambiguous (a second case in `M15-git-write-deadline-in-a-running-engine.test.mjs`). `harness/SEAM.md` gains §§111 and 112 and one sentence in §106. The section "M2 slice 2: a first real project is usable and legible" gains "The review's cases" with what was run. No other test was changed. The paragraph that follows is the slice's Verifier's.
@@ -2181,6 +2183,58 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 ## The M2 report after Sean's fourth attempt (the hands-on run)
 
 2026-10-06, on `verify/m2-report` from `main` at `02558a1`. `docs/acceptance/reports/M2-report.md` is filled from the fourth attempt's records (`~/surety-hands-on-20261006T014511Z/home`, its store read on a copy; nothing there changed): the host qualification at the run, the binary and its pin, the entry with every field and its evidence, what the canaries established (all but M139's), the spend as estimated and as charged, `term_to_exit_ms`, the configuration and policies in force, egress, `bootstrap_exception`, path one with its commits and its ledger against the transcripts, and the token's absence. It stays a skeleton: the real-lane test files have not run, so M139, path two, their run directory's records, a Stop of a live process (CHECK (8) not shown) and the revision Sean's checkout held remain pending. **M141 alone:** (a) passes; (b) fails by design, "the M2 report is a skeleton (21 pending facts)". **M142 alone:** 5 of 5. Findings put to Sean in the report's section 21 (questions 11 to 14): what counts as the real lane's records for M141; the Stop of a live process; the Stop recorded over a clean exit (a likely engine defect, SEAM §143, D2 §1.6); `runs.model_observed` null on every run.
+
+## M3 slice 15: the walking check (M3 build spec §9; E92)
+
+2026-10-07, by the Verifier of slice 15 on `verify/m3-s15`, cut from `main` at `cfb5001`. Rows M201 to M205 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.1. The seam's §§177 to 185 fix what the plan's §2.6 and D3 leave to the tests for these rows. The plan's letters are the cases.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M201 | sandbox | `M201-check-journey-path-one.test.mjs` (slice 15) | (a) registration at nomination; (b) the domain, the check tree and the results; (c) both gates on engine results, named on the gate read; (d) the candidate that fails the acceptance check; (e) provenance. One journey, made in the `before` hook. | written |
+| M201 | sandbox | (f) the journey with no runner qualification fixture, `check_runner` qualified by the self-test | | **deferred → 18**, as the plan says: added in slice 18 as a new file of row M201 listed under slice 18 |
+| M202 | kernel | `M202-governed-schemas-and-required-set.test.mjs` (slice 15) | (a) defaults; (b) invalid governed values; (c) host environment; (d) a version with errors at both gates; (d) a proposal with errors (L5); (e) `required_checks` | written |
+| M203 | kernel | `M203-definitions-and-discovery-runs-nothing.test.mjs` (slice 15) | (a) fourteen invalid definitions in one case; (b) the hostile tree; (b) 513 definitions | written |
+| M204 | kernel | `M204-triggers-registration-frozen-discovery.test.mjs` (slice 15) | (a); (b); (c); (d); (e), six cases: before, inside and after each of the nomination's and the application's finalizers | written |
+| M204 | kernel | (f) a nomination whose required set needs the candidate's module facts | | **deferred → 20**: the required set depends on modules only once the sensitivity floors exist (D3 §§4.1, 4.2; M229, M231). Added in slice 20 as a case of `M204-triggers-registration-frozen-discovery.test.mjs` |
+| M205 | sandbox | `M205-what-establishes-a-result.test.mjs` (slice 15) | (a) exit 0; (b) exit 3; (c) "passed" and exit 1; (e) a failed exec; (f) `init_report_lost`; (h) a TERM handled with exit 0 after `timeout_s`; and "every case". One history, made in the `before` hook. | written |
+| M205 | sandbox | (d) a foreign signal | | **deferred, for Sean's decision** (below) |
+| M205 | sandbox | (i) forged `started` and exit on the output and the control descriptors | | **deferred, for Sean's decision** (below) |
+| M205 | exhaust | (g) an OOM kill, on `mini-hp01` only | | **deferred, for Sean's decision** (below); no exhaust-lane file is listed |
+
+**Why (d), (g) and (i) are deferred.** On the coordinator's instruction (2026-10-07), these cases were to reuse the instruments M2 already built and reviewed, under E64's two halves, and not to design new ones. Those instruments are the guarded actions of the scripted role program, `harness/scripted/child.mjs`: the signals of M130's exit-class cases, the forger of M135 (i) and S1, and `allocateToLimit` of M130 (f) and M133. That program is driven by a launch request on its standard input and by scripts and a log in the read-write scripted directory. A check domain gives its program only its arguments, a constructed environment and read-only `read_paths` (D3 §§2.2, 2.3). So none of them can be pointed at a check domain without a new harness capability, and none was built. The case (g) would also need a harness override of a check domain's limits, which does not exist. Each case stays open until Sean decides how it is made.
+
+**Not pinned** (each named in the seam section given):
+
+| What | Where |
+|---|---|
+| Which of `unknown_field` and `invalid_value` a `container` or `remote` key is | SEAM §178 |
+| What the version read shows for a refused governed value, beyond "not the engine's bound" | SEAM §178 |
+| The `pending`, `due` and history entries of the gate read (named, read by no slice-15 case) | SEAM §183 |
+| The layout under `$SURETY_HOME/checktrees/` | SEAM §182 |
+| A nomination's or an application's trigger `id` and `generation` beyond their source | SEAM §180 |
+| The scripted check boundary of the kernel lane | slice 16 |
+
+**The safety rule (E64; BS3 §4).** No slice-15 check program is destructive. `harness/checks/program.mjs` reads its working directory and the files it is told to digest, waits (bounded, 180 s) for a release file, writes to its standard output, and exits with a status or exits 0 on SIGTERM (bounded, 120 s). It signals nothing, writes no file, starts no process and connects nowhere. M201 and M205 change no cgroup. A test reads only the domain's `cgroup.procs` and the processes listed there.
+
+**What was run.** `npm ci` and `npm run build` on `cfb5001` in the worktree. Each new file was then run alone with `node --test`, never two at once, after checking that no other test process was running. Results on `main`'s engine, which has no runner:
+
+| File | Cases | First failing assertion |
+|---|---|---|
+| M202 | 0 of 6 | Five cases at "GET the protected version …": 404, the route does not exist. "(d) a proposal with errors" at "approve carries CHECK_DEFINITION_INVALID": its `blockers` are `[]`. The proposal was captured and classified first, and the decision opened. |
+| M203 | 0 of 3 | Each at the version read (404). The hostile-tree project, with a symlink, a submodule entry, an executable, an oversize definition, hooks, a filter, an fsmonitor and an `ext::` remote planted, and the 513-definition project were each made and installed first. |
+| M204 | 0 of 10 | Each at the plan fixture: `requirement_index` is `unknown_field`. |
+| M201 | 0 of 5 | The `before` hook at the runner qualification fixture: 404. The sandbox-lane engine had started, the check program had been installed and the project created. |
+| M205 | 0 of 7 | The `before` hook, the same: 404. |
+
+Before every sandbox file `systemctl --user is-system-running` printed `running`. After each, `systemctl --user list-units 'surety-*'` listed nothing, and no engine or check program process remained.
+
+Outside the suite, the check program's modes were run by hand on the host in a scratchpad directory, since the program is benign:
+- `--report`, `--digest`, `expect` matching (status 0) and differing (status 1);
+- `exit 3`, `--say passed exit 1`;
+- `--hold` released by a file;
+- `term-exit0`: status 0 on SIGTERM, 99 when none came.
+
+`installCheckProgram`'s copy also ran through its shebang (exit 4), and its `not-executable` was refused by the shell (status 126).
 
 ## Row M01: the journey (slice 5), and the same journey read through the API (slice 7)
 
