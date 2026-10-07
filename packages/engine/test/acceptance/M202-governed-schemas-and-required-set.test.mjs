@@ -84,6 +84,8 @@ describe('M202 the governed schemas, their defaults, the required set', () => {
     const variants = [
       { label: 'an unknown key', gov: { surprise: 1 }, path: `${GOV}#/surprise`, codes: ['unknown_field'] },
       { label: 'an invalid value', gov: { result_collection: { output_max_bytes: 'big' } }, path: `${GOV}#/result_collection/output_max_bytes`, codes: ['invalid_value'] },
+      // The accepted fixtures' former form (objection 022; SEAM.md §187), pinned as now refused.
+      { label: 'a check_commands entry given as an argument array', gov: { check_commands: { ...KERNEL_COMMANDS, login: ['node', '.surety/checks/login.mjs'] } }, path: `${GOV}#/check_commands/login`, codes: ['invalid_value'] },
       { label: 'timeout_max_s over check_timeout_max (1800 s)', gov: { runner_config: { direct: { timeout_max_s: 1801 } } }, path: `${GOV}#/runner_config/direct/timeout_max_s`, codes: ['invalid_value'], clamp: { get: (g) => g?.runner_config?.direct?.timeout_max_s, bound: 1800 } },
       { label: 'output_max_bytes over check_output_max_bytes (1 MiB)', gov: { result_collection: { output_max_bytes: 1048577 } }, path: `${GOV}#/result_collection/output_max_bytes`, codes: ['invalid_value'], clamp: { get: (g) => g?.result_collection?.output_max_bytes, bound: 1048576 } },
       { label: 'a container key', gov: { runner_config: { container: {} } }, path: `${GOV}#/runner_config/container`, codes: ['unknown_field', 'invalid_value'] },

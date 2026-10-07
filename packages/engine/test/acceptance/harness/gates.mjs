@@ -276,8 +276,10 @@ export const review = (fx, project, candidate, result) => acceptedRun(fx, projec
 // ---- protected proposals: capture, classification, approval, application (SEAM.md §§68, 69) ----
 
 export const CHECK_FILE = '.surety/checks/login.check.json';
+// M3 slice 15 (objection 022; SEAM.md §187): the governed file names no
+// required key without a definition, which D3 §1.1 makes a discovery error.
 export const PROTECTED_FILES = Object.freeze({
-  [GOVERNED_FILE]: '{"protected_paths": [".surety/checks/"], "required_checks": ["login"]}\n',
+  [GOVERNED_FILE]: '{"protected_paths": [".surety/checks/"]}\n',
   [CHECK_FILE]: '{"expect": 200}\n',
 });
 
