@@ -474,9 +474,15 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
 
   // (2) The protected path is authorized and effective. A protected set
   // that could not be read is not shown authorized.
+  // An effective version whose fingerprint is not over the manifest (L6) is
+  // compared with nothing (Q11): recorded under the mode-free scheme, or
+  // unreadable at the migration, the head's set is not shown authorized,
+  // and no change is claimed detected.
   const pending = unfinishedOperations(db, args.project);
-  if (pending.length === 0 && unreadable.head === true) add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
-  if (pending.length === 0 && typeof args.headFingerprint === 'string' && args.headFingerprint !== scope.effective.fingerprint) {
+  const comparable = scope.effective.fingerprint_scheme === 'manifest';
+  if (!comparable) add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
+  else if (pending.length === 0 && unreadable.head === true) add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
+  if (comparable && pending.length === 0 && typeof args.headFingerprint === 'string' && args.headFingerprint !== scope.effective.fingerprint) {
     add('PROTECTED_PATH_UNAUTHORIZED', [scope.effective.id]);
     const seen = (db.prepare(`SELECT "payload" FROM "events" WHERE "type" = 'protected.unauthorized_detected' AND json_extract("subject", '$.project') = ?`).all(args.project) as { payload: string }[]).some(
       (e) => (JSON.parse(e.payload) as { fingerprint?: string }).fingerprint === args.headFingerprint,

@@ -32,14 +32,19 @@ import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandbo
 import { DOMAIN_MARKER } from '../invoke/processes.js';
 import { type BackendLaunch, INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
 import { writeWholeRecord } from '../records/files.js';
+import { finishEgress, startEgress } from '../invoke/proxy/egress.js';
+import type { DomainProxy } from '../invoke/proxy/proxy.js';
+import { FORWARDER_PORT } from '../invoke/sandbox/prepare.js';
+import { EGRESS_SOCKET } from '../invoke/sandbox/mounts.js';
 import { type Runtime, log } from '../runtime.js';
 import type { Admission, ResultFields } from '../store/transitions/checks.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamScriptedExecution } from '../testing/seam.js';
 import { hostIdentity } from '../trust/host.js';
-import { MaterializationFailed, listTrees, materialize, releaseTree } from './checktree.js';
+import { type CheckTree, MaterializationFailed, listTrees, materialize, projectionOf, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
-import { buildCheckPlan, inputTargetConflict } from './profile.js';
+import { buildCheckPlan, inputMountConflict, inputTargetConflict } from './profile.js';
+import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
 
 let tools: ResolvedTools | null = null;
@@ -98,7 +103,10 @@ export class Supervisor implements DomainHolder {
   // null while unreported or unreadable, which is never a pass.
   private orphans: boolean | null = null;
   private cancelAt: number | null = null;
-  private cancelCause: 'deadline' | 'lease' | null = null;
+  private cancelCause: 'deadline' | 'lease' | 'egress' | null = null;
+  // The domain's egress proxy, only when the definition names hosts.
+  private egress: DomainProxy | null = null;
+  private fireCancel: () => void = () => {};
   // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
   private leaseLost = false;
   private released = false;
@@ -143,10 +151,21 @@ export class Supervisor implements DomainHolder {
     await this.release();
   }
 
+  // The proxy closed and its log published as the domain's `egress_log`
+  // record, the project's, with no run (SEAM.md §201): once the domain is
+  // established terminated, or when nothing was launched.
+  async finishEgress(): Promise<void> {
+    const egress = this.egress;
+    if (egress === null) return;
+    this.egress = null;
+    await finishEgress(this.rt, egress, { project: this.a.project, run: null }).catch((err) => log('check egress', err, { execution: this.a.execution }));
+  }
+
   // The check trees nothing references any more go, once this execution's
   // domain is established terminated (never from a quarantine or a failure
   // whose termination is unknown).
   async release(): Promise<void> {
+    await this.finishEgress();
     if (this.released) return;
     this.released = true;
     await releaseUnreferenced(this.rt, this.a.project, this.a.execution);
@@ -176,6 +195,16 @@ export class Supervisor implements DomainHolder {
     } catch (err) {
       return this.notRun('mount_plan_refused', `a read path cannot be resolved: ${(err as Error).message}`);
     }
+    // The candidate's own protected fingerprint, under the roots of the
+    // version the execution is bound to, over the manifest (D3 §1.5; L6;
+    // SEAM.md §196): a copy that differs from the effective version's is
+    // visible in the read, and never mounted. Null when git cannot say.
+    const own = await protectedSetAt(a.repo, a.revision, a.roots).catch(() => null);
+    await this.engine('checks.candidate_fingerprint', { execution: a.execution, fingerprint: own?.fingerprint ?? null });
+    // The input namespace must be mountable (B01): refused before any tree
+    // is built or launcher started.
+    const unmountable = inputMountConflict(a.manifest);
+    if (unmountable !== null) return this.notRun('mount_plan_refused', unmountable);
     // The check tree (D3 §2.4).
     await pausePoint('checks.before_materialize');
     let tree;
@@ -191,6 +220,7 @@ export class Supervisor implements DomainHolder {
         manifests: a.manifests,
         maxEntries: checkLimits().checktree_max_entries,
         maxBytes: checkLimits().checktree_max_bytes,
+        maxAllBytes: checkLimits().checktrees_max_bytes,
       });
     } catch (err) {
       if (err instanceof MaterializationFailed) return this.notRun('materialization_failed', err.message);
@@ -218,7 +248,7 @@ export class Supervisor implements DomainHolder {
     await this.launch(def, governed, tree, readPaths, limits);
   }
 
-  private async launch(def: Definition, governed: Governed, tree: { src: string; protected: string }, readPaths: string[], limits: { memoryMax: number; tasksMax: number }): Promise<void> {
+  private async launch(def: Definition, governed: Governed, tree: CheckTree, readPaths: string[], limits: { memoryMax: number; tasksMax: number }): Promise<void> {
     const a = this.a;
     const rt = this.rt;
     tools ??= await resolveSandboxTools();
@@ -228,11 +258,35 @@ export class Supervisor implements DomainHolder {
     for (const d of ['root', 'vol']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
     const area = realpathSync(made);
     const copy = await initNodeCopy(rt.home);
+    // Egress (D3 §2.2; D2 §2.4): only when the definition names hosts, then
+    // through the domain's own proxy, its allow list exactly those hosts (a
+    // subset of `runner_config.direct.egress_allow`, checked at discovery).
+    // Its log's bound cancels the check, which then never passes.
+    const hosts = Array.isArray(def.egress) ? def.egress : [];
+    if (hosts.length > 0) {
+      this.egress = await startEgress(rt, {
+        area,
+        domain: a.domain,
+        run: null,
+        invocation: null,
+        profile: 'check',
+        allow: hosts,
+        onLogBound: () => {
+          log('check egress', new Error(`the egress log reached egress_log_max_bytes (${rt.setting('egress_log_max_bytes')} bytes): the check is cancelled`), { execution: a.execution });
+          if (this.cancelAt === null && this.sandbox?.exitReport == null) {
+            this.cancelAt = performance.now();
+            this.cancelCause = 'egress';
+          }
+          this.fireCancel();
+        },
+      });
+    }
     const plan = buildCheckPlan({
       area,
       source: realpathSync(tree.src),
-      protectedDir: realpathSync(tree.protected),
+      projection: realpathSync(projectionOf(tree, a.manifest)),
       manifest: a.manifest,
+      egressSocket: this.egress?.socketPath ?? null,
       readPaths,
       volBytes: rt.setting('domain_writable_bytes'),
       volInodes: rt.setting('domain_writable_inodes'),
@@ -267,18 +321,20 @@ export class Supervisor implements DomainHolder {
       SURETY_SOURCE_REVISION: a.revision,
       SURETY_PROTECTED_VERSION: a.version,
       [DOMAIN_MARKER]: a.domain,
+      ...(this.egress ? { HTTPS_PROXY: `http://127.0.0.1:${FORWARDER_PORT}` } : {}),
     };
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
       env,
       cwd: def.cwd === '.' ? '/surety/workspace' : join('/surety/workspace', def.cwd),
       stdin: null,
-      forwarder: null,
+      forwarder: this.egress ? { port: FORWARDER_PORT, socket: EGRESS_SOCKET } : null,
       check: true,
     };
     let deadline: NodeJS.Timeout | null = null;
     let fireDeadline: () => void = () => {};
     const deadlineHit = new Promise<void>((resolve) => (fireDeadline = resolve));
+    this.fireCancel = () => fireDeadline();
     const w = seamLauncherBarriers(rt.home);
     const launch = new SandboxLaunch(
       {
@@ -396,6 +452,7 @@ export class Supervisor implements DomainHolder {
         await this.engine('checks.quarantine', { execution: a.execution, why: verdict.unknown ?? 'termination not established' });
         return;
       }
+      await this.finishEgress();
       await this.collect();
       await this.release();
     } finally {
@@ -413,6 +470,7 @@ export class Supervisor implements DomainHolder {
     const verdict = await terminateDomain({ rt: this.rt, d, incarnation: this.rt.incarnation, handle: this, observeOnly: true });
     if (!verdict.terminated) return false;
     this.quarantined = false;
+    await this.finishEgress();
     await this.collect();
     await this.release();
     return true;
@@ -473,7 +531,7 @@ export interface Observed {
   execFailed: boolean;
   report: { code: number | null; signal: number | null; startFailed?: boolean } | null;
   cancelAt: number | null;
-  cancelCause: 'deadline' | 'lease' | null;
+  cancelCause: 'deadline' | 'lease' | 'egress' | null;
   reportAt: number | null;
   orphans: boolean | null;
 }

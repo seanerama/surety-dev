@@ -35,6 +35,8 @@ export interface VersionRow {
   effective_from: string | null;
   superseded_by: string | null;
   roots: string;
+  fingerprint_scheme: 'pairs' | 'manifest' | 'unreadable';
+  authorized_revision: string | null;
 }
 
 export interface ProposalRow {
@@ -89,15 +91,16 @@ function nextVersionSeq(tx: Tx, project: string): number {
 // A project's first version, recorded when it is created or installed
 // (SEAM.md §66): authorized and effective, with the fingerprint of its
 // integration branch's commit under the roots its governed file names.
-export function recordInitialVersion(tx: Tx, project: string, set: ProtectedSet, approvedBy: string): string {
+// `revision`: the commit the set was read at, its authorized tree (Q11).
+export function recordInitialVersion(tx: Tx, project: string, set: ProtectedSet, approvedBy: string, revision: string): string {
   const id = tx.newId('pv_');
   tx.db
     .prepare(
       `INSERT INTO "protected_versions" ("id", "created_at", "project", "seq", "fingerprint", "check_ids", "change_kind", "proposal", "approved_by",
-         "approver_authority", "approved_at", "authorized", "effective_from", "roots")
-       VALUES (?, ?, ?, 1, ?, '[]', 'initial', NULL, ?, 'human', ?, 1, ?, ?)`,
+         "approver_authority", "approved_at", "authorized", "effective_from", "roots", "fingerprint_scheme", "authorized_revision")
+       VALUES (?, ?, ?, 1, ?, '[]', 'initial', NULL, ?, 'human', ?, 1, ?, ?, 'manifest', ?)`,
     )
-    .run(id, tx.at, project, set.fingerprint, approvedBy, tx.at, tx.at, JSON.stringify(set.roots));
+    .run(id, tx.at, project, set.fingerprint, approvedBy, tx.at, tx.at, JSON.stringify(set.roots), revision);
   if (set.discovery) writeVersionDiscovery(tx, { project, version: id, discovery: set.discovery });
   return id;
 }
@@ -268,8 +271,8 @@ export function beginApplication(
   tx.db
     .prepare(
       `INSERT INTO "protected_versions" ("id", "created_at", "project", "seq", "fingerprint", "check_ids", "change_kind", "proposal", "approved_by",
-         "approver_authority", "approved_at", "authorized", "effective_from", "roots")
-       VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, 0, NULL, ?)`,
+         "approver_authority", "approved_at", "authorized", "effective_from", "roots", "fingerprint_scheme", "authorized_revision")
+       VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, 0, NULL, ?, 'manifest', ?)`,
     )
     .run(
       version,
@@ -283,6 +286,7 @@ export function beginApplication(
       p.approver_authority ?? 'human',
       p.approved_at ?? tx.at,
       JSON.stringify(args.set.roots),
+      args.sha,
     );
   // The discovery frozen for the proposal, the new version's checks (D3 §1.4).
   if (args.set.discovery) writeVersionDiscovery(tx, { project: p.project, version, discovery: args.set.discovery });
@@ -370,4 +374,53 @@ export function invalidateResults(tx: Tx, project: string, ids: string[], why: s
     tx.emit('finding.reopened', { project, finding: f.id }, { check_result: proof.check_result, why });
   }
   markStale(tx, { project });
+}
+
+// ---- the fingerprint over the manifest (L6) and the Q11 migration -------------------
+
+// Every version whose fingerprint is not over the manifest: recorded under
+// the mode-free scheme, or found unreadable at an earlier start (retried at
+// each start). With what recomputing it needs: the project's repository,
+// the version's roots and the commit it was authorized from.
+export function fingerprintsToRecompute(db: Db): { id: string; project: string; repo: string; roots: string[]; fingerprint: string; scheme: string; revision: string | null }[] {
+  const rows = db
+    .prepare(
+      `SELECT v."id", v."project", p."dev_repo_path" AS "repo", v."roots", v."fingerprint", v."fingerprint_scheme" AS "scheme", v."authorized_revision" AS "revision"
+       FROM "protected_versions" v JOIN "projects" p ON p."id" = v."project" WHERE v."fingerprint_scheme" <> 'manifest' ORDER BY v."project", v."seq"`,
+    )
+    .all() as { id: string; project: string; repo: string; roots: string; fingerprint: string; scheme: string; revision: string | null }[];
+  return rows.map((r) => ({ ...r, roots: JSON.parse(r.roots) as string[] }));
+}
+
+// The migration's outcome for one version (Q11 (a)): its fingerprint over the
+// manifest of its authorized tree, or unreadable (`fingerprint` null), the
+// value it had kept and compared with nothing. A version already over the
+// manifest is never touched.
+export function recordRecomputedFingerprint(tx: Tx, args: { version: string; fingerprint: string | null; why: string | null }): void {
+  const v = tx.db.prepare('SELECT * FROM "protected_versions" WHERE "id" = ?').get(args.version) as VersionRow | undefined;
+  if (!v || v.fingerprint_scheme === 'manifest') return;
+  if (args.fingerprint !== null) {
+    tx.db.prepare(`UPDATE "protected_versions" SET "fingerprint" = ?, "fingerprint_scheme" = 'manifest' WHERE "id" = ?`).run(args.fingerprint, v.id);
+  } else if (v.fingerprint_scheme !== 'unreadable') {
+    tx.db.prepare(`UPDATE "protected_versions" SET "fingerprint_scheme" = 'unreadable' WHERE "id" = ?`).run(v.id);
+  } else return;
+  tx.emit(
+    'protected.fingerprint_recomputed',
+    { project: v.project, version: v.id },
+    { from_scheme: v.fingerprint_scheme, scheme: args.fingerprint === null ? 'unreadable' : 'manifest', fingerprint: args.fingerprint, why: args.why },
+  );
+}
+
+// The harness's legacy fingerprint fixture (SEAM.md §197): what to compute
+// it from, and its recording.
+export function versionSource(db: Db, version: string): { repo: string; roots: string[]; revision: string | null } | null {
+  const r = db
+    .prepare(`SELECT p."dev_repo_path" AS "repo", v."roots", v."authorized_revision" AS "revision" FROM "protected_versions" v JOIN "projects" p ON p."id" = v."project" WHERE v."id" = ?`)
+    .get(version) as { repo: string; roots: string; revision: string | null } | undefined;
+  return r ? { repo: r.repo, roots: JSON.parse(r.roots) as string[], revision: r.revision } : null;
+}
+
+export function recordLegacyFingerprint(tx: Tx, args: { version: string; fingerprint: string }): { protected_version: { id: string; fingerprint: string } } {
+  tx.db.prepare(`UPDATE "protected_versions" SET "fingerprint" = ?, "fingerprint_scheme" = 'pairs' WHERE "id" = ?`).run(args.fingerprint, args.version);
+  return { protected_version: { id: args.version, fingerprint: args.fingerprint } };
 }

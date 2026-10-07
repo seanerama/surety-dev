@@ -71,6 +71,7 @@ export const EVENT_OWNERS = {
   'protected.rejected': 'store/transitions/queue.ts',
   'protected.applied': 'store/transitions/protected.ts',
   'protected.unauthorized_detected': 'store/transitions/gates.ts',
+  'protected.fingerprint_recomputed': 'store/transitions/protected.ts',
   'check.result': 'store/transitions/baseline.ts',
   'gate.scope_built': 'store/transitions/gates.ts',
   'gate.evaluated': 'store/transitions/gates.ts',

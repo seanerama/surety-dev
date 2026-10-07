@@ -365,7 +365,9 @@ export function readVersion(db: Db, args: { project: string; version: string }) 
     version: {
       id: v.id,
       seq: v.seq,
-      fingerprint: v.fingerprint,
+      // Unknown is a value (Q11; SEAM.md §197): a fingerprint not over the
+      // manifest is shown as none.
+      fingerprint: v.fingerprint_scheme === 'manifest' ? v.fingerprint : null,
       change_kind: v.change_kind,
       governed: v.governed === null ? null : JSON.parse(v.governed as string),
       discovery_errors: JSON.parse(v.discovery_errors as string),
@@ -596,6 +598,12 @@ export function recordInitReport(tx: Tx, args: { execution: string; kind: 'start
 }
 
 // The program the execution runs, as resolved at launch (D3 §§1.1, 2.5, Q6).
+// The candidate's own protected fingerprint, under the bound version's
+// roots, over the manifest (D3 §1.5; SEAM.md §196); null when unread.
+export function recordCandidateFingerprint(tx: Tx, args: { execution: string; fingerprint: string | null }): void {
+  tx.db.prepare('UPDATE "check_executions" SET "candidate_protected_fingerprint" = ? WHERE "id" = ?').run(args.fingerprint, args.execution);
+}
+
 export function recordToolchain(tx: Tx, args: { execution: string; toolchain: { name: string; path: string; sha256: string | null } }): void {
   tx.db.prepare('UPDATE "check_executions" SET "toolchain" = ? WHERE "id" = ?').run(JSON.stringify(args.toolchain), args.execution);
 }

@@ -6,29 +6,49 @@
 //   src/        the candidate-source projection: every tracked file of the
 //               revision but those under the version's roots and the
 //               governed file, wherever it lies; the overlay's lower layer.
-//   protected/  the protected inputs of the version's checks, by the object
-//               ids of their input manifests; each execution binds only its
-//               own check's manifest from here.
+//   inputs/<m>/ the projection of one input manifest, exactly its members
+//               at their paths (B01; D3 §§1.3, 2.2): one directory per
+//               distinct manifest of the version's checks, named by the
+//               manifest's hash; the `check` profile mounts it read-only.
+//
+// Modes (E89 item 2; the driver's ruling 1 for slice 17): the source keeps
+// its git modes (0644, 0755), so that a check may overwrite an existing
+// source file in its discarded overlay, the overlay checking the lower
+// file's mode with the check's own credentials; the tree is reachable only
+// by the engine and, in a domain, only as that overlay's lower layer, which
+// is never written. Each projection is read-only: files 0444 or 0555,
+// directories 0555.
 //
 // With engine git only (`ls-tree`, `cat-file`): every file is its blob's
 // bytes exactly, whatever any attributes or configuration say; nothing writes
-// a `.git`, runs repository code or contacts a remote. A tree is built in a private staging directory, made
-// read-only, and becomes visible only once complete; a failed build removes
-// its partial state. It is shared by the executions of its triple and
-// removed when none still needs it. Main thread only.
+// a `.git`, runs repository code or contacts a remote. A tree is built in a
+// private staging directory and becomes visible only once complete; a failed
+// build removes its partial state. It is shared by the executions of its
+// triple and removed when none still needs it.
+//
+// Bounds (D3 §2.4; T17): entries (`checktree_max_entries`), bytes per tree
+// (`checktree_max_bytes`) and bytes of all trees on the host
+// (`checktrees_max_bytes`), each admitted from the blobs' sizes before
+// anything is written; git's own deadlines. Main thread only.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { git, repoContext } from '../git/exec.js';
+import { checkLimits } from './limits.js';
 import { GOVERNED_FILE, type ManifestEntry, isProtectedPath } from './schema.js';
 
 export interface CheckTree {
   root: string;
   src: string;
-  protected: string;
+  // The projection directory of each manifest, by its key.
+  inputs: string;
 }
+
+// The name of a manifest's projection directory.
+export const manifestKey = (manifest: readonly ManifestEntry[]): string => createHash('sha256').update(JSON.stringify(manifest)).digest('hex').slice(0, 32);
+export const projectionOf = (tree: CheckTree, manifest: readonly ManifestEntry[]): string => join(tree.inputs, manifestKey(manifest));
 
 const PROJECT_ID = /^proj_[0-9A-Z]{26}$/;
 const TREE_NAME = /^[0-9a-f]{40}-pv_[0-9A-Z]{26}$/;
@@ -43,18 +63,17 @@ function treePath(home: string, project: string, revision: string, version: stri
   return join(checktreesDir(home), project, name);
 }
 
-// Its files read-only, as a tree's are (D3 §2.4), keeping their execute
-// bit. Directories stay writable by the engine alone (the tree lies under the
-// engine home): the workspace overlay above them must let a check create
-// files, whose writes are discarded with the domain (E89 item 2).
-function seal(dir: string): void {
+// A projection read-only (B01): files 0444 or 0555, directories 0555. The
+// source half keeps its modes (the head of this file).
+function sealProjection(dir: string): void {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     const st = lstatSync(p);
     if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) seal(p);
+    if (st.isDirectory()) sealProjection(p);
     else chmodSync(p, st.mode & 0o111 ? 0o555 : 0o444);
   }
+  chmodSync(dir, 0o555);
 }
 
 function unseal(dir: string): void {
@@ -92,6 +111,67 @@ export function removeTreeDir(home: string, dir: string): void {
   }
   unseal(real);
   rmSync(real, { recursive: true, force: true });
+  treeSizes.delete(real);
+}
+
+// ---- the bound for all trees (`checktrees_max_bytes`) ------------------------------------
+
+// Bytes of each complete tree, by its real path, counted once (file sizes);
+// and bytes reserved by builds in progress, by their staging directory.
+const treeSizes = new Map<string, number>();
+const reserved = new Map<string, number>();
+
+function bytesUnder(dir: string): number {
+  let total = 0;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    const p = join(dir, name);
+    let st;
+    try {
+      st = lstatSync(p);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) total += bytesUnder(p);
+    else if (st.isFile()) total += st.size;
+  }
+  return total;
+}
+
+// What the trees of this home hold, and what builds in progress will add.
+export function checktreeBytesInUse(home: string): number {
+  let total = 0;
+  let projects: string[];
+  try {
+    projects = readdirSync(checktreesDir(home)).filter((p) => PROJECT_ID.test(p));
+  } catch {
+    projects = [];
+  }
+  for (const p of projects) {
+    let names: string[];
+    try {
+      names = readdirSync(join(checktreesDir(home), p));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!TREE_NAME.test(name)) continue;
+      const root = join(checktreesDir(home), p, name);
+      let size = treeSizes.get(root);
+      if (size === undefined) {
+        size = bytesUnder(root);
+        treeSizes.set(root, size);
+      }
+      total += size;
+    }
+  }
+  for (const n of reserved.values()) total += n;
+  return total;
 }
 
 interface BlobEntry {
@@ -100,18 +180,11 @@ interface BlobEntry {
   path: string;
 }
 
-// Each entry written at <prefix>/<path> with exactly its blob's bytes (a
-// symlink, 120000, as a link whose target is the blob): read from the object
-// store with `cat-file`, never through `checkout-index`, so no attributes
-// file of the work tree, of `.git/info`, or of the revision itself, and no
-// configuration (`core.autocrlf`, `core.eol`), converts anything. No path
-// component is followed through a link, and nothing is created outside
-// `prefix`. Returns the bytes written.
-async function writeBlobs(repo: string, entries: BlobEntry[], prefix: string, maxBytes: number): Promise<number> {
-  mkdirSync(prefix, { recursive: true, mode: 0o700 });
-  if (entries.length === 0) return 0;
+// The size of each blob, with `cat-file --batch-check`; a blob that cannot be
+// read refuses the build.
+async function measure(repo: string, oids: string[]): Promise<Map<string, number>> {
   const ctx = repoContext(repo);
-  const unique = [...new Set(entries.map((e) => e.oid))];
+  const unique = [...new Set(oids)];
   const sizes = new Map<string, number>();
   for (let i = 0; i < unique.length; i += 1000) {
     const batch = unique.slice(i, i + 1000);
@@ -122,13 +195,24 @@ async function writeBlobs(repo: string, entries: BlobEntry[], prefix: string, ma
       if (oid && type === 'blob' && size !== undefined) sizes.set(oid, Number(size));
     }
   }
-  let total = 0;
-  for (const e of entries) {
-    const size = sizes.get(e.oid);
-    if (size === undefined) throw new MaterializationFailed(`the blob ${e.oid} of ${e.path} cannot be read`);
-    total += size;
-  }
-  if (total > maxBytes) throw new MaterializationFailed(`the tree holds ${total} bytes, more than checktree_max_bytes (${maxBytes})`);
+  for (const oid of unique) if (!sizes.has(oid)) throw new MaterializationFailed(`the blob ${oid} cannot be read`);
+  return sizes;
+}
+
+const bytesOf = (entries: BlobEntry[], sizes: Map<string, number>): number => entries.reduce((n, e) => n + sizes.get(e.oid)!, 0);
+
+// Each entry written at <prefix>/<path> with exactly its blob's bytes (a
+// symlink, 120000, as a link whose target is the blob): read from the object
+// store with `cat-file`, never through `checkout-index`, so no attributes
+// file of the work tree, of `.git/info`, or of the revision itself, and no
+// configuration (`core.autocrlf`, `core.eol`), converts anything. No path
+// component is followed through a link, and nothing is created outside
+// `prefix`. `sizes` are the blobs' as measured.
+async function writeBlobs(repo: string, entries: BlobEntry[], prefix: string, sizes: Map<string, number>): Promise<void> {
+  mkdirSync(prefix, { recursive: true, mode: 0o755 });
+  if (entries.length === 0) return;
+  const ctx = repoContext(repo);
+  const unique = [...new Set(entries.map((e) => e.oid))];
   const cap = 8 * 1024 * 1024;
   const bytes = new Map<string, Buffer>();
   const batches: string[][] = [];
@@ -166,7 +250,6 @@ async function writeBlobs(repo: string, entries: BlobEntry[], prefix: string, ma
     for (const oid of batch) bytes.delete(oid);
   };
   for (const batch of batches) await write(batch);
-  return total;
 }
 
 // One entry under `root`, its parents made directory by directory, none
@@ -202,7 +285,7 @@ export function placeEntry(root: string, e: BlobEntry, content: Buffer): void {
 }
 
 // The tree of (project, revision, version), built now or reused.
-// `manifests` are the input manifests the protected half must hold.
+// `manifests` are the input manifests whose projections it must hold.
 export async function materialize(args: {
   home: string;
   scratch: string;
@@ -214,10 +297,21 @@ export async function materialize(args: {
   manifests: ManifestEntry[][];
   maxEntries: number;
   maxBytes: number;
+  // checktrees_max_bytes; the engine's configured value when not given.
+  maxAllBytes?: number;
 }): Promise<CheckTree> {
+  const maxAll = args.maxAllBytes ?? checkLimits().checktrees_max_bytes;
   const root = treePath(args.home, args.project, args.revision, args.version);
-  const made = { root, src: join(root, 'src'), protected: join(root, 'protected') };
-  if (existsSync(join(root, 'src')) && existsSync(join(root, 'protected'))) return made;
+  const made: CheckTree = { root, src: join(root, 'src'), inputs: join(root, 'inputs') };
+  const wanted = new Map<string, ManifestEntry[]>();
+  for (const m of args.manifests) wanted.set(manifestKey(m), m);
+  if (existsSync(made.src)) {
+    if ([...wanted.keys()].every((k) => existsSync(join(made.inputs, k)))) return made;
+    // A tree of an earlier layout (no projections): never one this
+    // incarnation built for a live execution, so it is built again.
+    if (!existsSync(made.inputs)) removeTreeDir(args.home, root);
+    else throw new MaterializationFailed(`the check tree ${args.revision}-${args.version} has no projection of this check's inputs`);
+  }
   const parent = join(checktreesDir(args.home), args.project);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const staging = join(parent, `.staging-${randomBytes(8).toString('hex')}`);
@@ -241,16 +335,22 @@ export async function materialize(args: {
       if (++entries > args.maxEntries) throw new MaterializationFailed(`the revision has more than checktree_max_entries (${args.maxEntries}) entries`);
       source.push({ mode, oid, path });
     }
-    const written = await writeBlobs(args.repo, source, join(staging, 'src'), args.maxBytes);
-    const inputs = new Map<string, ManifestEntry>();
-    for (const m of args.manifests) for (const e of m) inputs.set(e[0], e);
-    await writeBlobs(
-      args.repo,
-      [...inputs.values()].map(([path, , mode, oid]) => ({ mode, oid, path })),
-      join(staging, 'protected'),
-      args.maxBytes - written,
-    );
-    seal(staging);
+    const projections = [...wanted].map(([key, m]) => ({ key, entries: m.map(([path, , mode, oid]) => ({ mode, oid, path })) }));
+    // The bounds, from the blobs' sizes, before anything is written.
+    const sizes = await measure(args.repo, [...source.map((e) => e.oid), ...projections.flatMap((p) => p.entries.map((e) => e.oid))]);
+    const total = bytesOf(source, sizes) + projections.reduce((n, p) => n + bytesOf(p.entries, sizes), 0);
+    if (total > args.maxBytes) throw new MaterializationFailed(`the tree would hold ${total} bytes, more than checktree_max_bytes (${args.maxBytes})`);
+    const inUse = checktreeBytesInUse(args.home);
+    if (inUse + total > maxAll) throw new MaterializationFailed(`the check trees would hold ${inUse + total} bytes, more than checktrees_max_bytes (${maxAll})`);
+    reserved.set(staging, total);
+    await writeBlobs(args.repo, source, join(staging, 'src'), sizes);
+    mkdirSync(join(staging, 'inputs'), { mode: 0o755 });
+    for (const p of projections) {
+      const dir = join(staging, 'inputs', p.key);
+      await writeBlobs(args.repo, p.entries, dir, sizes);
+      sealProjection(dir);
+    }
+    chmodSync(join(staging, 'inputs'), 0o555);
     try {
       renameSync(staging, root);
     } catch (err) {
@@ -261,6 +361,7 @@ export async function materialize(args: {
       }
       throw err;
     }
+    treeSizes.set(realpathSync(root), total);
     return made;
   } catch (err) {
     try {
@@ -270,6 +371,8 @@ export async function materialize(args: {
     }
     if (err instanceof MaterializationFailed) throw err;
     throw new MaterializationFailed((err as Error).message);
+  } finally {
+    reserved.delete(staging);
   }
 }
 

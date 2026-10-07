@@ -32,11 +32,12 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { seamHostChecks, seamQualifyMode, seamScopeBarrier } from './testing/seam.js';
+import { seamChecktreesMaxBytes, seamHostChecks, seamQualifyMode, seamScopeBarrier } from './testing/seam.js';
 import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
 import { CHECK_LIMIT_KEYS, setCheckLimits } from './checks/limits.js';
+import { migrateFingerprints } from './protected/migrate.js';
 import { CheckRunner } from './checks/run.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
@@ -275,6 +276,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   state.completed.push('store');
 
   setCheckLimits(config.values);
+  // `--harness-checktrees-max-bytes` (harness mode only; SEAM.md §200): the
+  // bound for all check trees, for this start, below its configured range.
+  const treesBound = seamChecktreesMaxBytes();
+  if (treesBound !== null) setCheckLimits({ checktrees_max_bytes: treesBound });
   configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home, incarnation: lock.incarnation_id });
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
   runtime.checks = new CheckRunner(runtime);
@@ -302,6 +307,16 @@ export async function serve(opts: ServeOptions): Promise<void> {
     collectAtEnd: (handle, quarantined) => launcher.collectAtEnd(handle, quarantined),
     qualificationStep: () => qualification.step(),
   };
+
+  // 3a. The protected fingerprints recorded under the mode-free scheme, or
+  // unreadable at an earlier start, recomputed over the manifest before
+  // anything reads one (L6; Q11 (a); SEAM.md §197). A version that cannot be
+  // recomputed stays unreadable; that never keeps the engine from starting.
+  try {
+    await migrateFingerprints(runtime);
+  } catch (err) {
+    log('protected fingerprints', err);
+  }
 
   // 4. recovery (D1 §16): every journal operation the previous incarnation
   // left is taken on its way, and every run it left is ended or quarantined,

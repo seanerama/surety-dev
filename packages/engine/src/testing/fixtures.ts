@@ -33,7 +33,7 @@ import {
   requirementIds,
 } from '../store/transitions/baseline.js';
 import type { DecisionKind } from '../store/transitions/decisions.js';
-import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal } from '../store/transitions/protected.js';
+import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal, recordLegacyFingerprint, versionSource } from '../store/transitions/protected.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
 import type { DecisionRow } from '../store/transitions/decisions.js';
 import { answerQueued } from '../store/transitions/queue.js';
@@ -702,3 +702,21 @@ export function installScriptedStep(db: Database, actor: Actor, args: Omit<Scrip
     return scriptExecutionStep(tx, { ...args, runner_id: 'test_fixture' });
   });
 }
+
+// ---- the legacy fingerprint fixture (SEAM.md §197) -----------------------------------------
+
+// POST /v1/harness/fixtures/legacy-fingerprint: the version recorded under
+// the mode-free scheme, as a store written before slice 17 holds it.
+export function parseLegacyFingerprint(body: unknown): { version: string } {
+  const b = objectBody(body, ['protected_version']);
+  return { version: str(b, 'protected_version') };
+}
+
+export function installLegacyFingerprint(db: Database, actor: Actor, args: { version: string; fingerprint: string }): { protected_version: { id: string; fingerprint: string } } {
+  return transact(db, actor, (tx) => {
+    tx.stamp = { ...FIXTURE_LABEL };
+    return recordLegacyFingerprint(tx, args);
+  });
+}
+
+export const versionSourceOf = (db: Database, version: string) => versionSource(db, version);

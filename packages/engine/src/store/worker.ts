@@ -88,7 +88,7 @@ import { ancestryPairs, nominationAncestryPairs, recordAncestry } from './transi
 import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
-import { applicationFacts, beginApplication } from './transitions/protected.js';
+import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, revalidateIntent, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext, runCheckKeys } from './reads.js';
@@ -138,6 +138,7 @@ import {
   recordExecutionResult,
   recordInitReport,
   recordToolchain,
+  recordCandidateFingerprint,
   registerDue,
   renewCheckLease,
   requestChecks,
@@ -200,6 +201,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'candidate.executions': (d, a) => readCandidateExecutions(d, a),
   'protected.proposal_discovery': (d, a: { proposal: string }) => proposalDiscovery(d, a.proposal),
   'checks.tree_in_use': (d, a) => treeInUse(d, a),
+  'protected.fingerprints_to_recompute': (d) => fingerprintsToRecompute(d),
   'checks.live': (d) => liveExecutions(d),
   'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,
   'checks.qualification': (d) => runnerQualification(d),
@@ -333,6 +335,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),
   'checks.init_report': (tx, a) => recordInitReport(tx, a),
   'checks.toolchain': (tx, a) => recordToolchain(tx, a),
+  'checks.candidate_fingerprint': (tx, a) => recordCandidateFingerprint(tx, a),
   'checks.renew': (tx, a) => renewCheckLease(tx, a),
   'checks.collecting': (tx, a) => markCollecting(tx, a),
   'checks.quarantine': (tx, a) => quarantineExecution(tx, a),
@@ -345,6 +348,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'accept.record_report': (tx, a) => recordRunReport(tx, a),
   'accept.capture_proposal': (tx, a) => captureRunProposal(tx, a),
   'protected.application_facts': (tx, a) => applicationFacts(tx, a),
+  'protected.fingerprint_recomputed': (tx, a) => recordRecomputedFingerprint(tx, a),
   'protected.begin_application': (tx, a) => beginApplication(tx, a, a.intent ? (t: Tx) => revalidateIntent(t, a.intent, a.facts ?? {}) : null),
   'intent.revalidate': (tx, a) => revalidate(tx, a),
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),
