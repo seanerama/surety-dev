@@ -35,7 +35,7 @@ import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { Admission, ResultFields } from '../store/transitions/checks.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
-import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamMainFault } from '../testing/seam.js';
+import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamScriptedExecution } from '../testing/seam.js';
 import { hostIdentity } from '../trust/host.js';
 import { MaterializationFailed, listTrees, materialize, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
@@ -584,6 +584,7 @@ export async function recoverChecks(rt: Runtime, priorUnknown: ReadonlyMap<strin
   const live = await rt.read<{ id: string; domain: string | null }[]>('checks.live');
   for (const x of live) {
     try {
+      if (seamScriptedExecution(x.domain)) continue;
       if (x.domain === null) {
         await rt.engine('checks.interrupt', { execution: x.id, why: 'the engine restarted before its domain was allocated' });
         continue;

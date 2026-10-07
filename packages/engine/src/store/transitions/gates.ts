@@ -29,7 +29,8 @@ import {
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
 import { discoveryErrorsOf, registerDue } from './checks.js';
-import { type OobRow, blockingObservation, candidateObservation } from './repo.js';
+import { movingRefs } from './accept.js';
+import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 
@@ -169,14 +170,92 @@ function executionsOf(db: Db, project: string, check: CheckRow, candidate: strin
   return [...own.map((r) => ({ ...r, reused: false })), ...reused.filter((r) => !seen.has(r.id)).map((r) => ({ ...r, reused: true }))];
 }
 
+// A registration of the check at the scope's bindings (L7).
+interface Registration {
+  id: string;
+  status: string;
+  execution_seq: number;
+  result: string | null;
+}
+
+// The gate read's history beside a deciding execution (N03; SEAM.md §191).
+export interface History {
+  count: number;
+  executions: { execution: string; execution_seq: number; trigger: unknown; status: string; state: CheckState | null }[];
+  link: string;
+}
+
 export interface StateOf {
   state: CheckState;
   decider: Execution | null;
+  // The latest registration, when it has no usable result (L7).
+  pending: { execution: string; status: string } | null;
+  history: History | null;
 }
 
+// D1 §9.2 step 3, with L4, for one result row.
+function resultState(r: Pick<ResultRow, 'execution_established' | 'signaled' | 'deadline_hit' | 'orphans' | 'exit_status'>): CheckState {
+  if (r.execution_established === 0) return 'skipped';
+  // L4: other processes alive at the check's own exit fail it too.
+  if (r.signaled === 1 || r.deadline_hit === 1 || r.orphans !== 0 || r.exit_status === null || r.exit_status !== 0) return 'failed';
+  return 'passed';
+}
+
+function registrationsOf(db: Db, check: CheckRow, scope: Pick<Scope, 'candidate' | 'effective' | 'environment' | 'artifact'>): Registration[] {
+  const requires = JSON.parse(check.requires) as string[];
+  const rows = db
+    .prepare(
+      `SELECT "id", "status", "execution_seq", "result", "environment", "artifact_digest" FROM "check_executions"
+       WHERE "candidate" = ? AND "key" = ? AND "source_revision" = ? AND "protected_version" = ? AND "runner_class" = ? ORDER BY "execution_seq"`,
+    )
+    .all(scope.candidate.id, check.key, scope.candidate.revision, scope.effective.id, check.runner_class) as (Registration & { environment: string | null; artifact_digest: string | null })[];
+  return rows.filter(
+    (x) => (!requires.includes('environment') || x.environment === scope.environment) && (!requires.includes('artifact_digest') || x.artifact_digest === scope.artifact),
+  );
+}
+
+// Every execution registered before the deciding one at its own bindings,
+// failed attempts included, in sequence (N03). A later pass relabels none.
+function historyOf(db: Db, project: string, decider: Execution): History | null {
+  if (decider.execution === null) return null;
+  const rows = db
+    .prepare(
+      `SELECT x."id", x."execution_seq", x."trigger", x."status", r."execution_established", r."signaled", r."deadline_hit", r."orphans", r."exit_status", r."id" AS "result_id"
+       FROM "check_executions" x JOIN "check_executions" d ON d."id" = ?
+       LEFT JOIN "check_results" r ON r."id" = x."result"
+       WHERE x."project" = ? AND x."candidate" = d."candidate" AND x."key" = d."key" AND x."source_revision" = d."source_revision"
+       AND x."protected_version" = d."protected_version" AND x."runner_class" = d."runner_class" AND x."execution_seq" < d."execution_seq"
+       ORDER BY x."execution_seq"`,
+    )
+    .all(decider.execution, project) as (Pick<ResultRow, 'execution_established' | 'signaled' | 'deadline_hit' | 'orphans' | 'exit_status'> & {
+    id: string;
+    execution_seq: number;
+    trigger: string;
+    status: string;
+    result_id: string | null;
+  })[];
+  return {
+    count: rows.length,
+    executions: rows.map((x) => ({
+      execution: x.id,
+      execution_seq: x.execution_seq,
+      trigger: JSON.parse(x.trigger) as unknown,
+      status: x.status,
+      state: x.result_id === null ? null : resultState(x),
+    })),
+    link: `/v1/projects/${encodeURIComponent(project)}/candidates/${encodeURIComponent(decider.candidate)}/checks`,
+  };
+}
+
+// Selection by registration (D1 §9.2 with L7, B03; SEAM.md §§71, 191). The
+// registrations and the results at the scope's bindings are ordered by the
+// project's one sequence, a registration and its result sharing a number;
+// the latest decides, never a timestamp. A latest registration with no
+// usable result leaves the check `missing`, naming it: no earlier pass or
+// reuse entry is fallen back to, and nothing stands in for its result.
 export function checkState(db: Db, project: string, check: CheckRow, scope: Pick<Scope, 'candidate' | 'effective' | 'environment' | 'artifact'>): StateOf {
   const all = executionsOf(db, project, check, scope.candidate.id);
-  if (all.length === 0) return { state: 'missing', decider: null };
+  const registrations = registrationsOf(db, check, scope);
   const requires = JSON.parse(check.requires) as string[];
   const matching = all.filter(
     (r) =>
@@ -187,14 +266,19 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
       (!requires.includes('environment') || r.environment === scope.environment) &&
       (!requires.includes('artifact_digest') || r.artifact_digest === scope.artifact),
   );
-  if (matching.length === 0) return { state: 'stale', decider: null };
-  const top = matching.reduce((a, b) => (b.execution_seq > a.execution_seq ? b : a));
-  let state: CheckState;
-  if (top.execution_established === 0) state = 'skipped';
-  // L4: other processes alive at the check's own exit fail it too.
-  else if (top.signaled === 1 || top.deadline_hit === 1 || top.orphans !== 0 || top.exit_status === null || top.exit_status !== 0) state = 'failed';
-  else state = 'passed';
-  return { state, decider: top };
+  const usable = new Set(matching.map((r) => r.id));
+  type Item = { seq: number; result?: Execution; registration?: Registration };
+  const items: Item[] = matching.map((r) => ({ seq: r.execution_seq, result: r }));
+  for (const x of registrations) if (x.result === null || !usable.has(x.result)) items.push({ seq: x.execution_seq, registration: x });
+  if (items.length === 0) return { state: all.length === 0 ? 'missing' : 'stale', decider: null, pending: null, history: null };
+  const top = items.reduce((a, b) => (b.seq > a.seq ? b : a));
+  if (top.registration !== undefined) {
+    // Its result exists and was invalidated: what it established no longer holds.
+    if (top.registration.status === 'recorded') return { state: 'stale', decider: null, pending: null, history: null };
+    return { state: 'missing', decider: null, pending: { execution: top.registration.id, status: top.registration.status }, history: null };
+  }
+  const decider = top.result!;
+  return { state: resultState(decider), decider, pending: null, history: historyOf(db, project, decider) };
 }
 
 // ---- findings (D1 §§9.3(5), 9.4; F §§6.1-6.3; E19; SEAM.md §74) --------------------
@@ -253,6 +337,15 @@ export interface EvaluateArgs {
   head?: string | null;
   // What the main thread could not read (E41 item 2).
   unreadable?: { head?: boolean; ancestry?: boolean; records?: string[] } | undefined;
+  // The gate's own reads of its registered refs (D3 §5 X1, A.2 RefRead):
+  // absent when nothing was read, which is unread, never unchanged.
+  refs?: RefFact[] | undefined;
+}
+
+export interface RefFact {
+  ref: string;
+  read: 'value' | 'absent' | 'unread';
+  oid: string | null;
 }
 
 export interface EvaluationBody {
@@ -266,7 +359,7 @@ export interface EvaluationBody {
   stale: boolean;
 }
 
-// The gate read's entry for one required check (SEAM.md §183).
+// The gate read's entry for one required check (SEAM.md §§183, 191).
 export interface CheckEntry {
   key: string;
   state: CheckState;
@@ -274,34 +367,22 @@ export interface CheckEntry {
   not_run_reason: string | null;
   pending: { execution: string; status: string } | null;
   due: { trigger: unknown; at: string } | null;
+  history: History | null;
 }
 
-function checkEntries(
-  db: Db,
-  scope: Scope,
-  states: Record<string, CheckState>,
-  deciders: Record<string, Execution | null>,
-  due: CheckEntry['due'],
-): Record<string, CheckEntry> {
+function checkEntries(scope: Scope, selected: Record<string, StateOf>, due: CheckEntry['due']): Record<string, CheckEntry> {
   const out: Record<string, CheckEntry> = {};
   for (const c of scope.required) {
-    const d = deciders[c.id] ?? null;
-    // The latest registration at the scope's bindings with no usable result
-    // (L7; its effect on the state is slice 16's).
-    const latest = db
-      .prepare(
-        `SELECT "id", "status", "execution_seq" FROM "check_executions" WHERE "candidate" = ? AND "key" = ? AND "protected_version" = ? AND "source_revision" = ?
-         ORDER BY "execution_seq" DESC LIMIT 1`,
-      )
-      .get(scope.candidate.id, c.key, scope.effective.id, scope.candidate.revision) as { id: string; status: string; execution_seq: number } | undefined;
-    const pending = latest && latest.status !== 'recorded' && (d === null || latest.execution_seq > d.execution_seq) ? { execution: latest.id, status: latest.status } : null;
+    const s = selected[c.id]!;
+    const d = s.decider;
     out[c.id] = {
       key: c.key,
-      state: states[c.id]!,
+      state: s.state,
       deciding: d === null ? null : { execution: d.execution ?? null, result: d.id, execution_seq: d.execution_seq },
       not_run_reason: d?.not_run_reason ?? null,
-      pending,
+      pending: s.pending,
       due,
+      history: s.history,
     };
   }
   return out;
@@ -359,6 +440,12 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const reasons: Reason[] = [];
   const add = (code: string, subjects: string[]) => reasons.push({ code, subjects });
 
+  // (0) The target (Q9 (a); SEAM.md §192): an evaluation of a superseded
+  // candidate is made and recorded, and refused naming its successor. It
+  // issues, completes and resolves nothing.
+  const superseded = candidate.superseded_by ?? null;
+  if (superseded !== null) add('CANDIDATE_SUPERSEDED', [superseded]);
+
   // An evaluation made without these facts (a request from inside the
   // store) cannot establish them: unknown, not a pass (E41 item 2).
   const unreadable = args.unreadable ?? { head: args.headFingerprint === undefined || args.headFingerprint === null, ancestry: false, records: [] };
@@ -391,20 +478,30 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // the candidate's own nomination ref, for that candidate's gates (row M24).
   const observations = [blockingObservation(db, args.project), candidateObservation(db, args.project, candidate.seq)].filter((o): o is OobRow => o !== undefined);
   if (observations.length > 0) add('OUT_OF_BAND_CHANGE', observations.map((o) => o.id));
+  // A ref the evaluation could not read (N02): refused, naming it, and
+  // never recorded as a change. A changed or deleted one was recorded
+  // before this transaction (gates/prepare.ts) and is an observation above.
+  const unreadRefs =
+    args.refs === undefined
+      ? [`refs/heads/${(db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { integration_branch: string }).integration_branch}`, nominationRef(candidate.seq)]
+      : args.refs.filter((r) => r.read === 'unread').map((r) => r.ref);
+  if (unreadRefs.length > 0) add('REF_UNREAD', unreadRefs);
   if (pending.length > 0) add('GIT_JOURNAL_PENDING', pending.map((op) => op.id));
 
   // (4) Every required check passed.
   const states: Record<string, CheckState> = {};
   const deciders: Record<string, Execution | null> = {};
+  const selected: Record<string, StateOf> = {};
   // A registration the candidate is owed (L2): its checks are missing.
   const due = (db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { checks_due: string | null }).checks_due;
   const dueMark = due === null ? null : (JSON.parse(due) as { trigger: unknown; at: string }[])[0] ?? null;
   for (const c of scope.required) {
-    const s = dueMark !== null ? { state: 'missing' as const, decider: null } : checkState(db, args.project, c, scope);
+    const s: StateOf = dueMark !== null ? { state: 'missing', decider: null, pending: null, history: null } : checkState(db, args.project, c, scope);
+    selected[c.id] = s;
     states[c.id] = s.state;
     deciders[c.id] = s.decider;
   }
-  const entries = checkEntries(db, scope, states, deciders, dueMark === null ? null : { trigger: dueMark.trigger, at: dueMark.at });
+  const entries = checkEntries(scope, selected, dueMark === null ? null : { trigger: dueMark.trigger, at: dueMark.at });
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
@@ -420,7 +517,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   for (const f of findings) {
     // A fix whose named check passes here, by an execution recorded after
     // the disposition, is resolved by this evaluation (SEAM.md §74).
-    if (f.disposition === 'fix' && f.check !== null) {
+    if (f.disposition === 'fix' && f.check !== null && superseded === null) {
       const named = checksOfVersion(db, scope.effective.id).find((c) => c.key === f.check);
       if (named) {
         const s = checkState(db, args.project, named, scope);
@@ -569,7 +666,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
 
   if (outcome === 'satisfied' && kind === 'stage') completeStageWork(tx, candidate, scope.stage!, id);
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
-  if (kind === 'stage') queueReview(tx, candidate, scope, states);
+  if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
   tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
   return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false } };
@@ -746,4 +843,50 @@ export function gateFactsRead(db: Db, args: { project: string; candidate: string
     )
     .all(args.candidate, args.candidate) as { id: string; path: string | null; sha256: string | null; bytes: number | null; missing_at: string | null }[];
   return { repo: p.dev_repo_path, head: head?.expected_oid ?? null, roots: effective ? (JSON.parse(effective.roots) as string[]) : null, records };
+}
+
+// ---- the gate's own ref reads (D3 §5 X1; Q4, N02; SEAM.md §193) -------------------------
+
+// One registered ref the evaluation reads, and the registry's generation of
+// it: the value it expects and the values an unfinished journaled ref update
+// of the engine's own is moving it to.
+export interface RegisteredRef {
+  registry: string;
+  ref: string;
+  expected: string;
+  moving: string[];
+}
+
+// The integration branch's ref and the candidate's nomination ref, where
+// registered, as the registry has them now.
+export function gateRefRegistry(db: Db, args: { project: string; candidate: string }): RegisteredRef[] {
+  const p = db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { integration_branch: string } | undefined;
+  if (!p) throw notFound('project', args.project);
+  const c = getCandidate(db, args.candidate);
+  const names = [`refs/heads/${p.integration_branch}`, ...(c && c.project === args.project ? [nominationRef(c.seq)] : [])];
+  const moving = movingRefs(db, args.project);
+  const out: RegisteredRef[] = [];
+  for (const ref of names) {
+    const row = db.prepare('SELECT "id", "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(args.project, ref) as { id: string; expected_oid: string } | undefined;
+    if (row) out.push({ registry: row.id, ref, expected: row.expected_oid, moving: moving[ref] ?? [] });
+  }
+  return out;
+}
+
+// What an evaluation's reads found changed, recorded before its transaction
+// as an integrity observation (D1 §7.6; SEAM.md §32). Reconciled against the
+// registry as it is now: if its expected value has moved since the read, or
+// what was found is now the engine's own journaled write, nothing is
+// recorded (the next read tells). Recorded once (recordObservation).
+export function observeGateRefs(tx: Tx, args: { project: string; changes: { registry: string; expected: string; found: string | null }[] }): { observed: number } {
+  let observed = 0;
+  const moving = movingRefs(tx.db, args.project);
+  for (const c of args.changes) {
+    const row = tx.db.prepare('SELECT "ref", "expected_oid" FROM "ref_registry" WHERE "id" = ? AND "project" = ?').get(c.registry, args.project) as { ref: string; expected_oid: string } | undefined;
+    if (!row || row.expected_oid !== c.expected || c.found === row.expected_oid) continue;
+    if (c.found !== null && (moving[row.ref] ?? []).includes(c.found)) continue;
+    recordObservation(tx, args.project, { subject: 'ref', ref: c.registry, expected: c.expected, found: c.found });
+    observed++;
+  }
+  return { observed };
 }

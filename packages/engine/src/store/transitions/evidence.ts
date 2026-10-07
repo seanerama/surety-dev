@@ -35,6 +35,7 @@ export interface CandidateRow {
   held_work: string;
   nominated_protected_version: string | null;
   progress: string;
+  superseded_by?: string | null;
 }
 
 export interface StageRow {

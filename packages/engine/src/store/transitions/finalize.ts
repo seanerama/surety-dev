@@ -14,7 +14,7 @@ import type { IntentSpec, OpDetail } from './journal.js';
 import { intendOperation } from './journal.js';
 import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
 import type { Tx } from './tx.js';
-import { registerAtNomination } from './checks.js';
+import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 
 export interface WorkspaceInputs {
@@ -267,6 +267,19 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
     .prepare('INSERT INTO "lineages" ("id", "created_at", "project", "branch", "started_from_candidate", "open") VALUES (?, ?, ?, ?, ?, 1)')
     .run(tx.newId('lin_'), tx.at, op.project, branch, candidate);
   tx.emit('candidate.nominated', { project: op.project, candidate }, { seq: inputs.seq, revision: inputs.new_oid, nominated_by: inputs.by });
+  // The candidate whose lineage this nomination closes is superseded by it
+  // (D1 A.3 `superseded_by`, A.6; SEAM.md §192): the one change a later
+  // nomination makes to an earlier candidate. Its queued executions are
+  // cancelled before launch and its evaluations are stale (Q9 refuses them).
+  const opened = tx.db.prepare('SELECT "started_from_candidate" FROM "lineages" WHERE "id" = ?').get(lineage) as { started_from_candidate: string | null };
+  if (opened.started_from_candidate !== null) {
+    const earlier = opened.started_from_candidate;
+    const changed = tx.db.prepare('UPDATE "candidates" SET "superseded_by" = ? WHERE "id" = ? AND "superseded_by" IS NULL').run(candidate, earlier).changes;
+    if (changed > 0) {
+      tx.emit('candidate.superseded', { project: op.project, candidate: earlier }, { by: candidate });
+      markStale(tx, { candidate: earlier });
+    }
+  }
   const verification = observeTrigger(
     tx,
     { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
@@ -282,6 +295,7 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   }
   // The nomination's checks, registered in its finalizer (D3 §2.5; L2).
   registerAtNomination(tx, { project: op.project, candidate });
+  cancelSuperseded(tx, op.project);
   return { candidate, verification: verification.work_item.id };
 }
 

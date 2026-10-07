@@ -45,6 +45,7 @@ export const EVENT_OWNERS = {
   'operation.finalized': 'store/transitions/journal.ts',
   'revision.recorded': 'store/transitions/repo.ts',
   'candidate.nominated': 'store/transitions/finalize.ts',
+  'candidate.superseded': 'store/transitions/finalize.ts',
   'repo.out_of_band': 'store/transitions/repo.ts',
   'repo.reconciled': 'store/transitions/finalize.ts, store/transitions/intents.ts, store/transitions/queue.ts, store/transitions/repo.ts',
   'policy.changed': 'store/transitions/finalize.ts',

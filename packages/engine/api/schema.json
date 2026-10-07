@@ -569,6 +569,7 @@
       "operation.finalized",
       "revision.recorded",
       "candidate.nominated",
+      "candidate.superseded",
       "repo.out_of_band",
       "repo.reconciled",
       "policy.changed",
@@ -4377,6 +4378,9 @@
       "owner": "store/transitions/repo.ts"
     },
     "candidate.nominated": {
+      "owner": "store/transitions/finalize.ts"
+    },
+    "candidate.superseded": {
       "owner": "store/transitions/finalize.ts"
     },
     "repo.out_of_band": {

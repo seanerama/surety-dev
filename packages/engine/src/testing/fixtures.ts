@@ -10,7 +10,7 @@ import type { Database } from 'better-sqlite3';
 import { Refusal } from '../refusal.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
 import type { Discovery } from '../checks/discovery.js';
-import { freezeProposalDiscovery, setCheckRunner } from '../store/transitions/checks.js';
+import { type ScriptedStep, freezeProposalDiscovery, scriptExecutionStep, setCheckRunner } from '../store/transitions/checks.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
@@ -648,4 +648,57 @@ export function installRunnerQualification(db: Database, actor: Actor, profileFi
   });
   if (id === null) throw new Refusal(409, 'isolation_unqualified', 'There is no active host qualification, so the check runner cannot be qualified.', 'Start the engine on a host whose checks pass.', {});
   return { host_qualification: id };
+}
+
+// ---- the scripted check boundary (kernel lane; SEAM.md §190) -----------------------------
+
+const EXECUTION_STATUSES = ['queued', 'materializing', 'running', 'quarantined', 'collecting', 'recorded', 'interrupted', 'cancelled'];
+const SCRIPTED_RESULT_FIELDS = ['exit_status', 'signaled', 'deadline_hit', 'orphans', 'output'] as const;
+
+export interface ScriptedStepBody {
+  execution: string;
+  to: string;
+  result: { exit_status: number | null; signaled: boolean; deadline_hit: boolean; orphans: boolean } | null;
+  outputText: string | null;
+}
+
+// POST /v1/harness/fixtures/check-execution: one step of D3 A.5. The
+// result fields go with `to: "recorded"` only.
+export function parseScriptedStep(body: unknown): ScriptedStepBody {
+  const b = objectBody(body, ['execution', 'to', ...SCRIPTED_RESULT_FIELDS]);
+  const execution = str(b, 'execution');
+  const to = str(b, 'to');
+  if (!EXECUTION_STATUSES.includes(to)) throw invalid('to', `must be one of ${EXECUTION_STATUSES.join(', ')}`);
+  if (to !== 'recorded') {
+    const given = SCRIPTED_RESULT_FIELDS.find((f) => b[f] !== undefined);
+    if (given !== undefined) throw invalid(given, 'goes with "to": "recorded" only');
+    return { execution, to, result: null, outputText: null };
+  }
+  const exit = b.exit_status;
+  if (exit !== null && !(typeof exit === 'number' && Number.isInteger(exit))) throw invalid('exit_status', 'is required with "recorded": an integer or null');
+  const flag = (f: string) => {
+    const v = b[f];
+    if (v !== undefined && typeof v !== 'boolean') throw invalid(f, 'must be a boolean');
+    return v === true;
+  };
+  if (b.output !== undefined && typeof b.output !== 'string') throw invalid('output', 'must be a string');
+  return {
+    execution,
+    to,
+    result: { exit_status: exit as number | null, signaled: flag('signaled'), deadline_hit: flag('deadline_hit'), orphans: flag('orphans') },
+    outputText: (b.output as string | undefined) ?? '',
+  };
+}
+
+// The project of an execution, or null when there is none.
+export function executionProject(db: Database, execution: string): string | null {
+  return (db.prepare('SELECT "project" FROM "check_executions" WHERE "id" = ?').get(execution) as { project: string } | undefined)?.project ?? null;
+}
+
+// The engine's own transition, every event it causes labelled.
+export function installScriptedStep(db: Database, actor: Actor, args: ScriptedStep) {
+  return transact(db, actor, (tx) => {
+    tx.stamp = { ...FIXTURE_LABEL };
+    return scriptExecutionStep(tx, args);
+  });
 }

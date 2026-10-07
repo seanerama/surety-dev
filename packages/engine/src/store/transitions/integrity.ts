@@ -4,6 +4,7 @@
 // expected value and no baseline; unknown is not clean.
 
 import { movingRefs } from './accept.js';
+import { markBlockedStale } from './evidence.js';
 import { type Baseline, type CheckoutRow, type RegistryRow, addCheckout, closeRepositoryObservation, integrationRef, projectRepoRow, recordObservation, releaseCheckouts } from './repo.js';
 import type { Tx } from './tx.js';
 
@@ -93,6 +94,9 @@ export function recordIntegrity(tx: Tx, report: IntegrityReport): { observed: nu
     return { observed: 1 };
   }
   closeRepositoryObservation(tx, report.project);
+  // The repository answered: an evaluation refused because it could not
+  // read a ref is due again (D3 §5 X1, N02's bounded reread), at most once a tick.
+  markBlockedStale(tx, report.project, ['REF_UNREAD']);
   for (const id of report.released ?? []) releaseCheckouts(tx, { id });
   for (const c of report.added ?? []) addCheckout(tx, { project: report.project, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
   for (const r of report.refs ?? []) {
