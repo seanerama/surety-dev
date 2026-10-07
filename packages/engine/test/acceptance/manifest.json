@@ -201,7 +201,9 @@
       "M202-governed-schemas-and-required-set.test.mjs",
       "M203-definitions-and-discovery-runs-nothing.test.mjs",
       "M204-triggers-registration-frozen-discovery.test.mjs",
-      "M205-what-establishes-a-result.test.mjs"
+      "M205-what-establishes-a-result.test.mjs",
+      "M201-materialization-is-the-revision.test.mjs",
+      "M201-source-symlink-refused.test.mjs"
     ]
   },
   "sandbox": [
@@ -235,7 +237,9 @@
     "M136-adapter-with-a-fake-backend.test.mjs",
     "M133-memory-admission-reserves-the-limit.test.mjs",
     "M201-check-journey-path-one.test.mjs",
-    "M205-what-establishes-a-result.test.mjs"
+    "M205-what-establishes-a-result.test.mjs",
+    "M201-materialization-is-the-revision.test.mjs",
+    "M201-source-symlink-refused.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
