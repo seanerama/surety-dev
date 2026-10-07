@@ -4165,6 +4165,93 @@ The rows declare their checks with the checks fixture of section 67, as before. 
 - S2's attributes use `eol=crlf` and `ident` only: a `working-tree-encoding` attribute makes git's own `add` refuse a file without a BOM, which fails the fixture, not the engine.
 - S1's sentinel is at the input's resolved target (`<victim>/checks/expect.txt`, since `.surety` points at `<victim>`), and the test-owned directory's whole listing must be unchanged.
 
+## 189. What the slice-16 tests assume throughout
+
+(M3 plan §3.2; BS3 §8; rows M206 to M209, all kernel lane.)
+
+- **The runner switch stands** (section 177): a kernel-lane engine registers executions and admits none. Where a case needs an execution to move, the test moves it with the scripted check boundary of section 190. M209 moves none and records its results with the check-result fixture (section 67).
+- **Two kinds of project.** (i) `nominated` (`gates.mjs`), whose checks the checks fixture declares **after** the candidates the case needs are nominated, so that no nomination registers them (section 180 registers the effective version's required checks, the fixture's included); the case then registers by the operator route. (ii) A project whose checks are discovered smoke definitions (`discoveredProject` in `checks/selection.mjs`), whose nomination registers them.
+- **A fixture result takes the one sequence** (L7): it draws a new `execution_seq` and decides over an older queued registration of the same bindings, as section 177 says.
+- **The check-result fixture records for any candidate of the project**, superseded or not (section 192): it is an observation of a past execution.
+- **`check_infra_retries_max` is 0** where a case moves an execution to `interrupted` (M206 (b)), so that slice 18's recovery registration (D3 §2.7) adds nothing the case does not read.
+
+## 190. The scripted check boundary (kernel lane)
+
+(BS3 §8; M3 plan §2.3; D3 A.5; section 177 left it to this slice. Rows M206 to M208.)
+
+**`POST /v1/harness/fixtures/check-execution`** with `{"execution": "cx_…", "to": <CheckExecutionStatus>, "exit_status"?, "signaled"?, "deadline_hit"?, "orphans"?, "output"?}` moves one execution **one step** of D3 A.5 and answers **200** `{"execution": {"id", "status"}, "check_result": {"id", "execution_seq"} | null}`.
+
+| From | To |
+|---|---|
+| `queued` | `materializing`, `cancelled` |
+| `materializing` | `running`, `quarantined`, `interrupted`, `cancelled` |
+| `running` | `collecting`, `quarantined`, `interrupted` |
+| `quarantined` | `collecting`, `interrupted` |
+| `collecting` | `recorded` |
+
+- **Any other step** (from a terminal status, skipping a status, `materializing → recorded`, which is slice 18's not-run row) is **409** `illegal_transition`, and nothing changes. An unknown execution is **404** `not_found`. The result fields with any `to` but `recorded` are **400** `invalid_value`.
+- **`to: "recorded"`** records the execution's one `check_results` row: `execution` the execution, `execution_seq` **the execution's** (no new number), `candidate`, `source_revision`, `protected_version` and `runner_class` the execution's frozen bindings (D3 §2.5), `execution_established` true, `exit_status` (required, an integer or null), `signaled`, `deadline_hit` and `orphans` as given (default false), `output` published as a `check_output` record (an empty one when not given: every established result names one, D3 §2.6), `runner_id` and `runner_qualification` null (no runner ran). The execution becomes `recorded` with `result` naming the row, and `check.result` is emitted.
+- **It is the engine's own transition.** Everything the engine does when an execution's status changes happens in the route's transaction: staling dependent evaluations (D3 §2.5), and in later slices the repair reconciliation of D3 §2.10 and the recovery registration of D3 §2.7. Every event it causes has `payload.test_fixture = true`.
+- **Only the route moves a scripted execution.** Once the route has moved an execution out of `queued`, no tick, supervision, lease or restart recovery changes its status; an engine path that applies to a status regardless of who set it (section 192's cancellation of a queued execution) still does.
+- Harness-only, as every route of section 7. The tests use it on kernel-lane engines, whose runner admits nothing; what it does to an execution a runner supervises is not pinned. Placement, `started`, closure and the init's reports are not scripted here: no kernel-lane row of slice 16 reads them.
+
+## 191. Selection by registration, the disposition watermark, and history (L7, B03, N03)
+
+(D3 §§2.5, 2.6, 2.11, §7.1 L7, A.7; Astra's T04, T06; rows M206, M207. Extends sections 71, 74 and 183.)
+
+**Selection** (section 71 with L7). For a required check, the executions at the scope's bindings (the candidate, its revision, the effective version, the check's runner class; a reused result as section 73) are the registrations and the results together, ordered by `execution_seq`; the latest decides, never a timestamp. A registration is ordered by its own number; its result carries the same number (section 190). If the latest is a registration with no recorded result, in any of `queued`, `materializing`, `running`, `quarantined`, `collecting`, `interrupted` or `cancelled`, the check is **`missing`**, its entry's `pending` is `{"execution", "status"}` of that registration, and no earlier result or reuse entry decides (`deciding` names none of them). Otherwise section 71 step 3 applies to the latest result. A fixture result (execution null) is a result like any other in this order.
+
+**Registration stales.** Registering an execution makes every stored evaluation of its candidate `stale` in the registering transaction: an evaluation satisfied before an operator request reads `stale` 1 as soon as the request is answered, with no tick.
+
+**The disposition watermark** (T06; section 74's resolution). A `fix` disposition is later than every registration and every result made before it in the project's one sequence. An execution registered before the disposition does not resolve the finding, though its passing result is recorded after the disposition; one registered after it does. (Section 74's "an execution recorded after the disposition" now reads "registered after". F2's criterion is slice 21's.)
+
+**History** (N03). Section 183's entry gains **`history`**, for a deciding execution (a registration's result): `{"count", "executions": [...], "link"}`. `executions` lists every execution of the check at the deciding execution's bindings registered before it, in `execution_seq` order, each with at least `execution` (its id), `execution_seq`, `trigger` (its stored trigger) and `state` (the state its own result has by section 71 step 3, or null without a result); `count` is their number. `link` is a path on the API (the candidate's checks route of section 180) whose GET lists them in sequence. A later pass changes no earlier result's row. `history` is not pinned where a fixture result decides.
+
+## 192. Candidate supersession, and the refusal of a superseded candidate's evaluation (Q9)
+
+(D1 A.3 `candidates.superseded_by`, A.6 `candidate.superseded`; D3 §2.5 "Supersession", §7.4 Q9 decided (a), E91 item 2; Astra's T15; M3 plan §4.3; rows M208, M206 and the straddle in M52.)
+
+**When a candidate is superseded.** A nomination on the lineage that an earlier candidate's nomination opened (section 42: that lineage's `started_from_candidate` is the earlier candidate) sets the earlier candidate's `superseded_by` to the new candidate in the new nomination's finalizer and emits `candidate.superseded` with `subject.candidate` the earlier one. Section 42's "A candidate is immutable" is amended: this is the one change a later nomination makes to an earlier candidate's row. (D1 names the column and the event and no trigger; this is the reading M3 plan §4.3 makes, "a candidate evaluated after its successor". A question for Sean in the Verifier's report.)
+
+**Before launch and while running** (T15). A `queued` execution whose candidate, or whose protected version, is superseded is `cancelled` with no `check_results` row, `check.cancelled` emitted with `subject.check_execution` the execution, no later than the end of the next tick. A `running` execution is not cancelled for it: its result is recorded under its frozen bindings (section 190), and it decides nothing at a binding it does not have.
+
+**The refusal** (Q9 (a)). An evaluation of a candidate whose `superseded_by` is set is made and recorded like any other (section 70), its scope and check states computed as they would be otherwise, and carries the reason **`CANDIDATE_SUPERSEDED`** with `subjects` `[<the successor's id>]` beside whatever other reasons it has; so it is `not_satisfied`. It issues no authorization, completes no work and resolves no finding. `CANDIDATE_SUPERSEDED` joins D1 A.4's gate reason codes.
+
+## 193. The gate's own ref reads (X1; Q4, N02)
+
+(D3 §5 X1, A.2 `RefRead`; Astra's T16; D1 §§7.2, 7.6; row M209. Extends sections 32, 66, 72 and 99.)
+
+**At every evaluation** of `stage` and `alpha_authorize`, before its transaction, the engine reads from git the integration branch's ref and the candidate's nomination ref (`refs/surety/cand/<seq>`).
+
+- **A different value or a verified absence** of a registered ref, other than one the engine's own journal is moving it to, is recorded as section 32's observation (an `out_of_band_changes` row, `repo.out_of_band`, the `out_of_band_change` decision) **before the evaluation's transaction**: its `repo.out_of_band` event precedes the evaluation's `gate.evaluated`, with no tick between. The evaluation carries `OUT_OF_BAND_CHANGE` (sections 72, 99), and nothing a satisfied evaluation does happens. The observation is not recorded twice.
+- **An unsuccessful read** (the case: `holdGit`, `git_deadline` 2 s): the evaluation is made and recorded, `not_satisfied`, carrying the reason **`REF_UNREAD`** whose `subjects` include the full name of a registered ref it could not read. Nothing is recorded as a change: no `out_of_band_changes` row, no `repo.out_of_band`, no `out_of_band_change` decision. Its other reasons are as before (an unreadable head is `PROTECTED_PATH_UNAUTHORIZED`, section 66). Once git answers, the next ticks and evaluations find nothing changed. `REF_UNREAD` joins D1 A.4's gate reason codes. Not pinned: the reread's interval.
+- **The engine's own write.** Barrier **`gate.facts_read`** fires in an evaluation after the main thread has read its facts, the refs included, and before the evaluation's transaction (section 18's rules). An evaluation whose facts were read while a protected application's ref update was confirmed and its finalizer not run (`protected_application.before_finalizer`, section 184), and whose transaction runs after that finalizer has committed, records no observation and carries no `OUT_OF_BAND_CHANGE`; nor do the ticks that follow.
+
+## 194. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Section 7's harness routes gain section 190's; section 18's barriers gain `gate.facts_read`.
+- Section 42: a later nomination sets the earlier candidate's `superseded_by` (section 192).
+- Section 71 reads with section 191 (registrations select); section 74's resolution counts executions registered after the disposition (section 191).
+- Sections 70 and 98: `CANDIDATE_SUPERSEDED` and `REF_UNREAD` (sections 192, 193); section 183's entry gains `history`.
+- Section 177: the scripted check boundary it left to this slice is section 190.
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The scripted check boundary | One route, one A.5 step per call; `recorded` writes the result with the registration's sequence (section 190) | BS3 §8; the rows need statuses and recorded results, not placement or init reports, in the kernel lane |
+| The gate read's history entry (M3 plan §2.6) | `history: {count, executions: [{execution, execution_seq, trigger, state}], link}` (section 191) | D3 A.7 and N03 name count, identities and a link; `trigger` makes a request distinguishable from a retry |
+| When a candidate is superseded † | At its successor's nomination, in that finalizer (section 192) | D1 names the column and event with no trigger; the plan's §4.3 reads it this way |
+| The reason a superseded candidate's evaluation carries † | `CANDIDATE_SUPERSEDED`, subjects the successor, beside the other reasons (section 192) | Q9 (a) names the successor and no code; computing the rest as before keeps M105's readings (and §99's precedent) |
+| The reason an evaluation refused on an unread ref carries (M3 plan §2.6) | `REF_UNREAD`, subjects including the unread ref's full name (section 193) | N02: the unread fact named, apart from `OUT_OF_BAND_CHANGE` |
+| When a superseded queued execution is cancelled | By the end of the next tick (section 192) | D3 says "before launch"; a kernel-lane engine launches nothing, so the case allows the transition or the next Checks step |
+| The race of an engine-owned finalizer with the fact preparation | Barrier `gate.facts_read`, with section 184's `protected_application.before_finalizer` (section 193) | T16 asks for the race; no existing barrier stops an evaluation between its reads and its transaction |
+
+**Deferred** (`../COVERAGE.md`, "M3 slice 16"):
+- **M207 (c), the infrastructure retry** beside the operator request: a `recovery` registration exists from slice 18 (D3 §2.7; E93 item 1). Slice 18's Verifier adds it to M207's file or to M216.
+- **M207 (a)** is rows M41's two blocks: a check's fingerprint is a function of its version's tree (D3 §1.3), so a changed fingerprint at an unchanged version cannot be built; a changed version is section 103's case.
+- **M208 (a)'s runner id and qualification** are the sandbox lane's (row M201 (b)); a scripted execution has none.
+- **M208 (d)'s repair**: no repair is triggered by any check result before slice 21 (D3 §2.10); slice 21's M234 (f) covers a superseded candidate's result.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15".
+See `../COVERAGE.md`, "M3 slice 15" and "M3 slice 16".
