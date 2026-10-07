@@ -696,9 +696,9 @@ export function executionProject(db: Database, execution: string): string | null
 }
 
 // The engine's own transition, every event it causes labelled.
-export function installScriptedStep(db: Database, actor: Actor, args: ScriptedStep) {
+export function installScriptedStep(db: Database, actor: Actor, args: Omit<ScriptedStep, 'runner_id'>) {
   return transact(db, actor, (tx) => {
     tx.stamp = { ...FIXTURE_LABEL };
-    return scriptExecutionStep(tx, args);
+    return scriptExecutionStep(tx, { ...args, runner_id: 'test_fixture' });
   });
 }

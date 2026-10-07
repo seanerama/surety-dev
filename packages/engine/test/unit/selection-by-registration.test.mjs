@@ -113,7 +113,7 @@ function register(db, { id, candidate = 'cand_2', revision = B, source = 'operat
   });
 }
 
-const step = (db, execution, to, result = null) => transact(db, ENGINE_ACTOR, (tx) => scriptExecutionStep(tx, { execution, to, result, output: null }));
+const step = (db, execution, to, result = null) => transact(db, ENGINE_ACTOR, (tx) => scriptExecutionStep(tx, { execution, to, result, output: null, runner_id: 'test_fixture' }));
 const recordExit = (db, execution, exit) => {
   for (const to of ['materializing', 'running', 'collecting']) step(db, execution, to);
   return step(db, execution, 'recorded', { exit_status: exit, signaled: false, deadline_hit: false, orphans: false });

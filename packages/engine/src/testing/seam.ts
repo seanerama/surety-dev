@@ -1191,7 +1191,7 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
     case OP.executionProject:
       return executionProject(store(), a.execution as string);
     case OP.scriptedStep:
-      return installScriptedStep(store(), a.actor, a.args as unknown as ScriptedStep);
+      return installScriptedStep(store(), a.actor, a.args as unknown as Omit<ScriptedStep, 'runner_id'>);
     case OP.correction:
       return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:

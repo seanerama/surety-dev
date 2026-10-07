@@ -704,13 +704,16 @@ export interface ScriptedStep {
   to: string;
   result: { exit_status: number | null; signaled: boolean; deadline_hit: boolean; orphans: boolean } | null;
   output: string | null;
+  // The label a recorded result carries as its runner: the caller's, since
+  // no runner ran (E92 item 2; objection 025).
+  runner_id: string;
 }
 
 // Move one execution one step through the engine's own transitions, so that
 // whatever the engine does on that change (staling, and in later slices the
 // repair and recovery reconciliations) happens in this transaction. A
 // recorded result carries the registration's number and frozen bindings,
-// `execution_established` true, no runner qualification and the harness
+// `execution_established` true, no runner qualification and the caller's
 // label as its runner (no runner ran; E92 item 2).
 export function scriptExecutionStep(tx: Tx, args: ScriptedStep): { execution: { id: string; status: string }; check_result: { id: string; execution_seq: number } | null } {
   const x = tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(args.execution) as (ExecutionRow & { execution_seq: number }) | undefined;
@@ -755,7 +758,7 @@ export function scriptExecutionStep(tx: Tx, args: ScriptedStep): { execution: { 
           output: args.output,
           output_dropped_bytes: null,
         },
-        { runner_id: 'test_fixture' },
+        { runner_id: args.runner_id },
       );
       if (made !== null) result = { id: made.check_result, execution_seq: x.execution_seq };
       break;
