@@ -134,6 +134,8 @@ test('the gate read is 404 before any evaluation, then shows the latest recorded
     outcome: 'not_satisfied',
     reasons: [{ code: 'CHECK_NOT_PASSED', subjects: ['chk_b'] }],
     check_states: { chk_a: 'passed', chk_b: 'missing' },
+    // SEAM.md §183: the per-check entries the evaluation recorded (none here).
+    checks: {},
     scope: 'scope_1',
     stale: true,
   }, 'the latest, as recorded');

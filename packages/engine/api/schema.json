@@ -31,10 +31,45 @@
       "beta_deployed",
       "live"
     ],
+    "CheckExecutionsRunnerClass": [
+      "direct",
+      "container",
+      "remote"
+    ],
+    "CheckExecutionsStatus": [
+      "queued",
+      "materializing",
+      "running",
+      "quarantined",
+      "collecting",
+      "recorded",
+      "interrupted",
+      "cancelled"
+    ],
+    "CheckExecutionsNotRunReason": [
+      "definition_invalid",
+      "toolchain_missing",
+      "materialization_failed",
+      "mount_plan_refused",
+      "isolation_unqualified",
+      "runner_unqualified",
+      "environment_unbound",
+      "exec_failed"
+    ],
     "RunnerClass": [
       "direct",
       "container",
       "remote"
+    ],
+    "CheckResultsNotRunReason": [
+      "definition_invalid",
+      "toolchain_missing",
+      "materialization_failed",
+      "mount_plan_refused",
+      "isolation_unqualified",
+      "runner_unqualified",
+      "environment_unbound",
+      "exec_failed"
     ],
     "CheckKind": [
       "acceptance",
@@ -51,6 +86,10 @@
       "T1",
       "T2",
       "T3"
+    ],
+    "ChecksOrigin": [
+      "acceptance",
+      "developer"
     ],
     "DecisionKind": [
       "idea_accept",
@@ -209,7 +248,8 @@
       "run",
       "integration",
       "workspace",
-      "quarantine"
+      "quarantine",
+      "check"
     ],
     "Role": [
       "vision",
@@ -593,7 +633,12 @@
       "domain.launch_closed",
       "run.lease_regranted",
       "domain.egress_refused",
-      "evidence.secret_refused"
+      "evidence.secret_refused",
+      "check.registered",
+      "check.launched",
+      "check.quarantined",
+      "check.interrupted",
+      "check.cancelled"
     ],
     "EngineMode": [
       "restricted",
@@ -878,6 +923,9 @@
         },
         "held_work": {
           "required": true
+        },
+        "checks_due": {
+          "required": false
         }
       }
     },
@@ -916,6 +964,113 @@
           "required": false
         },
         "provider_cap": {
+          "required": false
+        }
+      }
+    },
+    "check_executions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "check": {
+          "required": true,
+          "references": "checks"
+        },
+        "key": {
+          "required": true
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "source_revision": {
+          "required": true
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "runner_class": {
+          "required": true,
+          "enum": "CheckExecutionsRunnerClass"
+        },
+        "execution_seq": {
+          "required": true
+        },
+        "trigger": {
+          "required": true
+        },
+        "trigger_key": {
+          "required": true
+        },
+        "retry_of": {
+          "required": false,
+          "references": "check_executions"
+        },
+        "status": {
+          "required": true,
+          "enum": "CheckExecutionsStatus"
+        },
+        "domain": {
+          "required": false,
+          "references": "execution_domains"
+        },
+        "lease": {
+          "required": false,
+          "references": "leases"
+        },
+        "runner_id": {
+          "required": false
+        },
+        "runner_qualification": {
+          "required": false,
+          "references": "host_qualifications"
+        },
+        "environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "artifact_digest": {
+          "required": false
+        },
+        "deployment": {
+          "required": false
+        },
+        "candidate_protected_fingerprint": {
+          "required": false
+        },
+        "toolchain": {
+          "required": false
+        },
+        "init_reports": {
+          "required": true
+        },
+        "not_run_reason": {
+          "required": false,
+          "enum": "CheckExecutionsNotRunReason"
+        },
+        "infra_retries": {
+          "required": true
+        },
+        "result": {
+          "required": false,
+          "references": "check_results"
+        },
+        "registered_at": {
+          "required": true
+        },
+        "started_at": {
+          "required": false
+        },
+        "finished_at": {
           "required": false
         }
       }
@@ -988,6 +1143,24 @@
         },
         "invalidated_at": {
           "required": false
+        },
+        "execution": {
+          "required": false,
+          "references": "check_executions"
+        },
+        "not_run_reason": {
+          "required": false,
+          "enum": "CheckResultsNotRunReason"
+        },
+        "orphans": {
+          "required": true
+        },
+        "output_dropped_bytes": {
+          "required": false
+        },
+        "runner_qualification": {
+          "required": false,
+          "references": "host_qualifications"
         }
       }
     },
@@ -1044,6 +1217,19 @@
           "enum": "RunnerClass"
         },
         "requires": {
+          "required": true
+        },
+        "origin": {
+          "required": true,
+          "enum": "ChecksOrigin"
+        },
+        "criteria": {
+          "required": true
+        },
+        "definition": {
+          "required": true
+        },
+        "input_manifest": {
           "required": true
         }
       }
@@ -1394,11 +1580,11 @@
           "references": "projects"
         },
         "run": {
-          "required": true,
+          "required": false,
           "references": "runs"
         },
         "invocation": {
-          "required": true,
+          "required": false,
           "references": "invocation_receipts"
         },
         "status": {
@@ -1460,6 +1646,10 @@
         "mount_plan_record": {
           "required": false,
           "references": "records"
+        },
+        "check_execution": {
+          "required": false,
+          "references": "check_executions"
         }
       }
     },
@@ -1622,6 +1812,9 @@
         },
         "authorization": {
           "required": false
+        },
+        "checks": {
+          "required": true
         }
       }
     },
@@ -1734,6 +1927,9 @@
           "required": false
         },
         "lapsed_reason": {
+          "required": false
+        },
+        "check_runner": {
           "required": false
         }
       }
@@ -2286,7 +2482,7 @@
           "references": "execution_domains"
         },
         "invocation": {
-          "required": true,
+          "required": false,
           "references": "invocation_receipts"
         },
         "incarnation": {
@@ -2310,6 +2506,10 @@
         },
         "termination_confirmed_at": {
           "required": false
+        },
+        "check_execution": {
+          "required": false,
+          "references": "check_executions"
         }
       }
     },
@@ -2440,6 +2640,9 @@
         },
         "recommendations": {
           "required": true
+        },
+        "classification": {
+          "required": false
         }
       }
     },
@@ -2498,6 +2701,12 @@
         },
         "roots": {
           "required": true
+        },
+        "discovery_errors": {
+          "required": true
+        },
+        "governed": {
+          "required": false
         }
       }
     },
@@ -2692,6 +2901,12 @@
         },
         "text": {
           "required": false
+        },
+        "criteria": {
+          "required": false
+        },
+        "sensitive_areas": {
+          "required": true
         }
       }
     },
@@ -4358,6 +4573,21 @@
     },
     "evidence.secret_refused": {
       "owner": "store/transitions/boundary.ts"
+    },
+    "check.registered": {
+      "owner": "store/transitions/checks.ts"
+    },
+    "check.launched": {
+      "owner": "store/transitions/checks.ts"
+    },
+    "check.quarantined": {
+      "owner": "store/transitions/checks.ts"
+    },
+    "check.interrupted": {
+      "owner": "store/transitions/checks.ts"
+    },
+    "check.cancelled": {
+      "owner": "store/transitions/checks.ts"
     }
   },
   "config": {
@@ -4609,6 +4839,43 @@
         "max": 30,
         "integer": true
       },
+      "check_timeout_max": {
+        "default": 1800,
+        "min": 10,
+        "max": 10800,
+        "integer": true
+      },
+      "check_output_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
+      },
+      "checktree_max_bytes": {
+        "default": 2147483648,
+        "min": 67108864,
+        "max": 34359738368,
+        "integer": true
+      },
+      "checktree_max_entries": {
+        "default": 200000,
+        "min": 1000,
+        "max": 2000000,
+        "integer": true
+      },
+      "checktrees_max_bytes": {
+        "default": 8589934592,
+        "min": 67108864,
+        "max": 137438953472,
+        "integer": true,
+        "at_least": "checktree_max_bytes"
+      },
+      "check_infra_retries_max": {
+        "default": 2,
+        "min": 0,
+        "max": 5,
+        "integer": true
+      },
       "isolation_probe_exhaustion": {
         "default": false,
         "type": "boolean"
@@ -4727,6 +4994,12 @@
         "default": 10485760,
         "min": 1024,
         "max": 1073741824,
+        "integer": true
+      },
+      "max_concurrent_checks": {
+        "default": 1,
+        "min": 1,
+        "max": 8,
         "integer": true
       },
       "budget_run_boundary": {
