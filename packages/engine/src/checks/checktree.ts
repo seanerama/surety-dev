@@ -121,57 +121,68 @@ export function removeTreeDir(home: string, dir: string): void {
 const treeSizes = new Map<string, number>();
 const reserved = new Map<string, number>();
 
-function bytesUnder(dir: string): number {
+// The bytes of the files under `dir`, or why they cannot be counted: an
+// entry that cannot be read is never counted as nothing (unknown is a value).
+type Count = { bytes: number } | { unknown: string };
+
+function bytesUnder(dir: string): Count {
   let total = 0;
   let names: string[];
   try {
     names = readdirSync(dir);
-  } catch {
-    return 0;
+  } catch (err) {
+    return { unknown: `${dir} cannot be listed: ${(err as Error).message}` };
   }
   for (const name of names) {
     const p = join(dir, name);
     let st;
     try {
       st = lstatSync(p);
-    } catch {
-      continue;
+    } catch (err) {
+      return { unknown: `${p} cannot be read: ${(err as Error).message}` };
     }
-    if (st.isDirectory()) total += bytesUnder(p);
-    else if (st.isFile()) total += st.size;
+    if (st.isDirectory()) {
+      const below = bytesUnder(p);
+      if ('unknown' in below) return below;
+      total += below.bytes;
+    } else if (st.isFile()) total += st.size;
   }
-  return total;
+  return { bytes: total };
 }
 
-// What the trees of this home hold, and what builds in progress will add.
-export function checktreeBytesInUse(home: string): number {
+// What the trees of this home hold, and what builds in progress will add;
+// unknown when any of it cannot be read. A tree's count is kept once known.
+export function checktreeBytesInUse(home: string): Count {
   let total = 0;
   let projects: string[];
   try {
     projects = readdirSync(checktreesDir(home)).filter((p) => PROJECT_ID.test(p));
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return { unknown: `${checktreesDir(home)} cannot be listed: ${(err as Error).message}` };
     projects = [];
   }
   for (const p of projects) {
     let names: string[];
     try {
       names = readdirSync(join(checktreesDir(home), p));
-    } catch {
-      continue;
+    } catch (err) {
+      return { unknown: `${join(checktreesDir(home), p)} cannot be listed: ${(err as Error).message}` };
     }
     for (const name of names) {
       if (!TREE_NAME.test(name)) continue;
       const root = join(checktreesDir(home), p, name);
       let size = treeSizes.get(root);
       if (size === undefined) {
-        size = bytesUnder(root);
+        const counted = bytesUnder(root);
+        if ('unknown' in counted) return counted;
+        size = counted.bytes;
         treeSizes.set(root, size);
       }
       total += size;
     }
   }
   for (const n of reserved.values()) total += n;
-  return total;
+  return { bytes: total };
 }
 
 interface BlobEntry {
@@ -299,6 +310,9 @@ export async function materialize(args: {
   maxBytes: number;
   // checktrees_max_bytes; the engine's configured value when not given.
   maxAllBytes?: number;
+  // Whether another execution of the triple has a domain that may hold its
+  // tree; an earlier-layout tree is removed only when this says no.
+  held?: () => Promise<boolean>;
 }): Promise<CheckTree> {
   const maxAll = args.maxAllBytes ?? checkLimits().checktrees_max_bytes;
   const root = treePath(args.home, args.project, args.revision, args.version);
@@ -307,10 +321,14 @@ export async function materialize(args: {
   for (const m of args.manifests) wanted.set(manifestKey(m), m);
   if (existsSync(made.src)) {
     if ([...wanted.keys()].every((k) => existsSync(join(made.inputs, k)))) return made;
-    // A tree of an earlier layout (no projections): never one this
-    // incarnation built for a live execution, so it is built again.
-    if (!existsSync(made.inputs)) removeTreeDir(args.home, root);
-    else throw new MaterializationFailed(`the check tree ${args.revision}-${args.version} has no projection of this check's inputs`);
+    // A tree of an earlier layout (no projections) is built again, but never
+    // removed before closure: only once no other execution of its triple
+    // has a domain that may still hold it (running, collecting or
+    // quarantined, D3 §2.4).
+    if (!existsSync(made.inputs)) {
+      if (args.held === undefined || (await args.held())) throw new MaterializationFailed(`the check tree ${args.revision}-${args.version} is of an earlier layout and may still be held by an execution whose domain is not closed`);
+      removeTreeDir(args.home, root);
+    } else throw new MaterializationFailed(`the check tree ${args.revision}-${args.version} has no projection of this check's inputs`);
   }
   const parent = join(checktreesDir(args.home), args.project);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -336,12 +354,17 @@ export async function materialize(args: {
       source.push({ mode, oid, path });
     }
     const projections = [...wanted].map(([key, m]) => ({ key, entries: m.map(([path, , mode, oid]) => ({ mode, oid, path })) }));
+    // The projections' entries count toward the same bound as the source's.
+    entries += projections.reduce((n, p) => n + p.entries.length, 0);
+    if (entries > args.maxEntries) throw new MaterializationFailed(`the tree would hold ${entries} entries with its input projections, more than checktree_max_entries (${args.maxEntries})`);
     // The bounds, from the blobs' sizes, before anything is written.
     const sizes = await measure(args.repo, [...source.map((e) => e.oid), ...projections.flatMap((p) => p.entries.map((e) => e.oid))]);
     const total = bytesOf(source, sizes) + projections.reduce((n, p) => n + bytesOf(p.entries, sizes), 0);
     if (total > args.maxBytes) throw new MaterializationFailed(`the tree would hold ${total} bytes, more than checktree_max_bytes (${args.maxBytes})`);
+    // Unknown counts as over the bound: never admitted on a guess.
     const inUse = checktreeBytesInUse(args.home);
-    if (inUse + total > maxAll) throw new MaterializationFailed(`the check trees would hold ${inUse + total} bytes, more than checktrees_max_bytes (${maxAll})`);
+    if ('unknown' in inUse) throw new MaterializationFailed(`the bytes the check trees hold cannot be counted, so checktrees_max_bytes (${maxAll}) cannot be shown to hold: ${inUse.unknown}`);
+    if (inUse.bytes + total > maxAll) throw new MaterializationFailed(`the check trees would hold ${inUse.bytes + total} bytes, more than checktrees_max_bytes (${maxAll})`);
     reserved.set(staging, total);
     await writeBlobs(args.repo, source, join(staging, 'src'), sizes);
     mkdirSync(join(staging, 'inputs'), { mode: 0o755 });
@@ -399,9 +422,10 @@ export function listTrees(home: string, project: string): { revision: string; ve
 // way is never a tree, and goes (D3 §2.4). Retention of whole trees is the
 // rule above (an execution live, or a current candidate at the revision
 // under the version in effect); a candidate's tree goes once a later
-// nomination supersedes it and no execution holds it (slice 16), and slice
-// 17's `checktrees_max_bytes` admission must be able to remove trees no live
-// execution holds (`releaseTree`) to make room.
+// nomination supersedes it and no execution holds it (slice 16). Nothing is
+// evicted to make room: `checktrees_max_bytes` admission refuses a tree that
+// would take the trees past it (SEAM.md §200); whether trees no execution
+// holds should be evicted under that bound is a later question.
 export function removeStagingLeftovers(home: string): number {
   let projects: string[];
   try {

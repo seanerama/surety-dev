@@ -36,7 +36,14 @@ export function rootsOf(text: string | null): string[] {
   return [...DEFAULT_ROOTS];
 }
 
-export const isProtected = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((root) => path.startsWith(root));
+// A root is a directory (SEAM.md §66): a path is under it when it lies
+// inside that directory, never because its name merely begins with the
+// root's text. Discovery refuses a root without its trailing `/`
+// (`invalid_value`); one read here anyway is taken as the directory it
+// names. The one predicate every reader of the roots uses.
+export const rootDir = (root: string): string => (root.endsWith('/') ? root : `${root}/`);
+export const isUnderRoot = (path: string, root: string): boolean => path.startsWith(rootDir(root));
+export const isProtected = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((root) => isUnderRoot(path, root));
 
 export type ManifestRow = [path: string, type: string, mode: string, oid: string];
 

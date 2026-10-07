@@ -803,6 +803,20 @@ export function treeInUse(db: Db, args: { project: string; revision: string; ver
   return current !== undefined && candidate !== undefined;
 }
 
+// Whether another execution of the triple has a domain that may still hold
+// its check tree: launched or past it and not established closed (D3 §2.4,
+// "never before closure").
+export function treeHeld(db: Db, args: { project: string; revision: string; version: string; except: string }): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM "check_executions" WHERE "project" = ? AND "source_revision" = ? AND "protected_version" = ? AND "id" <> ?
+         AND "status" IN ('running', 'collecting', 'quarantined') LIMIT 1`,
+      )
+      .get(args.project, args.revision, args.version, args.except) !== undefined
+  );
+}
+
 // Executions this incarnation must account for at start (D3 §2.6, T07):
 // every one past `queued` and not terminal.
 export function liveExecutions(db: Db): { id: string; project: string; status: string; domain: string | null; source_revision: string; protected_version: string }[] {

@@ -312,8 +312,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // unreadable at an earlier start, recomputed over the manifest before
   // anything reads one (L6; Q11 (a); SEAM.md §197). A version that cannot be
   // recomputed stays unreadable; that never keeps the engine from starting.
+  let fingerprintsTried = new Set<string>();
   try {
-    await migrateFingerprints(runtime);
+    fingerprintsTried = await migrateFingerprints(runtime, 'before');
   } catch (err) {
     log('protected fingerprints', err);
   }
@@ -328,6 +329,14 @@ export async function serve(opts: ServeOptions): Promise<void> {
     return fail('recovery', err);
   }
   state.completed.push('recovery');
+
+  // 4a. The versions whose protected application recovery has just finished
+  // (Q11; protected/migrate.ts): recomputed once their commit exists.
+  try {
+    await migrateFingerprints(runtime, 'after', fingerprintsTried);
+  } catch (err) {
+    log('protected fingerprints', err);
+  }
 
   // 5. repository integrity (D1 §7.6), for every registered project. What it
   // observes is recorded and blocks that project; it does not keep the

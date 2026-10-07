@@ -16,7 +16,7 @@ import { rmSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
 import { type GitContext, SHA, gitOk, repoContext, worktreeContext } from './exec.js';
-import { isProtected } from '../protected/set.js';
+import { isProtected, isUnderRoot } from '../protected/set.js';
 import { type Baseline, type Change, type TreeEntry, blobSizes, catBlob, checkoutBaseline, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
 import { workspaceLink } from './worktree.js';
 
@@ -110,7 +110,7 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   if (role === 'reviewer') return `${path} was changed, and a reviewer may change nothing`;
   if (isProtected(path, roots)) {
     if (role === 'verifier') return null;
-    const root = roots.find((r) => path.startsWith(r)) ?? path;
+    const root = roots.find((r) => isUnderRoot(path, r)) ?? path;
     return `${path} is under the protected root ${root}, which no ${role} may change`;
   }
   if (path === IDENTITY_FILE) return `${path} is the project's identity file, which no role may change`;

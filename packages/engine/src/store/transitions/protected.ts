@@ -382,13 +382,13 @@ export function invalidateResults(tx: Tx, project: string, ids: string[], why: s
 // the mode-free scheme, or found unreadable at an earlier start (retried at
 // each start). With what recomputing it needs: the project's repository,
 // the version's roots and the commit it was authorized from.
-export function fingerprintsToRecompute(db: Db): { id: string; project: string; repo: string; roots: string[]; fingerprint: string; scheme: string; revision: string | null }[] {
+export function fingerprintsToRecompute(db: Db): { id: string; project: string; repo: string; roots: string[]; fingerprint: string; scheme: string; revision: string | null; authorized: number }[] {
   const rows = db
     .prepare(
-      `SELECT v."id", v."project", p."dev_repo_path" AS "repo", v."roots", v."fingerprint", v."fingerprint_scheme" AS "scheme", v."authorized_revision" AS "revision"
+      `SELECT v."id", v."project", p."dev_repo_path" AS "repo", v."roots", v."fingerprint", v."fingerprint_scheme" AS "scheme", v."authorized_revision" AS "revision", v."authorized"
        FROM "protected_versions" v JOIN "projects" p ON p."id" = v."project" WHERE v."fingerprint_scheme" <> 'manifest' ORDER BY v."project", v."seq"`,
     )
-    .all() as { id: string; project: string; repo: string; roots: string; fingerprint: string; scheme: string; revision: string | null }[];
+    .all() as { id: string; project: string; repo: string; roots: string; fingerprint: string; scheme: string; revision: string | null; authorized: number }[];
   return rows.map((r) => ({ ...r, roots: JSON.parse(r.roots) as string[] }));
 }
 

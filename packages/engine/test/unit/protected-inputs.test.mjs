@@ -213,12 +213,12 @@ test('checktrees_max_bytes: a tree that would take all trees past it is refused 
   const first = r.commit({ '.surety/checks/protected-policy.json': '{}', 'bin/p': 'x'.repeat(60 * 1024) });
   const second = r.commit({ '.surety/checks/protected-policy.json': '{}', 'bin/p': 'y'.repeat(60 * 1024) });
   const one = await mat(r, first, [[]], { maxAllBytes: 100 * 1024 });
-  assert.ok(checktreeBytesInUse(r.home) >= 60 * 1024);
+  assert.ok(checktreeBytesInUse(r.home).bytes >= 60 * 1024);
   await assert.rejects(mat(r, second, [[]], { maxAllBytes: 100 * 1024 }), /checktrees_max_bytes \(102400\)/);
   assert.deepEqual(readdirSync(join(checktreesDir(r.home), PROJECT)), [`${first}-${VERSION}`], 'nothing of the refused tree is left, staging included');
   assert.ok(existsSync(join(one.src, 'bin/p')), 'the tree in use is unaffected');
   releaseTree(r.home, PROJECT, first, VERSION);
-  assert.equal(checktreeBytesInUse(r.home), 0, 'its bytes go with it');
+  assert.deepEqual(checktreeBytesInUse(r.home), { bytes: 0 }, 'its bytes go with it');
   await mat(r, second, [[]], { maxAllBytes: 100 * 1024 });
 });
 
@@ -230,8 +230,105 @@ test('a tree of the earlier layout (no projections) is built again rather than u
   mkdirSync(join(old, 'protected'), { recursive: true });
   symlinkSync('/nowhere', join(old, 'src', 'stale'));
   const m = [['.surety/checks/a.txt', 'blob', '100644', r.g(['rev-parse', `${rev}:.surety/checks/a.txt`])]];
-  const tree = await mat(r, rev, [m]);
+  const tree = await mat(r, rev, [m], { held: async () => false });
   assert.deepEqual(walk(tree.src), ['src/a.js']);
   assert.ok(existsSync(join(projectionOf(tree, m), '.surety/checks/a.txt')));
   assert.equal(existsSync(join(old, 'protected')), false);
+});
+
+// ---- the slice-17 review's items ------------------------------------------------------------
+
+const { parseGoverned, isProtectedPath } = await import(join(dist, 'checks', 'schema.js'));
+const { isProtected } = await import(join(dist, 'protected', 'set.js'));
+const { migrateFingerprints } = await import(join(dist, 'protected', 'migrate.js'));
+const { treeHeld } = await import(join(dist, 'store', 'transitions', 'checks.js'));
+
+test('review 1: a root is a directory: discovery refuses one without its trailing slash; every reader matches roots with one directory predicate', async (t) => {
+  const parsed = parseGoverned('{"protected_paths": [".surety/checks", "acceptance/"]}');
+  assert.deepEqual(parsed.errors.map((e) => [e.path, e.code]), [['.surety/checks/protected-policy.json#/protected_paths/0', 'invalid_value']]);
+  for (const roots of [['.surety/checks'], ['.surety/checks/']]) {
+    for (const [path, want] of [['.surety/checks/a', true], ['.surety/checks-old/secret.json', false], ['.surety/checks', false]]) {
+      assert.equal(isProtected(path, roots), want, `fingerprint's predicate: ${path} under ${roots}`);
+      assert.equal(isProtectedPath(path, roots), want, `discovery's and the tree's predicate: ${path} under ${roots}`);
+    }
+  }
+  // The fingerprint and the source projection agree: a sibling sharing the
+  // root's text is source, in neither the manifest nor out of the tree.
+  const r = repoIn(scratch(t));
+  const rev = r.commit({ '.surety/checks/protected-policy.json': '{"protected_paths":[".surety/checks"]}', '.surety/checks/e.json': 'E', '.surety/checks-old/s.json': 'S', 'src/a.js': 'a' });
+  const m = await protectedManifest(repoContext(r.repo), rev, ['.surety/checks']);
+  assert.deepEqual(m.map(([p]) => p), ['.surety/checks/e.json', '.surety/checks/protected-policy.json']);
+  const tree = await mat(r, rev, [[]], { roots: ['.surety/checks'] });
+  assert.deepEqual(walk(tree.src).sort(), ['.surety/checks-old/s.json', 'src/a.js']);
+});
+
+test('review 2: checktree_max_entries counts the projections\' entries with the source\'s', async (t) => {
+  const r = repoIn(scratch(t));
+  const files = { '.surety/checks/protected-policy.json': '{}', 'app.js': 'x' };
+  for (let i = 0; i < 6; i++) files[`.surety/checks/d/f${i}`] = `${i}`;
+  const rev = r.commit(files);
+  const ls = r.g(['ls-tree', '-r', rev]).split('\n').filter((l) => l.includes('/d/')).map((l) => {
+    const [meta, path] = l.split('\t');
+    const [mode, type, oid] = meta.split(' ');
+    return [path, type, mode, oid];
+  });
+  const manifests = [ls.slice(0, 3), ls.slice(3)];
+  await assert.rejects(mat(r, rev, manifests, { maxEntries: 5 }), /7 entries with its input projections, more than checktree_max_entries \(5\)/);
+  assert.deepEqual(readdirSync(join(checktreesDir(r.home), PROJECT)), [], 'nothing left');
+  await mat(r, rev, manifests, { maxEntries: 7 });
+});
+
+test('review 3: bytes that cannot be counted are never nothing: the build is refused, naming them', { skip: process.getuid?.() === 0 ? 'root reads any directory' : false }, async (t) => {
+  const r = repoIn(scratch(t));
+  const first = r.commit({ '.surety/checks/protected-policy.json': '{}', 'a/b.txt': 'b' });
+  const second = r.commit({ '.surety/checks/protected-policy.json': '{}', 'c.txt': 'c' });
+  const tree = await mat(r, first, [[]]);
+  // A tree this process has not counted (as after a restart), one of whose
+  // directories cannot be listed.
+  const { chmodSync } = await import('node:fs');
+  const hidden = `${checktreesDir(r.home)}/${PROJECT}/${'f'.repeat(40)}-${VERSION}`;
+  mkdirSync(join(hidden, 'src', 'x'), { recursive: true });
+  chmodSync(join(hidden, 'src', 'x'), 0o000);
+  try {
+    await assert.rejects(mat(r, second, [[]]), /the bytes the check trees hold cannot be counted.*cannot be listed/);
+    assert.equal(checktreeBytesInUse(r.home).unknown !== undefined, true);
+    assert.ok(existsSync(tree.src));
+  } finally {
+    chmodSync(join(hidden, 'src', 'x'), 0o755);
+  }
+});
+
+test('review 4: a version whose application was in flight is recomputed after recovery, not before', async (t) => {
+  const db = store(t);
+  for (const [id, authorized, seq] of [['pv_a', 1, 1], ['pv_b', 0, 2]]) {
+    db.prepare(
+      `INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots)
+       VALUES (?, ?, 'prj_1', ?, 'legacy', 'initial', 'human', 'human', ?, ?, ?, '[".surety/checks/"]')`,
+    ).run(id, AT, seq, AT, authorized, authorized ? AT : null);
+  }
+  const rt = {
+    read: async (name) => (name === 'protected.fingerprints_to_recompute' ? fingerprintsToRecompute(db) : null),
+    engine: async (name, a) => transact(db, ENGINE_ACTOR, (tx) => recordRecomputedFingerprint(tx, a)),
+  };
+  const before = await migrateFingerprints(rt, 'before');
+  assert.deepEqual([...before], ['pv_a'], 'before recovery: only the authorized version');
+  const scheme = (id) => db.prepare('SELECT fingerprint_scheme AS s FROM protected_versions WHERE id = ?').get(id).s;
+  assert.deepEqual([scheme('pv_a'), scheme('pv_b')], ['unreadable', 'pairs']);
+  const after = await migrateFingerprints(rt, 'after', before);
+  assert.deepEqual([...after], ['pv_b'], 'after recovery: the rest, and not the first pass\'s again');
+});
+
+test('review 6: an earlier-layout tree is removed only when no other execution\'s domain may hold it', async (t) => {
+  const r = repoIn(scratch(t));
+  const rev = r.commit({ '.surety/checks/protected-policy.json': '{}', 'src/a.js': 'a\n' });
+  const old = join(checktreesDir(r.home), PROJECT, `${rev}-${VERSION}`);
+  mkdirSync(join(old, 'src'), { recursive: true });
+  await assert.rejects(mat(r, rev, [[]], { held: async () => true }), /earlier layout and may still be held/);
+  assert.ok(existsSync(join(old, 'src')), 'kept while held');
+  await assert.rejects(mat(r, rev, [[]]), /earlier layout/, 'no answer is not a no');
+  await mat(r, rev, [[]], { held: async () => false });
+  assert.deepEqual(walk(join(old, 'src')), ['src/a.js']);
+  // The store's answer: a running, collecting or quarantined execution of the triple holds it.
+  const db = store(t);
+  assert.equal(treeHeld(db, { project: 'prj_1', revision: rev, version: 'pv_1', except: 'cx_0' }), false);
 });

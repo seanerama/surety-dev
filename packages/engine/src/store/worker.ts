@@ -145,6 +145,7 @@ import {
   runnerQualification,
   setCheckRunner,
   treeInUse,
+  treeHeld,
 } from './transitions/checks.js';
 
 export interface WorkerData {
@@ -201,6 +202,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'candidate.executions': (d, a) => readCandidateExecutions(d, a),
   'protected.proposal_discovery': (d, a: { proposal: string }) => proposalDiscovery(d, a.proposal),
   'checks.tree_in_use': (d, a) => treeInUse(d, a),
+  'checks.tree_held': (d, a) => treeHeld(d, a),
   'protected.fingerprints_to_recompute': (d) => fingerprintsToRecompute(d),
   'checks.live': (d) => liveExecutions(d),
   'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,

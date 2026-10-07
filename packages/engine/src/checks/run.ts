@@ -221,6 +221,7 @@ export class Supervisor implements DomainHolder {
         maxEntries: checkLimits().checktree_max_entries,
         maxBytes: checkLimits().checktree_max_bytes,
         maxAllBytes: checkLimits().checktrees_max_bytes,
+        held: () => this.rt.read<boolean>('checks.tree_held', { project: a.project, revision: a.revision, version: a.version, except: a.execution }),
       });
     } catch (err) {
       if (err instanceof MaterializationFailed) return this.notRun('materialization_failed', err.message);
