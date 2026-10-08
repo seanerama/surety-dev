@@ -15,6 +15,7 @@ import { integrationRef, projectRepoRow } from './repo.js';
 import type { Tx } from './tx.js';
 import type { Discovery } from '../../checks/discovery.js';
 import { cancelSuperseded, registerAtApplication, writeVersionDiscovery } from './checks.js';
+import { routeMissingAtVersion } from './repair.js';
 
 type Db = Tx['db'];
 
@@ -330,6 +331,9 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   registerAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // Queued executions of the superseded version never launch (T15).
   cancelSuperseded(tx, op.project);
+  // A finding the new version leaves without a verifying check is routed
+  // to the Verifier, in the transaction that makes it effective (D3 §2.11).
+  routeMissingAtVersion(tx, op.project);
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
   return { version: v.id };
 }

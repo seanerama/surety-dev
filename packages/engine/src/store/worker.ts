@@ -92,7 +92,8 @@ import { applicationDiverged, operationApplication, recordClassification, revali
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
-import { contextFacts, mountContext, runCheckKeys } from './reads.js';
+import { contextFacts, mountContext, recordPaths, runCheckKeys } from './reads.js';
+import { reconcileRepairs } from './transitions/repair.js';
 import {
   attemptTarget,
   attemptUsage,
@@ -261,6 +262,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
   'context.facts': (d, a: { run: string }) => contextFacts(d, a),
   'run.check_keys': (d, a: { run: string }) => runCheckKeys(d, a),
+  'records.paths': (d, a: { project: string; ids: string[] }) => recordPaths(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
@@ -345,6 +347,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'presence.nomination_record': (tx, a) => recordNominationPresence(tx, a),
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
+  'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),

@@ -22,6 +22,7 @@ import { envelopeHold } from './envelope.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
+import { checkOutputsFor, reconcileRepairs, recordObjections } from './repair.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -206,6 +207,10 @@ export interface Claim {
   // A refusal in its form (code, reason, what_to_do, subject), recorded
   // with the run's end (SEAM.md §116).
   refusal: { code: string; reason: string; what_to_do: string; subject: Record<string, unknown> } | null;
+  // A stage_build's or a fix's run: every repair check failed at its item's
+  // current candidate when it is dispatched, with the deciding result and
+  // its output record (D3 §2.10; D2 §1.3; SEAM.md §229). Absent for other kinds.
+  check_outputs?: { key: string; check: string; check_result: string; output: string | null }[];
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
@@ -429,6 +434,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
 
+  // What the run is told of its failed repair checks, read at dispatch.
+  const outputs = canary ? undefined : checkOutputsFor(tx.db, item);
   return {
     run,
     project: item.project,
@@ -441,6 +448,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     deadline_at: deadlineAt,
     base_revision: baseRevision,
     lease_renewed_at: tx.at,
+    ...(outputs === undefined ? {} : { check_outputs: outputs }),
     cgroup_path: cgroupPath,
     profile,
     backend: backend.backend,
@@ -875,7 +883,14 @@ export function finishRun(
   const blockers = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "status" = 'open'`).all(run.id) as DecisionRow[];
   for (const d of blockers) invalidateDecision(tx, d, 'the run has ended');
 
+  // A Builder's objections, before anything its end moves (D3 §5 X2): a
+  // conflict it reports wins over a repair its item would take.
+  recordObjections(tx, run);
   workAfterRun(tx, run);
+  // The item's run has ended: a repair its check failures owe is taken now
+  // (D3 §2.10; reconcileRepair waits for the run that holds the item). Every
+  // item of the project, since a correction ending releases another's hold.
+  reconcileRepairs(tx, run.project);
   return { ended: true };
 }
 

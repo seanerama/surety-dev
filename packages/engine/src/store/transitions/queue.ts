@@ -42,6 +42,7 @@ import { engineSettings, policyRevision, projectEffective } from './settings.js'
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { hostIdentity } from '../../trust/host.js';
 
 type Db = Tx['db'];
@@ -161,6 +162,9 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     const item = getWorkItem(tx, d.subject_id);
     const blocker = parseJson<{ reason: string; worktree?: string }>(item?.blocker ?? null);
     if (!item || !blocker) return null;
+    // D3 §5 X2: a conflict stopped the item's repair (repair.ts).
+    const conflict = conflictPreview(item);
+    if (conflict !== null) return { ...conflict, blockedWorkItems: [item.id] };
     if (item.status === 'parked') {
       const what =
         blocker.reason === 'integration_branch_checked_out'
@@ -294,6 +298,9 @@ const BLOCKER: KindSpec = {
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
         return consumed(d);
       }
+      // D3 §5 X2's four answers (repair.ts): only the person's answer
+      // chooses the next work.
+      if (conflictPreview(item) !== null) return consumed(d, answerConflict(tx, item, option, d.id));
       if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
       else transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
       return consumed(d);
@@ -809,7 +816,14 @@ export function recordDisposition(
     )
     .run(args.disposition, args.authority, args.by, tx.at, n, args.linked_issue, args.defer_target, f.id);
   tx.emit('finding.dispositioned', { project: f.project, finding: f.id }, { disposition: args.disposition, authority: args.authority });
-  if (args.disposition === 'fix') registerFixWork(tx, f, args.by);
+  if (args.disposition === 'fix') {
+    registerFixWork(tx, f, args.by);
+    // A finding no required acceptance check can verify is routed to the
+    // Verifier in this transaction (D3 §2.11; Q8 (a); SEAM.md §231),
+    // chained as the fix is.
+    const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(args.by) as { chain: number } | undefined;
+    routeMissingVerification(tx, f, Math.max(run?.chain ?? 1, 1));
+  }
   markStale(tx, { project: f.project });
 }
 

@@ -360,9 +360,11 @@ test("m3: the candidate's own pending registration blocks a reuse pass with a hi
 test('m4: an evaluation carrying REF_UNREAD resolves no finding', (t) => {
   const { db } = store(t);
   register(db, { id: 'cx_pass' });
+  // F2 (c) (slice 21): the finding names a criterion its check covers.
+  db.prepare(`UPDATE checks SET criteria = '["R1.1"]' WHERE id = 'chk_1'`).run();
   db.prepare(
-    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, category, message, "check", proposed_severity, effective_severity, status, disposition, disposition_authority, disposition_seq)
-     VALUES ('f_1', ?, 'prj_1', 1, 'project', 'prj_1', NULL, 'defect', 'm', 'login', 'medium', 'medium', 'dispositioned', 'fix', 'human', ?)`,
+    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, category, message, "check", criterion, proposed_severity, effective_severity, status, disposition, disposition_authority, disposition_seq)
+     VALUES ('f_1', ?, 'prj_1', 1, 'project', 'prj_1', NULL, 'defect', 'm', 'login', 'R1.1', 'medium', 'medium', 'dispositioned', 'fix', 'human', ?)`,
   ).run(AT, 0);
   recordExit(db, 'cx_pass', 0);
   const unread = gate(db, 'cand_2', { refs: [{ ref: 'refs/heads/main', read: 'unread', oid: null }, READ_ALL('cand_2')[1]] });

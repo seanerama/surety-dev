@@ -8,6 +8,7 @@ import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js'
 import { type CandidateRow, type CheckRow, applies, candidateContent, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
 import { cadenceTier } from '../checks/scope.js';
 import { effectiveVersion } from './transitions/protected.js';
+import { knownCriteria } from './transitions/checks.js';
 import { type FindingRow, candidateSignoffs, findingApplies } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -125,6 +126,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     severity: f.effective_severity,
     message: f.message,
     check: f.check,
+    criterion: f.criterion ?? null,
     sensitive_area: f.sensitive_area,
     status: f.status,
     disposition: f.disposition,
@@ -178,7 +180,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   // `checks_known` false: the project has no effective protected version,
   // so its checks cannot be read; that is unknown, never "no checks" (the
   // review of b72b9cc, F3).
-  let checks: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null = null;
+  let checks: { key: string; requirements: string[]; criteria: string[]; gate_kinds: string[]; required: boolean }[] | null = null;
   let checksKnown: boolean | null = null;
   if (role === 'verifier' || role === 'reviewer' || item.kind === 'fix') {
     const version = effectiveVersion(db, item.project);
@@ -192,10 +194,18 @@ export function contextFacts(db: Database, args: { run: string }) {
     checksKnown = version !== undefined;
     checks = version
       ? checksOfVersion(db, version.id)
-          .map((c) => ({ key: c.key, requirements: requirementsOf(c).map(keyOf), gate_kinds: gateKindsOf(c), required: isRequired(c) }))
+          .map((c) => ({ key: c.key, requirements: requirementsOf(c).map(keyOf), criteria: parse<string[]>(c.criteria, []), gate_kinds: gateKindsOf(c), required: isRequired(c) }))
           .sort((a, b) => Number(b.required) - Number(a.required) || a.key.localeCompare(b.key))
       : [];
   }
+  // What a result may name (D3 §2.11, §5 X2; SEAM.md §§230, 232): the
+  // effective version's check keys (a Builder's objection names one; a
+  // finding's check, as above) and the registered index's criteria (a
+  // finding's criterion, an objection's); null where none can be read.
+  const effective = effectiveVersion(db, item.project);
+  const checkKeys = effective ? [...new Set(checksOfVersion(db, effective.id).map((c) => c.key))].sort() : null;
+  const indexed = knownCriteria(db, item.project);
+  const criteria = indexed === null ? null : [...indexed].sort();
   const fixFinding = subjectId('finding');
   const finding = fixFinding === null ? undefined : (db.prepare('SELECT * FROM "findings" WHERE "id" = ? AND "project" = ?').get(fixFinding, item.project) as Finding | undefined);
   // A resumed run's context is rebuilt from the records of the run it
@@ -226,8 +236,29 @@ export function contextFacts(db: Database, args: { run: string }) {
     finding: finding ? findingFacts(finding) : null,
     checks,
     checks_known: checksKnown,
+    check_keys: checkKeys,
+    criteria,
     resumed,
   };
+}
+
+// The records a run's context package may hold by id (the failed checks'
+// output records a repair run is given, D3 §2.10): where each is and the
+// size and hash its bytes must have, or null for a record the API would
+// not serve. A record of another project, unpublished, expired, recorded
+// missing, or flagged by a detector after it was written (post_scan
+// 'hit', quarantined: served by no route, E42 item 1) is withheld, and the
+// package treats it as missing; it is never copied (slice 21 review).
+export function recordPaths(db: Database, args: { project: string; ids: string[] }): Record<string, { path: string; sha256: string | null; bytes: number | null } | null> {
+  const out: Record<string, { path: string; sha256: string | null; bytes: number | null } | null> = {};
+  for (const id of args.ids) {
+    const row = db.prepare('SELECT "project", "path", "sha256", "bytes", "published", "missing_at", "post_scan" FROM "records" WHERE "id" = ?').get(id) as
+      | { project: string; path: string | null; sha256: string | null; bytes: number | null; published: number; missing_at: string | null; post_scan: string }
+      | undefined;
+    const served = row !== undefined && row.project === args.project && row.published === 1 && row.path !== null && row.missing_at === null && row.post_scan !== 'hit';
+    out[id] = served ? { path: row!.path!, sha256: row!.sha256, bytes: row!.bytes } : null;
+  }
+  return out;
 }
 
 // What the mount plan's validation needs before a launch (D2 §2.3): the
@@ -256,9 +287,12 @@ export function mountContext(db: Database, args: { project: string }) {
 // The check keys a run's findings may name (the review of b72b9cc, F1): the
 // effective protected version's, the same list its package shows; null
 // when the project has no effective version, so no key can be named.
-export function runCheckKeys(db: Database, args: { run: string }): { keys: string[] | null } {
+// With them, the criteria of the registered requirement index a finding's
+// `criterion` may name (D3 §2.11); null when no index is registered.
+export function runCheckKeys(db: Database, args: { run: string }): { keys: string[] | null; criteria: string[] | null } {
   const run = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string } | undefined;
-  if (!run) return { keys: null };
+  if (!run) return { keys: null, criteria: null };
   const version = effectiveVersion(db, run.project);
-  return { keys: version ? [...new Set(checksOfVersion(db, version.id).map((c) => c.key))].sort() : null };
+  const criteria = knownCriteria(db, run.project);
+  return { keys: version ? [...new Set(checksOfVersion(db, version.id).map((c) => c.key))].sort() : null, criteria: criteria === null ? null : [...criteria].sort() };
 }

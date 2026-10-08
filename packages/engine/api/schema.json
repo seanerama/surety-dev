@@ -1765,6 +1765,9 @@
         },
         "proposed_alpha_exception": {
           "required": false
+        },
+        "criterion": {
+          "required": false
         }
       }
     },
@@ -1825,6 +1828,9 @@
           "required": false
         },
         "checks": {
+          "required": true
+        },
+        "missing_verifications": {
           "required": true
         }
       }
@@ -3529,6 +3535,12 @@
           "references": "qualification_attempts"
         },
         "canary_kind": {
+          "required": false
+        },
+        "check_repair": {
+          "required": false
+        },
+        "check_conflict": {
           "required": false
         }
       }

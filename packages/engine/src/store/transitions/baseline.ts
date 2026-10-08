@@ -14,6 +14,7 @@ import { getProposal, mustEffective } from './protected.js';
 import type { Tx } from './tx.js';
 import { knownCriteria, nextExecutionSeq, recomputeIndexErrors } from './checks.js';
 import { requirementKeyOf } from '../../checks/schema.js';
+import { reconcileRepairs } from './repair.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the fixture request.', { field });
 
@@ -291,6 +292,9 @@ export function recordCheckResult(tx: Tx, args: ResultInput, label: Record<strin
     );
   tx.emit('check.result', { project: args.project, check: check.id, candidate: candidate.id, check_result: id }, { ...label, execution_seq: n, exit_status: args.exit_status });
   markStale(tx, { candidate: candidate.id });
+  // A fixture result is a recorded result (SEAM.md §228): the repair it
+  // owes is reconciled in its transaction (D3 §2.10).
+  reconcileRepairs(tx, args.project);
   return { check_result: { id, execution_seq: n } };
 }
 

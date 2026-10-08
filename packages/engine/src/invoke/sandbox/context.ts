@@ -43,9 +43,13 @@ export type ContextFacts = {
   } | null;
   finding?: FindingFacts | null;
   // The project's checks (E87), for a Verifier, a Reviewer and a fix Builder.
-  checks?: { key: string; requirements: string[]; gate_kinds: string[]; required: boolean }[] | null;
+  checks?: { key: string; requirements: string[]; criteria?: string[]; gate_kinds: string[]; required: boolean }[] | null;
   // false: no effective protected version, so the checks cannot be read.
   checks_known?: boolean | null;
+  // The effective version's check keys and the registered index's criteria,
+  // what a result may name (D3 §2.11, §5 X2); null where none can be read.
+  check_keys?: string[] | null;
+  criteria?: string[] | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
 
@@ -58,6 +62,7 @@ export type FindingFacts = {
   severity: string;
   message: string;
   check: string | null;
+  criterion?: string | null;
   sensitive_area: string | null;
   status: string;
   disposition: string | null;
@@ -69,7 +74,20 @@ export type FindingFacts = {
 // its first bytes, only its file summary, or nothing, with why.
 export type CandidateDiff = { base: string | null; base_from: string | null; revision: string; state: 'complete' | 'truncated' | 'stat_only' | 'unavailable'; text: string; detail: string | null };
 
-export type ContextKind = 'prompt' | 'instructions' | 'result_schema' | 'requirement' | 'adr' | 'constraint' | 'phase_plan' | 'interface' | 'diff' | 'acceptance_content_hash' | 'prior_run';
+export type ContextKind =
+  | 'prompt'
+  | 'instructions'
+  | 'result_schema'
+  | 'requirement'
+  | 'adr'
+  | 'constraint'
+  | 'phase_plan'
+  | 'interface'
+  | 'diff'
+  | 'acceptance_content_hash'
+  | 'prior_run'
+  // A failed repair check's output record (D3 §2.10; SEAM.md §229).
+  | 'check_output';
 
 // What every role is told, and what it may not do (F §4.1).
 const PROHIBITIONS = [
@@ -114,6 +132,26 @@ const FIELDS: Record<string, Record<string, unknown>> = {
           type: 'string',
           description: 'The key of the check whose passing shows the finding fixed. Required for the finding to be resolved by a fix; one of the keys listed in the prompt.',
         },
+        criterion: {
+          type: 'string',
+          description:
+            "The criterion of the requirement index the finding breaks (R<n>.<m>). Required for the finding to be resolved by a fix: it is resolved only when its `check` is a required acceptance check covering this criterion and passes after the disposition.",
+        },
+      },
+    },
+  },
+  objections: {
+    type: 'array',
+    description:
+      'Only when a protected check contradicts the requirement or the interface the work names: your objection to it. The check stays in force; if it fails, the engine does not send you back but asks the human owner to correct the check, change the spec, retry or cancel.',
+    items: {
+      type: 'object',
+      required: ['check', 'category', 'message'],
+      properties: {
+        check: { type: 'string', description: 'The key of the check you object to.' },
+        criterion: { type: 'string', description: 'The criterion of the requirement index the conflict is about, if one.' },
+        category: { enum: ['contract_conflict', 'requirement_conflict'] },
+        message: { type: 'string', description: 'What contradicts what, and where.' },
       },
     },
   },
@@ -197,7 +235,7 @@ const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
 };
 
 const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
-  builder: { checkpoint: FIELDS.checkpoint!, nominate: FIELDS.nominate! },
+  builder: { checkpoint: FIELDS.checkpoint!, nominate: FIELDS.nominate!, objections: FIELDS.objections! },
   architect: { checkpoint: FIELDS.checkpoint! },
   verifier: { findings: FIELDS.findings!, ...VERIFIER_FIELDS },
   reviewer: { findings: FIELDS.findings!, ...REVIEWER_FIELDS },
@@ -205,16 +243,28 @@ const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
 
 // `checkKeys` (the review of b72b9cc, F1): the keys a finding's `check` may
 // name, the effective protected version's; given, `check` is an enum of
-// them, and with none (no checks, or none readable) it is left out.
-export function resultSchema(role: string, checkKeys?: readonly string[]): Record<string, unknown> {
+// them, and with none (no checks, or none readable) it is left out. The
+// same for `criteria`, the registered index's (D3 §2.11), and a finding's
+// `criterion`; and for a Builder's objections, whose `check` and
+// `criterion` take the same enums.
+export function resultSchema(role: string, checkKeys?: readonly string[], criteria?: readonly string[]): Record<string, unknown> {
   const fields: Record<string, Record<string, unknown>> = { ...(ROLE_FIELDS[role] ?? {}) };
-  if (checkKeys !== undefined && fields.findings) {
-    const items = (fields.findings.items ?? {}) as { properties?: Record<string, unknown> };
+  const narrow = (field: string) => {
+    if (!fields[field]) return;
+    const items = (fields[field].items ?? {}) as { properties?: Record<string, unknown> };
     const props: Record<string, unknown> = { ...(items.properties ?? {}) };
-    if (checkKeys.length > 0) props.check = { ...(props.check as Record<string, unknown>), enum: [...checkKeys] };
-    else delete props.check;
-    fields.findings = { ...fields.findings, items: { ...items, properties: props } };
-  }
+    if (checkKeys !== undefined) {
+      if (checkKeys.length > 0) props.check = { ...(props.check as Record<string, unknown>), enum: [...checkKeys] };
+      else if (field === 'findings') delete props.check;
+    }
+    if (criteria !== undefined) {
+      if (criteria.length > 0) props.criterion = { ...(props.criterion as Record<string, unknown>), enum: [...criteria] };
+      else delete props.criterion;
+    }
+    fields[field] = { ...fields[field], items: { ...items, properties: props } };
+  };
+  narrow('findings');
+  narrow('objections');
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `The ${role}'s result, written to /surety/out/result.json`,
@@ -264,7 +314,12 @@ export function writeContextPackage(
           ? ['The project has no checks in its effective protected version, so no finding can name one.']
         : [
             "The project's checks:",
-            ...checks.map((c) => `- \`${c.key}\`${c.required ? ' (required)' : ''}: covers ${c.requirements.length > 0 ? c.requirements.join(', ') : 'no requirement'}; gate kinds ${c.gate_kinds.length > 0 ? c.gate_kinds.join(', ') : 'none'}.`),
+            ...checks.map(
+              (c) =>
+                `- \`${c.key}\`${c.required ? ' (required)' : ''}: covers ${c.requirements.length > 0 ? c.requirements.join(', ') : 'no requirement'}${
+                  (c.criteria ?? []).length > 0 ? ` (criteria ${(c.criteria ?? []).join(', ')})` : ''
+                }; gate kinds ${c.gate_kinds.length > 0 ? c.gate_kinds.join(', ') : 'none'}.`,
+            ),
           ];
   const open = review ? review.findings.filter((f) => f.status === 'open') : [];
   const diff = review && role === 'reviewer' ? (opts.diff ?? null) : null;
@@ -292,14 +347,14 @@ export function writeContextPackage(
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
               'Give every open finding a disposition in your result\'s `dispositions`: `fix` registers fix work for it; without a disposition the finding stays open and nothing is done about it. Record new findings in `findings`, and your sign-offs in `signoffs`.',
-              "A fix is shown done, and the finding resolved, when the finding's `check` passes after your disposition. A finding with no check cannot be resolved that way: if you raise one, name its check.",
+              "A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both.",
               '',
               ...checkList,
             ]
           : [
               '',
               "Record what you find in your result's `findings`; name a listed finding by its id.",
-              "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks). Without one, a fix of the finding can never be shown, and the finding stays open.",
+              "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks), and in its `criterion` the criterion of the requirement index it breaks (R<n>.<m>, as listed with each check below). Without both, a fix of the finding can never be shown, and the finding stays open. If no check covers that criterion, report the finding anyway: the engine asks for the check to be corrected.",
               '',
               ...checkList,
             ]),
@@ -311,7 +366,7 @@ export function writeContextPackage(
         '',
         '## The finding you fix',
         '',
-        `Finding ${fix.id} (${fix.severity}, ${fix.category}${fix.check ? `; the check ${fix.check} shows it fixed` : ''}):`,
+        `Finding ${fix.id} (${fix.severity}, ${fix.category}${fix.check ? `; the check ${fix.check} shows it fixed` : ''}${fix.criterion ? `; it breaks the criterion ${fix.criterion}` : ''}):`,
         '',
         fix.message,
         '',
@@ -323,6 +378,21 @@ export function writeContextPackage(
         ...(checkList.length > 0 ? ['', ...checkList] : []),
       ]
     : [];
+  // A repair run (D3 §2.10): the checks that failed on the item's current
+  // candidate, each with its output in /surety/context/check-outputs/.
+  const failedChecks = claim.check_outputs ?? [];
+  const repairText =
+    failedChecks.length > 0
+      ? [
+          '',
+          '## The checks that failed',
+          '',
+          'Your last candidate failed these protected checks, and the engine sent the work back to you once to make them pass:',
+          ...failedChecks.map((o) => `- \`${o.key}\`: its output is in /surety/context/check-outputs/${safeName(o.key)}.txt${o.output === null ? ' (it left no output record)' : ''}.`),
+          '',
+          'Fix the code, not the checks: they are protected. If a check contradicts the requirement or the interface, report it in your result\'s `objections`.',
+        ]
+      : [];
   const prompt = [
     `# Your task (${role})`,
     '',
@@ -337,6 +407,7 @@ export function writeContextPackage(
     ...(facts?.candidate ? ['', '## The candidate', '', `Candidate ${facts.candidate.id} at revision ${facts.candidate.revision}.`] : []),
     ...reviewText,
     ...fixText,
+    ...repairText,
     '',
     ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
@@ -356,8 +427,10 @@ export function writeContextPackage(
       '',
     ].join('\n'),
   );
-  const keys = facts?.checks && (role === 'verifier' || role === 'reviewer') ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : undefined;
-  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys);
+  const reports = role === 'verifier' || role === 'reviewer';
+  const keys = facts?.checks && reports ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : role === 'builder' && facts?.check_keys ? facts.check_keys : undefined;
+  const criteria = (reports || role === 'builder') && facts && facts.criteria !== undefined ? (facts.criteria ?? []) : undefined;
+  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(schema, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);
@@ -383,6 +456,17 @@ export function writeContextPackage(
     }
   }
   if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);
+  // Each failed repair check's output record, whole (SEAM.md §229): the
+  // record's text, or a note that it could not be read.
+  for (const o of failedChecks) {
+    const bytes = o.output === null ? null : (opts.readRecord?.(o.output) ?? null);
+    put(
+      `check-outputs/${safeName(o.key)}.txt`,
+      'check_output',
+      o.output,
+      bytes ?? `The output record of the check ${o.key} (result ${o.check_result}) ${o.output === null ? 'does not exist' : 'could not be read'}.\n`,
+    );
+  }
   // The approved texts, verbatim (E67 item 7; SEAM.md §139): a role inside
   // the sandbox has no other way to read them.
   for (const r of facts?.requirements ?? []) {

@@ -16,6 +16,7 @@ import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, rec
 import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
+import { reconcileRepairs } from './repair.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -303,6 +304,9 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   // The nomination's checks, registered in its finalizer (D3 §2.5; L2).
   registerAtNomination(tx, { project: op.project, candidate });
   cancelSuperseded(tx, op.project);
+  // The items now verifying are reconciled (D3 §2.10): a failure already
+  // recorded at their current candidate is repaired here.
+  reconcileRepairs(tx, op.project);
   return { candidate, verification: verification.work_item.id };
 }
 

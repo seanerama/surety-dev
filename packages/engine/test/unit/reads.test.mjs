@@ -138,6 +138,8 @@ test('the gate read is 404 before any evaluation, then shows the latest recorded
     checks: {},
     scope: 'scope_1',
     stale: true,
+    // M3 slice 21 (D3 §2.11; SEAM.md §231): none recorded here.
+    missing_verifications: [],
   }, 'the latest, as recorded');
 
   assert.throws(() => readGate(db, { project: 'prj_1', candidate: 'cand_1', kind: 'alpha_authorize' }), (err) => err.status === 404);

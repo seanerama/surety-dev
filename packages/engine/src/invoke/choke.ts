@@ -163,7 +163,7 @@ export interface DispatchTarget {
 // fix loop resolves the finding by. The reason a result fails it, naming
 // the unknown key (bounded), or null. `keys` null: the project has no
 // effective version, so no key can be named.
-export function unknownCheck(result: RunResult, keys: readonly string[] | null): string | null {
+export function unknownCheck(result: RunResult, keys: readonly string[] | null, criteria: readonly string[] | null = null): string | null {
   for (const f of result.report?.findings ?? []) {
     if (f.check === undefined || f.check === null) continue;
     if (keys !== null && keys.includes(f.check)) continue;
@@ -172,8 +172,23 @@ export function unknownCheck(result: RunResult, keys: readonly string[] | null):
       ? `a finding names the check ${named}, but the project has no effective protected version, so no check can be named`
       : `a finding names the check ${named}, which is not a check of the project (${keys.length > 0 ? `its checks: ${keys.slice(0, 20).join(', ')}` : 'it has none'})`;
   }
+  // A finding's criterion must be one of the registered index's (D3 §2.11;
+  // SEAM.md §230): naming any other makes the result invalid, and nothing of
+  // it is stored. With no index registered, no criterion can be named.
+  for (const f of result.report?.findings ?? []) {
+    if (f.criterion === undefined || f.criterion === null) continue;
+    if (criteria !== null && criteria.includes(f.criterion)) continue;
+    const named = JSON.stringify(String(f.criterion).slice(0, 80));
+    return criteria === null
+      ? `a finding names the criterion ${named}, but the project has no registered requirement index, so no criterion can be named`
+      : `a finding names the criterion ${named}, which is not a criterion of the project's requirement index (${criteria.length > 0 ? `its criteria: ${criteria.slice(0, 40).join(', ')}` : 'it has none'})`;
+  }
   return null;
 }
+
+// Whether a result's findings name a check or a criterion the engine must
+// judge against the project before the result is taken.
+const namesReference = (r: RunResult): boolean => (r.report?.findings ?? []).some((f) => (f.check !== undefined && f.check !== null) || (f.criterion !== undefined && f.criterion !== null));
 
 function parseResult(value: unknown, role: string): RunResult | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -218,6 +233,9 @@ function requestLine(handle: RunHandle, workspace: string): string {
     work_kind: claim.work_kind,
     role: claim.role,
     workspace,
+    // The failed repair checks a stage's or a fix's run is told of (D3
+    // §2.10; SEAM.md §229): key, check, deciding result, output record.
+    ...(claim.check_outputs === undefined ? {} : { check_outputs: claim.check_outputs }),
   })}\n`;
 }
 
@@ -1197,10 +1215,10 @@ export class Launcher {
       } catch {
         value = null;
       }
-      if (value !== null && (value.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
-        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run: claim.run }).then((r) => r.keys, () => undefined);
+      if (value !== null && namesReference(value)) {
+        const read = await this.rt.read<{ keys: string[] | null; criteria: string[] | null }>('run.check_keys', { run: claim.run }).catch(() => undefined);
         // Checks that cannot be read judge no key: the result is not taken.
-        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, keys);
+        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, read.keys, read.criteria);
         if (unknown !== null) {
           handle.invalidDetail = redactText(unknown);
           value = null;
@@ -1471,10 +1489,10 @@ export class Launcher {
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
       let result = parseResult(sent, handle.claim.role);
-      if (result !== null && (result.report?.findings ?? []).some((f) => f.check !== undefined && f.check !== null)) {
-        const keys = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run }).then((r) => r.keys, () => undefined);
+      if (result !== null && namesReference(result)) {
+        const read = await this.rt.read<{ keys: string[] | null; criteria: string[] | null }>('run.check_keys', { run }).catch(() => undefined);
         // Checks that cannot be read judge no key: the result is not taken.
-        const unknown = keys === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, keys);
+        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, read.keys, read.criteria);
         if (unknown !== null) {
           handle.invalidDetail = redactText(unknown);
           result = null;

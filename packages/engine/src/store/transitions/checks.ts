@@ -21,6 +21,7 @@ import { quarantineDomain } from './runs.js';
 import { envelopeHold } from './envelope.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
+import { reconcileRepairs } from './repair.js';
 
 type Db = Tx['db'];
 
@@ -754,6 +755,9 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
   markStale(tx, { candidate: x.candidate });
   // Registered again, as `recovery`, in this transaction (D3 §2.7; T05).
   registerRecoveryRetry(tx, x.id);
+  // An execution ended: reconciled as D3 §2.10 asks (it never makes a check
+  // failed by itself, so it never takes a repair; it may leave one owed).
+  reconcileRepairs(tx, x.project);
 }
 
 // The recovery registration of an interrupted or `materialization_failed`
@@ -842,6 +846,8 @@ export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runne
   // A failed materialization is registered again (D3 §2.7); no other
   // reason, and no established result, ever is.
   if (args.not_run_reason === 'materialization_failed') registerRecoveryRetry(tx, args.execution);
+  // The repair a failed check owes, in the transaction that records it (D3 §2.10).
+  reconcileRepairs(tx, x.project as string);
   return { check_result: id };
 }
 
@@ -925,6 +931,7 @@ export function cancelExecution(tx: Tx, args: { execution: string; why: string }
   releaseCheckLease(tx, x.id);
   tx.emit('check.cancelled', { project: x.project, candidate: x.candidate, check_execution: x.id }, { from: x.status, why: args.why });
   markStale(tx, { candidate: x.candidate });
+  reconcileRepairs(tx, x.project);
   return true;
 }
 

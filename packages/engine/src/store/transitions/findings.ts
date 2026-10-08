@@ -13,6 +13,7 @@ import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from 
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem } from './work.js';
+import { isObjection } from './repair.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -20,7 +21,7 @@ const RANK: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 }
 const BLOCKING = ['critical', 'high'];
 
 export interface Report {
-  findings?: { category: string; severity: string; message: string; scope?: string; sensitive_area?: string; check?: string }[];
+  findings?: { category: string; severity: string; message: string; scope?: string; sensitive_area?: string; check?: string; criterion?: string }[];
   signoffs?: { scope: string; module?: string }[];
   dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string }[];
   severity_changes?: { finding: string; to: string }[];
@@ -29,6 +30,9 @@ export interface Report {
   proposal?: { rationale: string; requested_change_kind: string };
   proposal_approval?: { proposal: string; reason: string };
   alpha_exception_proposals?: { finding: string; containment_text: string; references: ({ path: string } | { record: string })[]; testing_purpose: string }[];
+  // A Builder's objections to a check (D3 §5 X2, A.3), recorded with its
+  // run's end (repair.ts).
+  objections?: { check: string; criterion?: string; category: string; message: string }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
@@ -37,15 +41,15 @@ const findingOf = (tx: Tx, id: string) => findingRowOf(tx.db, id);
 // A finding is raised (D1 §3.4). `run` null: an engine-origin finding.
 export function raiseFinding(
   tx: Tx,
-  args: { project: string; scope: 'project' | 'lineage' | 'candidate'; candidate: string | null; run: string | null; role: string | null; category: string; severity: string; message: string; sensitiveArea?: string | null; check?: string | null },
+  args: { project: string; scope: 'project' | 'lineage' | 'candidate'; candidate: string | null; run: string | null; role: string | null; category: string; severity: string; message: string; sensitiveArea?: string | null; check?: string | null; criterion?: string | null },
 ): string {
   const id = tx.newId('fnd_');
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "findings" WHERE "project" = ?').get(args.project) as { n: number };
   tx.db
     .prepare(
       `INSERT INTO "findings" ("id", "created_at", "project", "seq", "scope", "subject_id", "candidate", "source_run", "source_role", "category", "message", "check",
-         "proposed_severity", "effective_severity", "severity_history", "sensitive_area", "status", "reevaluations")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'open', '[]')`,
+         "proposed_severity", "effective_severity", "severity_history", "sensitive_area", "status", "reevaluations", "criterion")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'open', '[]', ?)`,
     )
     .run(
       id,
@@ -63,6 +67,7 @@ export function raiseFinding(
       args.severity,
       args.severity,
       args.sensitiveArea ?? null,
+      args.criterion ?? null,
     );
   tx.emit('finding.raised', { project: args.project, finding: id, run: args.run }, { scope: args.scope, category: args.category, severity: args.severity, candidate: args.candidate });
   markStale(tx, { project: args.project });
@@ -133,6 +138,9 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       message: f.message,
       sensitiveArea: f.sensitive_area ?? null,
       check: f.check ?? null,
+      // The criterion it breaks (D3 §2.11), validated against the index
+      // before the result was taken (invoke/choke.ts).
+      criterion: f.criterion ?? null,
     });
   }
 
@@ -157,6 +165,9 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     for (const d of report.dispositions ?? []) {
       const f = findingOf(tx, d.finding);
       if (!f || f.project !== project || f.status === 'resolved') continue;
+      // A Builder's objection is not dispositioned: the entry is invalid and
+      // nothing is recorded for it (D3 §5 X2; slice 21 review, minor 2).
+      if (isObjection(f as FindingRow & { source_role: string | null })) continue;
       const deferLow = d.disposition === 'defer' && f.effective_severity === 'low' && d.linked_issue && d.defer_target;
       if (d.disposition === 'fix' || deferLow) {
         recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null });

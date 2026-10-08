@@ -123,6 +123,10 @@ export class Scheduler {
 
   private async decide(project: string): Promise<void> {
     await ensureAncestry(this.rt, project);
+    // The repairs failed checks owe (D3 §2.10): reconciled from durable
+    // state at every tick, so a failure recorded while its item was not yet
+    // verifying is repaired by the next tick at the latest.
+    await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
     // The candidates' module presence (D3 §4.1), before Gates and Checks: a
     // registration owed for want of it is made once it is read (L2).
     await ensurePresence(this.rt, project).catch((err) => log('module presence', err, { project }));

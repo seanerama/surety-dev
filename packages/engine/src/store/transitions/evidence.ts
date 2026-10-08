@@ -304,6 +304,29 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
   return { required: rows.filter((c) => ids.has(c.id)), obligations: scope.obligations, delivery, tier: scope.tier, scope };
 }
 
+// A stage's `stage` scope under a version as it stands once the stage has
+// delivered what it implements (D3 §4.2, the one scope rule): what a
+// Builder's objection may concern (D3 §5 X2; SEAM.md §232), which needs no
+// candidate. Its obligations are the requirements the stage implements, its
+// required set the scope's.
+export function deliveredStageScope(db: Db, args: { project: string; stage: string; version: string }): ScopeResult | null {
+  const stage = db.prepare('SELECT "modules", "implements" FROM "stages" WHERE "id" = ? AND "project" = ?').get(args.stage, args.project) as { modules: string; implements: string } | undefined;
+  if (!stage) return null;
+  const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
+  const ids = JSON.parse(stage.modules) as string[];
+  const stageImplements = JSON.parse(stage.implements) as string[];
+  return computeScope({
+    kind: 'stage',
+    projectTier,
+    checks: checksOfVersion(db, args.version).map(toScopeCheck),
+    requirements: requirementRows(db, args.project),
+    delivered: stageImplements,
+    partial: [],
+    stageImplements,
+    modules: modulesOf(db, args.project).filter((m) => ids.includes(m.id)).map(scopeModule),
+  });
+}
+
 // The (stage revision, candidate revision) facts a candidate's required sets
 // need that git has not yet answered: a delivery read from an unrecorded
 // ancestry would be a guess (D3 §2.5, L2).
