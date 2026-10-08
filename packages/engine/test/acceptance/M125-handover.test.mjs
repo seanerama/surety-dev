@@ -29,6 +29,12 @@
 // gives a finding's `check` as an enum of the effective version's keys; a
 // finding naming another key is failed / invalid_result, naming it, and no
 // finding is stored.
+// (h) (M3 slice 20, L3; the driver's ruling on the review of build/m3-s20;
+// SEAM.md §176): which checks the prompt marks required follows the scope
+// rule, as the gate does: in a T1 project whose candidate holds a T3
+// module, a check floored at T3 is in the deployment scope's required set
+// and is marked required in the Reviewer's prompt, not left unmarked by the
+// project's tier.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -53,7 +59,7 @@ import { makeProjectRepo } from './harness/repos.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { readRun } from './harness/reads.mjs';
 import { holdSecret } from './harness/records.mjs';
-import { assertRunEnded, requestTick, resumeWork, runsOf, tickUntil, waitForRun, waitForRunState } from './harness/runs.mjs';
+import { addWork, assertRunEnded, requestTick, resumeWork, runsOf, tickUntil, waitForRun, waitForRunState } from './harness/runs.mjs';
 import { domainOf, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { environFromMemory, members } from './harness/sandbox/procs.mjs';
 import { armedRole } from './harness/sandbox/view.mjs';
@@ -452,6 +458,48 @@ describe('M125 what is handed over', () => {
     assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `a finding naming a check outside the version is an invalid result (${run.reason_text})`);
     assert.ok(String(run.reason_text ?? '').includes(UNKNOWN), `its reason names the unknown key "${UNKNOWN}" (${run.reason_text})`);
     assert.deepEqual(findingsOf(fx.home, project), [], 'no finding is stored');
+  });
+
+  test("(h) the required checks the prompt marks are the scope's (M3 slice 20, L3; SEAM.md §176): in a T1 project whose candidate holds a T3 module, the Reviewer's prompt marks the check floored at T3 required, as the deployment scope requires it", async (t) => {
+    // The scope's tier is the highest of the project's and its modules'
+    // overrides (D3 §4.1); the deployment scope takes every module present
+    // at the revision. The project is T1 and its stage lists no module, so
+    // its Builder asks for the nomination; core (T3) holds the Builder's
+    // file, so the candidate's deployment scope is T3 and requires `deep`.
+    const LOGIN = check('login', { requirements: ['R1'] });
+    const DEEP = check('deep', { kind: 'property', requirements: ['R1'], tier_floor: 'T3' });
+    const fx = await sandboxEngine(t);
+    fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
+    const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
+    const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'required-by-the-scope', tier: 'T1' });
+    const plan = await installGatedPlan(fx.engine, project, {
+      requirements: ['R1'],
+      modules: [{ name: 'core', paths: ['src/'], tier_override: 'T3' }],
+      stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }],
+    });
+    await installChecks(fx.engine, project, [LOGIN, DEEP]);
+    assert.ok(PERMITTED_EDIT.path.startsWith('src/'), 'the fixture is live: the Builder writes a file of core');
+    fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()], { nominate: true })]);
+    const build = await runToEnd(fx, project, plan.stages[0].work_item);
+    assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
+    const [candidate] = await waitForCandidates(fx, project);
+
+    const review = await addWork(fx.engine, project, 'review', { subject: { candidate: candidate.id } });
+    fx.scripted.script(review, [roleThat([step.probe('context_dump')])]);
+    const run = await tickUntil(fx.engine, project, () => {
+      const [r] = runsOf(fx.home, review);
+      return r?.state === 'ended' ? r : undefined;
+    }, { what: 'the Reviewer\'s run to end' });
+    assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the fixture is live: the Reviewer's run was accepted (${run.reason_text})`);
+    const [launch] = fx.scripted.launches({ work_item: review });
+    const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+    assertManifest(dump, 'the Reviewer\'s run');
+    const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+    const promptPath = manifest.files.find((f) => f.kind === 'prompt')?.path;
+    const prompt = dump.files.find((f) => f.name === promptPath)?.text ?? '';
+    const lineOf = (key) => prompt.split('\n').find((l) => new RegExp(`(^|[^\\w-])${key}([^\\w-]|$)`).test(l) && l.includes('R1'));
+    assert.match(lineOf(LOGIN.key) ?? '', /\brequired\b/i, `the control: login is listed and marked required (${JSON.stringify(lineOf(LOGIN.key))})`);
+    assert.match(lineOf(DEEP.key) ?? '', /\brequired\b/i, `deep, floored at T3, is marked required: the candidate's deployment scope is T3 through core, whatever the project's tier (${JSON.stringify(lineOf(DEEP.key))})`);
   });
 });
 

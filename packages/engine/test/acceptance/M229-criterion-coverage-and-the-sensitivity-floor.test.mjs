@@ -12,7 +12,11 @@
 // listing the gate kind (`area:<name>`); a floor check applies at T1, T2
 // and T3 alike. (c) A sensitive requirement two stages implement brings its
 // floor into the first stage's scope once that stage alone is integrated
-// (partial delivery), with no module declaring the area. (d) The M1
+// (partial delivery), with no module declaring the area; and a requirement
+// the scope touches that no index row registered (its criteria null, so its
+// areas were never read) is not taken as having none: the scope is
+// incomplete, naming it, partial delivery or not (the review of
+// build/m3-s20; D3 §4.3, "the index was read"; the driver's ruling). (d) The M1
 // fixture's former scope, which satisfied a gate before L3 (a requirement
 // registered with no criterion, a check mapped to a requirement and naming
 // none), is refused now (AD §8.3).
@@ -25,11 +29,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { alphaTarget, effectiveVersion, evaluate, installChecks, nominated, passAll, reasonCodes, scopeOf } from './harness/gates.mjs';
-import { permittedEdit, roleThat } from './harness/gitruns.mjs';
+import { alphaTarget, check, effectiveVersion, evaluate, installChecks, installGatedPlan, nominated, passAll, reasonCodes, scopeOf } from './harness/gates.mjs';
+import { addGitProject, permittedEdit, roleThat } from './harness/gitruns.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
-import { codesAt, errorsAt, versionRead } from './harness/checks/fixtures.mjs';
+import { withStore } from './harness/store.mjs';
+import { codesAt, errorsAt, installIndexedPlan, versionRead } from './harness/checks/fixtures.mjs';
 import { nextCandidate } from './harness/checks/selection.mjs';
 import { areaSubjects, buildStages, candidatesOfProject, checkIds, def, defPath, incomplete, inventoryDefs, passKeys, scopeProject, scopeRead } from './harness/checks/scope.mjs';
 
@@ -190,6 +195,59 @@ describe('M229 (c) partial delivery does not suppress a floor', () => {
     assert.ok(scope.categories.includes('authentication'), `the partially delivered requirement's area is a category of the first stage's scope (categories: ${JSON.stringify(scope.categories)})`);
     assert.ok(scope.required.includes(checkIds(fx.home, p.id).fauth), 'and its floor check is in that scope');
     assert.deepEqual(areaSubjects(evaluation), [], 'the area is covered by the floor');
+  });
+
+  test("a requirement the scope touches with no index row is never read as having no areas: R1, partially delivered and unindexed, leaves the first stage's scope incomplete, naming R1; indexed, its area declared and its floor present, the same scope is satisfied (the review of build/m3-s20)", async (t) => {
+    // The hole: R1 is partial at the first stage, so it is no obligation
+    // and its criteria are not asked; with no index row its sensitive areas
+    // were never read, and the scope came out validated with no category.
+    // D3 §4.3 validates a scope only when "the index was read", and B04
+    // (D3-S09) says partial delivery must not suppress a floor. The
+    // driver's ruling: a requirement the scope touches, delivered or
+    // partial, whose criteria are null leaves the scope incomplete, named
+    // by its id as an uncertain requirement is (SEAM.md §221).
+    // The checks are the fixture's (SEAM.md §226: an acceptance check of the
+    // fixture may cover no criterion), since a discovered acceptance
+    // definition must name a criterion, and no criterion is known without
+    // an index; the same three in both projects.
+    const fx = await scriptedEngine(t);
+    const stages = [
+      { number: 1, goal: 'R1, first half', implements: ['R1'] },
+      { number: 2, goal: 'R1, second half', implements: ['R1'] },
+    ];
+    const checks = [check('acc'), check('smoke', { kind: 'smoke' }), check('fauth', { kind: 'sensitivity_floor', sensitive_areas: ['authentication'] })];
+    for (const indexed of [true, false]) {
+      const what = indexed ? 'R1 indexed, its area authentication' : 'R1 with no index row';
+      const project = await addGitProject(fx, { tier: 'T1' });
+      const plan = indexed
+        ? await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1'], areas: ['authentication'] }], stages })
+        : await installGatedPlan(fx.engine, project.id, { requirements: ['R1'], stages, index: false });
+      const R1 = plan.requirements.find((r) => r.key === 'R1').id;
+      const registered = withStore(fx.home, (db) => db.prepare('SELECT "criteria" FROM "requirements" WHERE "id" = ?').get(R1));
+      assert.equal(registered.criteria === null, !indexed, `${what}: the fixture is live: R1's criteria are ${indexed ? 'registered' : 'null, never read'} (${JSON.stringify(registered)})`);
+      const ids = (await installChecks(fx.engine, project.id, checks, { inventory: false })).id;
+      const [s1, s2] = plan.stages;
+      fx.scripted.script(s1.work_item, [roleThat([permittedEdit()], { nominate: true })]);
+      // The second stage's Builder never finishes: R1 stays partial.
+      fx.scripted.script(s2.work_item, [script.crash(), script.crash(), script.crash(), script.crash(), script.crash()]);
+      const [c] = await tickUntil(fx.engine, project.id, () => {
+        const found = candidatesOfProject(fx.home, project.id);
+        return found.length > 0 ? found : undefined;
+      }, { max: 16, what: `${what}: the first stage's candidate` });
+      await passAll(fx.engine, project.id, c.id, Object.values(ids));
+      const evaluation = await evaluate(fx.engine, project.id, c.id, 'stage', { stage: s1.id });
+      const scope = scopeRead(fx.home, evaluation);
+      assert.deepEqual([scope.delivered, scope.partial], [[], [R1]], `${what}: the fixture is live: R1 is partially delivered at the candidate, so no obligation`);
+      if (indexed) {
+        assert.ok(scope.categories.includes('authentication') && scope.required.includes(ids.fauth), `${what}: the control: the area is the scope's and its floor is required (categories: ${JSON.stringify(scope.categories)})`);
+        assert.equal(evaluation.outcome, 'satisfied', `${what}: the control: the same scope, its index read, is satisfied (reasons: ${JSON.stringify(evaluation.reasons)})`);
+        assert.equal(scope.validated, 1);
+      } else {
+        assert.deepEqual(reasonCodes(evaluation), ['ACCEPTANCE_SCOPE_INCOMPLETE'], `${what}: the scope is incomplete, every check passed, and nothing else blocks (reasons: ${JSON.stringify(evaluation.reasons)})`);
+        assert.ok(incomplete(evaluation).includes(R1), `${what}: the reason names R1 (${R1}), whose areas were never read (subjects: ${JSON.stringify(incomplete(evaluation))})`);
+        assert.equal(scope.validated, 0, `${what}: the scope is not validated`);
+      }
+    }
   });
 });
 
