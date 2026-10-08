@@ -242,20 +242,28 @@ describe('M71 latency under the declared maximum load', () => {
     assert.deepEqual([clients.connected, clients.statuses.every((status) => status === 200)], [LIMITS.clients, true], `${LIMITS.clients} clients are connected to the event stream (statuses: ${clients.statuses.join(', ')})`);
     const replayBefore = (await clients.progress()).clients.filter((c) => c.kind === 'pager').reduce((sum, c) => sum + c.bytes, 0);
 
+    // The second project's git is held before the backup starts, and until it has ended.
+    const releaseGit = holdGit(held.repo.path);
+    fx.beforeCleanup.push(releaseGit);
+    // No tick that began before the hold is still under way when the held
+    // project's work is created. A tick that read the project's git in time,
+    // just before the hold, passed its integrity step for it and may dispatch
+    // work created while it goes on (its select step comes later); that was
+    // seen once in a full run of slice 20. Ticks run one at a time, so once
+    // any tick has ended after the hold, every tick still to come began after it.
+    await tick(engine, held.id, { rounds: 1, timeoutMs: 60_000 });
+    // Project 2: eligible work, created only now that its git is held. The
+    // engine may still be running a tick of its own asking when `tick`
+    // returns (one it requested itself after the dispatches above); work
+    // created before the hold could be dispatched by that tick, and was.
+    items.held = await addWork(engine, held.id, 'verification');
+
     // ---- the window ----
     const seqAtStart = maxEventSeq(fx.home);
     const receipts = () => withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "stream_chunk_receipts" WHERE "project" = ?').get(hashing.id).n);
     const receiptsBefore = receipts();
     const windowStart = now();
     fx.scripted.release(items.hashing, 'start');
-    // The second project's git is held before the backup starts, and until it has ended.
-    const releaseGit = holdGit(held.repo.path);
-    fx.beforeCleanup.push(releaseGit);
-    // Project 2: eligible work, created only now that its git is held. The
-    // engine may still be running a tick of its own asking when `tick`
-    // returns (one it requested itself after the dispatches above); work
-    // created before the hold could be dispatched by that tick, and was.
-    items.held = await addWork(engine, held.id, 'verification');
     const backup = await engine.post('/v1/harness/backup', {});
     assert.equal(backup.status, 202, `the backup is started (body: ${backup.text})`);
     await passAll(engine, gated.id, cand.candidate.id, [checks.id.login]);
