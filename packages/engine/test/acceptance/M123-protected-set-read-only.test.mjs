@@ -127,7 +127,9 @@ describe('M123 the protected set is read-only to every role but the Verifier', (
     const { fx, project, version } = await protectedProject(t);
     const content = '{"expect": 200, "body": "ok"}\n';
     const proposal = await capturedProposal(fx, project, { changeKind: null, steps: [step.write(CHECK_FILE, content), step.probe('read_back', { path: CHECK_FILE })] });
-    assert.deepEqual([proposal.status, proposal.proposed_by, proposal.base_revision], ['captured', 'verifier_run', project.base], 'a captured proposal on the run\'s base (row M36\'s shape)');
+    assert.deepEqual([proposal.proposed_by, proposal.base_revision], ['verifier_run', project.base], 'a captured proposal on the run\'s base (row M36\'s shape)');
+    // M3 slice 19 (D3 §1.6; SEAM.md §215): the engine may have classified it since its capture.
+    assert.ok(['captured', 'classified', 'awaiting_human'].includes(proposal.status), `captured, or classified since (it is ${proposal.status})`);
     const [launch] = fx.scripted.launches({ run: proposal.run });
     assert.equal(fx.scripted.probes(launch.invocation, 'read_back')[0].content, content, 'the Verifier wrote the protected file in its workspace and read it back');
     assert.equal(gitQuiet(project.repo.path, ['cat-file', '-p', `${proposal.tree_id}:${CHECK_FILE}`]), content.trim(), 'the proposal\'s tree holds what the Verifier wrote');

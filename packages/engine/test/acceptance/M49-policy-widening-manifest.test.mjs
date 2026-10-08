@@ -128,7 +128,9 @@ describe('M49 the policy_widening manifest', () => {
     assert.deepEqual(changedPaths(project.repo.path, project.base, head(project)), { '.surety/policy.json': 'A' }, 'the approval committed the ordinary policy file and nothing else');
     assert.ok(!('required_checks' in JSON.parse(fileAt(project.repo.path, head(project), '.surety/policy.json'))), 'which holds no governed key');
     assert.equal(fileAt(project.repo.path, head(project), GOVERNED_FILE), PROTECTED_FILES[GOVERNED_FILE], 'the governed file is as it was');
-    assert.deepEqual([effectiveVersion(fx.home, project.id).id, proposalsOf(fx.home, project.id)[0].status], [authorized.id, 'captured'], 'the effective protected version is unchanged and the proposal is still only captured');
+    assert.equal(effectiveVersion(fx.home, project.id).id, authorized.id, 'the effective protected version is unchanged');
+    // M3 slice 19 (D3 §1.6; SEAM.md §215): the ticks since may have classified it; nothing approved it.
+    assert.ok(['captured', 'classified', 'awaiting_human'].includes(proposalsOf(fx.home, project.id)[0].status), `and the proposal is still only captured, or classified (it is ${proposalsOf(fx.home, project.id)[0].status})`);
   });
 
   // M2 slice 1, A4 (SEAM.md §102).

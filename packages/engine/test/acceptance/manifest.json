@@ -234,6 +234,13 @@
       "M217-orphans-and-deadlines.test.mjs",
       "M218-output-and-evidence-presence.test.mjs",
       "M205-a-foreign-signal-and-forged-reports.test.mjs"
+    ],
+    "19": [
+      "M224-every-element-and-nothing-hidden.test.mjs",
+      "M225-declared-inputs-root-changes-the-policy-route.test.mjs",
+      "M226-affected-checks-with-their-reasons.test.mjs",
+      "M227-revalidation-and-authority.test.mjs",
+      "M228-invalid-definitions-and-spec-changes.test.mjs"
     ]
   },
   "sandbox": [

@@ -4525,6 +4525,123 @@ Sections 203 to 214 were written with the slice-18 acceptance tests (2026-10-07;
 - **M221 (b)'s "an optional observer never substitutes"** (T18, E57): no case; the engine has no optional observer of the self-test.
 - **M205 (i)'s writes "to the control descriptors"**: the ruling gives the program `print` only; the forged text goes to standard output. That check code cannot reach the init's channel is D2 §2.3's and M117's.
 
+---
+
+# M3 slice 19: the classifier
+
+Sections 215 to 220 were written with the slice-19 acceptance tests (2026-10-08; `verify/m3-s19` from `main` at `ce59cd2`): rows M224 to M228 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.5, M210 (a)'s `input_changed` observation (moved here by slice 17, section 202), and the configuration key `classifier_authority` (left here by section 186). They follow D3 draft 2 (§§1.4, 1.6, 3.1 to 3.5, A.2, A.3, A.7; L5, Q3, Q5), Astra's B02, N01, T03, T10 and §8.2, and E90 to E96. Every earlier section stands; what this pass changes in them is in section 220. † marks a reading for Sean.
+
+## 215. What the slice-19 tests assume throughout
+
+- **Kernel lane** (section 177). The classifier reads trees with engine git, the governed file and the registered requirement index; it runs nothing. No check runs in a slice-19 case.
+- **The engine classifies** (D3 §1.6). Every captured proposal, a Verifier's (section 68) or a human's through the policy route (section 66), is classified by the engine at a tick after the transaction that captured it, never in that transaction: a proposal reads `captured` when its capture commits, as sections 66 and 68 say, and is `classified` or `awaiting_human` (section 69) once a later tick has classified it. The engine discovers the proposal's tree and the effective version's (section 178) and reads the index registered through the plan fixture (sections 179, 219). Its `protected.classified` event carries no `test_fixture`.
+- **The classification fixture stays, harness-only** (section 67; D3 §1.6). A fixture call classifies as section 67 says, replacing a class the engine gave. A proposal whose class the fixture set keeps that class: the engine does not classify it again, and its revalidation (section 218) compares every other bound input with the stored class standing for the class. † So the accepted rows that use the fixture keep their meaning; their straddles are in section 220.
+- **Projects.** `classifierProject` (`harness/checks/classifier.mjs`): a T1 project whose integration branch holds the governed file, the definitions and their input files; a plan registered with a requirement index, whose one stage's Builder makes the permitted edit and asks for the nomination, so each project has a candidate and a free run slot before its first proposal; the effective version has no discovery error. Most cases declare each check's own input file, `.surety/checks/run/<key>.txt`, so a change to one check's input is in no other check's manifest (D3 §3.1, Q3); M225 (a), (b) and M226 (c) use default inputs.
+
+## 216. The classification as recorded, and the readings of D3 §3.1
+
+(D3 §§1.6, 3.1, 3.2, A.2, A.3; B02; N01; T03; rows M224 to M226, M210 (a).)
+
+**The record.** `protected_proposals.classification` is a JSON object with D3 A.3's members: `change_kind` (`tightening`, `loosening` or `unclassifiable`; never `initial`, which only project creation's first version is), `elements` (`[{reason, check?, path?}]`, `reason` a `ClassificationReason`), `affected_checks` (`[{check, reasons}]`), `effective_version` (the version's id), `spec_revision`, `classifier_version` (an integer, the running classifier's, section 217), `classifier_authority` (the setting in force, as section 217 reads it) and `discovery` (`{checks, errors}`). `classified_change_kind` holds `change_kind`; the proposal is routed by it as section 69 says.
+
+**An element's `check`** is the check's key for every element about one check (`check_added`, `criteria_added`, `gate_kinds_added`, `tier_floor_lowered`, `required_key_added_with_check`, `check_removed`, `required_key_removed`, `criteria_removed`, `areas_removed`, `gate_kinds_removed`, `tier_floor_raised`, `execution_field_changed`, `input_changed`, `required_key_added_alone`, and `unhandled_change` when it is about a definition). **`path`** is the repository path of the file for `neutral_file_changed`. The form of `path` on any other element is not pinned.
+
+**What the tests compare** (`assertClassification`). Always: every reason is D3 A.2's; `change_kind` is the class D3 §3.1's rule gives for the recorded elements (any unclassifiable-group element, or no strict and no loosening element: `unclassifiable`; else any loosening: `loosening`; else `tightening`), and the class the case expects; the classifier version is the running one. Then, of the elements other than `neutral_file_changed` and `no_strict_change`:
+- **exactly** the named ones, for each strict and loosening element alone and beside one strict one (M224 (b), (c));
+- **at least** the named ones, for an unclassifiable change, with every further element of the unclassifiable group: no change hides, and none adds, a strict or loosening element of its own. A governed field that every check's fingerprint uses (`runner_config`, `result_collection`) may, for example, also give each check `execution_field_changed`; that is not pinned either way.
+- For a change of neutral files only: no such element, a `neutral_file_changed` naming each path, and `no_strict_change`, the class's reason.
+
+**Readings of D3 §3.1 per delta** (each a case of M224):
+
+| Delta | Element |
+|---|---|
+| `tier_floor` removed; added | `tier_floor_lowered`; `tier_floor_raised` (D3: "lowered or removed", "raised or added") |
+| A root narrowed (`docs/protected/` to `docs/protected/sub/`) | `root_layout_changed`; a `root_removed` beside it is allowed † |
+| `check_discovery` changed, the definitions moved with it | `governed_field_changed` |
+| An existing check's `inputs` list | `execution_field_changed` (`input_changed` beside it allowed) |
+| A regular input replaced by a symlink | `discovery_error` (`input_not_regular`, D3 §1.3; `input_changed` beside it allowed) |
+| An input's executable bit | `input_changed` |
+| `phase`; a `covers.sensitive_areas` gain | `unhandled_change` |
+| A definition that is not JSON; one naming a criterion the index lacks | `discovery_error` |
+
+**Affected checks** (N01; D3 §1.6). One entry per check key, at most; each with a non-empty list of `AffectedReason`s; a check none of whose definition, input identity, required membership or applicability changed is not listed. Readings the cases pin: a check whose only change is its input file is listed exactly `input_changed`; one whose only change is leaving the required set (its key removed, or a list introduced that omits it) exactly `required_changed`; a `gate_kinds` change includes `applicability_changed` †; a `timeout_s` change includes `definition_changed`; an added check `added`, a removed one `removed`. Under default inputs, a changed file under the roots lists every check with `input_changed`.
+
+**A mode change, by the Verifier.** A scripted role cannot chmod in the kernel lane (the guarded `workspace_chmod` acts only inside a sandbox). The test writes a commit object, on the integration branch's commit and named by no ref, whose tree holds the file with mode `100755`, and the Verifier's step is `git checkout <commit> -- <path>`, which writes the file executable in its workspace (`objectCommit`, `chmodSteps`).
+
+## 217. The classifier's version and `classifier_authority`
+
+(D3 §3.3, A.7; Q5, decided (a); M3 plan §2.3, "a usage of `classifier_version` other than the running one"; rows M07, M227.)
+
+- **`GET /v1/engine`** gains `classifier_version`: a positive integer, the version of the classifier this engine runs. Every classification records it.
+- **`--harness-classifier-version <n>`** (harness mode only; without `--harness` a usage error, exit 2, as every harness flag, section 1): the running classifier reports `<n>`, a positive integer, for this start. It is how a case has "a different classifier running".
+- **`classifier_authority`**, an engine key (`../contract/config.json`): an object `{"mode", "version"?}`, `mode` `recommend` or `authoritative`; default `{"mode": "recommend"}`. `authoritative` requires `version`, an integer. Refused `invalid_value` with `subject.field` `classifier_authority`: a value that is not an object (a string, `null`), a `mode` that is neither, `authoritative` with no `version`, a `version` that is not an integer. `GET /v1/engine`'s `config.classifier_authority` is `{value, source}` as section 2 says. Not pinned: `recommend` with a `version`; the code of an unknown member.
+- **In force.** `authoritative` whose `version` is the running classifier's gives a Reviewer the authority E13 and F §4.1 give it; anything else, `recommend` or `authoritative` naming another version, is `recommend`: section 121's K8 stands.
+
+## 218. Binding, revalidation, and a Reviewer's application
+
+(D3 §3.3; K8; T10; D1 §10.5; sections 69, 76, 101, 104, 121; row M227.)
+
+**The manifests** of the three `check_correction_*` kinds (`../contract/decisions.json`) gain `classifier_version` (the running classifier's when the preview was made), `classifier_authority` (the setting's value as configured, as `GET /v1/engine` shows it) and `discovery` (a value that differs whenever the proposal's discovery differs; its form is not pinned †). `spec_revision` covers the requirement index's criteria and areas (section 219).
+
+**Revalidation.** Immediately before the human's effect (section 76), before a Reviewer's application begins, and when either is replayed after a restart, the engine re-reads every bound input and classifies again. If any differs, or the class does, the application is not made, **also when the class is the same**:
+- the human's: the intent `invalidated` `EFFECT_PRECONDITION_CHANGED`, the consumption withdrawn (the proposal `classified` or `awaiting_human`, `approver` and `approver_authority` null), the next generation of the decision raised with no approval, its manifest showing the changed value (the consumed decision keeps its approval, section 76);
+- a Reviewer's: the approval withdrawn the same way (the proposal `classified`, no approver), and the human's question open: a `check_correction_tightening` decision, open, with no approval, bound to the inputs as they now are;
+- in both, no version of the proposal is ever `authorized` or has `effective_from`, and the integration branch is where it was.
+
+**The barrier `protected_application.before_revalidation`** (section 18's rules; `pause` or `kill`): fires once an approved proposal's application is due, the human's effect (after `intent.recorded`) or a Reviewer's approval, after the approval is recorded on the proposal and before the revalidation. A case reads the proposal `approved` there, `approver_authority` `reviewer`.
+
+**A Reviewer's approval of a tightening.** Under the authority of section 217, after revalidation, the application follows as section 69 says, with `approver` the Reviewer's run and `approver_authority` `reviewer`; the open human decision is closed. Under `recommend`, or `authoritative` naming another version: section 121's K8: nothing is applied, the proposal stays `classified`, the human's decision stays open, and the approval is recorded in `protected_proposals.recommendations` as an entry naming the Reviewer's `run`.
+
+**The instruments** of row M227 (a), (b), one bound input at a time, the class unchanged:
+- the spec's criteria, then its areas: a spec revision (section 219), with the effect paused at `intent.recorded`;
+- the validation-scope approval: removed from the store (`scope_approvals`), with the engine killed at `intent.recorded` (section 121's precedent of a store change while the engine is down);
+- the classifier version: the restart takes `--harness-classifier-version`;
+- the setting: the restart reads a changed `classifier_authority`;
+- the proposal's discovery: the restart reads `check_output_max_bytes` lowered below the governed `result_collection.output_max_bytes`, which is then a discovery error (D3 §1.1: never clamped); the proposal was `unclassifiable` before and is after;
+- the effective version: row M106 (c)'s case (section 121), not repeated.
+
+A Reviewer's case is changed at the barrier above (paused: the spec's criteria; killed: the setting) or after the application's journal intent (`journal.commit_tree.intent_committed`, killed; restarted with another classifier version). What the refused application's journal operation is left as is not pinned (as section 104).
+
+## 219. A spec revision through the plan fixture
+
+(D3 §§1.4, 3.4, 4.5; L5; sections 101, 179; rows M227, M228.)
+
+A later `POST /v1/harness/fixtures/plan` with `requirement_index` registers a new approved spec revision: each row's requirement takes that row's criteria and sensitive areas, replacing those registered for its key, and the versions' discovery errors are recomputed against it in the fixture's transaction (section 177). The tests send the whole index each time. A key a later index leaves out is not pinned (D3: a withdrawn requirement's criteria are unknown; spec approval is not built). The fixture's stage implements nothing and its Builder crashes on every launch, so nothing is integrated and the integration branch does not move.
+
+**A criterion removed that a definition of the effective version names** (D3 §3.4; L5): the version's `discovery_errors` gain `criterion_unknown` at that definition's path, `#/covers/criteria/<n>` after it (section 178), and every evaluation of the project, `stage` and `alpha_authorize`, carries `ACCEPTANCE_SCOPE_INCOMPLETE` naming that path until a correction the engine classified, and the human approved, has applied.
+
+## 220. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Sections 66 and 68: a captured proposal is classified by the engine at a later tick (section 215). Rows M36, M49 (its widening with a governed field) and M123 (b) read `captured` after ticks; each now reads "captured, or classified since" (`captured`, `classified` or `awaiting_human`): what they pin, that nothing approved or applied it, is unchanged.
+- Section 67: a fixture's class stands against the engine's classifier (section 215).
+- Sections 69 and 121: a Reviewer approves a tightening under `authoritative` naming the running classifier (sections 217, 218); K8's recommendation stands otherwise.
+- Sections 76 and 77: the correction manifests gain three keys (section 218); `../contract/decisions.json` lists them, so every `check_correction_*` preview an accepted row reads must bind them.
+- Sections 2 and 186: `classifier_authority` joins the closed configuration; M07 compares values with `deepEqual` and gains its refusals.
+- Section 1's flags gain `--harness-classifier-version`; section 18's barriers gain `protected_application.before_revalidation`; section 4's `GET /v1/engine` gains `classifier_version`.
+- Section 179: a later index replaces a key's criteria and areas (section 219).
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| When the engine classifies | At a tick after the capture, never in its transaction (section 215) | D3 §1.6, "at the next tick"; keeps the accepted helpers' `captured` reads |
+| The classification fixture beside the classifier † | Its class stands; revalidation takes the stored class (section 215) | Otherwise every accepted application of a fixture-classified proposal would be invalidated by the engine's own class; harness-only |
+| Where the classification is read | `protected_proposals.classification`, D3 A.3's members (section 216) | A.3 names the column; no route reads a proposal |
+| Elements the tests compare † | Exactly, for strict and loosening; at least, for unclassifiable, never with an extra strict or loosening element; neutral elements only for neutral-only changes (section 216) | D3 fixes the reasons and the rule, not whether one change yields one element |
+| Per-delta readings † | Section 216's table | D3 §3.1 names the categories; the table fixes the fields it lists by name |
+| Affected entries pinned exactly † | Input-only and required-only changes (section 216) | N01's point is that these are visible apart from a definition change |
+| The running version, and "a different classifier" | `GET /v1/engine` `classifier_version`; `--harness-classifier-version` (section 217) | D3 records a version and names no read; M3 plan §2.3 names the fault |
+| `classifier_authority`'s refusals | Section 217 | A.7's range; nothing more |
+| The pending Reviewer application | Barrier `protected_application.before_revalidation` (section 218) | D3 revalidates "before a Reviewer's application begins"; no barrier stood there |
+| "The scope approval changed" † | Removed from the store, the engine down (section 218) | No route withdraws an approval; section 121's precedent |
+| "The discovery changed", the class the same † | The engine's output bound lowered under the governed one, on an unclassifiable proposal (section 218) | The one engine path that changes a fixed tree's discovery |
+| A Reviewer's withdrawal | The human's question open again, bound to the inputs now (section 218) | D3: "withdraws it the same way" and "the proposal goes to the human" |
+| A spec revision | A later plan fixture call with the whole index (section 219) | Spec approval is not built (BS3 §3); E92 item 4 |
+
+**Deferred or not written** (`../COVERAGE.md`, "M3 slice 19"):
+- **D3-C07's effective version** changed between preview and effect: row M106 (c)'s case, not repeated.
+- **Whether the retained check of B02's counterexample passes once its source is hidden**: row M238, project lane. M225 (b) pins the classification only.
+- **`authoritative` as a condition of M3's acceptance**: not required (BS3 §3); the cases set it and restore nothing.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 18".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 19".

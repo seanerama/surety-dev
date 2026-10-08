@@ -33,6 +33,7 @@ const FILES = { [GOVERNED_FILE]: '{"protected_paths": [".surety/checks/"]}\n', [
 const tighter = step.write(CHECK, '{"expect": 200, "body": "ok"}\n');
 const RATIONALE = 'The check did not look at the response body.';
 const proposing = { proposal: { rationale: RATIONALE, requested_change_kind: 'tightening' } };
+const CAPTURED_OR_CLASSIFIED = ['captured', 'classified', 'awaiting_human'];
 
 async function protectedProject(t) {
   const fx = await scriptedEngine(t);
@@ -68,10 +69,13 @@ describe('M36 a protected-only diff of a Verifier is captured as a proposal', ()
     const [proposal] = proposals;
     const workspace = getRow(fx.home, 'workspaces', run.workspace);
     assert.deepEqual(
-      { proposed_by: proposal.proposed_by, run: proposal.run, base: proposal.base_revision, tree: proposal.tree_id, status: proposal.status, requested: proposal.requested_change_kind },
-      { proposed_by: 'verifier_run', run: run.id, base: project.base, tree: snapshotTree(workspace.path, project.base), status: 'captured', requested: 'tightening' },
+      { proposed_by: proposal.proposed_by, run: proposal.run, base: proposal.base_revision, tree: proposal.tree_id, requested: proposal.requested_change_kind },
+      { proposed_by: 'verifier_run', run: run.id, base: project.base, tree: snapshotTree(workspace.path, project.base), requested: 'tightening' },
       'the proposal names the run, its base and the tree of what the Verifier left',
     );
+    // M3 slice 19 (D3 §1.6; SEAM.md §215): the engine classifies a captured
+    // proposal at a later tick, which the run's own ticks may reach.
+    assert.ok(CAPTURED_OR_CLASSIFIED.includes(proposal.status), `the proposal is captured, or classified since, and nothing more (it is ${proposal.status})`);
     assert.deepEqual(changedPaths(project.repo.path, project.base, proposal.tree_id), { [CHECK]: 'M' }, 'what it proposes is the protected change, exactly');
     await assertRecordHolds(fx.engine, project.id, proposal.rationale, { kind: 'proposal_rationale', content: RATIONALE });
     assert.deepEqual(eventsOfType(fx.home, 'protected.proposed').length, 1);

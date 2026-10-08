@@ -65,7 +65,7 @@ describe('M07 engine configuration', () => {
       let expected = spec.default;
       if (key === 'api_port') expected = port;
       if (key === 'api_authority') expected = `127.0.0.1:${port}`;
-      assert.equal(config[key].value, expected, `${key} value`);
+      assert.deepEqual(config[key].value, expected, `${key} value`);
       assert.equal(config[key].source, key === 'api_port' ? 'file' : 'default', `${key} source`);
       if (typeof expected === 'number') assert.ok(Number.isFinite(config[key].value) && config[key].value > 0, `${key} is finite`);
     }
@@ -130,6 +130,12 @@ describe('M07 engine configuration', () => {
     await assertEachRefused(t, 'git_output_cap', [65535, 268435457]);
   });
 
+  // M3 slice 19 (D3 A.7; Q5; SEAM.md §217): an object {mode, version?};
+  // `authoritative` requires the integer version it trusts.
+  test('invalid classifier_authority values are refused', async (t) => {
+    await assertEachRefused(t, 'classifier_authority', ['recommend', { mode: 'authoritative' }, { mode: 'sometimes' }, { mode: 'authoritative', version: '1' }, { mode: 'authoritative', version: 1.5 }, null]);
+  });
+
   test('invalid decision-target overrides are refused', async (t) => {
     await assertConfigRefused(t, { decision_targets: { not_a_kind: 3600 } }, { code: 'unknown_field', field: 'decision_targets.not_a_kind' });
     for (const value of [299, 2592001, 3600.5, null, '3600']) {
@@ -178,6 +184,7 @@ describe('M07 engine configuration', () => {
       git_deadline: 120,
       git_output_cap: 1048576,
       decision_targets: { blocker: 3600, policy_widening: 86400 },
+      classifier_authority: { mode: 'authoritative', version: 7 },
     };
     const home = makeTempDir('m07-valid');
     t.after(() => removeDir(home));
@@ -189,10 +196,10 @@ describe('M07 engine configuration', () => {
     for (const key of ENGINE_KEYS) {
       if (key === 'decision_targets') continue;
       if (key in chosen) {
-        assert.equal(config[key].value, chosen[key], `${key} value`);
+        assert.deepEqual(config[key].value, chosen[key], `${key} value`);
         assert.equal(config[key].source, 'file', `${key} source`);
       } else {
-        assert.equal(config[key].value, CONTRACT.engine[key].default, `${key} keeps its default`);
+        assert.deepEqual(config[key].value, CONTRACT.engine[key].default, `${key} keeps its default`);
         assert.equal(config[key].source, 'default', `${key} source`);
       }
     }
