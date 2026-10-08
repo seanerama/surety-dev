@@ -22,7 +22,7 @@ import { envelopeHold } from './envelope.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type WorkRow, getWorkItem, transitionWork } from './work.js';
-import { checkOutputsFor, reconcileRepair, recordObjections } from './repair.js';
+import { checkOutputsFor, reconcileRepairs, recordObjections } from './repair.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -888,8 +888,9 @@ export function finishRun(
   recordObjections(tx, run);
   workAfterRun(tx, run);
   // The item's run has ended: a repair its check failures owe is taken now
-  // (D3 §2.10; reconcileRepair waits for the run that holds the item).
-  reconcileRepair(tx, run.work_item);
+  // (D3 §2.10; reconcileRepair waits for the run that holds the item). Every
+  // item of the project, since a correction ending releases another's hold.
+  reconcileRepairs(tx, run.project);
   return { ended: true };
 }
 

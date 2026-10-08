@@ -24,6 +24,10 @@ const { unknownCheck } = await import(join(dist, 'invoke', 'choke.js'));
 const { resultSchema } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
 const { parseReport, fieldAllowed } = await import(join(dist, 'runs', 'report.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+const { evaluateGate } = await import(join(dist, 'store', 'transitions', 'gates.js'));
+const { recordReport } = await import(join(dist, 'store', 'transitions', 'findings.js'));
+const { answerQueued } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { recordPaths } = await import(join(dist, 'store', 'reads.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -259,21 +263,61 @@ test('retry takes the one repair; the answered conflict never stops it again', (
   assert.deepEqual([item(db).status, item(db).repair_attempts, item(db).check_conflict.answer], ['eligible', 1, 'retry']);
 });
 
-test('correct_check registers check_correction work for the Verifier, triggered by the finding, and holds the item at that candidate and version', (t) => {
+test('correct_check registers check_correction work for the Verifier, triggered by the finding; the hold lasts while the correction is open, a new candidate or an unrelated version included', (t) => {
   const db = store(t);
   objection(db);
   post(db, 'chk_acc', 'cand_1', 1);
   answer(db, 'correct_check');
   const w = db.prepare(`SELECT * FROM work_items WHERE kind = 'check_correction'`).all();
-  assert.deepEqual(w.map((x) => [x.trigger_id, x.chain, JSON.parse(x.subject).finding]), [['fnd_x', 0, 'fnd_x']]);
+  assert.deepEqual(w.map((x) => [x.trigger_id, x.trigger_generation, x.chain, JSON.parse(x.subject).finding]), [['fnd_x', 1, 0, 'fnd_x']]);
+  assert.deepEqual(item(db).check_conflict.corrections, [w[0].id]);
   assert.deepEqual([item(db).status, item(db).repair_attempts], ['verifying', 0]);
   reconcile(db);
   assert.deepEqual([item(db).status, item(db).repair_attempts], ['verifying', 0], 'held: no repair for that failure');
-  // A new candidate is judged afresh.
+  // A new candidate fails too, and an unrelated version becomes effective: still held while the correction is open.
   candidate(db, 'cand_2', 2, B);
   db.prepare(`UPDATE candidates SET superseded_by = 'cand_2' WHERE id = 'cand_1'`).run();
   post(db, 'chk_acc', 'cand_2', 1);
-  assert.deepEqual([item(db).status, item(db).repair_attempts], ['eligible', 1]);
+  assert.deepEqual([item(db).status, item(db).repair_attempts], ['verifying', 0], 'held across candidates');
+});
+
+test('a correction that ends with no corrected version raises the X2 blocker again; answered correct_check again, a fresh correction', (t) => {
+  const db = store(t);
+  objection(db);
+  post(db, 'chk_acc', 'cand_1', 1);
+  answer(db, 'correct_check');
+  const first = db.prepare(`SELECT id FROM work_items WHERE kind = 'check_correction'`).get().id;
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(first);
+  reconcile(db);
+  const row = item(db);
+  assert.deepEqual([row.status, row.repair_attempts, row.blocker.reason, row.blocker.findings], ['awaiting_decision', 0, 'check_conflict', ['fnd_x']]);
+  assert.deepEqual(JSON.parse(openBlocker(db).options).map((o) => o.key), ['correct_check', 'change_spec', 'retry', 'cancel']);
+  answer(db, 'correct_check');
+  const all = db.prepare(`SELECT id, trigger_generation FROM work_items WHERE kind = 'check_correction' ORDER BY seq`).all();
+  assert.deepEqual(all.map((x) => x.trigger_generation), [1, 2], 'the next generation of its trigger');
+  assert.deepEqual(item(db).check_conflict.corrections, [all[1].id]);
+});
+
+test("a correction whose proposal is still open holds; one whose proposal was applied releases the item to be judged afresh", (t) => {
+  const db = store(t);
+  objection(db);
+  post(db, 'chk_acc', 'cand_1', 1);
+  answer(db, 'correct_check');
+  const corr = db.prepare(`SELECT id FROM work_items WHERE kind = 'check_correction'`).get().id;
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(corr);
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, outcome, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, chain)
+     VALUES ('run_c', ?, 'prj_1', 20, ?, 'verifier', 'one_shot', 'ended', 'completed', 'scripted', '1', 'm', ?, ?, 0, 1)`,
+  ).run(AT, corr, A, AT);
+  db.prepare(
+    `INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status)
+     VALUES ('prop_c', ?, 'prj_1', 1, 'verifier_run', 'run_c', ?, ?, 'd', 'unclassifiable', 'awaiting_human')`,
+  ).run(AT, A, TREE);
+  reconcile(db);
+  assert.equal(item(db).status, 'verifying', 'held while the proposal awaits its decision');
+  db.prepare(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'prop_c'`).run();
+  reconcile(db);
+  assert.deepEqual([item(db).status, item(db).repair_attempts, item(db).check_conflict.answer], ['eligible', 1, 'corrected'], 'a corrected version came out of it: the failure is judged afresh, and is the Builder\'s');
 });
 
 test('change_spec raises spec_change work (never dispatched), cancel cancels', (t) => {
@@ -365,4 +409,162 @@ test("the schema gives criterion as the index's enum; a Builder's objections tak
   assert.equal(parseReport({ objections: [{ check: 'acc', category: 'defect', message: 'm' }] }), null, 'only the two conflict categories');
   assert.equal(fieldAllowed({ objections }, 'builder'), true);
   assert.equal(fieldAllowed({ objections }, 'verifier'), false);
+});
+
+test('a conflict finding dispositioned accept or defer raises no X2 blocker; one dispositioned fix does', (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'requirement_conflict' });
+  db.prepare(`UPDATE findings SET status = 'dispositioned', disposition = 'accept' WHERE id = 'fnd_x'`).run();
+  post(db, 'chk_acc', 'cand_1', 1);
+  assert.equal(item(db).status, 'eligible', 'accepted: the repair is taken');
+  const db2 = store(t);
+  objection(db2, { role: 'verifier', candidate: 'cand_1', category: 'requirement_conflict' });
+  db2.prepare(`UPDATE findings SET status = 'dispositioned', disposition = 'fix' WHERE id = 'fnd_x'`).run();
+  post(db2, 'chk_acc', 'cand_1', 1);
+  assert.equal(item(db2).status, 'awaiting_decision');
+});
+
+test("a Reviewer's disposition of a Builder's objection is an invalid entry: nothing is recorded", (t) => {
+  const db = store(t);
+  objection(db);
+  db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, depends_on, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold, chain)
+     VALUES ('wi_rev', ?, 'prj_1', 7, 'review', '{"candidate":"cand_1"}', 'executing', '[]', 'fixture', 'r', 1, 0, 0, 0, 0, 1)`).run(AT);
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, chain, result_value)
+     VALUES ('run_rev', ?, 'prj_1', 8, 'wi_rev', 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, 1, ?)`,
+  ).run(AT, A, AT, JSON.stringify({ summary: 's', report: { dispositions: [{ finding: 'fnd_x', disposition: 'fix' }, { finding: 'fnd_x', disposition: 'accept' }] } }));
+  transact(db, ENGINE_ACTOR, (tx) => recordReport(tx, { run: 'run_rev' }));
+  const f = db.prepare(`SELECT status, disposition, proposed_disposition FROM findings WHERE id = 'fnd_x'`).get();
+  assert.deepEqual(f, { status: 'open', disposition: null, proposed_disposition: null });
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind IN ('fix', 'check_correction')`).get().n, 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'finding_disposition'`).get().n, 0);
+});
+
+test("queue.ts routes an answer to the X2 blocker to the conflict's answers", (t) => {
+  const db = store(t);
+  objection(db);
+  post(db, 'chk_acc', 'cand_1', 1);
+  const d = openBlocker(db);
+  transact(db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'change_spec', preview_hash: d.preview_hash, note: null }));
+  assert.equal(db.prepare(`SELECT status FROM decisions WHERE id = ?`).get(d.id).status, 'consumed');
+  assert.deepEqual([item(db).status, item(db).check_conflict.answer], ['verifying', 'change_spec']);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = 'spec_change' AND trigger_id = 'fnd_x'`).get().n, 1);
+});
+
+test('routeMissingAtVersion routes every unresolved fix finding the version leaves unverifiable, once', (t) => {
+  const db = store(t);
+  const insert = (id, seq, check, criterion, status = 'dispositioned') =>
+    db.prepare(
+      `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, category, message, "check", criterion, proposed_severity, effective_severity, status, disposition)
+       VALUES (?, ?, 'prj_1', ?, 'project', 'prj_1', 'defect', 'm', ?, ?, 'medium', 'medium', ?, 'fix')`,
+    ).run(id, AT, seq, check, criterion, status);
+  insert('fnd_ok', 1, 'acc', 'R1.1');
+  insert('fnd_bad', 2, 'smoke', 'R1.1');
+  insert('fnd_done', 3, 'smoke', 'R1.1', 'resolved');
+  transact(db, ENGINE_ACTOR, (tx) => repair.routeMissingAtVersion(tx, 'prj_1'));
+  transact(db, ENGINE_ACTOR, (tx) => repair.routeMissingAtVersion(tx, 'prj_1'));
+  assert.deepEqual(db.prepare(`SELECT trigger_id FROM work_items WHERE kind = 'check_correction'`).all().map((r) => r.trigger_id), ['fnd_bad']);
+});
+
+test('recordPaths serves only a record the API would serve: never a quarantined, unpublished, missing, expired or foreign one', (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO projects (id, created_at, name, tier, dev_repo_path, integration_branch, baseline_state, registration_state, management)
+     VALUES ('prj_2', ?, 'q', 'T1', '/nowhere2', 'main', 'spec_ready', 'registered', '{}')`).run(AT);
+  const rec = (id, { project = 'prj_1', path = id, published = 1, post_scan = 'clean', missing_at = null } = {}) =>
+    db.prepare(
+      `INSERT INTO records (id, created_at, project, kind, path, sha256, bytes, redaction_version, published, post_scan, missing_at) VALUES (?, ?, ?, 'check_output', ?, ?, ?, 'r1', ?, ?, ?)`,
+    ).run(id, AT, project, path, published ? 'h' : null, published ? 3 : null, published, post_scan, missing_at);
+  rec('rec_ok');
+  rec('rec_hit', { post_scan: 'hit' });
+  rec('rec_pending', { post_scan: 'pending' });
+  rec('rec_unpub', { published: 0 });
+  rec('rec_gone', { missing_at: AT });
+  rec('rec_expired', { path: null });
+  rec('rec_other', { project: 'prj_2' });
+  const out = recordPaths(db, { project: 'prj_1', ids: ['rec_ok', 'rec_hit', 'rec_pending', 'rec_unpub', 'rec_gone', 'rec_expired', 'rec_other', 'rec_none'] });
+  assert.deepEqual(out, {
+    rec_ok: { path: 'rec_ok', sha256: 'h', bytes: 3 },
+    rec_hit: null,
+    rec_pending: { path: 'rec_pending', sha256: 'h', bytes: 3 },
+    rec_unpub: null,
+    rec_gone: null,
+    rec_expired: null,
+    rec_other: null,
+    rec_none: null,
+  });
+});
+
+// ---- the gate's resolution rule (F2 (c), L8) and missing_verifications --------------------
+
+function gateReady(db) {
+  for (const [id, ref, kind, oid, immutable] of [
+    ['ref_main', 'refs/heads/main', 'integration', A, 0],
+    ['ref_c1', 'refs/surety/cand/1', 'nomination', A, 1],
+  ]) {
+    db.prepare('INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, AT, 'prj_1', ref, kind, oid, immutable);
+  }
+  db.prepare(`INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria, requirement_ids)
+     VALUES ('chk_opt', ?, 'prj_1', 'opt', 'pv_1', 'acceptance', 0, '["stage","alpha_authorize"]', '.surety/checks/defs/opt.json', 'h', 'direct', '["R1.1"]', '["req_1"]')`).run(AT);
+  // Out of repair's way: these cases are about the gate.
+  db.prepare(`UPDATE work_items SET status = 'integrated' WHERE id = 'wi_1'`).run();
+}
+const evaluate = (db) =>
+  transact(db, ENGINE_ACTOR, (tx) =>
+    evaluateGate(tx, {
+      project: 'prj_1',
+      candidate: 'cand_1',
+      kind: 'stage',
+      stage: 'stage_1',
+      headFingerprint: 'fp',
+      head: A,
+      refs: [
+        { ref: 'refs/heads/main', read: 'value', oid: A },
+        { ref: 'refs/surety/cand/1', read: 'value', oid: A },
+      ],
+    }),
+  ).evaluation;
+function fixFinding(db, id, check, criterion) {
+  db.prepare(
+    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, category, message, "check", criterion, proposed_severity, effective_severity, status)
+     VALUES (?, ?, 'prj_1', (SELECT COALESCE(MAX(seq), 0) + 1 FROM findings), 'candidate', 'cand_1', 'cand_1', 'defect', 'm', ?, ?, 'medium', 'medium', 'open')`,
+  ).run(id, AT, check, criterion);
+  transact(db, ENGINE_ACTOR, (tx) =>
+    recordDisposition(tx, tx.db.prepare('SELECT * FROM findings WHERE id = ?').get(id), { disposition: 'fix', authority: 'human', by: 'human', linked_issue: null, defer_target: null }),
+  );
+}
+const status = (db, id) => db.prepare('SELECT status FROM findings WHERE id = ?').get(id).status;
+
+test("the gate resolves a fix only through a required acceptance check of the scope covering its criterion; every other names a missing verification", (t) => {
+  const db = store(t);
+  gateReady(db);
+  fixFinding(db, 'f_ok', 'acc', 'R1.1');
+  fixFinding(db, 'f_smoke', 'smoke', 'R1.1');
+  fixFinding(db, 'f_opt', 'opt', 'R1.1');
+  fixFinding(db, 'f_none', 'acc', null);
+  post(db, 'chk_acc', 'cand_1', 0);
+  post(db, 'chk_smoke', 'cand_1', 0);
+  post(db, 'chk_opt', 'cand_1', 0);
+  const e = evaluate(db);
+  assert.equal(status(db, 'f_ok'), 'resolved');
+  for (const f of ['f_smoke', 'f_opt', 'f_none']) assert.equal(status(db, f), 'dispositioned', f);
+  assert.deepEqual(e.missing_verifications, [
+    { finding: 'f_smoke', criterion: 'R1.1', check: 'smoke' },
+    { finding: 'f_opt', criterion: 'R1.1', check: 'opt' },
+    { finding: 'f_none', criterion: null, check: 'acc' },
+  ]);
+  assert.deepEqual(JSON.parse(db.prepare('SELECT missing_verifications FROM gate_evaluations WHERE id = ?').get(e.id).missing_verifications), e.missing_verifications, 'stored with the evaluation');
+});
+
+test("a pass whose output record a detector flagged is not intact evidence: it resolves nothing", (t) => {
+  const db = store(t);
+  gateReady(db);
+  fixFinding(db, 'f_ok', 'acc', 'R1.1');
+  db.prepare(`INSERT INTO records (id, created_at, project, kind, path, sha256, bytes, redaction_version, published, post_scan) VALUES ('rec_hit', ?, 'prj_1', 'check_output', 'rec_hit', 'h', 3, 'r1', 1, 'hit')`).run(AT);
+  const r = post(db, 'chk_acc', 'cand_1', 0);
+  db.prepare(`UPDATE check_results SET output = 'rec_hit' WHERE id = ?`).run(r.id);
+  post(db, 'chk_smoke', 'cand_1', 0);
+  const e = evaluate(db);
+  assert.ok(e.reasons.some((x) => x.code === 'EVIDENCE_MISSING' && x.subjects.includes('rec_hit')), JSON.stringify(e.reasons));
+  assert.equal(status(db, 'f_ok'), 'dispositioned');
+  assert.deepEqual(e.missing_verifications, [], 'the check can verify it; only its evidence is missing');
 });

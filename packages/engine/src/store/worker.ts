@@ -262,7 +262,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'mount.context': (d, a: { project: string }) => mountContext(d, a),
   'context.facts': (d, a: { run: string }) => contextFacts(d, a),
   'run.check_keys': (d, a: { run: string }) => runCheckKeys(d, a),
-  'records.paths': (d, a: { ids: string[] }) => recordPaths(d, a),
+  'records.paths': (d, a: { project: string; ids: string[] }) => recordPaths(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),

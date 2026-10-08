@@ -13,6 +13,7 @@ import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from 
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem } from './work.js';
+import { isObjection } from './repair.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -164,6 +165,9 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     for (const d of report.dispositions ?? []) {
       const f = findingOf(tx, d.finding);
       if (!f || f.project !== project || f.status === 'resolved') continue;
+      // A Builder's objection is not dispositioned: the entry is invalid and
+      // nothing is recorded for it (D3 §5 X2; slice 21 review, minor 2).
+      if (isObjection(f as FindingRow & { source_role: string | null })) continue;
       const deferLow = d.disposition === 'defer' && f.effective_severity === 'low' && d.linked_issue && d.defer_target;
       if (d.disposition === 'fix' || deferLow) {
         recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null });

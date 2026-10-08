@@ -10,7 +10,7 @@
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-import { recordsDir, writeWholeRecord } from '../../records/files.js';
+import { readRecordBytes, recordsDir, writeWholeRecord } from '../../records/files.js';
 import { seamDomainLimits, seamSandboxBinds } from '../../testing/seam.js';
 
 import { type DomainLimits, createDomainCgroup } from '../../boundary/cgroup.js';
@@ -123,11 +123,18 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
-  // The failed repair checks' output records the claim names (D3 §2.10).
+  // The failed repair checks' output records the claim names (D3 §2.10),
+  // read as the API would serve them: only a record it serves, and only
+  // bytes of its recorded size and hash. Anything else is missing to the
+  // package, never copied (a quarantined record among them).
+  const outputBytes = new Map<string, Buffer | null>();
   const outputIds = (claim.check_outputs ?? []).map((o) => o.output).filter((id): id is string => id !== null);
   if (outputIds.length > 0) {
-    const paths = await rt.read<Record<string, string | null>>('records.paths', { ids: outputIds });
-    for (const id of outputIds) recordPaths.set(id, paths[id] ?? null);
+    const rows = await rt.read<Record<string, { path: string; sha256: string | null; bytes: number | null } | null>>('records.paths', { project: claim.project, ids: outputIds });
+    for (const id of outputIds) {
+      const row = rows[id] ?? null;
+      outputBytes.set(id, row === null ? null : await readRecordBytes(rt.home, row));
+    }
   }
   const canary = claim.attempt
     ? canaryInstructions({
@@ -156,6 +163,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     diff,
     probe: claim.profile === 'probe',
     readRecord: (id) => {
+      if (outputBytes.has(id)) return outputBytes.get(id) ?? null;
       const path = recordPaths.get(id);
       if (!path) return null;
       try {

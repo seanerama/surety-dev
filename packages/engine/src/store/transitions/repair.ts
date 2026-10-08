@@ -26,12 +26,12 @@
 //   created and waits, never dispatched;
 // - objections from any role but the Builder (a Verifier reports a conflict
 //   as a finding);
-// - re-arming a hold after a spec change: see `heldByAnswer`.
+// - re-arming a hold after a spec change: see `heldByChangeSpec`.
 
 import { requirementKeyOf } from '../../checks/schema.js';
 import { canonical, parseJson, sha256 } from './common.js';
 import type { Effect } from './control.js';
-import { type CandidateRow, type CheckRow, checksOfVersion, requiredSet, requirementsOf } from './evidence.js';
+import { type CandidateRow, type CheckRow, checksOfVersion, deliveredStageScope, requiredSet } from './evidence.js';
 import { type FindingRow, checkState } from './gates.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
 import { knownCriteria, readDue } from './checks.js';
@@ -59,9 +59,15 @@ interface CheckRepair {
 // person's answer to it once given.
 interface CheckConflict {
   findings: string[];
+  // The findings the latest blocker was raised for.
+  raised?: string[];
   candidate: string;
   version: string;
-  answer: (typeof X2_OPTIONS)[number] | null;
+  // The person's answer; 'corrected' once a correct_check's correction
+  // ended with a version applied (the hold is over).
+  answer: (typeof X2_OPTIONS)[number] | 'corrected' | null;
+  // The check_correction work a `correct_check` answer registered.
+  corrections?: string[];
   at: string;
 }
 
@@ -195,10 +201,22 @@ export function reconcileRepair(tx: Tx, itemId: string): void {
 
   const pending = pendingConflicts(tx.db, item, view);
   if (pending.length > 0) {
-    raiseConflict(tx, item, view, pending);
+    raiseConflict(tx, item, view, pending.map((f) => f.id));
     return;
   }
-  if (heldByAnswer(item, view)) return;
+  const conflict = parseJson<CheckConflict>((item as WorkRow & { check_conflict?: string | null }).check_conflict ?? null);
+  if (conflict?.answer === 'correct_check') {
+    const outcome = correctionOutcome(tx.db, conflict.corrections ?? []);
+    if (outcome === 'open') return;
+    if (outcome === 'none') {
+      // The correction ended with no corrected version: the person decides again.
+      raiseConflict(tx, item, view, conflict.raised ?? conflict.findings);
+      return;
+    }
+    // A corrected version came out of it: judged afresh, as any failure.
+    tx.db.prepare('UPDATE "work_items" SET "check_conflict" = ? WHERE "id" = ?').run(JSON.stringify({ ...conflict, answer: 'corrected', at: tx.at }), item.id);
+  }
+  if (heldByChangeSpec(conflict, view)) return;
 
   const checks = view.failed.map((f) => f.check.id);
   const repair = JSON.stringify({ candidate: view.candidate.id, generation, at: tx.at } satisfies CheckRepair);
@@ -241,16 +259,35 @@ function park(
   raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
 }
 
-// A `correct_check` or `change_spec` answer holds the item: the failure at
-// the candidate and version the conflict was answered at is the check's or
-// the spec's, not the Builder's, so no repair is taken for it. The item
-// waits in `verifying` until the protected version or its candidate changes
-// (a corrected check under a new version, or a new candidate, is judged
-// afresh). Not built: re-arming after a spec change, which changes neither;
-// the item then waits for the person.
-function heldByAnswer(item: WorkRow, view: RepairView): boolean {
-  const c = parseJson<CheckConflict>((item as WorkRow & { check_conflict?: string | null }).check_conflict ?? null);
-  return c !== null && (c.answer === 'correct_check' || c.answer === 'change_spec') && c.candidate === view.candidate.id && c.version === view.version.id;
+// A `correct_check` answer holds the item while the correction it asked
+// for is open (slice 21 review, S3; driver's ruling under D3 §5 X2): any
+// check_correction work it registered not yet ended, or any protected
+// proposal those runs captured not yet applied or rejected. The failure at
+// hand is the check's, not the Builder's, until then. Ended: 'applied' if a
+// version came out of it (the item is then judged afresh at the new state),
+// 'none' if not (the X2 blocker is raised again for the person). An
+// unrelated protected application changes none of this.
+function correctionOutcome(db: Db, corrections: string[]): 'open' | 'applied' | 'none' {
+  if (corrections.length === 0) return 'none';
+  let applied = false;
+  for (const id of corrections) {
+    const w = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(id) as { status: string } | undefined;
+    if (w && w.status !== 'complete' && w.status !== 'cancelled') return 'open';
+    const proposals = db
+      .prepare(`SELECT p."status" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."work_item" = ?`)
+      .all(id) as { status: string }[];
+    if (proposals.some((p) => p.status !== 'applied' && p.status !== 'rejected')) return 'open';
+    if (proposals.some((p) => p.status === 'applied')) applied = true;
+  }
+  return applied ? 'applied' : 'none';
+}
+
+// A `change_spec` answer holds the item at the candidate and version it was
+// given at (not built: no process for spec_change work, which waits for the
+// person; the item then waits in `verifying` until the candidate or the
+// version changes).
+function heldByChangeSpec(c: CheckConflict | null, view: RepairView): boolean {
+  return c !== null && c.answer === 'change_spec' && c.candidate === view.candidate.id && c.version === view.version.id;
 }
 
 // ---- conflicts (D3 §5 X2) ------------------------------------------------------------
@@ -270,6 +307,9 @@ function pendingConflicts(db: Db, item: WorkRow, view: RepairView): FindingRow[]
     .all(item.project) as (FindingRow & { source_role: string | null; run_item: string | null })[];
   return rows.filter((f) => {
     if (!keys.has(f.check!) || seen.has(f.id)) return false;
+    // A conflict the person or a Reviewer accepted or deferred stops nothing
+    // (slice 21 review, minor 3): only one undispositioned, or dispositioned fix.
+    if (f.disposition !== null && f.disposition !== 'fix') return false;
     if (f.source_role === 'builder') return f.run_item === item.id;
     return (f.source_role === 'verifier' || f.source_role === 'reviewer') && f.candidate === view.candidate.id;
   });
@@ -280,10 +320,17 @@ function pendingConflicts(db: Db, item: WorkRow, view: RepairView): FindingRow[]
 // D3 §5 X2's blocker instead of the repair: `verifying → awaiting_decision`,
 // `repair_attempts` unchanged, one open blocker offering exactly
 // `correct_check`, `change_spec`, `retry` and `cancel`.
-function raiseConflict(tx: Tx, item: WorkRow, view: RepairView, pending: FindingRow[]): void {
+function raiseConflict(tx: Tx, item: WorkRow, view: RepairView, ids: string[]): void {
   const prior = parseJson<CheckConflict>((item as WorkRow & { check_conflict?: string | null }).check_conflict ?? null);
-  const ids = pending.map((f) => f.id);
-  const conflict: CheckConflict = { findings: [...new Set([...(prior?.findings ?? []), ...ids])], candidate: view.candidate.id, version: view.version.id, answer: null, at: tx.at };
+  const conflict: CheckConflict = {
+    findings: [...new Set([...(prior?.findings ?? []), ...ids])],
+    raised: ids,
+    candidate: view.candidate.id,
+    version: view.version.id,
+    answer: null,
+    ...(prior?.corrections ? { corrections: prior.corrections } : {}),
+    at: tx.at,
+  };
   tx.db.prepare('UPDATE "work_items" SET "check_conflict" = ? WHERE "id" = ?').run(JSON.stringify(conflict), item.id);
   const checks = view.failed.map((f) => f.check.id);
   const blocker = JSON.stringify({ reason: 'check_conflict', raised_at: tx.at, decision: null, checks, findings: ids, candidate: view.candidate.id });
@@ -324,13 +371,15 @@ export function answerConflict(tx: Tx, item: WorkRow, option: string, decision: 
   const blocker = parseJson<{ findings?: string[] }>(item.blocker) ?? {};
   const findings = blocker.findings ?? [];
   const prior = parseJson<CheckConflict>((item as WorkRow & { check_conflict?: string | null }).check_conflict ?? null);
-  if (prior) tx.db.prepare('UPDATE "work_items" SET "check_conflict" = ? WHERE "id" = ?').run(JSON.stringify({ ...prior, answer: option, at: tx.at }), item.id);
+  // A correct_check answer: the Verifier's check_correction work, one per
+  // conflict, a fresh one where an earlier correction of it has ended.
+  const corrections = option === 'correct_check' ? findings.map((f) => correctionFor(tx, item.project, f)) : (prior?.corrections ?? []);
+  if (prior) tx.db.prepare('UPDATE "work_items" SET "check_conflict" = ? WHERE "id" = ?').run(JSON.stringify({ ...prior, answer: option, corrections, at: tx.at }), item.id);
   const cause = { decision, cause: option };
   if (option === 'cancel') {
     transitionWork(tx, item, 'cancelled', { blocker: null }, cause);
     return [];
   }
-  if (option === 'correct_check') for (const f of findings) routeCheckCorrection(tx, item.project, f, 0);
   if (option === 'change_spec') {
     // Not built: any process for spec_change work. The item is recorded and
     // waits; the scheduler never dispatches it (no role performs the kind).
@@ -359,19 +408,18 @@ interface Objection {
 // are none or include one its stage implements, and a criterion of a
 // requirement its stage implements. For a fix: its finding's check and
 // criterion. A fixture fix naming no finding has none.
-function concerns(db: Db, item: WorkRow, o: Objection, checks: CheckRow[]): boolean {
+function concerns(db: Db, item: WorkRow, o: Objection, version: VersionRow): boolean {
   const subject = parseJson<{ stage?: string; finding?: string }>(item.subject) ?? {};
   if (item.kind === 'stage_build') {
-    const stage = subject.stage ? (db.prepare('SELECT "implements" FROM "stages" WHERE "id" = ?').get(subject.stage) as { implements: string } | undefined) : undefined;
-    if (!stage) return false;
-    const implemented = parseJson<string[]>(stage.implements) ?? [];
-    const c = checks.find((x) => x.key === o.check);
-    if (!c || c.required !== 1 || !(JSON.parse(c.gate_kinds) as string[]).includes('stage')) return false;
-    const reqs = requirementsOf(c);
-    if (reqs.length > 0 && !reqs.some((r) => implemented.includes(r))) return false;
+    // The stage's `stage` scope by the one scope rule (computeScope), as it
+    // stands once the stage delivers what it implements (slice 21 review,
+    // minor 5): the check in its required set, the criterion one of its
+    // obligations'.
+    const scope = subject.stage ? deliveredStageScope(db, { project: item.project, stage: subject.stage, version: version.id }) : null;
+    if (!scope || !scope.required.some((c) => c.key === o.check)) return false;
     if (o.criterion === undefined) return true;
     const req = db.prepare('SELECT "id", "criteria" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(item.project, requirementKeyOf(o.criterion)) as { id: string; criteria: string | null } | undefined;
-    return req !== undefined && implemented.includes(req.id) && (parseJson<string[]>(req.criteria) ?? []).includes(o.criterion);
+    return req !== undefined && scope.obligations.includes(req.id) && (parseJson<string[]>(req.criteria) ?? []).includes(o.criterion);
   }
   if (item.kind === 'fix' && subject.finding) {
     const f = db.prepare('SELECT "check", "criterion" FROM "findings" WHERE "id" = ? AND "project" = ?').get(subject.finding, item.project) as { check: string | null; criterion: string | null } | undefined;
@@ -405,7 +453,7 @@ export function recordObjections(tx: Tx, run: { id: string; project: string; wor
     if (!CONFLICT_CATEGORIES.includes(o.category)) continue;
     if (!checks.some((c) => c.key === o.check)) continue;
     if (o.criterion !== undefined && !(criteria?.has(o.criterion) ?? false)) continue;
-    if (!concerns(tx.db, item, o, checks)) continue;
+    if (!concerns(tx.db, item, o, version)) continue;
     const id = canonical([o.category, o.check, o.criterion ?? null, o.message]);
     if (done.has(id)) continue;
     done.add(id);
@@ -424,6 +472,11 @@ export function recordObjections(tx: Tx, run: { id: string; project: string; wor
   }
 }
 
+// A Builder's objection recorded as a finding (D3 §5 X2): it is a conflict
+// for the person's X2 answer, never a defect a disposition fixes, defers or
+// accepts (slice 21 review, minor 2).
+export const isObjection = (f: { source_role?: string | null; category: string }): boolean => f.source_role === 'builder' && CONFLICT_CATEGORIES.includes(f.category);
+
 // ---- what verifies a finding (D3 §2.11; F2 (c)) --------------------------------------
 
 // A check that can verify a finding's criterion: a required check of origin
@@ -432,6 +485,20 @@ export function recordObjections(tx: Tx, run: { id: string; project: string; wor
 export function verifiesCriterion(c: CheckRow | undefined, criterion: string | null): boolean {
   if (!c || criterion === null || c.required !== 1 || c.origin !== 'acceptance') return false;
   return (parseJson<string[]>(c.criteria ?? '[]') ?? []).includes(criterion);
+}
+
+// The check_correction work of a `correct_check` answer (not chained: the
+// person's answer made it): the finding's open correction if there is one,
+// else the next generation of its trigger.
+function correctionFor(tx: Tx, project: string, finding: string): string {
+  const open = tx.db
+    .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'check_correction' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" DESC LIMIT 1`)
+    .get(project, finding) as { id: string } | undefined;
+  if (open) return open.id;
+  const { n } = tx.db
+    .prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) + 1 AS n FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'check_correction' AND "trigger_id" = ?`)
+    .get(project, finding) as { n: number };
+  return observeTrigger(tx, { project, kind: 'check_correction', trigger_source: 'check_correction', trigger_id: finding, trigger_generation: n, subject: { finding }, chain: 0 }, { finding }).work_item.id;
 }
 
 // The `check_correction` work for the Verifier a missing verification or an

@@ -242,14 +242,21 @@ export function contextFacts(db: Database, args: { run: string }) {
   };
 }
 
-// The published records of a run's context package by id (the failed
-// checks' output records a repair run is given, D3 §2.10): their paths, so
-// the package can hold their text. A record not published has none.
-export function recordPaths(db: Database, args: { ids: string[] }): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
+// The records a run's context package may hold by id (the failed checks'
+// output records a repair run is given, D3 §2.10): where each is and the
+// size and hash its bytes must have, or null for a record the API would
+// not serve. A record of another project, unpublished, expired, recorded
+// missing, or flagged by a detector after it was written (post_scan
+// 'hit', quarantined: served by no route, E42 item 1) is withheld, and the
+// package treats it as missing; it is never copied (slice 21 review).
+export function recordPaths(db: Database, args: { project: string; ids: string[] }): Record<string, { path: string; sha256: string | null; bytes: number | null } | null> {
+  const out: Record<string, { path: string; sha256: string | null; bytes: number | null } | null> = {};
   for (const id of args.ids) {
-    const row = db.prepare('SELECT "path", "published", "missing_at" FROM "records" WHERE "id" = ?').get(id) as { path: string | null; published: number; missing_at: string | null } | undefined;
-    out[id] = row && row.published === 1 && row.missing_at === null ? row.path : null;
+    const row = db.prepare('SELECT "project", "path", "sha256", "bytes", "published", "missing_at", "post_scan" FROM "records" WHERE "id" = ?').get(id) as
+      | { project: string; path: string | null; sha256: string | null; bytes: number | null; published: number; missing_at: string | null; post_scan: string }
+      | undefined;
+    const served = row !== undefined && row.project === args.project && row.published === 1 && row.path !== null && row.missing_at === null && row.post_scan !== 'hit';
+    out[id] = served ? { path: row!.path!, sha256: row!.sha256, bytes: row!.bytes } : null;
   }
   return out;
 }
