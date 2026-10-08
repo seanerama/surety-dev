@@ -15,6 +15,11 @@
 // with a blocker naming the checks; a conflict finding from the Builder's run
 // wins over the repair and takes D3 §5 X2's route.
 //
+// S1 (E100 item 1; SEAM.md §235): a `stage_build`'s current candidate is the
+// latest non-superseded candidate that holds it, directly or by ancestry, so
+// a check of its stage scope failing on a fix's candidate sends the stage
+// back; a fix keeps E43's fix candidate.
+//
 // Kernel lane: checks discovered from the project's definitions, registered
 // at nomination and moved through the scripted check boundary (SEAM.md
 // §190); case (f) declares its checks with the fixture after the nomination
@@ -97,7 +102,8 @@ describe('M234 the repair loop', () => {
   test("(a) a fix: its named check failing on the fix's candidate sends it back once; another check failing there, and the stage's checks, send nothing back", async (t) => {
     const fx = await scriptedEngine(t);
     const p = await repairProject(fx);
-    const { item: stageItem, candidate: c1 } = await buildAndNominate(fx, p);
+    // The stage's Builder has a second run: by S1's ruling smoke's failure on the fix's candidate sends the stage back too (the S1 case below).
+    const { item: stageItem, candidate: c1 } = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true }), REPAIR_WRITE] });
     const ids = checkIds(fx.home, p.id);
     const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'medium', message: 'the session survives a logout', check: 'acc', criterion: 'R1.1' }], { kind: 'verification' });
     await review(fx, p.id, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
@@ -118,10 +124,47 @@ describe('M234 the repair loop', () => {
     const row = itemRow(fx.home, fix.id);
     assert.deepEqual([row.status, row.repair_attempts, repairsOf(fx.home, fix.id).length], ['eligible', 1, 1], 'the named check failed on the fix candidate: the fix is sent back once');
     assert.equal(row.check_repair?.candidate, c2.id, "the repair is taken for the fix's candidate");
-    assert.deepEqual([itemRow(fx.home, stageItem).status, repairsOf(fx.home, stageItem).length], ['verifying', 0], "the stage's work is not sent back: its current candidate is candidate 1, whose checks have no result");
+    // Replaced by S1's ruling (Sean, 2026-10-08): the stage's current candidate is candidate 2, which holds it by ancestry.
+    assert.deepEqual([repairsOf(fx.home, stageItem).length, itemRow(fx.home, stageItem).check_repair?.candidate], [1, c2.id], "the stage's work took one repair, for candidate 2 (smoke, a check of its stage scope, failed there; the S1 case below), and acc's failure there took no second");
 
     await runEnded(fx, p.id, fix.id, 1);
     assert.deepEqual(told(launchesOf(fx, fix.id)[1]), expected(fx.home, ids, { acc: failed }), "the fix's repair run is told of its named check's failure");
+  });
+
+  test("(a) S1 (E100 item 1): a stage_build held by a later candidate by ancestry is repaired there: a check of its stage scope, not the fix's, failing on the fix's candidate sends the stage back once, check_repair naming that candidate, the failed output in its repair run's context; repeated ticks take no second repair", async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await repairProject(fx);
+    const { item: stageItem, candidate: c1 } = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true }), REPAIR_WRITE] });
+    const ids = checkIds(fx.home, p.id);
+    const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'medium', message: 'M234-S1: the session survives a logout', check: 'acc', criterion: 'R1.1' }], { kind: 'verification' });
+    await review(fx, p.id, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
+    const fix = workItemsOf(fx.home, p.id).find((w) => w.kind === 'fix' && w.subject?.finding === found.id);
+    assert.ok(fix, 'the fixture is live: the engine registered the fix for the disposition (E43)');
+    const c2 = await successor(fx, { project: p }, { work: fix.id });
+    assert.equal(candidateRow(fx.home, c1.id).superseded_by, c2.id, "the fixture is live: the fix's candidate supersedes candidate 1");
+    assert.ok(!JSON.parse(candidateRow(fx.home, c2.id).held_work).includes(stageItem), "the fixture is live: candidate 2 holds the stage's work by ancestry only (E43)");
+    assert.deepEqual([itemRow(fx.home, stageItem).status, itemRow(fx.home, fix.id).status], ['verifying', 'verifying'], 'the fixture is live: the stage and the fix are verifying');
+    const reg = await tickUntil(fx.engine, p.id, () => {
+      const r = registrationsBy(fx.home, c2.id);
+      return r.acc && r.smoke ? r : undefined;
+    }, { max: 6, what: "the fix candidate's registrations" });
+
+    // Paused, so the ticks below can dispatch nothing: the repair is taken in the recording transaction, as in (e).
+    await pauseProject(fx.engine, p.id);
+    const failed = await recordExit(fx.engine, reg.smoke.id, 1, { output: 'M234-S1: smoke failed on the fix candidate\n' });
+    const row = itemRow(fx.home, stageItem);
+    assert.deepEqual([row.status, row.repair_attempts, repairsOf(fx.home, stageItem).length], ['eligible', 1, 1], "smoke, a required check of the stage's `stage` scope, failed at its current candidate (candidate 2, which holds it by ancestry): the stage_build is sent back once");
+    assert.equal(row.check_repair?.candidate, c2.id, 'check_repair names candidate 2');
+    assert.deepEqual([itemRow(fx.home, fix.id).status, repairsOf(fx.home, fix.id).length], ['verifying', 0], "smoke is not the fix's named check: the fix is not sent back");
+    await tick(fx.engine, p.id);
+    await tick(fx.engine, p.id);
+    assert.deepEqual([itemRow(fx.home, stageItem).repair_attempts, repairsOf(fx.home, stageItem).length], [1, 1], 'repeated ticks take no second repair');
+
+    await resumeProject(fx.engine, p.id);
+    await runEnded(fx, p.id, stageItem, 1);
+    assert.deepEqual(told(launchesOf(fx, stageItem)[1]), expected(fx.home, ids, { smoke: failed }), "the stage's repair run is told of smoke's failure on candidate 2, with its output record");
+    await tick(fx.engine, p.id);
+    assert.deepEqual([itemRow(fx.home, stageItem).repair_attempts, repairsOf(fx.home, stageItem).length, runsOf(fx.home, stageItem).length], [1, 1, 2], 'one repair and one repair run, and no other');
   });
 
   test('(b) a failure recorded before the item reached verifying sends it back once it is there', async (t) => {

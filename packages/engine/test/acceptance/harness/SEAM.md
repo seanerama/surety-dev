@@ -4845,6 +4845,23 @@ M234 (g)'s no-progress case sets `no_progress_max` before the build (objection 0
 - **The route at a new version's effect** (D3 §2.11, "or the one that makes a new version effective"): no case.
 - **An objection from a `fix`'s Builder** about its finding's check: the cases object from `stage_build` runs only.
 
+## 235. The slice-21 review's rulings (E100; the driver's S3 ruling; 2026-10-08)
+
+**What this pass changes in earlier sections.**
+- **Section 229, "Whose repair"** (E100 item 1, S1): a `stage_build`'s current candidate is the latest non-superseded candidate that holds it, directly or by ancestry (E43), not only the one nominated from its own latest integration. Its repair checks are its stage scope's required checks at that candidate. Everything else in section 229 stands. A `fix` keeps E43's fix candidate. M234 (a)-fix's reading of the stage's work ("not sent back: its current candidate is candidate 1") is replaced: smoke failing on the fix's candidate sends the stage back once, for that candidate.
+- **Section 230, condition (2), and section 231** (E100 item 2, S2): "in the required set of one of the candidate's scopes", the union check registration uses (section 225's scopes together: the `stage` scope of each stage the candidate holds and its `alpha_authorize` scope). A missing verification is named in `missing_verifications`, and `check_correction` routed, only when the named check is a required acceptance-origin check covering the criterion in none of the finding's candidate's scopes. So a check of the version marked required that no scope requires (in the case, a tier floor above the project's tier) routes.
+- **Section 232, `correct_check`** (S3, the driver's ruling under D3 §5 X2): the answer holds the item while the `check_correction` work it registered is not ended and no proposal its runs captured is still neither applied nor rejected. When the correction ends with no new effective version, the X2 blocker is raised again about the item with the same four options †. A protected application that is not the correction's does not end the hold: a repair check failing at the new version takes no repair and raises no blocker.
+- **Section 229, the sandbox lane's context** †: a failed repair check's output record that the API would not serve (section 57: a detector's later hit, `post_scan` `hit`) is treated as missing: the package still lists the check's `check_output` entry, `source` the record's id, and its file holds none of the record's bytes. What the file says instead is not pinned.
+
+**Instruments.** The correction cancelled: the harness transition route (section 15, `{"to": "cancelled"}`) before any tick dispatches it. The correction kept open across an unrelated application: the project paused before the answer (a pause stops run dispatch only; a repair is taken in the recording transaction, M234 (e)); the unrelated change is a Verifier's proposal adding a smoke check, captured before the answer and applied by the human (`humanApplies`), and the objected check is registered again by the operator route at the new version and fails. The later detector: M64's (`registerDetector`), registered once both checks of the first candidate are recorded with the project paused, then `waitForPostScan` `hit` before the project resumes.
+
+| Case | File | Defect it pins |
+|---|---|---|
+| S1 | M234 (a) S1 | the stage stayed `verifying` with no blocker when its stage check failed on a fix's candidate |
+| S2 | M235 (a) S2 | a cross-stage regression finding could never resolve at stage 2's gate; a version-required check no scope requires was not routed |
+| S3 | M236 (a) correct_check, two cases | the hold never ended after a cancelled correction; an unrelated application released it |
+| Leak | M237, the flagged-output case (sandbox) | a quarantined output record was copied into the Builder's repair package |
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 21".
