@@ -1,19 +1,23 @@
-// The test-owned check program of M3 slices 15 and 17 (SEAM.md §§182, 198,
-// 201). The engine's check runner executes it as a check's own process
+// The test-owned check program of M3 slices 15, 17 and 18 (SEAM.md §§182,
+// 198, 201, 207). The engine's check runner executes it as a check's own process
 // inside a `check` domain: a `check_commands` entry names the installed copy
 // (`installCheckProgram` in fixtures.mjs writes it with a shebang naming the
 // test's node), and the definition's `command[1..]` are its arguments.
 //
-// It is benign by construction. It signals nothing, opens no descriptor it
-// did not inherit and starts no process. It reads its working directory, the
+// It is benign by construction. It signals nothing and opens no descriptor
+// it did not inherit; only `detach-child` starts a process, one that sleeps. It reads its working directory, the
 // files it is told to digest and the existence of one release file, writes
 // to its standard output and exits. Every wait it makes is bounded. Node
 // built-ins only, no relative imports.
 //
-// Two modes act (slice 17), and each fails closed outside a check domain
-// (E64; BS3 §4 rule 1; the guard of SEAM.md §141, copied here): `write`
-// opens existing workspace files for writing, and `fetch` connects to the
-// proxy its environment names, and nothing else. Each acts only when the
+// Two modes act (slice 17), and five more (slice 18), and each fails closed
+// outside a check domain (E64; BS3 §4 rule 1; the guard of SEAM.md §141,
+// copied here): `write` opens existing workspace files for writing, `fetch`
+// connects to the proxy its environment names, `ignore-term` ignores
+// SIGTERM, `detach-child` starts one detached child that only sleeps,
+// `flood` writes many bytes, `print` writes the text it is given, and
+// `alloc` (the exhaustion lane's only) allocates memory up to a ceiling of
+// its own. None of them signals anything. Each acts only when the
 // program is told the host's pid, network and mount namespaces
 // (`--host-ns`) and its own are three others, pid 1 is no system init, and
 // it sees at most 16 processes; any read that fails is a refusal (exit 94,
@@ -44,7 +48,27 @@
 //                                 `SURETY-CHECK-FETCH <json>`: the proxy named (null when there
 //                                 is no HTTPS_PROXY, and then nothing is attempted) and each
 //                                 host's status line or error; exit 0
+//   ignore-term <max ms>          (guarded) install a SIGTERM handler that only writes one line
+//                                 `SURETY-CHECK ignored SIGTERM` and does not exit; write
+//                                 `SURETY-CHECK ignoring SIGTERM`; wait (at most 120 s); exit 99
+//   detach-child <ms>             (guarded) start one child, `child-sleep <ms>`, detached in a
+//                                 session of its own with standard input, output and error
+//                                 closed; write `SURETY-CHECK-DETACHED <json>` ({"pid"}, the
+//                                 child's pid as this program sees it); exit 0 at once
+//   child-sleep <ms>              sleep (at most 120 s) and exit 0; started only by detach-child
+//   flood <bytes>                 (guarded) write floor(bytes / 1024) lines of 1024 bytes,
+//                                 alternately to standard output (`O <seq> ooo…`) and standard
+//                                 error (`E <seq> eee…`), <seq> ten digits from 0; then exit 0.
+//                                 At most 16 GiB; above it, refused (exit 95)
+//   print <text>...               (guarded) write each text and a line ending to standard
+//                                 output; exit 0
+//   alloc <cap bytes>             (guarded; the exhaustion lane only, SEAM.md §212) refuse a cap
+//                                 above 64 MiB, and a memory.max it can read above the cap; then
+//                                 allocate 1 MiB at a time, every page touched, writing
+//                                 `SURETY-CHECK-ALLOC <bytes>` every 4 MiB, up to twice the cap
+//                                 (at most 128 MiB); exit 97 if it got there alive
 
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeSync } from 'node:fs';
 import net from 'node:net';
@@ -57,6 +81,12 @@ const WALK_MAX = 5000;
 const FETCH_WAIT_MAX_MS = 15_000;
 const MAX_VISIBLE = 16;
 const SYSTEM_INITS = ['systemd', 'init', 'launchd'];
+const SLEEP_MAX_MS = 120_000;
+const LINE_BYTES = 1024;
+const FLOOD_CEILING = 16 * 1024 * 1024 * 1024;
+const MIB = 1024 * 1024;
+// E69's memory cap (SEAM.md §155): the alloc mode refuses any cap above it.
+const ALLOC_CAP_MAX = 64 * MIB;
 
 const out = (text) =>
   new Promise((resolve) => {
@@ -167,6 +197,25 @@ async function guarded() {
   if (reasons.length === 0) return;
   await out(`SURETY-CHECK refused ${JSON.stringify(reasons)}`);
   await leave(94);
+}
+
+// Write all of `buf` to `fd`, synchronously. A standard stream may be a
+// non-blocking pipe: EAGAIN waits a millisecond and tries again, for at most
+// 60 s in all. Any other error, or the wait, ends the attempt (false).
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+let waitedMs = 0;
+function writeWhole(fd, buf) {
+  let off = 0;
+  while (off < buf.length) {
+    try {
+      off += writeSync(fd, buf, off, buf.length - off);
+    } catch (err) {
+      if (err.code !== 'EAGAIN' || waitedMs >= 60_000) return false;
+      Atomics.wait(PAUSE, 0, 0, 1);
+      waitedMs += 1;
+    }
+  }
+  return true;
 }
 
 // A workspace-relative path, never absolute and never through `..`.
@@ -291,6 +340,74 @@ if (mode === 'exit') {
   }
   await out(`SURETY-CHECK-FETCH ${JSON.stringify({ proxy: named, results })}`);
   await leave(0);
+} else if (mode === 'ignore-term') {
+  await guarded();
+  const max = Math.min(Number(rest[0]) || TERM_WAIT_MAX_MS, TERM_WAIT_MAX_MS);
+  process.on('SIGTERM', () => {
+    process.stdout.write('SURETY-CHECK ignored SIGTERM\n');
+  });
+  await out('SURETY-CHECK ignoring SIGTERM');
+  await sleep(max);
+  await out('SURETY-CHECK no end came');
+  await leave(99);
+} else if (mode === 'detach-child') {
+  await guarded();
+  const ms = String(Math.min(Number(rest[0]) || 0, SLEEP_MAX_MS));
+  const child = spawn(process.execPath, [process.argv[1], 'child-sleep', ms], { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
+  child.unref();
+  await out(`SURETY-CHECK-DETACHED ${JSON.stringify({ pid: child.pid ?? null })}`);
+  await leave(0);
+} else if (mode === 'child-sleep') {
+  await sleep(Math.min(Number(rest[0]) || 0, SLEEP_MAX_MS));
+  process.exit(0);
+} else if (mode === 'flood') {
+  await guarded();
+  const bytes = Number(rest[0]);
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > FLOOD_CEILING) {
+    await out(`SURETY-CHECK flood of ${rest[0]} bytes refused (at most ${FLOOD_CEILING})`);
+    await leave(95);
+  }
+  const lines = Math.floor(bytes / LINE_BYTES);
+  for (let seq = 0; seq < lines; seq++) {
+    const stream = seq % 2 === 0 ? 'O' : 'E';
+    const head = `${stream} ${String(seq).padStart(10, '0')} `;
+    const line = `${head}${(stream === 'O' ? 'o' : 'e').repeat(LINE_BYTES - head.length - 1)}\n`;
+    if (!writeWhole(stream === 'O' ? 1 : 2, Buffer.from(line))) process.exit(96);
+  }
+  await leave(0);
+} else if (mode === 'print') {
+  await guarded();
+  for (const text of rest) await out(text);
+  await leave(0);
+} else if (mode === 'alloc') {
+  await guarded();
+  const cap = Number(rest[0]);
+  const reasons = [];
+  if (!Number.isSafeInteger(cap) || cap <= 0 || cap > ALLOC_CAP_MAX) reasons.push(`the cap ${rest[0]} is not a positive integer at or below ${ALLOC_CAP_MAX}`);
+  let limit = null;
+  try {
+    limit = readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim();
+  } catch {
+    limit = null;
+  }
+  // Inside a check domain memory.max is normally not visible (no cgroupfs);
+  // then the test's host-side reading of it is the bound (SEAM.md §212).
+  if (limit !== null && (limit === 'max' || !(Number(limit) <= cap))) reasons.push(`memory.max reads ${limit}, above the cap ${cap}`);
+  if (reasons.length > 0) {
+    await out(`SURETY-CHECK alloc refused ${JSON.stringify(reasons)}`);
+    await leave(94);
+  }
+  const kept = [];
+  const ceiling = Math.min(2 * cap, 2 * ALLOC_CAP_MAX);
+  let allocated = 0;
+  while (allocated + MIB <= ceiling) {
+    kept.push(Buffer.alloc(MIB, 1));
+    allocated += MIB;
+    if (allocated % (4 * MIB) === 0) await out(`SURETY-CHECK-ALLOC ${allocated}`);
+  }
+  globalThis.__suretyKept = kept;
+  await out(`SURETY-CHECK alloc reached its ceiling ${ceiling} alive`);
+  await leave(97);
 } else {
   await out(`SURETY-CHECK unknown mode ${mode}`);
   await leave(93);
