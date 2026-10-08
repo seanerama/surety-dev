@@ -17,7 +17,10 @@
 // `recommend` a Reviewer's approval of a tightening is a recommendation and
 // applies nothing; under `authoritative` naming another version it reads as
 // `recommend`; naming the running version it applies, after revalidation,
-// with the Reviewer as approver. (d) The setting changed while a Reviewer's
+// with the Reviewer as approver, unless the tightening changes
+// `required_checks` and no validation-scope approval is recorded (D3 §3.2;
+// SEAM §§69, 218; the driver's ruling): then it is a recommendation on the
+// human's decision and applies nothing. (d) The setting changed while a Reviewer's
 // application is pending stops it, and the proposal goes to the human; (b) a
 // Reviewer's application replayed after a restart under another classifier
 // version is refused.
@@ -78,6 +81,8 @@ const FILES = protectedFiles({ governed: GOV, defs: DEFS, files: { [RUN('a')]: '
 const NEW_N = [writeDef('n', acceptanceDef('n')), step.write(RUN('n'), 'the input of n\n')];
 // A tightening: a new check, outside every existing check's inputs, not required.
 const TIGHTENING = NEW_N;
+// A tightening that changes the required set: the new check made required.
+const REQUIRED_N = [...NEW_N, writeGov({ ...GOV, required_checks: ['a', 's', 'n'] })];
 // An unclassifiable correction that changes the required set: the new check
 // made required, and an existing check's input changed.
 const UNCLASSIFIABLE = [...NEW_N, writeGov({ ...GOV, required_checks: ['a', 's', 'n'] }), step.write(RUN('a'), 'the input of a, corrected\n')];
@@ -90,6 +95,7 @@ const UNCL = 'check_correction_unclassifiable';
 // withdrawal helpers take.
 const EXPECTED = {
   tightening: { kind: 'tightening', exact: ['check_added:n'] },
+  required: { kind: 'tightening', exact: ['check_added:n', 'required_key_added_with_check:n'] },
   unclassifiable: { kind: 'unclassifiable', contains: ['check_added:n', 'required_key_added_with_check:n', 'input_changed:a'] },
 };
 
@@ -235,6 +241,39 @@ describe('M227 revalidation and authority', () => {
     assertApplied(fx, ctx.project, { proposal: ctx.proposal, previous: ctx.previous, headBefore: ctx.headBefore, authority: 'reviewer', changeKind: 'tightening' });
     assert.equal(proposalRow(fx.home, pid, ctx.proposal.id).approver, run.id, 'the Reviewer\'s run is the approver');
     assert.deepEqual(decisionsOn(fx.home, TIGHT, ctx.proposal.id).filter((d) => d.status === 'open'), [], 'the human\'s decision is closed');
+  });
+
+  test("(c) authoritative for the running version: a Reviewer's approval of a tightening that changes required_checks, with no validation-scope approval, applies nothing and is a recommendation on the human's decision; one that leaves the required set applies", async (t) => {
+    const fx = await scriptedEngine(t);
+    const V = await runningClassifier(fx.engine);
+    const authoritative = { mode: 'authoritative', version: V };
+    await fx.engine.stop();
+    setEngineConfig(fx, { classifier_authority: authoritative });
+    await fx.start();
+    assert.deepEqual((await fx.engine.engineInfo()).config.classifier_authority, { value: authoritative, source: 'file' }, 'the setting is read as configured');
+
+    const ctx = await correctionOn(fx, REQUIRED_N, 'required');
+    const pid = ctx.project.id;
+    const human = await openDecision(fx, pid, TIGHT, ctx.proposal.id);
+    assert.ok(approveOption(human).blockers.includes('APPROVAL_MISSING'), `the fixture is live: the required set changes and no validation-scope approval is recorded (options: ${JSON.stringify(human.options)})`);
+    const { run } = await reviewerApproves(fx, ctx.project, ctx.proposal);
+    await tick(fx.engine, pid, { rounds: 3 });
+    const what = "the Reviewer's approval without the validation-scope approval";
+    assertWithdrawn(fx, ctx, what);
+    assert.equal(proposalRow(fx.home, pid, ctx.proposal.id).status, 'classified', `${what}: applied nothing; the proposal awaits an approval`);
+    assert.equal(effectiveVersion(fx.home, pid).id, ctx.previous.id, `${what}: the effective protected version is unchanged`);
+    assert.ok(proposalRow(fx.home, pid, ctx.proposal.id).recommendations.some((r) => r.run === run.id), `${what}: the approval is recorded as the Reviewer's recommendation`);
+    const open = decisionsOn(fx.home, TIGHT, ctx.proposal.id).filter((d) => d.status === 'open');
+    assert.equal(open.length, 1, `${what}: the human's check_correction_tightening decision is open`);
+    assert.ok(approveOption(open[0]).blockers.includes('APPROVAL_MISSING'), `${what}: and its approve still waits for the validation-scope approval`);
+
+    // The contrast: a tightening that leaves the required set applies on the Reviewer's approval.
+    const plain = await correctionOn(fx, NEW_N, 'tightening');
+    await openDecision(fx, plain.project.id, TIGHT, plain.proposal.id);
+    const approved = await reviewerApproves(fx, plain.project, plain.proposal);
+    await waitApplied(fx, plain.project, plain.proposal);
+    assertApplied(fx, plain.project, { proposal: plain.proposal, previous: plain.previous, headBefore: plain.headBefore, authority: 'reviewer', changeKind: 'tightening' });
+    assert.equal(proposalRow(fx.home, plain.project.id, plain.proposal.id).approver, approved.run.id, "the contrast: the Reviewer's run is the approver");
   });
 
   test("(d) the setting changed while a Reviewer's application is pending stops it and the proposal goes to the human; (b) a Reviewer's application replayed after a restart under another classifier version is refused", async (t) => {

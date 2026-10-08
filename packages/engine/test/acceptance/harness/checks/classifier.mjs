@@ -64,9 +64,10 @@ export const writeGov = (fields) => step.write(GOVERNED_FILE, governedText(field
 // §179). The plan's one stage implements every requirement; its Builder
 // makes the permitted edit and asks for the nomination, so the project has
 // a candidate and its one-run slot is free again before any proposal. The
-// effective version has no discovery error (the fixture is live). Returns
+// effective version has no discovery error (the fixture is live), or, with
+// `withErrors`, has at least one (M228 (c): an error of P0's own). Returns
 // {id, repo, base, plan, stage, candidate, version: <the version read>}.
-export async function classifierProject(fx, { files, index, tier = 'T1' }) {
+export async function classifierProject(fx, { files, index, tier = 'T1', withErrors = false }) {
   const p = await checkProject(fx, { files, tier });
   const plan = await installIndexedPlan(fx.engine, p.id, { index, stages: [{ number: 1, goal: 'the first stage', implements: index.map((row) => row.key) }] });
   const item = plan.stages[0].work_item;
@@ -74,7 +75,8 @@ export async function classifierProject(fx, { files, index, tier = 'T1' }) {
   await runToEnd(fx, p.id, item);
   const [candidate] = await waitForCandidates(fx, p.id);
   const version = await versionRead(fx.engine, p.id, effectiveVersion(fx.home, p.id).id);
-  assert.deepEqual(version.discovery_errors, [], `the fixture is live: the effective version has no discovery error (${JSON.stringify(version.discovery_errors)})`);
+  if (withErrors) assert.ok(version.discovery_errors.length > 0, 'the fixture is live: the effective version has a discovery error');
+  else assert.deepEqual(version.discovery_errors, [], `the fixture is live: the effective version has no discovery error (${JSON.stringify(version.discovery_errors)})`);
   assert.equal(version.change_kind, 'initial', 'project creation classifies its first version initial (D3-C01)');
   return { ...p, plan, stage: plan.stages[0].id, candidate, version, base: refOid(p.repo.path, p.repo.ref) };
 }
