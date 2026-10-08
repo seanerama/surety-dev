@@ -11,7 +11,14 @@
 // definition of the effective version names gives that version
 // `criterion_unknown`, and every gate of the project
 // `ACCEPTANCE_SCOPE_INCOMPLETE` naming it, until a correction the engine
-// classifies, and the human approves, applies.
+// classifies, and the human approves, applies. (c) An error in the
+// effective version's own discovery is never ignored (D3 §1.4: a dropped
+// check is a loosening nobody approved): a proposal whose discovery does
+// not reproduce it identically is unclassifiable, with an `unhandled_change`
+// element naming the error's path (the driver's ruling, SEAM §216). Three
+// proposals: P0's invalid required definition deleted and the required set
+// rewritten round a new check; that definition repaired in place beside a
+// new check; and a governed-file error of P0 removed beside a new check.
 //
 // Expected to fail on `main`: no classifier runs. `GET /v1/engine` names no
 // `classifier_version`, and no proposal is classified by the engine.
@@ -19,8 +26,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { KERNEL_COMMANDS, RUN, assertClassification, classifierProject, defPath, engineClassification, protectedFiles, reviseSpec, runningClassifier, stageSettled, verifierProposal, writeDef } from './harness/checks/classifier.mjs';
-import { versionRead } from './harness/checks/fixtures.mjs';
+import { GOVERNED_FILE, KERNEL_COMMANDS, RUN, assertClassification, classifierProject, defPath, engineClassification, protectedFiles, reviseSpec, runningClassifier, stageSettled, verifierProposal, writeDef, writeGov } from './harness/checks/classifier.mjs';
+import { codesAt, versionRead } from './harness/checks/fixtures.mjs';
 import { answer, assertQuestionClosed, consume, openDecision, reject } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { alphaTarget, assertApplied, assertProposalRejected, effectiveVersion, reasonSubjects, stageGate, waitApplied } from './harness/gates.mjs';
@@ -36,6 +43,21 @@ const FILES = protectedFiles({ governed: GOV, defs: DEFS, files: { [RUN('b')]: '
 const KIND = 'check_correction_unclassifiable';
 
 const approveOption = (row) => row.options.find((o) => o.key === 'approve');
+
+// The effective version's discovery errors.
+const effectiveErrors = async (fx, p) => (await versionRead(fx.engine, p.id, effectiveVersion(fx.home, p.id).id)).discovery_errors;
+// Every error of P0 that P1 does not reproduce identically is named by an
+// `unhandled_change` element: at the error's path, or at its file.
+function assertP0ErrorsNamed(c, p0errors, label) {
+  const p1 = c.discovery?.errors ?? [];
+  const same = (a, b) => a.path === b.path && a.code === b.code;
+  const lost = p0errors.filter((e) => !p1.some((f) => same(e, f)));
+  assert.ok(lost.length > 0, `${label}: the fixture is live: an error of P0 is not reproduced by the proposal (P0: ${JSON.stringify(p0errors)}; P1: ${JSON.stringify(p1)})`);
+  for (const e of lost) {
+    const named = c.elements.some((el) => el.reason === 'unhandled_change' && (el.path === e.path || el.path === e.path.split('#')[0]));
+    assert.ok(named, `${label}: an unhandled_change element names P0's error at ${e.path} (${e.code}) (elements: ${JSON.stringify(c.elements)})`);
+  }
+}
 
 describe('M228 invalid definitions and spec changes', () => {
   test('(a) a proposal with a discovery error, criterion_unknown included, is unclassifiable; approve carries CHECK_DEFINITION_INVALID and is refused; reject works', async (t) => {
@@ -97,5 +119,44 @@ describe('M228 invalid definitions and spec changes', () => {
     const after = assertApplied(fx, p, { proposal, previous: before, headBefore, authority: 'human', changeKind: 'loosening' });
     assert.deepEqual((await versionRead(fx.engine, p.id, after.id)).discovery_errors, [], 'the corrected version has no discovery error');
     for (const [kind, evaluation] of await gates()) assert.deepEqual(namesB(evaluation), [], `${kind}: once the correction applies, ACCEPTANCE_SCOPE_INCOMPLETE names no error of b`);
+  });
+
+  test("(c) an error in the effective version's own discovery that the proposal does not reproduce makes it unclassifiable, with an unhandled_change element naming the error's path", async (t) => {
+    const fx = await scriptedEngine(t);
+    const running = await runningClassifier(fx.engine);
+    const K = defPath('k');
+    const NEW_N = [writeDef('n', acceptanceDef('n', ['R1.1'])), step.write(RUN('n'), 'the input of n\n')];
+
+    // P0: k covers R1.2 and is required, and its definition has an unknown field.
+    const gov = { ...GOV, required_checks: ['a', 'k'] };
+    const defs = { a: acceptanceDef('a', ['R1.1']), k: { ...acceptanceDef('k', ['R1.2']), surprise: 1 } };
+    const p = await classifierProject(fx, { files: protectedFiles({ governed: gov, defs, files: { [RUN('a')]: 'the input of a\n', [RUN('k')]: 'the input of k\n' } }), index: INDEX, withErrors: true });
+    const p0 = await effectiveErrors(fx, p);
+    assert.ok(codesAt({ discovery_errors: p0 }, K).includes('unknown_field'), `the fixture is live: the effective version has unknown_field at ${K} (${JSON.stringify(p0)})`);
+
+    // A dropped check is never a tightening. k's removal from the required
+    // set may also be recorded as a loosening; k's definition, once valid,
+    // as an added check: neither hides the error of P0.
+    const cases = [
+      ["P0's invalid definition deleted, the required set rewritten round a new required check", [step.delete(K), ...NEW_N, writeGov({ ...gov, required_checks: ['a', 'n'] })], ['check_added:n', 'required_key_added_with_check:n'], ['required_key_removed', 'check_removed']],
+      ["P0's invalid definition repaired in place, beside a new check", [writeDef('k', acceptanceDef('k', ['R1.2'])), ...NEW_N], ['check_added:n'], ['check_added', 'required_key_added_with_check']],
+    ];
+    for (const [label, steps, contains, allow] of cases) {
+      const { row, c } = await engineClassification(fx, p.id, await verifierProposal(fx, p, steps));
+      assert.deepEqual(c.discovery?.errors, [], `${label}: the fixture is live: the proposal's own discovery has no error (${JSON.stringify(c.discovery)})`);
+      assertClassification({ row, c }, { kind: 'unclassifiable', contains: ['unhandled_change', ...contains], allow }, { label, running });
+      assertP0ErrorsNamed(c, p0, label);
+    }
+
+    // A governed-file error of P0, removed beside a new check.
+    const direct = { egress_allow: ['example.test'] };
+    const q = await classifierProject(fx, { files: protectedFiles({ governed: { ...GOV, runner_config: { direct: { ...direct, surprise: 1 } } }, defs: DEFS, files: { [RUN('b')]: 'the input of b\n' } }), index: INDEX, withErrors: true });
+    const q0 = await effectiveErrors(fx, q);
+    assert.ok(codesAt({ discovery_errors: q0 }, GOVERNED_FILE).includes('unknown_field'), `the fixture is live: the effective version has unknown_field in ${GOVERNED_FILE} (${JSON.stringify(q0)})`);
+    const label = "P0's unknown runner_config.direct member removed, beside a new check";
+    const { row, c } = await engineClassification(fx, q.id, await verifierProposal(fx, q, [writeGov({ ...GOV, runner_config: { direct } }), ...NEW_N]));
+    assert.deepEqual(c.discovery?.errors, [], `${label}: the fixture is live: the proposal's own discovery has no error (${JSON.stringify(c.discovery)})`);
+    assertClassification({ row, c }, { kind: 'unclassifiable', contains: ['unhandled_change', 'check_added:n'], allow: ['required_key_added_with_check'] }, { label, running });
+    assertP0ErrorsNamed(c, q0, label);
   });
 });
