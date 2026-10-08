@@ -31,6 +31,7 @@ import type { SandboxLaunch } from '../invoke/sandboxed.js';
 import type { RunHandle, Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
+import { ownedHomeEntry } from '../home-entries.js';
 import { pausePoint, seamMainFault } from '../testing/seam.js';
 import { DOMAIN_ID, SUPERVISOR_LEAF, cgroupInode, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
 import { managerReachable } from './scope.js';
@@ -381,6 +382,13 @@ export async function removeEndedAreas(rt: Runtime): Promise<number> {
   let removed = 0;
   for (const id of names) {
     if (!terminated.has(id) || !DOMAIN_ID.test(id)) continue;
+    // By real path, never through a link (review m3): a link or an entry
+    // outside the home's own `domains/` is skipped and reported.
+    const why = ownedHomeEntry(rt.home, 'domains', join(dir, id), DOMAIN_ID);
+    if (why !== null) {
+      log('domain area', new Error(`not removed: ${why}`), { domain: id });
+      continue;
+    }
     try {
       rmSync(join(dir, id), { recursive: true, force: true });
       removed++;

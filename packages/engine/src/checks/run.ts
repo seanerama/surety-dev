@@ -206,6 +206,17 @@ export function fromReports(args: {
   const o = args.reports.filter((r) => r.kind === 'orphans').at(-1)?.detail ?? null;
   const count = o?.count;
   const e = (exit ?? {}) as Partial<ExitDetail>;
+  if (!execFailed) {
+    // Whether the engine had begun cancelling the check before its exit
+    // report arrived must be recorded; a report that does not say (written
+    // by an earlier engine) is never taken for the check's own exit: nothing
+    // is established of it, and it ends interrupted (review m1).
+    if (typeof e.cancelled !== 'boolean') return { kind: 'interrupt', why: 'the recorded exit report does not say whether the engine had begun cancelling the check before it, so its exit is not known to be its own' };
+    // A lapsed check lease is no verdict, as it is live (review m2); a
+    // cancellation whose cause is not recorded is not known to be a deadline.
+    if (e.cancelled && e.cause === 'lease') return { kind: 'interrupt', why: 'the check lease lapsed: the engine did not hold the execution throughout' };
+    if (e.cancelled && e.cause !== 'deadline' && e.cause !== 'egress') return { kind: 'interrupt', why: 'the recorded exit report does not say why the engine cancelled the check' };
+  }
   const cancelled = e.cancelled === true;
   return decideResult({
     leaseLost: false,
@@ -214,7 +225,7 @@ export function fromReports(args: {
     execFailed,
     report: exit === null ? null : { code: typeof e.code === 'number' ? e.code : null, signal: typeof e.signal === 'number' ? e.signal : null },
     cancelAt: cancelled ? 0 : null,
-    cancelCause: cancelled ? (e.cause ?? 'deadline') : null,
+    cancelCause: cancelled ? (e.cause as ExitDetail['cause']) : null,
     reportAt: exit === null ? null : cancelled ? 1 : 0,
     orphans: typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count > 0 : null,
   }) as ReturnType<typeof fromReports>;

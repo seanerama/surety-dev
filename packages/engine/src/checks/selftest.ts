@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type DomainLimits, createDomainCgroup, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyLimits, writeKill } from '../boundary/cgroup.js';
+import { ownedHomeEntry } from '../home-entries.js';
 import { newId } from '../ids.js';
 import { containedFromHost } from '../invoke/probes/suite.js';
 import { ECHO_HOST, echoEndpoint } from '../invoke/proxy/echo.js';
@@ -259,18 +260,27 @@ export class RunnerSelfTest {
     } catch {
       // nothing held
     }
-    if (BOX_ID.test(c.area.split('/').at(-1) ?? '')) rmSync(c.area, { recursive: true, force: true });
+    this.removeOwned('domains', c.area);
     this.removeTree();
   }
 
   private removeTree(): void {
-    const tree = this.tree;
-    if (tree === null || !BOX_ID.test(tree.split('/').at(-1) ?? '')) return;
+    if (this.tree !== null) this.removeOwned('selftest', this.tree);
+  }
+
+  // A tree or an area of the self-test's, removed only as an entry of the
+  // home's own `selftest/` or `domains/`, by real path, never through a link.
+  private removeOwned(sub: 'selftest' | 'domains', path: string): void {
+    const why = ownedHomeEntry(this.rt.home, sub, path, BOX_ID);
+    if (why !== null) {
+      log('runner self-test', new Error(`not removed: ${why}`), { path });
+      return;
+    }
     try {
-      chmodTree(tree);
-      rmSync(tree, { recursive: true, force: true });
+      chmodTree(path);
+      rmSync(path, { recursive: true, force: true });
     } catch (err) {
-      log('runner self-test', err, { tree });
+      log('runner self-test', err, { path });
     }
   }
 
@@ -333,6 +343,11 @@ export class RunnerSelfTest {
   // The tree, the governed fields and the plan's fixed parts.
   private async prepare(treeRoot: string) {
     if (this.rt.scope === null) throw new Error('this engine has no scope');
+    // After any wait, an abort creates nothing more (review m5).
+    const halt = () => {
+      if (this.aborted) throw new Error('the engine stopped');
+    };
+    halt();
     const src = join(treeRoot, 'src');
     const proj = join(treeRoot, 'proj');
     const node = engineNode();
@@ -359,6 +374,7 @@ export class RunnerSelfTest {
     const prefix = dirname(dirname(node));
     const readPaths = SYSTEM_TREES.some((t) => prefix === t || prefix.startsWith(`${t}/`)) ? [] : [realpathSync(prefix)];
     const refused = await validateReadPaths(readPaths, { repositories: [], workspaces: [], checkouts: [], home: this.rt.home });
+    halt();
     if (refused !== null) throw new Error(`the node installation cannot be a read path: ${refused.path}: ${refused.detail}`);
     const governed = {
       check_commands: { node: { path: node }, gone: { path: join(treeRoot, 'no-such-program') } },
@@ -366,9 +382,11 @@ export class RunnerSelfTest {
       result_collection: { output_max_bytes: 65536 },
     } as unknown as Governed;
     const tools = await resolveSandboxTools();
+    halt();
     const t = tools.paths;
     if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root || !t.mknod) throw new Error(`the sandbox's tools are missing: ${tools.missing.join(', ')}`);
     const copy = await initNodeCopy(this.rt.home);
+    halt();
     const expected = createHash('sha256').update(INPUT_BYTES).digest('hex');
     return { src: realpathSync(src), proj: realpathSync(proj), manifest, readPaths, governed, tools: t, copy, expected, scope: this.rt.scope };
   }
@@ -386,6 +404,7 @@ export class RunnerSelfTest {
     } as unknown as Definition;
     const program = resolveProgram(ctx.governed, def);
     if (program.problem !== null) return notRun('toolchain_missing', { toolchain: { name: program.name, path: program.path, sha256: program.sha256 }, why: program.problem });
+    if (this.aborted) return interrupted('the engine stopped');
     const id = newId('selftest_');
     const made = domainArea(rt.home, id);
     for (const d of ['root', 'vol']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
@@ -397,12 +416,26 @@ export class RunnerSelfTest {
     const notes: Record<string, unknown> = {};
     let proxy: DomainProxy | null = null;
     let launch: SandboxLaunch | null = null;
+    // After any wait, an abort (the engine stopping) creates nothing more
+    // (review m5): the box ends here, and the finally removes what exists.
+    const stopped = () => (this.aborted ? interrupted('the engine stopped') : null);
+    let counted = false;
     try {
+      // Counted in the resource envelope before its cgroup exists (m6).
+      await this.countInEnvelope({ cgroup, memoryMax: limits.memoryMax, writableBytes: bounds.volBytes });
+      counted = true;
+      const early = stopped();
+      if (early !== null) return early;
       createDomainCgroup(cgroup, limits);
       if ((spec.egress ?? []).length > 0) {
         proxy = new DomainProxy({ area, domain: id, run: null, invocation: null, profile: 'check', allow: spec.egress!, limits: proxyLimits(rt), resolver: activeResolver(), echo: echoEndpoint });
         await proxy.listen();
+        const after = stopped();
+        if (after !== null) return after;
       }
+      const initCopy = await initNodeIn(area, ctx.copy);
+      const afterCopy = stopped();
+      if (afterCopy !== null) return afterCopy;
       const plan = buildCheckPlan({
         area,
         source: ctx.src,
@@ -415,7 +448,7 @@ export class RunnerSelfTest {
         shmBytes: Math.min(bounds.volBytes, 64 * 1024 * 1024),
         tools: { mount: ctx.tools.mount!, umount: ctx.tools.umount!, pivot_root: ctx.tools.pivot_root!, ip: ctx.tools.ip!, unshare: ctx.tools.unshare!, setpriv: ctx.tools.setpriv!, mknod: ctx.tools.mknod! },
         node: engineNode(),
-        initNodeCopy: await initNodeIn(area, ctx.copy),
+        initNodeCopy: initCopy,
         initScript: INIT_SCRIPT,
       });
       const env = checkEnvironment({ governed: ctx.governed, def, ids: { check: `selftest:${spec.key}`, candidate: '-', revision: '-', version: '-' }, marker: id, proxy: proxy !== null });
@@ -434,6 +467,8 @@ export class RunnerSelfTest {
       };
       const boxCtx: BoxContext = { id, cgroup, notes, cancel };
       let deadline: NodeJS.Timeout | null = null;
+      const beforeLaunch = stopped();
+      if (beforeLaunch !== null) return beforeLaunch;
       const l: SandboxLaunch = new SandboxLaunch(
         { domain: id, invocation: id, incarnation: rt.incarnation, generation: 0, cgroup, unshare: ctx.tools.unshare!, node: engineNode() },
         {
@@ -536,8 +571,19 @@ export class RunnerSelfTest {
       } catch {
         // nothing held
       }
-      if (BOX_ID.test(id)) rmSync(area, { recursive: true, force: true });
+      this.removeOwned('domains', area);
       this.current = null;
+      if (counted) await this.countInEnvelope(null);
+    }
+  }
+
+  // The box running now, or none, as the store's resource envelope counts
+  // it (review m6). A failure to say so is logged; the box is small.
+  private async countInEnvelope(box: { cgroup: string; memoryMax: number; writableBytes: number } | null): Promise<void> {
+    try {
+      await this.rt.store.call('envelope.self_test_boxes', { boxes: box === null ? [] : [box] });
+    } catch (err) {
+      log('runner self-test', err, { what: 'resource envelope' });
     }
   }
 
@@ -781,9 +827,11 @@ const summary = (r: Run) => ({
 // name: `<home>/selftest/selftest_<ULID>` (its trees) and
 // `<home>/domains/selftest_<ULID>` (its boxes' areas). Nothing of another
 // engine home is ever named.
-export function sweepSelfTestLeftovers(home: string): string[] {
+export function sweepSelfTestLeftovers(home: string): { swept: string[]; skipped: { path: string; why: string }[] } {
   const swept: string[] = [];
-  for (const dir of [join(home, 'selftest'), join(home, 'domains')]) {
+  const skipped: { path: string; why: string }[] = [];
+  for (const sub of ['selftest', 'domains'] as const) {
+    const dir = join(home, sub);
     let names: string[];
     try {
       names = readdirSync(dir);
@@ -792,17 +840,25 @@ export function sweepSelfTestLeftovers(home: string): string[] {
     }
     for (const n of names) {
       if (!BOX_ID.test(n)) continue;
+      const path = join(dir, n);
+      // By real path, never through a link: a link is skipped and reported.
+      const why = ownedHomeEntry(home, sub, path, BOX_ID);
+      if (why !== null) {
+        skipped.push({ path, why });
+        log('runner self-test', new Error(`a leftover was not removed: ${why}`), { leftover: path });
+        continue;
+      }
       try {
         // A read-only tree is made writable before it is removed.
-        chmodTree(join(dir, n));
-        rmSync(join(dir, n), { recursive: true, force: true });
-        swept.push(join(dir, n));
+        chmodTree(path);
+        rmSync(path, { recursive: true, force: true });
+        swept.push(path);
       } catch (err) {
-        log('runner self-test', err, { leftover: join(dir, n) });
+        log('runner self-test', err, { leftover: path });
       }
     }
   }
-  return swept;
+  return { swept, skipped };
 }
 
 // Every directory of a tree made writable by its owner, no link followed.

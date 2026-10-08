@@ -124,7 +124,7 @@ import {
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
-import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
+import { type EnvelopeSettings, type SelfTestBox, setEnvelope, setSelfTestBoxes } from './transitions/envelope.js';
 import {
   admitExecution,
   checkOutputRefused,
@@ -466,6 +466,9 @@ const OPS: Record<string, (args: any) => unknown> = {
   'engine.started': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => schedulerStarted(tx, a.incarnation)),
   // What this start's host checks observed (no store write; SEAM.md §123).
   'host.observed': (a: HostObserved) => setHostObserved(a),
+  // The runner self-test's boxes running now, for the resource envelope (no
+  // store write; review m6).
+  'envelope.self_test_boxes': (a: { boxes: SelfTestBox[] }) => setSelfTestBoxes(Array.isArray(a.boxes) ? a.boxes : []),
   close: () => {
     db?.close();
     db = null;

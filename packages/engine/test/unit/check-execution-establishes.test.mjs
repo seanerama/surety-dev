@@ -371,3 +371,146 @@ test('the self-test switches: a closed case list, results failed or not_exercise
   assert.match(setHarnessSwitches({ ...base, checkDomainLimits: 'pids_max=0' }), /positive/);
   assert.match(setHarnessSwitches({ ...base, checkDomainLimits: 'cpu=1' }), /pids_max/);
 });
+
+// ---- the review's minor findings (m1 to m6) ---------------------------------------------------
+
+const { ownedHomeEntry } = await import(join(dist, 'home-entries.js'));
+const { RunnerSelfTest, sweepSelfTestLeftovers } = await import(join(dist, 'checks', 'selftest.js'));
+const { removeEndedAreas } = await import(join(dist, 'boundary', 'terminate.js'));
+const { envelopeHold, setEnvelope, setSelfTestBoxes } = await import(join(dist, 'store', 'transitions', 'envelope.js'));
+const { existsSync, readFileSync, symlinkSync, readdirSync } = await import('node:fs');
+
+test('m1: an exit report that does not say whether the engine had begun cancelling is never the check\'s own exit: interrupted', () => {
+  const started = { kind: 'started', detail: { pid: 2 } };
+  const d = fromReports({ reports: [started, { kind: 'orphans', detail: { count: 0 } }, { kind: 'exit', detail: { code: 0, signal: null } }], authorized: true });
+  assert.equal(d.kind, 'interrupt', 'a TERM-handled exit 0 recorded by an earlier engine is never passed');
+  assert.match(d.why, /not known to be its own/);
+});
+
+test('m2: an exit report recorded after the check lease lapsed is no verdict, as it is live; an unrecorded cause neither', () => {
+  const started = { kind: 'started', detail: { pid: 2 } };
+  for (const cause of ['lease', null, 'other']) {
+    const d = fromReports({ reports: [started, { kind: 'exit', detail: { code: 0, signal: null, cancelled: true, cause } }], authorized: true });
+    assert.equal(d.kind, 'interrupt', `cause ${cause}`);
+  }
+  const live = decideResult({ leaseLost: true, authorized: true, started: true, execFailed: false, report: { code: 0, signal: null }, cancelAt: 1, cancelCause: 'lease', reportAt: 2, orphans: false });
+  assert.equal(live.kind, 'interrupt', 'the same as the live judgment');
+  const egress = fromReports({ reports: [started, { kind: 'exit', detail: { code: 0, signal: null, cancelled: true, cause: 'egress' } }], authorized: true });
+  assert.deepEqual([egress.kind, egress.fields.signaled, egress.fields.deadline_hit], ['record', true, false]);
+});
+
+function home(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'surety-unit-home-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+const ULID = '01M4CMCKCZT23PCJ9FXB1FVQ4H';
+
+test('m3: an entry is removed only directly inside the home\'s own directory, by real path, never through a link', (t) => {
+  const h = home(t);
+  const outside = home(t);
+  mkdirSync(join(h, 'selftest', `selftest_${ULID}`), { recursive: true });
+  const re = /^selftest_[0-9A-HJKMNP-TV-Z]{26}$/;
+  assert.equal(ownedHomeEntry(h, 'selftest', join(h, 'selftest', `selftest_${ULID}`), re), null);
+  assert.match(ownedHomeEntry(h, 'selftest', join(h, 'selftest', 'other'), re), /not a name/);
+  // A link at the entry is never followed.
+  mkdirSync(join(outside, 'precious'));
+  writeFileSync(join(outside, 'precious', 'keep'), 'x');
+  const linked = `selftest_${'1'.repeat(26)}`;
+  symlinkSync(join(outside, 'precious'), join(h, 'selftest', linked));
+  assert.match(ownedHomeEntry(h, 'selftest', join(h, 'selftest', linked), re), /symbolic link/);
+  // An entry whose parent is not the home's own directory.
+  mkdirSync(join(outside, 'selftest', `selftest_${ULID}`), { recursive: true });
+  assert.match(ownedHomeEntry(h, 'selftest', join(outside, 'selftest', `selftest_${ULID}`), re), /not directly inside/);
+  // The home's directory itself a link elsewhere.
+  const h2 = home(t);
+  mkdirSync(join(outside, 'elsewhere', `selftest_${ULID}`), { recursive: true });
+  symlinkSync(join(outside, 'elsewhere'), join(h2, 'selftest'));
+  assert.match(ownedHomeEntry(h2, 'selftest', join(h2, 'selftest', `selftest_${ULID}`), re), /not a directory of the home's own/);
+  // The sweep removes the real entry and skips, and reports, the link.
+  const { swept, skipped } = sweepSelfTestLeftovers(h);
+  assert.deepEqual(swept, [join(h, 'selftest', `selftest_${ULID}`)]);
+  assert.deepEqual(skipped.map((s) => s.path), [join(h, 'selftest', linked)]);
+  assert.equal(readFileSync(join(outside, 'precious', 'keep'), 'utf8'), 'x', 'nothing behind the link was touched');
+  assert.deepEqual(sweepSelfTestLeftovers(h2).swept, [], 'nothing removed through a linked selftest/');
+  assert.ok(existsSync(join(outside, 'elsewhere', `selftest_${ULID}`)));
+});
+
+test('m3: removeEndedAreas has the same rule: a linked dom_ entry is skipped and its target kept', async (t) => {
+  const h = home(t);
+  const outside = home(t);
+  const real = `dom_${ULID}`;
+  const linked = `dom_${'2'.repeat(26)}`;
+  mkdirSync(join(h, 'domains', real), { recursive: true });
+  mkdirSync(join(outside, 'target'));
+  writeFileSync(join(outside, 'target', 'keep'), 'x');
+  symlinkSync(join(outside, 'target'), join(h, 'domains', linked));
+  const rt = { home: h, read: async (_name, args) => args.ids };
+  assert.equal(await removeEndedAreas(rt), 1);
+  assert.deepEqual(readdirSync(join(h, 'domains')), [linked], 'the real area removed, the link left');
+  assert.equal(readFileSync(join(outside, 'target', 'keep'), 'utf8'), 'x');
+});
+
+test('m4: the prior incarnations\' self-test boxes are swept before the leftovers of this home', () => {
+  const src = readFileSync(join(root, 'src', 'engine.ts'), 'utf8');
+  const boxes = src.indexOf('await sweepPriorSelfTestBoxes(runtime)');
+  const left = src.indexOf('sweepSelfTestLeftovers(opts.home)');
+  assert.ok(boxes > 0 && left > 0 && boxes < left, 'sweepPriorSelfTestBoxes comes first');
+});
+
+test('m5: after an abort a box creates nothing, and one aborted during a wait creates nothing more', async (t) => {
+  const h = home(t);
+  let release = () => {};
+  const calls = [];
+  const rt = {
+    home: h,
+    incarnation: 'inc_x',
+    scope: { path: '/nonexistent-scope' },
+    config: { values: { domain_memory_max: 512 * 1024 * 1024, domain_tasks_max: 64, domain_writable_bytes: 1 << 20, domain_writable_inodes: 1000, kill_grace: 1, terminate_grace: 1 } },
+    setting(k) {
+      return this.config.values[k];
+    },
+    store: { call: (op, args) => (calls.push([op, args]), op === 'envelope.self_test_boxes' && args.boxes.length > 0 ? new Promise((r) => (release = r)) : Promise.resolve()) },
+  };
+  const st = new RunnerSelfTest(rt);
+  const ctx = { governed: { check_commands: { node: { path: process.execPath } } }, scope: rt.scope, src: h, proj: h, manifest: [], readPaths: [], tools: {}, copy: process.execPath };
+  // During the envelope's wait: aborted there, the box goes no further.
+  const pending = st.box(ctx, { key: 'k', args: ['exit', '0'], timeoutS: 5 });
+  await new Promise((r) => setTimeout(r, 20));
+  st.abort();
+  release();
+  const run = await pending;
+  assert.deepEqual([run.outcome, run.reason], ['interrupted', 'the engine stopped'], 'it returns before making its cgroup (which would throw here, outside an engine scope)');
+  assert.deepEqual(readdirSync(join(h, 'domains')), [], 'its area was removed');
+  assert.deepEqual(calls.at(-1), ['envelope.self_test_boxes', { boxes: [] }], 'and it is no longer counted in the envelope');
+  // Already aborted: nothing is made at all.
+  const again = await st.box(ctx, { key: 'k2', args: ['exit', '0'], timeoutS: 5 });
+  assert.equal(again.reason, 'the engine stopped');
+  assert.deepEqual(readdirSync(join(h, 'domains')), []);
+});
+
+test('m6: a running self-test box counts in the resource envelope, at its own memory cap', (t) => {
+  const { db } = store(t);
+  const h = home(t);
+  const cg = join(h, 'box');
+  mkdirSync(cg);
+  writeFileSync(join(cg, 'memory.current'), '0\n');
+  const base = { max_concurrent_domains: 2, host_reserve_memory: 0, host_reserve_disk: 0, domain_memory_max: 1024 * 1024, domain_writable_bytes: 0, home: h };
+  setEnvelope(base);
+  t.after(() => {
+    setEnvelope(null);
+    setSelfTestBoxes([]);
+  });
+  setSelfTestBoxes([]);
+  assert.equal(envelopeHold(db), null, 'nothing running: admitted');
+  setSelfTestBoxes([{ cgroup: cg, memoryMax: 1024 * 1024, writableBytes: 0 }]);
+  assert.equal(envelopeHold(db), null, 'one box and the new domain fit max_concurrent_domains 2');
+  setEnvelope({ ...base, max_concurrent_domains: 1 });
+  const held = envelopeHold(db);
+  assert.deepEqual([held?.subject.limit, held?.subject.self_test_boxes], ['max_concurrent_domains', 1], 'the box takes the one slot');
+  // Memory: the box at its cap leaves no room for the new domain beyond a reserve the host has only just.
+  const avail = Number(/^MemAvailable:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'))[1]) * 1024;
+  setEnvelope({ ...base, host_reserve_memory: avail - 2 * 1024 * 1024, domain_memory_max: 1024 * 1024 });
+  setSelfTestBoxes([{ cgroup: cg, memoryMax: 64 * 1024 * 1024, writableBytes: 0 }]);
+  assert.equal(envelopeHold(db)?.subject.limit, 'host_reserve_memory', 'the box\'s cap is counted against the reserve');
+});

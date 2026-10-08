@@ -340,8 +340,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // home's own trees and box areas, and its boxes in a prior incarnation's
   // scope of this home (D3 §2.8; SEAM.md §208).
   try {
-    sweepSelfTestLeftovers(opts.home);
+    // The boxes first, so no prior box can still be using an area or a
+    // tree when it is removed (review m4).
     await sweepPriorSelfTestBoxes(runtime);
+    sweepSelfTestLeftovers(opts.home);
   } catch (err) {
     log('runner self-test', err, { what: 'sweep' });
   }
