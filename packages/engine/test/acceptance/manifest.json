@@ -249,6 +249,12 @@
       "M231-scope-modules-tier-and-cadence.test.mjs",
       "M232-one-scope-rule.test.mjs",
       "M233-the-requirement-index.test.mjs"
+    ],
+    "21": [
+      "M234-the-repair-loop.test.mjs",
+      "M235-finding-resolution.test.mjs",
+      "M236-the-conflict-route-and-objections.test.mjs",
+      "M237-check-journey-path-two.test.mjs"
     ]
   },
   "sandbox": [
@@ -299,7 +305,8 @@
     "M223-a-real-projects-toolchain.test.mjs",
     "M217-orphans-and-deadlines.test.mjs",
     "M218-output-and-evidence-presence.test.mjs",
-    "M205-a-foreign-signal-and-forged-reports.test.mjs"
+    "M205-a-foreign-signal-and-forged-reports.test.mjs",
+    "M237-check-journey-path-two.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

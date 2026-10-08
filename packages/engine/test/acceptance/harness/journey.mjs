@@ -41,8 +41,9 @@ import { script, step } from './scripted.mjs';
 
 // What the journey's Verifier reports in the second path: a Critical finding
 // in the login, naming the check whose passing on a later candidate resolves
-// it (SEAM.md §74, "Resolution").
-export const FINDING = Object.freeze({ category: 'security', severity: 'critical', message: 'the login accepts an expired session', check: 'login' });
+// it (SEAM.md §74, "Resolution"), and, from M3 slice 21 (F2 (c), L8; SEAM.md
+// §§230, 233), the criterion it breaks, R1.1, which that check covers.
+export const FINDING = Object.freeze({ category: 'security', severity: 'critical', message: 'the login accepts an expired session', check: 'login', criterion: 'R1.1' });
 
 // The edit the fix's Builder makes: one new source file, beside the stage's.
 export const FIX_EDIT = Object.freeze({ path: 'src/session.js', content: 'export const expiresSessions = true;\n' });

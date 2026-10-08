@@ -323,14 +323,15 @@ describe('M125 what is handed over', () => {
       reviewer: [...BASE, 'findings', 'signoffs', 'dispositions', 'severity_changes', 'assessments', 'proposal_approval'],
     };
     const ITEM_KEYS = {
-      findings: ['category', 'severity', 'message', 'check'],
+      // M3 slice 21 (F2 (c), L8; SEAM.md §§230, 233): a finding names its criterion.
+      findings: ['category', 'severity', 'message', 'check', 'criterion'],
       signoffs: ['scope'],
       dispositions: ['finding', 'disposition'],
       severity_changes: ['finding', 'to'],
       assessments: ['assessment', 'verdict'],
       applicability: ['finding', 'candidate', 'reason', 'evidence'],
     };
-    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login' };
+    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login', criterion: 'R1.1' };
 
     const { found, v, r, b } = await fixLoopPackages(t, { checks: [check('login', { requirements: ['R1'] })], finding: FINDING });
 
@@ -385,7 +386,7 @@ describe('M125 what is handed over', () => {
     // check's key, its requirement keys and its gate kinds share a line.
     const LOGIN = check('login', { requirements: ['R1'] });
     const STYLE = check('style', { kind: 'security_lint', gates: ['stage'], required: false });
-    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login' };
+    const FINDING = { category: 'security', severity: 'critical', message: `the login accepts an expired session ${randomBytes(4).toString('hex')}`, check: 'login', criterion: 'R1.1' };
     const { v, r, b } = await fixLoopPackages(t, { checks: [LOGIN, STYLE], finding: FINDING });
 
     const gaps = [];
@@ -397,12 +398,19 @@ describe('M125 what is handed over', () => {
     // The result field `check` named as a field (as the prompt names
     // `findings` and `dispositions`), not the word "check".
     const FIELD = /`check`|findings(\[\])?\.check\b|"check"/;
+    const CRITERION_FIELD = /`criterion`|findings(\[\])?\.criterion\b|"criterion"/;
     // M3 slice 20 (L3; SEAM.md §226): a check covers criteria; the line names the requirement each belongs to (a criterion's key holds it).
     const requirementsOf = (c) => [...new Set((c.criteria ?? []).map((x) => x.split('.')[0]))];
     const listLine = (text, c) => text.split('\n').find((l) => new RegExp(`(^|[^\\w-])${c.key}([^\\w-]|$)`).test(l) && requirementsOf(c).every((q) => l.includes(q)) && c.gate_kinds.every((g) => l.includes(g)));
     const checkList = (dump, what) => {
       const text = promptOf(dump);
       if (!FIELD.test(text)) gaps.push(`${what}: its prompt does not name the result field \`check\`, which a finding must carry to be resolved`);
+      // M3 slice 21 (F2 (c), L8; BS3 §3; SEAM.md §§230, 233): a finding also names the criterion it breaks, and the line of each check names the criteria it covers.
+      if (!CRITERION_FIELD.test(text)) gaps.push(`${what}: its prompt does not name the result field \`criterion\`, which a finding must carry to be resolved`);
+      for (const c of [LOGIN, STYLE]) {
+        const line = listLine(text, c);
+        for (const k of c.criteria ?? []) if (line && !line.includes(k)) gaps.push(`${what}: the line of ${c.key} does not name the criterion ${k} it covers (${JSON.stringify(line)})`);
+      }
       for (const c of [LOGIN, STYLE]) {
         const line = listLine(text, c);
         if (!line) gaps.push(`${what}: its prompt has no line listing the check ${c.key} with its requirements ${JSON.stringify(requirementsOf(c))} and gate kinds ${JSON.stringify(c.gate_kinds)}`);

@@ -17,6 +17,10 @@
 // registered for the disposition, let through the chain boundary by a
 // person, and no longer a fixture's.
 //
+// M3 slice 21 (F2 (c), L8; SEAM.md §233): the fourth and sixth cases'
+// findings name the criterion their check covers, R1.1; without one a
+// finding is never resolved (M235 (c) pins the former form as refused).
+//
 // The sixth case is E43: a Reviewer's "fix" disposition is recorded at once,
 // and the engine registers the fix work itself, in that transaction: one
 // `fix` item naming the finding, not a fixture, chained like the review the
@@ -157,7 +161,7 @@ describe('M42 the findings a gate asks about', () => {
     const { fx, ctx, project, k, c1 } = await clean(t, [check('login', { requirements: ['R1'] }), check('regress', { requirements: ['R1'] })]);
     await passAll(fx.engine, project, c1.id, [k.login]);
     await postResult(fx.engine, project, { candidate: c1.id, check: k.regress, exit_status: 1 });
-    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'regress' })]);
+    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'regress', criterion: 'R1.1' })]);
     await review(fx, project, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
 
     // The fix is the work the engine registered for the disposition (E43; the sixth case): a person lets it through the chain boundary, its Builder builds it and asks for the nomination.
@@ -216,7 +220,7 @@ describe('M42 the findings a gate asks about', () => {
   test("a Reviewer's fix disposition is recorded at once, and the engine registers the fix work with it: one fix item naming the finding, no fixture, chained and waiting at the chain boundary; one still after ticks and a restart; none before the disposition", async (t) => {
     const { fx, ctx, project, k, c1 } = await clean(t);
     await passAll(fx.engine, project, c1.id, [k.login]);
-    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'login' })]);
+    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'login', criterion: 'R1.1' })]);
     const fixes = () => workItemsOf(fx.home, project).filter((work) => work.kind === 'fix');
 
     // An open finding with no disposition has no fix work, however many ticks run.

@@ -135,8 +135,8 @@ describe('M206 registration decides; one sequence', () => {
     await postResult(fx.engine, project, { candidate: c.id, check: k.own, exit_status: 1 });
     const { own: before } = await operatorRequest(fx.engine, project, c.id, ['own']);
 
-    // A Reviewer reports a finding naming the check, and dispositions it fix.
-    const [found] = await raiseFindings(fx, project, c.id, [{ category: 'defect', severity: 'medium', message: 'the login form accepts an empty password', check: 'own' }]);
+    // A Reviewer reports a finding naming the check and the criterion it covers (F2 (c); SEAM.md §233), and dispositions it fix.
+    const [found] = await raiseFindings(fx, project, c.id, [{ category: 'defect', severity: 'medium', message: 'the login form accepts an empty password', check: 'own', criterion: 'R1.1' }]);
     await review(fx, project, c.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
     assert.equal(finding(fx.home, found.id).status, 'dispositioned', 'the fixture is live: the finding is dispositioned fix');
 

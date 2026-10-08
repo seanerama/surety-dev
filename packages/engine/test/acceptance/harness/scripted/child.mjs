@@ -1925,6 +1925,8 @@ log('launch', {
   role: request?.role ?? null,
   workspace: request?.workspace ?? null,
   request_keys: request ? Object.keys(request).sort() : null,
+  // M3 slice 21 (SEAM.md §229): the failed repair checks a repair run is told of.
+  check_outputs: request?.check_outputs ?? null,
   ...requestProblem,
   launch_index: index,
   script_source: source,
