@@ -89,6 +89,9 @@ export const RUN_BILLABLE_MAX_USD = (REAL.runBillableTokens * REAL.usdPerMillion
 
 // SURETY_REAL_CONFIRM_SPEND must be exactly this.
 export const CONFIRM_PHRASE = 'I accept the M2 real lane on my Claude subscription, up to 25 USD a day as estimated';
+// M3's real row (M239; SEAM.md §237) asks for its own confirmation, so that
+// Sean's consent to the M2 lane is never read as consent to M3's run.
+export const CONFIRM_PHRASE_M3 = 'I accept the M3 real lane on my Claude subscription, up to 25 USD a day as estimated';
 
 const ENV = Object.freeze({
   runDir: 'SURETY_REAL_RUN_DIR',
@@ -122,12 +125,12 @@ const fail = (message) => {
 // starts, unless Sean has set the run directory, the key reference, the
 // pinned binary and the spend confirmation, each well formed. Returns the
 // lane's context. The key's value is held in memory only, for the searches.
-export function realPreflight() {
+export function realPreflight({ confirm = CONFIRM_PHRASE } = {}) {
   const env = process.env;
   for (const name of [ENV.runDir, ENV.keyRef, ENV.binary, ENV.confirm]) {
     if (!env[name]) fail(`the real lane needs ${name} (SEAM.md §§160, 161)`);
   }
-  if (env[ENV.confirm] !== CONFIRM_PHRASE) fail(`${ENV.confirm} must be exactly "${CONFIRM_PHRASE}"`);
+  if (env[ENV.confirm] !== confirm) fail(`${ENV.confirm} must be exactly "${confirm}"`);
 
   // The key reference: a path, never a key.
   const keyRef = env[ENV.keyRef];
@@ -379,11 +382,12 @@ export async function productionEngine(ctx, name, { keyFile = ctx.keyRef, config
 // M2 (D3 is not built). The entry it dispatches to was written and
 // activated by the production engine (SEAM.md §164). `scriptedDir` only
 // for path two's mixed fallback (E59 item 3).
-export async function journeyEngine(ctx, name, { scriptedDir = null, config = {} } = {}) {
+// `extra`: further harness flags (M239 starts the runner self-test, SEAM.md §237).
+export async function journeyEngine(ctx, name, { scriptedDir = null, config = {}, extra = [] } = {}) {
   const home = join(ctx.runDir, name);
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, tick_interval: 600, ...config });
-  const args = ['--harness-real-lane', ...(scriptedDir ? ['--harness-scripted', scriptedDir] : []), ...secretArgs(ctx, ctx.keyRef)];
+  const args = ['--harness-real-lane', ...(scriptedDir ? ['--harness-scripted', scriptedDir] : []), ...extra, ...secretArgs(ctx, ctx.keyRef)];
   const engine = await startEngine({ home, port, harness: true, args, env: engineEnvFor(ctx), timeoutMs: 180_000 });
   return { engine, home, port, root: ctx.runDir };
 }
@@ -405,9 +409,12 @@ export function tellSean(ctx, text) {
   writeFileSync(join(ctx.runDir, 'WAITING.txt'), banner, { mode: 0o600 });
 }
 
-const answerCommand = (fx, row, option) =>
+// The answer route: engine-scoped decisions (M2's money decisions) at /v1/decisions,
+// a project's (M239's classification decision) under its project (SEAM.md §237).
+const answerPath = (row, project) => (project ? `/v1/projects/${project}/decisions/${row.id}/answer` : `/v1/decisions/${row.id}/answer`);
+const answerCommand = (fx, row, option, project = null) =>
   `curl -sS -H "X-Surety-Token: $(cat ${join(fx.home, 'api.token')})" -H 'Content-Type: application/json' ` +
-  `-X POST http://127.0.0.1:${fx.port}/v1/decisions/${row.id}/answer -d '{"option": "${option}", "preview_hash": "${row.preview_hash}"}'`;
+  `-X POST http://127.0.0.1:${fx.port}${answerPath(row, project)} -d '{"option": "${option}", "preview_hash": "${row.preview_hash}"}'`;
 
 // Wait for Sean's answer to the one open engine-scoped decision of `kind`
 // about `subjectId`. Never answers it. Prints the question, the facts the
@@ -415,7 +422,7 @@ const answerCommand = (fx, row, option) =>
 // generation (the question still standing after a change) is followed and
 // printed again. Returns the consumed decision; fails, and so halts, on a
 // rejection or when the wait runs out (the decision is left open).
-export async function waitForSean(ctx, fx, kind, subjectId, { what, facts = {} }) {
+export async function waitForSean(ctx, fx, kind, subjectId, { what, facts = {}, project = null }) {
   const limitMs = ctx.waitMinutes * 60_000;
   const started = performance.now();
   let shown = null;
@@ -431,7 +438,7 @@ export async function waitForSean(ctx, fx, kind, subjectId, { what, facts = {} }
     if (open && ctx.rehearsal && open.id !== shown) {
       shown = open.id;
       tellSean(ctx, `SURETY REAL LANE REHEARSAL: the harness answers ${kind} ${open.id} itself with "approve" (the backend is the rehearsal's fake; SURETY_REAL_REHEARSAL=1).\nWhat: ${what}`);
-      const res = await fx.engine.post(`/v1/decisions/${open.id}/answer`, { option: 'approve', preview_hash: open.preview_hash });
+      const res = await fx.engine.post(answerPath(open, project), { option: 'approve', preview_hash: open.preview_hash });
       if (res.status !== 200) throw new Error(`rehearsal: answering ${kind} ${open.id} was refused (${res.status} ${res.text})`);
     }
     if (open && open.id !== shown) {
@@ -443,11 +450,11 @@ export async function waitForSean(ctx, fx, kind, subjectId, { what, facts = {} }
           `What: ${what}`,
           `Decision: ${kind} ${open.id} (preview ${open.preview_hash}), about ${subjectId}`,
           ...Object.entries(facts).map(([k, v]) => `  ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`),
-          `The full preview: GET /v1/decisions on http://127.0.0.1:${fx.port}.`,
+          `The full preview: GET ${project ? `/v1/projects/${project}/decisions` : '/v1/decisions'} on http://127.0.0.1:${fx.port}.`,
           `To approve:`,
-          `  ${answerCommand(fx, open, 'approve')}`,
+          `  ${answerCommand(fx, open, 'approve', project)}`,
           `To refuse (nothing is spent; the step stops):`,
-          `  ${answerCommand(fx, open, 'reject')}`,
+          `  ${answerCommand(fx, open, 'reject', project)}`,
           `This test waits ${ctx.waitMinutes} minutes from when it began waiting, then stops with nothing further spent.`,
         ].join('\n'),
       );

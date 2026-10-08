@@ -4862,6 +4862,84 @@ M234 (g)'s no-progress case sets `no_progress_max` before the build (objection 0
 | S3 | M236 (a) correct_check, two cases | the hold never ended after a cancelled correction; an unrelated application released it |
 | Leak | M237, the flagged-output case (sandbox) | a quarantined output record was copied into the Builder's repair package |
 
+---
+
+# M3 slice 22: the end of M3
+
+Sections 236 to 239 were written with the slice-22 acceptance tests (2026-10-08; `verify/m3-s22` from `main` at `3c6e886`): rows M238 to M241 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.8. They follow D3 draft 2 (§3.1, §6, Appendices B and C: D3-J02, D3-J05), Astra's T03, T18 and B02, BS3 §§3, 10, and E89 to E101 (E92 item 2 (6) and item 3: the hands-on and the real run included; E100). Every earlier section stands; what this pass changes in them is in each section. † marks a reading for Sean.
+
+## 236. The wrapper's mutants and the root-hiding case (row M238, project lane)
+
+(D3-J02, D3-J05; T18, T03, B02; D3 §6 classes B and C, §3.1, Appendix B; section 213.)
+
+**The project** (`m238Project` in `harness/project/reference.mjs`): T1, R1 with R1.1; the governed file names one program, `node` (the test's own `process.execPath`, its installation in `read_paths`); three definitions, `gate_kinds` `stage`:
+
+| Key | Kind | Command | Inputs |
+|---|---|---|---|
+| `guarded` | acceptance, covers R1.1 | `node .surety/checks/wrapper.mjs .surety/checks/tests/sum-child.test.mjs` | the wrapper and the test |
+| `srctests` | smoke | `node .surety/checks/wrapper.mjs 'src/**/*.test.mjs'` (the retained check discovering the Builder's tests, B02's runner) | the wrapper |
+| `bare` | smoke | `node --test 'src/**/*.test.mjs'` (D3 §6 class B's bare definition) | none |
+
+Each pattern is one argument; node expands it (no shell). `sum-child.test.mjs` runs the candidate's `src/sum.mjs` **as a child** (`node --input-type=module -e …`) and asserts the child's signal null, status 0 and output exactly `SUM 5` (D3 Appendix B, §6 class C: "a check should run candidate code as a child and judge what it observably does").
+
+**The wrapper, hardened in this slice** (section 213 stands, with two rules added): (1) the summary it reads is the runner's **last** (a test file's own output reaches the runner's TAP report first, as `# <line>`, seen in a check domain); (2) a top-level `ok N - <name>` whose name is an existing file is a test file that ran no test of its own (Node 22 reports a test file that exits 0 having run nothing as one passing test, seen in a check domain), exit 3. Why: run first with section 213's wrapper, the premature-summary mutant (a test file that printed a summary and ran no test) passed `srctests` with exit 0 (COVERAGE.md, "M3 slice 22").
+
+**The candidates**, each built by a scripted Builder, the first by the stage and each other by a `fix` item of its own (`repair_attempts_max` 0 before the build, objection 030's precedent: the row is about the checks, not the repair), each from the correct project with the mutant's files over it; each candidate's checks recorded and its stage gate read before the next is built (a successor's nomination supersedes it, section 192):
+
+| Case | The Builder's change | Target | Pinned |
+|---|---|---|---|
+| control | `src/sum.mjs` correct; `src/sum.test.mjs`, its own test, correct | all | each passed, exit 0; the gate satisfied |
+| skipped | sum broken; its own test `test.skip` | `srctests` | failed, exit 3; the runner's `# skipped 1` |
+| empty | sum broken; `src/sum.test.mjs` removed | `srctests` | failed, exit 3; `# tests 0` |
+| emptyFile | sum broken; `src/sum.test.mjs` runs no test | `srctests` | failed, exit 3; the runner's `ok 1 - src/sum.test.mjs`; the wrapper's line naming it |
+| premature | sum broken; its test file prints `tests 1`, `pass 1`, … then skips its one test | `srctests` | failed, exit 3; a forged `# pass 1` first in the report, the runner's own last, `# pass 0`, `# skipped 1` |
+| childFailure | sum correct; the module ends its process with 1 after the child prints `SUM 5` | `guarded` | failed, exit 1; the test's assertion on the child's status in the output |
+| exitZero | sum broken; `process.exit(0)` at import | `guarded` | failed, exit 1; `not ok 1 - R1.1 …` |
+| (b) | the skipped, empty and emptyFile candidates | `bare` | passed, exit 0, the test named a LIMITATION; `srctests` failed and the gate unsatisfied beside it |
+| (c) | sum correct; `src/sum.test.mjs` asserts `sum(2, 2) === 5` | `srctests` | failed, exit 1; `guarded` passed |
+| (c) proposal | a Verifier's `check_correction` run rewrites the governed file with `src/` added to `protected_paths`, nothing else | the classifier | `unclassifiable`, at least `root_layout_changed` (section 216's rule); `awaiting_human`; one open `check_correction_unclassifiable`; a Reviewer's `proposal_approval` (run accepted): the proposal still `awaiting_human`, no approver, the effective version and the integration branch unchanged |
+
+"Each `failed`": the result established, not signaled, no deadline, the exit status above, and the gate's `check_states` entry `failed`. The target per mutant † : the vacuous-run mutants against the check that runs the Builder's tests in-process, the child failure and `process.exit(0)` against the check that runs the candidate as a child. Not pinned: `srctests` and `bare` on the exitZero candidate (in-process candidate code, D3 §6 class C); `guarded` on the vacuous-run mutants beyond its state.
+
+**Safety.** The mutants run only inside check domains, through the engine; the test never runs them on the host. None signals, detaches or writes outside its discarded overlay.
+
+## 237. The real check journey (row M239, real lane) and what the Verifier is told
+
+(E89, E91, E92 item 3; plan question 5; sections 159 to 166, 171; NC "a check's execution in the real journey is a fixture".)
+
+**Files.** `M239-the-real-check-journey.test.mjs`, manifest `real` only (never a slice); `harness/real/checks-journey.mjs`; M2's `lane.mjs` and `attempt.mjs` reused: the run directory, the token by `SURETY_REAL_CREDENTIAL_REF`, `SURETY_REAL_AUTH_MODE`, the pinned binary, the steps, halts and reruns, `waitForSean`. `M239-the-verifiers-check-writing-package.test.mjs`, slice 22, sandbox lane, no model.
+
+**Changes to M2's harness.** `realPreflight({confirm})`: M239 asks for `CONFIRM_PHRASE_M3` ("I accept the M3 real lane on my Claude subscription, up to 25 USD a day as estimated"); M2's files keep theirs. `journeyEngine(…, {extra})` takes further harness flags (M239: `--harness-runner-self-test run`). `waitForSean(…, {project})` answers a project's decision through `/v1/projects/:p/decisions/:id/answer` and prints that command (a `check_correction_*` decision is the project's; M2's money decisions stay engine-scoped).
+
+**The project** (`M239`): T1; R1 `src/greeting.mjs`, R2 `src/session.mjs` (already in the repository, with the seeded defect: a 30-minute session valid a thousand times too long), R3 `src/logout.mjs`; the shared plan fixture's index, one criterion each (R1.1, R2.1, R3.1); constraint C1 (ES modules, `.mjs`, no package.json); the governed file names `node` (the engine's own) and no definition; the real backend for Builder, Verifier and Reviewer; the journey projects' limits (M2's `realPolicy`, 6 USD a day in estimates).
+
+**Steps** (each run once per run directory, section 159):
+- `attempt`, `activation`: M2's (Sean's `qualification_approval` and `trust_activation`).
+- `m3_path_one`: a journey engine with the runner self-test, which must qualify `direct` with all ten cases passed and no fixture label at this start, or the path is not established. The project paused; the plan (stage 1, R1); `check_correction` work by the trigger fixture (source `test`); resumed until the Verifier's run is dispatched (check_correction before stage_build, `PRIORITY`), paused again so that the stage waits. The real Verifier's run must be accepted and its protected-only diff captured; the engine classifies it; a discovery error is "not established"; Sean answers the decision of its class (`check_correction_<class>`); applied; the version read. Resumed: the real Builder builds stage 1; each candidate's checks settle (every key's latest registration `recorded`, `cancelled` or `interrupted`); both gates evaluated; up to three rounds if the repair loop sends the stage back; both gates satisfied, or not established.
+- `m3_path_two`: a new journey engine, self-test again; `repair_attempts_max` 0 † (a real check catching the seeded defect parks the stage instead of sending it back, so the real Verifier's finding is the path); the plan's stage 2 (R2 already implemented, implement R3); the real Builder; the candidate's checks; its verification let through at the chain boundary; the real Verifier's finding must name `R2.1` and a check; a review by the trigger fixture (a T1 project's cadence queues none); the real Reviewer's `fix`; the fix let through; the real Builder; the fix's candidate's checks; both gates; the finding `resolved`, or not established.
+
+**What M239's cases pin:** (a) the project began with no check; the Verifier's run accepted; the proposal classified, no discovery error, its class's decision answered `approve`, applied, its version effective, no discovery error, checks discovered. (b) every execution of the last candidate: a result naming it, established, `runner_id` not `test_fixture`, bound to this start's self-tested qualification, from a domain of profile `check` naming it, with its output record; both gates satisfied with no reason, each decided by those executions. (c) the finding names R2.1; dispositioned `fix`; its check, at the effective version, `acceptance` origin, required, covering R2.1; resolved; `resolution_verification.check_result` the named check's result on the fix's candidate, registered after the disposition (`execution_seq` above `disposition_seq`), an engine execution as (b), exit 0; the stage gate on the first candidate not satisfied; every execution on the fix's candidate as (b); both gates satisfied there. (d) every result of the project names an execution and none is the fixture's; the token in no file of the run directory and no git object of the repositories.
+
+**What stays a fixture, labelled:** the approved plan with its texts and index, the first `check_correction`'s trigger, path two's review trigger, the Alpha test target. No check result.
+
+**The command** is Sean's (`docs/acceptance/reports/M3-real-lane/README.md`): `node --test` on the file alone after `npm run build` † (`run-tests.mjs --lane real` would run M2's five real files too).
+
+**The rehearsal** (section 171's switch): `harness/standin/rehearsal-claude.cjs` gains M239's roles: on `check_correction` work it writes `.surety/checks/run/expect.mjs` and four definitions (`greeting` R1.1, `session` R2.1, `logout` R3.1, `smoke`), each `node .surety/checks/run/expect.mjs <module> <expression> <want>` (the candidate imported in a child), `gate_kinds` `stage` and `alpha_authorize`, declared inputs, with a `proposal`; a Verifier on a candidate names `criterion` R2.1 and the check its package lists as covering it; a fix corrects `src/session.mjs`. Rehearsed with `SURETY_REAL_AUTH_MODE=api_key` and a made-up key (section 171).
+
+**What the check_correction Verifier is told** (BS3 §3; E87 item 10's principle; `M239-the-verifiers-check-writing-package`): a scripted Verifier on `check_correction` work in M239's project dumps its package (`context_dump`); every file but `result-schema.json` and `manifest.json` together must hold: `.surety/checks/` and `.surety/checks/defs/`; each criterion (R1.1, R2.1, R3.1) and each requirement's approved text; the program's name `node`; the definition members `"key"`, `"kind"`, `"command"`, `"covers"`, `"criteria"`, `"gate_kinds"`, `"inputs"`, `"timeout_s"` (D3 Appendix B's example); the kinds `acceptance` and `smoke` (T1, D3 §4.3); the gate kinds `stage` and `alpha_authorize`. The result schema's `proposal` requires `rationale` and `requested_change_kind`. The wording and the files are the engine's.
+
+## 238. The M3 report (row M240)
+
+(BS3 §10; E40; M141's form, section 163.)
+
+`docs/acceptance/reports/M3-report.md`, a skeleton until the acceptance, exhaustion and real runs are recorded; a fact a run must supply is `[[PENDING <label>: <what>; from <source>]]`. M240 (a) holds the report to BS3 §10 in either state: revisions with commits; the host's `host_id`, kernel, WSL2, distribution, util-linux, systemd, Node, git and SQLite; a section naming each of section 208's ten self-test cases and its control; `profile_fingerprint`; `classifier_version` and `classifier_authority`; **every D3 Appendix C statement** (read from D3 itself, 67) on a line with the row the plan's §4.1 gives it, with a last recorded result and an acceptance result (or PENDING); the lanes; M205 (g) in the exhaustion section; `M239-the-real-check-journey` in the real lane's; `M205 (g)`, `M239` and `foreign_signal` among the `not_exercised` cases; classes A, B and C with **D3 §6's class C verbatim** and the bare definition's vacuous pass as a limitation; E93 to E101 each in the open decisions. M240 (b) fails while the report is a skeleton, after checking that it says M3 is not accepted, reports no real-lane result, no condition of BS3 §1 met and no acceptance-run result; a final report has no placeholder, its real-lane records under `docs/acceptance/reports/M3-real-lane/<date>/` (`state.json`, `M239.json`) and M239's date. †: M240 fails `npm test` until then, as M141 did.
+
+## 239. The hands-on script (row M241)
+
+(E92 item 2 (6); E45, E88; M142's form.)
+
+`docs/acceptance/reports/M3-hands-on.sh`: scripted roles in the engine's test mode (`serve --harness --harness-scripted … --harness-host-checks run --harness-runner-self-test run`), the test-owned check program, no backend, no token, no paid step; it prints `CHECK (1)` to `CHECK (5)` (cgroup.procs; no `.git`; the input write refused, the source write discarded; the gate read's deciding execution and history; a root addition `unclassifiable`), each with a command; it releases the program's guarded `write` only after reading the program inside the domain's `cgroup.procs` and its own `/proc/<pid>/cgroup`; it refuses before starting anything without `XDG_RUNTIME_DIR` or a terminal (`SURETY_HANDS_ON_NO_PAUSE=1` runs it without pauses). M241's file holds those properties without running it (M142's form).
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 21".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22".

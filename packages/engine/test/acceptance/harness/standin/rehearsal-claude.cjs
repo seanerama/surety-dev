@@ -32,6 +32,15 @@
 // signoffs) because it was written to; a real agent learns them only from
 // its context package.
 //
+// M3 (row M239; SEAM.md §237), for M239's project (src/*.mjs): a Verifier
+// on `check_correction` work writes the project's checks: one definition per
+// criterion (R1.1 greeting, R2.1 session, R3.1 logout) and a smoke check,
+// each running one protected program, .surety/checks/run/expect.mjs, that
+// imports the candidate's module in a child and compares what it prints,
+// with a proposal in its result; a Verifier on a candidate reports the
+// seeded defect of src/session.mjs naming the criterion R2.1 and the check
+// its package lists as covering it; a fix corrects src/session.mjs.
+//
 // Built-ins only. It acts only inside a sandbox: without /surety/context it
 // prints a failure result and exits 1.
 
@@ -185,11 +194,22 @@ const write = (p, text) => {
   writeFileSync(ws(p), text);
 };
 assistant(usageOf(U));
+// M239's project names its modules src/<name>.mjs; M2's, src/<name>.js.
+const sessionFile = existsSync(ws('src/session.mjs')) ? 'src/session.mjs' : 'src/session.js';
+if (role === 'verifier' && /\(check_correction\)/.test(prompt)) return writeChecks(write);
+// M239's constraint C2: a Builder asks for the nomination (T1).
+let asksNomination = false;
+try {
+  asksNomination = require('node:fs').readdirSync('/surety/context/constraints').some((f) => /"nominate": true/.test(readFileSync(`/surety/context/constraints/${f}`, 'utf8')));
+} catch {
+  asksNomination = false;
+}
+const nominated = (value) => (asksNomination ? { ...value, nominate: true } : value);
 if (role === 'builder') {
   const isFix = /\(fix\)/.test(prompt);
-  if (isFix && existsSync(ws('src/session.js'))) {
-    write('src/session.js', readFileSync(ws('src/session.js'), 'utf8').replace('SESSION_LIFETIME * 1000 * 1000', 'SESSION_LIFETIME * 1000'));
-    finish({ status: 'completed', summary: 'rehearsal: corrected the session lifetime to 30 minutes in milliseconds' });
+  if (isFix && existsSync(ws(sessionFile))) {
+    write(sessionFile, readFileSync(ws(sessionFile), 'utf8').replace('SESSION_LIFETIME * 1000 * 1000', 'SESSION_LIFETIME * 1000'));
+    finish(nominated({ status: 'completed', summary: 'rehearsal: corrected the session lifetime to 30 minutes in milliseconds' }));
   }
   // The file names the stage's goal or its requirements' texts name.
   let texts = prompt;
@@ -198,7 +218,8 @@ if (role === 'builder') {
   } catch {
     // no requirement texts
   }
-  const files = [...new Set([...texts.matchAll(/src\/([a-z]+)\.js/g)].map((m) => m[1]))];
+  const ext = /src\/[a-z]+\.mjs/.test(texts) ? 'mjs' : 'js';
+  const files = [...new Set([...texts.matchAll(/src\/([a-z]+)\.m?js/g)].map((m) => m[1]))];
   if (files.includes('farewell')) {
     // Slow work, to be stopped: usage first, then a long wait.
     process.on('SIGTERM', () => process.exit(143));
@@ -207,13 +228,26 @@ if (role === 'builder') {
       finish({ status: 'completed', summary: 'rehearsal: farewell' });
     }, 120_000);
   } else {
-    if (files.includes('greeting')) write('src/greeting.js', 'export const greeting = (name) => `Hello, ${name}!`;\n');
-    if (files.includes('logout')) write('src/logout.js', 'export const logout = (session) => ({ ...session, revoked: true });\n');
-    finish({ status: 'completed', summary: `rehearsal: wrote ${files.map((f) => 'src/' + f + '.js').join(', ') || 'nothing'}` });
+    const wrote = [];
+    if (files.includes('greeting')) write(`src/greeting.${ext}`, 'export const greeting = (name) => `Hello, ${name}!`;\n'), wrote.push('greeting');
+    if (files.includes('logout')) write(`src/logout.${ext}`, 'export const logout = (session) => ({ ...session, revoked: true });\n'), wrote.push('logout');
+    finish(nominated({ status: 'completed', summary: `rehearsal: wrote ${wrote.map((f) => `src/${f}.${ext}`).join(', ') || 'nothing'}` }));
   }
 } else if (role === 'verifier') {
-  const defect = existsSync(ws('src/session.js')) && readFileSync(ws('src/session.js'), 'utf8').includes('SESSION_LIFETIME * 1000 * 1000');
-  finish({ status: 'completed', summary: 'rehearsal: verified', ...(defect ? { findings: [{ category: 'security', severity: 'critical', message: 'src/session.js accepts expired sessions: the lifetime is compared a thousand times too long (R1)', check: 'login' }] } : {}) });
+  const defect = existsSync(ws(sessionFile)) && readFileSync(ws(sessionFile), 'utf8').includes('SESSION_LIFETIME * 1000 * 1000');
+  // M3: the criterion the defect breaks, if the result schema offers criteria, and the check listed as covering it.
+  let criteria = [];
+  try {
+    criteria = JSON.parse(readFileSync('/surety/context/result-schema.json', 'utf8')).properties?.findings?.items?.properties?.criterion?.enum ?? [];
+  } catch {
+    criteria = [];
+  }
+  const criterion = criteria.includes('R2.1') && sessionFile.endsWith('.mjs') ? 'R2.1' : null;
+  const covering = criterion ? [...prompt.matchAll(/^- `([^`]+)`[^\n]*\(criteria ([^)]*)\)/gm)].find((m) => m[2].split(/,\s*/).includes(criterion))?.[1] : null;
+  const finding = criterion
+    ? { category: 'security', severity: 'critical', message: `${sessionFile} accepts expired sessions: the lifetime is compared a thousand times too long (R2)`, check: covering ?? 'session', criterion }
+    : { category: 'security', severity: 'critical', message: 'src/session.js accepts expired sessions: the lifetime is compared a thousand times too long (R1)', check: 'login' };
+  finish({ status: 'completed', summary: 'rehearsal: verified', ...(defect ? { findings: [finding] } : {}) });
 } else if (role === 'reviewer') {
   // The open findings its package names (E79's first finding, fixed: a
   // Reviewer is given their ids): each is dispositioned `fix`; with none
@@ -244,6 +278,36 @@ if (role === 'builder') {
 } else {
   finish({ status: 'completed', summary: `rehearsal: ${role}` });
 }
+}
+
+// M239's check_correction Verifier: the project's checks, as D3 Appendix B
+// shows a definition, each running the one program the governed file names
+// (`node`) on one protected script.
+function writeChecks(write) {
+  const expect = `// Rehearsal's check program (M239): import the candidate's module in a child and
+// compare what one expression of it prints; exit 1 on any difference or failure.
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [mod, expr, want] = process.argv.slice(2);
+const url = pathToFileURL(resolve(mod)).href;
+const code = 'const m = await import(' + JSON.stringify(url) + '); process.stdout.write(JSON.stringify(' + expr + ') + "\\\\n");';
+const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 20000 });
+const got = (child.stdout ?? '').trim();
+console.log('check: ' + expr + ' printed ' + got + ', want ' + want + '; child status ' + child.status + ', signal ' + child.signal);
+process.exit(child.status === 0 && child.signal === null && got === want ? 0 : 1);
+`;
+  write('.surety/checks/run/expect.mjs', expect);
+  const def = (key, kind, criteria, args) => {
+    const d = { schema: 1, key, kind, command: ['node', '.surety/checks/run/expect.mjs', ...args], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], inputs: ['.surety/checks/run/expect.mjs'] };
+    if (criteria.length > 0) d.covers = { criteria };
+    write(`.surety/checks/defs/${key}.json`, `${JSON.stringify(d, null, 2)}\n`);
+  };
+  def('greeting', 'acceptance', ['R1.1'], ['src/greeting.mjs', 'm.greeting("Ada")', '"Hello, Ada!"']);
+  def('session', 'acceptance', ['R2.1'], ['src/session.mjs', '[m.isSessionValid({ issuedAtMs: 0 }, 1799999), m.isSessionValid({ issuedAtMs: 0 }, 1800000)]', '[true,false]']);
+  def('logout', 'acceptance', ['R3.1'], ['src/logout.mjs', '(() => { const s = { id: 1 }; const o = m.logout(s); return [o.revoked, s.revoked === undefined, o !== s]; })()', '[true,true,true]']);
+  def('smoke', 'smoke', [], ['src/greeting.mjs', 'typeof m.greeting', '"function"']);
+  finish({ status: 'completed', summary: 'rehearsal: wrote the checks of R1.1, R2.1 and R3.1 and a smoke check', proposal: { rationale: 'rehearsal: the checks of R1.1, R2.1, R3.1 and a smoke check, as the approved spec states them', requested_change_kind: 'tightening' } });
 }
 
 // One CONNECT to the rehearsal's provider name through the proxy (inside a

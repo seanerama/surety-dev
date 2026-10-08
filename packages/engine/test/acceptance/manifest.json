@@ -255,6 +255,12 @@
       "M235-finding-resolution.test.mjs",
       "M236-the-conflict-route-and-objections.test.mjs",
       "M237-check-journey-path-two.test.mjs"
+    ],
+    "22": [
+      "M240-the-m3-report.test.mjs",
+      "M241-hands-on-script.test.mjs",
+      "M239-the-verifiers-check-writing-package.test.mjs",
+      "M238-the-wrapper-mutants-and-root-hiding.test.mjs"
     ]
   },
   "sandbox": [
@@ -306,7 +312,9 @@
     "M217-orphans-and-deadlines.test.mjs",
     "M218-output-and-evidence-presence.test.mjs",
     "M205-a-foreign-signal-and-forged-reports.test.mjs",
-    "M237-check-journey-path-two.test.mjs"
+    "M237-check-journey-path-two.test.mjs",
+    "M239-the-verifiers-check-writing-package.test.mjs",
+    "M238-the-wrapper-mutants-and-root-hiding.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
@@ -318,6 +326,7 @@
     "M136-positive-canary.test.mjs",
     "M137-cancellation-canary.test.mjs",
     "M138-containment-canary.test.mjs",
-    "M140-real-backend-journey.test.mjs"
+    "M140-real-backend-journey.test.mjs",
+    "M239-the-real-check-journey.test.mjs"
   ]
 }
