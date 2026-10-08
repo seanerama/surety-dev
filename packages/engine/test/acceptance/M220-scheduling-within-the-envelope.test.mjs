@@ -4,8 +4,10 @@
 //
 // (a) The envelope, reached by configuration only (SEAM.md §156's way):
 //     `max_concurrent_domains` 1 with a role's run holding the one domain;
-//     then `host_reserve_memory` and `host_reserve_disk` each at their
-//     maximum, above what the host has free. Each time an operator's request
+//     then `host_reserve_memory` and `host_reserve_disk`, each set so that
+//     the host qualifies with room for one domain beside the reserve but not
+//     for two, with a role's run holding the one (objection 028; SEAM.md
+//     §§168, 210). Each time an operator's request
 //     for a check stays queued, no domain allocated, its hold shown on the
 //     candidate's checks route as `resource_envelope` naming the limit; once
 //     the role's run has ended, the check runs.
@@ -51,6 +53,8 @@ import {
 // available. The cases mean the limits they name, so domain_memory_max is the
 // contract's minimum (512 MiB), as M133 and M214 configure it.
 const ADMIT = Object.freeze({ domain_memory_max: CONTRACT.engine.domain_memory_max.min });
+const MIB = 1024 * 1024;
+const GIB = 1024 * MIB;
 
 // An operator's request for `key`, held by the envelope: the route's entry
 // for it, once it shows its hold. Returns {entry, id}.
@@ -71,6 +75,25 @@ async function heldByEnvelope(fx, project, candidate, key, limit) {
   return { entry, id };
 }
 
+// A role of `other` holds a domain; an operator's request for the check is
+// then held by the envelope at `limit`; once the role's run has ended, the
+// check runs and passes.
+async function heldWhileARoleRuns(fx, project, candidate, other, limit) {
+  const role = await roleHolding(fx, other.id, await addItem(fx, other.id, 'fix'));
+  const held = await heldByEnvelope(fx, project.id, candidate.id, 'quick', limit);
+  await stopRun(fx.engine, other.id, role.run.id);
+  await waitForRunState(fx.home, role.run.id, 'ended', { timeoutMs: 60_000 });
+  await waitFor(
+    async () => {
+      await tick(fx.engine, project.id, { rounds: 1 });
+      return executionRow(fx.home, held.id).status === 'recorded' ? true : undefined;
+    },
+    { timeoutMs: 60_000, what: `the check held at ${limit} to run once the role's domain has ended` },
+  );
+  const r = resultRow(fx.home, executionRow(fx.home, held.id).result);
+  assert.deepEqual([r.execution_established, r.exit_status], [1, 0], `${limit}: released, it ran and passed`);
+}
+
 describe('M220 scheduling within the envelope', () => {
   test('(a) max_concurrent_domains and the two host reserves: a check is held, shown as resource_envelope; released, it runs', async (t) => {
     const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1, ...ADMIT } });
@@ -80,33 +103,35 @@ describe('M220 scheduling within the envelope', () => {
     const { candidate } = await buildStage(fx, project);
     await waitRecorded(fx, project.id, candidate.id, ['quick'], { what: "the nomination's check, before anything holds the domain" });
 
-    // max_concurrent_domains 1, the one domain held by another project's role.
     const other = await addGitProject(fx);
-    const role = await roleHolding(fx, other.id, await addItem(fx, other.id, 'fix'));
-    const domains = await heldByEnvelope(fx, project.id, candidate.id, 'quick', 'max_concurrent_domains');
-    await stopRun(fx.engine, other.id, role.run.id);
-    await waitForRunState(fx.home, role.run.id, 'ended', { timeoutMs: 60_000 });
-    await waitFor(
-      async () => {
-        await tick(fx.engine, project.id, { rounds: 1 });
-        return executionRow(fx.home, domains.id).status === 'recorded' ? true : undefined;
-      },
-      { timeoutMs: 60_000, what: 'the held check to run once the domain is free' },
-    );
-    assert.deepEqual([resultRow(fx.home, executionRow(fx.home, domains.id).result).execution_established, resultRow(fx.home, executionRow(fx.home, domains.id).result).exit_status], [1, 0], 'released, it ran and passed');
 
-    // The reserves, each above what the host has free, by configuration only.
+    // max_concurrent_domains 1, the one domain held by another project's role.
+    await heldWhileARoleRuns(fx, project, candidate, other, 'max_concurrent_domains');
+
+    // The reserves (objection 028). A reserve above what the host has free
+    // fails H12 and leaves no host qualification, so nothing is held: it is
+    // isolation_unqualified. Each reserve is therefore set between H12's need
+    // (the reserve and one domain's limit) and the envelope's need once a
+    // domain is running (the reserve and two domains' limits): the host
+    // qualifies, the role's domain is admitted, and the check is held.
+    // Configuration only; nothing consumes memory or disk (SEAM.md §§168, 210).
     const memAvailable = Number(/^MemAvailable:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'))[1]) * 1024;
-    for (const [key, value, free] of [
-      ['host_reserve_memory', CONTRACT.engine.host_reserve_memory.max, memAvailable],
-      ['host_reserve_disk', CONTRACT.engine.host_reserve_disk.max, Number(statfsSync(fx.home).bavail) * Number(statfsSync(fx.home).bsize)],
+    const diskFree = Number(statfsSync(fx.home).bavail) * Number(statfsSync(fx.home).bsize);
+    const memoryReserve = CONTRACT.engine.host_reserve_memory.min;
+    const memoryLimit = Math.floor((0.7 * (memAvailable - memoryReserve)) / MIB) * MIB;
+    const writable = 4 * GIB;
+    const diskReserve = Math.floor((diskFree - 1.5 * writable) / MIB) * MIB;
+    for (const [limit, config, h12, envelope, free] of [
+      ['host_reserve_memory', { host_reserve_memory: memoryReserve, domain_memory_max: memoryLimit }, memoryReserve + memoryLimit, memoryReserve + 2 * memoryLimit, memAvailable],
+      ['host_reserve_disk', { ...ADMIT, host_reserve_disk: diskReserve, domain_writable_bytes: writable }, diskReserve + writable, diskReserve + 2 * writable, diskFree],
     ]) {
-      assert.ok(value > free, `the fixture is live: ${key} ${value} is above what the host has free (${free})`);
+      for (const [k, v] of Object.entries(config)) assert.ok(v >= CONTRACT.engine[k].min && v <= CONTRACT.engine[k].max, `the fixture is live: ${k} ${v} lies within its configured range`);
+      assert.ok(h12 <= free && envelope > free, `the fixture is live: ${limit}: one domain fits beside the reserve (${h12} <= ${free}) and two do not (${envelope} > ${free})`);
       await fx.engine.stop();
-      writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, ...ADMIT, [key]: value });
+      writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, ...config });
       await fx.start();
       await qualifyRunnerByFixture(fx.engine);
-      await heldByEnvelope(fx, project.id, candidate.id, 'quick', key);
+      await heldWhileARoleRuns(fx, project, candidate, other, limit);
     }
   });
 
