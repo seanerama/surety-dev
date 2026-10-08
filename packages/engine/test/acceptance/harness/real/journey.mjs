@@ -304,9 +304,10 @@ export async function pathTwo(ctx, { mixed = false } = {}) {
       }
       const verification = await verify(fx, P, first, label);
       // The finding must name the check (SEAM.md §74, "Resolution"): by its
-      // key or by its id, whichever the engine stores.
-      const found = findingsOf(fx.home, P.id).filter((f) => f.check === 'login' || f.check === P.checks.login);
-      if (found.length === 0) notEstablished(label, 'the Verifier reported no finding naming the check "login"', findingsOf(fx.home, P.id));
+      // key or by its id, whichever the engine stores; and, from M3 slice 21
+      // (F2 (c), L8; SEAM.md §§230, 233), the criterion login covers, R1.1.
+      const found = findingsOf(fx.home, P.id).filter((f) => (f.check === 'login' || f.check === P.checks.login) && f.criterion === 'R1.1');
+      if (found.length === 0) notEstablished(label, 'the Verifier reported no finding naming the check "login" and the criterion R1.1', findingsOf(fx.home, P.id));
       const finding = found[0];
 
       if (mixed) {

@@ -121,8 +121,8 @@ describe('M208 frozen bindings and supersession', () => {
     const [earlier] = await passAll(fx.engine, project, c0.id, [k.reused]);
     await reuseEvidence(fx.engine, { project, candidate: c1.id, check: k.reused, check_result: earlier.id, assessed: true });
 
-    // A finding on candidate 1 naming `own`, dispositioned fix; then `own` passes on candidate 1 after the disposition.
-    const [found] = await raiseFindings(fx, project, c1.id, [{ category: 'defect', severity: 'medium', message: 'the session survives a logout', check: 'own' }]);
+    // A finding on candidate 1 naming `own` and the criterion it covers (F2 (c); SEAM.md §233), so only the supersession stands between it and resolution; dispositioned fix; then `own` passes on candidate 1 after the disposition.
+    const [found] = await raiseFindings(fx, project, c1.id, [{ category: 'defect', severity: 'medium', message: 'the session survives a logout', check: 'own', criterion: 'R1.1' }]);
     await review(fx, project, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
     await passAll(fx.engine, project, c1.id, [k.own]);
     const alpha = await alphaTarget(fx, ctx, c1);

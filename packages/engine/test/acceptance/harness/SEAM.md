@@ -4753,6 +4753,92 @@ From slice 20 a scope the M1 and M2 fixtures made is incomplete: their requireme
 - **A floor check naming no category of the scope**: whether it is required is not pinned (section 221).
 - **The real-lane project** is changed and not run (E92 item 3); the driver checks it at slice 22.
 
+---
+
+# M3 slice 21: repair and findings
+
+Sections 228 to 234 were written with the slice-21 acceptance tests (2026-10-08; `verify/m3-s21` from `main` at `e680e18`): rows M234 to M237 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.7, and the straddle of F2 (c) over the accepted rows (M3 plan §4.3; BS3 §9, "Known straddles"; E92 item 2 (3)). They follow D3 draft 2 (§§2.10, 2.11, §5 X2, §7.1 L8, §7.4 Q8, A.3, A.5), Astra's T13, T14 and T20, and E89 item 2, E90 items 2 (Q2) and 4 (F2 (c)), E91 item 2 (Q8). Every earlier section stands; what this pass changes in them is in section 234. † marks a reading for Sean.
+
+## 228. What the slice-21 tests assume throughout
+
+- **Lanes.** M234, M235 and M236 are the **kernel lane** (section 177): checks discovered from the project's definitions (`repairProject`, `harness/checks/repair.mjs`), registered at nomination and moved through the scripted check boundary (section 190); M234 (f) declares its checks with the checks fixture after the nomination (section 189, project (i)). M237 is the **sandbox lane** (section 122): M201's project with the test-owned check program in its benign modes only (`expect`, `exit`, `--say`), the runner qualified by the fixture (section 181).
+- **A fixture result is a recorded result** (sections 67, 189). The check-result fixture's transaction and the scripted boundary's step to `recorded` are each "a transition that records a result" (D3 §2.10), so each reconciles the repair of section 229. Section 234 says what this means for the accepted rows.
+- **Roles without a script.** M236 gives its engines `script.complete()` as the default script (section 13), so the Verifier a `correct_check` answer dispatches ends by itself.
+
+## 229. The repair a failed check takes (D3 §2.10; Q2 (a); T13)
+
+- **Whose repair.** A `stage_build` or `fix` item in `verifying`. Its **current candidate** is the candidate nominated from its latest integration (a fix's, E43's fix candidate). Its **repair checks**: for a fix, the check its finding names; for a `stage_build`, the required checks of its stage's `stage` scope at the current candidate (section 221).
+- **When.** The engine reconciles durable state: in every transition that records a result or ends an execution, in every transition that moves the item into `verifying`, and at each tick. When the item is `verifying`, some repair check's state at the current candidate (section 191) is `failed`, the candidate is not superseded (section 192), and no repair has been taken for this item, candidate and work generation, the item goes `verifying → eligible` (D1 A.5) and `repair_attempts` rises by exactly one, however many repair checks failed. When the reconciling transition records the result, the item's `work.*` step carries the `tx` of that result's `check.result` event (section 180): no tick between. When the item enters `verifying` with the failure already recorded, the repair is taken by the next tick at the latest.
+- **Once.** `work_items.check_repair` is `{"candidate", "generation", "at"}` (D3 A.3), the candidate the repair was taken for. A later tick, a restart, or another failure at the same candidate takes no second repair.
+- **Never.** A state `skipped`, `missing` (queued, materializing, running, quarantined, collecting, interrupted, cancelled, due) or `stale`; an earlier registration's failure when a later one has passed (only the latest registration counts); a superseded candidate's result.
+- **Limits** (D1 §4.3). A repair due when `repair_attempts` equals `repair_attempts_max` parks the item instead (`verifying → parked`), blocker reason `repair_attempts_max`. The progress key gains `(check, <key>, exit_status, signaled, deadline_hit)` for each failed repair check, over the candidate's tree: a repair whose key equals the stored one adds one to `no_progress_count`, and at `no_progress_max` the item is parked instead, blocker reason `no_progress_max`. **`work_items.blocker.checks`** † is the list of the failed repair checks' ids (the plan's "a blocker naming the checks").
+- **The context of the next run** (D2 §1.3). Every repair check whose state at the current candidate is `failed` when the item's next run is dispatched is given to it with its output record †:
+  - **kernel lane:** the scripted launch request (section 13) carries **`check_outputs`**: `[{"key", "check", "check_result", "output"}]`, the check's key and id, the deciding result's id and its output record's id. `harness/scripted/child.mjs` logs the request's `check_outputs` in its `launch` entry. What other launches carry under that key is not pinned;
+  - **sandbox lane:** the context package's manifest (section 139) lists one file of `kind` **`check_output`** † per such check, `source` the output record's id, the file holding the record's text (the cases' outputs are a few lines; a bound on a long one is not pinned). Section 139's kinds gain `check_output`.
+- **Instruments.** "Recorded before the item reached `verifying`" (M234 (b)): the harness's transition route (section 15) moves the item `verifying → awaiting_decision`, the failure is recorded, and the route returns it to its continuation †. The same failure on an unchanged tree (M234 (g)): the repair run rewrites the bytes the candidate already has and asks for the nomination, so the next candidate's tree is the same (an empty change is committed, section 30).
+
+## 230. A finding's criterion, and what resolves a finding (D3 §2.11; F2 (c); L8; T20)
+
+- **The result field.** A finding of a Verifier's or a Reviewer's result (section 68) may carry **`criterion`**, a criterion key of the registered index (section 179), stored as **`findings.criterion`** (D3 A.3). The result schema a role's package holds (section 172) gives it as `findings.items.properties.criterion`, an `enum` of the index's criteria, as it gives `check` (section 176). A finding naming a criterion outside the index makes the run `failed` / `invalid_result`, its `reason_text` naming the criterion, and no finding is stored.
+- **Resolution** (replaces section 74's "Resolution" and section 191's amendment of it). A finding dispositioned `fix` is resolved by an evaluation of a candidate it applies to (section 74) if and only if: (1) it names a criterion and a check; (2) the named check, at the effective version, has origin `acceptance`, names that criterion in `covers.criteria`, and is in the required set of the evaluation's scope (section 221); (3) its state there is `passed` (section 191) and the deciding execution was registered after the disposition (its `execution_seq` above `disposition_seq`, section 191); (4) its evidence is intact: established, its output record present and readable (section 72's `EVIDENCE_MISSING` rule as section 207 applies it: a harness fixture result, with no execution, is not held to an output record, as built), its bindings current, not invalidated. Then, as before, the finding becomes `resolved`, `resolution_verification` is `{"evaluation", "check_result"}`, `finding.resolved` is emitted, and a fix naming it completes in that transaction (section 74). An invalidated resolving result reopens it, as before.
+- **Never resolving:** a check that does not cover the criterion, a developer-origin check, a check of the version outside the required set, an unrelated passing check, an execution registered before the disposition, a pass whose output record is missing. A finding that names no criterion is never resolved (the former insufficient case, M235 (c)).
+
+## 231. The missing verification and its route (D3 §2.11; Q8 (a))
+
+- **The gate names it.** An evaluation's answer (section 70) and its gate read (section 98) carry **`missing_verifications`** †: an array, stored with the evaluation, with one entry `{"finding", "criterion", "check"}` (the finding's own values, `null` where it names none) for each finding dispositioned `fix` that the evaluation asks about (section 74) and whose named check is not, in the evaluation's scope, a required acceptance-origin check covering its criterion. Further keys of an entry (a reason) are not pinned. The finding stays a subject of `FINDING_UNSATISFIED` or `FINDING_BLOCKING` as before; no new reason code.
+- **The route.** In the transaction that records a `fix` disposition of a finding that names no criterion, or whose named check is not a required acceptance-origin check of the effective version covering its criterion, the engine registers one **`check_correction`** work item for the Verifier: `subject.finding` the finding, **`trigger_id` the finding's id**, `eligible`, its `work.created` in that transaction and not a fixture's. Its `trigger_source` and `trigger_generation` are not pinned † (the finding's `("finding", <id>, 1)` is the fix's, section 74, and a project's trigger identities are unique). It is chained work (section 40): it waits at the chain boundary with a `blocker` offering `continue` and `cancel`, and no run. Once: further ticks, evaluations and a restart register no second one. Whether a check of the version outside the required set routes is not pinned (M235 (b) reads only that it does not resolve). The route "when a new version becomes effective" has no case.
+
+## 232. The Builder's objection and D3 §5 X2's blocker (E89 item 2; T14)
+
+- **The result field.** A Builder's result (`stage_build`, `fix`) may carry **`objections`**: `[{"check", "criterion"?, "category": "contract_conflict" | "requirement_conflict", "message"}]` (D3 A.3).
+- **A valid objection** names a check that is a key of the effective version and, if it names a criterion, a criterion of the index, both concerning the run's work item †: for a `stage_build`, a check of its stage's `stage` scope and a criterion of a requirement its stage implements; for a fix, its finding's check and criterion; a fixture `fix` naming no finding has no check an objection can concern. It is recorded as a **`findings` row**: `category`, `check` (the key), `criterion`, `message`, `source_run` the Builder's run. Its severity, scope and candidate are not pinned †. The same entry twice in one result is recorded once (M236 (c)).
+- **An invalid entry** (an unknown key, a key of another project only, an unknown criterion, an unrelated check or criterion) records no finding, raises no blocker and registers no work. Whether the run is then `failed` / `invalid_result` or the entry alone is dropped is not pinned †.
+- **An objection does not stop its run.** The result is valid; the run is integrated and asks for its nomination as any other †. The check stays in force.
+- **A Verifier's conflict finding** (`findings` with category `requirement_conflict` or `contract_conflict`, naming a check and a criterion) concerns the work item whose current candidate is the finding's candidate and whose repair checks include the named check † (in the cases, the `stage_build` its candidate's nomination moved to `verifying`).
+- **The blocker.** No later than the transition in which a repair check named by a valid conflict of the item fails at its current candidate, the item goes `verifying → awaiting_decision` (D3 A.5) instead of taking the repair, `repair_attempts` unchanged, with one open `blocker` decision about it (`subject_id` the item) whose options are exactly `correct_check`, `change_spec`, `retry`, `cancel`. Whether it is raised earlier, when the objecting run ends, is not pinned; its `blocker.reason` is not pinned.
+- **The answers.** `retry`: the item returns to its continuation and takes its one repair (section 229; by the next tick at the latest). `cancel`: the item is `cancelled`. `correct_check`: one `check_correction` item, `trigger_id` the conflict's finding (not chained: the human's answer made it) †; the Builder is not sent back. `change_spec`: one **`spec_change`** work item, `trigger_id` the finding † (F §3.8); the Builder is not sent back. After every answer: the objected check's state at the candidate is what it was, the check is in the effective version, required, with the same id, and the requirements' criteria and areas are unchanged.
+
+## 233. The accepted rows under F2 (c) (the slice-21 straddle)
+
+(L8; M3 plan §4.3 and question 3 (a); E92 item 2 (3); AD §8.3; BS3 §9, "Known straddles".) From slice 21 a finding that names no criterion is never resolved. The accepted rows whose findings were resolved, or whose cases rest on their being resolvable, now name the criterion their check covers. No assertion is weakened, and the former insufficient resolution is pinned as refused (M235 (c), the finding with a check and no criterion).
+
+- `harness/journey.mjs` `FINDING` (M01's second path, both files; M140 (b)'s mixed run): `criterion` `R1.1`, which `login` covers.
+- `M42-…`: the fourth case's finding (`regress`) and the sixth's (`login`), `criterion` `R1.1`. The first case's finding names no check and stays unresolved, as it asserts.
+- `M206-…` (e) and `M208-…` (d): `criterion` `R1.1`, which `own` covers, so (e) still resolves by the later registration and (d) is still refused only for the supersession.
+- `M125-…` (sandbox): (e) the result schema's `findings` items name `criterion`; (f) the Verifier's and the Reviewer's prompts name the field `criterion`, and each check's line names the criteria it covers (BS3 §3: every role that reports findings is told to name the criterion a finding breaks; the Verifier's package names the index's criteria). Both cases' findings name `R1.1`.
+- `harness/real/journey.mjs` (real lane; **not run**): path two's finding must name `login` and `R1.1`, or the path is "not established".
+
+## 234. Names the Verifier fixed in this pass, what it changes in earlier sections, Q2's reach
+
+**What this pass changes in earlier sections.**
+- Section 13's request gains `check_outputs` (section 229); section 139's kinds gain `check_output`.
+- Section 68's result: `findings[].criterion` (section 230); a Builder's `objections` (section 232).
+- Section 74's and section 191's "Resolution" are section 230's; section 74's "Not pinned: whether the engine sends a verifying fix back" is section 229.
+- Sections 70 and 98: evaluations carry `missing_verifications` (section 231).
+- Section 15's blocker gains `checks` for the two limits when a check repair reaches them (section 229).
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| The repair's context in the kernel lane † | `check_outputs` on the scripted launch request (section 229) | The kernel lane builds no package; section 13 lets later slices add request keys |
+| The repair's context in the sandbox lane † | a manifest file of kind `check_output`, `source` the record (section 229) | D2 §1.3 lists the package's kinds; the record is the evidence the Builder needs |
+| Which failed checks the context holds † | every repair check failed at the candidate when the run is dispatched | "every failed repair check's output record" (D3 §2.10) read at the run's dispatch |
+| The blocker naming the checks † | `blocker.checks`, check ids | D3: "parks the item with a blocker naming the checks"; ids as gate subjects |
+| "Before the item reached verifying" † | the harness transition route (section 229) | No public path records a candidate's result before its nomination moves the item |
+| The gate read's missing verification † | `missing_verifications: [{finding, criterion, check}]` (section 231) | M3 plan §2.6 leaves the form to the tests; no new reason code (D3: "as now") |
+| The routed work's trigger † | `trigger_id` the finding; source and generation not pinned | `("finding", id, 1)` is already the fix's identity |
+| An objection's record † | a `findings` row with its run (section 232) | D3 §5 X2: "a finding of category … a Builder's objection … through `objections`" |
+| What a Builder's objection concerns † | its stage scope's checks and its stage's criteria; a fix's finding (section 232) | X2: "both concerning the run's own work item" |
+| A Verifier's conflict finding's item † | the item whose current candidate is the finding's and whose repair checks include the check | D3-X02: "from a Builder or Verifier run stops repair"; the repair is that item's |
+| When the X2 blocker is raised † | no later than the repair it replaces; earlier not pinned (section 232) | D3 §2.10: the conflict "wins over the repair"; `retry` is "one repair"; A.5 blocks from `verifying` |
+| An objection's run † | integrated and nominated as any other | The check stays in force (F §5.3 step 1); only the repair stops |
+| `correct_check` and `change_spec` † | a `check_correction` and a `spec_change` item, `trigger_id` the finding | X2's words; `spec_change` is D1's kind for F §3.8 |
+
+**Q2's reach over the accepted rows** (not a straddle E92 item 2 (3) names; a question for Sean, see `../COVERAGE.md`, "M3 slice 21"). Under section 228's reading, every accepted case that records a failed result (a fixture's or the scripted boundary's) for a candidate whose `stage_build` or `fix` is `verifying` now sends that item back, and the kernel lane's scripted Builder then has no script: the role holds until it is killed (section 13), so the project's one run slot is taken. No accepted file was changed for this in this pass.
+
+**Deferred or not written:**
+- **The route at a new version's effect** (D3 §2.11, "or the one that makes a new version effective"): no case.
+- **An objection from a `fix`'s Builder** about its finding's check: the cases object from `stage_build` runs only.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 20".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 21".
