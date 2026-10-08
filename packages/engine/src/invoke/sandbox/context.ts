@@ -21,6 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
+import { type CheckWritingFacts, checkWritingText } from '../../checks/guide.js';
 import { canaryPromptText } from '../../trust/canaries.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
@@ -50,6 +51,9 @@ export type ContextFacts = {
   // what a result may name (D3 §2.11, §5 X2); null where none can be read.
   check_keys?: string[] | null;
   criteria?: string[] | null;
+  // For check_correction work: what its Verifier is told about writing the
+  // project's checks (src/checks/guide.ts).
+  check_writing?: CheckWritingFacts | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
 };
 
@@ -360,7 +364,11 @@ export function writeContextPackage(
             ]),
       ]
     : [];
-  const fix = facts?.finding ?? null;
+  // check_correction work (BS3 §3): the Verifier writes the checks; the
+  // finding it was registered for, if any, is one no check verifies, never
+  // one it fixes in the code.
+  const correcting = claim.work_kind === 'check_correction';
+  const fix = correcting ? null : (facts?.finding ?? null);
   const fixText = fix
     ? [
         '',
@@ -378,6 +386,47 @@ export function writeContextPackage(
         ...(checkList.length > 0 ? ['', ...checkList] : []),
       ]
     : [];
+  const routed = correcting ? (facts?.finding ?? null) : null;
+  const routedText = routed
+    ? [
+        '',
+        '## The finding this work was registered for',
+        '',
+        `Finding ${routed.id} (${routed.severity}, ${routed.category}${routed.check ? `; it names the check ${routed.check}` : ''}${routed.criterion ? `; it breaks the criterion ${routed.criterion}` : ''}):`,
+        '',
+        routed.message,
+        '',
+        'It is also in /surety/context/finding.json.',
+        '',
+        // Two routes register this work (src/store/transitions/repair.ts): a
+        // Builder's objection the owner answered `correct_check` (D3 §5 X2),
+        // and a `fix` disposition whose finding cannot be verified (D3 §2.11):
+        // it names no criterion, no check, or a check that is not a required
+        // acceptance check covering its criterion.
+        ...(routed.source_role === 'builder' && (routed.category === 'requirement_conflict' || routed.category === 'contract_conflict')
+          ? [
+              `It is a Builder's objection that ${routed.check ? `the check \`${routed.check}\`` : 'a check'} contradicts the requirement or the interface its work names${routed.criterion ? ` (criterion ${routed.criterion})` : ''}; the owner chose to have the check corrected. Read the objection against the requirement's approved text, and correct the check if it is wrong.`,
+            ]
+          : [
+              "A fix of a finding is shown only when the check the finding names is a required acceptance check covering the criterion the finding names, and passes after the disposition. This finding cannot be shown fixed that way because:",
+              ...(routed.criterion ? [] : ['- it names no criterion of the requirement index;']),
+              ...(routed.check === null
+                ? ['- it names no check;']
+                : routed.criterion
+                  ? [`- the check it names, \`${routed.check}\`, is not a required acceptance check covering ${routed.criterion}. Another check may cover ${routed.criterion}; what counts is the check this finding names.`]
+                  : []),
+              '',
+              routed.check !== null && routed.criterion
+                ? `Write or correct the checks so that \`${routed.check}\` is a required acceptance check covering ${routed.criterion} that judges what the requirement's approved text says.`
+                : 'While the finding does not name both, no check can show it fixed. Write or correct the checks of the criterion it concerns all the same, and say in your summary that the finding names no ' +
+                  (routed.criterion ? 'check.' : routed.check === null ? 'criterion and no check.' : 'criterion.'),
+            ]),
+      ]
+    : [];
+  // The facts for check_correction work, or null when the store could not
+  // give them: then the task says so, and points to no section.
+  const writing = correcting ? (facts?.check_writing ?? null) : null;
+  const writingText = writing ? checkWritingText(writing, checkList) : [];
   // A repair run (D3 §2.10): the checks that failed on the item's current
   // candidate, each with its output in /surety/context/check-outputs/.
   const failedChecks = claim.check_outputs ?? [];
@@ -400,13 +449,19 @@ export function writeContextPackage(
       ? 'This run qualifies the backend you run as: the section below says what it asks, and asks nothing else.'
       : claim.work_kind === 'fix' && fix
         ? 'Fix the finding below.'
-        : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
+        : correcting
+          ? writing
+            ? "Write or correct the project's protected checks, as the section below says."
+            : "Write or correct the project's protected checks. The project's check facts (its protected roots, programs, requirements and criteria) could not be read, so none is given here: change nothing, and say so in your summary."
+          : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
     '',
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
     ...(facts?.candidate ? ['', '## The candidate', '', `Candidate ${facts.candidate.id} at revision ${facts.candidate.revision}.`] : []),
     ...reviewText,
     ...fixText,
+    ...routedText,
+    ...writingText,
     ...repairText,
     '',
     ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
@@ -456,6 +511,7 @@ export function writeContextPackage(
     }
   }
   if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);
+  if (routed) put('finding.json', 'instructions', routed.id, `${JSON.stringify(routed, null, 2)}\n`);
   // Each failed repair check's output record, whole (SEAM.md §229): the
   // record's text, or a note that it could not be read.
   for (const o of failedChecks) {

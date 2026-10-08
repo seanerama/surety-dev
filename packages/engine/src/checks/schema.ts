@@ -430,7 +430,48 @@ export interface DefinitionResult {
   errors: DiscoveryError[];
 }
 
-const DEFINITION_FIELDS = ['schema', 'key', 'kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'covers', 'gate_kinds', 'tier_floor', 'phase', 'runner_class', 'requires', 'inputs', 'egress'];
+// A definition's members as a person or a Verifier reads them (D3 §1.3, A.4,
+// Appendix B): whether each is required, its default, and the form
+// `parseDefinition` accepts. The parser's own list of members is this
+// table's keys, so the reference a role is given (src/checks/guide.ts) names
+// exactly the members discovery accepts; the forms are written from the
+// same constants the parser checks against.
+export interface MemberReference {
+  required: string;
+  form: string;
+}
+const quoted = (xs: readonly string[]): string => xs.map((x) => `\`${x}\``).join(', ');
+export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = Object.freeze({
+  schema: { required: 'required', form: 'the number `1`.' },
+  key: { required: 'required', form: `the definition file's name without \`.json\`, matching \`${KEY_FORM.source}\`; a check is known by its key across versions.` },
+  kind: { required: 'required', form: `one of ${quoted(CHECK_KINDS)}.` },
+  origin: { required: 'default `acceptance`', form: '`acceptance` or `developer`. A developer check covers nothing and never counts toward criteria or the kinds a tier requires.' },
+  command: {
+    required: 'required',
+    form: 'an array of 1 to 64 strings, run as an argument vector with no shell (no globbing by a shell, no pipes, no `&&`); its first string is the name of a program the governed file\'s `check_commands` names, never a path.',
+  },
+  cwd: { required: 'default `.`', form: 'the directory the command runs in, relative to the repository\'s root; no absolute path, no `..`.' },
+  env: { required: 'default `{}`', form: `constant string variables, each name matching \`${VARIABLE.source}\`, none beginning \`SURETY_\` and none of ${quoted(ENGINE_VARIABLES)}.` },
+  timeout_s: { required: 'required', form: 'whole seconds, from 1 to the governed `runner_config.direct.timeout_max_s`.' },
+  covers: {
+    required: `required on an acceptance-origin check of kind ${quoted(COVERING_KINDS)}, and on \`sensitivity_floor\``,
+    form: `\`{"criteria": ["R<n>.<m>", ...], "sensitive_areas": [...]}\`. \`"criteria"\`: the criteria of the requirement index the check shows met, at least one on a check of kind ${quoted(COVERING_KINDS)}, named on no other kind; \`"sensitive_areas"\`: only on \`sensitivity_floor\`, at least one of ${quoted(SENSITIVE_AREAS)}.`,
+  },
+  gate_kinds: { required: 'required', form: `a non-empty array, no repeats, of ${quoted(GATE_KINDS)}: the gates whose required set the check joins.` },
+  tier_floor: { required: 'optional', form: '`T1`, `T2` or `T3`: the lowest scope tier at which the check applies; absent, every tier. Never on `sensitivity_floor`.' },
+  phase: { required: 'optional', form: 'a whole number, 1 or more.' },
+  runner_class: {
+    required: 'default `direct`',
+    form: '`direct`, `container` or `remote`. Discovery accepts all three, but only `direct` runs: `container` and `remote` are refused at run time, each execution recorded not run (`runner_unqualified`), so such a check never passes.',
+  },
+  requires: { required: 'default `[]`', form: `\`environment\` or \`artifact_digest\`, only on ${quoted(POST_DEPLOY)}; leave it out otherwise.` },
+  inputs: {
+    required: 'default: every file under the protected roots but the governed file',
+    form: 'the protected paths the check reads: files, or directories ending `/`, under a protected root, regular files only, never the governed file. Only these protected files are present when the check runs, so list every protected file the command needs, its own program included.',
+  },
+  egress: { required: 'default `[]`', form: 'hosts the check may reach, a subset of the governed `runner_config.direct.egress_allow`; none by default, and then the check has no network.' },
+});
+const DEFINITION_FIELDS: readonly string[] = Object.keys(DEFINITION_REFERENCE);
 
 // The protected set's one directory predicate (protected/set.ts).
 export const isProtectedPath = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((r) => isUnderRoot(path, r));

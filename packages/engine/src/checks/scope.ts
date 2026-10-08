@@ -12,7 +12,10 @@
 // §4.5).
 
 export type Tier = 'T1' | 'T2' | 'T3';
-export type ScopeKind = 'stage' | 'alpha_authorize';
+// The gate kinds whose scope the engine evaluates (the `phase` gate stays
+// `unsupported`, deployment gates beyond Alpha's authorization are not built).
+export const SCOPE_KINDS = ['stage', 'alpha_authorize'] as const;
+export type ScopeKind = (typeof SCOPE_KINDS)[number];
 
 export const TIER_RANK: Record<string, number> = { T1: 1, T2: 2, T3: 3 };
 
