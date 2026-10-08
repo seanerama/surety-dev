@@ -22,16 +22,20 @@ import { describe, test } from 'node:test';
 import { alphaTarget, findingsOf, reasonSubjects, stageGate } from './harness/gates.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
-import { executionsOf, resultRow } from './harness/checks/fixtures.mjs';
-import { discoveredProject, nominateStage, recordExit } from './harness/checks/selection.mjs';
+import { GOVERNED_FILE, KERNEL_COMMANDS, buildStage, checkProject, defPath, executionsOf, governedText, resultRow, smoke } from './harness/checks/fixtures.mjs';
+import { recordExit } from './harness/checks/selection.mjs';
 
 describe('M218 (e) evidence missing, apart from the finding', () => {
   test('a result whose output record was removed after recording is EVIDENCE_MISSING on every evaluation that selects it, with no finding in the project', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await discoveredProject(fx, ['sm']);
-    const c = await nominateStage(fx, p, ['sm']);
-    const ctx = { project: p, stage: p.stage.id, candidate: c };
+    // A stage that implements no requirement, so that its one smoke check is
+    // all its scope needs (a requirement with no covering acceptance check
+    // would make the scope incomplete).
+    const p = await checkProject(fx, { files: { [GOVERNED_FILE]: governedText({ check_commands: KERNEL_COMMANDS }), [defPath('sm')]: smoke('sm') }, tier: 'T1' });
+    const { stage, candidate: c } = await buildStage(fx, p);
+    const ctx = { project: p, stage, candidate: c };
     const [x] = executionsOf(fx.home, c.id).filter((e) => e.key === 'sm');
+    assert.ok(x, 'the nomination registered the check');
     const recorded = await recordExit(fx.engine, x.id, 0, { output: 'the check passed with output\n' });
     const result = resultRow(fx.home, recorded.id);
     assert.ok(result.output, 'the result names its output record');

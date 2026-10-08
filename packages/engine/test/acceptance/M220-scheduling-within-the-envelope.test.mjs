@@ -46,6 +46,12 @@ import {
   waitRecorded,
 } from './harness/checks/fixtures.mjs';
 
+// Memory admission reserves each admitted domain's domain_memory_max beside
+// host_reserve_memory (SEAM.md §168); at the defaults two domains need 18 GiB
+// available. The cases mean the limits they name, so domain_memory_max is the
+// contract's minimum (512 MiB), as M133 and M214 configure it.
+const ADMIT = Object.freeze({ domain_memory_max: CONTRACT.engine.domain_memory_max.min });
+
 // An operator's request for `key`, held by the envelope: the route's entry
 // for it, once it shows its hold. Returns {entry, id}.
 async function heldByEnvelope(fx, project, candidate, key, limit) {
@@ -67,7 +73,7 @@ async function heldByEnvelope(fx, project, candidate, key, limit) {
 
 describe('M220 scheduling within the envelope', () => {
   test('(a) max_concurrent_domains and the two host reserves: a check is held, shown as resource_envelope; released, it runs', async (t) => {
-    const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1 } });
+    const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1, ...ADMIT } });
     const prog = installCheckProgram(fx.root);
     await qualifyRunnerByFixture(fx.engine);
     const project = await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('quick')]: smoke('quick', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } });
@@ -97,7 +103,7 @@ describe('M220 scheduling within the envelope', () => {
     ]) {
       assert.ok(value > free, `the fixture is live: ${key} ${value} is above what the host has free (${free})`);
       await fx.engine.stop();
-      writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, [key]: value });
+      writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, ...ADMIT, [key]: value });
       await fx.start();
       await qualifyRunnerByFixture(fx.engine);
       await heldByEnvelope(fx, project.id, candidate.id, 'quick', key);
@@ -105,7 +111,7 @@ describe('M220 scheduling within the envelope', () => {
   });
 
   test("(b) a role's run of the project holding it: a check runs meanwhile; (c) one candidate's checks run one at a time", async (t) => {
-    const fx = await sandboxEngine(t);
+    const fx = await sandboxEngine(t, { config: ADMIT });
     const prog = installCheckProgram(fx.root);
     await qualifyRunnerByFixture(fx.engine);
     const files = { [GOVERNED_FILE]: sandboxGoverned(prog) };

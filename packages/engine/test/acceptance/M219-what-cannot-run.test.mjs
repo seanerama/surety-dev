@@ -140,13 +140,12 @@ describe('M219 what cannot run', () => {
 
   test('isolation_unqualified: with no current host qualification an operator\'s re-run is a row, skipped; NOW refused, check_unrunnable', async (t) => {
     // The candidate is built on a qualified start (a Builder's run needs the
-    // sandbox); its nomination's check is recorded runner_unqualified there,
-    // since nothing qualified the runner. The next start fails H5.
+    // sandbox); nothing qualifies the runner there, so its nomination's check
+    // does not run. The next start fails H5.
     const fx = await sandboxEngine(t);
     const prog = installCheckProgram(fx.root);
     const project = await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('host')]: smoke('host', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } });
     const { stage, candidate } = await buildStage(fx, project);
-    await terminalExecution(fx, project.id, candidate.id, 'host', "the nomination's execution to end");
     await fx.engine.stop();
     await fx.start({ args: ['--harness-host-check', 'H5=failed'] });
     const asked = await requestChecks(fx.engine, project.id, candidate.id, { keys: ['host'] });

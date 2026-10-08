@@ -140,7 +140,10 @@ describe('M218 output and evidence presence', () => {
     const text = outputText(H.fx.home, r);
     assert.ok(text.startsWith(floodHead('cut', OUTPUT_MAX / 2)), 'the record begins with the stream\'s first half');
     assert.ok(text.length <= OUTPUT_MAX + 256, `bounded (${text.length} bytes)`);
-    assert.ok(r.output_dropped_bytes > 0 && r.output_dropped_bytes < CUT_BYTES, `the fixture is live: the flood was cut short (dropped ${r.output_dropped_bytes} of ${CUT_BYTES})`);
+    const last = text.split('\n').filter((l) => /^[OE] \d{10} /.test(l)).map((l) => Number(l.slice(2, 12))).at(-1);
+    assert.ok(Number.isInteger(last) && last < CUT_BYTES / LINE - 1, `the fixture is live: the flood was cut before its last line (the record's last line is ${last})`);
+    // The drop count of an output the engine cut off may be unknown (null), never a guess.
+    assert.ok(r.output_dropped_bytes === null || (r.output_dropped_bytes > 0 && r.output_dropped_bytes < CUT_BYTES), `the drop is counted or unknown (${r.output_dropped_bytes})`);
   });
 
   test('(c) no output: an empty output record', () => {

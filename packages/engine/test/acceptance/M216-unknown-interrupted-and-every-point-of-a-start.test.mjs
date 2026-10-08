@@ -175,7 +175,8 @@ describe('M216 unknown and interrupted executions, and every point of a start', 
     assert.equal(q.id, x.id);
     assert.equal(q.result, null, 'no row');
     assert.deepEqual(resultsOfProject(fx.home, project.id), [], 'nothing recorded');
-    assert.equal(domainOfExecution(fx.home, q).status, 'quarantined', 'the domain stays nonterminal while its closure is unknown');
+    const quarantinedDomain = domainOfExecution(fx.home, q);
+    assert.deepEqual([quarantinedDomain.status, quarantinedDomain.observation], ['quarantined', 'unknown'], 'the domain stays nonterminal, quarantined with its observation unknown, as a role\'s domain is (SEAM.md §128; L1)');
     const during = entryByKey(gateCheckEntries(await stageGate(fx, { project, stage }, candidate)), 'held');
     assert.deepEqual([during.state, during.pending?.execution, during.pending?.status], ['missing', q.id, 'quarantined'], 'missing, the gate read naming the quarantined execution');
 
@@ -239,7 +240,7 @@ describe('M216 unknown and interrupted executions, and every point of a start', 
     const LEASE_TTL = CONTRACT.engine.lease_ttl.min;
     const PAUSE_MS = (LEASE_TTL + 3) * 1000;
     const { fx, prog, project } = await heldProject(t, {
-      config: { lease_ttl: LEASE_TTL, terminate_grace: 3, kill_grace: 2 },
+      config: { lease_ttl: LEASE_TTL, terminate_grace: 3, kill_grace: 2, domain_memory_max: CONTRACT.engine.domain_memory_max.min },
       keys: ['long', 'short'],
       timeouts: { long: 300, short: LEASE_TTL - 10 },
       concurrent: 2,

@@ -29,10 +29,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { alphaTarget, capturedProposal, humanApplies, installGatedPlan, postResult, proposalsOf, reasonSubjects, stageGate } from './harness/gates.mjs';
+import { alphaTarget, askingForTicks, capturedProposal, humanApplies, installGatedPlan, postResult, proposalsOf, reasonSubjects, stageGate } from './harness/gates.mjs';
 import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
+import { CONTRACT } from './harness/fixtures.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import {
   GOVERNED_FILE,
@@ -65,7 +66,8 @@ async function assertUnbound(fx, project, candidate, x, source) {
 
 describe('M222 runner classes, developer checks, the reserved environment', () => {
   test('(a) container and remote unqualified, never matched by a direct result; (b) a required developer check blocks until it passes, its files changing with no proposal; (c) an environment-requiring check is environment_unbound from every trigger', async (t) => {
-    const fx = await sandboxEngine(t);
+    // domain_memory_max at its minimum, so a role's domain and a check's fit together (SEAM.md §168).
+    const fx = await sandboxEngine(t, { config: { domain_memory_max: CONTRACT.engine.domain_memory_max.min } });
     const prog = installCheckProgram(fx.root);
     await qualifyRunnerByFixture(fx.engine);
     const alphaOnly = ['alpha_authorize'];
@@ -85,6 +87,11 @@ describe('M222 runner classes, developer checks, the reserved environment', () =
     const build = await runToEnd(fx, project.id, stage.work_item);
     assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the Builder's run was accepted (${build.reason_text})`);
     const [first] = await waitForCandidates(fx, project.id);
+    const registered = await askingForTicks(fx, project.id, () => {
+      const keys = new Set(executionsOf(fx.home, first.id).map((x) => x.key));
+      return ['plain', 'dev', 'boxed', 'far', 'deployed'].every((k) => keys.has(k)) ? executionsOf(fx.home, first.id) : undefined;
+    }, 'the nomination to register all five checks, container, remote and the environment-requiring one included');
+    assert.deepEqual(registered.map((x) => x.trigger?.source), registered.map(() => 'nomination'), 'each by the nomination');
     const ended = {};
     for (const key of ['plain', 'dev', 'boxed', 'far', 'deployed']) ended[key] = await terminalExecution(fx, project.id, first.id, key);
 

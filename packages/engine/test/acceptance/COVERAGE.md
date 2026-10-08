@@ -2235,7 +2235,26 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **Readings for Sean** (each marked † in SEAM §214): the recovery trigger's form; `running` from the recorded `started`; "cancel" in M216 (b) as the deadline; the output after a crash between the exit report and collection not pinned; the self-test off in harness mode unless switched on, with no admission while it runs; `definition_invalid` as a `cwd` that is no directory of the tree; interleaving at the program's writes; M218 (f)'s reading; M222 in the sandbox lane; `ignore-term` writing one line from its handler; `alloc` relying on the test's host-side reading of memory.max inside a check domain.
 
-**Not yet run.** Every file here was written and committed while the driver's `--slice 17` run had this machine; nothing has been run against `main` yet.
+**What was run** (2026-10-08, after the driver's go; `verify/m3-s18` with `main` at `8098f4d` merged, slice 17's engine; `npm ci`, `npm run build`). First, on the host without an engine, each new guarded mode of the program (`ignore-term`, `detach-child`, `flood`, `print`, `alloc`), given no namespaces and then the host's own, refused with exit 94 and its reasons (the host's namespaces, pid 1 `systemd`, 110 processes visible); no `child-sleep` process was left. Then each new file alone with `node --test`, one at a time, waiting on the command; never the exhaustion file, never `--lane`. After each destructive file no check program or `child-sleep` process was left on the host.
+
+| File | Result on `main` | First failing assertion, or control |
+|---|---|---|
+| M207 (infrastructure retry) | 0 of 1 | no recovery registration: the interrupted nomination has no retry |
+| M216 (recovery budget, kernel) | 0 of 1 | the same: no retry is registered |
+| M218 (evidence missing, kernel) | 1 of 1 | **control**: M1's audit already makes the removed record `EVIDENCE_MISSING` |
+| M221 (fixture only in harness mode) | 2 of 2 | **control**: the route is 404 outside harness mode; an unknown flag is already a usage error |
+| M221 (self-test and binding) | 0 of 6 | the engine refuses to start: `unknown flag --harness-runner-self-test` |
+| M201 (f) | 0 of 3 | the same |
+| M219 | 0 of 3 | `cwd` not in the tree gives `exec_failed`, not `definition_invalid`; `mount_plan_refused` is recorded but NOW has no `cause` (`waiting_on_you`, `cause` null); the operator's re-run under a failed H5 is never recorded `isolation_unqualified` |
+| M220 | 1 of 2 | (a): no `hold` on the checks route. (b), (c) **controls**: a check runs during the project's run, and checks run one at a time |
+| M222 | 0 of 1 | all five registered by the nomination (passes); `boxed` (container) never ends: no `runner_unqualified` row |
+| M216 (sandbox) | 4 of 10 | (a) from `running` and the three launcher cells of (b) are **controls**. (a) from `materializing`: the execution is quarantined but its domain stays `allocated` (observation `unknown`), not `quarantined` as section 128 makes a role's. (b) `checks.before_started`, `checks.started`, `checks.exit_recorded`: unknown barriers (this slice's); `collect.before_read`: the execution ends `interrupted` though its exit report was recorded. (d): no `check.lease_regranted` |
+| M223 | 0 of 1 | everything before NOW passes on `main` ((a) the real runner's pass and exit 1, (b) `toolchain_missing` with the hash found, (c) the hanging test ended with nothing left); NOW is `waiting_on_you` with `cause` null |
+| M217 | 4 of 4 | **control**: orphans and the deadline were built in slice 15 (L4); the fixtures are live (the descendant's pid, "ignored SIGTERM") |
+| M218 (output) | 1 of 5 | (a), (b), (f): the record holds standard output only, no standard error line; (d): the output record holding the secret is named (published), no refusal; (e): no `EVIDENCE_MISSING`. (c) **control** |
+| M205 (d), (i) | 2 of 2 | **control**: the foreign SIGKILL is `signaled`, and the forged text sets nothing |
+
+**Fixes made while confirming the failures** (the tests' own faults, no assertion weakened): M218 (kernel) used a project whose requirement no check covered, so its control gate was `ACCEPTANCE_SCOPE_INCOMPLETE`; it now uses a stage that implements no requirement. M220 (b) was held by memory admission (two domains at 8 GiB need 18 GiB; this host has about 11 GiB available); M220, M216 (d) and M222 now set `domain_memory_max` to its minimum, as M133 and M214 do (SEAM §203). M219's `isolation_unqualified` case waited for the nomination's execution to end, which needs this slice's engine; it no longer waits. M218 (f) required the drop count of a flood the engine cut off; that count may be unknown (null on `main`), so it is now counted or null, and the cut is shown by the record's last line instead (SEAM §207). M222 now asserts first that the nomination registers all five checks. M216 (a)'s domain assertion is the one pinned above (`quarantined`, observation `unknown`).
 
 ## M3 slice 17: the protected inputs (M3 build spec §9; E92; E95)
 
