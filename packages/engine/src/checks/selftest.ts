@@ -222,6 +222,7 @@ export function programIn(cgroup: string, marker: string[]): { pid: number; star
 export class RunnerSelfTest {
   private aborted = false;
   private current: { cgroup: string; launch: SandboxLaunch | null; area: string } | null = null;
+  private tree: string | null = null;
   private readonly hostNs: string;
 
   constructor(private readonly rt: Runtime) {
@@ -235,7 +236,10 @@ export class RunnerSelfTest {
   abort(): void {
     this.aborted = true;
     const c = this.current;
-    if (c === null) return;
+    if (c === null) {
+      this.removeTree();
+      return;
+    }
     try {
       c.launch?.child.kill('SIGKILL');
     } catch {
@@ -256,6 +260,18 @@ export class RunnerSelfTest {
       // nothing held
     }
     if (BOX_ID.test(c.area.split('/').at(-1) ?? '')) rmSync(c.area, { recursive: true, force: true });
+    this.removeTree();
+  }
+
+  private removeTree(): void {
+    const tree = this.tree;
+    if (tree === null || !BOX_ID.test(tree.split('/').at(-1) ?? '')) return;
+    try {
+      chmodTree(tree);
+      rmSync(tree, { recursive: true, force: true });
+    } catch (err) {
+      log('runner self-test', err, { tree });
+    }
   }
 
   // Run every case and record the outcome once on the active host
@@ -264,6 +280,7 @@ export class RunnerSelfTest {
   async run(): Promise<CheckRunnerState | null> {
     const forced = seamSelfTestForced();
     const treeRoot = join(this.rt.home, 'selftest', newId('selftest_'));
+    this.tree = treeRoot;
     const runs = new Map<string, Promise<Run>>();
     const results: CheckRunnerState['self_test'] = [];
     let ctx: Awaited<ReturnType<RunnerSelfTest['prepare']>> | null = null;
@@ -301,8 +318,7 @@ export class RunnerSelfTest {
         results.push({ case: name, control: CONTROLS[name], result: verdict.result, evidence: verdict.evidence });
       }
     } finally {
-      chmodTree(treeRoot);
-      rmSync(treeRoot, { recursive: true, force: true });
+      this.removeTree();
     }
     if (this.aborted) return null;
     const state: CheckRunnerState = {
@@ -333,8 +349,9 @@ export class RunnerSelfTest {
       writeFileSync(path, content);
       chmodSync(path, mode);
     }
-    // Projection directories read-only, as a check tree's are.
-    for (const dir of ['inputs/deep', 'inputs', 'app/expect', 'app', '.selftest']) chmodSync(join(proj, dir), 0o555);
+    // The input files are read-only; their directories stay the owner's to
+    // remove, so a tree left by a crash never blocks the removal of the home
+    // (what holds the inputs immutable in the domain is its mounts, B01).
     const blob = (b: Buffer) => createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest('hex');
     const manifest: ManifestEntry[] = [PROGRAM_INPUT, BESIDE_INPUT, DEEP_INPUT].map((p) => [p, 'blob', '100644', blob(readFileSync(join(proj, p)))] as ManifestEntry);
     // The node installation's prefix, read-only, unless it lies under the
