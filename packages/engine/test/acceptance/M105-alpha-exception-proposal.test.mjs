@@ -56,9 +56,13 @@ const PURPOSE = 'Exercise the import path with real-shaped data before the fix l
 // the findings a Verifier raised on it: a High with no sensitive area, a
 // Medium, a High in a sensitive area; and a successor candidate with a High
 // finding of its own. Returns everything a proposal needs to name.
+// The failure is recorded while the stage's work is verifying on candidate
+// 1, so under Q2 (D3 §2.10; E90 item 2) it would send the stage back to its
+// Builder; this row is not about that repair, so at repair_attempts_max 0 the
+// work is parked instead (objection 030).
 async function reviewed(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 } });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
   const [login] = await passAll(fx.engine, project, ctx.candidate.id, [k.login], { output: CHECK_OUTPUT });

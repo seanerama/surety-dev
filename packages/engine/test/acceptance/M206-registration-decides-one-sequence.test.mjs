@@ -126,7 +126,9 @@ describe('M206 registration decides; one sequence', () => {
 
   test('(e) a registration made before a fix disposition and recorded after it does not resolve the finding; one registered after the disposition does', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx);
+    // The fixture's failure below is recorded while the stage's work is verifying on the candidate, so under Q2 (D3 §2.10; E90 item 2) it would send the
+    // stage back to its Builder. (e) is about which registration resolves the finding, not the repair: at repair_attempts_max 0 the work is parked instead (objection 030).
+    const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 } });
     const project = ctx.project.id;
     const c = ctx.candidate;
     const k = (await installChecks(fx.engine, project, [check('own', { requirements: ['R1'] })])).id;

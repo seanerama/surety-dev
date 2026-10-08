@@ -35,10 +35,14 @@ import { withStore } from './harness/store.mjs';
 const KIND = 'check_correction_tightening';
 
 // A T1 candidate with one check passed and one failed, and two findings a
-// Verifier raised on it: one Critical, one High.
+// Verifier raised on it: one Critical, one High. The failure is recorded
+// while the stage's work is verifying on the candidate, so under Q2 (D3
+// §2.10; E90 item 2) it would send the stage back to its Builder; this row is
+// not about that repair, so at repair_attempts_max 0 the work is parked
+// instead (objection 030).
 async function withFindings(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx, { files: PROTECTED_FILES });
+  const ctx = await nominated(fx, { files: PROTECTED_FILES, policy: { repair_attempts_max: 0 } });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);

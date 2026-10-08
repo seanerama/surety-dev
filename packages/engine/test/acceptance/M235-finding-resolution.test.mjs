@@ -37,6 +37,7 @@ import { readGate } from './harness/reads.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { commitOnRef } from './harness/repos.mjs';
 import { addWork, answerDecision, runsOf, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
+import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
@@ -226,6 +227,9 @@ describe('M235 finding resolution', () => {
 
   test('(e) a finding naming a criterion not in the index is an invalid result: nothing is stored', async (t) => {
     const { fx, p, candidate: c1 } = await project(t);
+    // A failed run returns its work to `eligible` (D1 §4.3), so the Verifier is dispatched again: that
+    // launch completes with no findings (objection 032), and the refused first run is what is read.
+    fx.scripted.defaultScript(script.complete());
     const { run } = await roleRunOf(fx, p.id, c1.id, [finding('M235-e', { check: 'login', criterion: 'R9.9' })]);
     assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `the run is failed / invalid_result (${run.reason_text})`);
     assert.ok(String(run.reason_text ?? '').includes('R9.9'), `its reason names the criterion (${run.reason_text})`);

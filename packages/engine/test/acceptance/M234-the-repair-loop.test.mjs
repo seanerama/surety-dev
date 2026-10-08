@@ -62,10 +62,13 @@ const runEnded = (fx, project, item, n) =>
   tickUntil(fx.engine, project, () => (runsOf(fx.home, item)[n]?.state === 'ended' ? runsOf(fx.home, item)[n] : undefined), { what: `run ${n + 1} of ${item} to end` });
 
 // A project at T1 (acc covering R1.1, smoke), its stage built and nominated,
-// the stage's Builder scripted for a second run that writes a file.
-async function builtStage(t, { config, second = REPAIR_WRITE, first } = {}) {
+// the stage's Builder scripted for a second run that writes a file. `policy`,
+// if given, is changed before the first build, so its commit of
+// `.surety/policy.json` is already in candidate 1 (objection 031).
+async function builtStage(t, { config, second = REPAIR_WRITE, first, policy } = {}) {
   const fx = await scriptedEngine(t, config === undefined ? {} : { config });
   const p = await repairProject(fx);
+  if (policy !== undefined) await changePolicy(fx.engine, p.id, policy);
   const scripts = [first ?? roleThat([permittedEdit()], { nominate: true }), second];
   const b = await buildAndNominate(fx, p, { scripts });
   assert.equal(itemRow(fx.home, b.item).status, 'verifying', "the fixture is live: the nomination moved the stage's work to verifying");
@@ -227,8 +230,8 @@ describe('M234 the repair loop', () => {
 
   test('(g) the same failure on an unchanged tree counts toward no_progress_max, which parks the item with a blocker naming the check', async (t) => {
     // The repair run writes the bytes the candidate already has and asks for the nomination: the next candidate's tree is the same.
-    const { fx, p, item, candidate: c1, reg, ids } = await builtStage(t, { second: roleThat([permittedEdit()], { nominate: true }) });
-    await changePolicy(fx.engine, p.id, { no_progress_max: 1 });
+    // The limit is set before the first build (objection 031): a policy change after it commits to the integration branch, so the repair's candidate could not have the same tree.
+    const { fx, p, item, candidate: c1, reg, ids } = await builtStage(t, { second: roleThat([permittedEdit()], { nominate: true }), policy: { no_progress_max: 1 } });
     await recordExit(fx.engine, reg.acc.id, 1, { output: 'M234-g: the same failure\n' });
     assert.equal(itemRow(fx.home, item).repair_attempts, 1, 'the fixture is live: the first failure is repaired');
     await runEnded(fx, p.id, item, 1);
