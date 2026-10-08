@@ -168,7 +168,7 @@ M3 is accepted when section 1's conditions hold. **The M3 acceptance report** (`
 | A new subscription token (E88 item 3) | The real lane needs one, made with `claude setup-token`; whether Claude Code's trust entry still serves or a new qualification attempt is needed is established when the engine starts | Slice 22, if the real lane runs |
 | Accepted fixtures under L3, L6, Q9 and F2 | Accepted tests change; recorded as corrections' changes, not weakenings | Slices 16, 17, 20, 21 |
 | E64 item 5's sandbox-lane precheck | The runner could fail once with "no user manager reachable" instead of many failures; an owner's change of a few lines | Any time |
-| Foundations v1.1 text | E1 to E101 still unmerged | Whenever convenient |
+| Foundations v1.1 text | E1 to E102 still unmerged | Whenever convenient |
 
 ## 12. Owner-file changes this spec needs
 
