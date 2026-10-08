@@ -128,8 +128,15 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     out.push('- The project has no registered requirement: a check can name no criterion, so a check of a covering kind cannot be valid. Say so in your summary.');
   }
   for (const r of requirements) {
-    const crit = r.criteria === null ? 'not in the requirement index, so no check can name a criterion of it' : r.criteria.length === 0 ? 'no criterion' : `criteria ${list([...r.criteria].sort(critOrder))}`;
-    const areas = r.sensitive_areas.length > 0 ? `; sensitive areas ${list(r.sensitive_areas)}` : '';
+    // A requirement no index row registered: its criteria and its areas are
+    // unknown (its areas column holds only the default), never "none".
+    const crit =
+      r.criteria === null
+        ? 'not in the requirement index: its criteria and sensitive areas are not registered, so they are unknown and no check can name a criterion of it'
+        : r.criteria.length === 0
+          ? 'no criterion'
+          : `criteria ${list([...r.criteria].sort(critOrder))}`;
+    const areas = r.criteria !== null && r.sensitive_areas.length > 0 ? `; sensitive areas ${list(r.sensitive_areas)}` : '';
     out.push(`- ${r.key}: ${crit}${areas}. Its approved text (also in /surety/context/requirements/):`);
     const text = r.text ?? `(the text is not in the store; it is referenced as ${r.text_ref})`;
     out.push(...text.split('\n').map((line) => `  > ${line}`));
@@ -149,12 +156,19 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
       out.push(`- The module ${code(m.name)} raises a scope that includes it to ${t}, which requires each of these kinds: ${list(KIND_INVENTORY[t])}.`);
     }
   }
-  const areas = [...new Set([...f.requirements.flatMap((r) => r.sensitive_areas), ...f.modules.flatMap((m) => m.sensitive_areas)])].sort();
-  out.push(
-    areas.length === 0
-      ? '- No requirement or module names a sensitive area, so no `sensitivity_floor` check is required.'
-      : `- For each sensitive area named, one required \`sensitivity_floor\` check naming it in \`"covers": {"sensitive_areas": [...]}\`, with no \`tier_floor\`: ${list(areas)}.`,
-  );
+  const indexed = f.requirements.filter((r) => r.criteria !== null);
+  const unindexed = f.requirements.filter((r) => r.criteria === null).map((r) => r.key);
+  const areas = [...new Set([...indexed.flatMap((r) => r.sensitive_areas), ...f.modules.flatMap((m) => m.sensitive_areas)])].sort();
+  if (areas.length > 0) {
+    out.push(`- For each sensitive area named, one required \`sensitivity_floor\` check naming it in \`"covers": {"sensitive_areas": [...]}\`, with no \`tier_floor\`: ${list(areas)}.`);
+  } else if (unindexed.length === 0) {
+    out.push('- No requirement or module names a sensitive area, so no `sensitivity_floor` check is required.');
+  }
+  if (unindexed.length > 0) {
+    out.push(
+      `- The sensitive areas of ${unindexed.join(', ')} are not registered (no requirement index row), so whether a \`sensitivity_floor\` check is required for ${unindexed.length === 1 ? 'it' : 'them'} is unknown; say so in your summary.`,
+    );
+  }
   out.push(
     `- Gate kinds: the engine evaluates ${list(SCOPE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both for a check that should decide both. The others (${list(GATE_KINDS.filter((k) => !(SCOPE_KINDS as readonly string[]).includes(k)))}) are accepted but not evaluated.`,
     g.required_checks === null

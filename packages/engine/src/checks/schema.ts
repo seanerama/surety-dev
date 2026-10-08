@@ -460,7 +460,10 @@ export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = O
   gate_kinds: { required: 'required', form: `a non-empty array, no repeats, of ${quoted(GATE_KINDS)}: the gates whose required set the check joins.` },
   tier_floor: { required: 'optional', form: '`T1`, `T2` or `T3`: the lowest scope tier at which the check applies; absent, every tier. Never on `sensitivity_floor`.' },
   phase: { required: 'optional', form: 'a whole number, 1 or more.' },
-  runner_class: { required: 'default `direct`', form: '`direct`; `container` and `remote` are refused.' },
+  runner_class: {
+    required: 'default `direct`',
+    form: '`direct`, `container` or `remote`. Discovery accepts all three, but only `direct` runs: `container` and `remote` are refused at run time, each execution recorded not run (`runner_unqualified`), so such a check never passes.',
+  },
   requires: { required: 'default `[]`', form: `\`environment\` or \`artifact_digest\`, only on ${quoted(POST_DEPLOY)}; leave it out otherwise.` },
   inputs: {
     required: 'default: every file under the protected roots but the governed file',

@@ -231,3 +231,92 @@ test("a Verifier on other work is not given the check-writing section", (t) => {
   assert.ok(!prompt.includes("## Writing the project's checks"));
   assert.ok(prompt.includes('Verify the work below'));
 });
+
+// Review of build/m3-s22, minor 4: a requirement no index row registered has
+// the areas column's default, which is not "no area".
+test('a requirement missing from the index: its criteria and areas are unknown, never "no sensitive area"', () => {
+  const g = parseGoverned(JSON.stringify(GOVERNED)).governed;
+  const only = checkWritingText({ governed: g, tier: 'T1', modules: [], requirements: [{ key: 'R3', text: 't', text_ref: 'r', criteria: null, sensitive_areas: [] }] }, []).join('\n');
+  assert.ok(!only.includes('No requirement or module names a sensitive area'), 'not claimed while a requirement is unindexed');
+  assert.match(only, /- R3: not in the requirement index: its criteria and sensitive areas are not registered/);
+  assert.match(only, /The sensitive areas of R3 are not registered .* unknown/);
+  const mixed = checkWritingText(
+    {
+      governed: g,
+      tier: 'T1',
+      modules: [],
+      requirements: [
+        { key: 'R2', text: 't', text_ref: 'r', criteria: ['R2.1'], sensitive_areas: ['authentication'] },
+        { key: 'R3', text: 't', text_ref: 'r', criteria: null, sensitive_areas: ['personal_data'] },
+      ],
+    },
+    [],
+  ).join('\n');
+  assert.match(mixed, /with no `tier_floor`: `authentication`\./, "the indexed requirement's area, and no area of an unindexed one");
+  assert.match(mixed, /The sensitive areas of R3 are not registered/);
+  const none = checkWritingText({ governed: g, tier: 'T1', modules: [], requirements: [{ key: 'R1', text: 't', text_ref: 'r', criteria: ['R1.1'], sensitive_areas: [] }] }, []).join('\n');
+  assert.match(none, /No requirement or module names a sensitive area/, 'said only when every requirement is indexed');
+});
+
+// Minor 5: why the work was registered, by its route (D3 §2.11; §5 X2).
+test("a routed finding's text says which route registered the work and what the finding lacks", (t) => {
+  const db = store(t);
+  const finding = (id, seq, role, category, check, criterion) =>
+    db
+      .prepare(
+        `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, source_run, source_role, category, message, "check", criterion, proposed_severity, effective_severity, status)
+         VALUES (?, ?, 'prj_1', ?, 'candidate', 'cand_1', 'cand_1', 'run_x', ?, ?, 'a message', ?, ?, 'high', 'high', 'open')`,
+      )
+      .run(id, AT, seq, role, category, check, criterion);
+  finding('fnd_wrong', 10, 'verifier', 'defect', 'smoke', 'R1.1');
+  finding('fnd_nocrit', 11, 'verifier', 'defect', 'smoke', null);
+  finding('fnd_obj', 12, 'builder', 'requirement_conflict', 'greeting', 'R1.1');
+  let seq = 10;
+  const promptFor = (findingId) => {
+    seq += 1;
+    db.prepare(
+      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+       VALUES (?, ?, 'prj_1', ?, 'check_correction', ?, 'executing', 'check_correction', ?, 1, 0, 0, 0, 0)`,
+    ).run(`wi_${findingId}`, AT, seq, JSON.stringify({ finding: findingId }), findingId);
+    db.prepare(
+      `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, content_hash)
+       VALUES (?, ?, 'prj_1', ?, ?, 'verifier', 'one_shot', 'executing', 'scripted', '1', 'm', ?, ?, 0, NULL)`,
+    ).run(`run_${findingId}`, AT, seq, `wi_${findingId}`, 'a'.repeat(40), AT);
+    return packageOf(t, db, `run_${findingId}`).prompt;
+  };
+  const noCheck = packageOf(t, db, 'run_routed').prompt;
+  assert.ok(noCheck.includes('- it names no check;'));
+  assert.ok(!noCheck.includes('names no criterion'));
+  const wrong = promptFor('fnd_wrong');
+  assert.ok(wrong.includes('the check it names, `smoke`, is not a required acceptance check covering R1.1. Another check may cover R1.1; what counts is the check this finding names.'));
+  assert.ok(!wrong.includes('- it names no check;') && !wrong.includes('names no criterion'));
+  const noCrit = promptFor('fnd_nocrit');
+  assert.ok(noCrit.includes('- it names no criterion of the requirement index;'));
+  assert.ok(!noCrit.includes('- it names no check;'));
+  const objection = promptFor('fnd_obj');
+  assert.ok(objection.includes("It is a Builder's objection that the check `greeting` contradicts"));
+  assert.ok(!objection.includes('cannot be shown fixed'), 'an objection is not a missing verification');
+});
+
+// Minor 6: discovery accepts every runner class; the run refuses all but direct.
+test('the runner_class reference says discovery accepts container and remote and the run refuses them', () => {
+  assert.match(DEFINITION_REFERENCE.runner_class.form, /Discovery accepts all three/);
+  assert.match(DEFINITION_REFERENCE.runner_class.form, /runner_unqualified/);
+  const g = parseGoverned(JSON.stringify(GOVERNED)).governed;
+  const def = { schema: 1, key: 's', kind: 'smoke', command: ['node', '.surety/checks/s.mjs'], timeout_s: 5, gate_kinds: ['stage'], runner_class: 'container', inputs: ['.surety/checks/s.mjs'] };
+  const parsed = parseDefinition('.surety/checks/defs/s.json', 's', JSON.stringify(def), g, [{ path: '.surety/checks/s.mjs', type: 'blob', mode: '100644', oid: '0'.repeat(40) }]);
+  assert.deepEqual(parsed.errors, [], 'as the reference says, discovery accepts it');
+});
+
+// Minor 7: no facts, no pointer to a section that is not there.
+test('check_correction work with no check facts: the task says they could not be read and points to no section', (t) => {
+  const db = store(t);
+  const facts = { ...contextFacts(db, { run: 'run_cc' }), check_writing: null };
+  const dir = join(scratch(t), 'context');
+  writeContextPackage(dir, { run: 'run_cc', role: 'verifier', work_item: 'wi_cc', work_kind: 'check_correction', base_revision: 'a'.repeat(40), attempt: null }, facts, { probe: false });
+  const prompt = readFileSync(join(dir, 'prompt.md'), 'utf8');
+  assert.ok(prompt.includes("The project's check facts (its protected roots, programs, requirements and criteria) could not be read"));
+  assert.ok(!prompt.includes('the section below'));
+  assert.ok(!prompt.includes("## Writing the project's checks"));
+  assert.ok(prompt.includes('Work item: wi_cc (check_correction);'));
+});
