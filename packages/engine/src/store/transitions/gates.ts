@@ -533,10 +533,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
-  // (8) Referenced evidence exists and verifies.
-  const evidence: string[] = [];
-  for (const c of scope.required) {
-    const decider = deciders[c.id];
+  // (8) Referenced evidence exists and verifies: what a decider's evidence
+  // lacks, named by its record (or by the result when it names none).
+  const evidenceMissing = (decider: Execution | null | undefined): string | null => {
     const record = decider?.output;
     if (!record) {
       // An established result of an execution names its output record, an
@@ -545,17 +544,21 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       // named by the result (T09; SEAM.md §207). A harness fixture result
       // has no execution and is not held to it.
       const r = decider as (Execution & { execution?: string | null; execution_established?: number }) | null | undefined;
-      if (r && r.execution && r.execution_established === 1) evidence.push(r.id);
-      continue;
+      return r && r.execution && r.execution_established === 1 ? r.id : null;
     }
     const row = db.prepare('SELECT "path", "post_scan", "missing_at", "published" FROM "records" WHERE "id" = ?').get(record) as
       | { path: string | null; post_scan: string; missing_at: string | null; published: number }
       | undefined;
-    if (!row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit' || (unreadable.records ?? []).includes(record)) evidence.push(record);
+    return !row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit' || (unreadable.records ?? []).includes(record) ? record : null;
+  };
+  const evidence: string[] = [];
+  for (const c of scope.required) {
+    const missing = evidenceMissing(deciders[c.id]);
+    if (missing !== null) evidence.push(missing);
   }
-  // Read before the findings (D3 §2.11 (4)): a pass whose evidence is
-  // missing resolves nothing. Its reason is added in its place, (8).
-  const intact = (d: Execution): boolean => !evidence.includes(d.id) && !(d.output !== null && evidence.includes(d.output));
+  // D3 §2.11 (4), the same rule for a resolving pass: a pass whose evidence
+  // is missing resolves nothing. Its reason is added in its place, (8).
+  const intact = (d: Execution): boolean => evidenceMissing(d) === null;
 
   // (5) Findings.
   const findings = (db.prepare(`SELECT * FROM "findings" WHERE "project" = ? AND "status" IN ('open', 'dispositioned') ORDER BY "seq"`).all(args.project) as FindingRow[]).filter((f) =>
@@ -570,7 +573,11 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // criterion in this scope (D3 §2.11; SEAM.md §231): named by the
   // evaluation, as the gate read shows it. No reason code of their own.
   const missingVerifications: { finding: string; criterion: string | null; check: string | null }[] = [];
-  const requiredByKey = new Map(scope.required.map((c) => [c.key, c]));
+  // Condition 2 as Sean ruled on S2 (2026-10-08): the named check is a
+  // required acceptance-origin check covering the criterion in one of the
+  // candidate's scopes (the union candidateContent gives, as registration
+  // uses it), so the gate of each scope sees the finding resolved.
+  const requiredByKey = new Map(candidateContent(db, args.project, candidate, scope.effective.id).checks.map((c) => [c.key, c]));
   for (const f of findings) {
     // F2 (c), L8: a fix is resolved by this evaluation only through its
     // named check, being a required acceptance-origin check of the scope
@@ -582,7 +589,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       const criterion = f.criterion ?? null;
       if (!verifiesCriterion(named, criterion)) missingVerifications.push({ finding: f.id, criterion, check: f.check });
       else if (superseded === null && !refUnread) {
-        const s = selected[named!.id]!;
+        const s = selected[named!.id] ?? checkState(db, args.project, named!, scope);
         if (s.state === 'passed' && s.decider && s.decider.execution_seq > (f.disposition_seq ?? 0) && intact(s.decider)) {
           resolving.push({ finding: f, result: s.decider.id });
           continue;

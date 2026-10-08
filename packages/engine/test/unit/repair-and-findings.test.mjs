@@ -568,3 +568,65 @@ test("a pass whose output record a detector flagged is not intact evidence: it r
   assert.equal(status(db, 'f_ok'), 'dispositioned');
   assert.deepEqual(e.missing_verifications, [], 'the check can verify it; only its evidence is missing');
 });
+
+// ---- Sean's rulings on S1 and S2 (2026-10-08) ------------------------------------------------
+
+test("S1: a stage check failing on a later candidate that holds the stage by ancestry (a fix's) sends the stage's own Builder back once", (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, depends_on, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold, chain)
+     VALUES ('wi_fix', ?, 'prj_1', 2, 'fix', '{}', 'verifying', '[]', 'fixture', 'x', 1, 0, 0, 0, 0, 1)`).run(AT);
+  db.prepare(`INSERT INTO lineages (id, created_at, project, branch, started_from_candidate, open) VALUES ('lin_2', ?, 'prj_1', 'main', 'cand_1', 0)`).run(AT);
+  db.prepare(
+    `INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, nominated_protected_version, progress, held_work)
+     VALUES ('cand_2', ?, 'prj_1', 2, ?, 'lin_2', ?, 'builder_request', 'pv_1', 'developing', '["wi_fix"]')`,
+  ).run(AT, B, AT);
+  db.prepare(`INSERT INTO revision_ancestry (id, created_at, project, ancestor, descendant, is_ancestor) VALUES ('anc_2', ?, 'prj_1', ?, ?, 1)`).run(AT, A, B);
+  db.prepare(`UPDATE candidates SET superseded_by = 'cand_2' WHERE id = 'cand_1'`).run();
+  assert.equal(repair.currentCandidate(db, { id: 'wi_1', project: 'prj_1', kind: 'stage_build' }).id, 'cand_2', "the stage's current candidate is the fix's, which holds it by ancestry");
+  assert.equal(repair.currentCandidate(db, { id: 'wi_fix', project: 'prj_1', kind: 'fix' }).id, 'cand_2', "the fix's is its own (E43)");
+  post(db, 'chk_smoke', 'cand_2', 1);
+  const row = item(db);
+  assert.deepEqual([row.status, row.repair_attempts, row.check_repair?.candidate], ['eligible', 1, 'cand_2']);
+  assert.equal(item(db, 'wi_fix').status, 'verifying', 'a fixture fix naming no finding has no repair check');
+});
+
+function secondStage(db) {
+  db.prepare(`INSERT INTO requirements (id, created_at, project, key, text_ref, status, criteria, sensitive_areas) VALUES ('req_2', ?, 'prj_1', 'R2', 'r2', 'approved', '["R2.1"]', '[]')`).run(AT);
+  db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, depends_on, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold, chain)
+     VALUES ('wi_2', ?, 'prj_1', 3, 'stage_build', '{"stage":"stage_2"}', 'integrated', '[]', 'plan', 'stage_2', 1, 0, 0, 0, 0, 0)`).run(AT);
+  db.prepare(
+    `INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, work_item, integrated_revision)
+     VALUES ('stage_2', ?, 'prj_1', 'plan_1', 2, 'g2', '[]', '["req_2"]', '["req_2"]', 'integrated', 'wi_2', ?)`,
+  ).run(AT, A);
+  db.prepare(`INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria, requirement_ids)
+     VALUES ('chk_acc2', ?, 'prj_1', 'acc2', 'pv_1', 'acceptance', 1, '["stage","alpha_authorize"]', '.surety/checks/defs/acc2.json', 'h', 'direct', '["R2.1"]', '["req_2"]')`).run(AT);
+  db.prepare(`UPDATE candidates SET held_work = '["wi_1","wi_2"]' WHERE id = 'cand_1'`).run();
+}
+
+test("S2: a finding naming another stage's check of the candidate resolves at this stage's gate, and routes nothing", (t) => {
+  const db = store(t);
+  gateReady(db);
+  secondStage(db);
+  fixFinding(db, 'f_other', 'acc2', 'R2.1');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = 'check_correction'`).get().n, 0, "acc2 verifies R2.1 in one of the candidate's scopes: nothing is routed");
+  for (const c of ['chk_acc', 'chk_smoke', 'chk_acc2']) post(db, c, 'cand_1', 0);
+  const e = evaluate(db);
+  assert.equal(e.check_states.chk_acc2, undefined, "acc2 is not in stage 1's scope");
+  assert.equal(status(db, 'f_other'), 'resolved', "resolved through the candidate's stage-2 scope");
+  assert.deepEqual(e.missing_verifications, []);
+});
+
+test("S2: a check in none of the candidate's scopes still names a missing verification and routes the finding", (t) => {
+  const db = store(t);
+  gateReady(db);
+  secondStage(db);
+  // Stage 2 neither held nor delivered: acc2 is in no scope of the candidate (not even its Alpha scope).
+  db.prepare(`UPDATE candidates SET held_work = '["wi_1"]' WHERE id = 'cand_1'`).run();
+  db.prepare(`UPDATE stages SET integrated_revision = NULL, status = 'planned' WHERE id = 'stage_2'`).run();
+  fixFinding(db, 'f_out', 'acc2', 'R2.1');
+  assert.deepEqual(db.prepare(`SELECT trigger_id FROM work_items WHERE kind = 'check_correction'`).all().map((r) => r.trigger_id), ['f_out']);
+  for (const c of ['chk_acc', 'chk_smoke', 'chk_acc2']) post(db, c, 'cand_1', 0);
+  const e = evaluate(db);
+  assert.equal(status(db, 'f_out'), 'dispositioned');
+  assert.deepEqual(e.missing_verifications, [{ finding: 'f_out', criterion: 'R2.1', check: 'acc2' }]);
+});

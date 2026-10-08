@@ -31,7 +31,7 @@
 import { requirementKeyOf } from '../../checks/schema.js';
 import { canonical, parseJson, sha256 } from './common.js';
 import type { Effect } from './control.js';
-import { type CandidateRow, type CheckRow, checksOfVersion, deliveredStageScope, requiredSet } from './evidence.js';
+import { type CandidateRow, type CheckRow, candidateContent, checksOfVersion, deliveredStageScope, getCandidate, heldByAncestry, requiredSet } from './evidence.js';
 import { type FindingRow, checkState } from './gates.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
 import { knownCriteria, readDue } from './checks.js';
@@ -73,10 +73,17 @@ interface CheckConflict {
 
 // ---- the current candidate and its repair checks -----------------------------------
 
-// The candidate nominated from the item's latest integration (D3 §2.10): the
-// latest candidate whose own held work lists the item. Work a candidate
-// holds only by ancestry (E43) is not its current work.
-export function currentCandidate(db: Db, item: Pick<WorkRow, 'id' | 'project'>): (CandidateRow & { checks_due: string | null }) | null {
+// The item's current candidate (D3 §2.10). For a fix, E43's fix candidate:
+// the latest candidate whose own held work lists it. For a stage_build
+// (Sean's ruling on S1, 2026-10-08): the latest candidate not superseded
+// that holds it, itself or by ancestry (E43), so a stage check failing on a
+// fix's candidate sends the stage's own Builder back; null when every
+// candidate holding it is superseded.
+export function currentCandidate(db: Db, item: Pick<WorkRow, 'id' | 'project' | 'kind'>): (CandidateRow & { checks_due: string | null }) | null {
+  if (item.kind === 'stage_build') {
+    const rows = db.prepare(`SELECT * FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC`).all(item.project) as (CandidateRow & { checks_due: string | null })[];
+    return rows.find((c) => heldByAncestry(db, c).includes(item.id)) ?? null;
+  }
   const row = db
     .prepare(`SELECT c.* FROM "candidates" c, json_each(c."held_work") h WHERE c."project" = ? AND h."value" = ? ORDER BY c."seq" DESC LIMIT 1`)
     .get(item.project, item.id) as (CandidateRow & { checks_due: string | null }) | undefined;
@@ -513,11 +520,23 @@ export function routeCheckCorrection(tx: Tx, project: string, finding: string, c
 // acceptance-origin check of the effective version covering it, cannot be
 // verified, and the Verifier is given check_correction work. Chained like
 // the fix (Q8 (a)): at the default max_chained_roles it waits for a person.
-export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'project' | 'check'> & { criterion?: string | null }, chain: number): void {
+export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'project' | 'check' | 'candidate'> & { criterion?: string | null }, chain: number): void {
   const version = effectiveVersion(tx.db, f.project);
-  const named = version && f.check !== null ? checksOfVersion(tx.db, version.id).find((c) => c.key === f.check) : undefined;
-  if (verifiesCriterion(named, f.criterion ?? null)) return;
+  if (version && findingVerifiable(tx.db, f, version.id)) return;
   routeCheckCorrection(tx, f.project, f.id, chain);
+}
+
+// Can a finding's named check verify its criterion (D3 §2.11 condition 2,
+// as Sean ruled on S2, 2026-10-08)? It must be a required acceptance-origin
+// check covering the criterion in one of the finding's candidate's scopes:
+// the union candidateContent gives, as registration uses it. A finding with
+// no candidate (project scope) has no candidate's scopes to read: the
+// version's own required mark is its rule (not pinned).
+export function findingVerifiable(db: Db, f: Pick<FindingRow, 'project' | 'check' | 'candidate'> & { criterion?: string | null }, version: string): boolean {
+  if (f.check === null || (f.criterion ?? null) === null) return false;
+  const candidate = f.candidate ? getCandidate(db, f.candidate) : undefined;
+  const pool = candidate ? candidateContent(db, f.project, candidate, version).checks : checksOfVersion(db, version);
+  return verifiesCriterion(pool.find((c) => c.key === f.check), f.criterion ?? null);
 }
 
 // The same route when a new protected version becomes effective (D3 §2.11):
@@ -525,7 +544,7 @@ export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'pro
 // without a verifying check.
 export function routeMissingAtVersion(tx: Tx, project: string): void {
   const rows = tx.db
-    .prepare(`SELECT "id", "project", "check", "criterion" FROM "findings" WHERE "project" = ? AND "status" = 'dispositioned' AND "disposition" = 'fix' ORDER BY "seq"`)
-    .all(project) as (Pick<FindingRow, 'id' | 'project' | 'check'> & { criterion: string | null })[];
+    .prepare(`SELECT "id", "project", "check", "candidate", "criterion" FROM "findings" WHERE "project" = ? AND "status" = 'dispositioned' AND "disposition" = 'fix' ORDER BY "seq"`)
+    .all(project) as (Pick<FindingRow, 'id' | 'project' | 'check' | 'candidate'> & { criterion: string | null })[];
   for (const f of rows) routeMissingVerification(tx, f, 1);
 }
