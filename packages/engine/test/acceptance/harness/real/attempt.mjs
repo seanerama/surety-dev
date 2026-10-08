@@ -300,7 +300,10 @@ export async function wrongKeyAttempt(ctx) {
 
 // Sean's activation of the entry the attempt wrote (M140's precondition).
 // Answering launches nothing (D2 §4.1): checked here before anything else runs.
-export async function activation(ctx) {
+// `journey`: what the activation lets run, as Sean is told it: M140's two
+// projects by default; M239 names its one project and its limit (SEAM.md §237).
+const M140_JOURNEY = Object.freeze({ name: 'the journey (M140)', limits: `the journey's projects have day limits of ${REAL.dayVerifiedUsd.pathOne} and ${REAL.dayVerifiedUsd.pathTwo} USD verified` });
+export async function activation(ctx, { journey = M140_JOURNEY } = {}) {
   return realStep(ctx, 'activation', async () => {
     const attemptStep = await qualificationAttempt(ctx);
     if (ctx.rehearsal && !attemptStep.entry) return rehearsalEntry(ctx, attemptStep);
@@ -312,7 +315,7 @@ export async function activation(ctx) {
       const entry = trustEntries(fx.home).find((e) => e.id === entryId);
       if (entry.status === 'proposed') {
         await waitForSean(ctx, fx, 'trust_activation', entryId, {
-          what: 'the activation of the Claude Code entry the attempt wrote. Activating launches nothing; it lets the journey (M140) dispatch real roles, each a paid run bounded by the journey project\'s limits.',
+          what: `the activation of the Claude Code entry the attempt wrote. Activating launches nothing; it lets ${journey.name} dispatch real roles, each a paid run bounded by its project's limits.`,
           facts: {
             entry: entryId,
             'binary sha256': entry.binary_sha256,
@@ -320,7 +323,7 @@ export async function activation(ctx) {
             model: entry.model,
             capabilities: entry.capabilities,
             'egress hosts': entry.egress_hosts,
-            'journey: at most, billable tokens alone': `${RUN_BILLABLE_MAX_USD.toFixed(2)} USD a run; the journey's projects have day limits of ${REAL.dayVerifiedUsd.pathOne} and ${REAL.dayVerifiedUsd.pathTwo} USD verified`,
+            'journey: at most, billable tokens alone': `${RUN_BILLABLE_MAX_USD.toFixed(2)} USD a run; ${journey.limits}`,
           },
         });
       }

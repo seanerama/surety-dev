@@ -4940,6 +4940,24 @@ Each pattern is one argument; node expands it (no shell). `sum-child.test.mjs` r
 
 `docs/acceptance/reports/M3-hands-on.sh`: scripted roles in the engine's test mode (`serve --harness --harness-scripted … --harness-host-checks run --harness-runner-self-test run`), the test-owned check program, no backend, no token, no paid step; it prints `CHECK (1)` to `CHECK (5)` (cgroup.procs; no `.git`; the input write refused, the source write discarded; the gate read's deciding execution and history; a root addition `unclassifiable`), each with a command; it releases the program's guarded `write` only after reading the program inside the domain's `cgroup.procs` and its own `/proc/<pid>/cgroup`; it refuses before starting anything without `XDG_RUNTIME_DIR` or a terminal (`SURETY_HANDS_ON_NO_PAUSE=1` runs it without pauses). M241's file holds those properties without running it (M142's form).
 
+## 240. The slice-22 review's corrections (2026-10-08)
+
+(Written on `verify/m3-s22-r` from `main` at `a9ddd51`. Sections 237 and 239 stand with these changes.)
+
+**S1, a rerun of the real journey dispatching paid work nobody asked for** (section 237). Each path's `finally` pauses its project before its engine stops, whatever ended it. Before an engine starts on the home, each path reads the store and refuses (nothing started) when an earlier attempt's project, not paused, has work that could be dispatched; path two refuses again, after its engine starts and before it resumes the project, when any earlier work of the project could be dispatched at all. "Could be dispatched" (`leftovers`): an `eligible` item not under `dispatch_hold` whose `chain` + 1 is within the project's `max_chained_roles` (the contract's default when no revision records it), or a run not `ended`; an item past the chain boundary waits for a person's `continue` and is not counted. Path two resumes its project itself, after its plan is installed. The README has Sean export `SURETY_REAL_RUN_DIR` once and reuse it, with the rerun command (`SURETY_REAL_RERUN=<step>`), and puts the runner's log inside the run directory, where (d)'s search reads it.
+
+**The checks' toolchain** (minor 3): `m239Toolchain(dir)` copies the engine's node binary to `<dir>/toolchain/node`; `M239_GOVERNED(toolchain)` names it in `check_commands` with its `sha256`, `read_paths` `[<dir>/toolchain]`, `path` `['/usr/bin', '/bin']`. The real journey's `dir` is the run directory; the sandbox file's, its fixture root.
+
+**The activation's question** (minor 1): `activation(ctx, {journey})` tells Sean what the entry lets run; M239's is one project with its 6 USD day limit in estimates; M140's text is unchanged.
+
+**M239 (b) and (c)** (minor 4): every execution of every candidate of the journey, each round's included: one with a result is an engine execution as section 237 says; one without is `cancelled` or `interrupted`.
+
+**S2, a release of the hands-on's writing check without its own containment read** (section 239). As first merged, step 6 made the release file before the second re-run was registered, so that execution acted with no host-side read of its own. Now `read_containment <project> <execution>` reads the execution's domain from the store, its `cgroup.procs` from the host, finds the program among the members, compares the program's own `/proc/<pid>/cgroup` with the domain's, and requires the domain's cgroup to lie under the engine's scope (the parent of the engine process's own cgroup leaf); any failed read or mismatch stops the script with nothing released. `release <project> <execution>` runs that read, makes the release file, waits for the execution's result and removes the file. Every creation of the release file is `release`'s (M241 (e)).
+
+**The hands-on's guards** (minor 5): `SURETY_HANDS_ON_NO_PAUSE=1` skips the pauses and no longer bypasses the terminal refusal (M241 does not need it: it never runs the script); an existing `SURETY_HANDS_ON_DIR` is refused, so `KEEP=0` removes only a directory the run made.
+
+**The report** (minor 6): the binary's source is `observed/attempt.json`; the acceptance results of M201, M237, M239's sandbox file, M240 and M241 are pending placeholders; M239 is no longer among the cases that pass by asserting a host fact (M240 (a) pins it).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22".

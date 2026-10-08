@@ -33,10 +33,12 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { activation, homeOf } from './harness/real/attempt.mjs';
-import { CONFIRM_PHRASE_M3, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue } from './harness/real/lane.mjs';
+import { CONFIRM_PHRASE_M3, REAL, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue } from './harness/real/lane.mjs';
 import { M239, checksPathOne, checksPathTwo, projectResults } from './harness/real/checks-journey.mjs';
 
 const preflight = () => realPreflight({ confirm: CONFIRM_PHRASE_M3 });
+// What Sean is told the activation lets run (attempt.mjs): one project, its day limit in estimates.
+const M239_JOURNEY = Object.freeze({ name: 'the M3 real check journey (M239)', limits: `the journey's one project has a day limit of ${REAL.dayVerifiedUsd.pathOne} USD in estimates` });
 
 // Every result of the journey: an engine execution, established, in a check domain of its own, bound to a self-tested qualification.
 function assertEngineExecution(f, qualification, what) {
@@ -53,7 +55,7 @@ describe('M239 the real check journey (real lane, paid)', () => {
   test("(a) a real Verifier writes the stage's checks in check_correction work; the classification's decision is Sean's; applied, the checks are discovered with no error", { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = preflight();
     await judged(ctx, 'M239 (a)', async () => {
-      await activation(ctx);
+      await activation(ctx, { journey: M239_JOURNEY });
       const one = await checksPathOne(ctx);
       assert.deepEqual(one.initial_version.checks, [], 'the project began with no check');
       assert.deepEqual([one.correction.run.role, one.correction.run.outcome, one.correction.run.reason_class], ['verifier', 'completed', 'none'], `the real Verifier's check_correction run was accepted (${one.correction.run.reason_text})`);
@@ -71,12 +73,19 @@ describe('M239 the real check journey (real lane, paid)', () => {
   test('(b) a real Builder builds the stage; every check result is an engine execution in a check domain, bound to the self-test; both gates satisfied on them', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = preflight();
     await judged(ctx, 'M239 (b)', async () => {
-      await activation(ctx);
+      await activation(ctx, { journey: M239_JOURNEY });
       const one = await checksPathOne(ctx);
       assert.equal(one.qualification.cases.length > 0, true, 'the runner self-test ran at the start');
       const last = one.rounds.at(-1);
       assert.ok(last.executions.length > 0, 'the engine registered checks for the candidate');
-      for (const f of last.executions) assertEngineExecution(f, one.qualification, `${f.key} on ${last.candidate}`);
+      // Every execution of every round's candidate (the slice-22 review, minor 4): each recorded one an engine
+      // execution as above; one with no result only cancelled or interrupted, never recorded.
+      for (const round of one.rounds) {
+        for (const f of round.all_executions) {
+          if (f.result) assertEngineExecution(f, one.qualification, `${f.key} on ${round.candidate}`);
+          else assert.ok(['cancelled', 'interrupted'].includes(f.status), `${f.key} on ${round.candidate}: no result, and not recorded (${f.status})`);
+        }
+      }
       for (const [what, g] of [['stage', last.stage_gate], ['alpha_authorize', last.alpha_gate]]) {
         assert.deepEqual([g.outcome, g.reasons], ['satisfied', []], `${what}: satisfied`);
         const deciding = Object.values(g.checks ?? {}).map((e) => e.deciding?.execution).filter(Boolean);
@@ -88,7 +97,7 @@ describe('M239 the real check journey (real lane, paid)', () => {
   test('(c) path two: the seeded defect; the real Verifier\'s finding names a criterion and a check; fix; resolved only through the covering required check', { timeout: REAL_TEST_TIMEOUT_MS }, async () => {
     const ctx = preflight();
     await judged(ctx, 'M239 (c)', async () => {
-      await activation(ctx);
+      await activation(ctx, { journey: M239_JOURNEY });
       await checksPathOne(ctx);
       const two = await checksPathTwo(ctx);
       assert.equal(two.finding.criterion, M239.defectCriterion, 'the finding names the criterion the defect breaks');
@@ -104,7 +113,10 @@ describe('M239 the real check journey (real lane, paid)', () => {
       assert.equal(two.resolving.result.exit_status, 0, 'which passed');
       assert.equal(two.resolved.resolution_verification.check_result, two.resolving.result.id, 'resolution_verification names that result');
       assert.notEqual(two.blocked_on_first.stage.outcome, 'satisfied', 'the stage gate on the first candidate was blocked');
-      for (const f of two.fix_executions) assertEngineExecution(f, two.qualification, `${f.key} on the fix's candidate`);
+      for (const f of two.all_executions) {
+        if (f.result) assertEngineExecution(f, two.qualification, `${f.key} (${f.execution})`);
+        else assert.ok(['cancelled', 'interrupted'].includes(f.status), `${f.key} (${f.execution}): no result, and not recorded (${f.status})`);
+      }
       assert.deepEqual([two.stage_gate.outcome, two.alpha_gate.outcome], ['satisfied', 'satisfied'], `both gates satisfied on the fix's candidate (${JSON.stringify([two.stage_gate.reasons, two.alpha_gate.reasons])})`);
     });
   });

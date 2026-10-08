@@ -2222,6 +2222,23 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 2026-10-06, on `verify/m2-report` from `main` at `02558a1`. `docs/acceptance/reports/M2-report.md` is filled from the fourth attempt's records (`~/surety-hands-on-20261006T014511Z/home`, its store read on a copy; nothing there changed): the host qualification at the run, the binary and its pin, the entry with every field and its evidence, what the canaries established (all but M139's), the spend as estimated and as charged, `term_to_exit_ms`, the configuration and policies in force, egress, `bootstrap_exception`, path one with its commits and its ledger against the transcripts, and the token's absence. It stays a skeleton: the real-lane test files have not run, so M139, path two, their run directory's records, a Stop of a live process (CHECK (8) not shown) and the revision Sean's checkout held remain pending. **M141 alone:** (a) passes; (b) fails by design, "the M2 report is a skeleton (21 pending facts)". **M142 alone:** 5 of 5. Findings put to Sean in the report's section 21 (questions 11 to 14): what counts as the real lane's records for M141; the Stop of a live process; the Stop recorded over a clean exit (a likely engine defect, SEAM §143, D2 §1.6); `runs.model_observed` null on every run.
 
+## M3 slice 22: the review's corrections (SEAM §240)
+
+2026-10-08, by the Verifier on `verify/m3-s22-r`, cut from `main` at `a9ddd51`. The review of slice 22 found two serious problems in the Verifier's deliverables and six minor ones; each is corrected as SEAM §240 says:
+
+| Finding | Where | Correction |
+|---|---|---|
+| S1: a rerun of the real journey could dispatch the earlier attempt's eligible work (paid) | `harness/real/checks-journey.mjs`; `M3-real-lane/README.md` | each path pauses its project in `finally`; `leftovers`/`refuseLeftovers` before an engine starts and before path two resumes; the run directory exported once, the rerun command shown |
+| S2: the hands-on released the second re-run without its own containment read | `M3-hands-on.sh`; M241 (e); report §18 | `read_containment` and `release` per execution; the release file removed after each result; M241 (e) holds every creation of the file to `release()` after its read |
+| 1: the activation's question named M140 and two limits; the README's rounds | `harness/real/attempt.mjs`; README | `activation(ctx, {journey})`; one to three Builder rounds |
+| 2: the runner's log outside the run directory | README | `tee -a "$SURETY_REAL_RUN_DIR/runner.log"` |
+| 3: the checks' read path was Sean's whole node installation, its `bin` on their PATH | `checks-journey.mjs`; the sandbox file | a pinned copy of node alone in `<run dir>/toolchain/`; PATH `/usr/bin:/bin` |
+| 4: (b) checked only the last round's executions | M239 (b), (c) | every execution of every candidate |
+| 5: the no-pause switch bypassed the terminal guard; the scope check claimed in a comment only; `KEEP=0` could remove a directory it did not make | `M3-hands-on.sh`; M241 (d) | the terminal refused regardless (a (d) case); the scope check made; an existing directory refused |
+| 6: the report's binary source; missing pending rows; M239 among the host-fact cases | `M3-report.md`; M240 | corrected; M240 pins the pending rows and M239's place |
+
+**What was run:** nothing yet (the coordinator's hold while the full suite runs); the files' syntax only (`node --check`, `bash -n`). The runs of M241, M240, M239's sandbox file and M239's rehearsal follow on the coordinator's word.
+
 ## M3 slice 22: the end of M3 (M3 build spec §§9, 10; E92; E100; E101)
 
 2026-10-08, by the Verifier of slice 22 on `verify/m3-s22`, cut from `main` at `3c6e886`. Rows M238 to M241 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.8. The seam's §§236 to 239 fix what D3 leaves to the tests.

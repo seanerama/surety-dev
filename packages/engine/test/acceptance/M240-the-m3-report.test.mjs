@@ -101,7 +101,9 @@ describe('M240 the M3 acceptance report records what BS3 §10 lists, and claims 
     assert.ok(sectionLike(all, /^The exhaustion lane/).includes('M205'), "the exhaustion lane's M205 (g)");
     assert.ok(sectionLike(all, /^The real lane's run/).includes('M239-the-real-check-journey'), "the real lane's M239");
     const notEx = sectionLike(all, /not_exercised/);
-    for (const c of ['M205 (g)', 'M239', 'foreign_signal']) assert.ok(notEx.includes(c), `the not_exercised case ${c} is named`);
+    for (const c of ['M205 (g)', 'foreign_signal']) assert.ok(notEx.includes(c), `the not_exercised case ${c} is named`);
+    const hostFacts = notEx.split('\n').filter((l) => /^- /.test(l) && !/Not written/.test(l));
+    assert.ok(!hostFacts.some((l) => /\*\*M239\*\*/.test(l)), 'M239, never run outside Sean\'s command, is not listed among the cases that pass by asserting a host fact (the slice-22 review)');
     const notClaimed = sectionLike(all, /^What M3 does not claim/);
     assert.ok(/class A/i.test(notClaimed) && /class B/i.test(notClaimed) && /class C/i.test(notClaimed), 'classes A, B and C');
     assert.ok(notClaimed.includes(classC()), "D3 §6's class C, verbatim");
@@ -129,6 +131,7 @@ describe('M240 the M3 acceptance report records what BS3 §10 lists, and claims 
         const acceptance = l.split('|').map((c) => c.trim())[5] ?? '';
         assert.ok(acceptance.startsWith('[[PENDING'), `no acceptance-run result is reported before the run (${l.slice(0, 120)})`);
       }
+      for (const row of ['acc-M201', 'acc-M237', 'acc-M239-sandbox', 'acc-M240', 'acc-M241']) assert.ok(md.includes(`[[PENDING ${row}:`), `the acceptance-run result of ${row.slice(4)} is pending, not reported`);
       // An honest skeleton is still not the row met.
       assert.fail(`the acceptance, exhaustion and real runs have not been recorded: the M3 report is a skeleton (${pending.length} pending facts)`);
     } else {
