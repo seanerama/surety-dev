@@ -5,7 +5,7 @@
 // candidate. It runs after an integration and at every tick, so a nomination
 // that a crash interrupted before it was journaled is made after the restart.
 
-import { ensureAncestry, ensureNominationAncestry } from '../gates/prepare.js';
+import { ensureAncestry, ensureNominationAncestry, ensureNominationPresence, ensurePresence } from '../gates/prepare.js';
 import { type Runtime, log } from '../runtime.js';
 import type { IntentResult } from '../store/transitions/journal.js';
 import type { Journal } from './driver.js';
@@ -13,6 +13,7 @@ import type { Journal } from './driver.js';
 export async function nominate(rt: Runtime, journal: Journal, project: string): Promise<void> {
   await journal.withProject(project, async () => {
     await ensureNominationAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
+    await ensureNominationPresence(rt, project).catch((err) => log('module presence', err, { project }));
     const intent = await journal.intend('nomination.intend', { project, deadlineSeconds: rt.setting('git_deadline') }, 'ref_update');
     if (!('operation' in (intent as IntentResult))) return;
     const settled = await journal.drive((intent as { operation: string }).operation);
@@ -20,4 +21,5 @@ export async function nominate(rt: Runtime, journal: Journal, project: string): 
   });
   // What the new candidate's scopes need from git, recorded now.
   await ensureAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
+  await ensurePresence(rt, project).catch((err) => log('module presence', err, { project }));
 }

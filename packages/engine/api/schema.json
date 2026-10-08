@@ -934,6 +934,9 @@
         },
         "checks_due": {
           "required": false
+        },
+        "module_presence": {
+          "required": false
         }
       }
     },

@@ -20,6 +20,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { contextFacts } = await import(join(dist, 'store', 'reads.js'));
+const { moduleBasis } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
 const { writeContextPackage, resultSchema } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
 const { candidateDiff, DIFF_CAP_BYTES } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
@@ -149,9 +150,15 @@ test("the first candidate's diff is taken from the parent of the first revision 
   assert.deepEqual(contextFacts(db, { run: 'run_rev1' }).review.diff_base, { revision: null, from: null }, 'none is known: null, not a guess');
 });
 
-test("at T3 the Reviewer is told every module's sign-off and the security sign-off; a Verifier is told no sign-off", (t) => {
+test("at T3 the Reviewer is told each scope module's sign-off and the security sign-off; a Verifier is told no sign-off", (t) => {
   const db = store(t, { tier: 'T3' });
   db.prepare(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_1', ?, 'prj_1', 'auth', '["src/auth/"]')`).run(AT);
+  db.prepare(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_2', ?, 'prj_1', 'web', '["web/"]')`).run(AT);
+  // Slice 20 (D3 §4.1): its scopes' modules. While the presence is unread,
+  // every module may be in the deployment scope, so each is asked.
+  assert.deepEqual(contextFacts(db, { run: 'run_rev' }).review.signoffs.map((s) => s.module ?? s.scope), ['candidate', 'auth', 'web', 'security']);
+  // auth is present at the revision, web is not.
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: ['mod_1'], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
   assert.deepEqual(contextFacts(db, { run: 'run_rev' }).review.signoffs, [
     { role: 'reviewer', scope: 'candidate' },
     { role: 'reviewer', scope: 'module', module: 'auth' },

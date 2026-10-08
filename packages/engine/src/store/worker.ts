@@ -83,8 +83,8 @@ import { type EngineSettings, setEngineSettings } from './transitions/settings.j
 import { setCheckLimits } from '../checks/limits.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
-import { captureRunProposal, recordRunReport } from './transitions/accept.js';
-import { ancestryPairs, nominationAncestryPairs, recordAncestry } from './transitions/evidence.js';
+import { cadencePresenceDue, captureRunProposal, recordRunReport } from './transitions/accept.js';
+import { ancestryPairs, nominationAncestryPairs, nominationPresenceDue, presenceDue, recordAncestry, recordNominationPresence, recordPresence } from './transitions/evidence.js';
 import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
@@ -238,6 +238,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.referenced': (d) => referencedRecords(d),
   'ancestry.pairs': (d, a: { project: string }) => ancestryPairs(d, a),
   'ancestry.nomination_pairs': (d, a: { project: string }) => nominationAncestryPairs(d, a),
+  'presence.due': (d, a: { project: string }) => presenceDue(d, a),
+  'presence.nomination': (d, a: { project: string }) => nominationPresenceDue(d, a),
+  'accept.cadence_presence': (d, a: { run: string }) => cadencePresenceDue(d, a),
   // The engine's own qualification fixture project, by its repository.
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
@@ -338,6 +341,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'record.expire': (tx, a) => expireRecord(tx, a),
   'record.audited': (tx, a) => recordAudited(tx, a),
   'ancestry.record': (tx, a) => recordAncestry(tx, a),
+  'presence.record': (tx, a) => recordPresence(tx, a),
+  'presence.nomination_record': (tx, a) => recordNominationPresence(tx, a),
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),

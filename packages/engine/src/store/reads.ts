@@ -7,7 +7,7 @@ import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
 import { type CandidateRow, applies, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
 import { effectiveVersion } from './transitions/protected.js';
-import { type FindingRow, findingApplies, requiredSignoffs } from './transitions/gates.js';
+import { type FindingRow, candidateSignoffs, findingApplies } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
 
 // The project's effective ungoverned policy: the revision the engine
@@ -132,7 +132,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   // What a Verifier or a Reviewer of a candidate reports against (D2 §1.3;
   // F §6): the findings open or dispositioned that apply to the candidate,
   // each by the id its result names, the applicability assessments proposed
-  // on it, the sign-offs the tier requires, and the revision the candidate's
+  // on it, the sign-offs its scopes require (D3 §4.1), and the revision the candidate's
   // diff is taken from: the project's previous candidate, else the parent of
   // the first revision the engine recorded (null if there is none).
   let review: {
@@ -148,7 +148,6 @@ export function contextFacts(db: Database, args: { run: string }) {
     const assessments = db
       .prepare(`SELECT "id", "finding", "candidate", "reason", "status" FROM "applicability_assessments" WHERE "project" = ? AND "candidate" = ? AND "status" = 'proposed' ORDER BY "created_at", "id"`)
       .all(item.project, candidate.id) as { id: string; finding: string; candidate: string; reason: string; status: string }[];
-    const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
     const previous = db.prepare('SELECT "revision" FROM "candidates" WHERE "project" = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1').get(item.project, candidate.seq) as { revision: string } | undefined;
     const first = previous
       ? undefined
@@ -156,7 +155,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     review = {
       findings,
       assessments,
-      signoffs: role === 'reviewer' ? requiredSignoffs(db, item.project, tier) : [],
+      signoffs: role === 'reviewer' ? candidateSignoffs(db, item.project, candidate) : [],
       diff_base: previous ? { revision: previous.revision, from: 'previous_candidate' } : first ? { revision: first.parent_sha, from: 'first_recorded_parent' } : { revision: null, from: null },
     };
   }

@@ -11,9 +11,10 @@
 //   whole, so that evidence that is gone is reported missing.
 
 import { repoContext } from '../git/exec.js';
-import { isAncestor, readRefs } from '../git/repo.js';
+import { isAncestor, listTree, readRefs } from '../git/repo.js';
+import { presentModules } from '../checks/scope.js';
 import type { RefFact } from '../store/transitions/gates.js';
-import { pausePoint } from '../testing/seam.js';
+import { pausePoint, seamPresenceFault } from '../testing/seam.js';
 import { type RefJudgement, type RegistryGeneration, allUnread, judgeRefs, sameGeneration } from './refs.js';
 import { protectedSetAt } from '../protected/set.js';
 import { readRecordBytes } from '../records/files.js';
@@ -60,6 +61,51 @@ export async function ensureNominationAncestry(rt: Runtime, project: string): Pr
   if (found.length > 0) await rt.engine('ancestry.record', { project, pairs: found });
 }
 
+// ---- module presence (D3 §4.1; SEAM.md §224) ----------------------------------------------
+
+export interface PresenceModules {
+  basis: string;
+  modules: { id: string; paths: string[] }[];
+}
+
+// The modules with at least one tracked path at `revision`, read with engine
+// git (ls-tree; nothing is run). null when git could not say: unread, never
+// empty. A project with no module reads nothing.
+export async function readPresenceAt(rt: Runtime, project: string, repo: string, revision: string, mods: PresenceModules): Promise<string[] | null> {
+  if (mods.modules.length === 0) return [];
+  if (seamPresenceFault(project)) return null;
+  const entries = await listTree(repoContext(repo), revision);
+  if (entries === null) return null;
+  return presentModules(entries.keys(), mods.modules);
+}
+
+// Every candidate of the project whose presence is unread under the module
+// definitions in force: read and recorded. A failed read records nothing,
+// and is read again by the next caller.
+export async function ensurePresence(rt: Runtime, project: string): Promise<void> {
+  const due = await rt.read<PresenceModules & { candidates: { id: string; revision: string }[] }>('presence.due', { project });
+  if (due.candidates.length === 0) return;
+  const repo = await rt.read<{ repo: string } | null>('project.repo', { project });
+  if (!repo) return;
+  for (const c of due.candidates) {
+    const modules = await readPresenceAt(rt, project, repo.repo, c.revision, due);
+    if (modules !== null) await rt.engine('presence.record', { candidate: c.id, modules, basis: due.basis });
+  }
+}
+
+// The presence of the revision a due nomination will name, read before the
+// nomination is intended and frozen into it, so its finalizer can register
+// from it (D3 §2.5, L2). A failed read freezes nothing: the finalizer then
+// records `checks_due`.
+export async function ensureNominationPresence(rt: Runtime, project: string): Promise<void> {
+  const due = await rt.read<(PresenceModules & { revision: string }) | null>('presence.nomination', { project });
+  if (due === null) return;
+  const repo = await rt.read<{ repo: string } | null>('project.repo', { project });
+  if (!repo) return;
+  const modules = await readPresenceAt(rt, project, repo.repo, due.revision, due);
+  if (modules !== null) await rt.engine('presence.nomination_record', { project, revision: due.revision, modules, basis: due.basis });
+}
+
 export interface GateFacts {
   headFingerprint: string | null;
   head: string | null;
@@ -102,6 +148,9 @@ export async function readGateRefs(rt: Runtime, project: string, candidate: stri
 // file cannot say; what it could not read is named in `unreadable`.
 export async function gateFacts(rt: Runtime, project: string, candidate: string): Promise<GateFacts> {
   await ensureAncestry(rt, project);
+  // The candidates' module presence (D3 §4.1), for every gate kind: the
+  // candidate's registration and content hash need its deployment scope.
+  await ensurePresence(rt, project).catch((err) => log('module presence', err, { project }));
   const unknownPairs = await rt.read<{ ancestor: string; descendant: string }[]>('ancestry.pairs', { project });
   const revision = await rt.read<string | null>('candidate.revision', { candidate });
   const unreadable = { head: false, ancestry: revision !== null && unknownPairs.some((p) => p.descendant === revision), records: [] as string[] };

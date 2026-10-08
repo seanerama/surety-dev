@@ -238,6 +238,10 @@ let post: ((message: SeamMessage) => void) | null = null;
 const faults: Fault[] = [];
 const tickFaults: TickFault[] = [];
 const mainFaults: MainFault[] = [];
+// SEAM.md §224: each read of a candidate's module presence for the project
+// fails, as a git read that fails, `times` times.
+type PresenceFault = { point: 'module_presence_read'; project: string; times: number; remaining: number; hit: number };
+const presenceFaults: PresenceFault[] = [];
 
 type SeamMessage = { seam: 'barrier'; name: string; state: BarrierState };
 
@@ -778,6 +782,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       handler: async () => {
         tickFaults.length = 0;
         mainFaults.length = 0;
+        presenceFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
         connectHangs.clear();
@@ -812,6 +817,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         body: {
           faults: [
             ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...presenceFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...tickFaults.map((f) => ({ ...f })),
             ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
           ],
@@ -1058,6 +1064,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
             })()
           : isObject(body) && body.point === 'tick_step'
           ? armTickFault(body)
+          : isObject(body) && body.point === 'module_presence_read'
+          ? armPresenceFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
             ? armMainFault(body)
             : await storeOp(OP.armFault, body),
@@ -1339,6 +1347,26 @@ function armMainFault(body: Record<string, unknown>): { point: MainFault['point'
   }
   mainFaults.push({ point, times, remaining: times, hit: 0 });
   return { point, times };
+}
+
+function armPresenceFault(body: Record<string, unknown>): { point: 'module_presence_read'; project: string; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => !['point', 'project', 'times'].includes(k)) || typeof body.project !== 'string' || body.project.length === 0 || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown module_presence_read fault.', 'Send {"point":"module_presence_read","project":"proj_…","times"?: <n>}.', { field: 'point' });
+  }
+  presenceFaults.push({ point: 'module_presence_read', project: body.project, times, remaining: times, hit: 0 });
+  return { point: 'module_presence_read', project: body.project, times };
+}
+
+// SEAM.md §224: true where a read of the project's module presence is to
+// fail. Always false outside harness mode.
+export function seamPresenceFault(project: string): boolean {
+  if (!init.harness) return false;
+  const f = presenceFaults.find((m) => m.project === project && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 // A main-thread fault of the execution boundary (M2 plan §2.3): true, once

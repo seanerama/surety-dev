@@ -69,6 +69,10 @@ export interface RefInputs {
   // nomination
   seq?: number;
   by?: 'engine_cadence' | 'builder_request';
+  // the revision's module presence as read before the intent (D3 §4.1)
+  module_presence?: { modules: string[]; read_at: string; basis: string };
+  // integration: a cadence decided on a module presence that was unread
+  cadence_presence?: 'unread';
   // policy
   revision?: number;
   blob?: string;
@@ -261,6 +265,9 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
     )
     .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, version, JSON.stringify(held));
+  // The presence frozen at intent (D3 §4.1); readers take it only under the
+  // module definitions it was read under (evidence.ts presenceIn).
+  if (inputs.module_presence) tx.db.prepare('UPDATE "candidates" SET "module_presence" = ? WHERE "id" = ?').run(JSON.stringify(inputs.module_presence), candidate);
   tx.db.prepare('UPDATE "lineages" SET "open" = 0 WHERE "id" = ?').run(lineage);
   const branch = (tx.db.prepare('SELECT "branch" FROM "lineages" WHERE "id" = ?').get(lineage) as { branch: string }).branch;
   tx.db

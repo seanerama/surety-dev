@@ -15,6 +15,8 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, transitionWork } from './work.js';
+import { type Presence, presenceIn, presenceModules } from './evidence.js';
+import { TIER_RANK, cadenceTier, mayRaise } from '../../checks/scope.js';
 
 export interface RunResult {
   summary: string;
@@ -258,12 +260,69 @@ export function beginIntegration(tx: Tx, args: { run: string }): boolean {
   return true;
 }
 
+interface ModuleTierRow {
+  id: string;
+  tier_override: string | null;
+}
+
+const projectModules = (db: Tx['db'], project: string): ModuleTierRow[] =>
+  db.prepare('SELECT "id", "tier_override" FROM "modules" WHERE "project" = ? ORDER BY "id"').all(project) as ModuleTierRow[];
+
+// A `fix` naming a finding: its integration's cadence tier is the highest of
+// the project's tier and the tiers of the modules present at its revision
+// (D3 §4.1; Q10 (a)). What the main thread reads first: the modules and
+// their basis, or null when no module could raise the tier, so nothing need
+// be read.
+export function cadencePresenceDue(db: Tx['db'], args: { run: string }): { basis: string; modules: { id: string; paths: string[] }[] } | null {
+  const run = db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string } | undefined;
+  if (!run) return null;
+  const item = db.prepare('SELECT "kind", "subject" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { kind: string; subject: string } | undefined;
+  if (item?.kind !== 'fix') return null;
+  const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(run.project) as { tier: string }).tier;
+  if (!mayRaise(tier, projectModules(db, run.project))) return null;
+  return presenceModules(db, run.project);
+}
+
+// The cadence of an integration by the scope tier (D3 §4.1; B04; L3; Q10;
+// SEAM.md §224): a `stage_build` by its stage scope's tier (the project's
+// and its stage's modules' overrides); a `fix` naming a finding by the
+// project's and the present modules' tiers. An unread presence never lowers
+// the tier: when a module could raise it, the integration nominates by
+// cadence, recorded as decided on an unread fact. When no module could,
+// there is nothing to raise and nothing is read.
+export function cadenceOf(
+  tx: Tx,
+  args: { project: string; tier: string; kind: string; stage: string | null; namesFinding: boolean; presence?: { modules: string[]; basis: string } | 'unread' | undefined },
+): { cadence: boolean; unread: boolean } {
+  const modules = projectModules(tx.db, args.project);
+  if (args.kind === 'stage_build') {
+    const row = args.stage ? (tx.db.prepare('SELECT "modules" FROM "stages" WHERE "id" = ?').get(args.stage) as { modules: string } | undefined) : undefined;
+    const ids = row ? (JSON.parse(row.modules) as string[]) : [];
+    return { cadence: TIER_RANK[cadenceTier(args.tier, modules.filter((m) => ids.includes(m.id)))]! >= 2, unread: false };
+  }
+  if (!args.namesFinding) return { cadence: false, unread: false };
+  if ((TIER_RANK[args.tier] ?? 0) >= 2) return { cadence: true, unread: false };
+  if (!mayRaise(args.tier, modules)) return { cadence: false, unread: false };
+  const read = args.presence === undefined || args.presence === 'unread' ? null : presenceIn(tx.db, args.project, { ...args.presence, read_at: tx.at } as Presence);
+  if (read === null) return { cadence: true, unread: true };
+  return { cadence: TIER_RANK[cadenceTier(args.tier, modules.filter((m) => read.includes(m.id)))]! >= 2, unread: false };
+}
+
 // The intent of an integration: the compare-and-swap of the integration
 // branch from the commit it is at to the run's commit, with everything its
 // finalizer will write fixed now (correction 14).
 export function intendIntegration(
   tx: Tx,
-  args: { run: string; repo: string; head: string; commit: string; plans: PlanInput[]; deadlineSeconds: number },
+  args: {
+    run: string;
+    repo: string;
+    head: string;
+    commit: string;
+    plans: PlanInput[];
+    deadlineSeconds: number;
+    // A fix's module presence at `commit`, read beforehand (cadencePresenceDue).
+    presence?: { modules: string[]; basis: string } | 'unread';
+  },
 ): IntentResult {
   const run = getRun(tx, args.run)!;
   const extra = tx.db.prepare('SELECT "result_value", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result_value: string | null; chain: number };
@@ -272,13 +331,15 @@ export function intendIntegration(
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
   const subject = JSON.parse(item.subject) as { stage?: string; finding?: string };
-  // At T2 and T3 the integration of a stage is a cadence point, and so is the
-  // integration of a fix that names a finding: nothing else would nominate
-  // the fixed code, whose candidate resolves the finding (E43; SEAM.md §42).
+  // At a T2 or T3 scope tier the integration of a stage is a cadence point,
+  // and so is the integration of a fix that names a finding: nothing else
+  // would nominate the fixed code, whose candidate resolves the finding (E43;
+  // SEAM.md §§42, 224). The scope tier, not the project's (B04; L3; Q10).
   const namesFinding =
     item.kind === 'fix' && typeof subject.finding === 'string' && tx.db.prepare('SELECT 1 FROM "findings" WHERE "id" = ? AND "project" = ?').get(subject.finding, run.project) !== undefined;
+  const cadence = cadenceOf(tx, { project: run.project, tier: p.tier, kind: item.kind, stage: subject.stage ?? null, namesFinding, presence: args.presence });
   let nominate: RefInputs['nominate'] = null;
-  if ((item.kind === 'stage_build' || namesFinding) && (p.tier === 'T2' || p.tier === 'T3')) nominate = { by: 'engine_cadence' };
+  if (cadence.cadence) nominate = { by: 'engine_cadence' };
   else if (p.tier === 'T1' && result?.nominate === true && (item.kind === 'stage_build' || item.kind === 'fix')) nominate = { by: 'builder_request' };
   const inputs: RefInputs & { fence: boolean; work_kind: string } = {
     purpose: 'integration',
@@ -294,6 +355,7 @@ export function intendIntegration(
     nominate,
     chain: extra.chain,
     fence: true,
+    ...(cadence.unread ? { cadence_presence: 'unread' as const } : {}),
   };
   return intendOperation(tx, {
     project: run.project,
@@ -315,7 +377,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
   const row = tx.db.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
   if (!row) throw notFound('project', args.project);
   if (row.nomination_due === null) return null;
-  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number };
+  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number; presence?: Presence };
   const pending = tx.db
     .prepare(
       `SELECT o."id" FROM "operations" o WHERE o."project" = ? AND o."kind" = 'git_ref_update' AND json_extract(o."finalizer_inputs", '$.purpose') = 'nomination'
@@ -326,7 +388,20 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
   if (pending) return { operation: pending.id, existing: true };
   const seq = nextCandidateSeq(tx, args.project);
   const ref = nominationRef(seq);
-  const inputs: RefInputs = { purpose: 'nomination', ref, ref_kind: 'nomination', immutable: true, new_oid: due.revision, seq, by: due.by, chain: due.chain };
+  // The revision's module presence, read before the intent, is frozen with
+  // it (D3 §2.5, L2): the finalizer registers from it, or records
+  // `checks_due` when it was not read.
+  const inputs: RefInputs = {
+    purpose: 'nomination',
+    ref,
+    ref_kind: 'nomination',
+    immutable: true,
+    new_oid: due.revision,
+    seq,
+    by: due.by,
+    chain: due.chain,
+    ...(due.presence ? { module_presence: due.presence } : {}),
+  };
   return intendOperation(tx, {
     project: args.project,
     kind: 'ref_update',

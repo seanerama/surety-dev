@@ -12,7 +12,8 @@ import { canonical, notFound, sha256 } from './common.js';
 import { getCandidate, markStale } from './evidence.js';
 import { getProposal, mustEffective } from './protected.js';
 import type { Tx } from './tx.js';
-import { nextExecutionSeq, recomputeIndexErrors } from './checks.js';
+import { knownCriteria, nextExecutionSeq, recomputeIndexErrors } from './checks.js';
+import { requirementKeyOf } from '../../checks/schema.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the fixture request.', { field });
 
@@ -108,13 +109,51 @@ export function registerRequirementIndex(
   return out;
 }
 
-export function ensureModules(tx: Tx, args: { project: string; modules: { name: string; paths: string[]; sensitive_areas?: string[] }[] }): void {
+export interface ModuleInput {
+  name: string;
+  paths: string[];
+  sensitive_areas?: string[];
+  tier_override?: string | null;
+}
+
+// The approved architecture's modules (D1 A.3; D3 §4.1; SEAM.md §222): one
+// not yet registered is created; one registered again takes the paths,
+// areas and override given (absent fields their defaults), the fixture's
+// stand-in for an approved architecture revision (architecture approval is
+// not built; modules come from this fixture only). A change of any of them
+// changes every scope that takes the module, so the project's evaluations
+// are stale; a recorded presence read under the former paths is unread now
+// (evidence.ts presenceIn, by its basis).
+export function ensureModules(tx: Tx, args: { project: string; modules: ModuleInput[] }): void {
+  let changed = false;
   for (const m of args.modules) {
-    if (tx.db.prepare('SELECT 1 FROM "modules" WHERE "project" = ? AND "name" = ?').get(args.project, m.name)) continue;
+    const paths = JSON.stringify(m.paths);
+    const areas = JSON.stringify(m.sensitive_areas ?? []);
+    const override = m.tier_override ?? null;
+    const row = tx.db.prepare('SELECT "id", "paths", "sensitive_areas", "tier_override" FROM "modules" WHERE "project" = ? AND "name" = ?').get(args.project, m.name) as
+      | { id: string; paths: string; sensitive_areas: string; tier_override: string | null }
+      | undefined;
+    if (row) {
+      if (row.paths === paths && row.sensitive_areas === areas && row.tier_override === override) continue;
+      tx.db.prepare('UPDATE "modules" SET "paths" = ?, "sensitive_areas" = ?, "tier_override" = ? WHERE "id" = ?').run(paths, areas, override, row.id);
+      changed = true;
+      continue;
+    }
     tx.db
-      .prepare('INSERT INTO "modules" ("id", "created_at", "project", "name", "paths", "sensitive_areas") VALUES (?, ?, ?, ?, ?, ?)')
-      .run(tx.newId('mod_'), tx.at, args.project, m.name, JSON.stringify(m.paths), JSON.stringify(m.sensitive_areas ?? []));
+      .prepare('INSERT INTO "modules" ("id", "created_at", "project", "name", "paths", "sensitive_areas", "tier_override") VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(tx.newId('mod_'), tx.at, args.project, m.name, paths, areas, override);
+    changed = true;
   }
+  if (changed) markStale(tx, { project: args.project });
+}
+
+// Module names of the project, as their ids (a stage's `modules`).
+export function moduleIds(tx: Tx, projectId: string, names: string[], field: string): string[] {
+  return names.map((name) => {
+    const row = tx.db.prepare('SELECT "id" FROM "modules" WHERE "project" = ? AND "name" = ?').get(projectId, name) as { id: string } | undefined;
+    if (!row) throw invalid(field, `names the module "${name}", which the project does not have`);
+    return row.id;
+  });
 }
 
 export interface CheckInput {
@@ -122,6 +161,11 @@ export interface CheckInput {
   kind: string;
   gate_kinds: string[];
   requirements: string[];
+  // SEAM.md §226: the criteria it covers (its requirements are theirs too),
+  // its origin, and its index in the request, for naming a refused field.
+  criteria: string[];
+  origin: string;
+  field: number;
   required: boolean;
   tier_floor: string | null;
   sensitive_areas: string[];
@@ -136,8 +180,13 @@ export function declareChecks(tx: Tx, args: { project: string; checks: CheckInpu
   const version = mustEffective(tx.db, args.project);
   const out: { id: string; key: string }[] = [];
   const ids = JSON.parse(version.check_ids) as string[];
+  const known = knownCriteria(tx.db, args.project);
   for (const c of args.checks) {
-    const reqs = requirementIds(tx, args.project, c.requirements, 'checks.requirements');
+    // `requirements` (the M1 form) name what the check is required for and
+    // cover no criterion (SEAM.md §226); criteria cover, and name their
+    // requirements too (D3 §1.3).
+    for (const k of c.criteria) if (known === null || !known.has(k)) throw invalid(`checks[${c.field}].criteria`, `names the criterion "${k}", which the registered index does not have`);
+    const reqs = [...new Set([...requirementIds(tx, args.project, c.requirements, 'checks.requirements'), ...requirementIds(tx, args.project, [...new Set(c.criteria.map(requirementKeyOf))], `checks[${c.field}].criteria`)])];
     const existing = tx.db.prepare('SELECT "id" FROM "checks" WHERE "protected_version" = ? AND "key" = ?').get(version.id, c.key) as { id: string } | undefined;
     if (existing) {
       out.push({ id: existing.id, key: c.key });
@@ -147,8 +196,8 @@ export function declareChecks(tx: Tx, args: { project: string; checks: CheckInpu
     tx.db
       .prepare(
         `INSERT INTO "checks" ("id", "created_at", "project", "key", "protected_version", "kind", "required", "gate_kinds", "tier_floor", "definition_path", "definition_hash",
-           "requirement_ids", "sensitive_areas", "runner_class", "requires")
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           "requirement_ids", "sensitive_areas", "runner_class", "requires", "origin", "criteria")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -166,6 +215,8 @@ export function declareChecks(tx: Tx, args: { project: string; checks: CheckInpu
         JSON.stringify(c.sensitive_areas),
         c.runner_class,
         JSON.stringify(c.requires),
+        c.origin,
+        JSON.stringify(c.criteria),
       );
     ids.push(id);
     out.push({ id, key: c.key });
