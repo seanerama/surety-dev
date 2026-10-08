@@ -500,7 +500,43 @@ function reportExit(): void {
   // The time from the engine's TERM to the backend's exit, as the init saw
   // them (the cancellation canary's term_to_exit_ms; D2 §3.6).
   const termToExit = termAt !== null && exitAt !== null && exitAt >= termAt ? Math.round(exitAt - termAt) : null;
-  send({ t: 'exit', code: exit.code, signal: exit.signal, term_to_exit_ms: termToExit });
+  send({ t: 'exit', code: exit.code, signal: exit.signal, term_to_exit_ms: termToExit, ...(interleaved !== null ? { interleaved } : {}) });
+}
+
+// Whether a check's output was one pipe; null for any other backend.
+let interleaved: boolean | null = null;
+
+// The one pipe of a check's standard output and error: a FIFO on the
+// domain's volatile /tmp, opened at both ends and unlinked at once. null if
+// it cannot be made.
+function checkOutputPipe(): { read: number; write: number } | null {
+  const name = `/tmp/.surety-output-${process.hrtime.bigint().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+  const tool = ['/usr/bin/mkfifo', '/bin/mkfifo'].find((p) => {
+    try {
+      return lstatSync(p).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (tool === undefined) return null;
+  const made = spawnSync(tool, ['-m', '600', name], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin' } });
+  if (made.status !== 0) return null;
+  let read: number | null = null;
+  try {
+    if (!lstatSync(name).isFIFO()) return null;
+    read = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW);
+    const write = openSync(name, fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW);
+    return { read, write };
+  } catch {
+    if (read !== null) closeSync(read);
+    return null;
+  } finally {
+    try {
+      unlinkSync(name);
+    } catch {
+      // not made, or gone
+    }
+  }
 }
 
 // A sandbox whose backend has exited, whose report the engine has, and in
@@ -591,14 +627,25 @@ async function init(): Promise<void> {
   let child;
   // Nothing of the init's but the pipes it makes reaches the backend.
   closeInherited();
+  // A check's standard output and error are one pipe (D3 §2.6: interleaved,
+  // in the order the check wrote them; SEAM.md §207): the init makes a FIFO
+  // on the domain's own volatile /tmp, opens both its ends and unlinks it at
+  // once, so nothing reaches it by name; the write end is the check's fd 1
+  // and fd 2. If it cannot be made, two pipes, and the exit report says the
+  // output is not interleaved.
+  const output = spec.check === true ? checkOutputPipe() : null;
   try {
     child = spawn(spec.argv[0]!, spec.argv.slice(1), {
       cwd: spec.cwd,
       env: spec.env,
-      stdio: spec.check === true ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'ignore'],
+      stdio: spec.check === true ? (output !== null ? ['ignore', output.write, output.write] : ['ignore', 'pipe', 'pipe']) : ['pipe', 'pipe', 'ignore'],
       detached: true,
     });
   } catch (err) {
+    if (output !== null) {
+      closeSync(output.write);
+      closeSync(output.read);
+    }
     send({ t: 'start_failed', detail: (err as Error).message, errno: (err as NodeJS.ErrnoException).code ?? null });
     exit = { code: null, signal: null };
     send({ t: 'exit', code: null, signal: null, start_failed: true });
@@ -621,9 +668,19 @@ async function init(): Promise<void> {
     child.stdin.on('error', () => {});
     child.stdin.end(spec.stdin ?? '');
   }
-  child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
-  // A check's standard error joins its output (D3 §2.6).
-  child.stderr?.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+  // The check's own copies of the write end are its; the init keeps none,
+  // so the output ends when the check and everything that holds it end.
+  let combined: net.Socket | null = null;
+  if (output !== null) {
+    closeSync(output.write);
+    combined = new net.Socket({ fd: output.read, readable: true, writable: false });
+    combined.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+    combined.on('error', () => {});
+  } else {
+    child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+    // A check's standard error joins its output (D3 §2.6).
+    child.stderr?.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+  }
   if (spec.check !== true) child.stdout!.on('end', () => send({ t: 'eof' }));
   // The init exits once the backend has (SEAM.md §126): its report written,
   // process 1 of the sandbox goes, and the kernel ends every process left in
@@ -631,7 +688,7 @@ async function init(): Promise<void> {
   // What the backend wrote before its exit is relayed first: the init waits
   // for its output to end, or a moment if a descendant holds it open.
   let outputEnded = false;
-  let streamsOpen = child.stderr ? 2 : 1;
+  let streamsOpen = combined !== null ? 1 : child.stderr ? 2 : 1;
   const ended = () => {
     streamsOpen -= 1;
     if (streamsOpen === 0) {
@@ -639,8 +696,16 @@ async function init(): Promise<void> {
       if (spec.check === true) send({ t: 'eof' });
     }
   };
-  child.stdout!.on('end', ended);
-  child.stderr?.on('end', ended);
+  if (combined !== null) {
+    combined.on('end', ended);
+    combined.on('close', () => {
+      if (!outputEnded) ended();
+    });
+  } else {
+    child.stdout!.on('end', ended);
+    child.stderr?.on('end', ended);
+  }
+  if (spec.check === true) interleaved = combined !== null;
   // The cancellation canary's barrier, observed by the init, not the stream.
   if (spec.canary?.barrier) {
     const barrier = spec.canary.barrier;

@@ -32,13 +32,14 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { seamChecktreesMaxBytes, seamHostChecks, seamQualifyMode, seamScopeBarrier } from './testing/seam.js';
+import { seamChecktreesMaxBytes, seamHostChecks, seamQualifyMode, seamScopeBarrier, seamSelfTestAtStart } from './testing/seam.js';
 import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
 import { CHECK_LIMIT_KEYS, setCheckLimits } from './checks/limits.js';
 import { migrateFingerprints } from './protected/migrate.js';
 import { CheckRunner } from './checks/run.js';
+import { RunnerSelfTest, sweepPriorSelfTestBoxes, sweepSelfTestLeftovers } from './checks/selftest.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
@@ -195,7 +196,12 @@ export async function serve(opts: ServeOptions): Promise<void> {
 
   let server: Server | null = null;
   let scheduler: Scheduler | null = null;
+  // The runner self-test of this start, while it runs (D3 §2.8).
+  let selfTest: RunnerSelfTest | null = null;
   const shutdown = async () => {
+    // The self-test's box in progress is killed and removed first: nothing
+    // of it outlives the engine.
+    selfTest?.abort();
     scheduler?.stop();
     state.runtime?.stop();
     server?.close();
@@ -330,6 +336,16 @@ export async function serve(opts: ServeOptions): Promise<void> {
   }
   state.completed.push('recovery');
 
+  // 4b. What a crash during an earlier start's runner self-test left: this
+  // home's own trees and box areas, and its boxes in a prior incarnation's
+  // scope of this home (D3 §2.8; SEAM.md §208).
+  try {
+    sweepSelfTestLeftovers(opts.home);
+    await sweepPriorSelfTestBoxes(runtime);
+  } catch (err) {
+    log('runner self-test', err, { what: 'sweep' });
+  }
+
   // 4a. The versions whose protected application recovery has just finished
   // (Q11; protected/migrate.ts): recomputed once their commit exists.
   try {
@@ -398,8 +414,33 @@ export async function serve(opts: ServeOptions): Promise<void> {
   } catch (err) {
     return fail('scheduler', err);
   }
+  // 8. The runner self-test (D3 §2.8; SEAM.md §208): at a start whose host
+  // qualification is active, in the background. It holds only the
+  // admission of `direct` check executions, which stay queued until it has
+  // been recorded; role dispatch, the API and shutdown go on.
+  let selfTestDue = false;
+  if (checksRun && runtime.scope !== null && seamSelfTestAtStart()) {
+    try {
+      selfTestDue = (await runtime.read<{ id: string } | null>('checks.qualification')) !== null;
+    } catch (err) {
+      log('runner self-test', err);
+    }
+  }
+  if (selfTestDue && runtime.checks) runtime.checks.selfTestRunning = true;
   runtime.startWatch();
   scheduler.start();
   state.completed.push('scheduler');
+  if (selfTestDue && runtime.checks) {
+    const checks = runtime.checks;
+    selfTest = new RunnerSelfTest(runtime);
+    void selfTest
+      .run()
+      .catch((err) => log('runner self-test', err))
+      .finally(() => {
+        checks.selfTestRunning = false;
+        selfTest = null;
+        runtime.services?.requestTick();
+      });
+  }
 
 }

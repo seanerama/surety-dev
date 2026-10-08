@@ -742,6 +742,16 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
   }
 }
 
+// A check execution's domain whose termination is unknown (L1; SEAM.md
+// §205): nonterminal, quarantined, as a role's is.
+export function quarantineDomain(tx: Tx, args: { domain: string; subject: Record<string, unknown> }): void {
+  const d = tx.db.prepare('SELECT "status", "project" FROM "execution_domains" WHERE "id" = ?').get(args.domain) as { status: DomainStatus; project: string } | undefined;
+  if (!d || (d.status !== 'allocated' && d.status !== 'launched')) return;
+  assertEdge('DomainStatus', d.status, 'quarantined', { domain: args.domain });
+  tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'quarantined' WHERE "id" = ?`).run(args.domain);
+  tx.emit('domain.quarantined', { project: d.project, domain: args.domain, ...args.subject }, { from: d.status });
+}
+
 // Step 3: termination could not be established. The run stays finalizing and
 // quarantined; nothing is released or discarded; the run lease becomes a
 // quarantine reservation, which is never execution authority; the grant is
