@@ -16,7 +16,7 @@ const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const { scanJson, parseGoverned, parseDefinition, defaultGoverned, criterionErrors, checkFingerprint } = await import(join(dist, 'checks', 'schema.js'));
 const { parseRequirementIndex } = await import(join(dist, 'checks', 'requirement-index.js'));
 const { discover } = await import(join(dist, 'checks', 'discovery.js'));
-const { materialize, releaseTree, listTrees } = await import(join(dist, 'checks', 'checktree.js'));
+const { materialize, releaseTree, listTrees, projectionOf } = await import(join(dist, 'checks', 'checktree.js'));
 const { OutputCapture } = await import(join(dist, 'checks', 'run.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
 
@@ -167,7 +167,7 @@ test('a check tree: the source projection without the roots or .git, the inputs 
   assert.equal(readFileSync(join(tree.src, 'src/app.js'), 'utf8'), 'export const a = 1;\n');
   assert.equal(existsSync(join(tree.src, '.surety')), false, 'the candidate copy of the protected paths is never in the projection');
   assert.equal(existsSync(join(tree.src, '.git')), false);
-  assert.equal(readFileSync(join(tree.protected, '.surety/checks/expect.txt'), 'utf8'), 'expected\n');
+  assert.equal(readFileSync(join(projectionOf(tree, args.manifests[0]), '.surety/checks/expect.txt'), 'utf8'), 'expected\n');
   assert.deepEqual(await materialize(args), tree, 'the same triple is reused');
   assert.deepEqual(listTrees(home, project), [{ revision: head, version }]);
   releaseTree(home, project, head, version);

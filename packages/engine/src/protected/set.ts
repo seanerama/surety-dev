@@ -2,9 +2,14 @@
 // correction 3; D1 §§2.4, 5.2; SEAM.md §66). The governed settings live in
 // `.surety/checks/protected-policy.json`; the protected roots are the path
 // prefixes its `protected_paths` names (default `.surety/checks/`), and the
-// governed file itself is always protected (E34 item 1). The fingerprint is
-// SHA-256 of the JSON text of the sorted [path, blob id] pairs of every
-// file under the roots: no field of any file is projected into it.
+// governed file itself is always protected (E34 item 1). The fingerprint
+// (L6, B01; SEAM.md §196) is SHA-256 of the JSON text of the protected set's
+// manifest: the [path, type, mode, object id] of every entry under the roots
+// and of the governed file, sorted by path, so a type or mode change is a
+// change. No field of any file's content is projected into it. The mode-free
+// [path, blob id] form recorded before slice 17 (`legacyFingerprintOf`) is
+// read only by the Q11 migration and the harness's legacy fixture; no
+// comparison crosses the two schemes (D3 §7.4 Q11).
 //
 // Main thread only: these read git.
 
@@ -31,23 +36,41 @@ export function rootsOf(text: string | null): string[] {
   return [...DEFAULT_ROOTS];
 }
 
-export const isProtected = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((root) => path.startsWith(root));
+// A root is a directory (SEAM.md §66): a path is under it when it lies
+// inside that directory, never because its name merely begins with the
+// root's text. Discovery refuses a root without its trailing `/`
+// (`invalid_value`); one read here anyway is taken as the directory it
+// names. The one predicate every reader of the roots uses.
+export const rootDir = (root: string): string => (root.endsWith('/') ? root : `${root}/`);
+export const isUnderRoot = (path: string, root: string): boolean => path.startsWith(rootDir(root));
+export const isProtected = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((root) => isUnderRoot(path, root));
 
-export function fingerprintOf(pairs: [string, string][]): string {
+export type ManifestRow = [path: string, type: string, mode: string, oid: string];
+
+const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+export function fingerprintOf(manifest: ManifestRow[]): string {
+  return createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+}
+
+// The mode-free fingerprint of the same set, as recorded before slice 17:
+// the sorted [path, blob id] pairs of its blobs.
+export function legacyFingerprintOf(manifest: ManifestRow[]): string {
+  const pairs = manifest.filter(([, type]) => type === 'blob').map(([path, , , oid]) => [path, oid]);
   return createHash('sha256').update(JSON.stringify(pairs)).digest('hex');
 }
 
-// The [path, blob id] pairs of the protected set of `rev` under `roots`,
-// sorted by path; null if the tree cannot be read.
-export async function protectedPairs(ctx: GitContext, rev: string, roots: readonly string[]): Promise<[string, string][] | null> {
+// The manifest of the protected set of `rev` under `roots`, sorted by path;
+// null if the tree cannot be read.
+export async function protectedManifest(ctx: GitContext, rev: string, roots: readonly string[]): Promise<ManifestRow[] | null> {
   const entries = await listTree(ctx, rev);
   if (entries === null) return null;
-  const pairs: [string, string][] = [];
+  const rows: ManifestRow[] = [];
   for (const entry of entries.values()) {
-    if (entry.type !== 'blob' || !isProtected(entry.path, roots)) continue;
-    pairs.push([entry.path, entry.oid]);
+    if (!isProtected(entry.path, roots)) continue;
+    rows.push([entry.path, entry.type, entry.mode, entry.oid]);
   }
-  return pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return rows.sort(([a], [b]) => byPath(a, b));
 }
 
 // The governed file's text at `rev`, null if it has none.
@@ -70,7 +93,7 @@ export async function protectedSetAt(repo: string, rev: string, roots?: readonly
   } catch {
     return null;
   }
-  const pairs = await protectedPairs(ctx, rev, own);
-  if (pairs === null) return null;
-  return { roots: own, fingerprint: fingerprintOf(pairs) };
+  const manifest = await protectedManifest(ctx, rev, own);
+  if (manifest === null) return null;
+  return { roots: own, fingerprint: fingerprintOf(manifest) };
 }

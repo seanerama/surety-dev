@@ -60,6 +60,9 @@ import {
   parseClassification,
   parseRunnerQualification,
   installRunnerQualification,
+  parseLegacyFingerprint,
+  installLegacyFingerprint,
+  versionSourceOf,
   proposalTree,
   installEnvironment,
   installObservation,
@@ -172,6 +175,9 @@ export interface HarnessSwitches {
   hostId: string | null;
   mechanismVariant: string | null;
   collectBounds: { entries: number; bytes: number } | null;
+  // `--harness-checktrees-max-bytes <n>` (SEAM.md §200): checktrees_max_bytes
+  // for this start, below its configured range.
+  checktreesMaxBytes?: number | null;
 }
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
@@ -656,6 +662,8 @@ const OP = {
   proposalTree: 'harness.proposal_tree',
   armWorkerBarrier: 'harness.arm_worker_barrier',
   runnerQualification: 'harness.runner_qualification',
+  legacySource: 'harness.legacy_source',
+  legacyFingerprint: 'harness.legacy_fingerprint',
   fixtureApproval: 'harness.fixture_approval',
   fixtureAlphaException: 'harness.fixture_alpha_exception',
   fixtureReuse: 'harness.fixture_reuse',
@@ -947,6 +955,19 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       return storeOp(OP.runnerQualification, { fingerprint: checkProfileFingerprint(), actor: hooks.actor });
     });
   }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'legacy-fingerprint') {
+    return route(200, async (body) => {
+      // The mode-free value of the version's own authorized set, computed
+      // from its authorized revision as the engine did before slice 17.
+      const { version } = parseLegacyFingerprint(body);
+      const src = (await storeOp(OP.legacySource, { version })) as { repo: string; roots: string[]; revision: string | null } | null;
+      if (src === null) throw new Refusal(404, 'not_found', `No protected version "${version}".`, 'Name a version the engine recorded.', { protected_version: version });
+      const { protectedManifest, legacyFingerprintOf } = await import('../protected/set.js');
+      const manifest = src.revision === null ? null : await protectedManifest(repoContext(src.repo), src.revision, src.roots);
+      if (manifest === null) throw new Refusal(409, 'repo_unreadable', "The version's authorized tree could not be read.", 'Check the fixture repository.', { protected_version: version });
+      return storeOp(OP.legacyFingerprint, { version, fingerprint: legacyFingerprintOf(manifest), actor: hooks.actor });
+    });
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'environment') return route(201, (body) => storeOp(OP.fixtureEnvironment, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'observation') return route(201, (body) => storeOp(OP.fixtureObservation, { body, actor: hooks.actor }));
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'classification') {
@@ -1158,6 +1179,10 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installClassification(store(), a.actor, a.body, (a.discovery as Discovery | null | undefined) ?? null);
     case OP.runnerQualification:
       return installRunnerQualification(store(), a.actor, a.fingerprint as string);
+    case OP.legacySource:
+      return versionSourceOf(store(), a.version as string);
+    case OP.legacyFingerprint:
+      return installLegacyFingerprint(store(), a.actor, { version: a.version as string, fingerprint: a.fingerprint as string });
     case OP.armWorkerBarrier:
       runtimeWorkerBarriers.set(a.name as string, { action: a.action as BarrierAction, cell: new Int32Array(a.cell as SharedArrayBuffer) });
       return { armed: a.name };
@@ -1421,7 +1446,7 @@ export function seamQualifyMode(): boolean {
 // `--harness-mechanism-variant <label>`, `--harness-collect-bounds
 // entries=<n>,bytes=<n>`. Called once, after configureHarness, before the
 // store worker starts. Returns a usage problem, or null.
-export function setHarnessSwitches(values: { templateVersions: string[]; hostId: string | null; mechanismVariant: string | null; collectBounds: string | null }): string | null {
+export function setHarnessSwitches(values: { templateVersions: string[]; hostId: string | null; mechanismVariant: string | null; collectBounds: string | null; checktreesMaxBytes?: string | null }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
     const m = /^([a-z]+)=([A-Za-z0-9._-]+)$/.exec(v);
@@ -1436,8 +1461,13 @@ export function setHarnessSwitches(values: { templateVersions: string[]; hostId:
     if (!m || Number(m[1]) < 1 || Number(m[2]) < 1) return `--harness-collect-bounds takes entries=<n>,bytes=<n>, not ${values.collectBounds}`;
     collectBounds = { entries: Number(m[1]), bytes: Number(m[2]) };
   }
+  let checktreesMaxBytes: number | null = null;
+  if (values.checktreesMaxBytes != null) {
+    if (!/^\d{1,15}$/.test(values.checktreesMaxBytes) || Number(values.checktreesMaxBytes) < 1) return `--harness-checktrees-max-bytes takes a positive number of bytes, not ${values.checktreesMaxBytes}`;
+    checktreesMaxBytes = Number(values.checktreesMaxBytes);
+  }
   if (!init.harness) return null;
-  init = { ...init, switches: { templateVersions, hostId: values.hostId, mechanismVariant: values.mechanismVariant, collectBounds } };
+  init = { ...init, switches: { templateVersions, hostId: values.hostId, mechanismVariant: values.mechanismVariant, collectBounds, checktreesMaxBytes } };
   return null;
 }
 
@@ -1445,6 +1475,7 @@ export function setHarnessSwitches(values: { templateVersions: string[]; hostId:
 export const seamTemplateVersions = (): Record<string, string> | null => (init.harness ? (init.switches?.templateVersions ?? null) : null);
 export const seamHostId = (): string | null => (init.harness ? (init.switches?.hostId ?? null) : null);
 export const seamMechanismVariant = (): string | null => (init.harness ? (init.switches?.mechanismVariant ?? null) : null);
+export const seamChecktreesMaxBytes = (): number | null => (init.harness ? (init.switches?.checktreesMaxBytes ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
 // The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays

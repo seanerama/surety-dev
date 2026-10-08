@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 
 import { checkLimits } from './limits.js';
+import { isUnderRoot } from '../protected/set.js';
 
 export const GOVERNED_FILE = '.surety/checks/protected-policy.json';
 export const DEFINITION_MAX_BYTES = 64 * 1024;
@@ -265,7 +266,8 @@ export function parseGoverned(text: string | null): GovernedResult {
     else {
       const ok: string[] = [];
       p.forEach((x, n) => {
-        if (!isRelative(x)) e.at(`/protected_paths/${n}`, 'invalid_value');
+        // A root names a directory, with its trailing `/` (SEAM.md §66).
+        if (!isRelative(x) || !(x as string).endsWith('/')) e.at(`/protected_paths/${n}`, 'invalid_value');
         else if (ok.includes(x)) e.at(`/protected_paths/${n}`, 'duplicate_entry');
         else ok.push(x);
       });
@@ -430,7 +432,8 @@ export interface DefinitionResult {
 
 const DEFINITION_FIELDS = ['schema', 'key', 'kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'covers', 'gate_kinds', 'tier_floor', 'phase', 'runner_class', 'requires', 'inputs', 'egress'];
 
-export const isProtectedPath = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((r) => path === r || path.startsWith(r.endsWith('/') ? r : `${r}/`));
+// The protected set's one directory predicate (protected/set.ts).
+export const isProtectedPath = (path: string, roots: readonly string[]): boolean => path === GOVERNED_FILE || roots.some((r) => isUnderRoot(path, r));
 
 const isRegular = (x: TreeEntry): boolean => x.type === 'blob' && (x.mode === '100644' || x.mode === '100755');
 

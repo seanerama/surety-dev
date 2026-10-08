@@ -63,7 +63,7 @@ export function createProject(
   openLineage(tx, id);
   for (const c of project.checkouts ?? []) addCheckout(tx, { project: id, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
   // The project's first protected version (SEAM.md §66).
-  recordInitialVersion(tx, id, project.protectedSet, project.approvedBy ?? 'project creation');
+  recordInitialVersion(tx, id, project.protectedSet, project.approvedBy ?? 'project creation', project.head);
   return id;
 }
 

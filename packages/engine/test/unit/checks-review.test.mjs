@@ -23,7 +23,7 @@ import Database from 'better-sqlite3';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
-const { materialize, removeStagingLeftovers, checktreesDir } = await import(join(dist, 'checks', 'checktree.js'));
+const { materialize, removeStagingLeftovers, checktreesDir, projectionOf } = await import(join(dist, 'checks', 'checktree.js'));
 const { buildCheckPlan, inputTargetConflict } = await import(join(dist, 'checks', 'profile.js'));
 const { discover } = await import(join(dist, 'checks', 'discovery.js'));
 const { decideResult, armDeadline, Supervisor, recoverChecks } = await import(join(dist, 'checks', 'run.js'));
@@ -96,7 +96,7 @@ test('S1: an input whose ancestor in the candidate source is a link or a file re
   const plan = buildCheckPlan({
     area,
     source: t3.src,
-    protectedDir: t3.protected,
+    projection: projectionOf(t3, manifest),
     manifest,
     readPaths: [],
     volBytes: 1 << 20,
@@ -148,11 +148,12 @@ test('S2: every materialized file is its blob byte for byte, whatever a work-tre
   r.g('config', 'core.autocrlf', 'true');
   r.g('config', 'core.eol', 'crlf');
   const oid = r.g('rev-parse', `${rev}:.surety/checks/expect.txt`);
-  const tree = await mat(r, rev, [['.surety/checks/expect.txt', 'blob', '100644', oid]]);
+  const manifest = [['.surety/checks/expect.txt', 'blob', '100644', oid]];
+  const tree = await mat(r, rev, manifest);
   const blob = (path) => execFileSync('git', ['cat-file', 'blob', `${rev}:${path}`], { cwd: r.repo });
   assert.deepEqual(readFileSync(join(tree.src, 'src/a.txt')), blob('src/a.txt'));
   assert.deepEqual(readFileSync(join(tree.src, '.gitattributes')), blob('.gitattributes'));
-  assert.deepEqual(readFileSync(join(tree.protected, '.surety/checks/expect.txt')), blob('.surety/checks/expect.txt'));
+  assert.deepEqual(readFileSync(join(projectionOf(tree, manifest), '.surety/checks/expect.txt')), blob('.surety/checks/expect.txt'));
 });
 
 // ---- minor items ------------------------------------------------------------------------------
