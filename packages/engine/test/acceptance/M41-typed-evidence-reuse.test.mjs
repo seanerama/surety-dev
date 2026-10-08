@@ -36,6 +36,7 @@ import {
   checkResult,
   effectiveVersion,
   installChecks,
+  inventoryIds,
   nominated,
   passAll,
   postResult,
@@ -167,7 +168,7 @@ describe('M41 a result is not reused across a change of the protected checks', (
     assert.deepEqual(reasonCodes(evaluation), ['CHECK_NOT_PASSED'], `the gate asks for an execution and nothing else (reasons: ${reasonCodes(evaluation).join(', ')})`);
     assert.deepEqual(reasonSubjects(evaluation, 'CHECK_NOT_PASSED'), [declared.id.login]);
     assert.equal(evaluation.outcome, 'not_satisfied');
-    assert.deepEqual([...scopeOf(fx.home, evaluation).required], [declared.id.login], 'reuse removed nothing from the required set');
+    assert.deepEqual([...scopeOf(fx.home, evaluation).required].sort(), [declared.id.login, ...inventoryIds(declared.id)].sort(), 'reuse removed nothing from the required set (beside the check, the inventory of the tier: M3 slice 20, SEAM.md §226)');
 
     // The honest way: an execution of the check for candidate 2 under the new version.
     await passAll(fx.engine, project, c2.id, [declared.id.login]);

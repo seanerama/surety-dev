@@ -101,48 +101,188 @@ const created = (res, what) => {
   return res.body;
 };
 
+// ---- L3 and B04: the shared fixture's complete scope (M3 slice 20; SEAM.md §226) ----------
+//
+// From M3 slice 20 a scope is validated only when every criterion of every
+// obligation requirement is named by a required acceptance-origin check, the
+// kind inventory of the scope's tier is present, and every sensitivity
+// category has a floor check (D3 §4.3, L3, B04). The accepted rows that
+// satisfy a gate keep their meaning through three changes here, none of
+// which weakens what a row asserts:
+// - the plan fixture registers a requirement index: each requirement `R<n>`
+//   the shared plan names gets one criterion, `R<n>.1`, and no sensitive area
+//   (`index: false` sends no index, the M1 form; M229 (d) pins it refused);
+// - `check()` turns the requirement keys a row's check covers into those
+//   criteria (`requirements: ['R1']` covers `R1.1`); it never sends the M1
+//   fixture's `requirements` field;
+// - `installChecks` declares, beside a row's own checks, the inventory
+//   checks its project's tier requires and the row does not declare
+//   (`inventory: false` declares none). Each is required, acceptance-origin,
+//   covers no criterion, has no tier floor, lists the gate kinds (of `stage`
+//   and `alpha_authorize`) that the row's checks list and that lack it, and
+//   is keyed `kind-<kind>`, or `kind-<kind>-<gate kind>` for one gate kind.
+//   Every passing execution a row needs of them is recorded by the harness
+//   itself the first time the row records a result for a candidate or
+//   evaluates one of its gates (`ensureInventory`), so a row's own checks
+//   decide what they decided before. A row that reads `check_states` whole
+//   adds `passedInventory(ids)` to what it expects.
+
+export const INDEX_KEY = /^R[1-9][0-9]*$/;
+export const INVENTORY_PREFIX = 'kind-';
+// D3 §4.3: the kinds each tier requires, cumulatively.
+export const KIND_INVENTORY = Object.freeze({
+  T1: ['acceptance', 'smoke'],
+  T2: ['acceptance', 'smoke', 'integration', 'security_lint'],
+  T3: ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery'],
+});
+const TIER_RANK = { T1: 1, T2: 2, T3: 3 };
+const GATES = ['stage', 'alpha_authorize'];
+
+// The one criterion the shared fixture gives a requirement.
+export const criterionOf = (key) => `${key}.1`;
+
+// The text of a requirement index (the spec template's section 5; D3 §4.5).
+// `rows` are [{key, title?, phase?, areas?, criteria}].
+export function requirementIndexText(rows) {
+  const lines = ['| Key | Title | Phase | Sensitive areas | Criteria |', '|---|---|---|---|---|'];
+  for (const r of rows) lines.push(`| ${r.key} | ${r.title ?? `requirement ${r.key}`} | ${r.phase ?? 1} | ${(r.areas ?? []).length === 0 ? 'none' : r.areas.join(', ')} | ${r.criteria.join(', ')} |`);
+  return `${lines.join('\n')}\n`;
+}
+
+// The requirements registered in a project so far, with what the index gave them.
+const registeredRequirements = (home, project) =>
+  withStore(home, (db) =>
+    db
+      .prepare('SELECT "key", "criteria", "sensitive_areas" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
+      .all(project)
+      .map((r) => ({ key: r.key, criteria: r.criteria === null ? null : JSON.parse(r.criteria), areas: JSON.parse(r.sensitive_areas ?? '[]') })),
+  );
+
 // An approved baseline and a plan: requirement keys, and stages that say which
 // requirements each implements. Returns the fixture's answer:
-// {plan, stages: [{id, number, work_item}], requirements: [{id, key}]}.
+// {plan, stages: [{id, number, work_item}], requirements: [{id, key, ...}]}.
 // M2 slice 13 (E67 item 7; SEAM.md §139, as amended): a requirement may be
 // given as {key, text}, its approved text; `adrs` ([{key, text}]) and
 // `constraints` ([{key, text}]) join the approved baseline, a stage cites
 // ADRs by key in its own `adrs`, and every constraint is project-wide.
-export async function installGatedPlan(engine, project, { requirements = [], modules, stages, adrs, constraints }) {
-  const body = { project, requirements: requirements.map((r) => (typeof r === 'string' ? { key: r } : r)), stages };
+// M3 slice 20 (L3; SEAM.md §226): when every key is `R<n>` the plan
+// registers the whole index as it then stands (the requirements already
+// registered keep their criteria and areas; each new one gets `R<n>.1`), so
+// no requirement of the shared fixture is uncertain. `index: false` sends
+// none (the M1 form, which M229 (d) pins as an incomplete scope).
+export async function installGatedPlan(engine, project, { requirements = [], modules, stages, adrs, constraints, index = true }) {
+  const given = requirements.map((r) => (typeof r === 'string' ? { key: r } : r));
+  const body = { project, requirements: given, stages };
+  if (index && given.length > 0 && given.every((r) => INDEX_KEY.test(r.key))) {
+    const rows = registeredRequirements(engine.home, project)
+      .filter((r) => !given.some((g) => g.key === r.key))
+      .map((r) => ({ key: r.key, criteria: r.criteria ?? [criterionOf(r.key)], areas: r.areas }));
+    for (const g of given) rows.push({ key: g.key, criteria: [criterionOf(g.key)] });
+    body.requirements = [...rows.filter((r) => !given.some((g) => g.key === r.key)).map((r) => ({ key: r.key })), ...given];
+    body.requirement_index = requirementIndexText(rows);
+  }
   if (modules !== undefined) body.modules = modules;
   if (adrs !== undefined) body.adrs = adrs;
   if (constraints !== undefined) body.constraints = constraints;
   const plan = created(await engine.post('/v1/harness/fixtures/plan', body), 'plan fixture');
-  assert.equal(plan.requirements?.length, requirements.length, `the plan fixture answers with one requirement per key (body: ${JSON.stringify(plan)})`);
+  for (const r of given) assert.ok(plan.requirements?.some((row) => row.key === r.key), `the plan fixture answers with requirement ${r.key} (body: ${JSON.stringify(plan)})`);
   return plan;
 }
 
 // One check as the checks fixture takes it. `gates` are the gate kinds it
-// applies to and `requirements` the requirement keys it covers; a check with
-// no requirement is a release obligation.
-export const check = (key, { kind = 'acceptance', gates = ['stage', 'alpha_authorize'], requirements = [], ...rest } = {}) => ({ key, kind, gate_kinds: gates, requirements, ...rest });
+// applies to. `requirements` are the requirement keys whose criterion it
+// covers (M3 slice 20: `R<n>` covers `R<n>.1`, the criterion the shared plan
+// registers; `criteria` names them directly); a check covering no criterion
+// is a release obligation.
+export const check = (key, { kind = 'acceptance', gates = ['stage', 'alpha_authorize'], requirements = [], criteria, ...rest } = {}) => ({
+  key,
+  kind,
+  gate_kinds: gates,
+  criteria: criteria ?? requirements.map(criterionOf),
+  ...rest,
+});
+
+// The checks of the project's effective version, from the store.
+const versionChecks = (home, project) =>
+  withStore(home, (db) =>
+    db
+      .prepare(
+        `SELECT c.* FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version"
+         WHERE v."project" = ? AND v."authorized" = 1 AND v."effective_from" IS NOT NULL AND v."superseded_by" IS NULL ORDER BY c."id"`,
+      )
+      .all(project),
+  );
+
+const projectTier = (home, project) => withStore(home, (db) => db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(project)?.tier);
+
+// The inventory checks a project's tier requires that neither its effective
+// version nor `declared` provides, at each of the two gate kinds that one of
+// the declared checks lists (D3 §4.3).
+function inventoryFor(home, project, declared) {
+  const gates = GATES.filter((gate) => declared.some((c) => (c.gate_kinds ?? []).includes(gate)));
+  const tier = projectTier(home, project);
+  const kinds = KIND_INVENTORY[tier] ?? [];
+  const counted = [
+    ...versionChecks(home, project).map((c) => ({ kind: c.kind, required: c.required === 1, gates: JSON.parse(c.gate_kinds), tier_floor: c.tier_floor, origin: c.origin ?? 'acceptance' })),
+    ...declared.map((c) => ({ kind: c.kind, required: c.required !== false, gates: c.gate_kinds ?? [], tier_floor: c.tier_floor ?? null, origin: c.origin ?? 'acceptance' })),
+  ].filter((c) => c.required && c.origin === 'acceptance' && (c.tier_floor === null || TIER_RANK[c.tier_floor] <= TIER_RANK[tier]));
+  const out = [];
+  for (const kind of kinds) {
+    const missing = gates.filter((gate) => !counted.some((c) => c.kind === kind && c.gates.includes(gate)));
+    if (missing.length === 0) continue;
+    const key = missing.length === GATES.length ? `${INVENTORY_PREFIX}${kind}` : `${INVENTORY_PREFIX}${kind}-${missing[0]}`;
+    out.push({ key, kind, gate_kinds: missing, criteria: [] });
+  }
+  return out;
+}
 
 // Declare checks of the project's effective protected version: the stand-in
-// for what D3 would discover in the protected set. Returns {version, id: {key: check id}}.
-export async function installChecks(engine, project, checks) {
-  const body = created(await engine.post('/v1/harness/fixtures/checks', { project, checks }), 'checks fixture');
-  assert.equal(body.checks?.length, checks.length, `the checks fixture answers with one check per key (body: ${JSON.stringify(body)})`);
+// for what D3 would discover in the protected set. With `inventory` (the
+// default) the tier's missing kinds are declared beside them (above).
+// Returns {version, id: {key: check id}}, the inventory checks' ids among them.
+export async function installChecks(engine, project, checks, { inventory = true } = {}) {
+  const all = inventory ? [...checks, ...inventoryFor(engine.home, project, checks)] : checks;
+  const body = created(await engine.post('/v1/harness/fixtures/checks', { project, checks: all }), 'checks fixture');
+  assert.equal(body.checks?.length, all.length, `the checks fixture answers with one check per key (body: ${JSON.stringify(body)})`);
   return { version: body.protected_version, id: Object.fromEntries(body.checks.map((row) => [row.key, row.id])) };
+}
+
+// The inventory checks among the ids installChecks returned, each `passed`:
+// what a row that reads `check_states` whole adds to what it expects.
+export const inventoryIds = (ids) => Object.entries(ids).filter(([key]) => key.startsWith(INVENTORY_PREFIX)).map(([, id]) => id);
+export const passedInventory = (ids) => Object.fromEntries(Object.entries(ids).filter(([key]) => key.startsWith(INVENTORY_PREFIX)).map(([, id]) => [id, 'passed']));
+
+// A passing execution of each inventory check of the project's effective
+// version for the candidate, unless one is on record and not invalidated.
+export async function ensureInventory(engine, project, candidate) {
+  const inventory = versionChecks(engine.home, project).filter((c) => c.key.startsWith(INVENTORY_PREFIX));
+  for (const c of inventory) {
+    const passed = withStore(engine.home, (db) =>
+      db.prepare('SELECT 1 FROM "check_results" WHERE "candidate" = ? AND "check" = ? AND "exit_status" = 0 AND "invalidated_at" IS NULL').get(candidate, c.id),
+    );
+    if (!passed) await recordResult(engine, project, { candidate, check: c.id, exit_status: 0 });
+  }
+}
+
+async function recordResult(engine, project, result) {
+  const body = created(await engine.post('/v1/harness/fixtures/check-result', { project, ...result }), 'check-result fixture');
+  assert.ok(hasIdForm(body.check_result?.id, 'cr_') && Number.isInteger(body.check_result.execution_seq), `the fixture answers with the result and its execution sequence (body: ${JSON.stringify(body)})`);
+  return body.check_result;
 }
 
 // One recorded execution of a check for a candidate: an observation, entered
 // as a fixture. What is not given is the engine's default: the candidate's
 // revision, the effective protected version, the check's runner class, an
 // established execution with no signal and no deadline. `exit_status` is
-// always given. Returns {id, execution_seq}.
+// always given. Returns {id, execution_seq}. The candidate's inventory
+// checks are passed first, once (above).
 export async function postResult(engine, project, result) {
-  const body = created(await engine.post('/v1/harness/fixtures/check-result', { project, ...result }), 'check-result fixture');
-  assert.ok(hasIdForm(body.check_result?.id, 'cr_') && Number.isInteger(body.check_result.execution_seq), `the fixture answers with the result and its execution sequence (body: ${JSON.stringify(body)})`);
-  return body.check_result;
+  await ensureInventory(engine, project, result.candidate);
+  return recordResult(engine, project, result);
 }
 
 // A passing execution of each of `checks` (check ids) for the candidate.
+// Returns their results only, in that order.
 export async function passAll(engine, project, candidate, checks, extra = {}) {
   const results = [];
   for (const id of checks) results.push(await postResult(engine, project, { candidate, check: id, exit_status: 0, ...extra }));
@@ -186,7 +326,8 @@ export async function alphaException(engine, findingId, { containment = 'The alp
 // Evaluate a gate. A gate that is not satisfied is an answer, not an error:
 // the response is 200 with the evaluation either way. Returns the evaluation:
 // {id, gate_kind, outcome, reasons: [{code, subjects}], check_states, scope, stale}.
-export async function evaluate(engine, project, candidate, kind, body = {}) {
+export async function evaluate(engine, project, candidate, kind, body = {}, { inventory = true } = {}) {
+  if (inventory) await ensureInventory(engine, project, candidate);
   const res = await engine.post(`/v1/projects/${project}/candidates/${candidate}/gates/${kind}`, body);
   assert.equal(res.status, 200, `evaluate the ${kind} gate of ${candidate} (body: ${res.text})`);
   const evaluation = res.body?.evaluation;
@@ -232,9 +373,9 @@ export async function alphaTarget(fx, ctx, candidate = ctx.candidate, { environm
 // permitted edit by default). At T1 a nomination is the Builder's request.
 // `project` is a project made beforehand (of tier `tier`), else one is made.
 // Returns {project, plan, items, stage, candidate, requirement: {key: id}}.
-export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing } = {}) {
+export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing, index = true } = {}) {
   const project = existing ?? (await addGitProject(fx, { tier, files }));
-  const plan = await installGatedPlan(fx.engine, project.id, { requirements, modules, stages: stages ?? [{ number: 1, goal: 'the first stage', implements: requirements }] });
+  const plan = await installGatedPlan(fx.engine, project.id, { requirements, modules, index, stages: stages ?? [{ number: 1, goal: 'the first stage', implements: requirements }] });
   const items = plan.stages.map((stage) => stage.work_item);
   const nominate = tier === 'T1' ? { nominate: true } : {};
   items.forEach((item, n) => fx.scripted.script(item, [roles[n] ?? roleThat([n === 0 ? permittedEdit() : step.write(`src/stage-${n + 1}.js`, `export const stage = ${n + 1};\n`)], nominate)]));

@@ -38,13 +38,28 @@ import { REAL, eventsAboutRun, journeyEngine, ledgerOriginal, observe, realStep,
 
 // ---- the two projects -----------------------------------------------------------------
 
-// Path one: one stage, one requirement, one protected check (the M1 hands-on's shape).
+// M3 slice 20 (L3, B04; SEAM.md §226): the projects are T2, whose scopes
+// need, beside the acceptance checks of each requirement's criterion
+// (R<n>.1, registered by the shared plan fixture), a required check of each
+// kind T2 names: smoke, integration and security_lint. They are declared
+// here with plain keys, so the real roles' packages list checks a person
+// would name, and the harness's `kind-*` inventory adds none. `integration`
+// covers the criteria of every requirement of the project (D3 §1.3: an
+// integration check names at least one criterion).
+const tierChecks = (requirements) => [
+  check('smoke', { kind: 'smoke' }),
+  check('integration', { kind: 'integration', requirements }),
+  check('security_lint', { kind: 'security_lint' }),
+];
+
+// Path one: one stage, one requirement, one protected acceptance check (the M1 hands-on's shape), and the T2 kinds.
 export const PATH_ONE = Object.freeze({
   name: 'real-journey-one',
   files: {},
   requirements: [{ key: 'R1', text: 'src/greeting.js exports a function greeting(name) that returns the string "Hello, " followed by name and "!". For example greeting("Ada") returns "Hello, Ada!".' }],
   constraints: [{ key: 'C1', text: 'Plain JavaScript modules (ES modules) with no dependencies. Do not add a package.json.' }],
   stages: [{ number: 1, goal: 'Implement R1: create src/greeting.js as R1 describes.', implements: ['R1'] }],
+  checks: [check('login', { requirements: ['R1'] }), ...tierChecks(['R1'])],
 });
 
 // Path two: a defect seeded in the code R1 governs, which the stage does not
@@ -75,7 +90,7 @@ export const PATH_TWO = Object.freeze({
   // The stage implements R1 and R2, so each needs a protected check in the
   // acceptance scope (found by the E79 rehearsal: with `login` alone, both
   // gates were ACCEPTANCE_SCOPE_INCOMPLETE on R2).
-  checks: [check('login', { requirements: ['R1'] }), check('logout', { requirements: ['R2'] })],
+  checks: [check('login', { requirements: ['R1'] }), check('logout', { requirements: ['R2'] }), ...tierChecks(['R1', 'R2'])],
 });
 
 // A project of the journey: a disposable repository holding its protected

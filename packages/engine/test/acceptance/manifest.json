@@ -241,6 +241,14 @@
       "M226-affected-checks-with-their-reasons.test.mjs",
       "M227-revalidation-and-authority.test.mjs",
       "M228-invalid-definitions-and-spec-changes.test.mjs"
+    ],
+    "20": [
+      "M204-a-nomination-that-owes-its-registration.test.mjs",
+      "M229-criterion-coverage-and-the-sensitivity-floor.test.mjs",
+      "M230-the-kind-inventory.test.mjs",
+      "M231-scope-modules-tier-and-cadence.test.mjs",
+      "M232-one-scope-rule.test.mjs",
+      "M233-the-requirement-index.test.mjs"
     ]
   },
   "sandbox": [

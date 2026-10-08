@@ -15,24 +15,33 @@
 // implements Z. Candidate 1 is nominated after stage 1, candidate 2 after
 // stage 2. The cases are separately reported readings of the scopes built
 // along the way.
+//
+// M3 slice 20 (L3; SEAM.md §226): the requirement index registers keys of
+// the form R<n> (D3 §4.5), so A, B, C, D and Z are the keys R1 to R5, each
+// with its one criterion R<n>.1, which its check covers. A delivered
+// requirement with no required check is incomplete by its uncovered
+// criterion, which the reason names.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { alphaTarget, check, evaluate, installChecks, nominated, reasonCodes, reasonSubjects, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
+import { alphaTarget, check, criterionOf, evaluate, installChecks, nominated, reasonCodes, reasonSubjects, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
 import { roleThatHolds } from './harness/gitruns.mjs';
 import { candidatesOf, stagesOf } from './harness/journal.mjs';
 import { isAncestor } from './harness/repos.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
+// The requirements A, B, C, D and Z, as index keys (M3 slice 20).
+const [A, B, C, D, Z] = ['R1', 'R2', 'R3', 'R4', 'R5'];
+
 async function history(t) {
   const fx = await scriptedEngine(t);
   const ctx = await nominated(fx, {
-    requirements: ['A', 'B', 'C', 'D', 'Z'],
+    requirements: [A, B, C, D, Z],
     stages: [
-      { number: 1, goal: 'the first stage', implements: ['A', 'B', 'D'] },
-      { number: 2, goal: 'the second stage', implements: ['B', 'C'] },
+      { number: 1, goal: 'the first stage', implements: [A, B, D] },
+      { number: 2, goal: 'the second stage', implements: [B, C] },
     ],
     // Stage 2's Builder waits until the scopes of candidate 1 have been read.
     roles: [undefined, roleThatHolds([step.write('src/stage-2.js', 'export const stage = 2;\n')], [], { nominate: true })],
@@ -44,13 +53,13 @@ async function history(t) {
 
   evaluations.noChecks = await stageGate(fx, ctx);
   const first = await installChecks(fx.engine, project, [
-    check('kA', { requirements: ['A'] }),
-    check('kB', { requirements: ['B'] }),
-    check('kC', { requirements: ['C'] }),
+    check('kA', { requirements: [A] }),
+    check('kB', { requirements: [B] }),
+    check('kC', { requirements: [C] }),
     check('smoke', { kind: 'smoke', gates: ['alpha_authorize'] }),
   ]);
   evaluations.uncovered = await stageGate(fx, ctx);
-  const second = await installChecks(fx.engine, project, [check('kD', { requirements: ['D'] })]);
+  const second = await installChecks(fx.engine, project, [check('kD', { requirements: [D] })]);
   evaluations.c1stage = await stageGate(fx, ctx);
   const alpha1 = await alphaTarget(fx, ctx, c1);
   evaluations.c1alpha = await alpha1.evaluate();
@@ -68,7 +77,7 @@ async function history(t) {
     c2,
     stage1,
     stage2,
-    R: ctx.requirement,
+    R: { A: ctx.requirement[A], B: ctx.requirement[B], C: ctx.requirement[C], D: ctx.requirement[D], Z: ctx.requirement[Z] },
     k: { ...first.id, ...second.id },
     evaluations,
     scope: Object.fromEntries(Object.entries(evaluations).map(([name, evaluation]) => [name, scopeOf(fx.home, evaluation)])),
@@ -121,7 +130,7 @@ describe('M38 delivery is computed per candidate, and scope is built from it', (
       assert.equal(S.scope[name].validated, 0, `${name}: the scope is not validated`);
     }
     assert.deepEqual(S.scope.noChecks.required, [], 'the fixture is live: with no check declared the required set is empty');
-    assert.ok(reasonSubjects(S.evaluations.uncovered, 'ACCEPTANCE_SCOPE_INCOMPLETE').includes(S.R.D), 'the reason names the delivered requirement that has no check');
+    assert.ok(reasonSubjects(S.evaluations.uncovered, 'ACCEPTANCE_SCOPE_INCOMPLETE').includes(criterionOf(D)), 'the reason names the criterion of the delivered requirement that has no check (D3 §4.3)');
     assert.equal(S.scope.c1stage.validated, 1, 'once every delivered requirement has a required check the scope is validated');
     assert.ok(!reasonCodes(S.evaluations.c1stage).includes('ACCEPTANCE_SCOPE_INCOMPLETE'));
   });

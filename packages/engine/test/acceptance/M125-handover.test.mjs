@@ -391,13 +391,15 @@ describe('M125 what is handed over', () => {
     // The result field `check` named as a field (as the prompt names
     // `findings` and `dispositions`), not the word "check".
     const FIELD = /`check`|findings(\[\])?\.check\b|"check"/;
-    const listLine = (text, c) => text.split('\n').find((l) => new RegExp(`(^|[^\\w-])${c.key}([^\\w-]|$)`).test(l) && c.requirements.every((q) => l.includes(q)) && c.gate_kinds.every((g) => l.includes(g)));
+    // M3 slice 20 (L3; SEAM.md §226): a check covers criteria; the line names the requirement each belongs to (a criterion's key holds it).
+    const requirementsOf = (c) => [...new Set((c.criteria ?? []).map((x) => x.split('.')[0]))];
+    const listLine = (text, c) => text.split('\n').find((l) => new RegExp(`(^|[^\\w-])${c.key}([^\\w-]|$)`).test(l) && requirementsOf(c).every((q) => l.includes(q)) && c.gate_kinds.every((g) => l.includes(g)));
     const checkList = (dump, what) => {
       const text = promptOf(dump);
       if (!FIELD.test(text)) gaps.push(`${what}: its prompt does not name the result field \`check\`, which a finding must carry to be resolved`);
       for (const c of [LOGIN, STYLE]) {
         const line = listLine(text, c);
-        if (!line) gaps.push(`${what}: its prompt has no line listing the check ${c.key} with its requirements ${JSON.stringify(c.requirements)} and gate kinds ${JSON.stringify(c.gate_kinds)}`);
+        if (!line) gaps.push(`${what}: its prompt has no line listing the check ${c.key} with its requirements ${JSON.stringify(requirementsOf(c))} and gate kinds ${JSON.stringify(c.gate_kinds)}`);
         else if (c.required !== false && !/\brequired\b/i.test(line)) gaps.push(`${what}: the required check ${c.key} is not marked required (${JSON.stringify(line)})`);
       }
     };
@@ -420,7 +422,8 @@ describe('M125 what is handed over', () => {
     const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
     const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'an-unknown-check', tier: 'T2' });
     const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
-    await installChecks(fx.engine, project, CHECKS);
+    // M3 slice 20 (B04; SEAM.md §226): the version also holds the tier's inventory checks.
+    const installed = (await installChecks(fx.engine, project, CHECKS)).id;
     fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);
     const build = await runToEnd(fx, project, plan.stages[0].work_item);
     assert.deepEqual([build.outcome, build.reason_class], ['completed', 'none'], `the fixture is live: the Builder's run was accepted (${build.reason_text})`);
@@ -444,7 +447,7 @@ describe('M125 what is handed over', () => {
     const schemaPath = manifest.files.find((f) => f.kind === 'result_schema')?.path;
     const schema = JSON.parse(dump.files.find((f) => f.name === schemaPath)?.text ?? 'null');
     const allowed = schema?.properties?.findings?.items?.properties?.check?.enum;
-    assert.deepEqual(Array.isArray(allowed) ? [...allowed].sort() : allowed, CHECKS.map((c) => c.key).sort(), `the result schema gives findings.items.check as an enum of the effective version's keys (${JSON.stringify(schema?.properties?.findings?.items?.properties?.check)})`);
+    assert.deepEqual(Array.isArray(allowed) ? [...allowed].sort() : allowed, Object.keys(installed).sort(), `the result schema gives findings.items.check as an enum of the effective version's keys (${JSON.stringify(schema?.properties?.findings?.items?.properties?.check)})`);
 
     assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `a finding naming a check outside the version is an invalid result (${run.reason_text})`);
     assert.ok(String(run.reason_text ?? '').includes(UNKNOWN), `its reason names the unknown key "${UNKNOWN}" (${run.reason_text})`);

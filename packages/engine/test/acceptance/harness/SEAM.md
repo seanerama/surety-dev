@@ -4644,6 +4644,113 @@ A later `POST /v1/harness/fixtures/plan` with `requirement_index` registers a ne
 - **Whether the retained check of B02's counterexample passes once its source is hidden**: row M238, project lane. M225 (b) pins the classification only.
 - **`authoritative` as a condition of M3's acceptance**: not required (BS3 §3); the cases set it and restore nothing.
 
+---
+
+# M3 slice 20: validation scope
+
+Sections 221 to 227 were written with the slice-20 acceptance tests (2026-10-08; `verify/m3-s20` from `main` at `aee797e`): rows M229 to M233 of `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.6, M204 (f) (deferred here by section 185), and the straddle of L3 and B04 over the accepted fixtures (M3 plan §4.3, question 3 (a); E92 item 3; BS3 §9, "Known straddles"). They follow D3 draft 2 (§§2.5, 4.1 to 4.5, §7.1 L2, L3, §7.4 Q10, A.2, A.3), B04, Astra's T11, T12 and §8.3, and E90 to E97 (E90 item 2, Q7 (a); E91 item 2, Q10 (a)). Every earlier section stands; what this pass changes in them is in section 227. † marks a reading for Sean.
+
+## 221. What the slice-20 tests assume throughout, and the readings of D3 §4.3
+
+- **Kernel lane** (section 177). No check runs. The rows' checks are discovered from each project's governed file and definitions (sections 178, 179); the nomination registers them and admits none, and each result is the check-result fixture's, which takes the one sequence and decides over the queued registration (section 189). Sign-offs are a Reviewer's run's (section 68), findings a Verifier's. Helpers: `harness/checks/scope.mjs`.
+- **A scope is validated** exactly as D3 §4.3 says, with D3 §4.2's required set, at the scope's tier (section 222's modules), for `stage` and `alpha_authorize`. Section 70's "An incomplete scope" is replaced by it (section 227).
+- **The subjects of `ACCEPTANCE_SCOPE_INCOMPLETE`** (D3 §4.3: "among its subjects"). The tests read them by form and never pin their order or that nothing else is among them, except where a case says "and no other kind":
+  - an uncovered criterion: its key, `R2.2` †;
+  - an uncertain requirement (registered with no criterion): the requirement's id, `req_…`, as section 70 named an uncovered requirement;
+  - a missing kind: `kind:<kind>`, the `CheckKind` (`kind:security_lint`);
+  - an uncovered area: `area:<name>`, the `SensitiveArea`;
+  - a discovery error: its path, as section 178 says;
+  - an unread module presence fact: the string `module_presence` † (D3 A.3's member of `candidates`).
+- **Who counts.** A criterion is covered only by a required check of origin `acceptance` in the scope's required set that names it in `covers.criteria`, of any kind. A kind is present only through a required acceptance-origin check of that kind in the set. A developer-origin check is in the required set (D3 §4.2 (a)) and counts toward neither.
+- **A developer definition naming criteria** is the discovery error `covers_not_allowed` at its path (D3 §1.3, "a developer check covers nothing"; the closest A.2 code) †, and covers nothing: its criterion is also uncovered.
+- **`tier_floor` cannot waive a kind** (M230 (b)): a tier floor omits a check only in a scope below it, so the case is a T2 scope whose integration check is floored at T3. At T3 no floor omits anything †.
+- **Sensitivity categories** (D3 §4.2) are recorded on the scope (`acceptance_scopes.sensitivity_categories`, a JSON array of `SensitiveArea`, no repeats; order not pinned). A floor check is required at every tier (it has no `tier_floor`) when it names a category of the scope and lists the gate kind; the tests do not pin whether a floor check naming no category of the scope is in the set.
+
+## 222. The plan fixture's modules, stage modules, and a later plan's modules
+
+(D3 §4.1; D1 A.3 `modules.tier_override`, `stages.modules`; sections 67, 179, 219; rows M43, M229, M231, M232.)
+
+- **`modules[]`** of `POST /v1/harness/fixtures/plan` take `tier_override`: `T1`, `T2` or `T3`, absent for none; anything else **400** `invalid_value`, `subject.field` `modules[<i>].tier_override`.
+- **`stages[]`** take **`modules`**: names of modules of the project (this call's or an earlier one's); the stage row's `stages.modules` holds their ids. An unknown name is **400** `invalid_value`, `subject.field` `stages[<i>].modules`. Absent, the stage lists none.
+- **A later call naming an existing module** replaces its `paths`, `sensitive_areas` and `tier_override` with the fields given (absent fields take their defaults: no area, no override), as section 219 replaces a requirement's criteria and areas. This is the fixture's stand-in for an approved architecture revision † (architecture approval is not built). It is a change of every scope that takes the module; the candidate's recorded presence (section 224) is of the modules as they now are, so the engine reads it again before the next evaluation that needs it.
+- **The scope's modules and tier** (D3 §4.1): at `stage` the stage's modules; at `alpha_authorize` every module present at the candidate's revision (section 224). The scope's tier is the highest of the project's tier and those modules' overrides; it selects `tier_floor`, the kind inventory and the required sign-offs.
+- **`acceptance_scopes.required_signoffs`** is a JSON array of `{role, scope, module?}` (D1 A.3), `module` the module's name †; at T3 one entry of scope `module` per module of the scope, and one of scope `security`. A sign-off's `module` names the module by name (section 68).
+
+## 223. The requirement index's refusal
+
+(D3 §4.5; section 179, whose "the form of `subject` is slice 20's"; row M233.)
+
+A `requirement_index` the parser refuses is **400** `invalid_value` with `subject.field` `requirement_index`, `subject.row` the 1-based number of the requirement row it refuses (the header and the separator row are not counted; `0` for the table as a whole), and `subject.text` that row's text with its surrounding white space removed. The parser refuses the first bad row it reads. Nothing is installed: no requirement, plan, stage or work item. The cases (M233): a row of four cells; a key that is not `R<n>`; an area outside the closed list; a criterion not of its row's key; a criterion repeated in its row. A row with an empty criteria cell registers no criterion (`criteria` `[]`): the requirement is uncertain (section 221).
+
+## 224. Module presence, the fault that keeps it unread, and a nomination that owes its registration
+
+(D3 §§2.5, 4.1, A.3; L2; Q7 (a), Q10 (a); rows M231 (b), (c), M204 (f).)
+
+- **`candidates.module_presence`** is `{"modules": [<module id>, …], "read_at"}`: the modules with at least one file (a tracked path under one of their `paths`) at the candidate's revision, read with engine git and recorded, as ancestry is. It is null while unread. The ids' order is not pinned.
+- **The fault `module_presence_read`**: `POST /v1/harness/faults` with `{"point": "module_presence_read", "project": "proj_…", "times"?}` (section 61's rules; `DELETE /v1/harness/faults` lifts it): each read of a candidate's module presence for that project fails, as a git read that fails. While a fact a scope needs is unread, the evaluation carries `ACCEPTANCE_SCOPE_INCOMPLETE` naming `module_presence` and nothing is recorded as the presence; once the read succeeds it is recorded, and the next evaluation no longer names it. Not pinned: when, between the failure and the next evaluation, the engine reads again.
+- **A nomination that cannot read its facts** (D3 §2.5, "When registration happens"): when the nomination's required sets need the candidate's module presence and it was not read, the finalizer registers nothing and records **`candidates.checks_due`** = `{"trigger": {"source": "nomination", "id": <candidate id>, "generation": 1}, "at"}` (section 180's trigger). While it is set, each check of the due registration (each required check of the candidate's stage and Alpha sets that the tests can name without the fact: their acceptance and smoke checks) is `missing` at every evaluation, whatever results are recorded, and its gate entry's `due` (section 183) is the `checks_due` value. Not pinned: the entry of a check whose membership depends on the unread fact; when the registration is made once the fact is read.
+- **Cadence** (D3 §4.1; B04; Q10 (a)). A `stage_build` item's integration nominates by engine cadence (`nominated_by` `engine_cadence`, section 42) when its stage scope's tier is T2 or T3, whatever the project's tier and whether its Builder asked. A `fix` item naming a finding nominates by engine cadence when the highest of the project's tier and the tiers of the modules present at its integration's revision is T2 or T3. The T1 rules of section 42 hold otherwise.
+
+## 225. One scope rule: registration, scope, sign-offs, the content hash and previews
+
+(D3 §4.2, "one rule, every consumer"; D1 §3.4, A.3; B04; T12; AD §8.3; sections 70, 76, 77, 180; row M232.)
+
+- **The acceptance content hash** of a candidate is D1 A.3's: over the source revision, the protected fingerprint, the delivered requirement ids, the required check ids and the sensitivity categories, computed with D3 §4.2's rules, and the same in each of the candidate's scopes: it excludes the gate kind (D1 A.3) †, so its required checks and categories are those of the union of the candidate's stage scopes and its deployment scope. A change that leaves that union's required set and categories as they were (a nonsensitive criteria change) keeps the hash (AD §8.3); a change to either changes it.
+- **Check registration** derives from the same rule: the operator route's "required checks of the candidate" (section 180) is the union of section 221's sets, so a key enters it exactly when it enters a scope, and is refused **400** `invalid_value` before.
+- **Sign-offs** count only with the scope's hash (section 70): a change of the hash makes an earlier sign-off not count, and the gate carries `SIGNOFF_MISSING`.
+- **Previews**: a decision whose manifest binds `acceptance_content_hash` (`finding_disposition`, `severity_lower`, `finding_applicability_exclusion`; section 77) is stale once the hash changes (section 76), and its next generation binds the new hash; while the hash is kept the preview is not stale and its answer is accepted.
+- **The instruments** (one input at a time, on one candidate): a requirement's areas or criteria by a later plan fixture call with the whole index (section 219); a module's tier, or its presence, by a later plan fixture call naming it (section 222), the presence through new `paths` that take in a file of the revision †.
+
+## 226. The accepted fixtures under L3 and B04 (the slice-20 straddle)
+
+(D3 §§1.3, 4.2 to 4.5; L3, B04; M3 plan §4.3 and question 3 (a); E92 item 3; AD §8.3; BS3 §9, "Known straddles".)
+
+From slice 20 a scope the M1 and M2 fixtures made is incomplete: their requirements have no criterion (uncertain), their checks name requirements and no criterion, and they lack the kind inventory. The shared fixtures are updated so the accepted rows keep their meaning; no assertion is weakened, and the former scope is pinned as refused (M229 (d), M230 (d)).
+
+**The checks fixture** (section 67) takes, per check:
+- **`criteria`**: criterion keys of the registered index; the check covers them, and the requirements it covers are those of its criteria (D3 §1.3). An unknown criterion is **400** `invalid_value`, `subject.field` `checks[<i>].criteria`.
+- **`origin`**: `acceptance` (default) or `developer`.
+- `requirements` stays accepted, its section-67 meaning unchanged for membership, and **covers no criterion** (M229 (d)). The tests no longer send it, except M229 (d).
+- The fixture does not apply D3 §1.3's rule that a check of kind `acceptance`, `integration`, `property` or `failure_recovery` names a criterion: a fixture check of those kinds may cover none † (the harness's inventory checks below; M43's).
+
+**The shared helpers** (`harness/gates.mjs`):
+- `installGatedPlan` (and so `nominated`) registers a requirement index when every requirement key is `R<n>`: the whole index as it then stands, each new requirement with the one criterion `R<n>.1` and no area, earlier ones as registered. `index: false` sends none (the M1 form).
+- `check(key, {requirements: ['R1']})` sends `criteria: ['R1.1']`, never `requirements`.
+- `installChecks` declares, beside a row's checks, one check for each kind the project's tier requires (section 221) that neither the effective version nor the row's checks provide at a gate kind the row's checks list: required, acceptance-origin, no criterion, no tier floor, keyed `kind-<kind>` (both gate kinds) or `kind-<kind>-<gate kind>`. `inventory: false` declares none.
+- The first time a row records a result for a candidate (`postResult`, `passAll`) or evaluates one of its gates (`evaluate`), the harness records a passing fixture result of each `kind-` check of the effective version for that candidate that has no passing, uninvalidated one (`ensureInventory`). `passAll` returns the row's own results only. A row that reads `check_states` or the required set whole adds the inventory (`passedInventory`, `inventoryIds`).
+
+**Rows changed** (each listed in `../COVERAGE.md`, "M3 slice 20"): M01's journey (both files, through `harness/journey.mjs`), M38 (its keys A to Z become R1 to R5, and the uncovered requirement is named by its criterion), M41, M43 (its stage lists its two modules, so T3 still asks a module sign-off of each), M51, M70, M106, M125 (sandbox: a check's line names the requirements of its criteria; the schema's enum is the version's keys, the inventory's among them), M218 (e) (an acceptance check of R1.1 beside the smoke check), M222 (sandbox: the same), and the M2 real-lane project (`harness/real/journey.mjs`: both paths declare `smoke`, `integration` and `security_lint` checks under plain keys, so the real roles' packages list checks a person would name; not run, E92 item 3). Every other row that uses these helpers is unchanged in its file.
+
+## 227. Names the Verifier fixed in this pass, what it changes in earlier sections, what is deferred
+
+**What this pass changes in earlier sections.**
+- Section 67: the plan fixture's modules take `tier_override` and its stages `modules`; a later call redefines a module (section 222); the checks fixture takes `criteria` and `origin`, and `requirements` covers no criterion (section 226).
+- Section 70: "An incomplete scope" is D3 §4.3 (section 221); the required set is D3 §4.2's at the scope's tier; sign-offs per the scope's tier and modules (section 222); the content hash is section 225's.
+- Section 42: cadence by the scope tier (section 224).
+- Section 61's faults gain `module_presence_read` (section 224).
+- Section 179: the form of the index's refusal (section 223).
+- Section 183: `due` is pinned (section 224).
+
+| What | Fixed as | Why this choice |
+|---|---|---|
+| Subjects of an incomplete scope † | Criterion key; requirement id (uncertain); `kind:<kind>`; `area:<name>`; definition path; `module_presence` (section 221) | D3 §4.3 gives `kind:` and `area:`; the rest are the plainest names of what is missing |
+| A developer definition naming criteria † | `covers_not_allowed` (section 221) | D3 §1.3: a developer check covers nothing; the A.2 code for a `covers` a definition may not have |
+| `tier_floor` as a waiver † | A T2 scope with integration floored at T3 (section 221) | At T3 no floor can omit a check |
+| Modules and stage modules on the plan fixture | `tier_override`, `stages[].modules`, redefinition (section 222) | D3 §4.1 needs a module's tier and a stage's modules; architecture approval is not built |
+| `required_signoffs`' module † | By name (section 222) | Section 68's sign-off names a module by name |
+| The index's refusal | `subject.row`, `subject.text` (section 223) | Section 179 left it here; as the slice-15 parser answers |
+| Presence and its fault | `module_presence {modules, read_at}`; fault `module_presence_read` (section 224) | D3 A.3; the plan's "an unreadable presence fact" needs an instrument |
+| A nomination owing registration | `checks_due {trigger, at}`, entries' `due` (section 224) | D3 §2.5; section 183 named `due` for this |
+| The content hash across scopes † | One per candidate, over the union of its scopes (section 225) | D1 A.3: the hash excludes the gate kind so one sign-off serves both gates |
+| A module's presence changed on one candidate † | Its `paths` redefined (section 225) | Presence at a fixed revision changes only with the module's definition; across candidates the hash changes with the revision anyway |
+| The shared fixture's inventory | `kind-*` checks declared and passed by the harness (section 226) | One shared change instead of one per row; the rows' own checks decide what they decided |
+| Fixture checks of criterion kinds with no criterion † | Allowed in the fixture (section 226) | The fixture is the harness's stand-in; discovery applies D3 §1.3 |
+
+**Deferred or not written** (`../COVERAGE.md`, "M3 slice 20"):
+- **The `phase` scope** of D3 §4.2: refused `unsupported` (section 70) until its milestone.
+- **A floor check naming no category of the scope**: whether it is required is not pinned (section 221).
+- **The real-lane project** is changed and not run (E92 item 3); the driver checks it at slice 22.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 19".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 20".

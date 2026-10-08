@@ -41,7 +41,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { authorizationsOf, evaluationsOf, finding, reasonCodes, reasonSubjects, sharedFixture, signoffsOf } from './harness/gates.mjs';
+import { authorizationsOf, evaluationsOf, finding, passedInventory, reasonCodes, reasonSubjects, sharedFixture, signoffsOf } from './harness/gates.mjs';
 import { PERMITTED_EDIT } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { assertCommitted, assertOperations, candidatesOf, eventsOfType, lineagesOf, workItemsOf } from './harness/journal.mjs';
@@ -97,10 +97,10 @@ describe('M01 the kernel journey: a T2 project from its creation to an issued Al
     const { fx, candidate, checks, stage, unproven, stageEvaluation } = J;
     assert.deepEqual(
       [unproven.evaluation.outcome, reasonCodes(unproven.evaluation), unproven.evaluation.check_states, unproven.work, unproven.reviews],
-      ['not_satisfied', ['CHECK_NOT_PASSED', 'SIGNOFF_MISSING'], { [checks.login]: 'missing' }, 'verifying', 0],
+      ['not_satisfied', ['CHECK_NOT_PASSED', 'SIGNOFF_MISSING'], { ...passedInventory(checks), [checks.login]: 'missing' }, 'verifying', 0],
       "built and verified, with no execution of the check on record: the gate is not satisfied, the stage's work is not complete, and no review has been queued, so the sign-off is missing too",
     );
-    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `with a passing execution recorded, and the sign-off of the review that execution let the engine queue, the gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
+    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { ...passedInventory(checks), [checks.login]: 'passed' }], `with a passing execution recorded, and the sign-off of the review that execution let the engine queue, the gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
     assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, stage.work_item)), WORK.kinds.stage_build.path, "and the stage's work is complete");
     assert.deepEqual(
       signoffsOf(fx.home, candidate.id).map((row) => [row.role, row.scope, row.revision, row.run]),
@@ -112,7 +112,7 @@ describe('M01 the kernel journey: a T2 project from its creation to an issued Al
   test('the Alpha-authorization gate is satisfied from the same evidence and issues the authorization proposed for the test target', () => {
     const { fx, candidate, checks, alpha, alphaEvaluation } = J;
     assert.equal(alpha.authorization.status, 'proposed', 'the authorization was recorded first, as proposed');
-    assert.deepEqual([alphaEvaluation.outcome, alphaEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `the gate is satisfied (reasons: ${reasonCodes(alphaEvaluation).join(', ')})`);
+    assert.deepEqual([alphaEvaluation.outcome, alphaEvaluation.check_states], ['satisfied', { ...passedInventory(checks), [checks.login]: 'passed' }], `the gate is satisfied (reasons: ${reasonCodes(alphaEvaluation).join(', ')})`);
     assert.deepEqual(
       authorizationsOf(fx.home, candidate.id).map((row) => [row.id, row.status, row.environment, row.evaluation]),
       [[alpha.authorization.id, 'issued', alpha.environment, alphaEvaluation.id]],
@@ -226,10 +226,10 @@ describe("M01 the kernel journey, second path: a finding, the fix the engine reg
     const { fx, first, second, finding: found, checks, stage, blocked, stageEvaluation, alpha, alphaEvaluation } = F;
     assert.deepEqual([blocked.outcome, reasonCodes(blocked), reasonSubjects(blocked, 'FINDING_BLOCKING')], ['not_satisfied', ['FINDING_BLOCKING', 'SIGNOFF_MISSING'], [found.id]], 'with the check passed on the first candidate, the Critical finding blocks its stage gate, and the sign-off the Reviewer withheld is missing');
     assert.deepEqual(evaluationsOf(fx.home, first.id, 'stage').filter((row) => row.outcome === 'satisfied'), [], "no evaluation of the first candidate's stage gate was ever satisfied");
-    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `on the fix's candidate the stage gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
+    assert.deepEqual([stageEvaluation.outcome, stageEvaluation.check_states], ['satisfied', { ...passedInventory(checks), [checks.login]: 'passed' }], `on the fix's candidate the stage gate is satisfied (reasons: ${reasonCodes(stageEvaluation).join(', ')})`);
     assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, stage.work_item)), WORK.kinds.stage_build.path, "and the stage's work is complete: the fix's candidate holds it by ancestry (SEAM.md §74)");
     assert.deepEqual(signoffsOf(fx.home, second.id).map((row) => [row.role, row.scope, row.revision]), [['reviewer', 'candidate', second.revision]], "the sign-off T2 requires is on the fix's candidate, from the review the engine queued for it");
-    assert.deepEqual([alphaEvaluation.outcome, alphaEvaluation.check_states], ['satisfied', { [checks.login]: 'passed' }], `the Alpha-authorization gate is satisfied on it (reasons: ${reasonCodes(alphaEvaluation).join(', ')})`);
+    assert.deepEqual([alphaEvaluation.outcome, alphaEvaluation.check_states], ['satisfied', { ...passedInventory(checks), [checks.login]: 'passed' }], `the Alpha-authorization gate is satisfied on it (reasons: ${reasonCodes(alphaEvaluation).join(', ')})`);
     assert.deepEqual(authorizationsOf(fx.home, second.id).map((row) => [row.id, row.status, row.evaluation]), [[alpha.authorization.id, 'issued', alphaEvaluation.id]], 'and the one authorization proposed for it is issued by that evaluation');
     assert.deepEqual([authorizationsOf(fx.home, first.id), eventsOfType(fx.home, 'authorization.issued').length], [[], 1], 'the first candidate has none; one authorization was issued in all');
     assert.deepEqual(fx.scripted.launches().map((launch) => launch.role), ['builder', 'verifier', 'reviewer', 'builder', 'verifier', 'reviewer'], 'the six roles of the two rounds are the only processes the engine launched');

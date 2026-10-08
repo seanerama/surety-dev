@@ -59,7 +59,7 @@ import { after, describe, test } from 'node:test';
 import { armFault, clearFaults, isRefusalBody, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { assertRefused, eventsSince, maxEventSeq } from './harness/fixtures.mjs';
 import { assertPreview, consume, decision, openDecision, reachBarrier } from './harness/decisions.mjs';
-import { addEnvironment, check, evaluationsOf, installChecks, nominated, postResult, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
+import { addEnvironment, check, evaluationsOf, installChecks, nominated, passedInventory, postResult, scopeOf, sharedFixture, stageGate } from './harness/gates.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { armBarrier, changePolicy, journalBarrier, operationDetails, outOfBand, registryOf, workItemsOf } from './harness/journal.mjs';
 import { awayFromMidnight, getLedger } from './harness/ledger.mjs';
@@ -412,7 +412,7 @@ describe('M70 the gate read', () => {
     const first = await stageGate(fx, ctx);
     assert.deepEqual(
       [first.outcome, first.reasons, first.check_states],
-      ['not_satisfied', [{ code: 'CHECK_NOT_PASSED', subjects: [k.login] }], { [k.login]: 'missing' }],
+      ['not_satisfied', [{ code: 'CHECK_NOT_PASSED', subjects: [k.login] }], { ...passedInventory(k), [k.login]: 'missing' }],
       'the fixture is live: the evaluation is not satisfied, for the check that was never executed',
     );
     assert.equal(recorded().length, 1);

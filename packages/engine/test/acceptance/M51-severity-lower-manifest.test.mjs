@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { assertQuestionClosed, assertStaleAnswer, consume, decisionsOn, nextGeneration, openDecision, reject } from './harness/decisions.mjs';
-import { acceptedRun, assessmentsOf, check, finding, findingState, installChecks, nominated, passAll, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
+import { acceptedRun, assessmentsOf, check, finding, findingState, installChecks, nominated, passAll, passedInventory, postResult, raiseFindings, review, stageGate } from './harness/gates.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -50,7 +50,7 @@ describe('M51 the severity_lower manifest', () => {
   test("a Reviewer's lowering of High to Medium changes nothing until the human owner approves it; the approval lowers the severity and changes no check state", async (t) => {
     const { fx, project, k, found, lower, checkStates } = await findingOf(t, 'high');
     const before = await checkStates();
-    assert.deepEqual(before, { [k.login]: 'passed', [k.import]: 'failed' }, 'the fixture is live');
+    assert.deepEqual(before, { ...passedInventory(k), [k.login]: 'passed', [k.import]: 'failed' }, 'the fixture is live (beside the inventory of the tier, passed: M3 slice 20, SEAM.md §226)');
     await lower('medium');
     assert.equal(finding(fx.home, found.id).effective_severity, 'high', 'out of the blocking range a Reviewer lowers nothing');
 

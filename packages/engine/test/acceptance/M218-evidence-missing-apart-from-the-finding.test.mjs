@@ -20,23 +20,37 @@ import { rmSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 import { alphaTarget, findingsOf, reasonSubjects, stageGate } from './harness/gates.mjs';
+import { permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
-import { GOVERNED_FILE, KERNEL_COMMANDS, buildStage, checkProject, defPath, executionsOf, governedText, resultRow, smoke } from './harness/checks/fixtures.mjs';
+import { scriptedEngine, tickUntil } from './harness/runs.mjs';
+import { GOVERNED_FILE, KERNEL_COMMANDS, acceptance, checkProject, defPath, executionsOf, governedText, installIndexedPlan, resultRow, smoke } from './harness/checks/fixtures.mjs';
 import { recordExit } from './harness/checks/selection.mjs';
 
 describe('M218 (e) evidence missing, apart from the finding', () => {
   test('a result whose output record was removed after recording is EVIDENCE_MISSING on every evaluation that selects it, with no finding in the project', async (t) => {
     const fx = await scriptedEngine(t);
-    // A stage that implements no requirement, so that its one smoke check is
-    // all its scope needs (a requirement with no covering acceptance check
-    // would make the scope incomplete).
-    const p = await checkProject(fx, { files: { [GOVERNED_FILE]: governedText({ check_commands: KERNEL_COMMANDS }), [defPath('sm')]: smoke('sm') }, tier: 'T1' });
-    const { stage, candidate: c } = await buildStage(fx, p);
+    // M3 slice 20 (L3, B04; SEAM.md §226): a T1 scope is complete with its
+    // requirement's one criterion covered by an acceptance check and the
+    // smoke check beside it; the stage implements R1. Both are recorded with
+    // output; the smoke check's record is the one removed.
+    const p = await checkProject(fx, {
+      files: { [GOVERNED_FILE]: governedText({ check_commands: KERNEL_COMMANDS }), [defPath('sm')]: smoke('sm'), [defPath('acc')]: acceptance('acc', ['R1.1']) },
+      tier: 'T1',
+    });
+    const plan = await installIndexedPlan(fx.engine, p.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+    fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()], { nominate: true })]);
+    await runToEnd(fx, p.id, plan.stages[0].work_item);
+    const [c] = await waitForCandidates(fx, p.id);
+    const stage = plan.stages[0].id;
     const ctx = { project: p, stage, candidate: c };
-    const [x] = executionsOf(fx.home, c.id).filter((e) => e.key === 'sm');
-    assert.ok(x, 'the nomination registered the check');
+    const registered = await tickUntil(fx.engine, p.id, () => {
+      const rows = executionsOf(fx.home, c.id);
+      return ['sm', 'acc'].every((key) => rows.some((e) => e.key === key)) ? rows : undefined;
+    }, { max: 6, what: 'the nomination to register both checks' });
+    const [x] = registered.filter((e) => e.key === 'sm');
+    const [y] = registered.filter((e) => e.key === 'acc');
     const recorded = await recordExit(fx.engine, x.id, 0, { output: 'the check passed with output\n' });
+    await recordExit(fx.engine, y.id, 0, { output: 'the acceptance check passed\n' });
     const result = resultRow(fx.home, recorded.id);
     assert.ok(result.output, 'the result names its output record');
 
