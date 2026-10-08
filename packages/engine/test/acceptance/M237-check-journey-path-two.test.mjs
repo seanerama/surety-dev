@@ -38,7 +38,8 @@ import { consume, openDecision } from './harness/decisions.mjs';
 import { alphaTarget, authorizationsOf, reasonSubjects, sharedFixture, stageGate } from './harness/gates.mjs';
 import { PERMITTED_EDIT, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType, workItemsOf } from './harness/journal.mjs';
-import { addWork, runsOf, tickUntil } from './harness/runs.mjs';
+import { addWork, pauseProject, resumeProject, runsOf, tickUntil } from './harness/runs.mjs';
+import { registerDetector, waitForPostScan } from './harness/records.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -207,5 +208,64 @@ describe('M237 the check journey, path two', () => {
       assert.equal(r.runner_qualification, J.hostQualification, `result ${r.id} is bound to the host qualification at launch`);
     }
     assert.deepEqual(eventsOfType(J.fx.home, 'check.result').filter((e) => e.payload?.test_fixture === true), [], 'no check result came from a fixture');
+  });
+});
+
+// The slice-21 review's leak (the quarantined record): a failed repair
+// check's output record that a detector flags after it was written
+// (post_scan 'hit', M64's later detector) is served by no route (E42 item 1),
+// so it never reaches a role's sandbox. The project is paused once the first
+// candidate exists, so no run is dispatched while the check runs (checks run
+// while a project is paused; only runs wait), the repair is taken, and the
+// detector flags the record; then the repair run is let through and dumps
+// its package.
+const FLAG = 'M237-FLAGGED-5e1c9a';
+
+describe('M237 a flagged check output never reaches the repair package', () => {
+  test("the failed check's output record, flagged by a later detector before the repair run is dispatched: not copied into the Builder's repair package, treated as missing, no line of it in the package", async (t) => {
+    const fx = await sandboxEngine(t);
+    const prog = installCheckProgram(fx.root);
+    const files = {
+      [GOVERNED_FILE]: sandboxGoverned(prog),
+      [EXPECT]: PERMITTED_EDIT.content,
+      [defPath('accept')]: acceptance('accept', ['R1.1'], { command: ['probe', '--say', FLAG, 'expect', PERMITTED_EDIT.path, EXPECT], inputs: [EXPECT], timeout: 300 }),
+      [defPath('smoke')]: smoke('smoke', { command: ['probe', 'exit', '0'], inputs: [EXPECT], timeout: 300 }),
+    };
+    const project = await checkProject(fx, { files, tier: 'T1' });
+    await qualifyRunnerByFixture(fx.engine);
+    const plan = await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+    const item = plan.stages[0].work_item;
+    fx.scripted.script(item, [roleThat([step.write(PERMITTED_EDIT.path, BROKEN)], { nominate: true }), roleThat([step.probe('context_dump'), step.write(PERMITTED_EDIT.path, PERMITTED_EDIT.content)])]);
+    const first = await ended(fx, project.id, item, 0, "the stage's first Builder run");
+    assert.deepEqual([first.outcome, first.reason_class], ['completed', 'none'], `the first Builder run was accepted (${first.reason_text})`);
+    const [c1] = await waitForCandidates(fx, project.id);
+    await pauseProject(fx.engine, project.id);
+    assert.equal(runsOf(fx.home, item).length, 1, 'the fixture is live: no repair run was dispatched before the pause');
+
+    const recorded = await waitRecorded(fx, project.id, c1.id, KEYS, { what: "the first candidate's checks to be recorded" });
+    const failed = resultRow(fx.home, recorded.accept.result);
+    assert.deepEqual([failed.execution_established, failed.exit_status], [1, 1], 'the fixture is live: the acceptance check ran and exited 1');
+    const text = outputText(fx.home, failed);
+    assert.ok(text.includes(FLAG) && /differs from/.test(text), `the fixture is live: its output record holds what it wrote (${JSON.stringify(text)})`);
+    const row = itemRow(fx.home, item);
+    assert.deepEqual([row.status, row.repair_attempts, runsOf(fx.home, item).length], ['eligible', 1, 1], 'the fixture is live: the repair is taken, its run not yet dispatched');
+
+    await registerDetector(fx.engine, 'm237-flag', FLAG);
+    await waitForPostScan(fx.home, failed.output, 'hit');
+
+    await resumeProject(fx.engine, project.id);
+    await ended(fx, project.id, item, 1, "the stage's repair run");
+    const { manifest, files: dumped } = packageOf(fx, item, 1, 'the repair run');
+    const lines = text.split('\n').filter((l) => l.length > 0);
+    for (const f of dumped) {
+      const body = f.text ?? '';
+      for (const line of lines) assert.ok(!body.includes(line), `no package file holds a line of the flagged record: ${f.name} holds ${JSON.stringify(line)}`);
+    }
+    // Treated as missing: the run is still told the check failed (one check_output entry naming the record, SEAM.md §229),
+    // as for a record whose bytes are gone, but the file holds none of it.
+    const entries = manifest.files.filter((e) => e.kind === 'check_output');
+    assert.deepEqual(entries.map((e) => e.source), [failed.output], `the package names the failed check's output record once (manifest ${JSON.stringify(manifest.files)})`);
+    const body = dumped.find((f) => f.name === entries[0].path)?.text ?? '';
+    assert.ok(!body.includes(FLAG), `the check_output file does not hold the flagged record (${JSON.stringify(body.slice(0, 200))})`);
   });
 });
