@@ -39,15 +39,16 @@
 // established", which fails the step and halts the run directory, never a
 // verdict on the engine (E59 item 3).
 
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 
 import { alphaTarget, effectiveVersion, findingsOf, installGatedPlan, proposalsOf, stageGate } from '../gates.mjs';
 import { changePolicy, createProject, workItemsOf } from '../journal.mjs';
 import { makeProjectRepo, refOid } from '../repos.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, workItem } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { domainOfExecution, executionsOf, governedText, nodeReadPaths, resultRow, resultsOfProject, versionRead } from '../checks/fixtures.mjs';
+import { domainOfExecution, executionsOf, governedText, resultRow, resultsOfProject, versionRead } from '../checks/fixtures.mjs';
 import { activeQualification, selfTestArgs, SELF_TEST_CASES } from '../checks/execution.mjs';
 import { findingRow } from '../checks/repair.mjs';
 import { realPolicy } from './attempt.mjs';
@@ -87,13 +88,32 @@ export const M239 = Object.freeze({
   defectCriterion: 'R2.1',
 });
 
-// The governed file: one program, the engine's own node (its installation
-// named in read_paths), and no definition yet. A program is a person's
-// decision (D3 §3.1): the Verifier is to write definitions that run it.
-export const M239_GOVERNED = () => ({
+// The checks' toolchain: a copy of the engine's node binary, alone in a
+// directory of its own under `dir` (the run directory), its hash pinned. Only
+// that directory is a read path, and the check's PATH is D3's default system
+// directories: a check the real Verifier writes runs `node` and reaches no
+// other program of Sean's node installation (its npm, its global CLIs) and
+// nothing else of his home (the slice-22 review, minor 3; SEAM.md §237).
+// Node needs nothing beside its binary to run a script; the system libraries
+// it links are in the profile's read-only system directories.
+export function m239Toolchain(dir) {
+  const toolchain = join(dir, 'toolchain');
+  mkdirSync(toolchain, { recursive: true, mode: 0o755 });
+  const node = join(toolchain, 'node');
+  if (!existsSync(node)) {
+    copyFileSync(process.execPath, node);
+    chmodSync(node, 0o755);
+  }
+  return { dir: toolchain, node, sha256: createHash('sha256').update(readFileSync(node)).digest('hex') };
+}
+
+// The governed file: one program, `node`, the pinned copy above, and no
+// definition yet. A program is a person's decision (D3 §3.1): the Verifier is
+// to write definitions that run it.
+export const M239_GOVERNED = (toolchain) => ({
   protected_paths: ['.surety/checks/'],
-  check_commands: { node: { path: process.execPath } },
-  runner_config: { direct: { read_paths: [...nodeReadPaths()], path: [dirname(process.execPath), '/usr/bin', '/bin'], timeout_max_s: 600 } },
+  check_commands: { node: { path: toolchain.node, sha256: toolchain.sha256 } },
+  runner_config: { direct: { read_paths: [toolchain.dir], path: ['/usr/bin', '/bin'], timeout_max_s: 600 } },
 });
 
 const notEstablished = (path, what, detail) => {
@@ -101,6 +121,66 @@ const notEstablished = (path, what, detail) => {
 };
 
 const SELF_TEST = selfTestArgs();
+
+// ---- what an earlier attempt left (the slice-22 review, S1) -----------------------------
+//
+// A path that ends "not established" leaves its project paused (each path's
+// `finally`), so a later engine on the same home dispatches nothing of it. A
+// rerun checks the store before it starts an engine, and before it resumes a
+// project, that no earlier work could be dispatched: an eligible item not
+// held, within the project's chain limit (an item past the chain boundary
+// waits for a person's `continue`), or a run not ended. It refuses otherwise,
+// before anything is started or resumed.
+
+const CONTRACT_CONFIG = JSON.parse(readFileSync(new URL('../../contract/config.json', import.meta.url), 'utf8'));
+function contractDefault(key) {
+  const walk = (o) => {
+    if (!o || typeof o !== 'object') return undefined;
+    if (o[key] && typeof o[key] === 'object' && 'default' in o[key]) return o[key].default;
+    for (const v of Object.values(o)) {
+      const found = walk(v);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  return walk(CONTRACT_CONFIG);
+}
+
+// For each project of `ids` (default: every project of M239 in the home):
+// whether it is paused, its dispatchable items and its live runs.
+export function leftovers(home, ids = null) {
+  if (!exists(join(home, 'store.db'))) return [];
+  return withStore(home, (db) => {
+    const projects = ids === null ? db.prepare('SELECT "id" FROM "projects" WHERE "name" LIKE ?').all(`${M239.name}%`).map((r) => r.id) : ids;
+    return projects.map((project) => {
+      const p = db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(project);
+      const policy = db.prepare('SELECT r."effective" FROM "projects" p JOIN "policy_revisions" r ON r."id" = p."policy_revision" WHERE p."id" = ?').get(project);
+      const recorded = policy ? JSON.parse(policy.effective).max_chained_roles : undefined;
+      const maxChained = Number.isInteger(recorded) ? recorded : contractDefault('max_chained_roles');
+      const dispatchable = db
+        .prepare(`SELECT "id", "kind", "status", "chain", "dispatch_hold" FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`)
+        .all(project)
+        .filter((w) => w.dispatch_hold !== 1 && !(w.chain + 1 > maxChained));
+      const live = db.prepare(`SELECT "id", "role", "state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`).all(project);
+      return { project, paused: p?.paused === 1, dispatchable, live };
+    });
+  });
+}
+
+function refuseLeftovers(path, found, { evenIfPaused }) {
+  const bad = found.filter((f) => f.live.length > 0 || (f.dispatchable.length > 0 && (evenIfPaused || !f.paused)));
+  if (bad.length === 0) return;
+  throw new Error(
+    `${path} refused: work of an earlier attempt could be dispatched (${JSON.stringify(bad).slice(0, 900)}). Nothing was started or resumed. ` +
+      'Settle it first (cancel it as its owner, or let it end), or start a new run directory.',
+  );
+}
+
+// Pause the project before the engine stops, whatever happened (S1).
+async function pauseQuietly(fx, project) {
+  if (!project) return;
+  await pauseProject(fx.engine, project).catch(() => null);
+}
 
 // The host qualification active before an engine starts on the home, which
 // this start's self-test is not (every start qualifies the host again).
@@ -197,9 +277,12 @@ const runSummary = (home, run) => ({ id: run.id, role: run.role, work_item: run.
 export async function checksPathOne(ctx) {
   return realStep(ctx, 'm3_path_one', async () => {
     const path = 'M239 path one';
+    // Every earlier attempt's project is paused, or has nothing to dispatch, before an engine starts on the home.
+    refuseLeftovers(path, leftovers(join(ctx.runDir, 'home')), { evenIfPaused: false });
     const prior = priorQualification(ctx);
     const fx = await journeyEngine(ctx, 'home', { extra: SELF_TEST });
     fx.priorQualification = prior;
+    let project = null;
     try {
       const qualification = await selfTested(fx, path);
 
@@ -207,9 +290,10 @@ export async function checksPathOne(ctx) {
       let dir = join(ctx.runDir, 'repos', M239.name);
       for (let n = 2; existsSync(dir); n++) dir = join(ctx.runDir, 'repos', `${M239.name}-${n}`);
       mkdirSync(join(ctx.runDir, 'repos'), { recursive: true, mode: 0o700 });
-      const repo = makeProjectRepo(dir, { files: { '.surety/checks/protected-policy.json': governedText(M239_GOVERNED()), [SEEDED_DEFECT_M3.path]: SEEDED_DEFECT_M3.content } });
+      const toolchain = m239Toolchain(ctx.runDir);
+      const repo = makeProjectRepo(dir, { files: { '.surety/checks/protected-policy.json': governedText(M239_GOVERNED(toolchain)), [SEEDED_DEFECT_M3.path]: SEEDED_DEFECT_M3.content } });
       const base = refOid(repo.path, repo.ref);
-      const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: M239.name, tier: M239.tier });
+      ({ id: project } = await createProject(fx.engine, { repoPath: repo.path, name: M239.name, tier: M239.tier }));
       await changePolicy(fx.engine, project, { ...realPolicy(REAL.dayVerifiedUsd.pathOne), backend_builder: REAL.backend, backend_verifier: REAL.backend, backend_reviewer: REAL.backend });
       const journeyBase = refOid(repo.path, repo.ref);
       const initial = await versionRead(fx.engine, project, effectiveVersion(fx.home, project).id);
@@ -268,7 +352,7 @@ export async function checksPathOne(ctx) {
           const candidate = await nthCandidate(fx, project, round + 1);
           const settled = await waitSettled(fx, project, candidate.id, `the checks of ${candidate.id}`);
           evaluated = await gatesOn(fx, project, candidate, stage.id);
-          rounds.push({ build: runSummary(fx.home, build), candidate: candidate.id, executions: settled.map((x) => executionFacts(fx.home, x)), stage_gate: summary(evaluated.stage), alpha_gate: summary(evaluated.alpha), authorization: evaluated.authorization });
+          rounds.push({ build: runSummary(fx.home, build), candidate: candidate.id, executions: settled.map((x) => executionFacts(fx.home, x)), all_executions: executionsOf(fx.home, candidate.id).map((x) => executionFacts(fx.home, x)), stage_gate: summary(evaluated.stage), alpha_gate: summary(evaluated.alpha), authorization: evaluated.authorization });
           if (evaluated.stage.outcome === 'satisfied' && evaluated.alpha.outcome === 'satisfied') break;
           const item = workItem(fx.home, stage.work_item);
           if (item.status !== 'eligible' && item.status !== 'executing') break; // not sent back for a repair: nothing more to wait for
@@ -299,6 +383,7 @@ export async function checksPathOne(ctx) {
       if (out.stage_gate !== 'satisfied' || out.alpha_gate !== 'satisfied') notEstablished(path, 'a gate is not satisfied on the last candidate', { stage: last.stage_gate, alpha: last.alpha_gate });
       return out;
     } finally {
+      await pauseQuietly(fx, project);
       await fx.engine.stop();
     }
   });
@@ -311,15 +396,22 @@ export async function checksPathTwo(ctx) {
     const path = 'M239 path two';
     const one = stepValue(ctx, 'm3_path_one');
     const project = one.project;
+    const home = join(ctx.runDir, 'home');
+    // Path one (or an earlier try of path two) left the project paused; nothing of it may start with the engine.
+    refuseLeftovers(path, leftovers(home, [project]), { evenIfPaused: false });
     const prior = priorQualification(ctx);
     const fx = await journeyEngine(ctx, 'home', { extra: SELF_TEST });
     fx.priorQualification = prior;
     try {
       const qualification = await selfTested(fx, path);
+      await pauseProject(fx.engine, project).catch(() => null);
       await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
       const before = candidates(fx.home, project).length;
+      // Before the project is resumed: nothing an earlier try left may be dispatched with this one's stage.
+      refuseLeftovers(path, leftovers(fx.home, [project]), { evenIfPaused: true });
       const plan = await installGatedPlan(fx.engine, project, { requirements: M239.requirements, constraints: M239.constraints, stages: [M239.stageTwo] });
       const stage = plan.stages[0];
+      await resumeProject(fx.engine, project);
       const build = await runEnds(fx, project, stage.work_item);
       if (build.outcome !== 'completed') notEstablished(path, `the stage's Builder run ended ${build.outcome}/${build.reason_class}`, build.reason_text);
       const first = await nthCandidate(fx, project, before + 1);
@@ -361,6 +453,7 @@ export async function checksPathTwo(ctx) {
         candidates: [first.id, fixCandidate.id],
         first_executions: firstSettled.map((x) => executionFacts(fx.home, x)),
         fix_executions: fixSettled.map((x) => executionFacts(fx.home, x)),
+        all_executions: [first.id, fixCandidate.id].flatMap((c) => executionsOf(fx.home, c).map((x) => executionFacts(fx.home, x))),
         finding: { id: found.id, criterion: found.criterion, check: found.check, severity: found.severity, message: found.message, disposition: dispositioned.disposition, disposition_seq: dispositioned.disposition_seq },
         named_check: named ? checkFacts(named) : null,
         blocked_on_first: { stage: summary(blockedOnFirst.stage), alpha: summary(blockedOnFirst.alpha) },
@@ -378,6 +471,7 @@ export async function checksPathTwo(ctx) {
       if (resolved.status !== 'resolved') notEstablished(path, 'the finding was not resolved on the fix\'s candidate', out.resolved);
       return out;
     } finally {
+      await pauseQuietly(fx, project);
       await fx.engine.stop();
     }
   });

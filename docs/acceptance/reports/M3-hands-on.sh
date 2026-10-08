@@ -21,8 +21,11 @@
 #
 # Safety (E64; BS3 §4 rule 1): the one check that writes, the program's
 # guarded `write` mode, refuses to act unless it finds itself contained; and
-# this script releases it only after reading from the host that the
-# program is a member of its check domain's cgroup and of nothing else.
+# this script releases each held execution only after its own read from the
+# host (`read_containment`): the program a member of that execution's domain
+# cgroup, by its own /proc/<pid>/cgroup too, the domain under the engine's
+# scope. The release file exists only between that read and the execution's
+# result.
 #
 # Before running it:
 #   - from a login session of uid 1000 with the user manager running
@@ -33,7 +36,8 @@
 # Usage:
 #   bash docs/acceptance/reports/M3-hands-on.sh
 # It pauses at each check for you to look, and goes on when you press
-# enter (SURETY_HANDS_ON_NO_PAUSE=1 goes straight on). Everything it makes
+# enter (SURETY_HANDS_ON_NO_PAUSE=1 goes straight on; it still needs a
+# terminal). Everything it makes
 # is under one directory (SURETY_HANDS_ON_DIR, by default
 # ~/surety-m3-hands-on-<date>), printed at the start and KEPT at the end:
 # the engine's records are the run's evidence. KEEP=0 removes it.
@@ -60,7 +64,7 @@ pause() {
 # ---- the guards: nothing starts unless every one holds ------------------------------
 
 [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] || die "start this from a login session (XDG_RUNTIME_DIR is not set). Nothing was started."
-[ -t 0 ] || [ "${SURETY_HANDS_ON_NO_PAUSE:-}" = 1 ] || die "run this from your terminal (it pauses at each check), or set SURETY_HANDS_ON_NO_PAUSE=1. Nothing was started."
+[ -t 0 ] || die "run this from your terminal: it pauses at each check, and SURETY_HANDS_ON_NO_PAUSE=1 skips the pauses but not this. Nothing was started."
 for tool in jq curl git node systemctl; do command -v "$tool" >/dev/null || die "$tool is needed. Nothing was started."; done
 [ "$(systemctl --user is-system-running 2>/dev/null || true)" = running ] || die "the user manager is not running (systemctl --user is-system-running). Nothing was started."
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -75,7 +79,9 @@ NODE=$(readlink -f "$(command -v node)")
 
 WORK=${SURETY_HANDS_ON_DIR:-$HOME/surety-m3-hands-on-$(date -u +%Y%m%dT%H%M%SZ)}
 case $WORK in "$REPO"/*) die "SURETY_HANDS_ON_DIR must be outside the repository. Nothing was started." ;; esac
-mkdir -p "$WORK" && chmod 700 "$WORK"
+# A directory that exists already is refused, never reused or removed: KEEP=0 removes only what this run made.
+[ ! -e "$WORK" ] && [ ! -L "$WORK" ] || die "$WORK exists already; name a new SURETY_HANDS_ON_DIR. Nothing was started."
+mkdir -p "$WORK" && chmod 700 "$WORK" && MADE_WORK=1
 SURETY_HOME=$WORK/home
 SCRIPTED=$WORK/scripted
 CHECKS=$WORK/checks
@@ -100,9 +106,41 @@ record_path() { dbq "SELECT path FROM records WHERE id = '$1'" | head -1 | sed "
 tick() { S -X POST "$API/v1/projects/$1/tick" -d '{}' >/dev/null; }
 cleanup() {
   if [ -n "$ENGINE_PID" ] && kill -0 "$ENGINE_PID" 2>/dev/null; then kill -TERM "$ENGINE_PID"; wait "$ENGINE_PID" 2>/dev/null || true; fi
-  if [ "${KEEP:-1}" = 0 ]; then rm -rf "$WORK"; else echo "kept: $WORK"; fi
+  if [ "${KEEP:-1}" = 0 ] && [ -n "${MADE_WORK:-}" ]; then rm -rf "$WORK"; else echo "kept: $WORK"; fi
 }
 trap cleanup EXIT
+
+# The guard's host half (E64; BS3 §4 rule 1), read again before every release:
+# the execution's domain read from the host; the check program found among the
+# members of that domain's cgroup.procs; its own /proc/<pid>/cgroup that
+# cgroup; and the domain's cgroup under the engine's own scope (the parent of
+# the engine process's own cgroup leaf). Any read that fails, or any mismatch,
+# stops the walkthrough and releases nothing. Sets CG, PIDS and PROG_PID.
+read_containment() { # project, execution
+  local i pid engine_cg scope
+  CG=$(until_db "$1" "SELECT cgroup_path FROM execution_domains WHERE check_execution = '$2' AND cgroup_path IS NOT NULL" 60 "the domain of $2")
+  PIDS=""
+  for i in $(seq 1 30); do PIDS=$(cat "$CG/cgroup.procs" 2>/dev/null | tr '\n' ' '); [ -n "$PIDS" ] && grep -lsF "$CHECKS/program.mjs" $(printf '/proc/%s/cmdline ' $PIDS) >/dev/null && break; sleep 1; done
+  PROG_PID=""
+  for pid in $PIDS; do tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qF "$CHECKS/program.mjs" && PROG_PID=$pid; done
+  [ -n "$PROG_PID" ] || die "the check program of $2 was not found in its domain: nothing is released"
+  [ "/sys/fs/cgroup$(sed -n 's/^0:://p' "/proc/$PROG_PID/cgroup")" = "$CG" ] || die "the program's own /proc/$PROG_PID/cgroup is not the domain's: nothing is released"
+  engine_cg=/sys/fs/cgroup$(sed -n 's/^0:://p' "/proc/$ENGINE_PID/cgroup" 2>/dev/null)
+  scope=$(dirname "$engine_cg")
+  [ "$engine_cg" != /sys/fs/cgroup ] && [ "$scope" != /sys/fs/cgroup ] || die "the engine's own cgroup could not be read: nothing is released"
+  case $CG in "$scope"/*) ;; *) die "the domain's cgroup $CG is not under the engine's scope $scope: nothing is released" ;; esac
+}
+
+# Release the held program of one execution, after its own containment read,
+# and remove the release file again once that execution has its result, so
+# that no later execution finds it without a read of its own.
+release() { # project, execution
+  read_containment "$1" "$2"
+  echo "   released $2 (program pid $PROG_PID in $CG, under the engine's scope)"
+  touch "$RELEASE/go"
+  until_db "$1" "SELECT result FROM check_executions WHERE id = '$2' AND result IS NOT NULL" 120 "the result of $2" >/dev/null
+  rm -f "$RELEASE/go"
+}
 
 # Tick a project until a store query prints something (a value), at most $3 seconds.
 until_db() { # project, query, seconds, what
@@ -189,19 +227,12 @@ S "$API/v1/projects/$P/candidates/$C/checks" | jq -c '.executions[] | {id, key, 
 # ---------------------------------------------------------------------------------------
 say "3. The check 'contained' running in its own check domain, waiting for you"
 X=$(until_db "$P" "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' AND x.status = 'running' ORDER BY x.execution_seq DESC LIMIT 1" 180 "the contained check to be running")
-CG=$(until_db "$P" "SELECT cgroup_path FROM execution_domains WHERE check_execution = '$X' AND cgroup_path IS NOT NULL" 60 "its domain's cgroup")
-PIDS=""
-for i in $(seq 1 30); do PIDS=$(cat "$CG/cgroup.procs" 2>/dev/null | tr '\n' ' '); [ -n "$PIDS" ] && grep -lsF "$CHECKS/program.mjs" $(printf '/proc/%s/cmdline ' $PIDS) >/dev/null && break; sleep 1; done
+read_containment "$P" "$X"
 echo "execution $X; its domain's cgroup: $CG"
 echo "cgroup.procs: $PIDS"
 for pid in $PIDS; do printf '   %s  %s\n' "$pid" "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-160)"; done
 check 1 "the check program (program.mjs, under the domain init) is a member of the check domain's cgroup.procs, read from the host" \
   "cat $CG/cgroup.procs; for p in \$(cat $CG/cgroup.procs); do tr '\\0' ' ' < /proc/\$p/cmdline; echo; done"
-# The guard's host half: the program is in this domain's cgroup, and the domain is under the engine's scope.
-PROG_PID=""
-for pid in $PIDS; do tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qF "$CHECKS/program.mjs" && PROG_PID=$pid; done
-[ -n "$PROG_PID" ] || die "the check program was not found in its domain: nothing is released"
-[ "/sys/fs/cgroup$(sed -n 's/^0:://p' "/proc/$PROG_PID/cgroup")" = "$CG" ] || die "the program's own /proc/$PROG_PID/cgroup is not the domain's: nothing is released"
 pause
 TREE=$(find "$SURETY_HOME/checktrees" -type f -path '*/src/app.js' -printf '%h\n' 2>/dev/null | head -1 | xargs -r dirname)
 echo "the check tree of ($P, $REV, the effective version), engine-owned: $TREE"
@@ -213,9 +244,9 @@ pause
 
 # ---------------------------------------------------------------------------------------
 say "4. Release the check: it writes the protected input and the candidate's src/app.js"
-note "Released only now: the program was read from the host inside its own check domain (above)."
-touch "$RELEASE/go"
-R=$(until_db "$P" "SELECT result FROM check_executions WHERE id = '$X' AND result IS NOT NULL" 120 "the contained check's result")
+note "Released only after the program is read again from the host, inside its own check domain under the engine's scope."
+release "$P" "$X"
+R=$(dbq "SELECT result FROM check_executions WHERE id = '$X'")
 OUT=$(dbq "SELECT output FROM check_results WHERE id = '$R'")
 grep -h '^SURETY-CHECK-WRITE ' "$(record_path "$OUT")" | sed 's/^SURETY-CHECK-WRITE //' | jq .
 grep -h '^SURETY-CHECK-REPORT ' "$(record_path "$OUT")" | sed 's/^SURETY-CHECK-REPORT //' | jq '{cwd, git_present}'
@@ -233,16 +264,17 @@ S -X POST "$API/v1/projects/$P/candidates/$C/gates/stage" -d "{\"stage\": \"$STA
 
 # ---------------------------------------------------------------------------------------
 say "6. Two operator re-runs of 'contained' at the same bindings: the first held past its timeout, the second released"
-rm -f "$RELEASE/go"
+[ ! -e "$RELEASE/go" ] || die "the release file is still there: nothing more is started"
 S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, trigger: .trigger.source}]}'
 note "No release file this time: the program waits, and the engine ends it at timeout_s (90 s), TERM then kill."
 X2=$(dbq "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' ORDER BY x.execution_seq DESC LIMIT 1")
 until_db "$P" "SELECT result FROM check_executions WHERE id = '$X2' AND result IS NOT NULL" 240 "the held re-run to reach its deadline" >/dev/null
 dbq "SELECT id, execution_established, exit_status, signaled, deadline_hit FROM check_results WHERE execution = '$X2'" | sed 's/^/   held re-run: /'
-touch "$RELEASE/go"
 S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, trigger: .trigger.source}]}'
 X3=$(dbq "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' ORDER BY x.execution_seq DESC LIMIT 1")
-until_db "$P" "SELECT result FROM check_executions WHERE id = '$X3' AND result IS NOT NULL" 120 "the released re-run's result" >/dev/null
+until_db "$P" "SELECT id FROM check_executions WHERE id = '$X3' AND status = 'running'" 180 "the second re-run to be running" >/dev/null
+note "Released, as in step 4, only after its own containment read."
+release "$P" "$X3"
 GATE=$(S -X POST "$API/v1/projects/$P/candidates/$C/gates/stage" -d "{\"stage\": \"$STAGE\"}")
 echo "$GATE" | jq '.evaluation | {id, outcome, contained: [.checks[] | select(.key == "contained") | {state, deciding, history}]}'
 check 4 "the gate read names the deciding execution of 'contained' (the latest registration, $X3) and, in its history, the earlier executions at the same bindings, the one that failed at its deadline included" \

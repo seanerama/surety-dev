@@ -37,14 +37,14 @@ import { addWork, pauseProject, resumeProject, runsOf, tickUntil } from './harne
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { step } from './harness/scripted.mjs';
 import { checkProject, governedText } from './harness/checks/fixtures.mjs';
-import { M239, M239_GOVERNED, SEEDED_DEFECT_M3 } from './harness/real/checks-journey.mjs';
+import { M239, M239_GOVERNED, SEEDED_DEFECT_M3, m239Toolchain } from './harness/real/checks-journey.mjs';
 
 const FIELDS = ['key', 'kind', 'command', 'covers', 'criteria', 'gate_kinds', 'inputs', 'timeout_s'];
 
 describe("M239 the Verifier's check-writing package (sandbox lane, no model)", () => {
   test("a check_correction Verifier is told where and how to write the project's checks: the roots, the definitions directory, every criterion with its requirement's text, the program, a definition's form, the tier's kinds and the gate kinds; its result offers the proposal", async (t) => {
     const fx = await sandboxEngine(t);
-    const project = await checkProject(fx, { files: { '.surety/checks/protected-policy.json': governedText(M239_GOVERNED()), [SEEDED_DEFECT_M3.path]: SEEDED_DEFECT_M3.content }, tier: M239.tier });
+    const project = await checkProject(fx, { files: { '.surety/checks/protected-policy.json': governedText(M239_GOVERNED(m239Toolchain(fx.root))), [SEEDED_DEFECT_M3.path]: SEEDED_DEFECT_M3.content }, tier: M239.tier });
     await pauseProject(fx.engine, project.id);
     await installGatedPlan(fx.engine, project.id, { requirements: M239.requirements, constraints: M239.constraints, stages: [M239.stageOne] });
     const item = await addWork(fx.engine, project.id, 'check_correction');

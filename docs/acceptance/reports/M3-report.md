@@ -62,7 +62,7 @@ M3's kernel, sandbox and project lanes run no backend (scripted roles). The real
 
 | What | Value |
 |---|---|
-| The binary qualified: path, SHA-256, `--version` | [[PENDING m3-binary: the pinned copy in the real lane's home; from `observed/M136.json` or the entry]] |
+| The binary qualified: path, SHA-256, `--version` | [[PENDING m3-binary: the pinned copy in the real lane's home; from `observed/attempt.json` (the attempt's pinned binary) or the entry]] |
 | The entry, its attempt, its activation | [[PENDING m3-entry: the trust entry, attempt and Sean's `trust_activation`; from `observed/activation.json`]] |
 | Model | `claude-sonnet-5-5` (E59), as the harness asks; [[PENDING m3-model: the model every transcript shows; from the run's transcripts]] |
 | Auth mode | `subscription_token` (E74 item 1) |
@@ -150,7 +150,16 @@ The 67 statements of D3 Appendix C, by the row that pins each (plan §4.1). "Las
 | D3-X02 | M236 | kernel | passed, `--slice 21` on `48841e1` | [[PENDING acc-M236: result; from npm test]] |
 | D3-J02, D3-J05 | M238 | project | 11 of 11, run alone by the Verifier on `verify/m3-s22` (`main`'s engine at `3c6e886`), 2026-10-08 (section 9) | [[PENDING acc-M238: result; from npm test]] |
 
-Rows beyond Appendix C: M201 and M237 (the journeys; passed in `--slice 21` on `48841e1`), M239 (the real journey; section 14), M240 (this report), M241 (the hands-on; section 20). Astra's T01 to T20, L1 to L8, B01 to B04, Q1 to Q11 and N01 to N04 are traced to rows in the plan's §4.2.
+Rows beyond Appendix C, and the second files of rows above:
+
+| Row and file | Lane | Last recorded | Acceptance run |
+|---|---|---|---|
+| M201, `M201-check-journey-path-one` and its three further files | sandbox | passed, `--slice 21` on `48841e1` | [[PENDING acc-M201: each file's result; from npm test]] |
+| M237, `M237-check-journey-path-two` | sandbox | passed, `--slice 21` on `48841e1` | [[PENDING acc-M237: result; from npm test]] |
+| M239, `M239-the-verifiers-check-writing-package` | sandbox | 0 of 1 alone on `verify/m3-s22` (the package; the Builder's work) | [[PENDING acc-M239-sandbox: result; from npm test]] |
+| M239, `M239-the-real-check-journey` | real | not run (section 14) | not in `npm test` (manifest `real`) |
+| M240, `M240-the-m3-report` | report | (a) passed, (b) failed by design, alone on `verify/m3-s22` | [[PENDING acc-M240: result, (b) passing only once this report is final; from npm test]] |
+| M241, `M241-hands-on-script` | hands-on | 5 of 5 alone on `verify/m3-s22`; amended by the review (section 20) | [[PENDING acc-M241: result; from npm test]] | Astra's T01 to T20, L1 to L8, B01 to B04, Q1 to Q11 and N01 to N04 are traced to rows in the plan's §4.2.
 
 ## 9. The reference project and the protective wrapper (project lane)
 
@@ -187,7 +196,7 @@ The reference project (`harness/project/reference.mjs`; SEAM §§213, 236) runs 
 | M239's sandbox file alone (`M239-the-verifiers-check-writing-package`) | `verify/m3-s22` on `3c6e886` | 0 of 1: the `check_correction` Verifier's package holds no guidance for writing checks (COVERAGE.md, "M3 slice 22") | the Verifier's run |
 | M240 alone | `verify/m3-s22` | (a) passes, (b) fails by design while this report is a skeleton | the Verifier's run |
 | M241 alone | `verify/m3-s22` | 5 of 5 (the script's form and guards) | the Verifier's run |
-| `M3-hands-on.sh` run once without pauses | `verify/m3-s22` on `3c6e886` | exit 0, each of the five checks shown (COVERAGE.md, "M3 slice 22"); not Sean's run | the Verifier's run |
+| `M3-hands-on.sh` run once without pauses | `verify/m3-s22` on `3c6e886` | exit 0, each of the five checks shown (COVERAGE.md, "M3 slice 22"); not Sean's run; made before the review's S2 fix (section 18), and without a terminal, which the script now refuses | the Verifier's run |
 | M223 alone, with the hardened wrapper | `verify/m3-s22` on `3c6e886` | 1 of 1 | the Verifier's run |
 | The full `npm test` | [[PENDING npm-test-rev2: `main` after slice 22; from the driver's run]] | [[PENDING npm-test-result: counts and exit; from the driver's run]] | |
 
@@ -218,16 +227,17 @@ The dress rehearsal (SEAM §171, with the fake `claude`; never evidence) passed 
 | (c) Path two: the seeded defect, the finding (criterion and check), the disposition, the fix's candidate, the resolving execution, the gates | [[PENDING m239-c: from `observed/M239.json`, `path_two`]] |
 | (d) No result from a fixture; the token's absence | [[PENDING m239-d: from `observed/M239.json`, `key_search`]] |
 
-What stays a fixture in the real journey, labelled (SEAM §237): the approved plan with its texts and index (spec approval is not built), the trigger of the first `check_correction` work and of path two's review, and the Alpha test target. No check result.
+The checks' toolchain in the real journey: a copy of the engine's node binary in the run directory, its SHA-256 pinned in `check_commands`, its directory the checks' only read path, their `PATH` `/usr/bin:/bin` (the slice-22 review, minor 3; SEAM §237). What stays a fixture in the real journey, labelled (SEAM §237): the approved plan with its texts and index (spec approval is not built), the trigger of the first `check_correction` work and of path two's review, and the Alpha test target. No check result.
 
 ## 16. Cases reported `not_exercised`
 
 Each passes by asserting the host fact and its reason, and is **never counted as passed**:
 
 - **M205 (g)**, the OOM kill, off the designated host (plan §2.5; E69): its file runs only on `mini-hp01`.
-- **M239**, the real row, until Sean runs it (plan §2.5).
 - **The self-test's `foreign_signal`** reports `not_exercised` when the engine cannot re-verify its own box's program immediately before the kill (E97 item 1); a `not_exercised` mandatory case leaves `direct` unqualified (D3 §2.8).
 - Carried from M2: the observer cases M112 (g), M116 (d), M124 (e), M128 (g), M135 (j) (H13 not exercised); M115 (f) and M115 (h); P20 on this workstation (exercised on `mini-hp01`).
+**Not run, and so not counted:** M239, the real row, until Sean runs it (section 14; plan §2.5). It asserts no host fact and is no `not_exercised` case: its file is never run outside Sean's command.
+
 - **Not written, and so not claimed:** Astra's T02 attempt cases and M212 (b) to (d) (E95 item 1: B01 verified structurally); M221 (b)'s "an optional observer never substitutes" (no optional observer of the self-test exists).
 
 ## 17. What M3 does not claim
@@ -256,7 +266,7 @@ In the form of `M1-not-claimed.md`, from D3 §6.
 - B01 is verified structurally: the domain's mount table read host-side, not by attempts from inside (E95 item 1; the slice-17 review ran the attempts in a scratch namespace reproducing the plan).
 - The reference project protects only itself: its wrapper and child-run tests are a construction a Verifier can copy, not a property the engine enforces (D3 §6 class C).
 - The real journey's engine runs in the test mode for the real lane (`--harness-real-lane`), because the plan and its index, the first `check_correction`'s trigger, path two's review trigger and the Alpha target are fixtures; its check results are the engine's own (SEAM §237).
-- A destructive check instrument is released only after the host has read it contained (E64; BS3 §4).
+- A destructive check instrument is released only after the host has read it contained (E64; BS3 §4). In the hands-on script as first merged (`a9ddd51`), the second operator re-run of step 6 was released without a read of its own: the release file was made before that execution was registered, so it acted at once. The review of slice 22 found it (S2); every release now follows its own read of that execution (`read_containment`: the program among its domain's `cgroup.procs`, by its own `/proc/<pid>/cgroup` too, the domain under the engine's scope), and the release file is removed once the execution has its result (SEAM §239; M241 (e)). The one released execution without its own read wrote only to its discarded overlay and its refused input.
 
 ## 19. Open decisions and provisional readings (E93 to E101)
 
