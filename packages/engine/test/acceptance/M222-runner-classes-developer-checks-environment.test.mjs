@@ -34,6 +34,7 @@ import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitrun
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
+import { changePolicy } from './harness/journal.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import {
   GOVERNED_FILE,
@@ -84,6 +85,10 @@ describe('M222 runner classes, developer checks, the reserved environment', () =
       [defPath('deployed')]: definitionText('deployed', { kind: 'post_deploy_behavior', command: ['probe', 'exit', '0'], timeout_s: 60, gate_kinds: alphaOnly, requires: ['environment', 'artifact_digest'] }),
     };
     const project = await checkProject(fx, { files });
+    // The developer check fails on the first candidate while the stage's work is verifying there, so under Q2 (D3 §2.10; E90 item 2; E100 S1) it would
+    // send the stage back to its Builder. This row is about runner classes, developer checks and the environment, not the repair: at
+    // repair_attempts_max 0, set before the build so every candidate holds its commit, the stage's work is parked instead (objection 030's ruling).
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
     const plan = await installGatedPlan(fx.engine, project.id, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
     const [stage] = plan.stages;
     fx.scripted.script(stage.work_item, [roleThat([step.write(VALUE, 'wrong\n')], { nominate: true })]);
