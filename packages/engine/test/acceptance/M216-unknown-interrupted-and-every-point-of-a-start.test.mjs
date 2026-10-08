@@ -180,7 +180,14 @@ describe('M216 unknown and interrupted executions, and every point of a start', 
     const during = entryByKey(gateCheckEntries(await stageGate(fx, { project, stage }, candidate)), 'held');
     assert.deepEqual([during.state, during.pending?.execution, during.pending?.status], ['missing', q.id, 'quarantined'], 'missing, the gate read naming the quarantined execution');
 
-    restoreReadable(domain.cgroup_path);
+    // Recovery's kill may have emptied the killed engine's scope, and the
+    // user manager then removes it with the domain's directory (objection
+    // 029): there is then nothing to restore. Any other failure stands.
+    try {
+      restoreReadable(domain.cgroup_path);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
     const let_go = await fx.engine.post(`/v1/harness/barriers/${encodeURIComponent('launcher.placed')}/release`, {});
     assert.ok([200, 201, 202, 204, 404, 409].includes(let_go.status), `the waiting launcher's barrier is released, or its waiter is gone (SEAM.md §125) (${let_go.status} ${let_go.text})`);
     const ended = await terminalExecution(fx, project.id, candidate.id, 'held', 'the quarantined execution to end once its closure is observed');
