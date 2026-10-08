@@ -41,6 +41,23 @@ export function setEnvelope(value: EnvelopeSettings | null): void {
   settings = value;
 }
 
+// The runner self-test's boxes running now (checks/selftest.ts; review m6):
+// domains of the engine's own that are no store rows, each counted like a
+// running domain, at its own memory cap and writable bytes, so that a domain
+// admitted beside them still leaves the host its reserves. The main thread
+// sets the list before a box's cgroup is made and clears it once removed.
+export interface SelfTestBox {
+  cgroup: string;
+  memoryMax: number;
+  writableBytes: number;
+}
+
+let selfTestBoxes: SelfTestBox[] = [];
+
+export function setSelfTestBoxes(boxes: SelfTestBox[]): void {
+  selfTestBoxes = boxes.filter((b) => typeof b.cgroup === 'string' && Number.isInteger(b.memoryMax) && b.memoryMax > 0 && Number.isInteger(b.writableBytes) && b.writableBytes >= 0);
+}
+
 export interface EnvelopeHold {
   code: 'resource_envelope';
   reason: string;
@@ -73,16 +90,23 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
     id: string;
     cgroup_path: string;
   }[];
-  const hold = (reason: string, subject: Record<string, unknown>): EnvelopeHold => ({ code: 'resource_envelope', reason, subject: { running_domains: running.length, ...subject } });
-  if (running.length + 1 > s.max_concurrent_domains) {
-    return hold(`${running.length} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
+  const boxes = selfTestBoxes;
+  const hold = (reason: string, subject: Record<string, unknown>): EnvelopeHold => ({
+    code: 'resource_envelope',
+    reason,
+    subject: { running_domains: running.length, ...(boxes.length > 0 ? { self_test_boxes: boxes.length } : {}), ...subject },
+  });
+  const domains = running.length + boxes.length;
+  if (domains + 1 > s.max_concurrent_domains) {
+    return hold(`${domains} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
   }
   // Memory (option B, above): every admitted domain at its maximum, the new
-  // one included, beyond the reserve, against the room the host has.
+  // one included, beyond the reserve, against the room the host has; a
+  // self-test box at its own cap.
   const admitted = running.length + 1;
-  const needed = s.host_reserve_memory + s.domain_memory_max * admitted;
+  const needed = s.host_reserve_memory + s.domain_memory_max * admitted + boxes.reduce((n, b) => n + b.memoryMax, 0);
   const available = memAvailable();
-  const held = running.map((d) => readNumber(join(d.cgroup_path, 'memory.current')));
+  const held = [...running.map((d) => d.cgroup_path), ...boxes.map((b) => b.cgroup)].map((path) => readNumber(join(path, 'memory.current')));
   const unread = held.some((v) => v === null);
   const room = available === null || unread ? null : available + (held as number[]).reduce((a, b) => a + b, 0);
   if (room === null || room < needed) {
@@ -100,7 +124,7 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
   } catch {
     free = null;
   }
-  const diskNeed = s.host_reserve_disk + s.domain_writable_bytes * (running.length + 1);
+  const diskNeed = s.host_reserve_disk + s.domain_writable_bytes * (running.length + 1) + boxes.reduce((n, b) => n + b.writableBytes, 0);
   if (free === null || free < diskNeed) {
     return hold(
       `the engine home's filesystem has ${free ?? 'an unreadable amount of'} bytes free; admitting a domain needs host_reserve_disk (${s.host_reserve_disk}) beyond what the domains may write.`,

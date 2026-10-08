@@ -135,6 +135,25 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
       primary: 'inspect_store',
     };
   }
+  // A check of the project the runner cannot run on this host (D3 §2.7;
+  // SEAM.md §209): the latest registration of some check of a current
+  // candidate was recorded with a host-level reason.
+  const unrunnable = db
+    .prepare(
+      `SELECT x."id", x."key", x."not_run_reason" FROM "check_executions" x JOIN "candidates" c ON c."id" = x."candidate"
+       WHERE x."project" = ? AND c."superseded_by" IS NULL AND x."status" = 'recorded'
+         AND x."not_run_reason" IN ('toolchain_missing', 'mount_plan_refused', 'isolation_unqualified', 'runner_unqualified')
+         AND NOT EXISTS (SELECT 1 FROM "check_executions" y WHERE y."candidate" = x."candidate" AND y."key" = x."key" AND y."execution_seq" > x."execution_seq")
+       ORDER BY x."execution_seq" LIMIT 1`,
+    )
+    .get(project) as { id: string; key: string; not_run_reason: string } | undefined;
+  if (unrunnable) {
+    return {
+      cause: 'check_unrunnable',
+      reason: `The engine cannot run the check ${unrunnable.key} on this host: its execution ${unrunnable.id} was not run (${unrunnable.not_run_reason}).`,
+      primary: 'inspect_checks',
+    };
+  }
   return null;
 }
 

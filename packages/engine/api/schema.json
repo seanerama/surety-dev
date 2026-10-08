@@ -645,7 +645,8 @@
       "check.launched",
       "check.quarantined",
       "check.interrupted",
-      "check.cancelled"
+      "check.cancelled",
+      "check.lease_regranted"
     ],
     "EngineMode": [
       "restricted",
@@ -4607,6 +4608,9 @@
       "owner": "store/transitions/checks.ts"
     },
     "check.cancelled": {
+      "owner": "store/transitions/checks.ts"
+    },
+    "check.lease_regranted": {
       "owner": "store/transitions/checks.ts"
     }
   },

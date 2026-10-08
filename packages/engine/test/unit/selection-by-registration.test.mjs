@@ -25,6 +25,7 @@ const { cancelSuperseded, executionSeqHigh, nextExecutionSeq, registerDue, reque
 const { getCandidate } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
 const { effectiveVersion } = await import(join(dist, 'store', 'transitions', 'protected.js'));
 const { judgeRefs, sameGeneration } = await import(join(dist, 'gates', 'refs.js'));
+const { setCheckLimits } = await import(join(dist, 'checks', 'limits.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -113,7 +114,20 @@ function register(db, { id, candidate = 'cand_2', revision = B, source = 'operat
   });
 }
 
-const step = (db, execution, to, result = null) => transact(db, ENGINE_ACTOR, (tx) => scriptExecutionStep(tx, { execution, to, result, output: null, runner_id: 'test_fixture' }));
+// A recorded result names its output record, an empty published one, as the
+// scripted route's does (D3 §2.6; SEAM.md §190): one naming none is
+// EVIDENCE_MISSING since slice 18 (T09).
+let records = 0;
+function emptyRecord(db) {
+  const id = `rec_empty_${++records}`;
+  db.prepare(
+    `INSERT INTO records (id, created_at, project, kind, path, sha256, bytes, redaction_version, published, post_scan, published_at)
+     VALUES (?, ?, 'prj_1', 'check_output', ?, ?, 0, 'redactor-1', 1, 'clean', ?)`,
+  ).run(id, AT, `records/${id}`, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', AT);
+  return id;
+}
+const step = (db, execution, to, result = null) =>
+  transact(db, ENGINE_ACTOR, (tx) => scriptExecutionStep(tx, { execution, to, result, output: to === 'recorded' ? emptyRecord(db) : null, runner_id: 'test_fixture' }));
 const recordExit = (db, execution, exit) => {
   for (const to of ['materializing', 'running', 'collecting']) step(db, execution, to);
   return step(db, execution, 'recorded', { exit_status: exit, signaled: false, deadline_hit: false, orphans: false });
@@ -137,6 +151,10 @@ test('a newer registration with no result leaves the check missing, naming it; t
   register(db, { id: 'cx_0', status: 'queued' }); // seq 1, recorded below as an earlier pass
   recordExit(db, 'cx_0', 0);
   assert.equal(stateOf(db).state, 'passed');
+  // No recovery registration (slice 18, D3 §2.7), so the interrupted
+  // execution stays the latest registration.
+  setCheckLimits({ check_infra_retries_max: 0 });
+  t.after(() => setCheckLimits({ check_infra_retries_max: 2 }));
   register(db, { id: 'cx_1' });
   for (const status of ['queued', 'materializing', 'running', 'quarantined', 'interrupted']) {
     if (status !== 'queued') step(db, 'cx_1', status);

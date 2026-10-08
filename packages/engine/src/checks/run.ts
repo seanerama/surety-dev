@@ -19,7 +19,7 @@
 // scripted boundary registrations stay `queued`.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
@@ -32,6 +32,8 @@ import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandbo
 import { DOMAIN_MARKER } from '../invoke/processes.js';
 import { type BackendLaunch, INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
 import { writeWholeRecord } from '../records/files.js';
+import { scanBytes } from '../records/redact.js';
+import { nowIso } from '../clock.js';
 import { finishEgress, startEgress } from '../invoke/proxy/egress.js';
 import type { DomainProxy } from '../invoke/proxy/proxy.js';
 import { FORWARDER_PORT } from '../invoke/sandbox/prepare.js';
@@ -39,7 +41,7 @@ import { EGRESS_SOCKET } from '../invoke/sandbox/mounts.js';
 import { type Runtime, log } from '../runtime.js';
 import type { Admission, ResultFields } from '../store/transitions/checks.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
-import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamScriptedExecution } from '../testing/seam.js';
+import { pausePoint, seamCheckDomainLimits, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamScriptedExecution } from '../testing/seam.js';
 import { hostIdentity } from '../trust/host.js';
 import { type CheckTree, MaterializationFailed, listTrees, materialize, projectionOf, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
@@ -91,6 +93,166 @@ const sha256File = (path: string): string | null => {
   }
 };
 
+// The program a check runs, resolved from the governed `check_commands` as
+// at launch (D3 §§1.1, 2.7, Q6): its path and the SHA-256 of what is there
+// now, recorded whether pinned or not; `problem` when the path is not named,
+// cannot be read or is not the pinned program (`toolchain_missing`).
+export function resolveProgram(governed: Governed, def: Definition): { name: string; path: string | null; sha256: string | null; problem: string | null } {
+  const name = def.command[0]!;
+  const entry = governed.check_commands[name];
+  const path = entry?.path ?? null;
+  const sha = path === null ? null : sha256File(path);
+  const problem =
+    path === null ? `${name} is not in check_commands` : sha === null ? `${path} cannot be read` : entry?.sha256 !== undefined && entry.sha256 !== sha ? `${path} is not the pinned program` : null;
+  return { name, path, sha256: sha, problem };
+}
+
+// Why a definition's `cwd` is not a directory of the check tree, or null
+// (D3 §2.7 `definition_invalid`; SEAM.md §209): every component, read
+// without following a link, a directory of the source projection or of the
+// check's input projection.
+export function cwdProblem(roots: string[], cwd: string): string | null {
+  if (cwd === '.' || cwd === '') return null;
+  const parts = cwd.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) return `the cwd ${JSON.stringify(cwd)} is not a plain relative path`;
+  for (const root of roots) {
+    let ok = true;
+    let at = root;
+    for (const part of parts) {
+      at = join(at, part);
+      try {
+        const st = lstatSync(at);
+        if (!st.isDirectory()) {
+          ok = false;
+          break;
+        }
+      } catch {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return null;
+  }
+  return `the cwd ${JSON.stringify(cwd)} is not a directory of the check tree`;
+}
+
+// The environment of a check, constructed, never inherited (D3 §2.3).
+export function checkEnvironment(args: {
+  governed: Governed;
+  def: Definition;
+  ids: { check: string; candidate: string; revision: string; version: string };
+  marker: string;
+  proxy: boolean;
+}): Record<string, string> {
+  return {
+    PATH: args.governed.runner_config.direct.path.join(':'),
+    HOME: '/surety/home',
+    TMPDIR: '/tmp',
+    LANG: 'C.UTF-8',
+    TZ: 'UTC',
+    CI: 'true',
+    ...args.governed.runner_config.direct.env,
+    ...args.def.env,
+    SURETY_CHECK: args.ids.check,
+    SURETY_CANDIDATE: args.ids.candidate,
+    SURETY_SOURCE_REVISION: args.ids.revision,
+    SURETY_PROTECTED_VERSION: args.ids.version,
+    [DOMAIN_MARKER]: args.marker,
+    ...(args.proxy ? { HTTPS_PROXY: `http://127.0.0.1:${FORWARDER_PORT}` } : {}),
+  };
+}
+
+// The cwd of a check inside its domain.
+export const checkCwd = (def: Definition): string => (def.cwd === '.' ? '/surety/workspace' : join('/surety/workspace', def.cwd));
+
+// The limits of a check domain: the configured ones, or the test seam's
+// below them (SEAM.md §212).
+export function checkDomainLimits(rt: Runtime): { memoryMax: number; tasksMax: number; volBytes: number; volInodes: number } {
+  const below = seamCheckDomainLimits();
+  return {
+    memoryMax: below?.memory_max ?? rt.setting('domain_memory_max'),
+    tasksMax: below?.pids_max ?? rt.setting('domain_tasks_max'),
+    volBytes: below?.writable_bytes ?? rt.setting('domain_writable_bytes'),
+    volInodes: below?.writable_inodes ?? rt.setting('domain_writable_inodes'),
+  };
+}
+
+// The exit report as recorded (A.2 InitReport `exit`): the status or signal,
+// and whether the engine had begun cancelling the check before it arrived,
+// with why; so that a restart can record the execution from what the init
+// had reported (D3 §2.6 "Interrupted"; SEAM.md §205).
+export interface ExitDetail {
+  code: number | null;
+  signal: number | null;
+  cancelled: boolean;
+  cause: 'deadline' | 'lease' | 'egress' | null;
+  interleaved?: boolean;
+}
+
+// What a restart, or a quarantine's observed end, can record of an
+// execution from its recorded reports alone, once its domain's closure is
+// observed: a row when the init's exit report (or a failed exec) had been
+// recorded, else nothing (it ends `interrupted`). The output captured before
+// is not held across a restart: the row names no output record, which every
+// evaluation then reads as EVIDENCE_MISSING (never an empty record claimed).
+export function fromReports(args: {
+  reports: { kind: string; detail: Record<string, unknown> | null }[];
+  authorized: boolean;
+}): { kind: 'interrupt'; why: string } | { kind: 'record'; fields: Omit<ResultFields, 'execution' | 'output' | 'output_dropped_bytes'> } {
+  const started = args.reports.some((r) => r.kind === 'started');
+  const execFailed = args.reports.some((r) => r.kind === 'exec_failed');
+  const exit = args.reports.filter((r) => r.kind === 'exit').at(-1)?.detail ?? null;
+  if (!execFailed && (!started || exit === null)) return { kind: 'interrupt', why: 'the engine restarted before the check\'s exit report was recorded' };
+  const o = args.reports.filter((r) => r.kind === 'orphans').at(-1)?.detail ?? null;
+  const count = o?.count;
+  const e = (exit ?? {}) as Partial<ExitDetail>;
+  if (!execFailed) {
+    // Whether the engine had begun cancelling the check before its exit
+    // report arrived must be recorded; a report that does not say (written
+    // by an earlier engine) is never taken for the check's own exit: nothing
+    // is established of it, and it ends interrupted (review m1).
+    if (typeof e.cancelled !== 'boolean') return { kind: 'interrupt', why: 'the recorded exit report does not say whether the engine had begun cancelling the check before it, so its exit is not known to be its own' };
+    // A lapsed check lease is no verdict, as it is live (review m2); a
+    // cancellation whose cause is not recorded is not known to be a deadline.
+    if (e.cancelled && e.cause === 'lease') return { kind: 'interrupt', why: 'the check lease lapsed: the engine did not hold the execution throughout' };
+    if (e.cancelled && e.cause !== 'deadline' && e.cause !== 'egress') return { kind: 'interrupt', why: 'the recorded exit report does not say why the engine cancelled the check' };
+  }
+  const cancelled = e.cancelled === true;
+  return decideResult({
+    leaseLost: false,
+    authorized: args.authorized,
+    started,
+    execFailed,
+    report: exit === null ? null : { code: typeof e.code === 'number' ? e.code : null, signal: typeof e.signal === 'number' ? e.signal : null },
+    cancelAt: cancelled ? 0 : null,
+    cancelCause: cancelled ? (e.cause as ExitDetail['cause']) : null,
+    reportAt: exit === null ? null : cancelled ? 1 : 0,
+    orphans: typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count > 0 : null,
+  }) as ReturnType<typeof fromReports>;
+}
+
+// Record, or end interrupted, an execution whose domain is established
+// terminated with closure and which no supervisor holds (recovery; a
+// quarantine re-observed after a restart).
+export async function settleFromReports(rt: Runtime, execution: string, why: string): Promise<void> {
+  const x = await rt.read<{ id: string; domain: string | null; init_reports: string } | null>('checks.execution', { execution });
+  if (x === null) return;
+  const reports = JSON.parse(x.init_reports) as { kind: string; detail: Record<string, unknown> | null }[];
+  let authorized = false;
+  if (x.domain !== null) {
+    const d = await rt.read<DomainRow | null>('domain.row', { domain: x.domain });
+    const binding = d?.launch_binding ? (JSON.parse(d.launch_binding) as { check_execution?: string }) : null;
+    authorized = d !== null && d.launch_authorized_at !== null && binding?.check_execution === execution;
+  }
+  const decided = fromReports({ reports, authorized });
+  if (decided.kind === 'interrupt') {
+    await rt.engine('checks.interrupt', { execution, why: `${why}: ${decided.why}` });
+    return;
+  }
+  await rt.engine('checks.collecting', { execution });
+  await rt.engine('checks.record', { execution, ...decided.fields, output: null, output_dropped_bytes: null } satisfies ResultFields);
+}
+
 export class Supervisor implements DomainHolder {
   readonly claim: { domain: string };
   sandbox: SandboxLaunch | null = null;
@@ -113,6 +275,9 @@ export class Supervisor implements DomainHolder {
   private reportAt: number | null = null;
   private capture: OutputCapture;
   private outputDone: Promise<void> = Promise.resolve();
+  // When the init's `started` report arrived (the deadline counts from it).
+  private startedAt: number | null = null;
+  private renewing = false;
 
   constructor(
     private readonly rt: Runtime,
@@ -177,14 +342,9 @@ export class Supervisor implements DomainHolder {
     const governed = a.governed as unknown as Governed | null;
     if (governed === null || !Array.isArray(def.command)) return this.notRun('definition_invalid', 'the check has no discovered definition to run');
     // The program, resolved now and recorded whether pinned or not (Q6).
-    const name = def.command[0]!;
-    const entry = governed.check_commands[name];
-    const program = entry?.path ?? null;
-    const sha = program === null ? null : sha256File(program);
-    await this.engine('checks.toolchain', { execution: a.execution, toolchain: { name, path: program, sha256: sha } });
-    if (program === null || sha === null || (entry?.sha256 !== undefined && entry.sha256 !== sha)) {
-      return this.notRun('toolchain_missing', program === null ? `${name} is not in check_commands` : sha === null ? `${program} cannot be read` : `${program} is not the pinned program`);
-    }
+    const program = resolveProgram(governed, def);
+    await this.engine('checks.toolchain', { execution: a.execution, toolchain: { name: program.name, path: program.path, sha256: program.sha256 } });
+    if (program.problem !== null) return this.notRun('toolchain_missing', program.problem);
     // The toolchain's read paths, validated as D2 §2.3 validates a role's.
     const mount = await this.rt.read<{ context: { repositories: string[]; workspaces: string[]; checkouts: string[] } }>('mount.context', { project: a.project });
     const refused = await validateReadPaths(governed.runner_config.direct.read_paths, { ...mount.context, home: this.rt.home });
@@ -233,6 +393,10 @@ export class Supervisor implements DomainHolder {
     // one refuses the plan before any launcher starts.
     const conflict = inputTargetConflict(tree.src, a.manifest);
     if (conflict !== null) return this.notRun('mount_plan_refused', conflict);
+    // The definition's cwd must be a directory of the check tree (D3 §2.7;
+    // SEAM.md §209).
+    const badCwd = cwdProblem([tree.src, projectionOf(tree, a.manifest)], def.cwd);
+    if (badCwd !== null) return this.notRun('definition_invalid', badCwd);
     // The domain's cgroup, only while its launch is not closed (D2 §3.2),
     // and only at this domain's directory in this engine's own scope.
     const scope = this.rt.scope;
@@ -243,13 +407,21 @@ export class Supervisor implements DomainHolder {
       await this.engine('checks.interrupt', { execution: a.execution, why: 'the domain could not be created in this engine scope' });
       return;
     }
-    const limits = { memoryMax: this.rt.setting('domain_memory_max'), tasksMax: this.rt.setting('domain_tasks_max') };
+    const bounds = checkDomainLimits(this.rt);
+    const limits = { memoryMax: bounds.memoryMax, tasksMax: bounds.tasksMax };
     const inode = createDomainCgroup(may.cgroup_path, limits);
     await this.engine('domain.cgroup_created', { domain: a.domain, inode });
-    await this.launch(def, governed, tree, readPaths, limits);
+    await this.launch(def, governed, tree, readPaths, limits, bounds);
   }
 
-  private async launch(def: Definition, governed: Governed, tree: CheckTree, readPaths: string[], limits: { memoryMax: number; tasksMax: number }): Promise<void> {
+  private async launch(
+    def: Definition,
+    governed: Governed,
+    tree: CheckTree,
+    readPaths: string[],
+    limits: { memoryMax: number; tasksMax: number },
+    bounds: { volBytes: number; volInodes: number },
+  ): Promise<void> {
     const a = this.a;
     const rt = this.rt;
     tools ??= await resolveSandboxTools();
@@ -289,9 +461,9 @@ export class Supervisor implements DomainHolder {
       manifest: a.manifest,
       egressSocket: this.egress?.socketPath ?? null,
       readPaths,
-      volBytes: rt.setting('domain_writable_bytes'),
-      volInodes: rt.setting('domain_writable_inodes'),
-      shmBytes: Math.min(rt.setting('domain_writable_bytes'), 64 * 1024 * 1024),
+      volBytes: bounds.volBytes,
+      volInodes: bounds.volInodes,
+      shmBytes: Math.min(bounds.volBytes, 64 * 1024 * 1024),
       tools: { mount: t.mount, umount: t.umount, pivot_root: t.pivot_root, ip: t.ip, unshare: t.unshare, setpriv: t.setpriv, mknod: t.mknod },
       node: engineNode(),
       initNodeCopy: await initNodeIn(area, copy),
@@ -308,26 +480,11 @@ export class Supervisor implements DomainHolder {
     });
     await this.engine('domain.plan', { domain: a.domain, fingerprint, mounts: entries, record });
     // The environment, constructed, never inherited (D3 §2.3).
-    const env: Record<string, string> = {
-      PATH: governed.runner_config.direct.path.join(':'),
-      HOME: '/surety/home',
-      TMPDIR: '/tmp',
-      LANG: 'C.UTF-8',
-      TZ: 'UTC',
-      CI: 'true',
-      ...governed.runner_config.direct.env,
-      ...def.env,
-      SURETY_CHECK: a.key,
-      SURETY_CANDIDATE: a.candidate,
-      SURETY_SOURCE_REVISION: a.revision,
-      SURETY_PROTECTED_VERSION: a.version,
-      [DOMAIN_MARKER]: a.domain,
-      ...(this.egress ? { HTTPS_PROXY: `http://127.0.0.1:${FORWARDER_PORT}` } : {}),
-    };
+    const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
       env,
-      cwd: def.cwd === '.' ? '/surety/workspace' : join('/surety/workspace', def.cwd),
+      cwd: checkCwd(def),
       stdin: null,
       forwarder: this.egress ? { port: FORWARDER_PORT, socket: EGRESS_SOCKET } : null,
       check: true,
@@ -376,6 +533,7 @@ export class Supervisor implements DomainHolder {
         backend: () => backend,
         started: async (pid) => {
           this.backendStarted = true;
+          this.startedAt = performance.now();
           // `timeout_s` from the arrival of the init's `started` report; never
           // extended, and disarmed once the check has exited by itself.
           deadline = armDeadline(def.timeout_s * 1000, () => launch.exitReport !== null || launch.dropExitReport, () => {
@@ -385,7 +543,9 @@ export class Supervisor implements DomainHolder {
             }
             fireDeadline();
           });
+          await pausePoint('checks.before_started');
           await this.engine('checks.init_report', { execution: a.execution, kind: 'started', detail: { pid } });
+          await pausePoint('checks.started');
         },
         setupFailed: (detail) => log('check launch', new Error(`the sandbox could not be built: ${detail}`), { execution: a.execution }),
         report: (kind, detail) => {
@@ -408,22 +568,10 @@ export class Supervisor implements DomainHolder {
       if (launch.exitReport !== null && this.reportAt === null) this.reportAt = performance.now();
       if (deadline !== null) clearTimeout(deadline);
     });
-    // The check lease, renewed while supervised (D3 §2.5).
+    // The check lease, renewed while supervised, and re-granted after a pause
+    // only by D2 §3.5's fresh challenge (D3 §2.5; SEAM.md §205).
     const renew = setInterval(() => {
-      void this.engine<boolean>('checks.renew', { execution: a.execution, generation: a.lease_generation, incarnation: rt.incarnation })
-        .then((ok) => {
-          if (ok || this.leaseLost) return;
-          // The check lease lapsed (the engine paused past it, D2 §3.5): the
-          // execution ends with no verdict, `interrupted` once its domain's
-          // closure is observed. Never a test failure, and never a pass.
-          this.leaseLost = true;
-          if (this.cancelAt === null && launch.exitReport === null) {
-            this.cancelAt = performance.now();
-            this.cancelCause = 'lease';
-          }
-          fireDeadline();
-        })
-        .catch((err) => log('check lease', err, { execution: a.execution }));
+      void this.renewOrRegrant(launch, def, () => fireDeadline()).catch((err) => log('check lease', err, { execution: a.execution }));
     }, (rt.setting('lease_ttl') * 1000) / 4);
     renew.unref?.();
     try {
@@ -435,8 +583,9 @@ export class Supervisor implements DomainHolder {
         await this.engine('checks.init_report', {
           execution: a.execution,
           kind: report.startFailed === true ? 'exec_failed' : 'exit',
-          detail: report.startFailed === true ? (this.execFailed ?? {}) : { code: report.code, signal: report.signal },
+          detail: report.startFailed === true ? (this.execFailed ?? {}) : this.exitDetail(report),
         });
+        await pausePoint('checks.exit_recorded');
       }
       // Termination with closure, whatever the check did (D3 §2.6).
       const d = await rt.read<DomainRow>('domain.row', { domain: a.domain });
@@ -446,7 +595,7 @@ export class Supervisor implements DomainHolder {
       // cancellation's, never the check's exit status.
       if (launch.exitReport !== null && report === null) {
         this.reportAt ??= performance.now();
-        await this.engine('checks.init_report', { execution: a.execution, kind: launch.exitReport.startFailed === true ? 'exec_failed' : 'exit', detail: { code: launch.exitReport.code, signal: launch.exitReport.signal } });
+        await this.engine('checks.init_report', { execution: a.execution, kind: launch.exitReport.startFailed === true ? 'exec_failed' : 'exit', detail: this.exitDetail(launch.exitReport) });
       }
       if (!verdict.terminated) {
         this.quarantined = true;
@@ -460,6 +609,61 @@ export class Supervisor implements DomainHolder {
       clearInterval(renew);
       if (deadline !== null) clearTimeout(deadline);
       launch.closeChannel();
+    }
+  }
+
+  // The exit report as the engine records it: whether its own cancellation
+  // had begun before the report arrived.
+  private exitDetail(report: { code: number | null; signal: number | null; interleaved?: boolean }): ExitDetail {
+    const at = this.reportAt ?? performance.now();
+    const cancelled = this.cancelAt !== null && at >= this.cancelAt;
+    return { code: report.code, signal: report.signal, cancelled, cause: cancelled ? this.cancelCause : null, ...(typeof report.interleaved === 'boolean' ? { interleaved: report.interleaved } : {}) };
+  }
+
+  // A renewal of the check lease; after a pause that let it expire, a
+  // re-grant by a fresh challenge on the init's channel, on the same
+  // generation (D2 §3.5; SEAM.md §205). A check whose `timeout_s` passed in
+  // the pause is ended at its deadline instead: the pause extends nothing.
+  // Without a re-grant the lease has lapsed: no verdict, `interrupted` once
+  // the domain's closure is observed.
+  private async renewOrRegrant(launch: SandboxLaunch, def: Definition, fire: () => void): Promise<void> {
+    const a = this.a;
+    if (this.renewing || this.leaseLost) return;
+    this.renewing = true;
+    try {
+      const ok = await this.engine<boolean>('checks.renew', { execution: a.execution, generation: a.lease_generation, incarnation: this.rt.incarnation });
+      if (ok || this.leaseLost || this.cancelAt !== null || launch.exitReport !== null) return;
+      if (this.startedAt !== null && performance.now() - this.startedAt >= def.timeout_s * 1000) {
+        this.cancelAt = performance.now();
+        this.cancelCause = 'deadline';
+        fire();
+        return;
+      }
+      if (this.startedAt !== null && launch.alive) {
+        const facts = await this.rt.read<{ eligible: boolean }>('checks.regrant_facts', { execution: a.execution, incarnation: this.rt.incarnation, generation: a.lease_generation });
+        if (facts.eligible && this.cancelAt === null) {
+          const sentAt = nowIso();
+          const response = await launch.challenge(a.execution, a.lease_generation, this.rt.setting('pause_challenge_timeout') * 1000, seamMainFault('challenge_response_dropped'));
+          if (this.cancelAt !== null) return;
+          if (response !== null && response.backend.state === 'exited') return;
+          if (response !== null) {
+            const at = await this.engine<string | null>('checks.regrant', {
+              execution: a.execution,
+              generation: a.lease_generation,
+              incarnation: this.rt.incarnation,
+              challenge: { nonce: response.nonce, sent_at: sentAt, answered_at: nowIso(), backend_state: response.backend.state },
+            });
+            if (at !== null) return;
+          }
+        }
+      }
+      if (this.cancelAt !== null || launch.exitReport !== null) return;
+      this.leaseLost = true;
+      this.cancelAt = performance.now();
+      this.cancelCause = 'lease';
+      fire();
+    } finally {
+      this.renewing = false;
     }
   }
 
@@ -504,10 +708,19 @@ export class Supervisor implements DomainHolder {
     // otherwise bytes may be missing that nothing counted.
     const dropped = whole && launch.outputEof ? this.capture.dropped : null;
     let output: string | null = null;
-    try {
-      output = await writeWholeRecord(this.rt, { project: a.project, run: null, kind: 'check_output', content: this.capture.bytes() });
-    } catch (err) {
-      log('check output', err, { execution: a.execution });
+    const bytes = this.capture.bytes();
+    // The secret screen first (D3 §2.6; D2 §2.5; D1 §14.2): a hit refuses the
+    // publication, raises the Critical finding and names no record, which
+    // every evaluation selecting the result reads as EVIDENCE_MISSING.
+    const screened = scanBytes(bytes);
+    if (screened.hit) {
+      await this.engine('checks.output_refused', { execution: a.execution, by: screened.by });
+    } else {
+      try {
+        output = await writeWholeRecord(this.rt, { project: a.project, run: null, kind: 'check_output', content: bytes });
+      } catch (err) {
+        log('check output', err, { execution: a.execution });
+      }
     }
     const fields: ResultFields = { execution: a.execution, ...pre.fields, output, output_dropped_bytes: dropped };
     await this.engine('checks.record', fields);
@@ -581,8 +794,30 @@ async function releaseUnreferenced(rt: Runtime, project: string, except: string)
 
 export class CheckRunner {
   private readonly live = new Map<string, Supervisor>();
+  // True while this start's runner self-test is in progress: nothing
+  // `direct` is admitted meanwhile (SEAM.md §208).
+  selfTestRunning = false;
 
   constructor(private readonly rt: Runtime) {}
+
+  // Quarantined executions no supervisor of this engine holds (left by a
+  // prior incarnation, recovery could not establish their closure): each
+  // observed again at the tick, signalling nothing; once termination is
+  // observed, recorded from its reports or ended interrupted (D3 §2.6).
+  private async reobserveHeldByNone(project: string): Promise<void> {
+    const live = await this.rt.read<{ id: string; project: string; status: string; domain: string | null }[]>('checks.live');
+    for (const x of live) {
+      if (x.project !== project || x.status !== 'quarantined' || x.domain === null || this.live.has(x.id) || seamScriptedExecution(x.domain)) continue;
+      try {
+        const d = await this.rt.read<DomainRow>('domain.row', { domain: x.domain });
+        const owner = await this.rt.read<{ incarnation: string } | null>('checks.domain_owner', { domain: d.id });
+        const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt: this.rt, d, incarnation: owner?.incarnation ?? this.rt.incarnation, handle: undefined, observeOnly: true });
+        if (v.terminated) await settleFromReports(this.rt, x.id, 'its quarantine ended');
+      } catch (err) {
+        log('check quarantine', err, { execution: x.id });
+      }
+    }
+  }
 
   // The tick step "Checks", after Gates (L2): registrations owed to a
   // trigger whose facts are now read, re-observation of quarantined
@@ -595,10 +830,11 @@ export class CheckRunner {
       if (s.project !== project || !s.quarantined) continue;
       if (await s.reobserve().catch((err) => (log('check quarantine', err, { execution: s.a.execution }), false))) this.live.delete(s.a.execution);
     }
+    await this.reobserveHeldByNone(project);
     const host = hostIdentity();
     if (host === null) return;
     for (let i = 0; i < 8; i++) {
-      const a = await this.rt.engine<Admission | null>('checks.admit', { project, incarnation: this.rt.incarnation, scope: this.rt.scope.path, hostId: host });
+      const a = await this.rt.engine<Admission | null>('checks.admit', { project, incarnation: this.rt.incarnation, scope: this.rt.scope.path, hostId: host, selfTestRunning: this.selfTestRunning });
       if (a === null) return;
       const s = new Supervisor(this.rt, a);
       this.live.set(a.execution, s);
@@ -612,7 +848,7 @@ export class CheckRunner {
             const d = await this.rt.read<DomainRow>('domain.row', { domain: a.domain });
             const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt: this.rt, d, incarnation: this.rt.incarnation, handle: s });
             if (v.terminated) {
-              await this.rt.engine('checks.interrupt', { execution: a.execution, why: (err as Error).message });
+              await settleFromReports(this.rt, a.execution, (err as Error).message);
               await s.release();
             }
             else {
@@ -633,9 +869,10 @@ export class CheckRunner {
 
 // At start (D3 §2.6, T07): an execution a prior incarnation left past
 // `queued` is never recorded as run or not run. Its domain's closure is
-// established first; then it ends `interrupted` with no row. One whose
-// termination cannot be established stays quarantined. Its registration
-// again, as trigger `recovery`, is slice 18's.
+// established first; then it is recorded from the init's reports if its exit
+// report was recorded, or ends `interrupted` with no row and is registered
+// again as `recovery`. One whose termination cannot be established stays
+// quarantined.
 // `priorUnknown`: per prior incarnation, why its domains are unknown (its
 // supervisor leaf could not be closed, D2 §3.3); such a domain is never taken
 // for terminated, so its execution stays quarantined.
@@ -658,7 +895,10 @@ export async function recoverChecks(rt: Runtime, priorUnknown: ReadonlyMap<strin
       const owner = await rt.read<{ incarnation: string } | null>('checks.domain_owner', { domain: d.id });
       const known = owner === null ? 'the domain has no recorded owner' : (priorUnknown.get(owner.incarnation) ?? null);
       const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt, d, incarnation: owner?.incarnation ?? rt.incarnation, handle: undefined, knownUnknown: known });
-      if (v.terminated) await rt.engine('checks.interrupt', { execution: x.id, why: 'the engine restarted during the execution' });
+      // Closure first; then an execution whose exit report was recorded is
+      // recorded from the init's reports, any other ends interrupted with no
+      // row and is registered again (D3 §§2.6, 2.7; SEAM.md §205).
+      if (v.terminated) await settleFromReports(rt, x.id, 'the engine restarted during the execution');
       else await rt.engine('checks.quarantine', { execution: x.id, why: v.unknown ?? 'termination not established' });
     } catch (err) {
       log('check recovery', err, { execution: x.id });

@@ -42,6 +42,7 @@ import { join } from 'node:path';
 
 import { Builder, DEV_NODES, ETC_FILES, type Plan, SYSTEM_TREES, type Tools, WORKSPACE, esc, hostMountPoints, overlayPath, parents, systemRoot } from '../invoke/sandbox/mounts.js';
 import { INIT_SCRIPT } from '../invoke/sandboxed.js';
+import { seamCheckProfileVariant } from '../testing/seam.js';
 import type { ManifestEntry } from './schema.js';
 
 export interface CheckPlanInput {
@@ -195,7 +196,10 @@ export function checkProfileFingerprint(): string {
     read_paths: 'runner_config.direct.read_paths, read-only at their own paths',
     init,
   };
-  fingerprint = createHash('sha256').update(JSON.stringify(rules)).digest('hex');
+  // The test seam's profile variant (SEAM.md §208) folds a label in, as a
+  // change to the profile would.
+  const variant = seamCheckProfileVariant();
+  fingerprint = createHash('sha256').update(JSON.stringify(variant === null ? rules : { ...rules, variant })).digest('hex');
   return fingerprint;
 }
 

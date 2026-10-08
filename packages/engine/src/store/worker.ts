@@ -124,9 +124,12 @@ import {
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
-import { type EnvelopeSettings, setEnvelope } from './transitions/envelope.js';
+import { type EnvelopeSettings, type SelfTestBox, setEnvelope, setSelfTestBoxes } from './transitions/envelope.js';
 import {
   admitExecution,
+  checkOutputRefused,
+  checkRegrantFacts,
+  regrantCheckLease,
   freezeProposalDiscovery,
   interruptExecution,
   liveExecutions,
@@ -207,6 +210,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'checks.live': (d) => liveExecutions(d),
   'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,
   'checks.qualification': (d) => runnerQualification(d),
+  'checks.regrant_facts': (d, a: { execution: string; incarnation: string; generation: number }) => checkRegrantFacts(d, a),
+  'checks.execution': (d, a: { execution: string }) => d.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(a.execution) ?? null,
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
@@ -345,6 +350,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'checks.record': (tx, a) => recordExecutionResult(tx, a),
   'checks.never_launched': (tx, a) => domainTerminated(tx, { domain: a.domain, observed: true, evidence: { never_launched: true } }),
   'checks.set_runner': (tx, a) => setCheckRunner(tx, a),
+  'checks.regrant': (tx, a) => regrantCheckLease(tx, a),
+  'checks.output_refused': (tx, a) => checkOutputRefused(tx, a),
   'protected.freeze_discovery': (tx, a) => freezeProposalDiscovery(tx, a),
   'decisions.review': (tx, a) => reviewDecisions(tx, a),
   'accept.record_report': (tx, a) => recordRunReport(tx, a),
@@ -459,6 +466,9 @@ const OPS: Record<string, (args: any) => unknown> = {
   'engine.started': (a: { incarnation: string }) => transact(store(), ENGINE_ACTOR, (tx) => schedulerStarted(tx, a.incarnation)),
   // What this start's host checks observed (no store write; SEAM.md §123).
   'host.observed': (a: HostObserved) => setHostObserved(a),
+  // The runner self-test's boxes running now, for the resource envelope (no
+  // store write; review m6).
+  'envelope.self_test_boxes': (a: { boxes: SelfTestBox[] }) => setSelfTestBoxes(Array.isArray(a.boxes) ? a.boxes : []),
   close: () => {
     db?.close();
     db = null;
