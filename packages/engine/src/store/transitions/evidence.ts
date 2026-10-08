@@ -5,7 +5,7 @@
 
 import { canonical, sha256 } from './common.js';
 import type { Tx } from './tx.js';
-import { MODULE_PRESENCE, type ScopeCheck, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf } from '../../checks/scope.js';
+import { MODULE_PRESENCE, type ScopeCheck, type Tier, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf } from '../../checks/scope.js';
 
 const SIGNOFF_ORDER = (s: Signoff): number => ({ candidate: 0, module: 1, security: 2 })[s.scope] ?? 3;
 
@@ -344,6 +344,14 @@ export interface CandidateContent {
   checks: CheckRow[];
   categories: string[];
   signoffs: Signoff[];
+  // The highest tier of its scopes (every module's, while presence is
+  // unread): what queues the review its sign-offs need (slice 20 review,
+  // minor 6) and marks the context's required checks (minor 5).
+  tier: Tier;
+  // Its scopes' modules, each as `[id, paths, effective tier]` (every module
+  // while presence is unread), in id order: part of the content hash, so a
+  // redefined or re-tiered module changes it (slice 20 review, serious 2).
+  modules: [string, string[], Tier][];
   delivered: string[];
   // The facts its scopes need that are unread: `ancestry`, `module_presence`.
   unread: string[];
@@ -359,26 +367,41 @@ export function candidateContent(db: Db, project: string, candidate: CandidateRo
   const byId = new Map<string, CheckRow>();
   const categories = new Set<string>();
   const signoffs: Signoff[] = [];
+  const moduleIds = new Set<string>();
+  let tier: Tier = 'T1';
+  const raise = (t: Tier): void => {
+    if (TIER_RANK[t]! > TIER_RANK[tier]!) tier = t;
+  };
   for (const s of scopes) {
     for (const c of s.required) byId.set(c.id, c);
     for (const a of s.scope.categories) categories.add(a);
     for (const so of s.scope.signoffs) if (!signoffs.some((x) => sameSignoff(x, so))) signoffs.push(so);
+    for (const m of s.scope.modules) moduleIds.add(m.id);
+    raise(s.scope.tier);
   }
+  const all = modulesOf(db, project);
+  const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(project) as { tier: string }).tier;
   const unread: string[] = [];
   if (unreadAncestry(db, project, candidate)) unread.push('ancestry');
   if (presenceOf(db, project, candidate) === null) {
     unread.push(MODULE_PRESENCE);
     // Any module may be in the deployment scope while its presence is
     // unread: a Reviewer is asked the sign-offs of each (never fewer).
-    const all = modulesOf(db, project);
-    const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(project) as { tier: string }).tier;
-    for (const so of signoffsOf(cadenceTier(projectTier, all), all)) if (!signoffs.some((x) => sameSignoff(x, so))) signoffs.push(so);
+    const allTier = cadenceTier(projectTier, all);
+    for (const so of signoffsOf(allTier, all)) if (!signoffs.some((x) => sameSignoff(x, so))) signoffs.push(so);
+    for (const m of all) moduleIds.add(m.id);
+    raise(allTier);
   }
   signoffs.sort((a, b) => SIGNOFF_ORDER(a) - SIGNOFF_ORDER(b) || (a.module ?? '').localeCompare(b.module ?? ''));
+  const modules = all
+    .filter((m) => moduleIds.has(m.id))
+    .map((m): [string, string[], Tier] => [m.id, [...(JSON.parse(m.paths) as string[])].sort(), cadenceTier(projectTier, [m])]);
   return {
     checks: [...byId.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)),
     categories: [...categories].sort(),
     signoffs,
+    tier,
+    modules,
     delivered: scopes[scopes.length - 1]!.delivery.delivered,
     unread,
   };
@@ -403,6 +426,13 @@ export function contentHash(db: Db, project: string, candidate: CandidateRow): s
     sensitivity: content?.categories ?? [],
   };
   if (content && content.unread.length > 0) body.unread = content.unread;
+  // The scopes' modules (id, paths, effective tier) and the required
+  // sign-offs: a module redefined or re-tiered, with the required set as it
+  // was, is changed content, and an earlier sign-off does not count for it
+  // (slice 20 review, serious 2; D3 §4.2; T12). Absent when empty, so a
+  // project with neither keeps the hash it had.
+  if (content && content.modules.length > 0) body.modules = content.modules;
+  if (content && content.signoffs.length > 0) body.signoffs = content.signoffs.map((so) => [so.role, so.scope, so.module ?? null]);
   return sha256(canonical(body));
 }
 

@@ -35,6 +35,7 @@ import {
   requirementIds,
 } from '../store/transitions/baseline.js';
 import { SENSITIVE_AREAS } from '../checks/schema.js';
+import { modulePathOk } from '../checks/scope.js';
 import type { DecisionKind } from '../store/transitions/decisions.js';
 import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal, getProposal, recordLegacyFingerprint, versionSource } from '../store/transitions/protected.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
@@ -195,7 +196,11 @@ export function parsePlanBody(body: unknown): PlanBody {
     // D1 A.3, D3 §4.1 (SEAM.md §222): absent for none.
     const override = mo.tier_override;
     if (override !== undefined && override !== null && override !== 'T1' && override !== 'T2' && override !== 'T3') throw invalid(`modules[${i}].tier_override`, 'must be T1, T2 or T3');
-    return { name: str(mo, 'name'), paths: strings(mo.paths, `modules[${i}].paths`), sensitive_areas: areas, tier_override: (override ?? null) as string | null };
+    const paths = strings(mo.paths, `modules[${i}].paths`);
+    // A path the presence matcher cannot interpret (`.`, `./src`, `src/**`,
+    // absolute, `..`) is refused (slice 20 review, minor 3).
+    if (paths.some((x) => !modulePathOk(x))) throw invalid(`modules[${i}].paths`, 'names a path that is not a relative file or directory path of the tree (no ".", "..", empty component, glob or leading "/")');
+    return { name: str(mo, 'name'), paths, sensitive_areas: areas, tier_override: (override ?? null) as string | null };
   });
   let index: IndexRow[] | null = null;
   if (b.requirement_index !== undefined) {

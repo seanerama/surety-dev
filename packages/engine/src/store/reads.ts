@@ -5,7 +5,8 @@ import type { Database } from 'better-sqlite3';
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
-import { type CandidateRow, applies, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
+import { type CandidateRow, applies, candidateContent, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
+import { cadenceTier } from '../checks/scope.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { type FindingRow, candidateSignoffs, findingApplies } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
@@ -164,7 +165,13 @@ export function contextFacts(db: Database, args: { run: string }) {
   // Verifier, a Reviewer and a fix Builder know the keys the fix loop reads
   // (SEAM.md §74, "Resolution"). Every check of the effective protected
   // version: its key, the keys of the requirements it covers, its gate kinds,
-  // and whether the project's tier requires it; never its content.
+  // and whether the scope's tier requires it; never its content. The tier
+  // follows the scope rule, like the gate (slice 20 review, minor 5; D3
+  // §4.1): the highest of the candidate's scopes (candidateContent); with
+  // no candidate, the highest any scope of the project could take (its tier
+  // and every module's override), never lower than a scope's.
+  // `required` there is `applies` at that tier: the check is required and
+  // no tier floor omits it; gate kinds and obligations are not applied.
   // `checks_known` false: the project has no effective protected version,
   // so its checks cannot be read; that is unknown, never "no checks" (the
   // review of b72b9cc, F3).
@@ -172,7 +179,9 @@ export function contextFacts(db: Database, args: { run: string }) {
   let checksKnown: boolean | null = null;
   if (role === 'verifier' || role === 'reviewer' || item.kind === 'fix') {
     const version = effectiveVersion(db, item.project);
-    const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
+    const tier = candidate
+      ? candidateContent(db, item.project, candidate, version?.id ?? '').tier
+      : cadenceTier((db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '', db.prepare('SELECT "tier_override" FROM "modules" WHERE "project" = ?').all(item.project) as { tier_override: string | null }[]);
     const keyOf = (r: string): string =>
       (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
     checksKnown = version !== undefined;

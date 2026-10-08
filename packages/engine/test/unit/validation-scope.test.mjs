@@ -247,3 +247,128 @@ test('cadence (Q10): an unread presence never lowers the tier; with no module ab
     'a fix naming no finding is no cadence point at T1',
   );
 });
+
+// ---- the slice-20 review's fixes ----------------------------------------------------------
+
+test('S1: a touched requirement no index row registered (criteria null) is uncertain, delivered or partial; one indexed with no criterion and only partial is not', () => {
+  const partialNull = computeScope(base({ requirements: [req('R1', ['R1.1']), req('R2', null)], partial: ['R2'], stageImplements: ['R1', 'R2'] }));
+  assert.deepEqual(partialNull.missing.uncertain, ['R2']);
+  assert.ok(missingSubjects(partialNull.missing).includes('R2'));
+  const alpha = computeScope(base({ kind: 'alpha_authorize', requirements: [req('R1', ['R1.1']), req('R2', null)], partial: ['R2'] }));
+  assert.deepEqual(alpha.missing.uncertain, ['R2'], 'at a deployment gate too');
+  const unknownRow = computeScope(base({ partial: ['R9'], stageImplements: ['R1', 'R9'] }));
+  assert.deepEqual(unknownRow.missing.uncertain, ['R9'], 'a requirement with no row at all is not known either');
+  const indexedEmpty = computeScope(base({ requirements: [req('R1', ['R1.1']), req('R2', [])], partial: ['R2'], stageImplements: ['R1', 'R2'] }));
+  assert.deepEqual(indexedEmpty.missing.uncertain, [], 'indexed, its areas are known; not an obligation, nothing to cover');
+  const notTouched = computeScope(base({ requirements: [req('R1', ['R1.1']), req('R2', null)], partial: ['R2'], stageImplements: ['R1'] }));
+  assert.deepEqual(notTouched.missing.uncertain, [], "another stage's requirement is not this stage scope's");
+  const deliveredNull = computeScope(base({ requirements: [req('R1', null)] }));
+  assert.deepEqual(deliveredNull.missing.uncertain, ['R1'], 'named once');
+});
+
+test('minor 4: a developer-origin floor is in the set and supplies no area', () => {
+  const s = computeScope(base({ requirements: [req('R1', ['R1.1'], ['personal_data'])], checks: [...base({}).checks, chk('f', 'sensitivity_floor', { origin: 'developer', sensitive_areas: ['personal_data'] })] }));
+  assert.ok(s.required.some((c) => c.id === 'f'));
+  assert.deepEqual(s.missing.areas, ['area:personal_data']);
+});
+
+test('minor 3: module paths the matcher cannot interpret are refused by modulePathOk and read as unread, never absent', async () => {
+  const { modulePathOk } = await import(join(dist, 'checks', 'scope.js'));
+  for (const ok of ['src/', 'src', 'src/auth/', 'README.md', '.surety/x/', 'a b/c']) assert.equal(modulePathOk(ok), true, ok);
+  for (const bad of ['', '.', './src', 'src/**', 'src/*.js', '/abs', '..', 'a/../b', 'a//b', 'a/./b', 'a\\b', '//', '/']) assert.equal(modulePathOk(bad), false, JSON.stringify(bad));
+  assert.equal(inModule('src/a.js', ['.']), false);
+  assert.equal(presentModules(['src/a.js'], [{ id: 'a', paths: ['.'] }]), null, 'unread, not absent');
+  assert.equal(presentModules(['src/a.js'], [{ id: 'a', paths: ['web/', 'src/**'] }]), null);
+  assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: ['src/', 'src/**'] }]), ['a'], 'present through an interpretable path');
+  assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: [] }]), [], 'no path: absent, known');
+});
+
+test('minor 3: the plan fixture refuses an uninterpretable module path with 400 modules[i].paths', async () => {
+  const { parsePlanBody } = await import(join(dist, 'testing', 'fixtures.js'));
+  const body = (paths) => ({ project: 'p', stages: [{ number: 1, goal: 'g' }], modules: [{ name: 'ok', paths: ['src/'] }, { name: 'm', paths }] });
+  assert.doesNotThrow(() => parsePlanBody(body(['billing/'])));
+  for (const bad of ['.', './src', 'src/**', '/abs/x', '../x', 'a/../b']) {
+    assert.throws(
+      () => parsePlanBody(body([bad])),
+      (e) => e.status === 400 && e.code === 'invalid_value' && e.subject?.field === 'modules[1].paths',
+      bad,
+    );
+  }
+});
+
+test('S2: the content hash covers the scope modules (id, paths, effective tier) and the required sign-offs', (t) => {
+  const { db } = store(t, { modules: [billing] });
+  const mod = () => db.prepare(`SELECT id FROM modules WHERE name = 'billing'`).get().id;
+  const read = (modules) => transact(db, ENGINE_ACTOR, (tx) => recordPresence(tx, { candidate: 'cand_1', modules, basis: moduleBasis(db, 'prj_1') }));
+  read([mod()]);
+  const first = contentHash(db, 'prj_1', cand(db));
+  const content = candidateContent(db, 'prj_1', cand(db), 'pv_1');
+  assert.deepEqual(content.modules, [[mod(), ['billing/'], 'T1']]);
+  // Redefine the paths; the presence is read again and the module is still
+  // present with the same required set and categories.
+  transact(db, ENGINE_ACTOR, (tx) => ensureModules(tx, { project: 'prj_1', modules: [{ ...billing, paths: ['billing/', 'pay/'] }] }));
+  read([mod()]);
+  const redefined = candidateContent(db, 'prj_1', cand(db), 'pv_1');
+  assert.deepEqual(redefined.checks.map((c) => c.id), content.checks.map((c) => c.id));
+  assert.deepEqual(redefined.categories, content.categories);
+  assert.notEqual(contentHash(db, 'prj_1', cand(db)), first, 'redefined paths: changed content');
+  const second = contentHash(db, 'prj_1', cand(db));
+  // Raise its tier: T2 adds the candidate sign-off, the required set as it was.
+  transact(db, ENGINE_ACTOR, (tx) => ensureModules(tx, { project: 'prj_1', modules: [{ ...billing, paths: ['billing/', 'pay/'], tier_override: 'T2' }] }));
+  const raised = candidateContent(db, 'prj_1', cand(db), 'pv_1');
+  assert.deepEqual(raised.checks.map((c) => c.id), content.checks.map((c) => c.id));
+  assert.deepEqual(raised.signoffs, [{ role: 'reviewer', scope: 'candidate' }]);
+  assert.equal(raised.tier, 'T2');
+  assert.notEqual(contentHash(db, 'prj_1', cand(db)), second, 'a raised tier: changed content');
+  // T2 to T3 changes the sign-offs (module and security) and the effective tier.
+  const t2 = contentHash(db, 'prj_1', cand(db));
+  transact(db, ENGINE_ACTOR, (tx) => ensureModules(tx, { project: 'prj_1', modules: [{ ...billing, paths: ['billing/', 'pay/'], tier_override: 'T3' }] }));
+  assert.notEqual(contentHash(db, 'prj_1', cand(db)), t2);
+  assert.equal(contentHash(db, 'prj_1', cand(db)), contentHash(db, 'prj_1', cand(db)), 'deterministic');
+});
+
+test('S2: a project with no module and no sign-off keeps the hash form it had (no modules or signoffs member)', (t) => {
+  const { db } = store(t);
+  const content = candidateContent(db, 'prj_1', cand(db), 'pv_1');
+  assert.deepEqual(content.modules, []);
+  assert.deepEqual(content.signoffs, []);
+  assert.equal(content.tier, 'T1');
+});
+
+test('minor 6: the candidate tier is the highest of its scopes; a module present only at Alpha raises it', (t) => {
+  const { db } = store(t, { modules: [{ ...billing, tier_override: 'T2' }] });
+  assert.equal(candidateContent(db, 'prj_1', cand(db), 'pv_1').tier, 'T2', 'unread presence: every module, never lower');
+  transact(db, ENGINE_ACTOR, (tx) => recordPresence(tx, { candidate: 'cand_1', modules: [], basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(candidateContent(db, 'prj_1', cand(db), 'pv_1').tier, 'T1');
+  db.prepare('UPDATE candidates SET module_presence = NULL').run();
+  const mod = db.prepare(`SELECT id FROM modules WHERE name = 'billing'`).get().id;
+  transact(db, ENGINE_ACTOR, (tx) => recordPresence(tx, { candidate: 'cand_1', modules: [mod], basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(candidateContent(db, 'prj_1', cand(db), 'pv_1').tier, 'T2');
+});
+
+test('minor 7: a checks_due in a form this engine did not write is unknown: everything owed, never cleared or rewritten', async (t) => {
+  const { readDue, registerDue } = await import(join(dist, 'store', 'transitions', 'checks.js'));
+  const trigger = { source: 'nomination', id: 'cand_1', generation: 1 };
+  for (const text of ['{}', '[]', '{"owed":[]}', '{"trigger":"x","at":1}', '"due"', 'null', 'not json', '[{"at":"x"}]', '{"owed":[{"trigger":{"source":"s"},"at":"x"}]}']) {
+    const d = readDue(text);
+    assert.equal(d.unknown, true, text);
+    assert.deepEqual(dueOwed(text), [], text);
+  }
+  assert.equal(readDue(null), null);
+  assert.equal(readDue(JSON.stringify({ trigger, at: AT })).unknown, false);
+  assert.equal(readDue(JSON.stringify({ trigger, at: AT, owed: [{ trigger, at: AT, version: 'pv_1' }] })).owed[0].version, 'pv_1');
+  // In a store with no module (nothing unread): registerDue would register
+  // and clear a known mark; an unknown one stays as it was.
+  const { db } = store(t);
+  db.prepare(`UPDATE candidates SET checks_due = '{"weird":true}'`).run();
+  transact(db, ENGINE_ACTOR, (tx) => registerDue(tx, { project: 'prj_1' }));
+  assert.equal(db.prepare(`SELECT checks_due FROM candidates`).get().checks_due, '{"weird":true}');
+  db.prepare(`UPDATE candidates SET checks_due = ?`).run(JSON.stringify({ trigger, at: AT }));
+  transact(db, ENGINE_ACTOR, (tx) => registerDue(tx, { project: 'prj_1' }));
+  assert.equal(db.prepare(`SELECT checks_due FROM candidates`).get().checks_due, null, 'a known mark is cleared once registered');
+  // While a fact is unread, a trigger does not rewrite an unknown mark.
+  const unread = store(t, { modules: [billing] });
+  unread.db.prepare(`UPDATE candidates SET checks_due = '{"weird":true}'`).run();
+  transact(unread.db, ENGINE_ACTOR, (tx) => registerForTrigger(tx, { project: 'prj_1', candidate: 'cand_1', version: 'pv_1', trigger }));
+  assert.equal(unread.db.prepare(`SELECT checks_due FROM candidates`).get().checks_due, '{"weird":true}');
+});

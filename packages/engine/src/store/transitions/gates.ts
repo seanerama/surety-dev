@@ -19,7 +19,7 @@ import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, checksOf
 import { type Missing, missingSubjects } from '../../checks/scope.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
-import { discoveryErrorsOf, dueOwed, registerDue } from './checks.js';
+import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
@@ -371,7 +371,8 @@ export interface CheckEntry {
   deciding: { execution: string | null; result: string; execution_seq: number } | null;
   not_run_reason: string | null;
   pending: { execution: string; status: string } | null;
-  due: { trigger: unknown; at: string } | null;
+  // An unknown stored mark is carried as stored (fails closed).
+  due: { trigger: unknown; at: string } | unknown;
   history: History | null;
 }
 
@@ -513,14 +514,17 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const selected: Record<string, StateOf> = {};
   // A registration the candidate is owed (L2): its checks are missing.
   const due = (db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { checks_due: string | null }).checks_due;
-  const dueMark = dueOwed(due)[0] ?? null;
+  // A mark in a form this engine did not write owes everything, its entries'
+  // `due` the stored value (slice 20 review, minor 7: fails closed).
+  const mark = readDue(due);
+  const dueEntry: CheckEntry['due'] = mark === null ? null : mark.unknown ? (mark.value ?? 'unknown') : mark.owed[0] ? { trigger: mark.owed[0].trigger, at: mark.owed[0].at } : null;
   for (const c of scope.required) {
-    const s: StateOf = dueMark !== null ? { state: 'missing', decider: null, pending: null, history: null } : checkState(db, args.project, c, scope);
+    const s: StateOf = dueEntry !== null ? { state: 'missing', decider: null, pending: null, history: null } : checkState(db, args.project, c, scope);
     selected[c.id] = s;
     states[c.id] = s.state;
     deciders[c.id] = s.decider;
   }
-  const entries = checkEntries(scope, selected, dueMark === null ? null : { trigger: dueMark.trigger, at: dueMark.at });
+  const entries = checkEntries(scope, selected, dueEntry);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
@@ -727,9 +731,12 @@ export function verificationOf(db: Db, candidate: string): { id: string; status:
 // The engine queues the review a tier requires (E36 item 3; E38; SEAM.md
 // §70): at T2 and T3, once the candidate's verification work is complete and
 // every check its stage scope requires has passed. One per candidate; it is
-// chained work, created on the outcome of the Verifier's run.
+// chained work, created on the outcome of the Verifier's run. The tier is the
+// highest across the candidate's scopes, so a T1 stage with a T2 module
+// present at Alpha still queues the sign-off Alpha needs (slice 20 review,
+// minor 6; D3 §4.1).
 function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Record<string, CheckState>): void {
-  if (TIER_RANK[scope.tier]! < 2) return;
+  if (TIER_RANK[candidateContent(tx.db, candidate.project, candidate, scope.effective.id).tier]! < 2) return;
   if (scope.required.length === 0 || scope.required.some((c) => states[c.id] !== 'passed')) return;
   const verification = verificationOf(tx.db, candidate.id);
   if (!verification || verification.status !== 'complete') return;

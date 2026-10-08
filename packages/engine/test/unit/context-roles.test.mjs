@@ -298,6 +298,20 @@ function withChecks(db, { none = false } = {}) {
   check('chk_2', 'lint', 0, []);
 }
 
+test('slice 20 review, minor 5: `required` in the check list is at the scope tier (the scope rule), not the project tier', (t) => {
+  const db = store(t, { tier: 'T1' });
+  withChecks(db);
+  // `login` floored at T2: not required in a T1 scope.
+  db.prepare(`UPDATE checks SET tier_floor = 'T2' WHERE id = 'chk_1'`).run();
+  db.prepare(`INSERT INTO modules (id, created_at, project, name, paths, tier_override) VALUES ('mod_1', ?, 'prj_1', 'auth', '["src/auth/"]', 'T2')`).run(AT);
+  const required = () => contextFacts(db, { run: 'run_ver' }).checks.find((c) => c.key === 'login').required;
+  assert.equal(required(), true, 'presence unread: every module may be in scope, never lower');
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: [], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(required(), false, 'the T2 module absent: a T1 scope');
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: ['mod_1'], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(required(), true, 'the T2 module present at Alpha: a T2 scope');
+});
+
 test("E87: the Verifier is told to name a finding's check, with the project's check keys (required ones marked), never their content", (t) => {
   const db = store(t);
   withChecks(db);

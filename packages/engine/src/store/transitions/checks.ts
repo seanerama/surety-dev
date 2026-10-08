@@ -214,16 +214,39 @@ export interface Owed {
   at: string;
 }
 
-export function dueOwed(text: string | null | undefined): Owed[] {
-  if (text === null || text === undefined) return [];
-  const v = JSON.parse(text) as unknown;
-  if (Array.isArray(v)) return v as Owed[];
-  if (v && typeof v === 'object') {
-    const o = v as { trigger?: Trigger; at?: string; version?: string; owed?: Owed[] };
-    if (Array.isArray(o.owed) && o.owed.length > 0) return o.owed;
-    if (o.trigger && o.at) return [{ trigger: o.trigger, at: o.at, ...(o.version ? { version: o.version } : {}) }];
+// The due mark as read: what is owed, or `unknown` when the stored value is
+// not a form this engine wrote (slice 20 review, minor 7). An unknown mark
+// fails closed: every check is owed (missing, its entry's `due` the stored
+// value) and the mark is never cleared or rewritten.
+export type Due = { owed: Owed[]; unknown: false } | { owed: []; unknown: true; value: unknown };
+
+const isTrigger = (t: unknown): t is Trigger =>
+  typeof t === 'object' && t !== null && typeof (t as Trigger).source === 'string' && typeof (t as Trigger).id === 'string' && Number.isInteger((t as Trigger).generation);
+const isOwed = (o: unknown): o is Owed =>
+  typeof o === 'object' && o !== null && isTrigger((o as Owed).trigger) && typeof (o as Owed).at === 'string' && ((o as Owed).version === undefined || typeof (o as Owed).version === 'string');
+
+export function readDue(text: string | null | undefined): Due | null {
+  if (text === null || text === undefined) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(text) as unknown;
+  } catch {
+    return { owed: [], unknown: true, value: text };
   }
-  return [];
+  // The slice-15 form: a non-empty list.
+  if (Array.isArray(v)) return v.length > 0 && v.every(isOwed) ? { owed: v, unknown: false } : { owed: [], unknown: true, value: v };
+  if (v && typeof v === 'object') {
+    const o = v as { trigger?: unknown; at?: unknown; version?: unknown; owed?: unknown };
+    if (o.owed !== undefined) return Array.isArray(o.owed) && o.owed.length > 0 && o.owed.every(isOwed) ? { owed: o.owed, unknown: false } : { owed: [], unknown: true, value: v };
+    if (isOwed(o)) return { owed: [{ trigger: o.trigger, at: o.at, ...(typeof o.version === 'string' ? { version: o.version } : {}) }], unknown: false };
+  }
+  return { owed: [], unknown: true, value: v };
+}
+
+// What is owed, for a known mark; [] for none. An unknown mark has no list:
+// callers that must fail closed read readDue.
+export function dueOwed(text: string | null | undefined): Owed[] {
+  return readDue(text)?.owed ?? [];
 }
 
 const dueText = (owed: Owed[]): string | null => (owed.length === 0 ? null : JSON.stringify({ trigger: owed[0]!.trigger, at: owed[0]!.at, owed }));
@@ -272,7 +295,13 @@ export function registerForTrigger(tx: Tx, args: { project: string; candidate: s
   const set = registrationSet(tx.db, args.project, candidate, args.version);
   if (set.unread) {
     const due = candidate as CandidateRow & { checks_due?: string | null };
-    const list = dueOwed(due.checks_due);
+    const mark = readDue(due.checks_due);
+    // An unknown mark already owes everything; it is never rewritten.
+    if (mark?.unknown) {
+      markStale(tx, { candidate: candidate.id });
+      return;
+    }
+    const list = mark?.owed ?? [];
     if (!list.some((d) => triggerKey(d.trigger, '') === triggerKey(args.trigger, ''))) list.push({ trigger: args.trigger, version: args.version, at: tx.at });
     tx.db.prepare('UPDATE "candidates" SET "checks_due" = ? WHERE "id" = ?').run(dueText(list), candidate.id);
     markStale(tx, { candidate: candidate.id });
@@ -299,7 +328,10 @@ export function registerDue(tx: Tx, args: { project: string }): number {
     if (!effective) continue;
     // A fact the sets need (ancestry, module presence) is still unread.
     if (registrationSet(tx.db, args.project, candidate, effective.id).unread) continue;
-    for (const d of dueOwed(r.checks_due)) {
+    // An unknown mark is never cleared (it fails closed: everything owed).
+    const mark = readDue(r.checks_due);
+    if (!mark || mark.unknown) continue;
+    for (const d of mark.owed) {
       const set = registrationSet(tx.db, args.project, candidate, effective.id);
       made += registerExecutions(tx, { project: args.project, candidate, checks: set.checks, trigger: d.trigger }).filter((x) => x.created).length;
     }

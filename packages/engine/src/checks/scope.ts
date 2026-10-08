@@ -149,8 +149,19 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
     }
     for (const k of r.criteria) if (!counting.some((c) => c.criteria.includes(k))) missing.criteria.push(k);
   }
+  // A requirement the scope touches that no index row registered (criteria
+  // null) has no known areas: its categories are unknown, never none, so the
+  // scope is incomplete, the requirement named as uncertain, delivered or
+  // partially delivered (slice 20 review, serious 1; D3 §§4.2, 4.3).
+  for (const id of touched) {
+    if (missing.uncertain.includes(id)) continue;
+    const r = inputs.requirements.find((x) => x.id === id);
+    if (!r || r.criteria === null) missing.uncertain.push(id);
+  }
   for (const kind of KIND_INVENTORY[tier]) if (!counting.some((c) => c.kind === kind)) missing.kinds.push(`kind:${kind}`);
-  for (const a of [...categories].sort()) if (!required.some((c) => isFloor(c) && c.sensitive_areas.includes(a))) missing.areas.push(`area:${a}`);
+  // A floor counts only when acceptance-origin, like a criterion or a kind
+  // (slice 20 review, minor 4).
+  for (const a of [...categories].sort()) if (!counting.some((c) => isFloor(c) && c.sensitive_areas.includes(a))) missing.areas.push(`area:${a}`);
   if (inputs.modules === null) missing.unread.push(MODULE_PRESENCE);
 
   return { tier, modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
@@ -177,19 +188,39 @@ export function missingSubjects(m: Missing): string[] {
 
 export const sameSignoff = (a: Signoff, b: Signoff): boolean => a.role === b.role && a.scope === b.scope && (a.module ?? null) === (b.module ?? null);
 
+// Whether a module path is one the matcher can interpret (SEAM.md §222;
+// slice 20 review, minor 3): a path of the tree relative to its root, a file
+// or a directory (a trailing `/`), with no empty, `.` or `..` component, not
+// absolute, and no glob or escape character. The plan fixture refuses any
+// other path; the matcher reads one as unread, never as absent.
+export function modulePathOk(p: string): boolean {
+  if (typeof p !== 'string' || p.length === 0 || p.startsWith('/')) return false;
+  if (/[*?[\]\\\0]/.test(p)) return false;
+  const parts = (p.endsWith('/') ? p.slice(0, -1) : p).split('/');
+  return parts.every((x) => x.length > 0 && x !== '.' && x !== '..');
+}
+
 // Whether a tracked path lies in a module (SEAM.md §224): it is one of the
-// module's paths, or under one taken as a directory.
+// module's paths, or under one taken as a directory. Only interpretable
+// paths are matched (modulePathOk).
 export function inModule(path: string, paths: readonly string[]): boolean {
   return paths.some((p) => {
-    if (p.length === 0) return false;
+    if (!modulePathOk(p)) return false;
     if (path === p) return true;
     const dir = p.endsWith('/') ? p : `${p}/`;
     return path.startsWith(dir);
   });
 }
 
-// The modules with at least one tracked path at a revision (D3 §4.1).
-export function presentModules(paths: Iterable<string>, modules: readonly { id: string; paths: string[] }[]): string[] {
+// The modules with at least one tracked path at a revision (D3 §4.1). null
+// (unread, never absent) when a module that no interpretable path shows
+// present has a path the matcher cannot interpret.
+export function presentModules(paths: Iterable<string>, modules: readonly { id: string; paths: string[] }[]): string[] | null {
   const list = [...paths];
-  return modules.filter((m) => list.some((p) => inModule(p, m.paths))).map((m) => m.id);
+  const present: string[] = [];
+  for (const m of modules) {
+    if (list.some((p) => inModule(p, m.paths))) present.push(m.id);
+    else if (m.paths.some((p) => !modulePathOk(p))) return null;
+  }
+  return present;
 }
