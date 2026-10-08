@@ -22,7 +22,7 @@ const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { contextFacts } = await import(join(dist, 'store', 'reads.js'));
 const { writeContextPackage } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
 const { DEFINITION_REFERENCE, defaultGoverned, parseDefinition, parseGoverned } = await import(join(dist, 'checks', 'schema.js'));
-const { exampleDefinition, checkWritingText } = await import(join(dist, 'checks', 'guide.js'));
+const { exampleDefinition, checkWritingText, scopeRuleText } = await import(join(dist, 'checks', 'guide.js'));
 
 const AT = '2026-10-08T00:00:00.000Z';
 const HOST_NODE = '/opt/hostnode/bin/node';
@@ -319,4 +319,47 @@ test('check_correction work with no check facts: the task says they could not be
   assert.ok(!prompt.includes('the section below'));
   assert.ok(!prompt.includes("## Writing the project's checks"));
   assert.ok(prompt.includes('Work item: wi_cc (check_correction);'));
+});
+
+// Sean's first real try of M239 (main 4d3d3bf): a smoke check importing every
+// requirement's module failed at stage 1. The package states the scope rule
+// and the plan in hand, from the store's stage rows.
+test("the scope rule and the stage plan from the store: a check covering no criterion at every stage, a criterion's check only where its requirement is implemented, the requirements no stage implements yet", (t) => {
+  const db = store(t);
+  const stage = (id, number, implementsList, status) =>
+    db
+      .prepare(
+        `INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status) VALUES (?, ?, 'prj_1', 'pp_1', ?, 'a goal', '[]', '[]', ?, ?)`,
+      )
+      .run(id, AT, number, JSON.stringify(implementsList), status);
+  // A stage names a requirement by id or by key; the package names keys.
+  stage('stg_2', 2, ['req_2'], 'planned');
+  stage('stg_1', 1, ['R1'], 'integrated');
+  const { prompt, facts } = packageOf(t, db, 'run_cc');
+  assert.deepEqual(facts.check_writing.stages, [
+    { number: 1, status: 'integrated', implements: ['R1'] },
+    { number: 2, status: 'planned', implements: ['R2'] },
+  ]);
+  assert.ok(prompt.includes("- A check that covers no criterion (a `smoke` check, say) and lists `stage` in its `gate_kinds` is required at every stage's gate, from the first stage on."));
+  assert.ok(prompt.includes('it must not require code that no stage has delivered yet'));
+  assert.ok(prompt.includes("- A check that names criteria is required at a stage's gate only when that stage implements the criteria's requirement"));
+  assert.ok(prompt.includes('- Stage 1 implements R1 (integrated).'));
+  assert.ok(prompt.includes('- Stage 2 implements R2 (planned).'));
+  assert.ok(prompt.includes('- No stage implements R3, R10 yet.'), 'every requirement no stage implements, in index order');
+  assert.ok(prompt.indexOf('### Which gates require a check') < prompt.indexOf('### How a check runs'));
+});
+
+test('an unreadable stage plan is unknown, never "no stage"; an empty one is said to be empty', (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status) VALUES ('stg_x', ?, 'prj_1', 'pp_1', 1, 'g', '[]', '[]', 'not json', 'planned')`).run(AT);
+  const { prompt, facts } = packageOf(t, db, 'run_cc');
+  assert.equal(facts.check_writing.stages, null);
+  assert.match(prompt, /stage plan could not be read, so which stage implements which requirement is unknown/);
+  assert.ok(!prompt.includes('No stage implements'), 'no claim about what no stage implements');
+  assert.ok(!prompt.includes('no stage planned'));
+  const empty = scopeRuleText({ stages: [], requirements: [{ key: 'R1' }, { key: 'R2' }] }).join('\n');
+  assert.match(empty, /The project has no stage planned yet\./);
+  assert.match(empty, /No stage implements R1, R2 yet\./);
+  const absent = scopeRuleText({ requirements: [{ key: 'R1' }] }).join('\n');
+  assert.match(absent, /could not be read/, 'absent facts are unknown too');
 });

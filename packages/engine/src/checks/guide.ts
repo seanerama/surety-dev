@@ -28,6 +28,11 @@ export interface CheckWritingFacts {
   modules: { name: string; tier_override: string | null; sensitive_areas: string[] }[];
   // `criteria` null: no index row registered the requirement.
   requirements: { key: string; text: string | null; text_ref: string; criteria: string[] | null; sensitive_areas: string[] }[];
+  // The project's stages as the scope rule reads them (D3 §4.2): each
+  // stage's number, status and the keys of the requirements it implements.
+  // null: the plan could not be read, so which stage implements what is
+  // unknown (never "none").
+  stages: { number: number; status: string; implements: string[] }[] | null;
 }
 
 const code = (s: string): string => `\`${s}\``;
@@ -74,6 +79,45 @@ export function exampleDefinition(f: CheckWritingFacts): { file: string; program
   const parsed = parseDefinition(file, key, JSON.stringify(definition), g, entries);
   if (parsed.definition === null || parsed.errors.length > 0) return null;
   return { file, program, definition };
+}
+
+// When a check is required, as the one scope rule decides it (D3 §4.2;
+// src/checks/scope.ts): a check covering no criterion joins every scope of
+// a gate kind it lists; a check naming criteria joins a `stage` scope only
+// when the stage implements their requirement, and the Alpha scope once the
+// requirement is delivered. Then the project's plan, from the store: which
+// stage implements which requirement, and which no stage implements yet.
+export function scopeRuleText(f: Pick<CheckWritingFacts, 'stages' | 'requirements'>): string[] {
+  const out: string[] = [
+    '',
+    '### Which gates require a check',
+    '',
+    "- A check that covers no criterion (a `smoke` check, say) and lists `stage` in its `gate_kinds` is required at every stage's gate, from the first stage on.",
+    "- Such a check must therefore pass on the first stage's candidate, before later stages' code exists: it must not require code that no stage has delivered yet. Keep it to what exists from the first stage on, and put each requirement's behaviour in a check naming that requirement's criteria.",
+    "- A check that names criteria is required at a stage's gate only when that stage implements the criteria's requirement; at the `alpha_authorize` gate, only once the requirement is delivered (every stage implementing it integrated).",
+  ];
+  const known = f.stages ?? null;
+  if (known === null) {
+    out.push("- The project's stage plan could not be read, so which stage implements which requirement is unknown here; write each check against its own requirement's code only, and say in your summary that the plan was unknown.");
+    return out;
+  }
+  const stages = [...known].sort((a, b) => a.number - b.number);
+  if (stages.length === 0) out.push('- The project has no stage planned yet.');
+  for (const s of stages) {
+    out.push(
+      s.implements.length > 0
+        ? `- Stage ${s.number} implements ${s.implements.join(', ')} (${s.status}).`
+        : `- Stage ${s.number} implements no requirement (${s.status}).`,
+    );
+  }
+  const planned = new Set(stages.flatMap((s) => s.implements));
+  const unplanned = f.requirements.map((r) => r.key).filter((k) => !planned.has(k)).sort((a, b) => reqNumber(a) - reqNumber(b) || a.localeCompare(b));
+  if (unplanned.length > 0) {
+    out.push(
+      `- No stage implements ${unplanned.join(', ')} yet. A check naming ${unplanned.length === 1 ? 'its' : 'their'} criteria is required at no stage's gate until a stage implements ${unplanned.length === 1 ? 'it' : 'them'}, and the code ${unplanned.length === 1 ? 'it names' : 'they name'} may not exist in a candidate yet.`,
+    );
+  }
+  return out;
 }
 
 const higher = (t: string | null, than: string): boolean => (TIER_RANK[t ?? ''] ?? 0) > (TIER_RANK[than] ?? 0);
@@ -175,6 +219,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
       ? '- Every check discovered is required: the governed file lists no `required_checks`.'
       : `- Only the checks the governed file's \`required_checks\` lists are required: ${g.required_checks.length > 0 ? list(g.required_checks) : 'none'}. A check you add is not required unless the owner lists it.`,
   );
+  out.push(...scopeRuleText(f));
   out.push(
     '',
     '### How a check runs',

@@ -139,6 +139,7 @@ export function contextFacts(db: Database, args: { run: string }) {
         sensitive_areas: parse<string[]>(m.sensitive_areas, []),
       })),
       requirements: all.map((r) => ({ key: r.key, text: r.text, text_ref: r.text_ref, criteria: r.criteria === null ? null : parse<string[] | null>(r.criteria, null), sensitive_areas: parse<string[]>(r.sensitive_areas, []) })),
+      stages: stagePlan(db, item.project, all),
     };
   }
   const candidate = db.prepare('SELECT * FROM "candidates" WHERE "id" = ? AND "project" = ?').get(subjectId('candidate'), item.project) as CandidateRow | undefined;
@@ -268,6 +269,24 @@ export function contextFacts(db: Database, args: { run: string }) {
     check_writing: checkWriting,
     resumed,
   };
+}
+
+// The project's stages as the scope rule reads them (deliveryOf, D3 §4.2):
+// every stage row of the project with the requirements it implements, by
+// key (a stage names a requirement by id or key). null when a stage's
+// `implements` cannot be read: the plan is then unknown, never empty.
+function stagePlan(db: Database, project: string, requirements: readonly { id: string; key: string }[]): { number: number; status: string; implements: string[] }[] | null {
+  try {
+    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
+    const keyOf = (r: string): string => requirements.find((q) => q.id === r || q.key === r)?.key ?? r;
+    return rows.map((s) => {
+      const ids = JSON.parse(s.implements) as unknown;
+      if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) throw new Error('unreadable implements');
+      return { number: s.number, status: s.status, implements: [...new Set(ids.map(keyOf))] };
+    });
+  } catch {
+    return null;
+  }
 }
 
 // The records a run's context package may hold by id (the failed checks'
