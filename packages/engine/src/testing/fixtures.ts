@@ -10,7 +10,7 @@ import type { Database } from 'better-sqlite3';
 import { Refusal } from '../refusal.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
 import type { Discovery } from '../checks/discovery.js';
-import { type ScriptedStep, freezeProposalDiscovery, scriptExecutionStep, setCheckRunner } from '../store/transitions/checks.js';
+import { type ScriptedStep, scriptExecutionStep, setCheckRunner } from '../store/transitions/checks.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
@@ -33,7 +33,7 @@ import {
   requirementIds,
 } from '../store/transitions/baseline.js';
 import type { DecisionKind } from '../store/transitions/decisions.js';
-import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal, recordLegacyFingerprint, versionSource } from '../store/transitions/protected.js';
+import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal, getProposal, recordLegacyFingerprint, versionSource } from '../store/transitions/protected.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
 import type { DecisionRow } from '../store/transitions/decisions.js';
 import { answerQueued } from '../store/transitions/queue.js';
@@ -335,7 +335,12 @@ export function installClassification(db: Database, actor: Actor, body: unknown,
   const changeKind = str(b, 'change_kind');
   if (!['tightening', 'loosening', 'unclassifiable'].includes(changeKind)) throw invalid('change_kind', 'must be tightening, loosening or unclassifiable');
   return transact(db, actor, (tx) => {
-    if (discovery !== null) freezeProposalDiscovery(tx, { proposal: str(b, 'proposal'), discovery });
+    // The fixture's class replaces any the engine gave, and stands: the
+    // column holds the discovery alone, so the engine never classifies the
+    // proposal again and its revalidation takes this class (SEAM.md §215).
+    if (getProposal(tx, str(b, 'proposal'))) {
+      tx.db.prepare('UPDATE "protected_proposals" SET "classification" = ? WHERE "id" = ?').run(JSON.stringify(discovery !== null ? { discovery } : {}), str(b, 'proposal'));
+    }
     const p = classifyProposal(tx, { proposal: str(b, 'proposal'), changeKind: changeKind as ChangeKind }, FIXTURE_LABEL);
     raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[changeKind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
     return { proposal: { id: p.id, status: p.status } };

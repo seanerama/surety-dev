@@ -263,6 +263,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
         decision_targets: config.values.decision_targets,
         ui_bootstrap: config.values.ui_bootstrap,
         checks: Object.fromEntries(CHECK_LIMIT_KEYS.map((k) => [k, config.values[k]])),
+        classifier_authority: config.values.classifier_authority,
       },
       // The resource envelope's admission (D2 §3.7), on the real boundary.
       envelope: checksRun && scope.scope !== null

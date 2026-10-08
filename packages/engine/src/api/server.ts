@@ -12,6 +12,7 @@ import { heldProviderCaps } from '../records/redact.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import { inspectEngineConfig } from '../config/engine-config.js';
+import { runningClassifierVersion } from '../checks/classify.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
@@ -760,6 +761,9 @@ async function engineInfo(state: EngineState) {
     // the scripted backend only where the test seam provides it (D2 §5 C3).
     backends: trust?.backends ?? (scripted ? ['scripted'] : []),
     config: inspectEngineConfig(state.config),
+    // D3 §3.3 (SEAM.md §217): the classifier this engine runs; every
+    // classification records it.
+    classifier_version: runningClassifierVersion(),
     startup: { step: state.step, completed: [...state.completed], failed: state.failed },
     // D2 §2.6: whether the bootstrap exception is in force; while it is, no
     // protection from other local uids is claimed and no host qualification

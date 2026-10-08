@@ -19,6 +19,7 @@ import type { Policy } from '../config/project-policy.js';
 import { preparePolicyCommit } from '../projects/commands.js';
 import { protectedSetAt } from '../protected/set.js';
 import { type Discovery, discover } from '../checks/discovery.js';
+import { classificationInputs } from '../checks/classify-inputs.js';
 import { nowIso } from '../clock.js';
 import { type Runtime, log } from '../runtime.js';
 import type { ApplicationFacts } from '../store/transitions/protected.js';
@@ -242,8 +243,14 @@ async function adoptCheckout(rt: Runtime, journal: Journal, row: IntentRow): Pro
 // the commit the integration branch is at, one protected commit through the
 // journal, whose finalizer makes the intended version the effective one.
 export async function applyProposal(rt: Runtime, journal: Journal, proposal: string, intent: string | null): Promise<void> {
-  const facts = await rt.engine<ApplicationFacts>('protected.application_facts', { proposal });
+  let facts = await rt.engine<ApplicationFacts>('protected.application_facts', { proposal });
   const project = facts.project;
+  if (facts.pending === null) {
+    // The application is due, its approval recorded (the human's intent, or
+    // a Reviewer's approval); its binding is revalidated next (SEAM.md §218).
+    await pausePoint('protected_application.before_revalidation');
+    facts = await rt.engine<ApplicationFacts>('protected.application_facts', { proposal });
+  }
   if (facts.pending === null) {
     const read = await readRef(repoContext(facts.repo), facts.ref);
     const head = read.state === 'ok' ? read.oid : null;
@@ -270,6 +277,16 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
       if (intent) await rt.engine('intent.revalidate', { intent, facts: { head } });
       return;
     }
+    // What the classifier reads, read again (D3 §3.3; T10): the effective
+    // version's tree and the proposal's. Unreadable, nothing is begun this
+    // tick and nothing is invalidated: an unread tree is no evidence either
+    // way, and a later tick reads again.
+    const revision = facts.effective.authorized_revision;
+    const inputs = revision === null ? null : await classificationInputs(facts.repo, revision, facts.proposal.tree_id);
+    if (inputs === null) {
+      log('protected application', new Error(`the trees proposal ${proposal} is classified from cannot be read; its binding is not revalidated, and it is not applied now`), { proposal });
+      return;
+    }
     const message = messageText({
       title: `surety: apply protected proposal ${proposal}`,
       trailers: [
@@ -283,7 +300,7 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     const made = await journal.withProject(project, () =>
       journal.intend(
         'protected.begin_application',
-        { proposal, repo: facts.repo, head, tree, sha, content, set, intent, deadlineSeconds: rt.setting('git_deadline'), facts: { head } },
+        { proposal, repo: facts.repo, head, tree, sha, content, set, intent, deadlineSeconds: rt.setting('git_deadline'), facts: { head }, inputs },
         'commit_tree',
       ),
     );
@@ -291,4 +308,37 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     await journal.withProject(project, () => journal.drive(made.operation));
   }
   await rt.services?.journal(project);
+}
+
+// The engine classifies every captured proposal at a tick after its capture,
+// never in the capturing transaction (D3 §1.6; SEAM.md §215): the two trees
+// read here with engine git, the classification computed and recorded by
+// the store against the index as it then stands. A tree that cannot be read
+// leaves the proposal captured; a later tick reads again.
+export async function classifyDue(rt: Runtime, project: string): Promise<void> {
+  const due = await rt.read<{ proposal: string; repo: string; effective: string; revision: string; tree: string }[]>('protected.unclassified', { project });
+  for (const p of due) {
+    const inputs = await classificationInputs(p.repo, p.revision, p.tree);
+    if (inputs === null) {
+      log('classification', new Error(`the trees of proposal ${p.proposal} cannot be read; it stays captured`), { proposal: p.proposal });
+      continue;
+    }
+    await rt.engine('protected.record_classification', { proposal: p.proposal, effective: p.effective, inputs }).catch((err) => log('classification', err, { proposal: p.proposal }));
+  }
+}
+
+// Before a protected application's operation is replayed (one this engine
+// did not itself just intend): the application's binding read again (D3
+// §3.3, "a replay after a restart is revalidated the same way"). Returns
+// whether the operation may go on; false also when the trees cannot be read
+// now, so nothing is attempted and a later pass reads again.
+export async function revalidateReplay(rt: Runtime, operation: string): Promise<boolean> {
+  const app = await rt.read<{ proposal: string; repo: string; revision: string | null; tree: string } | null>('protected.operation_application', { operation });
+  if (app === null) return true;
+  const inputs = app.revision === null ? null : await classificationInputs(app.repo, app.revision, app.tree);
+  if (inputs === null) {
+    log('protected application', new Error(`the trees proposal ${app.proposal} is classified from cannot be read; its replay waits`), { operation });
+    return false;
+  }
+  return rt.engine<boolean>('protected.revalidate_operation', { operation, inputs, incarnation: rt.incarnation });
 }

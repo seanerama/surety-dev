@@ -29,6 +29,7 @@ import { type Runtime, log } from '../runtime.js';
 import type { IntentResult, OpDetail, ProbeOutcome } from '../store/transitions/journal.js';
 import { pausePoint, seamProbeOutcome } from '../testing/seam.js';
 import { completeRemainder, effect, precondition, probe, readDescription, refNow, remainingScope } from './effects.js';
+import { revalidateReplay } from '../decisions/effects.js';
 
 type Way = 'finalize' | 'retry' | 'complete' | 'withdraw' | 'block';
 
@@ -133,7 +134,19 @@ export class Journal {
   // ---- the ordinary course -------------------------------------------------------
 
   private async execute(op: OpDetail, remainder = false): Promise<Settled> {
-    this.fresh.delete(op.id);
+    const fresh = this.fresh.delete(op.id);
+    // A protected application's operation this engine did not itself just
+    // intend (a replay after a restart, or the branch update its commit's
+    // finalizer intended): its binding is revalidated before the effect (D3
+    // §3.3; T10; SEAM.md §218). A binding that no longer holds refuses the
+    // operation; trees that cannot be read now leave it as it is, for a
+    // later pass.
+    if (!remainder && !fresh && (op.inputs as { purpose?: string }).purpose === 'protected') {
+      if (!(await revalidateReplay(this.rt, op.id))) {
+        const now = await this.detail(op.id);
+        return { op: now, end: now.state === 'failed' ? 'failed' : 'blocked', receipts: {} };
+      }
+    }
     const refused = remainder ? null : await precondition(op, this.rt.home);
     if (refused) {
       await this.rt.engine('journal.refuse', { operation: op.id, detail: refused, incarnation: this.rt.incarnation });

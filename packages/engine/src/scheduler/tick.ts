@@ -38,7 +38,7 @@ import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
-import type { Effects } from '../decisions/effects.js';
+import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { ensureAncestry, gateFacts } from '../gates/prepare.js';
 
@@ -131,6 +131,9 @@ export class Scheduler {
       const facts = await gateFacts(this.rt, project, g.candidate);
       await this.rt.engine('gate.evaluate', { project, candidate: g.candidate, kind: 'stage', stage: g.stage, ...facts }).catch((err) => log('stage gate', err, { project, ...g }));
     }
+    // The classifier (D3 §1.6; SEAM.md §215): every captured proposal,
+    // classified at a tick after its capture, its question raised.
+    await classifyDue(this.rt, project).catch((err) => log('classification', err, { project }));
     await this.rt.engine('decisions.review', { project, channel: seamNotifyChannel() ?? 'none' });
     // The engine-scoped decisions (SEAM.md §117) are reviewed with every
     // project's tick: a dependency that changed raises their next generation.

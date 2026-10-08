@@ -228,6 +228,7 @@ function configSection(): ContractDocument['config'] {
     if (number) engine[key] = { default: number.default, min: number.min, max: number.max, integer: number.integer, ...(ENGINE_AT_LEAST[key] ? { at_least: ENGINE_AT_LEAST[key] } : {}) };
     else if (ENGINE_FIXED[key] !== undefined) engine[key] = { default: ENGINE_FIXED[key], fixed: true };
     else if (ENGINE_BOOLEANS[key] !== undefined) engine[key] = { default: ENGINE_BOOLEANS[key], type: 'boolean' };
+    else if (key === 'classifier_authority') engine[key] = { default: { mode: 'recommend' }, modes: ['recommend', 'authoritative'], version: 'integer, required by authoritative' };
     else if (key === 'api_authority') engine[key] = { default: '127.0.0.1:<api_port>', allowed: ['127.0.0.1:<api_port>', 'localhost:<api_port>'] };
     else if (key === 'decision_targets') {
       engine[key] = {

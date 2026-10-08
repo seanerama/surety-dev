@@ -5,6 +5,8 @@
 
 import type { Database } from 'better-sqlite3';
 
+import type { AuthoritySetting } from '../../checks/classify.js';
+
 import { type Policy, effectiveOf, projectPolicyDefaults } from '../../config/project-policy.js';
 
 export interface EngineSettings {
@@ -15,6 +17,8 @@ export interface EngineSettings {
   ui_bootstrap?: boolean;
   // D3 A.7's engine keys (checks/limits.ts).
   checks?: Record<string, number>;
+  // D3 A.7, §3.3: the configured `classifier_authority` (SEAM.md §217).
+  classifier_authority?: AuthoritySetting;
   // The running incarnation, set when the store is opened.
   incarnation?: string;
 }

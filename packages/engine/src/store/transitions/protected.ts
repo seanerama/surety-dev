@@ -186,22 +186,7 @@ export function approveProposal(tx: Tx, p: ProposalRow, approver: string, author
   tx.emit('protected.approved', { project: p.project, proposal: p.id }, { approver, authority, from: p.status });
 }
 
-// A Reviewer's run "approves" a proposal (E13; D2 §5 C2, K8): until D3's
-// classifier is qualified, the approval of a tightening is a recommendation,
-// recorded on the proposal and applying nothing: the proposal stays
-// unapplied, the effective version unchanged, and the human's
-// check_correction_tightening question open. A Reviewer's approval of
-// anything else is not even recorded.
-export function reviewerApprove(tx: Tx, args: { proposal: string; run: string }): boolean {
-  const p = getProposal(tx, args.proposal);
-  if (!p || p.status !== 'classified' || p.classified_change_kind !== 'tightening') return false;
-  const row = tx.db.prepare('SELECT "recommendations" FROM "protected_proposals" WHERE "id" = ?').get(p.id) as { recommendations: string };
-  const list = JSON.parse(row.recommendations) as { run: string }[];
-  if (list.some((r) => r.run === args.run)) return false;
-  list.push({ run: args.run, authority: 'reviewer', recommends: 'approve', at: tx.at } as { run: string });
-  tx.db.prepare('UPDATE "protected_proposals" SET "recommendations" = ? WHERE "id" = ?').run(JSON.stringify(list), p.id);
-  return true;
-}
+// A Reviewer's approval: store/transitions/classification.ts (D3 §3.3, Q5).
 
 // An approval whose effect was invalidated is withdrawn: the proposal awaits
 // an approval again (E34 item 8; SEAM.md §76).
@@ -209,7 +194,9 @@ export function withdrawApproval(tx: Tx, proposal: string): void {
   const p = getProposal(tx, proposal);
   if (!p || p.status !== 'approved') return;
   const status = p.classified_change_kind === 'tightening' ? 'classified' : 'awaiting_human';
-  tx.db.prepare('UPDATE "protected_proposals" SET "status" = ?, "approver" = NULL, "approver_authority" = NULL, "approved_at" = NULL WHERE "id" = ?').run(status, p.id);
+  tx.db
+    .prepare('UPDATE "protected_proposals" SET "status" = ?, "approver" = NULL, "approver_authority" = NULL, "approved_at" = NULL, "approval_binding" = NULL WHERE "id" = ?')
+    .run(status, p.id);
 }
 
 // ---- application ----------------------------------------------------------------

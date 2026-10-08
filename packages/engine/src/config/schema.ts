@@ -125,6 +125,8 @@ export const ENGINE_KEYS = [
   'checktree_max_entries',
   'checktrees_max_bytes',
   'check_infra_retries_max',
+  // D3 A.7, §3.3 (Q5; SEAM.md §217): {mode, version?}.
+  'classifier_authority',
   // E69: the host is designated for the exhaustion probe P20.
   'isolation_probe_exhaustion',
 ] as const;

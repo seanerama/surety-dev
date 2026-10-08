@@ -65,11 +65,19 @@ export function ensureBaselineTexts(tx: Tx, args: { project: string; kind: 'adr'
 // a protected correction's preview binds as `spec_revision` (D1 A.8; Review
 // B12 "approved spec"; row M53): a requirement added, removed or changed
 // between the preview and the answer is a changed dependency.
+//
+// The binding covers the requirement index too, each requirement's criteria
+// and sensitive areas (D3 §§3.3, 4.5; T10; SEAM.md §218): a spec revision
+// that changes only those is a changed dependency as well.
 export function specRevision(db: Tx['db'], projectId: string): string {
   const rows = db
-    .prepare('SELECT "key", "text_ref", "assigned_phase", "status" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
-    .all(projectId) as { key: string; text_ref: string; assigned_phase: number | null; status: string }[];
-  return sha256(canonical(rows.map((r) => [r.key, r.text_ref, r.assigned_phase, r.status])));
+    .prepare('SELECT "key", "text_ref", "assigned_phase", "status", "criteria", "sensitive_areas" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
+    .all(projectId) as { key: string; text_ref: string; assigned_phase: number | null; status: string; criteria: string | null; sensitive_areas: string }[];
+  return sha256(
+    canonical(
+      rows.map((r) => [r.key, r.text_ref, r.assigned_phase, r.status, r.criteria === null ? null : (JSON.parse(r.criteria) as unknown), JSON.parse(r.sensitive_areas) as unknown]),
+    ),
+  );
 }
 
 export function requirementIds(tx: Tx, projectId: string, keys: string[], field: string): string[] {
