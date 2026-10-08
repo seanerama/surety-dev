@@ -58,6 +58,7 @@ const templateVersionValues: string[] = [];
 let hostIdValue: string | null = null;
 let mechanismVariantValue: string | null = null;
 let collectBoundsValue: string | null = null;
+let checktreesMaxBytesValue: string | null = null;
 let hostChecksMode: string | null = null;
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
@@ -101,7 +102,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-template-version' ||
     flag === '--harness-host-id' ||
     flag === '--harness-mechanism-variant' ||
-    flag === '--harness-collect-bounds'
+    flag === '--harness-collect-bounds' ||
+    flag === '--harness-checktrees-max-bytes'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -133,6 +135,9 @@ for (let i = 0; i < args.length; i++) {
       mechanismVariantValue = value;
     } else if (flag === '--harness-collect-bounds') {
       collectBoundsValue = value;
+    } else if (flag === '--harness-checktrees-max-bytes') {
+      // checktrees_max_bytes below its configured range (SEAM.md §200).
+      checktreesMaxBytesValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -152,7 +157,7 @@ const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, pro
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
 if (overrideProblem !== null) usage(overrideProblem);
-const switchProblem = setHarnessSwitches({ templateVersions: templateVersionValues, hostId: hostIdValue, mechanismVariant: mechanismVariantValue, collectBounds: collectBoundsValue });
+const switchProblem = setHarnessSwitches({ templateVersions: templateVersionValues, hostId: hostIdValue, mechanismVariant: mechanismVariantValue, collectBounds: collectBoundsValue, checktreesMaxBytes: checktreesMaxBytesValue });
 if (switchProblem !== null) usage(switchProblem);
 
 const home = process.env.SURETY_HOME;

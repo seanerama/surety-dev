@@ -8,15 +8,36 @@
 // `runner_config.direct.read_paths`, read-only at their own paths;
 // `/surety/workspace`, an overlay whose lower layer is the check tree's
 // candidate-source projection and whose upper layer is on the domain's
-// volatile filesystem, discarded with the domain (E89 item 2); each entry of
-// the check's input manifest, read-only at its workspace pathname; and
-// `/surety/home` and `/tmp` on the volatile filesystem. Absent, compared with
-// the `role` profile: the context package, `/surety/out`, any git metadata, a
-// backend installation, any provider key, and the egress proxy (no check
-// names egress before slice 17): the network namespace has only loopback.
+// volatile filesystem, discarded with the domain (E89 item 2); the immutable
+// input namespace (B01, below); `/surety/home` and `/tmp` on the volatile
+// filesystem; and, only when the definition names `egress`, the domain's
+// egress socket beside the init (D2 §2.4). Absent, compared with the `role`
+// profile: the context package, `/surety/out`, any git metadata, a backend
+// installation and any provider key; the network namespace has only
+// loopback.
+//
+// The immutable input namespace (D3 §2.2, B01; E95; SEAM.md §198). For each
+// top-level component T of the workspace that holds an input, one read-only
+// mount at /surety/workspace/T, on top of the writable overlay:
+//   - T a directory of the source projection: an overlay with no upper
+//     layer, its layers the check's manifest projection of T over the source
+//     projection's T (`ro`, so the mount and its superblock are read-only);
+//   - T absent from the source: a read-only bind of the projection's T;
+//   - an input at the top level itself: a read-only bind of that file.
+// So every input's pathname and every directory from it up to
+// /surety/workspace lies on a read-only mount below the workspace that is
+// no overlay with an upper layer: nothing at those paths can be renamed,
+// removed, exchanged or replaced (a mount point cannot be renamed or
+// removed from its parent, and a read-only mount refuses changes under it).
+// The source beside an input in T is read-only too (the driver's ruling 2).
+// The only target made is T itself, in the overlay's upper layer, without
+// following a link (S1); a source that has T, or an ancestor of an input, as
+// anything but a directory refuses the plan (`inputTargetConflict`). A T
+// that an overlay's options cannot name (`,` `:` `\` or white space) refuses
+// it too (`inputMountConflict`).
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Builder, DEV_NODES, ETC_FILES, type Plan, SYSTEM_TREES, type Tools, WORKSPACE, esc, hostMountPoints, overlayPath, parents, systemRoot } from '../invoke/sandbox/mounts.js';
@@ -25,9 +46,10 @@ import type { ManifestEntry } from './schema.js';
 
 export interface CheckPlanInput {
   area: string;
-  // The check tree's halves, by their real paths.
+  // The check tree's source projection and this check's manifest
+  // projection, by their real paths.
   source: string;
-  protectedDir: string;
+  projection: string;
   manifest: ManifestEntry[];
   readPaths: string[];
   volBytes: number;
@@ -37,7 +59,13 @@ export interface CheckPlanInput {
   node: string;
   initNodeCopy: string;
   initScript: string;
+  // The domain's egress socket, only when the definition names `egress`.
+  egressSocket?: string | null;
 }
+
+// The top-level components of the workspace that hold the manifest's
+// inputs, each once, in order.
+export const inputTops = (manifest: readonly ManifestEntry[]): string[] => [...new Set(manifest.map(([path]) => path.split('/')[0]!))].sort();
 
 export function buildCheckPlan(input: CheckPlanInput): Plan {
   const stage = join(input.area, 'root');
@@ -59,13 +87,21 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
   const first = { skeleton: b.skeleton, fstab: b.fstab };
   b.second();
   b.entry({ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' });
-  // The check's protected inputs, each read-only at its workspace pathname
-  // (D3 §2.2). TEMPORARY, B01 / slice 17: a read-only bind beneath the
-  // writable overlay is the construction D3 calls insufficient (renaming an
-  // ancestor frees the pathname); slice 17 replaces it with an immutable
-  // input namespace.
-  for (const [path] of input.manifest) b.bind(join(input.protectedDir, path), { target: join(WORKSPACE, path) });
-  // Their targets, made under the overlay before the root is pivoted to,
+  // The immutable input namespace (the head of this file).
+  for (const top of inputTops(input.manifest)) {
+    const target = join(WORKSPACE, top);
+    const projected = join(input.projection, top);
+    const st = lstatSync(projected);
+    if (st.isFile()) {
+      b.bind(projected, { target });
+      continue;
+    }
+    b.dir(target);
+    if (existsSync(join(input.source, top))) {
+      b.line('surety-inputs', target, 'overlay', `lowerdir=${esc(overlayPath(projected))}:${esc(overlayPath(join(input.source, top)))},userxattr,ro,nosuid,nodev`);
+    } else b.bind(projected, { target, noTarget: true });
+  }
+  // The targets, made under the overlay before the root is pivoted to,
   // never through a link (S1): with `inputTargetConflict` refusing a plan
   // whose source has one, nothing is created outside the domain's own area.
   for (const e of b.late) if (e.path.startsWith(`${WORKSPACE.slice(1)}/`)) e.nofollow = true;
@@ -92,6 +128,19 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
     initScript: '/.init/init.js',
     workspaceMount: 'surety/workspace',
   };
+}
+
+// Why the input namespace cannot be mounted, or null: a top-level component
+// holding an input whose name an overlay's options cannot carry (`,` and `:`
+// separate them; `\` and white space are escapes there). The first runner
+// refuses the plan rather than mount it otherwise (`mount_plan_refused`).
+export function inputMountConflict(manifest: readonly ManifestEntry[]): string | null {
+  for (const top of inputTops(manifest)) {
+    if (/[,:\\\s]/.test(top)) {
+      return `the top-level directory ${JSON.stringify(top)} holds a protected input, and its name contains a comma, colon, backslash or white space, which a read-only overlay's options cannot name: the first runner cannot mount the input namespace there`;
+    }
+  }
+  return null;
 }
 
 // Why a check's input targets cannot be made in the workspace, or null (S1):
@@ -134,14 +183,15 @@ export function checkProfileFingerprint(): string {
   }
   const rules = {
     profile: 'check',
-    rules: 1,
+    rules: 2,
     system: SYSTEM_TREES,
     etc: ETC_FILES,
     dev: DEV_NODES,
     workspace: 'overlay(lower: candidate-source projection; upper: volatile, discarded)',
-    inputs: 'read-only bind per manifest entry at its workspace pathname',
+    inputs: 'per top-level component holding an input: read-only overlay without upper layer (manifest projection over source), or read-only bind; source in such a component read-only',
     volatile: ['/surety/home', '/tmp', '/dev/shm'],
-    absent: ['/surety/context', '/surety/out', '/surety/git', 'egress'],
+    absent: ['/surety/context', '/surety/out', '/surety/git'],
+    egress: 'only the definition\'s egress hosts, through the domain proxy; none without egress',
     read_paths: 'runner_config.direct.read_paths, read-only at their own paths',
     init,
   };

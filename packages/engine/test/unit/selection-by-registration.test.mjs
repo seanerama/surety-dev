@@ -50,8 +50,8 @@ function store(t) {
     AT,
   );
   run(
-    `INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots)
-     VALUES ('pv_1', ?, 'prj_1', 1, ?, 'initial', 'human', 'human', ?, 1, ?, '[".surety/checks/"]')`,
+    `INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots, fingerprint_scheme)
+     VALUES ('pv_1', ?, 'prj_1', 1, ?, 'initial', 'human', 'human', ?, 1, ?, '[".surety/checks/"]', 'manifest')`,
     AT,
     FP,
     AT,
@@ -231,6 +231,18 @@ test('REF_UNREAD names each unread ref, and an evaluation made with no ref facts
   assert.deepEqual(one.reasons, [{ code: 'REF_UNREAD', subjects: ['refs/heads/main'] }]);
   assert.deepEqual(gate(db, 'cand_2', { refs: READ_ALL('cand_2') }).reasons, []);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM out_of_band_changes').get().n, 0, 'nothing is recorded for an unread ref');
+});
+
+test('Q11, L6: an effective version not over the manifest is compared with nothing: PROTECTED_PATH_UNAUTHORIZED, and no change claimed detected (slice 17)', (t) => {
+  const { db } = store(t);
+  register(db, { id: 'cx_1' });
+  recordExit(db, 'cx_1', 0);
+  assert.deepEqual(gate(db, 'cand_2', { refs: READ_ALL('cand_2') }).reasons, [], 'the fixture is live: over the manifest, nothing is wrong');
+  for (const scheme of ['pairs', 'unreadable']) {
+    db.prepare(`UPDATE protected_versions SET fingerprint_scheme = ? WHERE id = 'pv_1'`).run(scheme);
+    assert.deepEqual(gate(db, 'cand_2', { refs: READ_ALL('cand_2') }).reasons, [{ code: 'PROTECTED_PATH_UNAUTHORIZED', subjects: ['pv_1'] }], scheme);
+  }
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'protected.unauthorized_detected'`).get().n, 0);
 });
 
 test('the gate\'s observation is reconciled against the registry as it is now (N02)', (t) => {
