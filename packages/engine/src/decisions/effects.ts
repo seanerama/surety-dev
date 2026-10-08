@@ -277,16 +277,6 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
       if (intent) await rt.engine('intent.revalidate', { intent, facts: { head } });
       return;
     }
-    // What the classifier reads, read again (D3 §3.3; T10): the effective
-    // version's tree and the proposal's. Unreadable, nothing is begun this
-    // tick and nothing is invalidated: an unread tree is no evidence either
-    // way, and a later tick reads again.
-    const revision = facts.effective.authorized_revision;
-    const inputs = revision === null ? null : await classificationInputs(facts.repo, revision, facts.proposal.tree_id);
-    if (inputs === null) {
-      log('protected application', new Error(`the trees proposal ${proposal} is classified from cannot be read; its binding is not revalidated, and it is not applied now`), { proposal });
-      return;
-    }
     const message = messageText({
       title: `surety: apply protected proposal ${proposal}`,
       trailers: [
@@ -297,13 +287,24 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     const content = commitContent({ tree, parent: head, message, at: nowIso() });
     const sha = await commitId(facts.repo, content);
     if (sha === null) return;
-    const made = await journal.withProject(project, () =>
-      journal.intend(
+    // What the classifier reads, read again immediately before the journal
+    // intent, with the project's journal held (D3 §3.3; T10): the effective
+    // version's tree and the proposal's. Unreadable, nothing is begun this
+    // tick and nothing is invalidated: an unread tree is no evidence either
+    // way, and a later tick reads again.
+    const revision = facts.effective.authorized_revision;
+    const made = await journal.withProject(project, async () => {
+      const inputs = revision === null ? null : await classificationInputs(facts.repo, revision, facts.proposal.tree_id);
+      if (inputs === null) {
+        log('protected application', new Error(`the trees proposal ${proposal} is classified from cannot be read; its binding is not revalidated, and it is not applied now`), { proposal });
+        return { fenced: true as const };
+      }
+      return journal.intend(
         'protected.begin_application',
         { proposal, repo: facts.repo, head, tree, sha, content, set, intent, deadlineSeconds: rt.setting('git_deadline'), facts: { head }, inputs },
         'commit_tree',
-      ),
-    );
+      );
+    });
     if (!('operation' in made)) return;
     await journal.withProject(project, () => journal.drive(made.operation));
   }

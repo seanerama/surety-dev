@@ -249,7 +249,14 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
   if (inputs.purpose !== 'protected' || !inputs.proposal) return true;
   const p = getProposal(tx, inputs.proposal);
   if (!p || p.status !== 'approved') return true;
-  const intent = inputs.intent ?? null;
+  // The human's intent: named by the branch update's inputs, or, for the
+  // application's commit, the intent that operation executes. A Reviewer's
+  // application has none.
+  const intent =
+    inputs.intent ??
+    (tx.db.prepare(`SELECT "id" FROM "effect_intents" WHERE "operation" = ? AND "kind" = 'protected_application'`).get(op.id) as { id: string } | undefined)?.id ??
+    null;
+  if (intent === null && p.approver_authority !== 'reviewer') return true;
   // An intent already done or invalidated is not this check's.
   if (intent !== null) {
     const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(intent) as { status: string } | undefined;
