@@ -26,7 +26,8 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
         isString(f.message) &&
         (f.scope === undefined || ['candidate', 'lineage', 'project'].includes(f.scope as string)) &&
         optString(f.sensitive_area) &&
-        optString(f.check),
+        optString(f.check) &&
+        optString(f.criterion),
     ),
   signoffs: (v) => listOf(v, (s) => ['candidate', 'module', 'security'].includes(s.scope as string) && optString(s.module)),
   dispositions: (v) =>
@@ -52,11 +53,20 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
         Array.isArray(p.references) &&
         p.references.every((r) => isObject(r) && Object.keys(r).length === 1 && ((isString(r.path) && r.path.length > 0) || (isString(r.record) && r.record.length > 0))),
     ),
+  // D3 §5 X2, A.3: a Builder's objections to a check. Whether an entry
+  // names a check and criterion of the project that concern the run's work
+  // is the store's (store/transitions/repair.ts): an entry that does not is
+  // dropped, and the result stands.
+  objections: (v) =>
+    listOf(v, (o) => isString(o.check) && optString(o.criterion) && ['contract_conflict', 'requirement_conflict'].includes(o.category as string) && isString(o.message)),
 };
 
+// Not built: objections from any role but the Builder; a Verifier reports a
+// conflict as a finding of category requirement_conflict or contract_conflict.
 // Fields only one role may send: carried by another role's result, they make
-// it invalid (D2 §5 C1: an Alpha exception proposal is a Reviewer's).
-const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer' };
+// it invalid (D2 §5 C1: an Alpha exception proposal is a Reviewer's; D3 §5
+// X2: an objection is a Builder's).
+const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer', objections: 'builder' };
 
 // Fields no role's result may carry: no role registers a check execution or
 // records a result (D3 §2.5; SEAM.md §180).

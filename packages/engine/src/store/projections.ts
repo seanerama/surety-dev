@@ -591,6 +591,7 @@ export function readGate(db: Db, args: { project: string; candidate: string; kin
       checks: JSON.parse((e.checks as string | undefined) ?? '{}') as Record<string, unknown>,
       scope: e.scope,
       stale: e.stale === 1,
+      missing_verifications: JSON.parse((e.missing_verifications as string | undefined) ?? '[]') as { finding: string; criterion: string | null; check: string | null }[],
     },
   };
 }

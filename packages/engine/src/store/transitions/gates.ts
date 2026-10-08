@@ -15,7 +15,7 @@ import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, parseJson, sha256 } from './common.js';
-import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, checksOfVersion, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet } from './evidence.js';
+import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet } from './evidence.js';
 import { type Missing, missingSubjects } from '../../checks/scope.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
@@ -24,6 +24,7 @@ import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { verifiesCriterion } from './repair.js';
 
 type Db = Tx['db'];
 
@@ -69,6 +70,8 @@ export interface FindingRow {
   source_run: string | null;
   category: string;
   check: string | null;
+  // The criterion of the index it names as broken (D3 §2.11).
+  criterion?: string | null;
   effective_severity: 'critical' | 'high' | 'medium' | 'low';
   severity_history: string;
   sensitive_area: string | null;
@@ -362,6 +365,8 @@ export interface EvaluationBody {
   checks: Record<string, CheckEntry>;
   scope: string;
   stale: boolean;
+  // D3 §2.11; SEAM.md §231.
+  missing_verifications: { finding: string; criterion: string | null; check: string | null }[];
 }
 
 // The gate read's entry for one required check (SEAM.md §§183, 191).
@@ -528,6 +533,30 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
+  // (8) Referenced evidence exists and verifies.
+  const evidence: string[] = [];
+  for (const c of scope.required) {
+    const decider = deciders[c.id];
+    const record = decider?.output;
+    if (!record) {
+      // An established result of an execution names its output record, an
+      // empty one when the check wrote nothing (D3 §2.6): one that names
+      // none (refused by the secret screen, or lost) is missing evidence,
+      // named by the result (T09; SEAM.md §207). A harness fixture result
+      // has no execution and is not held to it.
+      const r = decider as (Execution & { execution?: string | null; execution_established?: number }) | null | undefined;
+      if (r && r.execution && r.execution_established === 1) evidence.push(r.id);
+      continue;
+    }
+    const row = db.prepare('SELECT "path", "post_scan", "missing_at", "published" FROM "records" WHERE "id" = ?').get(record) as
+      | { path: string | null; post_scan: string; missing_at: string | null; published: number }
+      | undefined;
+    if (!row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit' || (unreadable.records ?? []).includes(record)) evidence.push(record);
+  }
+  // Read before the findings (D3 §2.11 (4)): a pass whose evidence is
+  // missing resolves nothing. Its reason is added in its place, (8).
+  const intact = (d: Execution): boolean => !evidence.includes(d.id) && !(d.output !== null && evidence.includes(d.output));
+
   // (5) Findings.
   const findings = (db.prepare(`SELECT * FROM "findings" WHERE "project" = ? AND "status" IN ('open', 'dispositioned') ORDER BY "seq"`).all(args.project) as FindingRow[]).filter((f) =>
     findingApplies(db, f, candidate),
@@ -537,14 +566,24 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const expired: string[] = [];
   const reevaluated: FindingRow[] = [];
   const resolving: { finding: FindingRow; result: string }[] = [];
+  // The findings dispositioned fix whose named check cannot verify their
+  // criterion in this scope (D3 §2.11; SEAM.md §231): named by the
+  // evaluation, as the gate read shows it. No reason code of their own.
+  const missingVerifications: { finding: string; criterion: string | null; check: string | null }[] = [];
+  const requiredByKey = new Map(scope.required.map((c) => [c.key, c]));
   for (const f of findings) {
-    // A fix whose named check passes here, by an execution recorded after
-    // the disposition, is resolved by this evaluation (SEAM.md §74).
-    if (f.disposition === 'fix' && f.check !== null && superseded === null && !refUnread) {
-      const named = checksOfVersion(db, scope.effective.id).find((c) => c.key === f.check);
-      if (named) {
-        const s = checkState(db, args.project, named, scope);
-        if (s.state === 'passed' && s.decider && s.decider.execution_seq > (f.disposition_seq ?? 0)) {
+    // F2 (c), L8: a fix is resolved by this evaluation only through its
+    // named check, being a required acceptance-origin check of the scope
+    // covering the finding's criterion, passed here by an execution
+    // registered after the disposition (its number above the watermark),
+    // with its evidence intact.
+    if (f.disposition === 'fix') {
+      const named = f.check !== null ? requiredByKey.get(f.check) : undefined;
+      const criterion = f.criterion ?? null;
+      if (!verifiesCriterion(named, criterion)) missingVerifications.push({ finding: f.id, criterion, check: f.check });
+      else if (superseded === null && !refUnread) {
+        const s = selected[named!.id]!;
+        if (s.state === 'passed' && s.decider && s.decider.execution_seq > (f.disposition_seq ?? 0) && intact(s.decider)) {
           resolving.push({ finding: f, result: s.decider.id });
           continue;
         }
@@ -579,26 +618,6 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const missing = scope.signoffs.filter((need) => !signoffs.some((s) => s.role === need.role && s.scope === need.scope && (need.module === undefined || s.module === need.module)));
   if (missing.length > 0) add('SIGNOFF_MISSING', [candidate.id]);
 
-  // (8) Referenced evidence exists and verifies.
-  const evidence: string[] = [];
-  for (const c of scope.required) {
-    const decider = deciders[c.id];
-    const record = decider?.output;
-    if (!record) {
-      // An established result of an execution names its output record, an
-      // empty one when the check wrote nothing (D3 §2.6): one that names
-      // none (refused by the secret screen, or lost) is missing evidence,
-      // named by the result (T09; SEAM.md §207). A harness fixture result
-      // has no execution and is not held to it.
-      const r = decider as (Execution & { execution?: string | null; execution_established?: number }) | null | undefined;
-      if (r && r.execution && r.execution_established === 1) evidence.push(r.id);
-      continue;
-    }
-    const row = db.prepare('SELECT "path", "post_scan", "missing_at", "published" FROM "records" WHERE "id" = ?').get(record) as
-      | { path: string | null; post_scan: string; missing_at: string | null; published: number }
-      | undefined;
-    if (!row || row.published !== 1 || row.path === null || row.missing_at !== null || row.post_scan === 'hit' || (unreadable.records ?? []).includes(record)) evidence.push(record);
-  }
   if (evidence.length > 0) add('EVIDENCE_MISSING', evidence);
 
   const outcome = reasons.length === 0 ? 'satisfied' : 'not_satisfied';
@@ -661,8 +680,8 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   tx.db
     .prepare(
       `INSERT INTO "gate_evaluations" ("id", "created_at", "project", "scope", "candidate", "gate_kind", "computed_at", "inputs_hash", "inputs_snapshot", "check_states",
-         "outcome", "reasons", "satisfiers", "stale", "stage", "authorization", "checks")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?)`,
+         "outcome", "reasons", "satisfiers", "stale", "stage", "authorization", "checks", "missing_verifications")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -680,6 +699,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       scope.stage,
       target.authorization?.id ?? null,
       JSON.stringify(entries),
+      JSON.stringify(missingVerifications),
     );
 
   // What the evaluation itself records about the findings it read.
@@ -705,7 +725,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
   tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
-  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false } };
+  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false, missing_verifications: missingVerifications } };
 }
 
 export { heldByAncestry };

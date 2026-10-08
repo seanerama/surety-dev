@@ -123,6 +123,12 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+  // The failed repair checks' output records the claim names (D3 §2.10).
+  const outputIds = (claim.check_outputs ?? []).map((o) => o.output).filter((id): id is string => id !== null);
+  if (outputIds.length > 0) {
+    const paths = await rt.read<Record<string, string | null>>('records.paths', { ids: outputIds });
+    for (const id of outputIds) recordPaths.set(id, paths[id] ?? null);
+  }
   const canary = claim.attempt
     ? canaryInstructions({
         attempt: claim.attempt.id,

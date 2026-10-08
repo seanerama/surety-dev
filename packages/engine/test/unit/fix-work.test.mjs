@@ -53,10 +53,13 @@ test('a fix the human approved registers one chained fix item naming the finding
   assert.deepEqual(more, []);
   assert.deepEqual(JSON.parse(item.subject), { finding: 'fnd_A' });
   assert.deepEqual([item.status, item.trigger_source, item.trigger_id, item.trigger_generation, item.chain], ['eligible', 'finding', 'fnd_A', 1, 1]);
-  const events = db.prepare('SELECT type, tx FROM events ORDER BY seq').all();
-  assert.deepEqual(events.map((e) => e.type), ['finding.dispositioned', 'work.created']);
-  assert.equal(events[0].tx, events[1].tx, 'one transaction');
-  assert.equal(JSON.parse(db.prepare(`SELECT payload FROM events WHERE type = 'work.created'`).get().payload).test_fixture, undefined);
+  // The finding names no criterion, so from M3 slice 21 the same transaction
+  // also routes check_correction work (D3 §2.11; repair-and-findings.test.mjs).
+  const events = db.prepare(`SELECT type, tx, json_extract(subject, '$.work_item') AS w FROM events ORDER BY seq`).all();
+  assert.deepEqual(events.map((e) => e.type), ['finding.dispositioned', 'work.created', 'work.created']);
+  assert.equal(events[1].w, item.id, "the fix's work.created comes first");
+  assert.ok(events.every((e) => e.tx === events[0].tx), 'one transaction');
+  assert.equal(JSON.parse(db.prepare(`SELECT payload FROM events WHERE type = 'work.created' AND json_extract(subject, '$.work_item') = ?`).get(item.id).payload).test_fixture, undefined);
 });
 
 test('a disposition that fails leaves no fix item', (t) => {
@@ -85,6 +88,6 @@ test("a Reviewer's fix creates the work too, carrying its run's chain; other dis
   const db = store(t);
   dispose(db, 'fnd_B', 'accept', 'human');
   dispose(db, 'fnd_A', 'fix', 'reviewer', 'run_R');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get().n, 1);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = 'fix'`).get().n, 1);
   assert.deepEqual(fixes(db, 'fnd_A').map((w) => [w.trigger_source, w.chain]), [['finding', 1]], 'a run the store does not have counts as chain 1');
 });

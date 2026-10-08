@@ -142,6 +142,10 @@ export interface TriggerInput {
   // The sandbox profile its runs are dispatched under (D2 §§2.8, 3.8); null
   // for `role`.
   profile?: 'role' | 'probe' | null;
+  // Work the engine itself raises of a kind it never dispatches: only
+  // `spec_change`, from D3 §5 X2's `change_spec` answer. It is recorded and
+  // waits; the API still refuses the kind, and the scheduler never runs it.
+  engineRaised?: boolean;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation'];
@@ -155,7 +159,7 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   if (!isWorkKind(input.kind)) {
     throw new Refusal(400, 'invalid_value', `"${String(input.kind)}" is not a work-item kind.`, 'Send one of the WorkItemKind values.', { field: 'kind' });
   }
-  if (!DISPATCHABLE.includes(input.kind)) {
+  if (!DISPATCHABLE.includes(input.kind) && !(input.engineRaised === true && input.kind === 'spec_change')) {
     throw new Refusal(
       501,
       'unsupported',

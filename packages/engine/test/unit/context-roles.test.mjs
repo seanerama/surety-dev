@@ -180,7 +180,8 @@ test("a fix Builder's facts: the finding its work item names", (t) => {
 
 test("each role's result schema names the fields the engine reads from that role, and only those", () => {
   const props = (role) => Object.keys(resultSchema(role).properties).sort();
-  assert.deepEqual(props('builder'), ['checkpoint', 'nominate', 'status', 'summary']);
+  // M3 slice 21 (D3 §5 X2, A.3): a Builder may object to a check.
+  assert.deepEqual(props('builder'), ['checkpoint', 'nominate', 'objections', 'status', 'summary']);
   assert.deepEqual(props('architect'), ['checkpoint', 'status', 'summary']);
   assert.deepEqual(props('verifier'), ['applicability', 'findings', 'proposal', 'severity_changes', 'status', 'summary']);
   assert.deepEqual(props('reviewer'), ['alpha_exception_proposals', 'assessments', 'dispositions', 'findings', 'proposal_approval', 'severity_changes', 'signoffs', 'status', 'summary']);
@@ -332,13 +333,15 @@ test("E87: the Verifier is told to name a finding's check, with the project's ch
   withChecks(db);
   const facts = contextFacts(db, { run: 'run_ver' });
   assert.deepEqual(facts.checks, [
-    { key: 'login', requirements: ['R1'], gate_kinds: ['stage', 'alpha_authorize'], required: true },
-    { key: 'lint', requirements: [], gate_kinds: ['stage', 'alpha_authorize'], required: false },
+    { key: 'login', requirements: ['R1'], criteria: [], gate_kinds: ['stage', 'alpha_authorize'], required: true },
+    { key: 'lint', requirements: [], criteria: [], gate_kinds: ['stage', 'alpha_authorize'], required: false },
   ]);
   const pkg = packageOf(t, facts);
   const prompt = pkg.read('prompt.md');
   assert.match(prompt, /Name in each finding's `check` the key of the project's check whose passing shows it fixed/);
-  assert.match(prompt, /Without one, a fix of the finding can never be shown, and the finding stays open\./);
+  // M3 slice 21 (F2 (c); SEAM.md §230): the finding's criterion too.
+  assert.match(prompt, /and in its `criterion` the criterion of the requirement index it breaks/);
+  assert.match(prompt, /Without both, a fix of the finding can never be shown, and the finding stays open\./);
   assert.match(prompt, /- `login` \(required\): covers R1; gate kinds stage, alpha_authorize\./);
   assert.match(prompt, /- `lint`: covers no requirement;/);
   assert.ok(!prompt.includes('.surety/checks/x.json'), 'never a check\'s definition');
@@ -349,7 +352,8 @@ test('E87: the Reviewer is told how a fix is resolved, with the same keys', (t) 
   const db = store(t);
   withChecks(db);
   const prompt = packageOf(t, contextFacts(db, { run: 'run_rev' }), { base: null, base_from: null, revision: 'b'.repeat(40), state: 'complete', text: '', detail: null }).read('prompt.md');
-  assert.match(prompt, /A fix is shown done, and the finding resolved, when the finding's `check` passes after your disposition\. A finding with no check cannot be resolved that way: if you raise one, name its check\./);
+  // M3 slice 21 (F2 (c), L8): only a required acceptance check covering the criterion resolves it.
+  assert.match(prompt, /A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition\. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both\./);
   assert.match(prompt, /- `login` \(required\)/);
 });
 
