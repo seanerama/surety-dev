@@ -4,7 +4,7 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
-M3 slice 19, "the classifier", 2026-10-08, on branch `verify/m3-s19` from `main` at `ce59cd2` (`docs/spec/M3-build-spec.md` §9; `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.5). Five new kernel-lane files for rows M224 to M228, listed under a new slice `19` in `manifest.json`. `harness/SEAM.md` gains §§215 to 220. New harness: `harness/checks/classifier.mjs`. Contract: `contract/config.json` gains `classifier_authority` (the key §186 left here); `contract/decisions.json`'s three correction manifests gain `classifier_version`, `classifier_authority` and `discovery`. Four accepted files change for the slice's corrections, with no assertion weakened: M07 compares configuration values with `deepEqual` and gains the key's refusals; M36, M49 and M123 (b) read a proposal as "captured, or classified since" (D3 §1.6). M210 (a)'s `input_changed` is written as M226 (d). The section "M3 slice 19" below lists every case and the readings for Sean. Nothing was run in this pass yet (the driver's `--slice 18` run had the machine). The paragraph that follows is the previous pass's.
+M3 slice 19, "the classifier", 2026-10-08, on branch `verify/m3-s19` from `main` at `ce59cd2` (`docs/spec/M3-build-spec.md` §9; `docs/acceptance/sdlc-M3-acceptance-plan.md` §3.5). Five new kernel-lane files for rows M224 to M228, listed under a new slice `19` in `manifest.json`. `harness/SEAM.md` gains §§215 to 220. New harness: `harness/checks/classifier.mjs`. Contract: `contract/config.json` gains `classifier_authority` (the key §186 left here); `contract/decisions.json`'s three correction manifests gain `classifier_version`, `classifier_authority` and `discovery`. Four accepted files change for the slice's corrections, with no assertion weakened: M07 compares configuration values with `deepEqual` and gains the key's refusals; M36, M49 and M123 (b) read a proposal as "captured, or classified since" (D3 §1.6). M210 (a)'s `input_changed` is written as M226 (d). The section "M3 slice 19" below lists every case, the readings for Sean (accepted provisionally by the driver), and what was run on `main` at `16f6a40`. The paragraph that follows is the previous pass's.
 
 The slice-18 objections, 2026-10-08, on `verify/m3-s18-obj` from `main` at `b55ab1f`. Both of the Builder's objections on `build/m3-s18` (`8ea22c7`) are upheld; the answers are in `docs/acceptance/objections/`. **028:** M220 (a)'s reserves above the host's free memory or disk failed H12, so no host qualification was active and nothing could be held. Each reserve is now set between H12's need and the envelope's with one domain running, and the check is held while a role's run holds that domain (SEAM §210 amended). **029:** M216 (a) from `materializing` tolerates `ENOENT` when it restores `cgroup.events`, since recovery's kill lets the user manager collect the dead incarnation's scope. No assertion was weakened. Run against `build/m3-s18` at `8ea22c7` with this branch merged, in a scratch worktree, each file alone: M220 2 of 2 (both reserves held, and each check then runs); the M216 sandbox file 10 of 10. No check program or engine was left running. The paragraph that follows is the previous pass's.
 
@@ -2235,7 +2235,24 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 **Readings for Sean** (each marked † in SEAM §220): a fixture's class stands against the engine's classifier; how elements are compared (exactly, or at least with no extra strict or loosening one); the per-delta table of SEAM §216 (a narrowed root may also give `root_removed`; a `gate_kinds` change is `applicability_changed`); input-only and required-only affected entries pinned exactly; the form of the manifest's `discovery` not pinned; the scope approval changed by its removal from the store; the discovery changed by the engine's output bound, on an unclassifiable proposal.
 
-**What was run:** nothing yet in this pass.
+**What was run** (2026-10-08, after the driver's go; `verify/m3-s19` with `main` at `16f6a40` merged, slice 18's engine; `npm ci`, `npm run build`, `node --check` on every changed file). Each file alone with `node --test`, waiting on the command; no engine or role process was left afterwards.
+
+| File | Result on `main` | First failing assertion, or control |
+|---|---|---|
+| M224 | 0 of 5 | `GET /v1/engine` names no `classifier_version` (after the project, its index and its first proposal) |
+| M225 | 0 of 4 | the same |
+| M226 | 0 of 4 | no proposal is classified by the engine within four ticks |
+| M227 | 0 of 3 | (a): no engine classification; (c), (d): no `classifier_version` |
+| M228 | 0 of 2 | no `classifier_version` |
+| M07 | 15 of 18 | defaults, refusals, valid alternatives: `classifier_authority` is not a configuration key (`unknown_field`) |
+| M36, M49 | 4 of 4, 5 of 5 | **controls**: the "captured, or classified since" reading holds on `main` |
+| M123 (sandbox) | 5 of 5 | **control** |
+| M73 (not changed; reads the contracts) | 10 of 11 | the `check_correction_tightening` manifest does not bind `classifier_version` |
+| M53 (not changed; a representative of the rows that open a correction decision) | 0 of 8 | each at `assertPreview`: the manifest lacks the three keys |
+
+**A probe beyond the classifier**, not committed: with the harness patched for one run so that the missing version and classification were passed over, every file reached its classification step. All 65 of M224's proposals were captured, among them the policy route's, the symlink and the mode change; M225 to M228 stopped where an engine classification or its decision is needed. The patch was removed before the commit.
+
+**One fixture fault fixed while confirming the failures** (no assertion changed): the Verifier's mode change used `git checkout <commit> -- <path>`, which changed its workspace's index, so the run was rejected `ref_violation` (SEAM §28) before a proposal existed; it now uses `git restore --source=<commit> -- <path>`, which leaves the index as it was (SEAM §216).
 
 ## M3 slice 18: what an execution establishes (M3 build spec §9; E92 to E95)
 
