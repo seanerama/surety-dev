@@ -29,7 +29,7 @@ import { armFault, waitFor } from './harness/engine.mjs';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { assertNoEffect, assertRefused, maxEventSeq, storeState } from './harness/fixtures.mjs';
 import { addEnvironment, alphaTarget, authorizationsOf, check, effectiveVersion, evaluationsOf, installChecks, installGatedPlan, nominated, passAll, postResult, proposeAuthorization, reasonCodes, review, stageGate } from './harness/gates.mjs';
-import { roleThat } from './harness/gitruns.mjs';
+import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { candidatesOf, eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { commitOnRef, refOid } from './harness/repos.mjs';
@@ -63,31 +63,46 @@ describe('M44 the stage gate', () => {
   test("a stage's work is complete only when its stage gate is satisfied, not when its candidate's verification completes; and a satisfied stage gate issues no deployment authority", async (t) => {
     const { fx, ctx, project, c, k } = await candidate(t, { pass: false });
     const stageWork = ctx.items[0];
-    // The candidate's verification, let through the chain boundary by a person, completes.
-    const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === c.id);
-    assert.ok(verification, 'the fixture is live: the nomination created verification work');
-    await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
-    await tickUntil(fx.engine, project, () => workItem(fx.home, verification.id).status === 'complete', { what: "the candidate's verification to complete" });
+    // The stage's Builder: its first run, and a second for the repair the failure below takes, which writes the same edit and asks for the nomination.
+    fx.scripted.script(stageWork, [roleThat([permittedEdit()], { nominate: true }), roleThat([permittedEdit()], { nominate: true })]);
+    // A candidate's verification, let through the chain boundary by a person, completes.
+    const verify = async (candidateId) => {
+      const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === candidateId);
+      assert.ok(verification, 'the fixture is live: the nomination created verification work');
+      await consume(fx, project, await openDecision(fx, project, 'blocker', verification.id), 'continue');
+      await tickUntil(fx.engine, project, () => workItem(fx.home, verification.id).status === 'complete', { what: "the candidate's verification to complete" });
+    };
+    await verify(c.id);
 
     // The engine evaluates the stage gate by itself, and it is not satisfied: no execution of the check is recorded.
     const own = await tickUntil(fx.engine, project, () => evaluationsOf(fx.home, c.id, 'stage').at(-1), { max: 4, what: 'the engine to evaluate the stage gate' });
     assert.equal(own.outcome, 'not_satisfied');
     assert.equal(workItem(fx.home, stageWork).status, 'verifying', "the verification is complete and the stage's work is not");
 
-    // A failed execution completes nothing.
+    // A failed execution completes nothing. Under Q2 (D3 §2.10; E90 item 2; objection 030) it sends the stage's work back to its Builder, in the
+    // transaction that records it: where this case had the work stay verifying on the failed candidate, the Q2 behaviour is pinned instead.
     await postResult(fx.engine, project, { candidate: c.id, check: k.login, exit_status: 1 });
-    await tick(fx.engine, project);
-    assert.equal(workItem(fx.home, stageWork).status, 'verifying');
+    assert.deepEqual([workItem(fx.home, stageWork).status, workItem(fx.home, stageWork).repair_attempts], ['eligible', 1], 'a failed execution completes nothing: the stage is sent back to its Builder (Q2)');
+
+    // The repair's candidate: the stage's work is verifying again, and that candidate's verification completes. The work is still not complete.
+    const c2 = (await waitForCandidates(fx, project, 2))[1];
+    await tickUntil(fx.engine, project, () => workItem(fx.home, stageWork).status === 'verifying', { what: "the stage's work to be verifying on the repair's candidate" });
+    await verify(c2.id);
+    const own2 = await tickUntil(fx.engine, project, () => evaluationsOf(fx.home, c2.id, 'stage').at(-1), { max: 4, what: "the engine to evaluate the repair's candidate's stage gate" });
+    assert.equal(own2.outcome, 'not_satisfied');
+    assert.equal(workItem(fx.home, stageWork).status, 'verifying', "its verification is complete and the stage's work is not");
 
     // A later passing execution: the stale evaluation is recomputed at a tick, and the work completes with it.
-    await passAll(fx.engine, project, c.id, [k.login]);
+    await passAll(fx.engine, project, c2.id, [k.login]);
     await tickUntil(fx.engine, project, () => workItem(fx.home, stageWork).status === 'complete', { max: 4, what: "the stage's work to complete" });
-    assert.equal(evaluationsOf(fx.home, c.id, 'stage').at(-1).outcome, 'satisfied', 'the evaluation that completed it is satisfied');
-    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, stageWork)), WORK.kinds.stage_build.path);
+    assert.equal(evaluationsOf(fx.home, c2.id, 'stage').at(-1).outcome, 'satisfied', 'the evaluation that completed it is satisfied');
+    const once = WORK.kinds.stage_build.path.slice(0, -1);
+    assert.deepEqual(withStore(fx.home, (db) => assertWorkHistory(db, stageWork)), [...once, ...once, 'complete'], 'the path, with the one repair Q2 took, ends complete');
 
-    assert.deepEqual(authorizationsOf(fx.home, c.id), [], 'stage success issues no authorization');
+    for (const held of [c, c2]) assert.deepEqual(authorizationsOf(fx.home, held.id), [], 'stage success issues no authorization');
     assert.equal(eventsOfType(fx.home, 'authorization.issued').length, 0);
     notDeployed(fx, project, c);
+    notDeployed(fx, project, c2);
   });
 
   test("a stage gate that an out-of-band change blocked is evaluated again once the change is discarded: the next ticks complete the stage's work, whose check has passed, and nobody asks for the gate", async (t) => {

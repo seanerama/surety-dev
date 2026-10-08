@@ -209,10 +209,10 @@ const reviewsOf = (fx, project) => workItemsOf(fx.home, project).filter((work) =
 // verification work its nomination registered, which waits at the chain
 // boundary. `verify()` is the person letting it through, and its run, which
 // changes nothing and reports completion.
-async function verifiable(t, tier) {
+async function verifiable(t, tier, { policy } = {}) {
   const fx = await scriptedEngine(t);
   fx.scripted.defaultScript(script.complete());
-  const ctx = await nominated(fx, { tier });
+  const ctx = await nominated(fx, { tier, policy });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
   const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === ctx.candidate.id);
@@ -226,23 +226,31 @@ async function verifiable(t, tier) {
 
 describe('M43 the engine queues the review a tier requires', () => {
   test("T2: the candidate's review is queued by the engine once its verification has completed with its required check passed: not at the nomination, not while the check is failed, and once", async (t) => {
-    const { fx, ctx, project, c, k, verify } = await verifiable(t, 'T2');
+    // The failed check below is recorded while the stage's work is verifying on the candidate, so under Q2 (D3 §2.10; E90 item 2) it sends the stage
+    // back to its Builder, whose repair's candidate supersedes this one. This case is about the review the engine queues, not the repair: at
+    // repair_attempts_max 0 the stage's work is parked instead, and the candidate stays current (objection 030).
+    const { fx, ctx, project, c, k, verify } = await verifiable(t, 'T2', { policy: { repair_attempts_max: 0 } });
 
     // The check has passed and the Verifier has not run: nothing is queued at the nomination, or by the check alone.
     await passAll(fx.engine, project, c.id, [k.login]);
     await tick(fx.engine, project);
     assert.deepEqual(reviewsOf(fx, project), [], "no review before the candidate's verification has completed");
 
-    // The candidate is verified with its required check failed: it gets no review, however many ticks run.
+    // The candidate is verified with its required check failed: it gets no review, however many ticks run, nor at an evaluation asked for.
     await postResult(fx.engine, project, { candidate: c.id, check: k.login, exit_status: 1 });
     await verify();
     await tick(fx.engine, project);
     await tick(fx.engine, project);
+    assert.ok(reasonCodes(await stageGate(fx, ctx)).includes('CHECK_NOT_PASSED'), 'the fixture is live: an evaluation with the verification complete and the check failed');
     assert.deepEqual(reviewsOf(fx, project), [], 'a candidate whose verification fails gets no review');
 
-    // A later execution passes. The engine queues the review itself.
+    // A later execution passes. The engine queues the review itself, in the stage gate's evaluation. Under Q2 the ticks no longer evaluate this
+    // candidate's stage gate by themselves (SEAM.md §70: they evaluate the gate of stage work still verifying, and the failure took it out of
+    // verifying), so the evaluation is asked for: where this case had a tick queue it, the Q2 behaviour is pinned (objection 030).
     await passAll(fx.engine, project, c.id, [k.login]);
-    const queued = await tickUntil(fx.engine, project, () => reviewsOf(fx, project)[0], { max: 4, what: "the engine to queue the candidate's review" });
+    await stageGate(fx, ctx);
+    const [queued] = reviewsOf(fx, project);
+    assert.ok(queued, "the engine queued the candidate's review in the evaluation");
     assert.deepEqual(
       [queued.subject?.candidate, queued.trigger_source, queued.trigger_id, queued.trigger_generation],
       [c.id, 'verification', c.id, 1],

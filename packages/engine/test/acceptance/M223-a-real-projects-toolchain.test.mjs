@@ -26,6 +26,7 @@ import { describe, test } from 'node:test';
 
 import { askingForTicks, reasonSubjects, stageGate } from './harness/gates.mjs';
 import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { changePolicy } from './harness/journal.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
@@ -66,6 +67,10 @@ describe('M223 a real project\'s toolchain', () => {
     await qualifyRunnerByFixture(fx.engine);
     const ref = referenceProject(fx.root);
     const project = await checkProject(fx, { files: ref.files, tier: 'T1' });
+    // The broken candidate below is a fix's, and its acceptance check fails while the fix is verifying, so under Q2 (D3 §2.10; E90 item 2) it would
+    // send the fix back to its Builder. This row is about the toolchain, not the repair: at repair_attempts_max 0, set before the build so every
+    // candidate holds its commit, the fix is parked instead (objection 030).
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
     const plan = await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'sum', implements: ['R1'] }] });
     const [stage] = plan.stages;
     fx.scripted.script(stage.work_item, [roleThat([step.write(SUM_PATH, SUM)], { nominate: true })]);

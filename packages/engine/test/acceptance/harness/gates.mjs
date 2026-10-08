@@ -372,9 +372,15 @@ export async function alphaTarget(fx, ctx, candidate = ctx.candidate, { environm
 // requirement; `roles[n]` scripts stage n+1's Builder (stage 1 writes the
 // permitted edit by default). At T1 a nomination is the Builder's request.
 // `project` is a project made beforehand (of tier `tier`), else one is made.
+// `policy`, if given, is changed before the plan and the build, so its commit
+// of `.surety/policy.json` is already in the first candidate (objection 030:
+// a case that records a failure while the stage's work is verifying, and is
+// not about D3 §2.10's repair, sets `repair_attempts_max` 0, so Q2 parks the
+// work instead of sending it back to a Builder with no script).
 // Returns {project, plan, items, stage, candidate, requirement: {key: id}}.
-export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing, index = true } = {}) {
+export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing, index = true, policy } = {}) {
   const project = existing ?? (await addGitProject(fx, { tier, files }));
+  if (policy !== undefined) await changePolicy(fx.engine, project.id, policy);
   const plan = await installGatedPlan(fx.engine, project.id, { requirements, modules, index, stages: stages ?? [{ number: 1, goal: 'the first stage', implements: requirements }] });
   const items = plan.stages.map((stage) => stage.work_item);
   const nominate = tier === 'T1' ? { nominate: true } : {};
