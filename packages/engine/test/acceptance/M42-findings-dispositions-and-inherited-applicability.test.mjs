@@ -79,10 +79,11 @@ const inDays = (n) => new Date(Date.now() + n * DAY * 1000).toISOString();
 const defect = (severity, message, extra = {}) => ({ category: 'defect', severity, message, ...extra });
 
 // A T1 candidate with one required check, passed: its stage gate is
-// satisfied until a finding says otherwise.
-async function clean(t, checks = [check('login', { requirements: ['R1'] })]) {
+// satisfied until a finding says otherwise. `policy` is changed before the
+// build (gates.mjs `nominated`).
+async function clean(t, checks = [check('login', { requirements: ['R1'] })], { policy } = {}) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { policy });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, checks)).id;
   return { fx, ctx, project, k, c1: ctx.candidate };
@@ -158,7 +159,9 @@ describe('M42 the findings a gate asks about', () => {
   });
 
   test("a fix is resolved by a verification on the candidate that holds it, and the fix's work is complete with that resolution and not before; a resolution whose verification is invalidated reopens the finding", async (t) => {
-    const { fx, ctx, project, k, c1 } = await clean(t, [check('login', { requirements: ['R1'] }), check('regress', { requirements: ['R1'] })]);
+    // The failure of `regress` on candidate 1 is recorded while the stage's work is verifying there, so under Q2 (D3 §2.10; E90 item 2) it would send
+    // the stage back to its Builder. This case is about the fix the finding gets, not the stage's repair: at repair_attempts_max 0 the stage's work is parked instead (objection 030).
+    const { fx, ctx, project, k, c1 } = await clean(t, [check('login', { requirements: ['R1'] }), check('regress', { requirements: ['R1'] })], { policy: { repair_attempts_max: 0 } });
     await passAll(fx.engine, project, c1.id, [k.login]);
     await postResult(fx.engine, project, { candidate: c1.id, check: k.regress, exit_status: 1 });
     const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'a session survives logout', { check: 'regress', criterion: 'R1.1' })]);
