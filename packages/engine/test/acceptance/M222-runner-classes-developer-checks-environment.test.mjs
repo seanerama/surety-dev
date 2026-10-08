@@ -37,6 +37,7 @@ import { CONTRACT } from './harness/fixtures.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import {
   GOVERNED_FILE,
+  acceptance,
   checkProject,
   defPath,
   definitionText,
@@ -75,13 +76,15 @@ describe('M222 runner classes, developer checks, the reserved environment', () =
       [GOVERNED_FILE]: sandboxGoverned(prog),
       [EXPECT]: 'right\n',
       [defPath('plain')]: smoke('plain', { command: ['probe', 'exit', '0'], gates: ['stage'] }),
+      // M3 slice 20 (L3, B04; SEAM.md §226): the stage implements R1, whose one criterion this acceptance check covers, so the stage scope is complete beside the smoke check.
+      [defPath('acc')]: acceptance('acc', ['R1.1'], { command: ['probe', 'exit', '0'], gates: ['stage'] }),
       [defPath('dev')]: definitionText('dev', { origin: 'developer', kind: 'smoke', command: ['probe', 'expect', VALUE, EXPECT], timeout_s: 60, gate_kinds: ['stage'], inputs: [EXPECT] }),
       [defPath('boxed')]: smoke('boxed', { command: ['probe', 'exit', '0'], gates: alphaOnly, runner_class: 'container' }),
       [defPath('far')]: smoke('far', { command: ['probe', 'exit', '0'], gates: alphaOnly, runner_class: 'remote' }),
       [defPath('deployed')]: definitionText('deployed', { kind: 'post_deploy_behavior', command: ['probe', 'exit', '0'], timeout_s: 60, gate_kinds: alphaOnly, requires: ['environment', 'artifact_digest'] }),
     };
     const project = await checkProject(fx, { files });
-    const plan = await installGatedPlan(fx.engine, project.id, { requirements: [], stages: [{ number: 1, goal: 'the first stage', implements: [] }] });
+    const plan = await installGatedPlan(fx.engine, project.id, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
     const [stage] = plan.stages;
     fx.scripted.script(stage.work_item, [roleThat([step.write(VALUE, 'wrong\n')], { nominate: true })]);
     const build = await runToEnd(fx, project.id, stage.work_item);
@@ -127,6 +130,8 @@ describe('M222 runner classes, developer checks, the reserved environment', () =
     const second = (await waitForCandidates(fx, project.id, 2)).at(-1);
     const dev2 = await terminalExecution(fx, project.id, second.id, 'dev');
     const plain2 = await terminalExecution(fx, project.id, second.id, 'plain');
+    const acc2 = await terminalExecution(fx, project.id, second.id, 'acc');
+    assert.equal(resultRow(fx.home, acc2.result).exit_status, 0, 'the acceptance check of R1.1 passed');
     assert.deepEqual([resultRow(fx.home, dev2.result).execution_established, resultRow(fx.home, dev2.result).exit_status], [1, 0], '(b) on the changed file the developer check passes');
     assert.equal(resultRow(fx.home, plain2.result).exit_status, 0);
     assert.deepEqual(proposalsOf(fx.home, project.id), [], "(b) the Builder's test file changed with no proposal");

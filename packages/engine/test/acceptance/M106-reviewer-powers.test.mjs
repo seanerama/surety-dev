@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { CODES, answer, answerAndHoldEffect, assertEffectInvalidated, consume, decision, decisionsOn, intentsOf, openDecision, untilKilled } from './harness/decisions.mjs';
-import { CHECK_FILE, PROTECTED_FILES, assertApplied, assertNotApplied, capturedProposal, check, correction, effectiveVersion, finding, installChecks, installGatedPlan, nominated, passAll, postResult, proposalsOf, raiseFindings, reasonSubjects, review, reviewerApproves, stageGate, waitApplied } from './harness/gates.mjs';
+import { CHECK_FILE, PROTECTED_FILES, assertApplied, assertNotApplied, capturedProposal, check, correction, effectiveVersion, finding, installChecks, installGatedPlan, nominated, passAll, passedInventory, postResult, proposalsOf, raiseFindings, reasonSubjects, review, reviewerApproves, stageGate, waitApplied } from './harness/gates.mjs';
 import { armBarrier } from './harness/journal.mjs';
 import { isoNow, newId } from './harness/ids.mjs';
 import { commitOnRef, refOid, treeOf } from './harness/repos.mjs';
@@ -192,7 +192,7 @@ describe('M106 the Reviewer\'s powers', () => {
     const { fx, ctx, project, k, critical, high, lower, checkStates } = await withFindings(t);
     const more = await installChecks(fx.engine, project, [check('export', { requirements: ['R1'] })]);
     const before = await checkStates();
-    assert.deepEqual(before, { [k.login]: 'passed', [k.import]: 'failed', [more.id.export]: 'missing' }, 'the fixture is live: one passed, one failed, one missing');
+    assert.deepEqual(before, { ...passedInventory(k), [k.login]: 'passed', [k.import]: 'failed', [more.id.export]: 'missing' }, 'the fixture is live: one passed, one failed, one missing (beside the inventory of the tier, passed: M3 slice 20, SEAM.md §226)');
 
     await lower(critical.id, 'high');
     await consume(fx, project, await openDecision(fx, project, 'severity_lower', critical.id), 'approve');

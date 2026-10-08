@@ -79,7 +79,8 @@ describe('M43 the obligations of a tier are cumulative, and every sign-off it na
   for (const [tier, expect] of Object.entries(TIERS)) {
     test(`${tier}: requires ${expect.required.join(', ')}; ${expect.signoffs.flat().length === 0 ? 'no sign-off' : `sign-offs ${expect.signoffs.flat().map((s) => s.module ?? s.scope).join(', ')}`}`, async (t) => {
       const fx = await scriptedEngine(t);
-      const ctx = await nominated(fx, { tier, modules: MODULES });
+      // The stage lists both modules: a stage scope's modules are its stage's (D3 §4.1; M3 slice 20, SEAM.md §226), so T3 asks a sign-off of each.
+      const ctx = await nominated(fx, { tier, modules: MODULES, stages: [{ number: 1, goal: 'the first stage', implements: ['R1'], modules: MODULES.map((m) => m.name) }] });
       const project = ctx.project.id;
       const k = (await installChecks(fx.engine, project, CHECKS)).id;
       // Every check passes, including those this tier does not require.
