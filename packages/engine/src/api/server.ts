@@ -16,9 +16,10 @@ import { runningClassifierVersion } from '../checks/classify.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
-import { gateFacts } from '../gates/prepare.js';
+import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
 import { homePaths } from '../paths.js';
+import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes } from '../records/files.js';
 import type { RecordRow } from '../store/transitions/records.js';
 import { EventReader } from '../store/reader-client.js';
@@ -401,7 +402,16 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'checks' && post) {
         const candidate = decodeSegment(rest[1]!);
         if (candidate === null) return null;
-        return { kind: 'command', name: 'candidate.request_checks', args: (b) => ({ project, candidate, body: b }) };
+        // The candidate's required checks need its module presence (D3
+        // §4.1): read first, as a gate evaluation reads its facts.
+        return {
+          kind: 'prepared',
+          name: 'candidate.request_checks',
+          prepare: async (b) => {
+            await ensurePresence(runtime(), project).catch((err) => log('module presence', err, { project }));
+            return { project, candidate, body: b };
+          },
+        };
       }
       if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'authorizations' && post) {
         const candidate = decodeSegment(rest[1]!);

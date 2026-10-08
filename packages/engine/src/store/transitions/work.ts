@@ -196,6 +196,8 @@ export interface PlanStageInput {
   goal: string;
   // The requirements the stage implements (ids), from an approved baseline.
   implements?: string[];
+  // The modules it lists (ids; D3 §4.1): its stage scope's modules.
+  modules?: string[];
 }
 
 // Register a phase plan's stages and the stage_build work of each (D1 §7.8:
@@ -220,9 +222,9 @@ export function registerPlan(
     tx.db
       .prepare(
         `INSERT INTO "stages" ("id", "created_at", "project", "phase_plan", "number", "goal", "modules", "requirement_ids", "implements", "status")
-         VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, 'planned')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned')`,
       )
-      .run(id, tx.at, args.project, plan, stage.number, stage.goal, JSON.stringify(stage.implements ?? []), JSON.stringify(stage.implements ?? []));
+      .run(id, tx.at, args.project, plan, stage.number, stage.goal, JSON.stringify(stage.modules ?? []), JSON.stringify(stage.implements ?? []), JSON.stringify(stage.implements ?? []));
     const made = observeTrigger(
       tx,
       { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0 },

@@ -40,7 +40,7 @@ import type { RunEnder } from '../runs/end.js';
 import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
-import { ensureAncestry, gateFacts } from '../gates/prepare.js';
+import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -123,6 +123,9 @@ export class Scheduler {
 
   private async decide(project: string): Promise<void> {
     await ensureAncestry(this.rt, project);
+    // The candidates' module presence (D3 §4.1), before Gates and Checks: a
+    // registration owed for want of it is made once it is read (L2).
+    await ensurePresence(this.rt, project).catch((err) => log('module presence', err, { project }));
     // Every stage gate that is due (SEAM.md §70): a candidate's verification
     // is complete and the stage's work it holds is still verifying, with no
     // evaluation or a stale one.

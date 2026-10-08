@@ -12,8 +12,7 @@ import { type DiscoveryError, criterionErrors, requirementKeyOf } from '../../ch
 import { Refusal } from '../../refusal.js';
 import { barrier } from '../../testing/seam.js';
 import { notFound } from './common.js';
-import { type CandidateRow, type CheckRow, getCandidate, markStale, requiredSet, unreadAncestry } from './evidence.js';
-import { heldByAncestry } from './gates.js';
+import { type CandidateRow, type CheckRow, candidateContent, getCandidate, markStale } from './evidence.js';
 import { effectiveVersion } from './protected.js';
 import { insertExecutionResult } from './baseline.js';
 import { checkLimits } from '../../checks/limits.js';
@@ -188,29 +187,69 @@ export function executionSeqHigh(db: Db, project: string): number {
 // protected application's trigger registers for every candidate.
 const triggerKey = (t: Trigger, key: string, candidate = ''): string => `${candidate}|${t.source}|${t.id}|${t.generation}|${key}`;
 
-// The stages whose work a candidate holds, by ancestry (E43).
-function stagesHeld(db: Db, candidate: CandidateRow): string[] {
-  const out: string[] = [];
-  for (const w of heldByAncestry(db, candidate)) {
-    const item = db.prepare('SELECT "kind", "subject" FROM "work_items" WHERE "id" = ?').get(w) as { kind: string; subject: string } | undefined;
-    if (item?.kind !== 'stage_build') continue;
-    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
-    if (stage && !out.includes(stage)) out.push(stage);
-  }
-  return out;
-}
-
+// Not built, by design (slice 20, approved): a scope that grows on a spec
+// revision or a module change registers nothing by itself. Neither is a
+// trigger of D3 §2.5; the new required check is `missing` (never passed)
+// until a trigger (operator request, a protected application, recovery)
+// registers it, or a result is recorded.
+//
 // The checks a candidate's trigger registers under `version`: the union of
 // the required sets of the `stage` gates of the stages it holds and of its
-// `alpha_authorize` gate (D3 §2.5), each once, in key order. `unread`: a
-// fact the sets need has not been read, so nothing is registered yet.
+// `alpha_authorize` gate (D3 §2.5), each once, in key order: the candidate's
+// content (evidence.ts candidateContent; one rule, B04). `unread`: a fact the
+// sets need (ancestry, module presence) has not been read, so nothing is
+// registered yet.
 export function registrationSet(db: Db, project: string, candidate: CandidateRow, version: string): { checks: CheckRow[]; unread: boolean } {
-  if (unreadAncestry(db, project, candidate)) return { checks: [], unread: true };
-  const byId = new Map<string, CheckRow>();
-  for (const stage of stagesHeld(db, candidate)) for (const c of requiredSet(db, { project, candidate, kind: 'stage', stage, version }).required) byId.set(c.id, c);
-  for (const c of requiredSet(db, { project, candidate, kind: 'alpha_authorize', stage: null, version }).required) byId.set(c.id, c);
-  return { checks: [...byId.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)), unread: false };
+  const content = candidateContent(db, project, candidate, version);
+  if (content.unread.length > 0) return { checks: [], unread: true };
+  return { checks: content.checks, unread: false };
 }
+
+// A candidate's `checks_due` (D3 A.3; SEAM.md §224): {trigger, at} of the
+// first registration owed, and `owed`, every one, each with the version it
+// was owed under. Read also in the form slice 15 wrote, a list.
+export interface Owed {
+  trigger: Trigger;
+  version?: string;
+  at: string;
+}
+
+// The due mark as read: what is owed, or `unknown` when the stored value is
+// not a form this engine wrote (slice 20 review, minor 7). An unknown mark
+// fails closed: every check is owed (missing, its entry's `due` the stored
+// value) and the mark is never cleared or rewritten.
+export type Due = { owed: Owed[]; unknown: false } | { owed: []; unknown: true; value: unknown };
+
+const isTrigger = (t: unknown): t is Trigger =>
+  typeof t === 'object' && t !== null && typeof (t as Trigger).source === 'string' && typeof (t as Trigger).id === 'string' && Number.isInteger((t as Trigger).generation);
+const isOwed = (o: unknown): o is Owed =>
+  typeof o === 'object' && o !== null && isTrigger((o as Owed).trigger) && typeof (o as Owed).at === 'string' && ((o as Owed).version === undefined || typeof (o as Owed).version === 'string');
+
+export function readDue(text: string | null | undefined): Due | null {
+  if (text === null || text === undefined) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(text) as unknown;
+  } catch {
+    return { owed: [], unknown: true, value: text };
+  }
+  // The slice-15 form: a non-empty list.
+  if (Array.isArray(v)) return v.length > 0 && v.every(isOwed) ? { owed: v, unknown: false } : { owed: [], unknown: true, value: v };
+  if (v && typeof v === 'object') {
+    const o = v as { trigger?: unknown; at?: unknown; version?: unknown; owed?: unknown };
+    if (o.owed !== undefined) return Array.isArray(o.owed) && o.owed.length > 0 && o.owed.every(isOwed) ? { owed: o.owed, unknown: false } : { owed: [], unknown: true, value: v };
+    if (isOwed(o)) return { owed: [{ trigger: o.trigger, at: o.at, ...(typeof o.version === 'string' ? { version: o.version } : {}) }], unknown: false };
+  }
+  return { owed: [], unknown: true, value: v };
+}
+
+// What is owed, for a known mark; [] for none. An unknown mark has no list:
+// callers that must fail closed read readDue.
+export function dueOwed(text: string | null | undefined): Owed[] {
+  return readDue(text)?.owed ?? [];
+}
+
+const dueText = (owed: Owed[]): string | null => (owed.length === 0 ? null : JSON.stringify({ trigger: owed[0]!.trigger, at: owed[0]!.at, owed }));
 
 // Register one execution per check for the trigger, in this transaction;
 // a trigger identity already registered registers nothing (D3 §2.5).
@@ -256,9 +295,15 @@ export function registerForTrigger(tx: Tx, args: { project: string; candidate: s
   const set = registrationSet(tx.db, args.project, candidate, args.version);
   if (set.unread) {
     const due = candidate as CandidateRow & { checks_due?: string | null };
-    const list = due.checks_due ? (JSON.parse(due.checks_due) as { trigger: Trigger; version: string; at: string }[]) : [];
+    const mark = readDue(due.checks_due);
+    // An unknown mark already owes everything; it is never rewritten.
+    if (mark?.unknown) {
+      markStale(tx, { candidate: candidate.id });
+      return;
+    }
+    const list = mark?.owed ?? [];
     if (!list.some((d) => triggerKey(d.trigger, '') === triggerKey(args.trigger, ''))) list.push({ trigger: args.trigger, version: args.version, at: tx.at });
-    tx.db.prepare('UPDATE "candidates" SET "checks_due" = ? WHERE "id" = ?').run(JSON.stringify(list), candidate.id);
+    tx.db.prepare('UPDATE "candidates" SET "checks_due" = ? WHERE "id" = ?').run(dueText(list), candidate.id);
     markStale(tx, { candidate: candidate.id });
     return;
   }
@@ -277,12 +322,16 @@ export function registerDue(tx: Tx, args: { project: string }): number {
     const candidate = getCandidate(tx.db, r.id)!;
     // A superseded candidate is owed nothing more (slice 16 review m5).
     if (candidate.superseded_by) continue;
-    if (unreadAncestry(tx.db, args.project, candidate)) continue;
     // Under the version effective now: one stored with the due mark may
     // since have been superseded.
     const effective = effectiveVersion(tx.db, args.project);
     if (!effective) continue;
-    for (const d of JSON.parse(r.checks_due) as { trigger: Trigger }[]) {
+    // A fact the sets need (ancestry, module presence) is still unread.
+    if (registrationSet(tx.db, args.project, candidate, effective.id).unread) continue;
+    // An unknown mark is never cleared (it fails closed: everything owed).
+    const mark = readDue(r.checks_due);
+    if (!mark || mark.unknown) continue;
+    for (const d of mark.owed) {
       const set = registrationSet(tx.db, args.project, candidate, effective.id);
       made += registerExecutions(tx, { project: args.project, candidate, checks: set.checks, trigger: d.trigger }).filter((x) => x.created).length;
     }

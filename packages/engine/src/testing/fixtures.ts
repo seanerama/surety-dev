@@ -19,6 +19,7 @@ import { type Actor, transact } from '../store/transitions/tx.js';
 import { applyWorkTransition, observeTrigger, registerPlan } from '../store/transitions/work.js';
 import {
   type CheckInput,
+  type ModuleInput,
   type ResultInput,
   configureEnvironment,
   declareChecks,
@@ -30,8 +31,11 @@ import {
   recordReuse,
   recordScopeApproval,
   registerRequirementIndex,
+  moduleIds,
   requirementIds,
 } from '../store/transitions/baseline.js';
+import { SENSITIVE_AREAS } from '../checks/schema.js';
+import { modulePathOk } from '../checks/scope.js';
 import type { DecisionKind } from '../store/transitions/decisions.js';
 import { type ChangeKind, type ProtectedSet, CORRECTION_KIND, classifyProposal, getProposal, recordLegacyFingerprint, versionSource } from '../store/transitions/protected.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
@@ -127,13 +131,13 @@ export function installFixtureTrigger(db: Database, actor: Actor, body: unknown)
 
 export interface PlanBody {
   project: string;
-  stages: { number: number; goal: string; implements: string[]; adrs: string[] }[];
+  stages: { number: number; goal: string; implements: string[]; adrs: string[]; modules: string[] }[];
   requirements: string[];
   // E67 item 7 (SEAM.md §139): approved texts.
   requirementTexts: Record<string, string>;
   adrs: { key: string; text: string }[];
   constraints: { key: string; text: string }[];
-  modules: { name: string; paths: string[]; sensitive_areas?: string[] }[];
+  modules: ModuleInput[];
   // D3 §4.5 (SEAM.md §179): the requirement index, registered through the
   // parser spec approval will use.
   index: IndexRow[] | null;
@@ -159,13 +163,15 @@ export function parsePlanBody(body: unknown): PlanBody {
   const project = str(b, 'project');
   if (!Array.isArray(b.stages) || b.stages.length === 0) throw invalid('stages', 'must be a non-empty array');
   const stages = b.stages.map((s: unknown, i: number) => {
-    const st = objectBody(s, ['number', 'goal', 'implements', 'adrs']);
+    const st = objectBody(s, ['number', 'goal', 'implements', 'adrs', 'modules']);
     if (typeof st.goal !== 'string' || st.goal.length === 0) throw invalid(`stages[${i}].goal`, 'must be a non-empty string');
     return {
       number: positiveInt(st, 'number'),
       goal: st.goal,
       implements: st.implements === undefined ? [] : strings(st.implements, `stages[${i}].implements`),
       adrs: st.adrs === undefined ? [] : strings(st.adrs, `stages[${i}].adrs`),
+      // D3 §4.1 (SEAM.md §222): the modules the stage lists, by name.
+      modules: st.modules === undefined ? [] : strings(st.modules, `stages[${i}].modules`),
     };
   });
   if (b.requirements !== undefined && !Array.isArray(b.requirements)) throw invalid('requirements', 'must be an array');
@@ -184,8 +190,17 @@ export function parsePlanBody(body: unknown): PlanBody {
   const constraints = keyed(b.constraints, 'constraints');
   for (const [i, st] of stages.entries()) for (const k of st.adrs) if (!adrs.some((a) => a.key === k)) throw invalid(`stages[${i}].adrs`, `names ${k}, which is not among the plan's adrs`);
   const modules = ((b.modules ?? []) as unknown[]).map((m, i) => {
-    const mo = objectBody(m, ['name', 'paths', 'sensitive_areas']);
-    return { name: str(mo, 'name'), paths: strings(mo.paths, `modules[${i}].paths`), ...(mo.sensitive_areas !== undefined ? { sensitive_areas: strings(mo.sensitive_areas, `modules[${i}].sensitive_areas`) } : {}) };
+    const mo = objectBody(m, ['name', 'paths', 'sensitive_areas', 'tier_override']);
+    const areas = mo.sensitive_areas === undefined ? [] : strings(mo.sensitive_areas, `modules[${i}].sensitive_areas`);
+    if (areas.some((a) => !SENSITIVE_AREAS.includes(a))) throw invalid(`modules[${i}].sensitive_areas`, 'names an area outside the closed list');
+    // D1 A.3, D3 §4.1 (SEAM.md §222): absent for none.
+    const override = mo.tier_override;
+    if (override !== undefined && override !== null && override !== 'T1' && override !== 'T2' && override !== 'T3') throw invalid(`modules[${i}].tier_override`, 'must be T1, T2 or T3');
+    const paths = strings(mo.paths, `modules[${i}].paths`);
+    // A path the presence matcher cannot interpret (`.`, `./src`, `src/**`,
+    // absolute, `..`) is refused (slice 20 review, minor 3).
+    if (paths.some((x) => !modulePathOk(x))) throw invalid(`modules[${i}].paths`, 'names a path that is not a relative file or directory path of the tree (no ".", "..", empty component, glob or leading "/")');
+    return { name: str(mo, 'name'), paths, sensitive_areas: areas, tier_override: (override ?? null) as string | null };
   });
   let index: IndexRow[] | null = null;
   if (b.requirement_index !== undefined) {
@@ -219,7 +234,12 @@ export function installFixturePlan(db: Database, actor: Actor, args: PlanBody & 
     const adrs = ensureBaselineTexts(tx, { project: args.project, kind: 'adr', items: args.adrs });
     const constraints = ensureBaselineTexts(tx, { project: args.project, kind: 'constraint', items: args.constraints });
     ensureModules(tx, { project: args.project, modules: args.modules });
-    const stages = args.stages.map((st, i) => ({ number: st.number, goal: st.goal, implements: requirementIds(tx, args.project, st.implements, `stages[${i}].implements`) }));
+    const stages = args.stages.map((st, i) => ({
+      number: st.number,
+      goal: st.goal,
+      implements: requirementIds(tx, args.project, st.implements, `stages[${i}].implements`),
+      modules: moduleIds(tx, args.project, st.modules, `stages[${i}].modules`),
+    }));
     const plan = registerPlan(tx, { project: args.project, baseRevision: args.baseRevision, approvedBy: 'test fixture', stages }, FIXTURE_LABEL);
     // The ADRs each stage cites (SEAM.md §139).
     for (const st of plan.stages) {
@@ -239,7 +259,7 @@ export function installFixtureChecks(db: Database, actor: Actor, body: unknown) 
   const project = str(b, 'project');
   if (!Array.isArray(b.checks) || b.checks.length === 0) throw invalid('checks', 'must be a non-empty array');
   const checks: CheckInput[] = b.checks.map((c: unknown, i: number) => {
-    const ch = objectBody(c, ['key', 'kind', 'gate_kinds', 'requirements', 'required', 'tier_floor', 'sensitive_areas', 'runner_class', 'requires']);
+    const ch = objectBody(c, ['key', 'kind', 'gate_kinds', 'requirements', 'criteria', 'origin', 'required', 'tier_floor', 'sensitive_areas', 'runner_class', 'requires']);
     const kind = str(ch, 'kind');
     if (!CHECK_KINDS.includes(kind)) throw invalid(`checks[${i}].kind`, 'is not a check kind');
     const gates = strings(ch.gate_kinds, `checks[${i}].gate_kinds`);
@@ -251,7 +271,18 @@ export function installFixtureChecks(db: Database, actor: Actor, body: unknown) 
     const requires = ch.requires === undefined ? [] : strings(ch.requires, `checks[${i}].requires`);
     if (requires.some((r) => r !== 'environment' && r !== 'artifact_digest')) throw invalid(`checks[${i}].requires`, 'may name only environment and artifact_digest');
     if (ch.required !== undefined && typeof ch.required !== 'boolean') throw invalid(`checks[${i}].required`, 'must be a boolean');
+    // SEAM.md §226: the criteria it covers, and its origin; a developer
+    // check covers nothing (D3 §1.3). The fixture does not apply D3 §1.3's
+    // rule that a check of a criterion-bearing kind names a criterion (†).
+    const origin = ch.origin === undefined ? 'acceptance' : str(ch, 'origin');
+    if (origin !== 'acceptance' && origin !== 'developer') throw invalid(`checks[${i}].origin`, 'must be acceptance or developer');
+    const criteria = ch.criteria === undefined ? [] : strings(ch.criteria, `checks[${i}].criteria`);
+    if (origin === 'developer' && criteria.length > 0) throw invalid(`checks[${i}].criteria`, 'is not allowed on a developer check, which covers nothing');
+    if (new Set(criteria).size !== criteria.length) throw invalid(`checks[${i}].criteria`, 'repeats a criterion');
     return {
+      criteria,
+      origin,
+      field: i,
       key: str(ch, 'key'),
       kind,
       gate_kinds: gates,

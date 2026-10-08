@@ -22,6 +22,7 @@
 // issued is in flight (D1 §4.5 step 4); an effect on behalf of a run whose
 // lease is closing is refused in the store.
 
+import { type PresenceModules, readPresenceAt } from '../gates/prepare.js';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -283,8 +284,21 @@ export class Acceptor {
       if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
       const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
       if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
+      // A fix's cadence takes the modules present at its revision (D3 §4.1;
+      // Q10 (a)): read now, when a module could raise the tier; a failed
+      // read is passed on as unread, which never lowers the tier.
+      const due = await this.rt.read<PresenceModules | null>('accept.cadence_presence', { run });
+      let presence: { modules: string[]; basis: string } | 'unread' | undefined;
+      if (due !== null) {
+        const modules = await readPresenceAt(this.rt, facts.project.id, repo, target.sha, due);
+        presence = modules === null ? 'unread' : { modules, basis: due.basis };
+      }
       const intent = await this.journal.withProject(facts.project.id, () =>
-        this.journal.intend('accept.intend_integration', { run, repo, head, commit: target.sha, plans: plans.plans, deadlineSeconds: this.rt.setting('git_deadline') }, 'ref_update'),
+        this.journal.intend(
+          'accept.intend_integration',
+          { run, repo, head, commit: target.sha, plans: plans.plans, deadlineSeconds: this.rt.setting('git_deadline'), ...(presence !== undefined ? { presence } : {}) },
+          'ref_update',
+        ),
       );
       if ('fenced' in intent) return null;
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });

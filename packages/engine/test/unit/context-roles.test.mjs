@@ -20,6 +20,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { contextFacts } = await import(join(dist, 'store', 'reads.js'));
+const { moduleBasis } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
 const { writeContextPackage, resultSchema } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
 const { candidateDiff, DIFF_CAP_BYTES } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
@@ -149,9 +150,15 @@ test("the first candidate's diff is taken from the parent of the first revision 
   assert.deepEqual(contextFacts(db, { run: 'run_rev1' }).review.diff_base, { revision: null, from: null }, 'none is known: null, not a guess');
 });
 
-test("at T3 the Reviewer is told every module's sign-off and the security sign-off; a Verifier is told no sign-off", (t) => {
+test("at T3 the Reviewer is told each scope module's sign-off and the security sign-off; a Verifier is told no sign-off", (t) => {
   const db = store(t, { tier: 'T3' });
   db.prepare(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_1', ?, 'prj_1', 'auth', '["src/auth/"]')`).run(AT);
+  db.prepare(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_2', ?, 'prj_1', 'web', '["web/"]')`).run(AT);
+  // Slice 20 (D3 §4.1): its scopes' modules. While the presence is unread,
+  // every module may be in the deployment scope, so each is asked.
+  assert.deepEqual(contextFacts(db, { run: 'run_rev' }).review.signoffs.map((s) => s.module ?? s.scope), ['candidate', 'auth', 'web', 'security']);
+  // auth is present at the revision, web is not.
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: ['mod_1'], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
   assert.deepEqual(contextFacts(db, { run: 'run_rev' }).review.signoffs, [
     { role: 'reviewer', scope: 'candidate' },
     { role: 'reviewer', scope: 'module', module: 'auth' },
@@ -265,7 +272,8 @@ test("a diff the package cannot carry whole is said to be so: whole, cut at the 
 // ---- E87: the fix loop's check keys, told to each role (path two (b)) ----
 
 // The effective protected version's checks: `login` (required at T2, covers
-// R1) and `lint` (not required), with the requirement R1 by its id.
+// R1, delivered to cand_2) and `lint` (not required), with the requirement R1
+// by its id.
 function withChecks(db, { none = false } = {}) {
   const run = (sql, ...a) => db.prepare(sql).run(...a);
   run(
@@ -276,6 +284,10 @@ function withChecks(db, { none = false } = {}) {
     AT,
   );
   run(`INSERT INTO requirements (id, created_at, project, key, text_ref, assigned_phase, status) VALUES ('req_1', ?, 'prj_1', 'R1', 'r1', 1, 'approved')`, AT);
+  // R1 is delivered to cand_2 (its stage integrated at cand_2's revision), so
+  // a check covering it is in cand_2's deployment scope: `required` follows
+  // the scope rule (SEAM.md §176, slice 20).
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, integrated_revision) VALUES ('stage_1', ?, 'prj_1', 'plan_1', 1, 'g', '[]', '[]', '["req_1"]', 'planned', ?)`, AT, R2);
   if (none) return;
   const check = (id, key, required, reqs) =>
     run(
@@ -290,6 +302,30 @@ function withChecks(db, { none = false } = {}) {
   check('chk_1', 'login', 1, ['req_1']);
   check('chk_2', 'lint', 0, []);
 }
+
+test('slice 20 review, minor 5: `required` in the check list is at the scope tier (the scope rule), not the project tier', (t) => {
+  const db = store(t, { tier: 'T1' });
+  withChecks(db);
+  // `login` floored at T2: not required in a T1 scope.
+  db.prepare(`UPDATE checks SET tier_floor = 'T2' WHERE id = 'chk_1'`).run();
+  db.prepare(`INSERT INTO modules (id, created_at, project, name, paths, tier_override) VALUES ('mod_1', ?, 'prj_1', 'auth', '["src/auth/"]', 'T2')`).run(AT);
+  const required = () => contextFacts(db, { run: 'run_ver' }).checks.find((c) => c.key === 'login').required;
+  assert.equal(required(), true, 'presence unread: every module may be in scope, never lower');
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: [], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(required(), false, 'the T2 module absent: a T1 scope');
+  db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: ['mod_1'], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
+  assert.equal(required(), true, 'the T2 module present at Alpha: a T2 scope');
+});
+
+test('slice 20 review, minor 5: a check covering a requirement not delivered to the candidate is not in its scopes, so not marked required', (t) => {
+  const db = store(t);
+  withChecks(db);
+  const of = (run) => contextFacts(db, { run }).checks.find((c) => c.key === 'login').required;
+  assert.equal(of('run_rev1'), true, "whether cand_1 holds R1 is unread (no ancestry recorded): marked, never fewer");
+  db.prepare(`INSERT INTO revision_ancestry (id, created_at, project, ancestor, descendant, is_ancestor) VALUES ('anc_1', ?, 'prj_1', ?, ?, 0)`).run(AT, R2, R1);
+  assert.equal(of('run_rev'), true, 'cand_2 holds R1');
+  assert.equal(of('run_rev1'), false, 'cand_1 does not');
+});
 
 test("E87: the Verifier is told to name a finding's check, with the project's check keys (required ones marked), never their content", (t) => {
   const db = store(t);

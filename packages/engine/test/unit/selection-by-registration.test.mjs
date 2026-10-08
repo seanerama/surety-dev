@@ -99,6 +99,30 @@ function result(db, { id, candidate = 'cand_2', revision = B, seq, exit = 0, exe
   ).run(id, AT, candidate, revision, seq, exit, execution);
 }
 
+// Slice 20 (D3 §4.3, B04): a T1 scope needs an acceptance-origin check of
+// kind acceptance beside the smoke check `login`. Declared and passed by a
+// fixture result for a candidate, for the cases that read a whole
+// evaluation's reasons.
+function passInventory(db, candidate) {
+  const revision = db.prepare('SELECT revision FROM candidates WHERE id = ?').get(candidate).revision;
+  if (!db.prepare(`SELECT 1 FROM checks WHERE id = 'chk_acc'`).get()) {
+    db.prepare(
+      `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class)
+       VALUES ('chk_acc', ?, 'prj_1', 'acc', 'pv_1', 'acceptance', 1, '["stage","alpha_authorize"]', '.surety/checks/defs/acc.json', 'h', 'direct')`,
+    ).run(AT);
+  }
+  transact(db, ENGINE_ACTOR, (tx) => {
+    const seq = nextExecutionSeq(tx, 'prj_1');
+    tx.db
+      .prepare(
+        `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq,
+           execution_established, signaled, deadline_hit, exit_status, execution)
+         VALUES (?, ?, 'prj_1', 'chk_acc', ?, ?, 'pv_1', 'direct', 'r', ?, 1, 0, 0, 0, NULL)`,
+      )
+      .run(`cr_acc_${candidate}`, AT, candidate, revision, seq);
+  });
+}
+
 // A registration of `login` for a candidate, through the engine's sequence.
 function register(db, { id, candidate = 'cand_2', revision = B, source = 'operator_request', status = 'queued' }) {
   return transact(db, ENGINE_ACTOR, (tx) => {
@@ -232,6 +256,7 @@ test('Q9: an evaluation of a superseded candidate is refused first, naming its s
   const { db } = store(t);
   register(db, { id: 'cx_1', candidate: 'cand_1', revision: A });
   recordExit(db, 'cx_1', 0);
+  passInventory(db, 'cand_1');
   assert.deepEqual(reasonCodes(gate(db, 'cand_1', { refs: READ_ALL('cand_1') })), [], 'satisfied before the supersession');
   db.prepare(`UPDATE candidates SET superseded_by = 'cand_2' WHERE id = 'cand_1'`).run();
   const e = gate(db, 'cand_1', { refs: READ_ALL('cand_1') });
@@ -244,6 +269,7 @@ test('REF_UNREAD names each unread ref, and an evaluation made with no ref facts
   const { db } = store(t);
   register(db, { id: 'cx_1' });
   recordExit(db, 'cx_1', 0);
+  passInventory(db, 'cand_2');
   assert.deepEqual(gate(db, 'cand_2').reasons.find((r) => r.code === 'REF_UNREAD')?.subjects, ['refs/heads/main', 'refs/surety/cand/2']);
   const one = gate(db, 'cand_2', { refs: [{ ref: 'refs/heads/main', read: 'unread', oid: null }, READ_ALL('cand_2')[1]] });
   assert.deepEqual(one.reasons, [{ code: 'REF_UNREAD', subjects: ['refs/heads/main'] }]);
@@ -255,6 +281,7 @@ test('Q11, L6: an effective version not over the manifest is compared with nothi
   const { db } = store(t);
   register(db, { id: 'cx_1' });
   recordExit(db, 'cx_1', 0);
+  passInventory(db, 'cand_2');
   assert.deepEqual(gate(db, 'cand_2', { refs: READ_ALL('cand_2') }).reasons, [], 'the fixture is live: over the manifest, nothing is wrong');
   for (const scheme of ['pairs', 'unreadable']) {
     db.prepare(`UPDATE protected_versions SET fingerprint_scheme = ? WHERE id = 'pv_1'`).run(scheme);

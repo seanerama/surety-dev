@@ -15,20 +15,11 @@ import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, parseJson, sha256 } from './common.js';
-import {
-  type CandidateRow,
-  type CheckRow,
-  TIER_RANK,
-  checksOfVersion,
-  contentHash,
-  getCandidate,
-  predecessors,
-  requiredSet,
-  requirementsOf,
-} from './evidence.js';
+import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, checksOfVersion, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet } from './evidence.js';
+import { type Missing, missingSubjects } from '../../checks/scope.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
-import { discoveryErrorsOf, registerDue } from './checks.js';
+import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
@@ -37,6 +28,8 @@ import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 type Db = Tx['db'];
 
 export const COMPUTED_GATES = ['stage', 'alpha_authorize'] as const;
+// `phase` is among them: D3 §4.2 defines its scope (checks/scope.ts), and the
+// gate stays `unsupported` until its milestone (SEAM.md §70; slice 20, not built).
 export const UNBUILT_GATES = ['phase', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
 export type GateKind = (typeof COMPUTED_GATES)[number];
 
@@ -104,23 +97,23 @@ export interface Scope {
   delivered: string[];
   partial: string[];
   required: CheckRow[];
-  uncovered: string[];
+  // What D3 §4.3 finds missing: uncovered criteria, uncertain requirements,
+  // kinds, areas and unread facts (checks/scope.ts).
+  missing: Missing;
+  categories: string[];
   environment: string | null;
   artifact: string | null;
   signoffs: { role: string; scope: string; module?: string }[];
   contentHash: string;
 }
 
-// The sign-offs a project's tier requires of a candidate (D1 §9; E36 item 3).
-export function requiredSignoffs(db: Db, project: string, tier: string): Scope['signoffs'] {
-  const signoffs: Scope['signoffs'] = [];
-  if ((TIER_RANK[tier] ?? 0) >= 2) signoffs.push({ role: 'reviewer', scope: 'candidate' });
-  if ((TIER_RANK[tier] ?? 0) >= 3) {
-    const modules = db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? ORDER BY "name"').all(project) as { name: string }[];
-    for (const m of modules) signoffs.push({ role: 'reviewer', scope: 'module', module: m.name });
-    signoffs.push({ role: 'reviewer', scope: 'security' });
-  }
-  return signoffs;
+// The sign-offs a Reviewer of a candidate is asked for: those its scopes
+// require together, from the same rule as each gate's (D3 §4.1; B04).
+// Sign-offs depend on the scopes' tiers and modules, not on the checks: with
+// no effective version they are computed over no check.
+export function candidateSignoffs(db: Db, project: string, candidate: CandidateRow): Scope['signoffs'] {
+  const effective = effectiveVersion(db, project);
+  return candidateContent(db, project, candidate, effective?.id ?? '').signoffs;
 }
 
 export function buildScope(db: Db, args: { project: string; candidate: CandidateRow; kind: GateKind; stage: string | null; environment: string | null; artifact: string | null }): Scope {
@@ -128,9 +121,7 @@ export function buildScope(db: Db, args: { project: string; candidate: Candidate
   if (!project) throw notFound('project', args.project);
   const effective = effectiveVersion(db, args.project);
   if (!effective) throw new Refusal(409, 'illegal_transition', `Project ${args.project} has no effective protected version.`, 'Nothing was evaluated.', { project: args.project });
-  const { required, obligations, delivery, tier } = requiredSet(db, { project: args.project, candidate: args.candidate, kind: args.kind, stage: args.stage, version: effective.id });
-  const uncovered = obligations.filter((r) => !required.some((c) => requirementsOf(c).includes(r)));
-  const signoffs = requiredSignoffs(db, args.project, tier);
+  const { required, delivery, tier, scope } = requiredSet(db, { project: args.project, candidate: args.candidate, kind: args.kind, stage: args.stage, version: effective.id });
   return {
     candidate: args.candidate,
     kind: args.kind,
@@ -140,10 +131,11 @@ export function buildScope(db: Db, args: { project: string; candidate: Candidate
     delivered: delivery.delivered,
     partial: delivery.partial,
     required,
-    uncovered,
+    missing: scope.missing,
+    categories: scope.categories,
     environment: args.environment,
     artifact: args.artifact,
-    signoffs,
+    signoffs: scope.signoffs,
     contentHash: contentHash(db, args.project, args.candidate),
   };
 }
@@ -379,7 +371,8 @@ export interface CheckEntry {
   deciding: { execution: string | null; result: string; execution_seq: number } | null;
   not_run_reason: string | null;
   pending: { execution: string; status: string } | null;
-  due: { trigger: unknown; at: string } | null;
+  // An unknown stored mark is carried as stored (fails closed).
+  due: { trigger: unknown; at: string } | unknown;
   history: History | null;
 }
 
@@ -467,10 +460,14 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // is not known, so the scope is not complete.
   // While the effective version has discovery errors every gate names them
   // (D3 §1.4; SEAM.md §178).
+  // D3 §4.3 (L3, B04; SEAM.md §221): every criterion of every obligation
+  // requirement named by a required acceptance-origin check, a requirement
+  // with no criterion uncertain, the tier's kind inventory, a floor for
+  // every category, and every fact the scope needs read.
   const discoveryPaths = [...new Set(discoveryErrorsOf(db, scope.effective.id).map((e) => e.path))];
-  if (scope.required.length === 0 || scope.uncovered.length > 0 || unreadable.ancestry === true || discoveryPaths.length > 0) {
-    add('ACCEPTANCE_SCOPE_INCOMPLETE', [...scope.uncovered, ...discoveryPaths]);
-  }
+  const missingNamed = missingSubjects(scope.missing);
+  const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
+  if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
 
   // (2) The protected path is authorized and effective. A protected set
   // that could not be read is not shown authorized.
@@ -517,14 +514,17 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const selected: Record<string, StateOf> = {};
   // A registration the candidate is owed (L2): its checks are missing.
   const due = (db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { checks_due: string | null }).checks_due;
-  const dueMark = due === null ? null : (JSON.parse(due) as { trigger: unknown; at: string }[])[0] ?? null;
+  // A mark in a form this engine did not write owes everything, its entries'
+  // `due` the stored value (slice 20 review, minor 7: fails closed).
+  const mark = readDue(due);
+  const dueEntry: CheckEntry['due'] = mark === null ? null : mark.unknown ? (mark.value ?? 'unknown') : mark.owed[0] ? { trigger: mark.owed[0].trigger, at: mark.owed[0].at } : null;
   for (const c of scope.required) {
-    const s: StateOf = dueMark !== null ? { state: 'missing', decider: null, pending: null, history: null } : checkState(db, args.project, c, scope);
+    const s: StateOf = dueEntry !== null ? { state: 'missing', decider: null, pending: null, history: null } : checkState(db, args.project, c, scope);
     selected[c.id] = s;
     states[c.id] = s.state;
     deciders[c.id] = s.decider;
   }
-  const entries = checkEntries(scope, selected, dueMark === null ? null : { trigger: dueMark.trigger, at: dueMark.at });
+  const entries = checkEntries(scope, selected, dueEntry);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
 
@@ -612,7 +612,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     source_revision: candidate.revision,
     delivered: scope.delivered,
     partial: scope.partial,
+    sensitivity_categories: scope.categories,
     required,
+    signoffs: scope.signoffs,
     environment: scope.environment,
     artifact: scope.artifact,
   };
@@ -622,7 +624,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       `INSERT INTO "acceptance_scopes" ("id", "created_at", "project", "candidate", "gate_kind", "stage", "policy_revision", "effective_protected_version", "source_revision",
          "delivered_requirement_ids", "partial_requirement_ids", "sensitivity_categories", "required_check_ids", "runner_classes", "required_signoffs",
          "environment", "artifact_digest", "evidence_reuse", "validated", "scope_hash", "acceptance_content_hash")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       scopeId,
@@ -636,13 +638,14 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       candidate.revision,
       JSON.stringify(scope.delivered),
       JSON.stringify(scope.partial),
+      JSON.stringify(scope.categories),
       JSON.stringify(required),
       JSON.stringify(Object.fromEntries(scope.required.map((c) => [c.id, c.runner_class]))),
       JSON.stringify(scope.signoffs),
       scope.environment,
       scope.artifact,
       JSON.stringify(Object.values(deciders).filter((d): d is Execution => d !== null && d.reused).map((d) => ({ check_result: d.id, applicability: null }))),
-      scope.required.length > 0 && scope.uncovered.length === 0 ? 1 : 0,
+      scopeComplete ? 1 : 0,
       sha256(canonical(scopeBody)),
       scope.contentHash,
     );
@@ -705,17 +708,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false } };
 }
 
-// The work a candidate holds by ancestry (E43): what it holds itself and what
-// every candidate before it on its lineage chain holds. After a fix, the
-// stage's work its first candidate held is held by the fix's candidate too.
-export function heldByAncestry(db: Db, candidate: CandidateRow): string[] {
-  const held = JSON.parse(candidate.held_work) as string[];
-  for (const id of predecessors(db, candidate)) {
-    const prior = getCandidate(db, id);
-    if (prior) held.push(...(JSON.parse(prior.held_work) as string[]));
-  }
-  return [...new Set(held)];
-}
+export { heldByAncestry };
 
 // A satisfied stage gate completes its stage's work, held by the candidate
 // by ancestry (SEAM.md §70; E43).
@@ -738,9 +731,12 @@ export function verificationOf(db: Db, candidate: string): { id: string; status:
 // The engine queues the review a tier requires (E36 item 3; E38; SEAM.md
 // §70): at T2 and T3, once the candidate's verification work is complete and
 // every check its stage scope requires has passed. One per candidate; it is
-// chained work, created on the outcome of the Verifier's run.
+// chained work, created on the outcome of the Verifier's run. The tier is the
+// highest across the candidate's scopes, so a T1 stage with a T2 module
+// present at Alpha still queues the sign-off Alpha needs (slice 20 review,
+// minor 6; D3 §4.1).
 function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Record<string, CheckState>): void {
-  if (TIER_RANK[scope.tier]! < 2) return;
+  if (TIER_RANK[candidateContent(tx.db, candidate.project, candidate, scope.effective.id).tier]! < 2) return;
   if (scope.required.length === 0 || scope.required.some((c) => states[c.id] !== 'passed')) return;
   const verification = verificationOf(tx.db, candidate.id);
   if (!verification || verification.status !== 'complete') return;
