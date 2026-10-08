@@ -163,7 +163,11 @@ export function classify(p0: ClassifySide, p1: ClassifySide, known: ReadonlySet<
   // S1). The index's `criterion_unknown` errors are not P0's tree errors:
   // they are judged against the index (schema.criterionErrors), and a
   // correction that drops such a criterion is classified by its own elements
-  // (D3 §3.4; M228 (b)).
+  // (D3 §3.4; M228 (b)). Only discovery's own errors count here, the
+  // structural ones that leave a definition or a governed field out of P0's
+  // maps. `area_unknown` is among them as built: it is judged against the
+  // closed list of areas (schema.ts), and the definition is dropped, so its
+  // check is in no map and is classified only through this rule.
   const reproduced = new Set(p1.discovery.errors.map((e) => `${e.path}\u0000${e.code}`));
   const seenCleared = new Set<string>();
   for (const e of p0.discovery.errors) {
