@@ -18,17 +18,24 @@
 // through the scripted check boundary (SEAM.md §190). Every role without a
 // script of its own completes and changes nothing, so the Verifier's run a
 // `correct_check` answer dispatches ends by itself.
+//
+// S3 (the driver's ruling under D3 §5 X2, 2026-10-08; SEAM.md §235): a
+// `correct_check` answer holds the item while the check_correction work it
+// registered is not ended and its proposal is neither applied nor rejected;
+// an unrelated protected application does not release it; when the
+// correction ends with no new version, the X2 blocker is raised again.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume } from './harness/decisions.mjs';
-import { acceptedRun, stageGate } from './harness/gates.mjs';
+import { acceptedRun, capturedProposal, humanApplies, stageGate } from './harness/gates.mjs';
 import { addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
-import { runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { pauseProject, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
-import { recordExit } from './harness/checks/selection.mjs';
+import { defPath, definitionText } from './harness/checks/fixtures.mjs';
+import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import {
   ACC_SMOKE,
   buildAndNominate,
@@ -37,6 +44,7 @@ import {
   findingsBy,
   itemRow,
   ofKind,
+  openBlockers,
   repairProject,
   repairsOf,
   requirementsOf,
@@ -128,6 +136,50 @@ describe('M236 the conflict route and objections', () => {
     const row = itemRow(o.fx.home, o.item);
     assert.deepEqual([row.repair_attempts, runsOf(o.fx.home, o.item).length], [0, 1], 'the Builder is not sent back');
     await assertNothingRelaxed(o, 'correct_check');
+  });
+
+  test("(a) correct_check (S3, the driver's ruling): the correction cancelled with no new version, the X2 blocker is raised again with its four options", async (t) => {
+    const o = await objected(t);
+    const { fx, p, item } = o;
+    const [f] = o.recorded;
+    await consume(fx, p.id, o.blocker, 'correct_check');
+    const [correction] = workFor(fx.home, p.id, 'check_correction', f.id);
+    assert.ok(correction, 'the fixture is live: correct_check registered check_correction work');
+    // No tick has run since the answer, so the correction has no run; the harness route (SEAM.md §15) cancels it.
+    assert.equal(runsOf(fx.home, correction.id).length, 0, 'the fixture is live: the correction has not run');
+    const cancelled = await fx.engine.post(`/v1/harness/work/${correction.id}/transition`, { to: 'cancelled' });
+    assert.equal(cancelled.status, 200, `the correction is cancelled (body: ${cancelled.text})`);
+    await tick(fx.engine, p.id);
+    const again = await x2Blocker(fx, p.id, item);
+    assert.notEqual(again.id, o.blocker.id, 'a new X2 blocker about the item, offering correct_check, change_spec, retry and cancel again');
+    const row = itemRow(fx.home, item);
+    assert.deepEqual([row.status, row.repair_attempts, repairsOf(fx.home, item).length], ['awaiting_decision', 0, 0], 'the correction ended with no new version: the item awaits the person again, with no repair');
+    await assertNothingRelaxed(o, 'the correction cancelled');
+  });
+
+  test("(a) correct_check (S3, the driver's ruling): an unrelated protected application while the correction is open releases nothing: the objected check failing again at the new version takes no repair and raises no blocker", async (t) => {
+    const o = await objected(t);
+    const { fx, p, item } = o;
+    const [f] = o.recorded;
+    // An unrelated protected change, captured before the answer and applied while the correction is open: a new smoke check.
+    const unrelated = await capturedProposal(fx, p, { changeKind: null, steps: [step.write(defPath('extra'), definitionText('extra', def('smoke')))] });
+    // Paused, so no run is dispatched and the correction stays open. A pause holds no reconciliation back: a repair is
+    // taken in the transaction that records the failure (M234 (e)).
+    await pauseProject(fx.engine, p.id);
+    await consume(fx, p.id, o.blocker, 'correct_check');
+    const [correction] = workFor(fx.home, p.id, 'check_correction', f.id);
+    assert.ok(correction, 'the fixture is live: correct_check registered check_correction work');
+    const before = versionChecks(fx.home, p.id).acc.id;
+    await humanApplies(fx, p, unrelated, 'tightening');
+    assert.notEqual(versionChecks(fx.home, p.id).acc.id, before, 'the fixture is live: a new version is effective');
+    assert.deepEqual([itemRow(fx.home, correction.id).status, runsOf(fx.home, correction.id).length], ['eligible', 0], 'the fixture is live: the correction is still open');
+
+    const { acc } = await operatorRequest(fx.engine, p.id, o.candidate.id, ['acc']);
+    await recordExit(fx.engine, acc, 1, { output: 'M236-S3: the objected check fails again at the new version\n' });
+    await tick(fx.engine, p.id);
+    const held = itemRow(fx.home, item);
+    assert.deepEqual([held.status, held.repair_attempts, repairsOf(fx.home, item).length], ['verifying', 0, 0], 'the hold stands: no repair');
+    assert.deepEqual(openBlockers(fx.home, item), [], 'and no blocker');
   });
 
   test('(a) change_spec: spec_change work is raised and the spec is not edited', async (t) => {
