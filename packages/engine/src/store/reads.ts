@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3';
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
 import { projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
-import { type CandidateRow, applies, candidateContent, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
+import { type CandidateRow, type CheckRow, applies, candidateContent, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
 import { cadenceTier } from '../checks/scope.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { type FindingRow, candidateSignoffs, findingApplies } from './transitions/gates.js';
@@ -165,13 +165,16 @@ export function contextFacts(db: Database, args: { run: string }) {
   // Verifier, a Reviewer and a fix Builder know the keys the fix loop reads
   // (SEAM.md §74, "Resolution"). Every check of the effective protected
   // version: its key, the keys of the requirements it covers, its gate kinds,
-  // and whether the scope's tier requires it; never its content. The tier
-  // follows the scope rule, like the gate (slice 20 review, minor 5; D3
-  // §4.1): the highest of the candidate's scopes (candidateContent); with
-  // no candidate, the highest any scope of the project could take (its tier
-  // and every module's override), never lower than a scope's.
-  // `required` there is `applies` at that tier: the check is required and
-  // no tier floor omits it; gate kinds and obligations are not applied.
+  // and whether the candidate's scopes require it; never its content.
+  // `required` follows the scope rule, as the gate and registration read it
+  // (SEAM.md §176, as amended in slice 20; slice 20 review, minor 5; D3
+  // §4.2): in the required set of a scope of the run's candidate (the union
+  // of its stage scopes and its deployment scope, each at its own tier,
+  // candidateContent), never by the project's tier alone. While a fact those
+  // sets need is unread, a check that applies at the highest tier the
+  // scopes could take is marked too (never fewer). With no candidate (not
+  // pinned): a check that applies at the highest tier any scope of the
+  // project could take (its tier and every module's override).
   // `checks_known` false: the project has no effective protected version,
   // so its checks cannot be read; that is unknown, never "no checks" (the
   // review of b72b9cc, F3).
@@ -179,15 +182,17 @@ export function contextFacts(db: Database, args: { run: string }) {
   let checksKnown: boolean | null = null;
   if (role === 'verifier' || role === 'reviewer' || item.kind === 'fix') {
     const version = effectiveVersion(db, item.project);
-    const tier = candidate
-      ? candidateContent(db, item.project, candidate, version?.id ?? '').tier
-      : cadenceTier((db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '', db.prepare('SELECT "tier_override" FROM "modules" WHERE "project" = ?').all(item.project) as { tier_override: string | null }[]);
+    const content = candidate && version ? candidateContent(db, item.project, candidate, version.id) : null;
+    const inScope = new Set((content?.checks ?? []).map((c) => c.id));
+    const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
+    const anyTier = cadenceTier(projectTier, db.prepare('SELECT "tier_override" FROM "modules" WHERE "project" = ?').all(item.project) as { tier_override: string | null }[]);
+    const isRequired = (c: CheckRow): boolean => (content ? inScope.has(c.id) || (content.unread.length > 0 && applies(c, content.tier)) : applies(c, anyTier));
     const keyOf = (r: string): string =>
       (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
     checksKnown = version !== undefined;
     checks = version
       ? checksOfVersion(db, version.id)
-          .map((c) => ({ key: c.key, requirements: requirementsOf(c).map(keyOf), gate_kinds: gateKindsOf(c), required: applies(c, tier) }))
+          .map((c) => ({ key: c.key, requirements: requirementsOf(c).map(keyOf), gate_kinds: gateKindsOf(c), required: isRequired(c) }))
           .sort((a, b) => Number(b.required) - Number(a.required) || a.key.localeCompare(b.key))
       : [];
   }

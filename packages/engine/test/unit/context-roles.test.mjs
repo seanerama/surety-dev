@@ -272,7 +272,8 @@ test("a diff the package cannot carry whole is said to be so: whole, cut at the 
 // ---- E87: the fix loop's check keys, told to each role (path two (b)) ----
 
 // The effective protected version's checks: `login` (required at T2, covers
-// R1) and `lint` (not required), with the requirement R1 by its id.
+// R1, delivered to cand_2) and `lint` (not required), with the requirement R1
+// by its id.
 function withChecks(db, { none = false } = {}) {
   const run = (sql, ...a) => db.prepare(sql).run(...a);
   run(
@@ -283,6 +284,10 @@ function withChecks(db, { none = false } = {}) {
     AT,
   );
   run(`INSERT INTO requirements (id, created_at, project, key, text_ref, assigned_phase, status) VALUES ('req_1', ?, 'prj_1', 'R1', 'r1', 1, 'approved')`, AT);
+  // R1 is delivered to cand_2 (its stage integrated at cand_2's revision), so
+  // a check covering it is in cand_2's deployment scope: `required` follows
+  // the scope rule (SEAM.md §176, slice 20).
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, integrated_revision) VALUES ('stage_1', ?, 'prj_1', 'plan_1', 1, 'g', '[]', '[]', '["req_1"]', 'planned', ?)`, AT, R2);
   if (none) return;
   const check = (id, key, required, reqs) =>
     run(
@@ -310,6 +315,16 @@ test('slice 20 review, minor 5: `required` in the check list is at the scope tie
   assert.equal(required(), false, 'the T2 module absent: a T1 scope');
   db.prepare(`UPDATE candidates SET module_presence = ? WHERE id = 'cand_2'`).run(JSON.stringify({ modules: ['mod_1'], read_at: AT, basis: moduleBasis(db, 'prj_1') }));
   assert.equal(required(), true, 'the T2 module present at Alpha: a T2 scope');
+});
+
+test('slice 20 review, minor 5: a check covering a requirement not delivered to the candidate is not in its scopes, so not marked required', (t) => {
+  const db = store(t);
+  withChecks(db);
+  const of = (run) => contextFacts(db, { run }).checks.find((c) => c.key === 'login').required;
+  assert.equal(of('run_rev1'), true, "whether cand_1 holds R1 is unread (no ancestry recorded): marked, never fewer");
+  db.prepare(`INSERT INTO revision_ancestry (id, created_at, project, ancestor, descendant, is_ancestor) VALUES ('anc_1', ?, 'prj_1', ?, ?, 0)`).run(AT, R2, R1);
+  assert.equal(of('run_rev'), true, 'cand_2 holds R1');
+  assert.equal(of('run_rev1'), false, 'cand_1 does not');
 });
 
 test("E87: the Verifier is told to name a finding's check, with the project's check keys (required ones marked), never their content", (t) => {
