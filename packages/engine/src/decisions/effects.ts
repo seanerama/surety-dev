@@ -277,6 +277,23 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
       if (intent) await rt.engine('intent.revalidate', { intent, facts: { head } });
       return;
     }
+    // What is committed is the proposal's changes rebased onto the head;
+    // what was classified, bound and revalidated is the proposal's own tree.
+    // Their protected sets must be the same, or what would be applied is not
+    // what was approved: nothing is applied, and the approval is withdrawn
+    // as for any failed precondition (the review's M3). Unreadable, nothing
+    // is begun now.
+    if (tree !== facts.proposal.tree_id) {
+      const own = await protectedSetAt(facts.repo, facts.proposal.tree_id);
+      if (own === null) {
+        log('protected application', new Error(`the protected set of proposal ${proposal}'s tree cannot be read; it is not applied now`), { proposal });
+        return;
+      }
+      if (own.fingerprint !== plain!.fingerprint || canonicalRoots(own.roots) !== canonicalRoots(plain!.roots)) {
+        await rt.engine('protected.application_diverged', { proposal, intent });
+        return;
+      }
+    }
     const message = messageText({
       title: `surety: apply protected proposal ${proposal}`,
       trailers: [
@@ -292,8 +309,12 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     // version's tree and the proposal's. Unreadable, nothing is begun this
     // tick and nothing is invalidated: an unread tree is no evidence either
     // way, and a later tick reads again.
-    const revision = facts.effective.authorized_revision;
     const made = await journal.withProject(project, async () => {
+      // The effective version read with the journal held (the review's M2):
+      // the inputs are read at it, and the transaction keeps what they give
+      // only if it is still the effective one there.
+      const now = await rt.engine<ApplicationFacts>('protected.application_facts', { proposal });
+      const revision = now.effective.authorized_revision;
       const inputs = revision === null ? null : await classificationInputs(facts.repo, revision, facts.proposal.tree_id);
       if (inputs === null) {
         log('protected application', new Error(`the trees proposal ${proposal} is classified from cannot be read; its binding is not revalidated, and it is not applied now`), { proposal });
@@ -301,7 +322,7 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
       }
       return journal.intend(
         'protected.begin_application',
-        { proposal, repo: facts.repo, head, tree, sha, content, set, intent, deadlineSeconds: rt.setting('git_deadline'), facts: { head }, inputs },
+        { proposal, repo: facts.repo, head, tree, sha, content, set, intent, deadlineSeconds: rt.setting('git_deadline'), facts: { head }, inputs, inputsVersion: now.effective.id },
         'commit_tree',
       );
     });
@@ -310,6 +331,8 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
   }
   await rt.services?.journal(project);
 }
+
+const canonicalRoots = (roots: readonly string[]): string => JSON.stringify([...roots].sort());
 
 // The engine classifies every captured proposal at a tick after its capture,
 // never in the capturing transaction (D3 §1.6; SEAM.md §215): the two trees
@@ -334,12 +357,12 @@ export async function classifyDue(rt: Runtime, project: string): Promise<void> {
 // whether the operation may go on; false also when the trees cannot be read
 // now, so nothing is attempted and a later pass reads again.
 export async function revalidateReplay(rt: Runtime, operation: string): Promise<boolean> {
-  const app = await rt.read<{ proposal: string; repo: string; revision: string | null; tree: string } | null>('protected.operation_application', { operation });
+  const app = await rt.read<{ proposal: string; repo: string; effective: string | null; revision: string | null; tree: string } | null>('protected.operation_application', { operation });
   if (app === null) return true;
   const inputs = app.revision === null ? null : await classificationInputs(app.repo, app.revision, app.tree);
   if (inputs === null) {
     log('protected application', new Error(`the trees proposal ${app.proposal} is classified from cannot be read; its replay waits`), { operation });
     return false;
   }
-  return rt.engine<boolean>('protected.revalidate_operation', { operation, inputs, incarnation: rt.incarnation });
+  return rt.engine<boolean>('protected.revalidate_operation', { operation, inputs, inputsVersion: app.effective ?? undefined, incarnation: rt.incarnation });
 }

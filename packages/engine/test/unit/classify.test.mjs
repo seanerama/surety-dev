@@ -188,3 +188,54 @@ test('classifier_authority: the default, an accepted value, and every refusal', 
     );
   }
 });
+
+// ---- discovery errors on either side (the review's S1 and M4) ------------------------------
+
+test('an existing definition that no longer parses is its discovery error, not a removal: affected definition_changed', () => {
+  const c = run(base(), base({ [DEF('s')]: '{"schema": 1, "key": "s"' }));
+  assert.equal(c.change_kind, 'unclassifiable');
+  assert.ok(!shape(c).includes('check_removed:s'), shape(c).join());
+  assert.ok(c.elements.some((e) => e.reason === 'discovery_error' && e.path === DEF('s')), shape(c).join());
+  assert.deepEqual(c.affected_checks, [{ check: 's', reasons: ['definition_changed'] }]);
+});
+
+test("a P0 definition that does not parse, deleted beside a new required check, is never a tightening (S1's example)", () => {
+  const before = base({
+    [GOV]: gov({ protected_paths: ['.surety/checks/'], required_checks: ['a', 'k'] }),
+    [DEF('k')]: '{"schema": 1, "key": ',
+  });
+  const after = { ...before, [GOV]: gov({ protected_paths: ['.surety/checks/'], required_checks: ['a', 'n'] }), [DEF('n')]: declared('n'), [RUN('n')]: 'n\n' };
+  delete after[DEF('k')];
+  const c = run(before, after);
+  assert.equal(c.change_kind, 'unclassifiable');
+  assert.ok(c.elements.some((e) => e.reason === 'unhandled_change' && e.path === DEF('k')), shape(c).join());
+  assert.ok(shape(c).includes('check_added:n') && shape(c).includes('required_key_added_with_check:n'), shape(c).join());
+});
+
+test('a P0 definition repaired in place, and a governed-file error cleared, are each unhandled_change at the error path', () => {
+  const broken = base({ [DEF('k')]: '{"schema": 1, "key": ', [RUN('k')]: 'k\n' });
+  const repaired = run(broken, { ...broken, [DEF('k')]: declared('k') });
+  assert.equal(repaired.change_kind, 'unclassifiable');
+  assert.ok(repaired.elements.some((e) => e.reason === 'unhandled_change' && e.path === DEF('k')), shape(repaired).join());
+  assert.ok(shape(repaired).includes('check_added:k'), shape(repaired).join());
+
+  const unknownMember = base({ [GOV]: gov({ protected_paths: ['.surety/checks/'], runner_config: { direct: { stray: 1 } } }) });
+  const cleared = run(unknownMember, base());
+  assert.equal(cleared.change_kind, 'unclassifiable');
+  assert.ok(cleared.elements.some((e) => e.reason === 'unhandled_change' && e.path === `${GOV}#/runner_config/direct/stray`), shape(cleared).join());
+});
+
+test('a P0 error P1 reproduces is P1 discovery_error only; no unhandled_change is added for it', () => {
+  const broken = base({ [DEF('k')]: '{"schema": 1, "key": ', [RUN('k')]: 'k\n' });
+  const c = run(broken, { ...broken, [DEF('n')]: declared('n'), [RUN('n')]: 'n\n' });
+  assert.equal(c.change_kind, 'unclassifiable');
+  assert.ok(c.elements.some((e) => e.reason === 'discovery_error' && e.path === DEF('k')), shape(c).join());
+  assert.ok(!c.elements.some((e) => e.reason === 'unhandled_change'), shape(c).join());
+});
+
+test("P0's criterion_unknown, against the index, is not a tree error: dropping that criterion is criteria_removed alone (M228 (b))", () => {
+  const before = base({ [DEF('a')]: declared('a', { kind: 'acceptance', covers: { criteria: ['R1.1', 'R1.2'] } }) });
+  const c = run(before, base(), new Set(['R1.1']));
+  assert.equal(c.change_kind, 'loosening');
+  assert.deepEqual(shape(c), ['criteria_removed:a']);
+});

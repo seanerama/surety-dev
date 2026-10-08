@@ -139,13 +139,20 @@ export function recordClassification(tx: Tx, args: { proposal: string; effective
 // `authoritative` naming the running classifier, its approval of a
 // classified tightening is recorded as the approval, bound to the
 // correction manifest as it now stands, and the ticks after apply it once
-// that binding is revalidated. Otherwise (K8) it is a recommendation,
+// that binding is revalidated, and, where it changes `required_checks`, only
+// with a validation-scope approval recorded. Otherwise (K8) it is a recommendation,
 // recorded on the proposal, applying nothing: the human's question stays
 // open. A Reviewer's approval of anything else is not recorded.
 export function reviewerApprove(tx: Tx, args: { proposal: string; run: string }): boolean {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'classified' || p.classified_change_kind !== 'tightening') return false;
-  if (authorityNow() === 'authoritative') {
+  // A change to `required_checks` also needs the validation-scope approval
+  // (D3 §3.2; SEAM.md §69; the human's `approve` carries APPROVAL_MISSING
+  // without it): with none recorded, even an authoritative Reviewer's
+  // approval applies nothing and is a recommendation (the review's S2).
+  const scopeMissing =
+    p.changes_required_set === 1 && tx.db.prepare('SELECT 1 FROM "scope_approvals" WHERE "proposal" = ? LIMIT 1').get(p.id) === undefined;
+  if (authorityNow() === 'authoritative' && !scopeMissing) {
     approveProposal(tx, p, args.run, 'reviewer');
     const binding = correctionManifest(tx, p.id);
     tx.db.prepare('UPDATE "protected_proposals" SET "approval_binding" = ? WHERE "id" = ?').run(JSON.stringify(binding), p.id);
@@ -154,7 +161,9 @@ export function reviewerApprove(tx: Tx, args: { proposal: string; run: string })
   const row = tx.db.prepare('SELECT "recommendations" FROM "protected_proposals" WHERE "id" = ?').get(p.id) as { recommendations: string };
   const list = JSON.parse(row.recommendations) as { run: string }[];
   if (list.some((r) => r.run === args.run)) return false;
-  list.push({ run: args.run, authority: 'reviewer', recommends: 'approve', at: tx.at } as { run: string });
+  // Provenance `claimed` (D3 §3.3; D2-C03): a recommendation on the
+  // check_correction_tightening decision the human answers.
+  list.push({ run: args.run, authority: 'reviewer', recommends: 'approve', provenance: 'claimed', at: tx.at } as { run: string });
   tx.db.prepare('UPDATE "protected_proposals" SET "recommendations" = ? WHERE "id" = ?').run(JSON.stringify(list), p.id);
   return true;
 }
@@ -164,20 +173,41 @@ export function reviewerApprove(tx: Tx, args: { proposal: string; run: string })
 // The facts the binding is read with now: the head the main thread read,
 // and the class and discovery the classifier gives again. A class the
 // fixture set stands for the class (ruling 1); the discovery is read again
-// whoever classified.
-function freshFacts(tx: Tx, p: ProposalRow, inputs: ClassifyInputs | null | undefined, head: string | null | undefined): { facts: Facts; fresh: StoredClassification | null } {
+// whoever classified. null when nothing was read again (no inputs): the
+// binding is then never taken to hold, and nothing is invalidated on it
+// (the review's M1). `current` is false when the inputs were read at
+// another effective version than the one in force in this transaction:
+// their classification is not kept (M2).
+interface Read {
+  facts: Facts;
+  fresh: StoredClassification | null;
+  current: boolean;
+}
+function freshFacts(tx: Tx, p: ProposalRow, inputs: ClassifyInputs | null | undefined, inputsVersion: string | undefined, head: string | null | undefined): Read | null {
   const facts: Facts = head === undefined ? {} : { head };
   const eff = effectiveVersion(tx.db, p.project);
-  if (!inputs || !eff) return { facts, fresh: null };
+  if (!inputs || !eff) return null;
+  if (inputsVersion !== eff.id) return { facts, fresh: null, current: false };
   const fresh = buildClassification(tx, p.project, eff.id, inputs);
   const mine = engineClassified(classificationJson(tx.db, p.id));
-  return { facts: { ...facts, classification: mine ? fresh.change_kind : p.classified_change_kind, discovery: fresh.discovery }, fresh };
+  return { facts: { ...facts, classification: mine ? fresh.change_kind : p.classified_change_kind, discovery: fresh.discovery }, fresh, current: true };
+}
+
+// Whether the binding holds on what was read: 'holds'; 'changed' (withdraw);
+// or 'unread' (nothing read again, or read at another effective version
+// with the rest unchanged: not begun now, nothing invalidated).
+function judge(tx: Tx, p: ProposalRow, intent: string | null, read: Read | null): 'holds' | 'changed' | 'unread' {
+  if (read === null) return 'unread';
+  const holds = bindingHolds(tx, p, intent, read.facts);
+  if (!holds) return 'changed';
+  return read.current ? 'holds' : 'unread';
 }
 
 // What was read again is kept, so the next generation of the human's
 // question shows it: the engine's classification replaced whole; under a
 // fixture's class, its discovery only.
 function keepFresh(tx: Tx, p: ProposalRow, fresh: StoredClassification | null): void {
+  // Read at another effective version: not kept (M2).
   if (fresh === null) return;
   const json = classificationJson(tx.db, p.id);
   if (engineClassified(json)) writeClassification(tx, p, fresh);
@@ -220,16 +250,20 @@ export function withdrawReviewerApproval(tx: Tx, proposal: string): void {
 // human's intent invalidated EFFECT_PRECONDITION_CHANGED with its next
 // generation raised, or the Reviewer's approval withdrawn and the human's
 // question open. Returns whether the application may begin.
-export function revalidateApplication(tx: Tx, args: { proposal: string; intent: string | null; head?: string | null; inputs?: ClassifyInputs | null }): boolean {
+export function revalidateApplication(
+  tx: Tx,
+  args: { proposal: string; intent: string | null; head?: string | null; inputs?: ClassifyInputs | null; inputsVersion?: string },
+): boolean {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'approved') return false;
   if (args.intent !== null) {
     const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
     if (row?.status !== 'pending') return false;
   }
-  const { facts, fresh } = freshFacts(tx, p, args.inputs, args.head);
-  if (bindingHolds(tx, p, args.intent, facts)) return true;
-  keepFresh(tx, p, fresh);
+  const read = freshFacts(tx, p, args.inputs, args.inputsVersion, args.head);
+  const verdict = judge(tx, p, args.intent, read);
+  if (verdict !== 'changed') return verdict === 'holds';
+  keepFresh(tx, p, read!.fresh);
   if (args.intent !== null) invalidateIntent(tx, args.intent);
   else withdrawReviewerApproval(tx, p.id);
   return false;
@@ -242,7 +276,7 @@ export function revalidateApplication(tx: Tx, args: { proposal: string; intent: 
 // withdraws what it was for (queue.effectFailed: the intended version
 // removed, the intent invalidated or the Reviewer's approval withdrawn).
 // Returns whether the operation may go on.
-export function revalidateOperation(tx: Tx, args: { operation: string; inputs: ClassifyInputs | null; incarnation: string }): boolean {
+export function revalidateOperation(tx: Tx, args: { operation: string; inputs: ClassifyInputs | null; inputsVersion?: string; incarnation: string }): boolean {
   const op = opDetail(tx, args.operation);
   if (op.state === 'failed' || op.state === 'finalized') return true;
   const inputs = op.inputs as { purpose?: string; proposal?: string; intent?: string | null };
@@ -262,9 +296,10 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
     const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(intent) as { status: string } | undefined;
     if (!row || row.status === 'done' || row.status === 'invalidated') return true;
   }
-  const { facts, fresh } = freshFacts(tx, p, args.inputs, undefined);
-  if (bindingHolds(tx, p, intent, facts)) return true;
-  keepFresh(tx, p, fresh);
+  const read = freshFacts(tx, p, args.inputs, args.inputsVersion, undefined);
+  const verdict = judge(tx, p, intent, read);
+  if (verdict !== 'changed') return verdict === 'holds';
+  keepFresh(tx, p, read!.fresh);
   refuseOperation(tx, {
     operation: op.id,
     detail: { reason: 'precondition_changed', text: "the protected application's binding changed before its replay: EFFECT_PRECONDITION_CHANGED" },
@@ -274,7 +309,7 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
 }
 
 // What the main thread reads to revalidate an operation's application.
-export function operationApplication(db: Db, args: { operation: string }): { proposal: string; repo: string; revision: string | null; tree: string } | null {
+export function operationApplication(db: Db, args: { operation: string }): { proposal: string; repo: string; effective: string | null; revision: string | null; tree: string } | null {
   const row = db.prepare('SELECT "finalizer_inputs" FROM "operations" WHERE "id" = ?').get(args.operation) as { finalizer_inputs: string } | undefined;
   if (!row) return null;
   const inputs = JSON.parse(row.finalizer_inputs) as { purpose?: string; proposal?: string };
@@ -284,5 +319,28 @@ export function operationApplication(db: Db, args: { operation: string }): { pro
     | undefined;
   if (!p) return null;
   const eff = effectiveVersion(db, p.project);
-  return { proposal: inputs.proposal, repo: p.dev_repo_path, revision: eff?.authorized_revision ?? null, tree: p.tree_id };
+  return { proposal: inputs.proposal, repo: p.dev_repo_path, effective: eff?.id ?? null, revision: eff?.authorized_revision ?? null, tree: p.tree_id };
+}
+
+// The tree an application commits is the proposal's changes rebased onto
+// where the integration branch is (decisions/effects.applyProposal); what
+// was classified, bound and revalidated is the proposal's own tree. When
+// the two protected sets differ, what would be applied is not what was
+// approved: the application is not made, and the approval is withdrawn as
+// for any failed precondition, the human's intent invalidated
+// EFFECT_PRECONDITION_CHANGED with its next generation raised, or a
+// Reviewer's approval withdrawn and the human's question open (the
+// review's M3).
+export function applicationDiverged(tx: Tx, args: { proposal: string; intent: string | null }): boolean {
+  const p = getProposal(tx, args.proposal);
+  if (!p || p.status !== 'approved') return false;
+  if (args.intent !== null) {
+    const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
+    if (row?.status !== 'pending') return false;
+    invalidateIntent(tx, args.intent);
+    return true;
+  }
+  if (p.approver_authority !== 'reviewer') return false;
+  withdrawReviewerApproval(tx, p.id);
+  return true;
 }

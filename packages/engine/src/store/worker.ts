@@ -88,7 +88,7 @@ import { ancestryPairs, nominationAncestryPairs, recordAncestry } from './transi
 import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
-import { operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
+import { applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
@@ -364,7 +364,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // D3 §3.3 (T10; SEAM.md §218): the whole binding, the human's or a
   // Reviewer's, revalidated in the transaction that begins the application.
   'protected.begin_application': (tx, a) =>
-    beginApplication(tx, a, (t: Tx) => revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null })),
+    beginApplication(tx, a, (t: Tx) =>
+      revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null, inputsVersion: a.inputsVersion }),
+    ),
+  'protected.application_diverged': (tx, a) => applicationDiverged(tx, a),
   'protected.record_classification': (tx, a) => recordClassification(tx, a),
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),

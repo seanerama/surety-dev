@@ -153,6 +153,25 @@ export function classify(p0: ClassifySide, p1: ClassifySide, known: ReadonlySet<
     seenErrors.add(k);
     elements.push({ reason: 'discovery_error', path: e.path });
   }
+  // Every discovery error of P0's tree that P1 does not reproduce identically
+  // (same path, same code). An error P1 reproduces is already a
+  // `discovery_error` above. One P1 clears is a difference no rule places: a
+  // definition P0 could not parse is in neither check map, so its deletion,
+  // or its repair in place, would otherwise vanish, and a dropped check is a
+  // loosening nobody approved (D3 §1.4); a governed-file error cleared is the
+  // same. Each is `unhandled_change` naming the error's path (the review's
+  // S1). The index's `criterion_unknown` errors are not P0's tree errors:
+  // they are judged against the index (schema.criterionErrors), and a
+  // correction that drops such a criterion is classified by its own elements
+  // (D3 §3.4; M228 (b)).
+  const reproduced = new Set(p1.discovery.errors.map((e) => `${e.path}\u0000${e.code}`));
+  const seenCleared = new Set<string>();
+  for (const e of p0.discovery.errors) {
+    const k = `${e.path}\u0000${e.code}`;
+    if (reproduced.has(k) || seenCleared.has(k)) continue;
+    seenCleared.add(k);
+    elements.push({ reason: 'unhandled_change', path: e.path });
+  }
   const defFile1 = (key: string) => `${g1.check_discovery.definitions}${key}.json`;
   const invalidInP1 = (key: string) => errors1.some((e) => e.path.split('#')[0] === defFile1(key));
 
