@@ -60,6 +60,10 @@ let mechanismVariantValue: string | null = null;
 let collectBoundsValue: string | null = null;
 let checktreesMaxBytesValue: string | null = null;
 let hostChecksMode: string | null = null;
+let runnerSelfTestValue: string | null = null;
+const selfTestCaseValues: string[] = [];
+let checkProfileVariantValue: string | null = null;
+let checkDomainLimitsValue: string | null = null;
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -103,7 +107,11 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-host-id' ||
     flag === '--harness-mechanism-variant' ||
     flag === '--harness-collect-bounds' ||
-    flag === '--harness-checktrees-max-bytes'
+    flag === '--harness-checktrees-max-bytes' ||
+    flag === '--harness-runner-self-test' ||
+    flag === '--harness-runner-self-test-case' ||
+    flag === '--harness-check-profile-variant' ||
+    flag === '--harness-check-domain-limits'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -138,6 +146,16 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-checktrees-max-bytes') {
       // checktrees_max_bytes below its configured range (SEAM.md §200).
       checktreesMaxBytesValue = value;
+    } else if (flag === '--harness-runner-self-test') {
+      // SEAM.md §208: the runner self-test at this harness start.
+      runnerSelfTestValue = value;
+    } else if (flag === '--harness-runner-self-test-case') {
+      selfTestCaseValues.push(value);
+    } else if (flag === '--harness-check-profile-variant') {
+      checkProfileVariantValue = value;
+    } else if (flag === '--harness-check-domain-limits') {
+      // SEAM.md §212: check domain limits below their configured minimums.
+      checkDomainLimitsValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -157,7 +175,17 @@ const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, pro
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
 if (overrideProblem !== null) usage(overrideProblem);
-const switchProblem = setHarnessSwitches({ templateVersions: templateVersionValues, hostId: hostIdValue, mechanismVariant: mechanismVariantValue, collectBounds: collectBoundsValue, checktreesMaxBytes: checktreesMaxBytesValue });
+const switchProblem = setHarnessSwitches({
+  templateVersions: templateVersionValues,
+  hostId: hostIdValue,
+  mechanismVariant: mechanismVariantValue,
+  collectBounds: collectBoundsValue,
+  checktreesMaxBytes: checktreesMaxBytesValue,
+  runnerSelfTest: runnerSelfTestValue,
+  selfTestCases: selfTestCaseValues,
+  checkProfileVariant: checkProfileVariantValue,
+  checkDomainLimits: checkDomainLimitsValue,
+});
 if (switchProblem !== null) usage(switchProblem);
 
 const home = process.env.SURETY_HOME;

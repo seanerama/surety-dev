@@ -123,6 +123,7 @@ export const EVENT_OWNERS = {
   'check.quarantined': 'store/transitions/checks.ts',
   'check.interrupted': 'store/transitions/checks.ts',
   'check.cancelled': 'store/transitions/checks.ts',
+  'check.lease_regranted': 'store/transitions/checks.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

@@ -582,8 +582,18 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // (8) Referenced evidence exists and verifies.
   const evidence: string[] = [];
   for (const c of scope.required) {
-    const record = deciders[c.id]?.output;
-    if (!record) continue;
+    const decider = deciders[c.id];
+    const record = decider?.output;
+    if (!record) {
+      // An established result of an execution names its output record, an
+      // empty one when the check wrote nothing (D3 §2.6): one that names
+      // none (refused by the secret screen, or lost) is missing evidence,
+      // named by the result (T09; SEAM.md §207). A harness fixture result
+      // has no execution and is not held to it.
+      const r = decider as (Execution & { execution?: string | null; execution_established?: number }) | null | undefined;
+      if (r && r.execution && r.execution_established === 1) evidence.push(r.id);
+      continue;
+    }
     const row = db.prepare('SELECT "path", "post_scan", "missing_at", "published" FROM "records" WHERE "id" = ?').get(record) as
       | { path: string | null; post_scan: string; missing_at: string | null; published: number }
       | undefined;

@@ -129,7 +129,7 @@ function counters(path: string): { oom_kill: number | null; pids_max: number | n
 
 // From the host: process 1 of the sandbox is in a pid namespace other than
 // the engine's (its NSpid has two levels) before the program may start.
-function containedFromHost(launcherPid: number, cgroup: string): string | null {
+export function containedFromHost(launcherPid: number, cgroup: string): string | null {
   let kids: number[];
   try {
     kids = readFileSync(`/proc/${launcherPid}/task/${launcherPid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number);

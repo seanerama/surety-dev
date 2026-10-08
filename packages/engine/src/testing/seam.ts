@@ -18,6 +18,7 @@
 // transaction until released, and another that holds the controlled clock's
 // offset, so both threads take the same time.
 
+import { SELF_TEST_CASES } from '../checks/selftest-cases.js';
 import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -128,6 +129,12 @@ const MAIN_BARRIERS: readonly string[] = [
   // M3 plan §2.3: around a check tree's materialization.
   'checks.before_materialize',
   'checks.materialized',
+  // SEAM.md §205: the init's `started` report arrived, before and after the
+  // transaction that records it; after the transaction that records its exit
+  // report, before the domain's termination begins.
+  'checks.before_started',
+  'checks.started',
+  'checks.exit_recorded',
   // SEAM.md §193: an evaluation's facts read, its transaction not begun.
   'gate.facts_read',
 ];
@@ -178,7 +185,22 @@ export interface HarnessSwitches {
   // `--harness-checktrees-max-bytes <n>` (SEAM.md §200): checktrees_max_bytes
   // for this start, below its configured range.
   checktreesMaxBytes?: number | null;
+  // SEAM.md §208: `--harness-runner-self-test run`, the forced results of
+  // `--harness-runner-self-test-case`, `--harness-check-profile-variant`;
+  // §212: `--harness-check-domain-limits`.
+  runnerSelfTest?: boolean;
+  selfTestForced?: Record<string, 'failed' | 'not_exercised'>;
+  checkProfileVariant?: string | null;
+  checkDomainLimits?: CheckDomainLimits | null;
 }
+
+export interface CheckDomainLimits {
+  pids_max?: number;
+  memory_max?: number;
+  writable_bytes?: number;
+  writable_inodes?: number;
+}
+
 
 // A fault fires for the next `times` matching transactions or reads (SEAM.md
 // §61), then is gone.
@@ -942,8 +964,17 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       // was given (D3 §2.6); it is published before the result names it.
       let output: string | null = null;
       if (step.to === 'recorded') {
-        const { writeWholeRecord } = await import('../records/files.js');
-        output = await writeWholeRecord(hooks.runtime(), { project, run: null, kind: 'check_output', content: Buffer.from(step.outputText ?? '') });
+        // The same screen as a collection (SEAM.md §207): a hit publishes
+        // nothing, raises the Critical finding, and names no record.
+        const content = Buffer.from(step.outputText ?? '');
+        const { scanBytes } = await import('../records/redact.js');
+        const screened = scanBytes(content);
+        if (screened.hit) {
+          await hooks.runtime().engine('checks.output_refused', { execution: step.execution, by: screened.by });
+        } else {
+          const { writeWholeRecord } = await import('../records/files.js');
+          output = await writeWholeRecord(hooks.runtime(), { project, run: null, kind: 'check_output', content });
+        }
       }
       return storeOp(OP.scriptedStep, { args: { execution: step.execution, to: step.to, result: step.result, output }, actor: hooks.actor });
     });
@@ -1446,7 +1477,17 @@ export function seamQualifyMode(): boolean {
 // `--harness-mechanism-variant <label>`, `--harness-collect-bounds
 // entries=<n>,bytes=<n>`. Called once, after configureHarness, before the
 // store worker starts. Returns a usage problem, or null.
-export function setHarnessSwitches(values: { templateVersions: string[]; hostId: string | null; mechanismVariant: string | null; collectBounds: string | null; checktreesMaxBytes?: string | null }): string | null {
+export function setHarnessSwitches(values: {
+  templateVersions: string[];
+  hostId: string | null;
+  mechanismVariant: string | null;
+  collectBounds: string | null;
+  checktreesMaxBytes?: string | null;
+  runnerSelfTest?: string | null;
+  selfTestCases?: string[];
+  checkProfileVariant?: string | null;
+  checkDomainLimits?: string | null;
+}): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
     const m = /^([a-z]+)=([A-Za-z0-9._-]+)$/.exec(v);
@@ -1466,8 +1507,38 @@ export function setHarnessSwitches(values: { templateVersions: string[]; hostId:
     if (!/^\d{1,15}$/.test(values.checktreesMaxBytes) || Number(values.checktreesMaxBytes) < 1) return `--harness-checktrees-max-bytes takes a positive number of bytes, not ${values.checktreesMaxBytes}`;
     checktreesMaxBytes = Number(values.checktreesMaxBytes);
   }
+  if (values.runnerSelfTest != null && values.runnerSelfTest !== 'run') return `--harness-runner-self-test takes run, not ${values.runnerSelfTest}`;
+  const selfTestForced: Record<string, 'failed' | 'not_exercised'> = {};
+  for (const v of values.selfTestCases ?? []) {
+    const m = /^([a-z_]+)=(failed|not_exercised)$/.exec(v);
+    if (!m || !(SELF_TEST_CASES as readonly string[]).includes(m[1]!)) return `--harness-runner-self-test-case takes <case>=<failed|not_exercised>, not ${v}`;
+    selfTestForced[m[1]!] = m[2] as 'failed' | 'not_exercised';
+  }
+  if (values.checkProfileVariant != null && !/^[A-Za-z0-9._-]{1,64}$/.test(values.checkProfileVariant)) return `--harness-check-profile-variant takes a label, not ${values.checkProfileVariant}`;
+  let checkDomainLimits: CheckDomainLimits | null = null;
+  if (values.checkDomainLimits != null) {
+    checkDomainLimits = {};
+    for (const part of values.checkDomainLimits.split(',')) {
+      const m = /^(pids_max|memory_max|writable_bytes|writable_inodes)=(\d{1,15})$/.exec(part);
+      if (!m || Number(m[2]) < 1 || (checkDomainLimits as Record<string, number>)[m[1]!] !== undefined) return `--harness-check-domain-limits takes <key>=<positive integer>,… of pids_max, memory_max, writable_bytes, writable_inodes, not ${values.checkDomainLimits}`;
+      (checkDomainLimits as Record<string, number>)[m[1]!] = Number(m[2]);
+    }
+  }
   if (!init.harness) return null;
-  init = { ...init, switches: { templateVersions, hostId: values.hostId, mechanismVariant: values.mechanismVariant, collectBounds, checktreesMaxBytes } };
+  init = {
+    ...init,
+    switches: {
+      templateVersions,
+      hostId: values.hostId,
+      mechanismVariant: values.mechanismVariant,
+      collectBounds,
+      checktreesMaxBytes,
+      runnerSelfTest: values.runnerSelfTest === 'run',
+      selfTestForced,
+      checkProfileVariant: values.checkProfileVariant ?? null,
+      checkDomainLimits,
+    },
+  };
   return null;
 }
 
@@ -1476,6 +1547,15 @@ export const seamTemplateVersions = (): Record<string, string> | null => (init.h
 export const seamHostId = (): string | null => (init.harness ? (init.switches?.hostId ?? null) : null);
 export const seamMechanismVariant = (): string | null => (init.harness ? (init.switches?.mechanismVariant ?? null) : null);
 export const seamChecktreesMaxBytes = (): number | null => (init.harness ? (init.switches?.checktreesMaxBytes ?? null) : null);
+// SEAM.md §208: whether this harness start runs the runner self-test, the
+// cases it records with a forced result, and the profile variant.
+// Outside the test mode the self-test runs at every start whose host
+// qualification is active; in it, only when asked for.
+export const seamSelfTestAtStart = (): boolean => (init.harness ? init.switches?.runnerSelfTest === true : true);
+export const seamSelfTestForced = (): Record<string, 'failed' | 'not_exercised'> => (init.harness ? (init.switches?.selfTestForced ?? {}) : {});
+export const seamCheckProfileVariant = (): string | null => (init.harness ? (init.switches?.checkProfileVariant ?? null) : null);
+// SEAM.md §212: limits below the configured minimums for every check domain.
+export const seamCheckDomainLimits = (): CheckDomainLimits | null => (init.harness ? (init.switches?.checkDomainLimits ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
 // The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays

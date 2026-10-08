@@ -48,6 +48,8 @@ export interface ExitReport {
   signal: number | null;
   startFailed?: boolean;
   termToExitMs?: number | null;
+  // A check's init: whether its standard output and error were one pipe.
+  interleaved?: boolean;
 }
 
 export interface ChallengeResponse {
@@ -340,6 +342,7 @@ export class SandboxLaunch {
           signal: typeof m.signal === 'number' ? m.signal : null,
           ...(m.start_failed === true ? { startFailed: true } : {}),
           termToExitMs: typeof m.term_to_exit_ms === 'number' ? m.term_to_exit_ms : null,
+          ...(typeof m.interleaved === 'boolean' ? { interleaved: m.interleaved } : {}),
         };
         this.resolveBackend();
         return;

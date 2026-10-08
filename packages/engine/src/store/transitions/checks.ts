@@ -16,6 +16,9 @@ import { type CandidateRow, type CheckRow, getCandidate, markStale, requiredSet,
 import { heldByAncestry } from './gates.js';
 import { effectiveVersion } from './protected.js';
 import { insertExecutionResult } from './baseline.js';
+import { checkLimits } from '../../checks/limits.js';
+import { raiseFinding } from './findings.js';
+import { quarantineDomain } from './runs.js';
 import { envelopeHold } from './envelope.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
@@ -404,6 +407,8 @@ export function executionView(row: Record<string, unknown>) {
     runner_qualification: row.runner_qualification ?? null,
     domain: row.domain ?? null,
     result: row.result ?? null,
+    retry_of: row.retry_of ?? null,
+    infra_retries: row.infra_retries ?? 0,
     init_reports: JSON.parse(row.init_reports as string),
     registered_at: row.registered_at,
     started_at: row.started_at ?? null,
@@ -417,14 +422,18 @@ export function readCandidateExecutions(db: Db, args: { project: string; candida
   const c = db.prepare('SELECT "project" FROM "candidates" WHERE "id" = ?').get(args.candidate) as { project: string } | undefined;
   if (!c || c.project !== args.project) throw notFound('candidate', args.candidate);
   const rows = db.prepare('SELECT * FROM "check_executions" WHERE "candidate" = ? ORDER BY "execution_seq"').all(args.candidate) as Record<string, unknown>[];
-  return { ...head, executions: rows.map(executionView) };
+  // A queued `direct` execution the resource envelope does not admit now
+  // shows its hold (D3 §2.5, "a hold shows as resource_envelope"; SEAM.md
+  // §210): no domain is allocated for it meanwhile.
+  const hold = rows.some((r) => r.status === 'queued' && r.runner_class === 'direct') ? envelopeHold(db) : null;
+  return { ...head, executions: rows.map((r) => ({ ...executionView(r), hold: r.status === 'queued' && r.runner_class === 'direct' ? hold : null })) };
 }
 
 // ---- the runner's qualification (D3 §2.8; A.3 host_qualifications.check_runner) --------
 
 export interface CheckRunnerState {
   profile_fingerprint: string;
-  self_test: { case: string; control: string; result: string }[];
+  self_test: { case: string; control: string; result: string; evidence?: unknown }[];
   qualified: boolean;
   [label: string]: unknown;
 }
@@ -479,11 +488,14 @@ const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + 
 // incarnation, and it holds a lease of kind `check`. null: nothing admitted.
 export function admitExecution(
   tx: Tx,
-  args: { project: string; incarnation: string; scope: string; hostId: string },
+  args: { project: string; incarnation: string; scope: string; hostId: string; selfTestRunning?: boolean },
 ): Admission | null {
   cancelSuperseded(tx, args.project);
+  recordUnrunnable(tx, args.project, args.selfTestRunning === true);
   const q = runnerQualification(tx.db);
-  if (q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
+  // While this start's runner self-test is in progress nothing `direct` is
+  // admitted: it stays queued (SEAM.md §208).
+  if (args.selfTestRunning === true || q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
   const { n } = tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "status" IN (${LIVE.map(() => '?').join(', ')})`).get(args.project, ...LIVE) as { n: number };
   const max = projectPolicy(tx.db, args.project).max_concurrent_checks ?? 1;
   if (n >= max || envelopeHold(tx.db) !== null) return null;
@@ -541,6 +553,57 @@ export function admitExecution(
   };
 }
 
+// The reasons the runner knows, before anything is allocated, that a queued
+// execution cannot run (D3 §§2.7, 2.8, 5 X3; SEAM.md §§209, 211): each is
+// recorded at once with its reason (queued → materializing → recorded, A.5),
+// with no domain, under the qualification in force now (T19).
+//   - environment_unbound: the definition requires an environment, and no
+//     trigger M3 has binds one (deployment is reserved);
+//   - isolation_unqualified: no active host qualification;
+//   - runner_unqualified: a class other than `direct`, which nothing
+//     qualifies; or `direct` while the runner is not qualified at this start
+//     and no self-test of this start is still in progress.
+function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): void {
+  const rows = tx.db
+    .prepare(
+      `SELECT x."id", x."runner_class", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
+       WHERE x."project" = ? AND x."status" = 'queued' ORDER BY x."execution_seq"`,
+    )
+    .all(project) as { id: string; runner_class: string; definition: string }[];
+  if (rows.length === 0) return;
+  const q = runnerQualification(tx.db);
+  for (const r of rows) {
+    let requires: unknown = [];
+    try {
+      requires = (JSON.parse(r.definition) as { requires?: unknown }).requires ?? [];
+    } catch {
+      requires = [];
+    }
+    let reason: string | null = null;
+    if (Array.isArray(requires) && requires.includes('environment')) reason = 'environment_unbound';
+    else if (q === null) reason = 'isolation_unqualified';
+    else if (r.runner_class !== 'direct') reason = 'runner_unqualified';
+    else if (!selfTestRunning && (q.check_runner === null || q.check_runner.qualified !== true)) reason = 'runner_unqualified';
+    if (reason === null) continue;
+    tx.db.prepare(`UPDATE "check_executions" SET "status" = 'materializing', "runner_qualification" = ? WHERE "id" = ?`).run(q?.id ?? null, r.id);
+    recordExecutionResult(
+      tx,
+      {
+        execution: r.id,
+        established: false,
+        exit_status: null,
+        signaled: false,
+        deadline_hit: false,
+        orphans: false,
+        not_run_reason: reason,
+        output: null,
+        output_dropped_bytes: null,
+      },
+      { runner_id: r.runner_class },
+    );
+  }
+}
+
 interface ExecutionRow {
   id: string;
   project: string;
@@ -580,10 +643,11 @@ function releaseCheckLease(tx: Tx, execution: string): void {
 
 // The launch was authorized (boundary.ts, in the same transaction): the
 // execution is running in its domain.
+// The execution stays `materializing` until the init's `started` report is
+// recorded (SEAM.md §203).
 export function markLaunched(tx: Tx, args: { execution: string; domain: string }): void {
   const x = mustExecution(tx.db, args.execution);
   if (x.status !== 'materializing') return;
-  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'running' WHERE "id" = ?`).run(x.id);
   tx.emit('check.launched', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: args.domain }, {});
 }
 
@@ -594,7 +658,11 @@ export function recordInitReport(tx: Tx, args: { execution: string; kind: 'start
   const reports = JSON.parse(x.init_reports) as { kind: string; at: string; detail: unknown }[];
   reports.push({ kind: args.kind, at: tx.at, detail: args.detail });
   tx.db.prepare('UPDATE "check_executions" SET "init_reports" = ? WHERE "id" = ?').run(JSON.stringify(reports), x.id);
-  if (args.kind === 'started') tx.db.prepare('UPDATE "check_executions" SET "started_at" = ? WHERE "id" = ? AND "started_at" IS NULL').run(tx.at, x.id);
+  if (args.kind === 'started') {
+    tx.db.prepare('UPDATE "check_executions" SET "started_at" = ? WHERE "id" = ? AND "started_at" IS NULL').run(tx.at, x.id);
+    // `running` from the transaction that records `started` (SEAM.md §203).
+    if (x.status === 'materializing') tx.db.prepare(`UPDATE "check_executions" SET "status" = 'running' WHERE "id" = ?`).run(x.id);
+  }
 }
 
 // The program the execution runs, as resolved at launch (D3 §§1.1, 2.5, Q6).
@@ -620,6 +688,9 @@ export function quarantineExecution(tx: Tx, args: { execution: string; why: stri
   if (x.status === 'quarantined' || !LIVE.includes(x.status)) return;
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'quarantined' WHERE "id" = ?`).run(x.id);
   tx.emit('check.quarantined', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
+  // Its domain stays nonterminal, quarantined, as a role's does (L1; SEAM.md
+  // §§128, 205).
+  if (x.domain !== null) quarantineDomain(tx, { domain: x.domain, subject: { check_execution: x.id } });
   markStale(tx, { candidate: x.candidate });
 }
 
@@ -632,6 +703,54 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
   releaseCheckLease(tx, x.id);
   tx.emit('check.interrupted', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
   markStale(tx, { candidate: x.candidate });
+  // Registered again, as `recovery`, in this transaction (D3 §2.7; T05).
+  registerRecoveryRetry(tx, x.id);
+}
+
+// The recovery registration of an interrupted or `materialization_failed`
+// execution (D3 §§2.5, 2.7; T05; SEAM.md §204), made in the transaction that
+// ends it, after its domain's closure. The n-th retry of an original
+// registration has trigger {recovery, the original's trigger id, the
+// original's generation + n}, `retry_of` the execution it retries and
+// `infra_retries` n; at most `check_infra_retries_max` per original, counted
+// from the store, so a restart resets nothing. The same frozen bindings: the
+// check row, the candidate and its revision, the protected version, the
+// class. Nothing for a superseded candidate or version. Returns the new
+// registration's id, or null.
+export function registerRecoveryRetry(tx: Tx, execution: string): string | null {
+  type Row = { id: string; project: string; check: string; key: string; candidate: string; source_revision: string; protected_version: string; runner_class: string; trigger: string; retry_of: string | null; infra_retries: number };
+  const get = (id: string) => tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(id) as Row | undefined;
+  const x = get(execution);
+  if (!x) return null;
+  let original = x;
+  for (let i = 0; original.retry_of !== null && i < 64; i++) {
+    const prior = get(original.retry_of);
+    if (!prior) break;
+    original = prior;
+  }
+  const n = (x.infra_retries ?? 0) + 1;
+  if (n > checkLimits().check_infra_retries_max) return null;
+  const superseded = tx.db
+    .prepare('SELECT (SELECT "superseded_by" FROM "candidates" WHERE "id" = ?) AS c, (SELECT "superseded_by" FROM "protected_versions" WHERE "id" = ?) AS v')
+    .get(x.candidate, x.protected_version) as { c: string | null; v: string | null };
+  if (superseded.c !== null || superseded.v !== null) return null;
+  const first = JSON.parse(original.trigger) as Trigger;
+  const trigger: Trigger = { source: 'recovery', id: first.id, generation: first.generation + n };
+  const tk = triggerKey(trigger, x.key, x.candidate);
+  const existing = tx.db.prepare('SELECT "id" FROM "check_executions" WHERE "project" = ? AND "trigger_key" = ?').get(x.project, tk) as { id: string } | undefined;
+  if (existing) return existing.id;
+  const id = tx.newId('cx_');
+  const seq = nextExecutionSeq(tx, x.project);
+  tx.db
+    .prepare(
+      `INSERT INTO "check_executions" ("id", "created_at", "project", "check", "key", "candidate", "source_revision", "protected_version", "runner_class", "execution_seq",
+         "trigger", "trigger_key", "retry_of", "infra_retries", "status", "registered_at")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+    )
+    .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at);
+  tx.emit('check.registered', { project: x.project, candidate: x.candidate, check_execution: id }, { key: x.key, trigger, execution_seq: seq, check: x.check, retry_of: x.id, infra_retries: n });
+  markStale(tx, { candidate: x.candidate });
+  return id;
 }
 
 export interface ResultFields {
@@ -671,7 +790,78 @@ export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runne
   });
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, args.execution);
   releaseCheckLease(tx, args.execution);
+  // A failed materialization is registered again (D3 §2.7); no other
+  // reason, and no established result, ever is.
+  if (args.not_run_reason === 'materialization_failed') registerRecoveryRetry(tx, args.execution);
   return { check_result: id };
+}
+
+// The secret screen refused a check's output record (D3 §2.6; D1 §14.2;
+// SEAM.md §207): nothing of it is written; the Critical security finding of
+// the project, and `evidence.secret_refused` naming the execution, never the
+// secret.
+export function checkOutputRefused(tx: Tx, args: { execution: string; by: string | null }): string {
+  const x = mustExecution(tx.db, args.execution);
+  const finding = raiseFinding(tx, {
+    project: x.project,
+    scope: 'project',
+    candidate: null,
+    run: null,
+    role: null,
+    category: 'security',
+    severity: 'critical',
+    message: `The secret screen found a registered secret${args.by ? ` (${args.by})` : ''} in the output of check execution ${x.id}; its publication was refused.`,
+  });
+  tx.emit('evidence.secret_refused', { project: x.project, check_execution: x.id, finding }, { what: 'check_output', path: null, by: args.by });
+  return finding;
+}
+
+// ---- the check lease after a pause (D3 §2.5; D2 §3.5; SEAM.md §205) -----------------------
+
+// Is the execution's check lease, past its expiry, a candidate for a re-grant
+// (everything but the challenge, which the main thread makes)? Its lease is
+// held, not closing, by this incarnation at this generation; its domain is
+// launched under an authorization binding the execution, the incarnation and
+// the generation; the execution is running.
+export function checkRegrantFacts(db: Db, args: { execution: string; incarnation: string; generation: number }): { eligible: boolean; reason: string | null } {
+  const none = (reason: string) => ({ eligible: false, reason });
+  const lease = db.prepare(`SELECT * FROM "leases" WHERE "resource_kind" = 'check' AND "resource_id" = ? AND "released_at" IS NULL`).get(args.execution) as
+    | { generation: number; closing: number; owner_incarnation: string }
+    | undefined;
+  if (!lease) return none('the execution holds no check lease');
+  if (lease.closing === 1) return none('the lease is closing');
+  if (lease.owner_incarnation !== args.incarnation || lease.generation !== args.generation) return none("the lease is another incarnation's or generation's");
+  const x = db.prepare('SELECT "status", "domain" FROM "check_executions" WHERE "id" = ?').get(args.execution) as { status: string; domain: string | null } | undefined;
+  if (!x || x.status !== 'running' || x.domain === null) return none('the execution is not running');
+  const d = db.prepare('SELECT "status", "launch_state", "launch_binding" FROM "execution_domains" WHERE "id" = ?').get(x.domain) as
+    | { status: string; launch_state: string; launch_binding: string | null }
+    | undefined;
+  if (!d || d.status !== 'launched' || d.launch_state !== 'authorized' || d.launch_binding === null) return none('the domain is not launched under an authorization');
+  const b = JSON.parse(d.launch_binding) as { check_execution?: string; incarnation?: string; lease_generation?: number };
+  if (b.check_execution !== args.execution || b.incarnation !== args.incarnation || b.lease_generation !== args.generation) return none('the launch authorization names another execution, incarnation or generation');
+  return { eligible: true, reason: null };
+}
+
+// The re-grant: the same generation, a new expiry, `timeout_s` untouched;
+// `check.lease_regranted` carries the fresh challenge's evidence.
+export function regrantCheckLease(
+  tx: Tx,
+  args: { execution: string; generation: number; incarnation: string; challenge: { nonce: string; sent_at: string; answered_at: string; backend_state: string } },
+): string | null {
+  if (!checkRegrantFacts(tx.db, args).eligible) return null;
+  const lease = tx.db.prepare(`SELECT "id", "expires_at" FROM "leases" WHERE "resource_kind" = 'check' AND "resource_id" = ? AND "released_at" IS NULL`).get(args.execution) as {
+    id: string;
+    expires_at: string;
+  };
+  const expires = addSeconds(tx.at, engineSettings().lease_ttl);
+  tx.db.prepare('UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "id" = ?').run(tx.at, expires, lease.id);
+  const x = mustExecution(tx.db, args.execution);
+  tx.emit(
+    'check.lease_regranted',
+    { project: x.project, candidate: x.candidate, check_execution: x.id },
+    { generation: args.generation, expired_at: lease.expires_at, expires_at: expires, challenge: { ...args.challenge, channel: 'domain_init' } },
+  );
+  return tx.at;
 }
 
 // ---- cancellation and supersession (D3 §2.5 "Supersession"; T15; SEAM.md §192) ------------
