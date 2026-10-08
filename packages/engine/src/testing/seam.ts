@@ -126,6 +126,9 @@ const MAIN_BARRIERS: readonly string[] = [
   'nomination.finalized',
   'protected_application.before_finalizer',
   'protected_application.finalized',
+  // SEAM.md §218: an approved proposal's application is due, its approval
+  // recorded, before the revalidation of its binding.
+  'protected_application.before_revalidation',
   // M3 plan §2.3: around a check tree's materialization.
   'checks.before_materialize',
   'checks.materialized',
@@ -192,6 +195,8 @@ export interface HarnessSwitches {
   selfTestForced?: Record<string, 'failed' | 'not_exercised'>;
   checkProfileVariant?: string | null;
   checkDomainLimits?: CheckDomainLimits | null;
+  // SEAM.md §217: `--harness-classifier-version <n>`.
+  classifierVersion?: number | null;
 }
 
 export interface CheckDomainLimits {
@@ -1487,6 +1492,7 @@ export function setHarnessSwitches(values: {
   selfTestCases?: string[];
   checkProfileVariant?: string | null;
   checkDomainLimits?: string | null;
+  classifierVersion?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1524,6 +1530,11 @@ export function setHarnessSwitches(values: {
       (checkDomainLimits as Record<string, number>)[m[1]!] = Number(m[2]);
     }
   }
+  let classifierVersion: number | null = null;
+  if (values.classifierVersion != null) {
+    if (!/^[1-9][0-9]{0,8}$/.test(values.classifierVersion)) return `--harness-classifier-version takes a positive integer, not ${values.classifierVersion}`;
+    classifierVersion = Number(values.classifierVersion);
+  }
   if (!init.harness) return null;
   init = {
     ...init,
@@ -1537,6 +1548,7 @@ export function setHarnessSwitches(values: {
       selfTestForced,
       checkProfileVariant: values.checkProfileVariant ?? null,
       checkDomainLimits,
+      classifierVersion,
     },
   };
   return null;
@@ -1546,6 +1558,8 @@ export function setHarnessSwitches(values: {
 export const seamTemplateVersions = (): Record<string, string> | null => (init.harness ? (init.switches?.templateVersions ?? null) : null);
 export const seamHostId = (): string | null => (init.harness ? (init.switches?.hostId ?? null) : null);
 export const seamMechanismVariant = (): string | null => (init.harness ? (init.switches?.mechanismVariant ?? null) : null);
+// SEAM.md §217: the classifier version this harness start reports.
+export const seamClassifierVersion = (): number | null => (init.harness ? (init.switches?.classifierVersion ?? null) : null);
 export const seamChecktreesMaxBytes = (): number | null => (init.harness ? (init.switches?.checktreesMaxBytes ?? null) : null);
 // SEAM.md §208: whether this harness start runs the runner self-test, the
 // cases it records with a forced result, and the profile variant.

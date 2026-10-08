@@ -2651,6 +2651,9 @@
         },
         "classification": {
           "required": false
+        },
+        "approval_binding": {
+          "required": false
         }
       }
     },
@@ -4042,7 +4045,10 @@
         "effective_protected_version",
         "spec_revision",
         "scope_approval",
-        "policy_revision"
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
       ],
       "target_seconds": 86400
     },
@@ -4059,7 +4065,10 @@
         "effective_protected_version",
         "spec_revision",
         "scope_approval",
-        "policy_revision"
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
       ],
       "target_seconds": 86400
     },
@@ -4226,7 +4235,10 @@
         "effective_protected_version",
         "spec_revision",
         "scope_approval",
-        "policy_revision"
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
       ],
       "target_seconds": 86400
     },
@@ -4899,6 +4911,16 @@
         "min": 0,
         "max": 5,
         "integer": true
+      },
+      "classifier_authority": {
+        "default": {
+          "mode": "recommend"
+        },
+        "modes": [
+          "recommend",
+          "authoritative"
+        ],
+        "version": "integer, required by authoritative"
       },
       "isolation_probe_exhaustion": {
         "default": false,

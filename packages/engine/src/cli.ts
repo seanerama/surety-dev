@@ -64,6 +64,7 @@ let runnerSelfTestValue: string | null = null;
 const selfTestCaseValues: string[] = [];
 let checkProfileVariantValue: string | null = null;
 let checkDomainLimitsValue: string | null = null;
+let classifierVersionValue: string | null = null;
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -111,7 +112,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-runner-self-test' ||
     flag === '--harness-runner-self-test-case' ||
     flag === '--harness-check-profile-variant' ||
-    flag === '--harness-check-domain-limits'
+    flag === '--harness-check-domain-limits' ||
+    flag === '--harness-classifier-version'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -156,6 +158,9 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-check-domain-limits') {
       // SEAM.md §212: check domain limits below their configured minimums.
       checkDomainLimitsValue = value;
+    } else if (flag === '--harness-classifier-version') {
+      // SEAM.md §217: the running classifier reports this version.
+      classifierVersionValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -185,6 +190,7 @@ const switchProblem = setHarnessSwitches({
   selfTestCases: selfTestCaseValues,
   checkProfileVariant: checkProfileVariantValue,
   checkDomainLimits: checkDomainLimitsValue,
+  classifierVersion: classifierVersionValue,
 });
 if (switchProblem !== null) usage(switchProblem);
 

@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { type AuthoritySetting, DEFAULT_AUTHORITY } from '../checks/classify.js';
 import { Refusal } from '../refusal.js';
 import {
   DECISION_KINDS,
@@ -24,7 +25,15 @@ export type ConfigSource = 'file' | 'default';
 
 export interface EngineConfig {
   values: {
-    [K in EngineKey]: K extends 'api_authority' ? string : K extends 'decision_targets' ? Record<string, number | null> : K extends 'ui_bootstrap' | 'isolation_probe_exhaustion' ? boolean : number;
+    [K in EngineKey]: K extends 'api_authority'
+      ? string
+      : K extends 'decision_targets'
+        ? Record<string, number | null>
+        : K extends 'ui_bootstrap' | 'isolation_probe_exhaustion'
+          ? boolean
+          : K extends 'classifier_authority'
+            ? AuthoritySetting
+            : number;
   };
   sources: Record<EngineKey, ConfigSource>;
 }
@@ -67,6 +76,8 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
       else throw invalidValue(key, `must be exactly ${allowed.join(' or ')}`);
     } else if (key === 'decision_targets') {
       values[key] = decisionTargets(given ? value : {});
+    } else if (key === 'classifier_authority') {
+      values[key] = given ? classifierAuthority(value) : { ...DEFAULT_AUTHORITY };
     } else if (key in ENGINE_BOOLEANS) {
       if (!given) values[key] = ENGINE_BOOLEANS[key];
       else if (typeof value === 'boolean') values[key] = value;
@@ -85,6 +96,19 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
     }
   }
   return { values: values as EngineConfig['values'], sources };
+}
+
+// D3 A.7 (Q5; SEAM.md §217): `{mode, version?}`, `mode` a
+// ClassifierAuthority; `authoritative` names the classifier version it
+// trusts, an integer. Nothing else is accepted.
+function classifierAuthority(raw: unknown): AuthoritySetting {
+  const why = 'must be {"mode": "recommend"} or {"mode": "authoritative", "version": <integer>}';
+  if (!isPlainObject(raw)) throw invalidValue('classifier_authority', why);
+  for (const k of Object.keys(raw)) if (k !== 'mode' && k !== 'version') throw invalidValue('classifier_authority', why);
+  if (raw.mode !== 'recommend' && raw.mode !== 'authoritative') throw invalidValue('classifier_authority', why);
+  if (raw.version !== undefined && (typeof raw.version !== 'number' || !Number.isInteger(raw.version) || raw.version < 1)) throw invalidValue('classifier_authority', why);
+  if (raw.mode === 'authoritative' && raw.version === undefined) throw invalidValue('classifier_authority', why);
+  return raw.version === undefined ? { mode: raw.mode } : { mode: raw.mode, version: raw.version };
 }
 
 function decisionTargets(raw: unknown): Record<string, number | null> {

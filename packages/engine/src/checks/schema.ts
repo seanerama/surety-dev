@@ -550,6 +550,10 @@ export function parseDefinition(file: string, stem: string, text: string, govern
         else if (!Array.isArray(c.sensitive_areas)) e.at('/covers/sensitive_areas', 'invalid_value');
         else
           c.sensitive_areas.forEach((x, n) => {
+            // Judged against the closed list of areas, as built since slice 15;
+            // not against the areas of the registered index (D3 §3.4 reads
+            // "an area the index does not have"). Accepted at slice 19 as not
+            // built: a later slice that needs it adds it.
             if (typeof x !== 'string' || !SENSITIVE_AREAS.includes(x)) e.at(`/covers/sensitive_areas/${n}`, 'area_unknown');
             else if (areas.includes(x)) e.at(`/covers/sensitive_areas/${n}`, 'duplicate_entry');
             else areas.push(x);

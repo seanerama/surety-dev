@@ -130,7 +130,7 @@ Notation: `*` required; `=Enum` one of A.2; `→table` a foreign key.
 - **policy_revisions:** `id*`, `created_at*`, `project* →projects`, `revision*`, `git_path*`, `git_blob*`, `changed_by*`, `changed_at*`, `diff_summary*`, `widens_authority*`, `committed*`, `decision →decisions`, `effective*`.
 - **process_ownership:** `id*`, `created_at*`, `project* →projects`, `domain* →execution_domains`, `invocation →invocation_receipts`, `incarnation* →engine_incarnations`, `pgid`, `pid`, `pid_start_time`, `containment_id`, `descendants*`, `termination_confirmed_at`, `check_execution →check_executions`.
 - **projects:** `id*`, `created_at*`, `name*`, `tier* =Tier`, `dev_repo_path*`, `integration_branch*`, `delivery_repo`, `baseline_state* =BaselineState`, `prior_baseline_state =BaselineState`, `registration_state* =RegistrationState`, `adoption`, `management*`, `paused*`, `seq_counters*`, `policy_revision →policy_revisions`, `nomination_due`.
-- **protected_proposals:** `id*`, `created_at*`, `project* →projects`, `seq*`, `proposed_by* =ProposedBy`, `run →runs`, `base_revision*`, `tree_id*`, `diff_hash*`, `affected_checks*`, `rationale →records`, `requested_change_kind* =ProtectedChangeKind`, `classified_change_kind =ProtectedChangeKind`, `status* =ProposalStatus`, `approver`, `approver_authority =Authority`, `approved_at`, `resulting_version →protected_versions`, `changes_required_set*`, `recommendations*`, `classification`.
+- **protected_proposals:** `id*`, `created_at*`, `project* →projects`, `seq*`, `proposed_by* =ProposedBy`, `run →runs`, `base_revision*`, `tree_id*`, `diff_hash*`, `affected_checks*`, `rationale →records`, `requested_change_kind* =ProtectedChangeKind`, `classified_change_kind =ProtectedChangeKind`, `status* =ProposalStatus`, `approver`, `approver_authority =Authority`, `approved_at`, `resulting_version →protected_versions`, `changes_required_set*`, `recommendations*`, `classification`, `approval_binding`.
 - **protected_versions:** `id*`, `created_at*`, `project* →projects`, `seq*`, `fingerprint*`, `check_ids*`, `change_kind* =ProtectedChangeKind`, `proposal →protected_proposals`, `approved_by*`, `approver_authority* =Authority`, `approved_at*`, `applied_by_operation →operations`, `authorized*`, `effective_from`, `superseded_by →protected_versions`, `roots*`, `discovery_errors*`, `governed`, `fingerprint_scheme* =ProtectedVersionsFingerprintScheme`, `authorized_revision`.
 - **qualification_attempts:** `id*`, `created_at*`, `backend*`, `version*`, `binary_path*`, `binary_sha256*`, `help_sha256*`, `template*`, `template_version*`, `model*`, `auth_mode* =AuthMode`, `host_qualification →host_qualifications`, `profile_fingerprint*`, `fixture_project →projects`, `candidate_egress*`, `canary_deadlines*`, `spend*`, `decision →decisions`, `status* =QualificationAttemptStatus`, `canaries*`, `unexpected_contacts*`, `trust_entry →trust_entries`, `invalidated_reason`.
 - **records:** `id*`, `created_at*`, `project →projects`, `kind* =RecordKind`, `path`, `sha256`, `bytes`, `redaction_version*`, `published*`, `post_scan* =PostScan`, `post_scan_finding`, `retain_until`, `run →runs`, `published_at`, `missing_at`.
@@ -367,8 +367,8 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `spec_change`: not enabled in M1
 - `architecture_approval`: not enabled in M1
 - `plan_approval`: not enabled in M1
-- `check_correction_loosening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
-- `check_correction_unclassifiable`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
+- `check_correction_loosening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision, classifier_version, classifier_authority, discovery
+- `check_correction_unclassifiable`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision, classifier_version, classifier_authority, discovery
 - `finding_disposition`: enabled; manifest finding_status, disposition, proposed_disposition, effective_severity, sensitive_area, evidence, scope, defer_target, linked_issue, applicable, candidate_revision, acceptance_content_hash, policy_revision
 - `severity_lower`: enabled; manifest finding_status, effective_severity, to, sensitive_area, evidence, scope, applicable, candidate_revision, acceptance_content_hash, policy_revision
 - `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation
@@ -388,7 +388,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `reactivate`: not enabled in M1
 - `policy_widening`: enabled; manifest base_revision, base_blob, proposed_policy, widens
 - `finding_applicability_exclusion`: enabled; manifest assessment_status, evidence, reason, proposed_by_run, assessed_by_run, finding, candidate, ancestry, acceptance_content_hash, effective_severity, finding_status, finding_evidence, scope, disposition, sensitive_area, blocks_gate, protected_version, policy_revision
-- `check_correction_tightening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision
+- `check_correction_tightening`: enabled; manifest proposal_status, tree, diff_hash, base_revision, integration_revision, classification, evidence, effective_protected_version, spec_revision, scope_approval, policy_revision, classifier_version, classifier_authority, discovery
 - `qualification_approval`: enabled; manifest attempt_status, binary_sha256, help_sha256, template, template_version, model, auth_mode, host_qualification, host_eligibility, fixture_project, candidate_egress, canary_deadlines, spend
 - `trust_activation`: enabled; manifest entry_status, binary_sha256, help_sha256, template, template_version, capabilities, profile_fingerprint, host_id, host_eligibility, evidence, evidence_fingerprint
 
@@ -441,6 +441,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `checktree_max_entries`: default 200000, 1000 to 2000000
 - `checktrees_max_bytes`: default 8589934592, 67108864 to 137438953472
 - `check_infra_retries_max`: default 2, 0 to 5
+- `classifier_authority`: default {"mode":"recommend"}
 - `isolation_probe_exhaustion`: default false
 
 ### project

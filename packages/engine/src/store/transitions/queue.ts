@@ -9,7 +9,10 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
-import { executionSeqHigh, proposalHasErrors } from './checks.js';
+import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
+import { configuredAuthority, discoveryHash } from './classification.js';
+import { runningClassifierVersion } from '../../checks/classify.js';
+import type { Discovery } from '../../checks/discovery.js';
 import { type Policy, wideningKeys } from '../../config/project-policy.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -52,6 +55,10 @@ export interface Facts {
   // A Stop's or an Abandon's run: its backend had already exited on its own
   // (Q13), as the running engine knows it.
   exited?: boolean;
+  // A protected application's revalidation (D3 §3.3; SEAM.md §218): the
+  // class and the proposal's discovery as the classifier gives them again.
+  classification?: string | null;
+  discovery?: Discovery | null;
 }
 
 export interface Preview {
@@ -970,7 +977,9 @@ const EXCLUSION: KindSpec = {
 
 // ---- check corrections (SEAM.md §§69, 77) ------------------------------------------------
 
-function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): Record<string, unknown> {
+// The binding of a check correction (SEAM.md §§69, 77, 218; D3 §3.3): with
+// `facts` from a revalidation, the class and discovery read again.
+export function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): Record<string, unknown> {
   const p = getProposal(tx, proposalId)!;
   const r = projectRepoRow(tx, p.project);
   const head = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(p.project, integrationRef(r.integration_branch)) as
@@ -986,7 +995,7 @@ function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): Record<s
     diff_hash: p.diff_hash,
     base_revision: p.base_revision,
     integration_revision: facts && 'head' in facts ? facts.head : (head?.expected_oid ?? null),
-    classification: p.classified_change_kind,
+    classification: facts && 'classification' in facts ? facts.classification : p.classified_change_kind,
     // A rationale a later detector matched is a changed dependency; the scan
     // of a record that is still pending is not (SEAM.md §77).
     evidence: { rationale: p.rationale, quarantined: rationale?.post_scan === 'hit', missing: rationale ? rationale.missing_at !== null : null },
@@ -996,6 +1005,11 @@ function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): Record<s
     spec_revision: specRevision(tx.db, p.project),
     scope_approval: scopeApproval?.id ?? null,
     policy_revision: policyRevisionId(tx.db, p.project),
+    // D3 §3.3 (T10; SEAM.md §218): the classifier that runs, the setting as
+    // configured, and the proposal's discovery.
+    classifier_version: runningClassifierVersion(),
+    classifier_authority: configuredAuthority(),
+    discovery: discoveryHash(facts && 'discovery' in facts ? facts.discovery : proposalDiscovery(tx.db, p.id)),
   };
 }
 
@@ -1152,7 +1166,22 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
 // build spec §6 correction 22): every preview's manifest holds these keys,
 // which raising a question checks, and the executable contract (contract/)
 // states this table.
-const CORRECTION_KEYS = ['proposal_status', 'tree', 'diff_hash', 'base_revision', 'integration_revision', 'classification', 'evidence', 'effective_protected_version', 'spec_revision', 'scope_approval', 'policy_revision'];
+const CORRECTION_KEYS = [
+  'proposal_status',
+  'tree',
+  'diff_hash',
+  'base_revision',
+  'integration_revision',
+  'classification',
+  'evidence',
+  'effective_protected_version',
+  'spec_revision',
+  'scope_approval',
+  'policy_revision',
+  'classifier_version',
+  'classifier_authority',
+  'discovery',
+];
 const CONTROL_KEYS = ['run', 'stoppable', 'domains', 'lease_generation', 'workspace', 'workspace_snapshot', 'workspace_fate', 'work_fate'];
 export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = {
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
@@ -1381,7 +1410,13 @@ export function effectFailed(tx: Tx, op: { id: string; inputs: Record<string, un
     // Never authorized and never in effect: the intended row is removed, so
     // that the proposal can be approved and applied again (one version per
     // proposal).
-    if (v && v.authorized === 0 && v.effective_from === null) tx.db.prepare('DELETE FROM "protected_versions" WHERE "id" = ?').run(inputs.version);
+    // Its checks rows, written from the frozen discovery when the
+    // application began (D3 §1.4), go with it: a version never in effect
+    // registered nothing, so nothing refers to them.
+    if (v && v.authorized === 0 && v.effective_from === null) {
+      tx.db.prepare('DELETE FROM "checks" WHERE "protected_version" = ?').run(inputs.version);
+      tx.db.prepare('DELETE FROM "protected_versions" WHERE "id" = ?').run(inputs.version);
+    }
     if (intentId === null) {
       const p = getProposal(tx, inputs.proposal);
       if (p && p.status === 'approved') {

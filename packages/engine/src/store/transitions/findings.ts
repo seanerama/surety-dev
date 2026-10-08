@@ -8,7 +8,7 @@
 import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
 import { type FindingRow, findingApplies } from './gates.js';
-import { reviewerApprove } from './protected.js';
+import { reviewerApprove } from './classification.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
