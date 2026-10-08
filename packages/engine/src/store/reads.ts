@@ -11,6 +11,8 @@ import { effectiveVersion } from './transitions/protected.js';
 import { knownCriteria } from './transitions/checks.js';
 import { type FindingRow, candidateSignoffs, findingApplies } from './transitions/gates.js';
 import type { WorkRow } from './transitions/work.js';
+import type { CheckWritingFacts } from '../checks/guide.js';
+import type { Governed } from '../checks/schema.js';
 
 // The project's effective ungoverned policy: the revision the engine
 // recorded over the schema defaults, or the defaults with revision null.
@@ -113,6 +115,31 @@ export function contextFacts(db: Database, args: { run: string }) {
       .map((m) => ({ id: m.id, name: m.name, paths: parse<unknown>(m.paths, []) }));
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
+  }
+  // The Verifier of check_correction work writes checks for every
+  // requirement of the project (BS3 §3): each registered requirement, with
+  // its approved text, its criteria and its areas (D3 §4.5).
+  type IndexedReq = Req & { criteria: string | null; sensitive_areas: string };
+  let checkWriting: CheckWritingFacts | null = null;
+  if (item.kind === 'check_correction') {
+    const all = db
+      .prepare('SELECT "id", "key", "text_ref", "assigned_phase", "text", "criteria", "sensitive_areas" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
+      .all(item.project) as IndexedReq[];
+    if (!stage) requirements = all.map(({ id, key, text_ref, assigned_phase, text }) => ({ id, key, text_ref, assigned_phase, text }));
+    const version = effectiveVersion(db, item.project);
+    const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(item.project) as { tier: string } | undefined)?.tier ?? '';
+    checkWriting = {
+      // Unknown, never A.4's defaults, when the version or its governed
+      // values cannot be read.
+      governed: version ? parse<Governed | null>((db.prepare('SELECT "governed" FROM "protected_versions" WHERE "id" = ?').get(version.id) as { governed: string | null }).governed, null) : null,
+      tier: projectTier,
+      modules: (db.prepare('SELECT "name", "tier_override", "sensitive_areas" FROM "modules" WHERE "project" = ? ORDER BY "name"').all(item.project) as { name: string; tier_override: string | null; sensitive_areas: string }[]).map((m) => ({
+        name: m.name,
+        tier_override: m.tier_override,
+        sensitive_areas: parse<string[]>(m.sensitive_areas, []),
+      })),
+      requirements: all.map((r) => ({ key: r.key, text: r.text, text_ref: r.text_ref, criteria: r.criteria === null ? null : parse<string[] | null>(r.criteria, null), sensitive_areas: parse<string[]>(r.sensitive_areas, []) })),
+    };
   }
   const candidate = db.prepare('SELECT * FROM "candidates" WHERE "id" = ? AND "project" = ?').get(subjectId('candidate'), item.project) as CandidateRow | undefined;
   const role = run.role as string;
@@ -238,6 +265,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     checks_known: checksKnown,
     check_keys: checkKeys,
     criteria,
+    check_writing: checkWriting,
     resumed,
   };
 }
