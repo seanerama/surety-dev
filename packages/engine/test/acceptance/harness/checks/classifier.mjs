@@ -224,9 +224,11 @@ export function affectedOf(c, label) {
 
 // A commit object, on `parent`, whose tree is the parent's with `entries`
 // ({path: {content, mode}}) replaced. No ref is made or moved. The
-// Verifier's `git checkout <commit> -- <path>` then writes the file with its
+// Verifier's `git restore --source=<commit> -- <path>` then writes the file with its
 // mode into the workspace, which a scripted role cannot chmod in the kernel
-// lane (SEAM §216).
+// lane (SEAM §216). `git restore` (worktree only) leaves the workspace's
+// index as it was: `git checkout` would change it, which is a ref_violation
+// (SEAM §28).
 export function objectCommit(repo, parent, entries) {
   const index = join(repo, '.git', `fixture-index-${process.hrtime.bigint()}`);
   const env = { GIT_INDEX_FILE: index };
@@ -242,7 +244,7 @@ export function objectCommit(repo, parent, entries) {
 // Verifier steps that make `path` executable, its content unchanged.
 export function chmodSteps(project, path, content) {
   const commit = objectCommit(project.repo.path, refOid(project.repo.path, project.repo.ref), { [path]: { content, mode: '100755' } });
-  return [step.git('checkout', commit, '--', path)];
+  return [step.git('restore', `--source=${commit}`, '--', path)];
 }
 
 // ---- the engine's configuration, between starts --------------------------------------------------
