@@ -22,7 +22,8 @@ import { finishEgress, startEgress } from '../proxy/egress.js';
 import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
-import { type CandidateDiff, type ContextFacts, PROBE_PROGRAM, writeContextPackage } from './context.js';
+import { type CandidateDiff, type ContextFacts, type EngineCommitsInRange, PROBE_PROGRAM, writeContextPackage } from './context.js';
+import { isAncestor } from '../../git/repo.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
 import { CANARY_BARRIER, CONTAINMENT_ACTIONS, CONTAINMENT_CHECK_MS, CONTAINMENT_PROBE, canaryInstructions, containmentTargets } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
@@ -157,7 +158,13 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
           apiPort: rt.config.values.api_port,
         })
       : null;
-  const diff = facts?.run.role === 'reviewer' && facts.candidate && facts.review ? await candidateDiff(repo, facts.review.diff_base, facts.candidate.revision) : null;
+  const diff =
+    facts?.run.role === 'reviewer' && facts.candidate && facts.review
+      ? {
+          ...(await candidateDiff(repo, facts.review.diff_base, facts.candidate.revision)),
+          engine_commits: await engineCommitsInRange(repo, facts.review.diff_base.revision, facts.candidate.revision, facts.review.revision_records),
+        }
+      : null;
   writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
     diff,
@@ -310,6 +317,39 @@ export const DIFF_CAP_BYTES = 2 * 1024 * 1024;
 // store names to the candidate's revision, taken from the project's
 // repository by the engine's own git. With no base, from the empty tree.
 // What could not be taken is said, never given as an empty diff.
+// The commits of the diff's range (E106): reachable from the candidate's
+// revision and not from the base (with no base, every ancestor of it), each
+// classified by the engine's records (store/reads.ts revisionRecords): a
+// commit whose every record names no run is the engine's or the owner's; one
+// a run recorded is a role's work and is not named; one with no record is
+// named as unknown, never left out. A read that fails makes the whole answer
+// unknown, never "none". At most RANGE_MAX commits are classified; beyond
+// them the range is said to be unknown.
+export const RANGE_MAX = 500;
+export async function engineCommitsInRange(
+  repo: string,
+  base: string | null,
+  revision: string,
+  records: Record<string, { by_run: boolean; kinds: string[]; purpose: string | null }> | null | undefined,
+): Promise<EngineCommitsInRange> {
+  if (records === null || records === undefined) return { state: 'unknown', detail: "the engine's records of the project's commits could not be read" };
+  if (!SHA.test(revision) || (base !== null && !SHA.test(base))) return { state: 'unknown', detail: 'a revision of the range is not an object id' };
+  const listed = await git(repoContext(repo), ['rev-list', `--max-count=${RANGE_MAX + 1}`, base === null ? revision : `${base}..${revision}`, '--']);
+  if (listed.code !== 0) return { state: 'unknown', detail: "the range's commits could not be listed" };
+  const shas = listed.stdout.split('\n').filter((x) => x.length > 0);
+  if (!shas.every((x) => SHA.test(x))) return { state: 'unknown', detail: "the range's commits could not be read" };
+  const more = shas.length > RANGE_MAX;
+  const engine: { sha: string; purpose: string }[] = [];
+  const unrecorded: string[] = [];
+  // Oldest first, as the history reads.
+  for (const sha of shas.slice(0, RANGE_MAX).reverse()) {
+    const r = records[sha];
+    if (r === undefined) unrecorded.push(sha);
+    else if (!r.by_run) engine.push({ sha, purpose: r.purpose ?? r.kinds[0] ?? 'engine_commit' });
+  }
+  return { state: 'known', commits: engine, unrecorded, more };
+}
+
 export async function candidateDiff(repo: string, base: { revision: string | null; from: string | null }, revision: string): Promise<CandidateDiff> {
   const ctx = repoContext(repo);
   const out = (state: CandidateDiff['state'], text: string, detail: string | null, from: string | null = base.revision): CandidateDiff => ({
