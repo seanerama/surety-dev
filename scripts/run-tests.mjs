@@ -25,11 +25,18 @@
 // --lane exhaust runs them, and only when SURETY_EXHAUSTION_HOST names this
 // machine's hostname. Like the real lane they are never part of the full run
 // or of a slice, and the full run still requires their rows to have files.
+// Around every acceptance run (M4 build spec §4.1 rule 7, E121): before it, the
+// user's service manager must report `running`, or nothing is run; after it,
+// the run's leftovers are reported by exact name against a snapshot taken
+// before: loaded `surety-*` user units, /dev/shm/surety* and /tmp/surety-*.
+// A leftover unit fails the run; a leftover file is reported. The check only
+// reads (`systemctl --user is-system-running` and `list-units`); it never
+// stops, resets or removes anything.
 // The full report of every run is also written under test-results/ (not tracked).
 // Exit 0 pass, 1 fail, 2 usage error.
 
 import { spawnSync } from 'node:child_process';
-import { createWriteStream, globSync, mkdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, globSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { run } from 'node:test';
@@ -37,13 +44,15 @@ import { spec } from 'node:test/reporters';
 import { fileURLToPath } from 'node:url';
 
 // The acceptance rows: docs/acceptance/sdlc-M1-acceptance-plan-Astra.md §3 (M01 to M74),
-// docs/acceptance/sdlc-M2-acceptance-plan.md §3 (M101 to M142) and
-// docs/acceptance/sdlc-M3-acceptance-plan.md §3 (M201 to M241).
+// docs/acceptance/sdlc-M2-acceptance-plan.md §3 (M101 to M142),
+// docs/acceptance/sdlc-M3-acceptance-plan.md §3 (M201 to M241) and
+// docs/acceptance/sdlc-M4-acceptance-plan.md §3 (M301 to M344).
 // Adding or removing a row is the owner's decision (build spec §9).
 const ROWS = [
   ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
   ...Array.from({ length: 42 }, (_, i) => `M${101 + i}`),
   ...Array.from({ length: 41 }, (_, i) => `M${201 + i}`),
+  ...Array.from({ length: 44 }, (_, i) => `M${301 + i}`),
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
@@ -126,6 +135,30 @@ if (suite === 'acceptance') {
 
 if (files.length === 0) fail(`${suite}: no test files found`);
 
+// Rule 7's read-only host check (E121): what may be left behind, by exact name.
+const leftovers = () => {
+  const units = spawnSync('systemctl', ['--user', 'list-units', '--all', 'surety-*', '--no-legend', '--plain'], { encoding: 'utf8' });
+  const names = (d, prefix) => {
+    try {
+      return readdirSync(d).filter((n) => n.startsWith(prefix)).map((n) => join(d, n));
+    } catch {
+      return null;
+    }
+  };
+  return {
+    units: units.status === 0 ? units.stdout.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter(Boolean) : null,
+    files: [names('/dev/shm', 'surety'), names('/tmp', 'surety-')],
+  };
+};
+let before = null;
+if (suite === 'acceptance') {
+  const state = spawnSync('systemctl', ['--user', 'is-system-running'], { encoding: 'utf8' });
+  const said = (state.stdout ?? '').trim();
+  if (said !== 'running') fail(`acceptance: the user's service manager is not running (systemctl --user is-system-running said "${said || state.error?.message || 'nothing'}"); nothing was run (M4 build spec §4.1 rule 7).`);
+  before = leftovers();
+  if (before.units === null) fail('acceptance: the user units could not be listed (systemctl --user list-units); nothing was run (M4 build spec §4.1 rule 7).');
+}
+
 const build = spawnSync('npm', ['run', 'build', '--silent'], { cwd: root, stdio: 'inherit' });
 if (build.status !== 0) fail('build failed; nothing was tested.');
 
@@ -162,6 +195,20 @@ await new Promise((resolve) => report.on('end', resolve));
 await new Promise((resolve) => log.end(resolve));
 if (failures.length > 0) console.error(`failed:\n  ${failures.join('\n  ')}\nfull report: ${logPath}`);
 
+// Rule 7 after the run: what this run left, by exact name; nothing is cleaned.
+let leftUnits = [];
+if (before !== null) {
+  const after = leftovers();
+  if (after.units === null) {
+    console.error('acceptance: after the run the user units could not be listed: whether a unit was left is unknown.');
+    leftUnits = null;
+  } else leftUnits = after.units.filter((u) => !before.units.includes(u));
+  const leftFiles = after.files.flatMap((names, i) => (names === null ? [] : names.filter((n) => !(before.files[i] ?? []).includes(n))));
+  if (after.files.some((names) => names === null)) console.error('acceptance: after the run /dev/shm or /tmp could not be read: whether a file was left is unknown.');
+  if (leftFiles.length > 0) console.error(`acceptance: the run left these files (reported, not removed):\n  ${leftFiles.join('\n  ')}`);
+  if (leftUnits !== null && leftUnits.length > 0) console.error(`acceptance: the run left these user units loaded (reported, not stopped):\n  ${leftUnits.join('\n  ')}`);
+}
+
 if (counts.failed > 0 || counts.failedGroups > 0) {
   fail(`${suite}: ${counts.failed} test(s) failed or were cancelled, in ${counts.failedGroups} failing group(s).`);
 }
@@ -172,4 +219,6 @@ if (suite === 'acceptance') {
   const empty = [...passedIn].filter(([, n]) => n === 0).map(([f]) => relative(root, f));
   if (empty.length > 0) fail(`acceptance: no passing test in:\n  ${empty.join('\n  ')}`);
 }
+if (leftUnits === null) fail('acceptance: whether the run left a user unit is unknown (M4 build spec §4.1 rule 7).');
+if (leftUnits.length > 0) fail(`acceptance: ${leftUnits.length} user unit(s) left loaded by the run (M4 build spec §4.1 rule 7).`);
 console.log(`${suite}: ${files.length} file(s) passed.`);

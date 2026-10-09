@@ -103,6 +103,15 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 |---|---|---|
 | alpha | [internal test target] | [the health check and the smoke checks pass against it] |
 
+*[For each environment Surety deploys to (D4; M4), also give:]*
+
+- **Target:** [the adapter and its target, for example `local_service`, target `app`].
+- **Runtime and start command:** [for example `node src/server.mjs`; the service is the revision's tracked files as they are, with no build or install step (D4 Q4)].
+- **Port:** [the environment variable the service listens on, for example `PORT`; the engine assigns the value].
+- **Excluded from the artifact:** [`artifact.exclude`: paths not deployed. It must name any protected root outside `.surety/` (D4 §3.1).]
+- **Required post-deploy behaviour check:** [the specified user operation the `post_deploy_behavior` check exercises against the running service, and what counts as success. A health or version endpoint alone is not a behaviour check.]
+- **Stable arguments:** the service must not change its process title or command-line arguments while it runs; the engine identifies the running service by them (CD4, E121).
+
 ## 8. Constraints
 
 *[Things that bound every design: platforms, languages, data residency, budgets, dates, dependencies that must or must not be used. One line each.]*
