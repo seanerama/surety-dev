@@ -1914,3 +1914,13 @@ B07 and B08 remain undecided. These entries record decisions only and start no d
 3. **Acceptance obligation and cost:** cover executable and non-executable files through sealing and target read, umask variation, added/missing files, byte/entry/aggregate limits, cancellation and interrupted staging cleanup. The M4 acceptance seam fixes numeric defaults and boundary values before implementation, following Sean's approval of the proposed build-spec limits. Cost: contract and boundary cases plus four numeric defaults to decide later.
 
 B01 to B08 are now decided by Sean in E110 to E117. This completes the requested decision recording; no D4 draft revision, status change, M4 build spec, implementation or other work is started here.
+
+---
+
+## E118. D4: Astra's variants on J1 to J9 and her suggestions N01 to N04 (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted the last batch of `docs/design/sdlc-design-D4-astra-dispositions.md` as recommended.
+
+1. **J1 to J9 accepted with Astra's variants** (`docs/reviews/D4/sdlc-review-D4-Astra.md` §4), each as shaped by E110 to E117: J1 with per-attempt intent and a durable verification round (E111, E112); J2 with B01's single-use launch, exit handling and recovered accounting, without reattachment (E110), and mixed-owner recovery tests proving that only service domains survive; J3 with coalescing of repeated requests while an operation is pending and caller-supplied fixture bindings only through `src/testing/`; J4 with B04's pre-effect revalidation (E113); J5 as written; J6 with environment-scoped drift and a persistent acknowledgment; J7 with one durably bound round and the original application identity (E114); J8 with the fixed-generation relay's closure and no-retarget tests; J9 with B05 and B06 (E114, E115). **Accepted tests that change:** M08's "deployment unsupported" boundary moves; M01, M44 and M140's fixtures gain the new authorization prerequisites. A Verifier makes these changes and records them in COVERAGE (E92 item 2's precedent); no production compatibility escape.
+2. **N01 to N04 accepted, editorially:** the observed condition's explicit precedence and acknowledged drift kept visible (N01); GET routes stay stored reads, with no adapter call or write on a read (N02); feasibility evidence, adapter qualification and milestone tests kept apart (N03); D4's schema appendix and not-claimed list aligned with the body (N04).
+3. **Next:** D4 draft 2, by one architect agent on `design/d4-draft2`, applying exactly E95 and E110 to E118 and reopening nothing (E20: no draft 3). The driver checks it against these entries; then D4's status is "decided" and the M4 build spec and acceptance plan follow, with the numeric defaults of E115 and E117 for Sean's approval.
