@@ -1,8 +1,8 @@
 # Surety M3 acceptance report
 
-**Status:** final. **M3 is not accepted:** whether it is is Sean's decision, and two of BS3 §1's conditions are not met as this report records them (section 1: the acceptance suite has not been run in full on the final `main`, and the exhaustion lane has no recorded run). Every fact below is taken from a record named beside it; a fact no record holds is said to be not run or unknown, never filled. The real lane's row M239 passed 4 of 4 on Sean's run directory's fourth try (2026-10-09); its `state.json` and `observed/` are copied to `docs/acceptance/reports/M3-real-lane/2026-10-09/`, searched for the subscription token first (by its file, the value never shown: no hit).
+**Status:** final. **M3 is not accepted:** that is Sean's decision, not yet given. Every condition of BS3 §1 is met as this report records it (section 1): the full `npm test` on `main` at `bb9dc7e` exited 0, the runner self-test passed at every start of the real lane's home, the exhaustion lane passed on `mini-hp01`, M239 passed under his command, and this report is written. Sean's hands-on run (M241) has not been made. Every fact below is taken from a record named beside it; a fact no record holds is said to be not run or unknown, never filled. The real lane's `state.json` and `observed/` are copied to `docs/acceptance/reports/M3-real-lane/2026-10-09/`, searched for the subscription token first, by its file, the value never shown: no hit; the final runs' two logs were searched the same way (no hit) and stay in the driver's scratchpad, not in the repository, whose `.gitignore` keeps `*.log` out (section 11).
 
-**Written by:** the Verifier of M3 slice 22, 2026-10-08, on branch `verify/m3-s22` from `main` at `3c6e886`; **completed** by the Verifier on 2026-10-09, on `verify/m3-report` from `main` at `19a3724` (E107), from the run directory `~/surety-m3-real-20261009` (read only; its store read without the engine running), the driver's test logs, the primary checkout's reflog and the errata E102 to E107. **For:** Sean, the owner, before and after the acceptance run, the exhaustion-lane run, his real run (M239) and his hands-on run (M241); and Astra. **Form:** the M2 report's (`M2-report.md`), with BS3 §10's contents; what M3 does not claim follows `M1-not-claimed.md` and starts from D3 §6. It decides nothing.
+**Written by:** the Verifier of M3 slice 22, 2026-10-08, on branch `verify/m3-s22` from `main` at `3c6e886`; **completed** by the Verifier on 2026-10-09, on `verify/m3-report` from `main` at `19a3724` (E107), from the run directory `~/surety-m3-real-20261009` (read only; its store read without the engine running), the driver's test logs, the primary checkout's reflog and the errata E102 to E107; **brought up to date** on 2026-10-09, on `verify/m3-report-final` from `main` at `bb9dc7e`, with the driver's two final runs (the full `npm test` and the exhaustion lane), from their logs and the driver's account. **For:** Sean, the owner, before and after the acceptance run, the exhaustion-lane run, his real run (M239) and his hands-on run (M241); and Astra. **Form:** the M2 report's (`M2-report.md`), with BS3 §10's contents; what M3 does not claim follows `M1-not-claimed.md` and starts from D3 §6. It decides nothing.
 
 The sources it cites: the **build specification** (`docs/spec/M3-build-spec.md`, cited BS3); the **acceptance plan** (`docs/acceptance/sdlc-M3-acceptance-plan.md`, rows M201 to M241); **D3** (`docs/design/sdlc-design-D3-checks.md`, draft 2); the **errata** (E-numbers, `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, cited "SEAM §n"). The real lane's records, once it has run, are copied to `docs/acceptance/reports/M3-real-lane/<date>/` (SEAM §§163, 237).
 
@@ -14,9 +14,9 @@ BS3 §1's conditions, and where each stands at the time of writing:
 
 | Condition | State |
 |---|---|
-| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every M3 row (M201 to M241) with executable tests and none skipped, the M1 and M2 rows passing | **Not met as written: not run in full on the final `main`.** The last full acceptance run is the driver's `--slice 22` on `03dd88f` (2026-10-09 01:23 UTC; `test-results/acceptance-slice22-2026-10-09T01-23-46-394Z.log` in the driver's scratch worktree `run-s19`): 1,264 tests, 1,263 passed, 1 failed, none skipped or todo; the failure M240 (b), by design while this report was a skeleton ("81 pending facts"); unit 481 of 481 the same day (`unit-2026-10-09T01-22-51-918Z.log`). After it, E106 changed the engine (merge `d92c0c4`: the Reviewer's context, 5 unit tests, M125 (i)): unit 486 of 486 on `3fb093d` (`unit-2026-10-09T11-47-07-000Z.log`). The acceptance suite has not been rerun since; with this report final, M240 (b) is expected to pass in it (run alone, section 11). |
+| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every M3 row (M201 to M241) with executable tests and none skipped, the M1 and M2 rows passing | **Met:** the driver's full `npm test` on `main` at `bb9dc7e` (2026-10-09, about 83 minutes, in the scratch worktree `run-s19` detached at `bb9dc7e`; log `/tmp/claude-1000/-home-smahoney-projects-sdlc-x/fa384943-ed62-4381-ae56-c1ae7b3402e5/scratchpad/final-npmtest.log`, the driver's scratchpad, not in the repository): unit 486 of 486 in 60 files; acceptance 1,265 of 1,265 in 218 files (327 suites), none failed, cancelled, skipped or todo; the runner's own report that 6 real-lane and 3 exhaustion-lane files were not run (only their lanes run them); exit 0. Earlier: `--slice 22` on `03dd88f`, 1,263 of 1,264, the one failure M240 (b) by design while this report was a skeleton. |
 | The runner self-test passed at an engine start: `host_qualifications.check_runner` qualified, every mandatory case and control `passed`, recorded with its evidence | **Met at every start of the real lane's home:** seven host qualification rows, 2026-10-08 21:11 UTC to 2026-10-09 11:54 UTC, each with `check_runner.qualified` true, no fixture label, and every one of the ten mandatory cases and its control passed (section 5) |
-| Row M205's exhaustion-lane file passed on the designated host (E92 item 2 (7)) | **Not run: no record.** No run of `--lane exhaust` on `mini-hp01` after slice 18 is recorded in the errata (E93 to E107) or in any record this report could read. M205 (g) is not claimed (sections 12, 16). |
+| Row M205's exhaustion-lane file passed on the designated host (E92 item 2 (7)) | **Met:** the driver's `--lane exhaust` on `mini-hp01` at `bb9dc7e` (2026-10-09, `SURETY_EXHAUSTION_HOST` set to its own hostname; log copied from `mini-hp01` to `/tmp/claude-1000/-home-smahoney-projects-sdlc-x/fa384943-ed62-4381-ae56-c1ae7b3402e5/scratchpad/m3-exhaust-mini-hp01.log`, not in the repository): 12 of 12 in 3 files (M133, M130 (f) and (g), M205 (g)), exit 0. By the driver's account, the kernel log afterwards showed every OOM kill as `CONSTRAINT_MEMCG` inside the engine's `dom_` or `probe_` scopes only, and the host's available memory was 11,685 MiB against 11,942 MiB before, its staging containers still up (section 12). |
 | The real-lane row M239 passed under Sean's command, records retained (E92 item 3) | **Passed, 4 of 4**, on the fourth try, 2026-10-09 (path two 11:54 to 11:56 UTC), `main` at `3fb093d`, in `~/surety-m3-real-20261009` (E107); the directory ends with nothing halted; records copied to `docs/acceptance/reports/M3-real-lane/2026-10-09/` (sections 14, 15). Four tries in all (E103 to E107; section 14). |
 | The M3 acceptance report written | This report, final: no pending fact; what was not run is said so. |
 
@@ -34,7 +34,7 @@ BS3 §1's conditions, and where each stands at the time of writing:
 | Slice 20, validation scope | merged; `--slice 20` on `0f349ab`, 1,185 of 1,186, the one failure M71's held-project race, fixed in the test at `94a782a` (E99 items 5, 6) |
 | Slice 21, repair and findings | merged at `6805dea`; `--slice 21` on `48841e1`, 1,242 of 1,243, the one failure M222 (Q2's reach), fixed in the test at `4a97d58` and passing alone (E101 item 5) |
 | Slice 22, the end of M3 (these cases) | `verify/m3-s22` merged: the cases at `a9ddd51`, the review's fixes at `e508794` (`verify/m3-s22-r`), the Builder's branch at `8c63220`; E102 at `22e9c53` (the primary checkout's reflog). After it: the scope rule of the check-writing package (`4d3d3bf`, `e398062`; E103), E104 (`45f9b89`, `5511bd2`), path two's own project (`8270579`, `03dd88f`), E106 (`a0ae0eb`, `d92c0c4`, `3fb093d`) |
-| The revision the acceptance run ran | `03dd88f` (`--slice 22`; section 1); not run in full on the final `main` |
+| The revision the acceptance run ran | `bb9dc7e`: the full `npm test` (section 1); the exhaustion lane on `mini-hp01` at the same revision. Before them, `--slice 22` on `03dd88f` |
 | The revision the real lane ran | By the primary checkout's HEAD reflog (the runner's report records no revision; whether the working tree held uncommitted changes, or was built at that revision, is not recorded): the first try (2026-10-08, from 21:11 UTC) `22e9c53` (HEAD 21:00 to 21:23 UTC); the second (path one 22:30 to 23:34 UTC, path two to 23:36 UTC) `0018a0d` (HEAD 21:27 UTC to 00:44 UTC); the third (2026-10-09, 01:08 to 01:10 UTC) `8270579` (E105); the fourth (11:54 to 11:56 UTC) `3fb093d` (E107) |
 | The contract files | `packages/engine/test/acceptance/contract/` at the same revision as the tests |
 
@@ -110,58 +110,58 @@ The runner self-test (D3 §2.8; SEAM §208; R17) runs at an engine start in real
 
 ## 8. Every Appendix C statement, its row and its result
 
-The 67 statements of D3 Appendix C, by the row that pins each (plan §4.1). "Last recorded" is the latest full run that included the row's files: the driver's `--slice 22` on `03dd88f`, in which every file passed except M240 (b) (section 1); the acceptance column is a full run on the final `main`, not made.
+The 67 statements of D3 Appendix C, by the row that pins each (plan §4.1). "Last recorded" is the latest full run that included the row's files: the driver's `--slice 22` on `03dd88f`, in which every file passed except M240 (b) (section 1); the acceptance column is the full `npm test` on `main` at `bb9dc7e`, in which every file passed (section 1), with the exhaustion lane on `mini-hp01` at the same revision for M205 (g).
 
 | Statements | Row | Lane | Last recorded | Acceptance run |
 |---|---|---|---|---|
-| D3-P01, D3-P05 | M202 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P02, D3-P03 | M203 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P04, D3-R13 | M204 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R05, D3-R06 | M205 | sandbox; (g) exhaust | passed in the sandbox lane (both files), `--slice 22` on `03dd88f`; (g) not run: no record on `mini-hp01` | not run on the final `main` (section 1) |
-| D3-R11, D3-R22, D3-R23 | M206 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S06, D3-R27 | M207 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R12 | M208 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-X01 | M209 | kernel, real git | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P10 | M210 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P06 | M211 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P07 | M212 | sandbox | passed, `--slice 22` on `03dd88f`; verified structurally (E95 item 1), Astra's T02 attempt cases not written | not run on the final `main` (section 1) |
-| D3-P08 | M213 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R01, D3-R25 | M214 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R02, D3-R03, D3-R04 | M215 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R07, D3-R16, D3-R24 | M216 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R08, D3-R09 | M217 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R10 | M218 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R15 | M219 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R14 | M220 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R17, D3-R26 | M221 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R18, D3-R19, D3-X03 | M222 | sandbox (E97 item 2) | passed, `--slice 22` on `03dd88f` (it failed `--slice 21` on `48841e1`, Q2's reach; the test fixed at `4a97d58`) | not run on the final `main` (section 1) |
-| D3-J01, D3-J03, D3-J04 | M223 | project | passed, `--slice 22` on `03dd88f`, with the hardened wrapper (section 9) | not run on the final `main` (section 1) |
-| D3-C01 to D3-C04, D3-C11 | M224 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-C05, D3-C06 | M225 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-P09 | M226 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-C07, D3-C08 | M227 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-C09, D3-C10 | M228 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S01, D3-S02, D3-S09 | M229 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S07 | M230 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S03, D3-S04, D3-S08 | M231 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S10 | M232 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-S05 | M233 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-R20, D3-R21 | M234 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-F01 | M235 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-X02 | M236 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | not run on the final `main` (section 1) |
-| D3-J02, D3-J05 | M238 | project | passed, `--slice 22` on `03dd88f`; 11 of 11 alone on 2026-10-08 (section 9) | not run on the final `main` (section 1) |
+| D3-P01, D3-P05 | M202 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P02, D3-P03 | M203 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P04, D3-R13 | M204 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R05, D3-R06 | M205 | sandbox; (g) exhaust | passed in the sandbox lane (both files), `--slice 22` on `03dd88f`; (g) not run before the final runs | passed, `npm test` on `bb9dc7e` (sandbox lane); (g) passed on `mini-hp01` at `bb9dc7e` |
+| D3-R11, D3-R22, D3-R23 | M206 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S06, D3-R27 | M207 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R12 | M208 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-X01 | M209 | kernel, real git | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P10 | M210 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P06 | M211 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P07 | M212 | sandbox | passed, `--slice 22` on `03dd88f`; verified structurally (E95 item 1), Astra's T02 attempt cases not written | passed, `npm test` on `bb9dc7e` |
+| D3-P08 | M213 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R01, D3-R25 | M214 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R02, D3-R03, D3-R04 | M215 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R07, D3-R16, D3-R24 | M216 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R08, D3-R09 | M217 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R10 | M218 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R15 | M219 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R14 | M220 | sandbox | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R17, D3-R26 | M221 | sandbox + kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R18, D3-R19, D3-X03 | M222 | sandbox (E97 item 2) | passed, `--slice 22` on `03dd88f` (it failed `--slice 21` on `48841e1`, Q2's reach; the test fixed at `4a97d58`) | passed, `npm test` on `bb9dc7e` |
+| D3-J01, D3-J03, D3-J04 | M223 | project | passed, `--slice 22` on `03dd88f`, with the hardened wrapper (section 9) | passed, `npm test` on `bb9dc7e` |
+| D3-C01 to D3-C04, D3-C11 | M224 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-C05, D3-C06 | M225 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-P09 | M226 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-C07, D3-C08 | M227 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-C09, D3-C10 | M228 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S01, D3-S02, D3-S09 | M229 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S07 | M230 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S03, D3-S04, D3-S08 | M231 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S10 | M232 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-S05 | M233 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-R20, D3-R21 | M234 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-F01 | M235 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-X02 | M236 | kernel | passed, `--slice 22` on `03dd88f` (section 1) | passed, `npm test` on `bb9dc7e` |
+| D3-J02, D3-J05 | M238 | project | passed, `--slice 22` on `03dd88f`; 11 of 11 alone on 2026-10-08 (section 9) | passed, `npm test` on `bb9dc7e` |
 
 Rows beyond Appendix C, and the second files of rows above:
 
 | Row and file | Lane | Last recorded | Acceptance run |
 |---|---|---|---|
-| M201, `M201-check-journey-path-one` and its three further files | sandbox | passed, `--slice 21` on `48841e1` | M201's four files passed in `--slice 22` on `03dd88f`; not run on the final `main` |
-| M237, `M237-check-journey-path-two` | sandbox | passed, `--slice 21` on `48841e1` | passed in `--slice 22` on `03dd88f`; not run on the final `main` |
-| M239, `M239-the-verifiers-check-writing-package` | sandbox | 0 of 1 alone on `verify/m3-s22` before the Builder's package; 2 of 2 in `--slice 22` on `03dd88f` | passed in `--slice 22` on `03dd88f` (2 of 2, after the Builder's package, E102, and the scope rule, E103); not run on the final `main` |
+| M201, `M201-check-journey-path-one` and its three further files | sandbox | passed, `--slice 21` on `48841e1` | M201's four files passed, `npm test` on `bb9dc7e` |
+| M237, `M237-check-journey-path-two` | sandbox | passed, `--slice 21` on `48841e1` | passed, `npm test` on `bb9dc7e` |
+| M239, `M239-the-verifiers-check-writing-package` | sandbox | 0 of 1 alone on `verify/m3-s22` before the Builder's package; 2 of 2 in `--slice 22` on `03dd88f` | passed, `npm test` on `bb9dc7e` (2 of 2) |
 | M239, `M239-the-real-check-journey` | real | 4 of 4 on the fourth try, 2026-10-09, `main` at `3fb093d` (section 14) | not in `npm test` (manifest `real`) |
-| M125 (i), E106's case in `M125-handover` | sandbox | 0 of 1 alone on `main` at `c899b68` before E106 (COVERAGE.md, "E106"); after the Builder's change no run of it is recorded with figures (E106 item 3 records it built) | not run on the final `main` |
-| M240, `M240-the-m3-report` | report | (a) passed, (b) failed by design, alone on `verify/m3-s22` | (a) passed, (b) failed by design in `--slice 22` on `03dd88f`; with this report final, (b) passes run alone (section 11); not run on the final `main` |
-| M241, `M241-hands-on-script` | hands-on | 5 of 5 alone on `verify/m3-s22`; amended by the review (section 20) | passed in `--slice 22` on `03dd88f`; not run on the final `main` |
+| M125 (i), E106's case in `M125-handover` | sandbox | 0 of 1 alone on `main` at `c899b68` before E106 (COVERAGE.md, "E106") | passed, `npm test` on `bb9dc7e` |
+| M240, `M240-the-m3-report` | report | (a) passed, (b) failed by design, alone on `verify/m3-s22` | 2 of 2, `npm test` on `bb9dc7e` (this report final) |
+| M241, `M241-hands-on-script` | hands-on | 5 of 5 alone on `verify/m3-s22`; amended by the review (section 20) | passed, `npm test` on `bb9dc7e` |
 
 Astra's T01 to T20, L1 to L8, B01 to B04, Q1 to Q11 and N01 to N04 are traced to rows in the plan's §4.2.
 
@@ -203,11 +203,13 @@ The reference project (`harness/project/reference.mjs`; SEAM §§213, 236) runs 
 | M241 alone | `verify/m3-s22` | 5 of 5 (the script's form and guards) | the Verifier's run |
 | `M3-hands-on.sh` run once without pauses | `verify/m3-s22` on `3c6e886` | exit 0, each of the five checks shown (COVERAGE.md, "M3 slice 22"); not Sean's run; made before the review's S2 fix (section 18), and without a terminal, which the script now refuses | the Verifier's run |
 | M223 alone, with the hardened wrapper | `verify/m3-s22` on `3c6e886` | 1 of 1 | the Verifier's run |
-| The full `npm test` | `03dd88f` (`--slice 22`); not run in full on the final `main` | 1,263 of 1,264, the one failure M240 (b) by design; unit 481 of 481; after E106, unit 486 of 486 on `3fb093d` | |
+| The full `npm test` | `bb9dc7e` | unit 486 of 486 (60 files); acceptance 1,265 of 1,265 in 218 files, 0 failed, 0 skipped; exit 0 | the driver's run; `final-npmtest.log` in the driver's scratchpad |
+| The exhaustion lane, `mini-hp01` | `bb9dc7e` | 12 of 12 in 3 files; exit 0 | the driver's run; `m3-exhaust-mini-hp01.log` in the driver's scratchpad |
+| `--slice 22`, before the final runs | `03dd88f` | 1,263 of 1,264, the one failure M240 (b) by design; unit 481 of 481; after E106, unit 486 of 486 on `3fb093d` | the driver's run |
 
 ## 12. The exhaustion lane
 
-Row M205 (g), an OOM kill in a check domain (E69; SEAM §212): `M205-an-oom-kill-on-the-exhaustion-host.test.mjs`, manifest `exhaust`, run only on `mini-hp01` with `SURETY_EXHAUSTION_HOST` set. **Not run: no record.** No run of the exhaustion lane after slice 18 is recorded in the errata (E93 to E107) or in a record this report could read; M205 (g) is not claimed. It runs only on `mini-hp01` by Sean or by the driver at his request (E69).
+Row M205 (g), an OOM kill in a check domain (E69; SEAM §212): `M205-an-oom-kill-on-the-exhaustion-host.test.mjs`, manifest `exhaust`, run only on `mini-hp01` with `SURETY_EXHAUSTION_HOST` set. **Passed:** the driver's `--lane exhaust` on `mini-hp01` at `bb9dc7e` (2026-10-09, `SURETY_EXHAUSTION_HOST` set to its own hostname; log copied from `mini-hp01` to `/tmp/claude-1000/-home-smahoney-projects-sdlc-x/fa384943-ed62-4381-ae56-c1ae7b3402e5/scratchpad/m3-exhaust-mini-hp01.log`, not in the repository). The lane's three files, 12 of 12: M133 (a) to (h) and P20 at start (on a host designated for it: passed, its target seeded, its negative recorded, its control run); M130 (f) and (g); M205 (g), "a check allocating past memory.max 64 MiB is OOM-killed: signaled, exit_status null, failed, the OOM kill recorded". **By the driver's account, not in the log:** afterwards the kernel log showed every OOM kill as `CONSTRAINT_MEMCG` inside the engine's `surety-…/dom_` or `probe_` scopes only; `mini-hp01`'s staging containers were still up, and its available memory was 11,685 MiB against 11,942 MiB before. The log names neither the host nor the revision; both are the driver's record.
 
 ## 13. Egress for checks
 
@@ -238,10 +240,10 @@ The checks' toolchain in the real journey: a copy of the engine's node binary in
 
 Each passes by asserting the host fact and its reason, and is **never counted as passed**:
 
-- **M205 (g)**, the OOM kill, off the designated host (plan §2.5; E69): its file runs only on `mini-hp01`.
+- **M205 (g)**, the OOM kill, is `not_exercised` off the designated host (plan §2.5; E69): its file runs only on `mini-hp01`, where it passed at `bb9dc7e` (section 12).
 - **The self-test's `foreign_signal`** reports `not_exercised` when the engine cannot re-verify its own box's program immediately before the kill (E97 item 1); a `not_exercised` mandatory case leaves `direct` unqualified (D3 §2.8).
 - Carried from M2: the observer cases M112 (g), M116 (d), M124 (e), M128 (g), M135 (j) (H13 not exercised); M115 (f) and M115 (h); P20 on this workstation (exercised on `mini-hp01`).
-**Not run, and so not counted:** M205 (g) on `mini-hp01` (no record, section 12); Sean's hands-on run (section 20). M239, the real row, ran and passed (section 14); it was never a `not_exercised` case.
+**Not run, and so not counted:** Sean's hands-on run (section 20). M239, the real row, ran and passed (section 14); it was never a `not_exercised` case.
 
 - **Not written, and so not claimed:** Astra's T02 attempt cases and M212 (b) to (d) (E95 item 1: B01 verified structurally); M221 (b)'s "an optional observer never substitutes" (no optional observer of the self-test exists).
 
@@ -314,7 +316,7 @@ Each is a decision, with the reading the Verifier pinned and its options.
 2. **The reference project's wrapper** (section 9). Hardened as a test fixture; whether D3 §6 class B should name the empty test file in its text is yours.
 3. **M238's mutants by target** (SEAM §236): the vacuous-run mutants against the retained check that runs the Builder's tests, the child failure and `process.exit(0)` against the acceptance check that runs the candidate as a child. A check that imports candidate code in its own process cannot be protected against `process.exit(0)` (D3 §6 class C); the mutant is not asserted against `srctests`.
 4. **M239 path two with `repair_attempts_max` 0** (objection 030's precedent): so that a real check catching the seeded defect parks the stage rather than sending it back to the Builder, and the real Verifier's finding is the path.
-5. **M240 fails until final**, as M141 did (the driver's ruling then, E88). *Now:* this report is final with every fact from a record or said to be not run, so M240 (b) passes (section 11); it does not record the exhaustion lane as run, and BS3 §1's exhaustion condition stays unmet until M205 (g) runs on `mini-hp01` (section 12). Whether M240 should also require that run is yours; the Verifier has not made it a condition of the test.
+5. **M240 fails until final**, as M141 did (the driver's ruling then, E88). *Now:* this report is final with every fact from a record or said to be not run, and M240 passed 2 of 2 in the full `npm test` on `bb9dc7e`. The exhaustion lane has since run on `mini-hp01` (section 12); whether M240 should also require that run is yours; the Verifier has not made it a condition of the test.
 6. **Decided as E106 (Sean, 2026-10-09: option (c)).** **The Reviewer's first diff holds the engine's own setup commits** (Sean's third real try; SEAM §242). A Reviewer is shown `candidate.diff` from a base the store names: the previous candidate's revision, or, for a project's first candidate, the parent of the project's first recorded revision (`src/store/reads.ts`). The first recorded revision is the engine's bootstrap commit, so a first candidate's diff always holds the bootstrap's `.surety/project.json` and every policy revision committed before the stage (`.surety/policy.json`, the owner's settings through the policy route), beside the Builder's work. The Reviewer's context says only "the candidate's changes, from <base> (first recorded parent) to <revision>": nothing tells it which commits in that range are the engine's or the owner's rather than a role's, though the commits' trailers say so (`Surety-Project` with no `Surety-Run`). In the third try a real Reviewer raised an open medium finding on exactly those two files ("neither relates to R2 or R3"), which blocked both gates; in the first try another let the same policy change pass. Options: (a) leave it: a Reviewer may question an owner's policy change, and the human dispositions such a finding; (b) the engine's diff base for a first candidate becomes the last engine setup commit before the first role's work (the project's own configuration is not the candidate's change); (c) the context names the engine's and the owner's commits in the range and says they are not the Builder's work to review. A design decision, not built here; the harness cannot avoid these commits without working around the engine (a policy revision is the only way to set the roles' backends, and the bootstrap always records first). **The decision:** the Reviewer's context names each commit of its diff's range that the engine made on no role run's behalf as the engine's or the owner's, not the Builder's work to review, from the engine's records and never from trailers alone; the diff is unchanged; what cannot be established is said as unknown. Its case is M125 (i) (SEAM §243).
 
 ## 22. How to read the suite
