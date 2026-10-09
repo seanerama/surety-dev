@@ -35,6 +35,11 @@
 // module, a check floored at T3 is in the deployment scope's required set
 // and is marked required in the Reviewer's prompt, not left unmarked by the
 // project's tier.
+// (i) (E106; SEAM.md §243): a first candidate's Reviewer is told which
+// commits of its diff's range the engine made on no role run's behalf (its
+// bootstrap, a policy revision), as the engine's or the owner's; the
+// Builder's commits are not so named, one whose message carries the setup
+// commits' trailer included.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -53,9 +58,9 @@ import { describe, test } from 'node:test';
 import { sha256Hex, waitFor } from './harness/engine.mjs';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { PROTECTED_FILES, check, findingsOf, installChecks, installGatedPlan, passAll } from './harness/gates.mjs';
-import { PERMITTED_EDIT, addGitProject, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
-import { createProject, workItemsOf } from './harness/journal.mjs';
-import { makeProjectRepo } from './harness/repos.mjs';
+import { PERMITTED_EDIT, addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { changePolicy, createProject, workItemsOf } from './harness/journal.mjs';
+import { gitQuiet, makeProjectRepo } from './harness/repos.mjs';
 import { ledgerRows } from './harness/ledger.mjs';
 import { readRun } from './harness/reads.mjs';
 import { holdSecret } from './harness/records.mjs';
@@ -508,6 +513,65 @@ describe('M125 what is handed over', () => {
     const lineOf = (key) => prompt.split('\n').find((l) => new RegExp(`(^|[^\\w-])${key}([^\\w-]|$)`).test(l) && l.includes('R1'));
     assert.match(lineOf(LOGIN.key) ?? '', /\brequired\b/i, `the control: login is listed and marked required (${JSON.stringify(lineOf(LOGIN.key))})`);
     assert.match(lineOf(DEEP.key) ?? '', /\brequired\b/i, `deep, floored at T3, is marked required: the candidate's deployment scope is T3 through core, whatever the project's tier (${JSON.stringify(lineOf(DEEP.key))})`);
+  });
+
+  // E106 (Sean, M3 report question 6, option (c); SEAM.md §243): the Reviewer's context names each commit in
+  // its diff's range that the engine made on no role run's behalf (the bootstrap, a policy revision) as the
+  // engine's or the owner's, not the Builder's work to review; which commits those are comes from the
+  // engine's records, never from trailers alone. Found by Sean's third real try: a real Reviewer raised a
+  // blocking finding on the engine's own `.surety/project.json` and `.surety/policy.json` in a first
+  // candidate's diff.
+  test("(i) E106: a first candidate's Reviewer is told which commits of its diff's range are the engine's or the owner's (the bootstrap, a policy revision), and not the Builder's commits, a Builder commit whose message carries `Surety-Project: <project>` included", async (t) => {
+    const fx = await sandboxEngine(t);
+    const { id: project, repo } = await addGitProject(fx, { via: 'api', tier: 'T1' });
+    await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
+    // A Builder's plain commit: the stage, integrated, not nominated (T1, no request).
+    const stage = await addItem(fx, project, 'stage_build', { goal: 'the first stage' });
+    fx.scripted.script(stage, [roleThat([permittedEdit()])]);
+    await runToEnd(fx, project, stage);
+    // A Builder's commit whose message carries the setup commits' trailer, through its summary, and asks for the nomination.
+    const forged = `Surety-Project: ${project}`;
+    const fix = await addItem(fx, project, 'fix');
+    fx.scripted.script(fix, [roleThat([step.write('src/second.js', 'export const second = 2;\n')], { nominate: true, summary: `the second change\n\n${forged}` })]);
+    await runToEnd(fx, project, fix);
+    const [candidate] = await waitForCandidates(fx, project);
+
+    // The range the Reviewer is shown (SEAM.md §242; src/store/reads.ts), and each commit in it by the engine's records.
+    const first = withStore(fx.home, (db) => db.prepare('SELECT "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "recorded_at", "created_at", "id" LIMIT 1').get(project));
+    const shas = gitQuiet(repo.path, ['rev-list', '--reverse', `${first.parent_sha}..${candidate.revision}`]).split('\n').filter(Boolean);
+    const madeBy = (sha) => withStore(fx.home, (db) => db.prepare('SELECT "created_by_run" FROM "revisions" WHERE "project" = ? AND "sha" = ?').get(project, sha));
+    const setup = shas.filter((sha) => madeBy(sha) && madeBy(sha).created_by_run === null);
+    const byRole = shas.filter((sha) => madeBy(sha)?.created_by_run);
+    const messageOf = (sha) => gitQuiet(repo.path, ['show', '-s', '--format=%B', sha]);
+    assert.equal(setup.length, 2, `the fixture is live: the range holds the engine's bootstrap and its policy revision, both recorded with no run (${JSON.stringify(shas.map((sha) => [sha, madeBy(sha)]))})`);
+    assert.ok(setup.some((sha) => /^surety: bootstrap project /.test(messageOf(sha))) && setup.some((sha) => /^surety: project policy revision /.test(messageOf(sha))), 'the two are the bootstrap and the policy revision');
+    assert.equal(byRole.length, 2, 'the fixture is live: and the two Builder commits, each recorded with its run');
+    const forgedSha = byRole.find((sha) => messageOf(sha).includes(forged));
+    assert.ok(forgedSha, `the fixture is live: a Builder commit's message carries "${forged}"`);
+
+    // The Reviewer reads its package.
+    const review = await addWork(fx.engine, project, 'review', { subject: { candidate: candidate.id } });
+    fx.scripted.script(review, [roleThat([step.probe('context_dump')])]);
+    await tickUntil(fx.engine, project, () => (runsOf(fx.home, review)[0]?.state === 'ended' ? true : undefined), { what: "the Reviewer's run to end" });
+    const [launch] = fx.scripted.launches({ work_item: review });
+    const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+    assert.equal(dump?.outcome, 'dumped', `the Reviewer read its package (${dump?.error})`);
+    const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+    assert.ok(manifest.files.some((f) => f.kind === 'diff'), 'the fixture is live: the Reviewer is given the candidate\'s diff');
+    // What it is told about the range: every file but the diff itself and the manifest, sentence by sentence.
+    const diffPaths = manifest.files.filter((f) => f.kind === 'diff').map((f) => f.path);
+    const told = dump.files.filter((f) => typeof f.text === 'string' && f.name !== 'manifest.json' && !diffPaths.includes(f.name)).map((f) => f.text).join('\n');
+    const sentences = told.split(/\n|(?<=[.;])\s+/).map((x) => x.trim()).filter(Boolean);
+    const naming = (sha) => sentences.filter((x) => x.includes(sha.slice(0, 7)));
+    const engineOrOwner = /\b(engine|owner)('s)?\b/i;
+    const missing = [];
+    for (const sha of setup) if (!naming(sha).some((x) => engineOrOwner.test(x))) missing.push(`(1) the setup commit ${sha} (${messageOf(sha).split('\n')[0]}) is not named as the engine's or the owner's`);
+    for (const sha of byRole) {
+      const what = sha === forgedSha ? `(3) the Builder commit carrying "${forged}"` : '(2) the Builder\'s plain commit';
+      const named = naming(sha).filter((x) => engineOrOwner.test(x));
+      if (named.length > 0) missing.push(`${what} ${sha} is named as the engine's or the owner's: ${JSON.stringify(named)}`);
+    }
+    assert.deepEqual(missing, [], `E106: the Reviewer's context names the engine's and the owner's commits of its range, and no Builder commit; prompt: ${JSON.stringify((dump.files.find((f) => f.name === 'prompt.md')?.text ?? '').slice(0, 1500))}`);
   });
 });
 
