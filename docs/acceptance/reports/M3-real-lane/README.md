@@ -58,6 +58,8 @@ node --test --test-reporter=spec packages/engine/test/acceptance/M239-the-real-c
   2>&1 | tee -a "$SURETY_REAL_RUN_DIR/runner.log"
 ```
 
+**Path two runs on a project of its own** (`real-check-journey-two`; SEAM §241): its first commit holds the seeded defect and path one's protected checks exactly as you approved them (read from the version's authorized revision in path one's repository), so that version is the project's `initial` one and path two asks you for no approval. Path one's project keeps whatever an earlier try of path two integrated there, the defect's fix included, and is left paused. A rerun of path two (`SURETY_REAL_RERUN=m3_path_two`) re-pays only path two: the stage's Builder, the Verifier, the Reviewer and the fix's Builder, four runs; not the attempt, the activation or path one.
+
 Steps already done are not run again (the attempt, the activation, path one when it passed); each case re-judges them from their records. Every path pauses its project before its engine stops, whatever happened; a rerun refuses, before it starts an engine or resumes a project, if any earlier work could be dispatched (an eligible item within the chain limit, or a run not ended), so a rerun never pays for work nobody asked for.
 
 **Why not `run-tests.mjs --lane real`:** that runs every file the manifest lists under `real`, M2's five included, which would run M2's attempt and journey again and spend on them (M3 report, question 1). The file run alone keeps every guard: it refuses before starting anything without the run directory (outside the repository), the token's reference (a path to a private file), the pinned binary and the M3 confirmation, which differs from M2's.

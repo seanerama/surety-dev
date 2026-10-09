@@ -35,7 +35,7 @@ import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
-import { openDecision } from './harness/decisions.mjs';
+import { consume, openDecision } from './harness/decisions.mjs';
 import { postResult, raiseFindings, reasonSubjects, review, stageGate, successor } from './harness/gates.mjs';
 import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
@@ -96,6 +96,7 @@ async function passFresh(fx, project, candidate, keys) {
 }
 
 const status = (fx, id) => findingRow(fx.home, id).status;
+const candidatesOfProject = (home, project) => withStore(home, (db) => db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(project));
 
 describe('M235 finding resolution', () => {
   test("(a) the named check is a required acceptance check covering the finding's criterion, passed on the fix's candidate by an execution registered after the disposition, its evidence intact: the finding is resolved, naming the evaluation and the execution, and the fix completes", async (t) => {
@@ -125,6 +126,35 @@ describe('M235 finding resolution', () => {
     assert.ok(result.execution_seq > row.disposition_seq, 'registered after the disposition (the watermark, SEAM.md §191)');
     assert.equal(eventsOfType(fx.home, 'finding.resolved').filter((e) => e.subject?.finding === found.id).length, 1, 'finding.resolved is emitted');
     assert.equal(workItem(fx.home, fix.id).status, 'complete', 'the fix completes with its finding\'s resolution');
+  });
+
+  // E104 (Sean, 2026-10-08): the integration of a fix that names a finding is a nomination point at
+  // every tier, T1 included, with no Builder request. Found by Sean's second real run: the real fix
+  // Builder returned nominate:false, nothing nominated the fixed code at T1, and the finding could
+  // never resolve (COVERAGE.md, "M3 slice 22: Sean's real run, second try").
+  test("(f) E104: at T1 a fix naming a finding whose Builder does not ask for the nomination (nominate false) is nominated by the engine at its integration; the covering required check runs on that candidate and the finding resolves", async (t) => {
+    const { fx, p, candidate: c1, ctx } = await project(t);
+    assert.equal(withStore(fx.home, (db) => db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(p.id)).tier, 'T1', 'the fixture is live: a T1 project');
+    const [found] = await raiseFindings(fx, p.id, c1.id, [finding('M235-f: an expired session is accepted', { check: 'login', criterion: 'R1.1' })], { kind: 'verification' });
+    await review(fx, p.id, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
+    const fix = workItemsOf(fx.home, p.id).find((w) => w.kind === 'fix' && w.subject?.finding === found.id);
+    assert.ok(fix, 'the fixture is live: the engine registered the fix (E43)');
+    fx.scripted.script(fix.id, [roleThat([step.write('src/fix-f.js', 'export const fixed = true;\n')], { nominate: false })]);
+    await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'continue');
+    const run = await tickUntil(fx.engine, p.id, () => (runsOf(fx.home, fix.id)[0]?.state === 'ended' ? runsOf(fx.home, fix.id)[0] : undefined), { what: "the fix's Builder run to end" });
+    assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the fix Builder's run, nominate false, was accepted (${run.reason_text})`);
+    const c2 = await tickUntil(fx.engine, p.id, () => candidatesOfProject(fx.home, p.id)[1], { max: 8, what: "the engine's nomination of the fix's integration (E104: no Builder request needed at T1)" });
+    const reg = await tickUntil(fx.engine, p.id, () => {
+      const r = registrationsBy(fx.home, c2.id);
+      return REQUIRED.every((k) => r[k]) ? r : undefined;
+    }, { max: 6, what: "the fix candidate's nomination registrations" });
+    const results = {};
+    for (const key of REQUIRED) results[key] = await recordExit(fx.engine, reg[key].id, 0, { output: `${key} passed on the fix candidate\n` });
+    const resolving = await stageGate(fx, ctx, c2);
+    const row = findingRow(fx.home, found.id);
+    assert.equal(row.status, 'resolved', `the finding is resolved (reasons ${JSON.stringify(resolving.reasons)})`);
+    assert.deepEqual(row.resolution_verification, { evaluation: resolving.id, check_result: results.login.id }, 'through the covering required check, login, on the engine-nominated candidate');
+    assert.equal(workItem(fx.home, fix.id).status, 'complete', 'and the fix completes');
   });
 
   test("(a) S2 (E100 item 2): a regression finding on stage 2's candidate naming stage 1's check `login` and R1.1 is resolved by `login` passing on the fix's candidate after the disposition, as a required check of one of the candidate's scopes; stage 2's gate is then free of it and no check_correction is routed. Contrast: a check covering R1.1 that none of the candidate's scopes requires resolves nothing and is routed", async (t) => {
