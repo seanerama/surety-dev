@@ -2252,6 +2252,68 @@ Recorded by the Verifier on `verify/m3-path-two-setup`, from `main` at `8270579`
 
 **A rerun of path two in the same directory:** `SURETY_REAL_RERUN='m3_path_two,judge:M239 (c)'` (both names: the step is recorded done, and the halt is the judgment's; with `m3_path_two` alone the directory stays halted and nothing starts, at no cost). It re-pays path two only (the stage's Builder, the Verifier, the Reviewer, the fix's Builder: four runs), on a third project of its own, with the harness fix. A real Reviewer may still raise a finding on the engine's two setup files, so the outcome depends on question 6 or on the reading of (c) below. **A reading for Sean:** row M239's Expected (c) is "the finding resolved only through the covering required check, as M235", which the third try met; "both gates satisfied on the fix's candidate" is the Verifier's addition, taken from M140 (b)'s form. Not changed here.
 
+## M4 slice 23: the walking deployment (BS4 §9; E120 to E122)
+
+2026-10-09, by the Verifier of slice 23 on `verify/m4-s23`, cut from `main` at `a686e88`. Rows M301 to M306 of `docs/acceptance/sdlc-M4-acceptance-plan.md` §3.1, all kernel lane, on the scripted deployment adapter. The seam's §§244 to 254 fix what the plan's §2.6 and D4 leave to the tests for these rows, and take the coordinator's provisional choices of the Builder's design (2026-10-09: names in routes, `POST …/deployments`, the M1 route removed, coalescing, the minimal artifact, scripted admission, `alpha_complete` by `{operation}`, `deploy/<name>`). The plan's letters are the cases. Helpers: `harness/deploy/kernel.mjs`.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M301 | kernel | `M301-the-walking-deployment.test.mjs` | (a) configuration version 1; (b) the stage gate, the sealed artifact and its mapping, the engine-derived authorization, the work item; (c) the intent at `deploy.intended`; (d) attempt 1, its intent and capability, the claimed receipt, reconcile, `attempted`, one round; (e) the round, its two reads, the check's binding, the verified row, `last_verified`; (f) completion in one transaction, the lease released, no `releases`; (g) the teardown; (h) provenance. One journey, made in the `before` hook. | written |
+| M302 | kernel | `M302-configuration-versions-and-identity.test.mjs` | (a) and (b) in one case: nine fields in turn, then equal content, then a secret value across a restart; (c) and (f): the searches and the key; (d) three refused references; (e) the trigger and the token | written; (f)'s "absent from every mount plan" is the engine home's absence, pinned in M110, M201 and M310 |
+| M303 | kernel | `M303-the-engine-derived-authorization.test.mjs` | (a) the three caller fields and the M1 route; (b) with (e): the binding, sequential, concurrent and replayed (after a kill) repeats, one issuance, the next generation after a terminal operation; (c) three cases, one per obligation; (d) M1's setup refused, the labelled facts satisfying the same rule | written |
+| M304 | kernel | `M304-bounded-calls-and-confirmed-effects.test.mjs` | (a) four cases: an effect past its deadline, past its output bound; a reconcile read past its deadline, past its output bound; (b) the four failure classes on reconcile; a failed identity read with every value `unread`; (c) `issued` held at `deploy.receipt_recorded`; `refused`; `not_issued`; `uncertain`; (d) the journal's events, in (c)'s cases | written; (d)'s "git's journal kinds and M26, M29 to M34 unchanged" is those rows, unchanged and run as they are |
+| M305 | kernel | `M305-one-operation-and-completion.test.mjs` | (a) two simultaneous requests and a kill at `deploy.intended`; (b) a seeded work item naming the consumed authorization; (c) with (e): pending, then the advance in the evaluation's transaction, no route to advance, no `releases`; (d) the deciding result's output removed at `verify.row_recorded` | written, but for (d)'s second half (below) |
+| M306 | kernel | `M306-preconditions-before-the-effect.test.mjs` | the control; the authorization superseded; the candidate superseded; a protected tightening; a pending required rerun; a new blocking finding; expired evidence (an output record missing); the configuration changed; a secret value changed; the artifact changed; the adapter qualification lapsed; the host qualification lapsed; admission past the orchestration deadline | written, but for four facts (below) |
+
+**Deferred, each a question for Sean** (not dropped: each is an observation the plan names that slice 23 cannot make on the kernel lane without new instruments):
+
+| Case | Why not here | Proposed |
+|---|---|---|
+| M305 (d), a result invalidated after the verification row | Every invalidation the engine makes (a protected application's finalizer; `adopt` of an observation of the integration branch) needs ticks, and the row and the completion it allows are made in one tick; holding that tick at `verify.row_recorded` holds the invalidation too | slice 25, with M317 and M318's guards, by whichever barrier that slice's Verifier names between the row and the completion's evaluation at a later tick |
+| M306, a lost sign-off | Needs a T2 candidate with the Reviewer's sign-off and a change of its acceptance content between issuance and the effect (section 70's binding of a sign-off) | slice 25 or 28, a T2 variant of M306's pattern |
+| M306, an out-of-band observation of the environment open | Nothing records one before slice 27's observation job and adapter reads (J6) | slice 27, a new M306 file beside M331 (b) |
+| M306, the lease lost | Only a preempting teardown takes the lease from an operation (D4 §4.6) | slice 27, with M327 |
+| M306, a unit of unknown ownership | Recovery and a restored store (D4 §9.2) | slice 26, with M324 (e) |
+
+**Not pinned** (each named in the seam section given): whether equal content writes a row (§245); the canonical form of the identity and the digest's encoding (§245); a backend reference in `secrets` (§245); the hold shown while admission waits (§247); the form of `finalizer_inputs.manifest` (§250); the projection's bounds and refusals (slice 24); where the deploy journal is stored (§250, J1).
+
+**The safety rule (BS4 §4.1; E64).** No slice-23 file creates a unit, runs `systemd-run` or `systemctl`, reads or signals a host process, or writes to a cgroup: the scripted deployment adapter is a JSON document in the test's scripted directory. M306's artifact case changes a file of the test's own engine home. Every engine has a disposable `SURETY_HOME` and `HOME`.
+
+**The slice-23 straddle** (D4 Appendix C.2; plan §4.3; BS4 §9.2; SEAM §§252, 253). Each change keeps what its row asserts; the former insufficient setup is pinned as refused.
+
+| Correction | File | Was | Now | What keeps the row's meaning |
+|---|---|---|---|---|
+| J3 | `harness/gates.mjs` `proposeAuthorization` | `POST …/candidates/:c/authorizations` (production) | `POST /v1/harness/fixtures/authorization`, section 75's answers | The same binding, row and answers; M303 (a) pins the M1 route gone (404) |
+| J4 | `harness/gates.mjs` `alphaTarget` | the harness environment fixture, `config_identity` `config-1`, no obligations | the owner's configuration (`PUT …/config`, one target, `tree_digest`), the labelled qualification fixture, one required `post_deploy_behavior` check (`deploy-behaves`, gate kind `alpha_complete` only) | The obligation check is in no `stage` or `alpha_authorize` scope, so every `check_states`, required set and reason the rows read is unchanged; `obligations: false` is M1's setup, pinned refused by M303 (d) (`ADAPTER_UNQUALIFIED`, `IDENTITY_METHOD_MISSING`, `ACCEPTANCE_SCOPE_INCOMPLETE` `kind:post_deploy_behavior`) |
+| J4 | every row reaching `alphaTarget` (M01 both files, M24, M35, M38, M39, M41, M42, M43, M44, M52, M105, M201 both files, M202, M204, M208, M209, M218 both files, M222, M228, M229, M231, M232, M237, M239's sandbox file) | — | unchanged files; they gain the obligations through the shared fixture | As the row above |
+| J4 | M140's real-lane journey and M239's real-lane file, through `real/journey.mjs` and `real/checks-journey.mjs` | — | the same, through `alphaTarget` | Rewritten by this change and **not run** (BS4 §9.2: not until Sean chooses) |
+| J4 | `M44-…`, the changed-scope case | `addEnvironment(…, {targets: ['alpha-1', 'alpha-2']})` | `configuredEnvironment(…, {targets: ['alpha-1']})`; the second binding still names two targets through the fixture | `local_service` takes one target (D4 §10 X2); "another binding is another proposal" is asserted as before |
+| deployment enabled | `M44-…`, the unbuilt kinds | `alpha_complete` among the kinds refused 501 | removed; a new case: `alpha_complete` with no operation is 400 `invalid_value` naming `operation`, with no effect | The other five kinds stay refused before any effect |
+| deployment enabled | `M08-api-capability-refusals.test.mjs` | "deploy, publish and export requests are refused" | every deploy path but `POST …/deployments` (and `…/candidates/:c/authorizations`) refused; `POST …/deployments {}` refused 400 `invalid_value` naming `candidate`, no effect, audited | Publish, export, releases, management, sessions and the reserved tables are unchanged |
+| D4 A.7 | `contract/config.json` (M07, M73) | D3's keys last | D4's eleven engine and eight project keys, BS4 §11.3's values | M07 and M73 read the file; nothing else of them changed |
+
+**Kept, unchanged and not edited:** `M08-scheduler-capability-refusals.test.mjs` (a `deploy` trigger through the trigger fixture stays refused; a `deploy` item seeded in the store is never launched or completed), M26 and M29 to M34, M70, M74, M112 to M118, M206, M215, M216, M221 (e), M222 (c). M08's "environment observation tables do not exist" still holds for slice 23; the observation job's tables are slice 27's, whose Verifier narrows it.
+
+**Run on `main`'s engine (`a686e88`), each file alone with `node --test` after `npm run build`, 2026-10-09:**
+
+| File | Result | The reason, as the output gives it |
+|---|---|---|
+| M301 | 0 of 8 (the `before` hook) | `PUT …/environments/alpha/config` → 404 `not_found`, "No route … exists in this engine" |
+| M302 | 0 of 4 | `--secret-file takes <backend/claude/api_key\|…>=<value>` (the `deploy/` namespace refused at start, exit 2); the configuration route 404 |
+| M303 | 0 of 6 | the configuration route 404; (d): `POST /v1/harness/fixtures/authorization` 404 |
+| M304 | 0 of 10 | `unknown_field` `adapter_effect_deadline` at start (exit 4); the configuration route 404 |
+| M305 | 0 of 4 | the configuration route 404 |
+| M306 | 0 of 13 | the configuration route 404; the secret case, the `deploy/` namespace refused at start |
+| M44 (straddled) | 3 of 7 | the stage cases and the five unbuilt kinds pass; the three Alpha cases fail at the configuration route (404), the new `alpha_complete` case at 501 `unsupported` |
+| M08 API (straddled) | 5 of 6 | `POST …/deployments` → 404 where 400 `invalid_value` is pinned |
+| M07 (straddled) | 15 of 18 | "exactly the closed key set", the project defaults (`deploy_orchestration_deadline default`, undefined) and the alternatives case: D4's keys are not the engine's |
+| M73 (straddled) | 10 of 11 | "the engine configuration keys": the engine's contract lacks `adapter_effect_deadline` and the rest |
+| M01 kernel journey (through `alphaTarget`) | 0 of 7 (both `before` hooks) | the configuration route 404 |
+| M24 (through `alphaTarget`) | 0 of 1 | the configuration route 404 |
+| M08 scheduler (unchanged) | 4 of 4 | — |
+
+Every other row reaching `alphaTarget` fails on `main` the same way, at its first Alpha authorization (the configuration route, 404): the fixtures it needs are the slice-23 seam's. None was run beyond M01 and M24 here; the full `--slice 23` run is the driver's on the Builder's branch.
+
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
