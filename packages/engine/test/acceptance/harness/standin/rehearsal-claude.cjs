@@ -37,7 +37,9 @@
 // criterion (R1.1 greeting, R2.1 session, R3.1 logout) and a smoke check,
 // each running one protected program, .surety/checks/run/expect.mjs, that
 // imports the candidate's module in a child and compares what it prints,
-// with a proposal in its result; a Verifier on a candidate reports the
+// with a proposal in its result (its smoke check imports only the source
+// files that exist, so a stage passes it before later stages' code exists);
+// a Verifier on a candidate reports the
 // seeded defect of src/session.mjs naming the criterion R2.1 and the check
 // its package lists as covering it; a fix corrects src/session.mjs.
 //
@@ -306,7 +308,29 @@ process.exit(child.status === 0 && child.signal === null && got === want ? 0 : 1
   def('greeting', 'acceptance', ['R1.1'], ['src/greeting.mjs', 'm.greeting("Ada")', '"Hello, Ada!"']);
   def('session', 'acceptance', ['R2.1'], ['src/session.mjs', '[m.isSessionValid({ issuedAtMs: 0 }, 1799999), m.isSessionValid({ issuedAtMs: 0 }, 1800000)]', '[true,false]']);
   def('logout', 'acceptance', ['R3.1'], ['src/logout.mjs', '(() => { const s = { id: 1 }; const o = m.logout(s); return [o.revoked, s.revoked === undefined, o !== s]; })()', '[true,true,true]']);
-  def('smoke', 'smoke', [], ['src/greeting.mjs', 'typeof m.greeting', '"function"']);
+  // smoke covers no criterion, so it is required at every stage's gate (D3 §4.2; the package's
+  // scope rule, E103): it imports only the source files that exist, each in a child, never a
+  // module a later stage is to write (the second rehearsal on 5511bd2 found the fake's own smoke
+  // requiring src/greeting.mjs in path two's project, which no stage of it writes).
+  const smoke = `// Rehearsal's smoke check (M239): every src/*.mjs that exists imports cleanly, each in a child.
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const files = existsSync('src') ? readdirSync('src').filter((f) => f.endsWith('.mjs')).sort() : [];
+let failed = 0;
+for (const f of files) {
+  const url = pathToFileURL(resolve('src', f)).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', 'await import(' + JSON.stringify(url) + ');'], { encoding: 'utf8', timeout: 20000 });
+  const ok = child.status === 0 && child.signal === null;
+  console.log('smoke: src/' + f + (ok ? ' imports' : ' does not import: status ' + child.status + ', signal ' + child.signal));
+  if (!ok) failed++;
+}
+console.log('smoke: ' + files.length + ' file(s), ' + failed + ' failed');
+process.exit(failed === 0 ? 0 : 1);
+`;
+  write('.surety/checks/run/smoke.mjs', smoke);
+  write('.surety/checks/defs/smoke.json', `${JSON.stringify({ schema: 1, key: 'smoke', kind: 'smoke', command: ['node', '.surety/checks/run/smoke.mjs'], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], inputs: ['.surety/checks/run/smoke.mjs'] }, null, 2)}\n`);
   finish({ status: 'completed', summary: 'rehearsal: wrote the checks of R1.1, R2.1 and R3.1 and a smoke check', proposal: { rationale: 'rehearsal: the checks of R1.1, R2.1, R3.1 and a smoke check, as the approved spec states them', requested_change_kind: 'tightening' } });
 }
 

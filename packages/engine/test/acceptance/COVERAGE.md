@@ -2222,6 +2222,20 @@ The user manager was `running` before and after; no `surety-*` scope was left.
 
 2026-10-06, on `verify/m2-report` from `main` at `02558a1`. `docs/acceptance/reports/M2-report.md` is filled from the fourth attempt's records (`~/surety-hands-on-20261006T014511Z/home`, its store read on a copy; nothing there changed): the host qualification at the run, the binary and its pin, the entry with every field and its evidence, what the canaries established (all but M139's), the spend as estimated and as charged, `term_to_exit_ms`, the configuration and policies in force, egress, `bootstrap_exception`, path one with its commits and its ledger against the transcripts, and the token's absence. It stays a skeleton: the real-lane test files have not run, so M139, path two, their run directory's records, a Stop of a live process (CHECK (8) not shown) and the revision Sean's checkout held remain pending. **M141 alone:** (a) passes; (b) fails by design, "the M2 report is a skeleton (21 pending facts)". **M142 alone:** 5 of 5. Findings put to Sean in the report's section 21 (questions 11 to 14): what counts as the real lane's records for M141; the Stop of a live process; the Stop recorded over a clean exit (a likely engine defect, SEAM §143, D2 §1.6); `runs.model_observed` null on every run.
 
+## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
+
+2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
+
+| Run | Result |
+|---|---|
+| M235 alone | 8 of 8 ((f), E104's case, passes) |
+| M231 alone | 4 of 4 (the straddle passes) |
+| M239 rehearsal, first run directory | 3 of 4: (c) failed, "both gates satisfied on the fix's candidate" (`CHECK_NOT_PASSED`, the fake's `smoke`). Path two's own project, its carried checks (`initial`), the defect found (R2.1, `session`), the fix's candidate nominated and the finding resolved through `session` all worked; the fake's own smoke check required `src/greeting.mjs`, which no stage of path two's project writes: the fake made E103's mistake. Fixed in the fake (`verify/m3-e104-r`): its smoke check imports only the source files that exist. The real Verifier's smoke of Sean's second try already does (E104's record). |
+| M239 rehearsal, a fresh run directory, the fake fixed | **4 of 4**. Path two on `real-check-journey-two`: the carried version `initial`; on the stage's candidate `session` exit 1 (the seeded defect), `logout` and `smoke` 0; the finding named R2.1 and `session`; the fix's candidate nominated by `engine_cadence`; `session` passed there and resolved the finding; both gates satisfied. |
+| The same directory, `SURETY_REAL_RERUN=m3_path_two` | **4 of 4**: (a) and (b) re-judged from the records in milliseconds (path one, the attempt and the activation not run again); path two ran again on a second project of its own (`real-check-journey-two`, `repos/real-check-journey-two-2`) and passed; every journey project paused after; 13 role runs in the directory's store in all (3 canaries, path one's 2, path two's 4 twice). |
+
+**Not exercised:** a rerun after a path two that *failed* (the rehearsal's first path two passed, and forcing a failure would need a change to the fake or the harness); the fake's fix Builder asks for the nomination (constraint C2), so `nominate: false` under E104 is M235 (f)'s, not the rehearsal's.
+
 ## M3 slice 22: Sean's real run, second try, and E104 (a working note, not the report's facts)
 
 Recorded by the Verifier on `verify/m3-e104`, from `main` at `2e352a3`, from the coordinator's account, E104, and a read-only look at the run directory's `state.json`, `observed/M239.json` and store (`~/surety-m3-real-20261009`; the token file not read).
