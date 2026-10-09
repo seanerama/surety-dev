@@ -261,6 +261,14 @@
       "M241-hands-on-script.test.mjs",
       "M239-the-verifiers-check-writing-package.test.mjs",
       "M238-the-wrapper-mutants-and-root-hiding.test.mjs"
+    ],
+    "23": [
+      "M301-the-walking-deployment.test.mjs",
+      "M302-configuration-versions-and-identity.test.mjs",
+      "M303-the-engine-derived-authorization.test.mjs",
+      "M304-bounded-calls-and-confirmed-effects.test.mjs",
+      "M305-one-operation-and-completion.test.mjs",
+      "M306-preconditions-before-the-effect.test.mjs"
     ]
   },
   "sandbox": [
