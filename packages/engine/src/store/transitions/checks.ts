@@ -255,7 +255,19 @@ const dueText = (owed: Owed[]): string | null => (owed.length === 0 ? null : JSO
 // Register one execution per check for the trigger, in this transaction;
 // a trigger identity already registered registers nothing (D3 §2.5).
 // Returns the executions, those registered before included.
-export function registerExecutions(tx: Tx, args: { project: string; candidate: CandidateRow; checks: CheckRow[]; trigger: Trigger }): { id: string; check: string; key: string; created: boolean }[] {
+// A deployment verification's registrations carry their binding (D4 §5.1,
+// X1): the environment, the artifact digest and {operation, attempt,
+// deployment_generation, round}, frozen with the registration.
+export interface DeploymentBinding {
+  environment: string;
+  artifact_digest: string;
+  deployment: { operation: string; attempt: string; deployment_generation: number; round: string };
+}
+
+export function registerExecutions(
+  tx: Tx,
+  args: { project: string; candidate: CandidateRow; checks: CheckRow[]; trigger: Trigger; binding?: DeploymentBinding },
+): { id: string; check: string; key: string; created: boolean }[] {
   const out: { id: string; check: string; key: string; created: boolean }[] = [];
   for (const c of args.checks) {
     const tk = triggerKey(args.trigger, c.key, args.candidate.id);
@@ -271,10 +283,27 @@ export function registerExecutions(tx: Tx, args: { project: string; candidate: C
     tx.db
       .prepare(
         `INSERT INTO "check_executions" ("id", "created_at", "project", "check", "key", "candidate", "source_revision", "protected_version", "runner_class", "execution_seq",
-           "trigger", "trigger_key", "status", "registered_at")
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+           "trigger", "trigger_key", "status", "registered_at", "environment", "artifact_digest", "deployment")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
       )
-      .run(id, tx.at, args.project, c.id, c.key, args.candidate.id, args.candidate.revision, c.protected_version, c.runner_class, seq, JSON.stringify(args.trigger), tk, tx.at);
+      .run(
+        id,
+        tx.at,
+        args.project,
+        c.id,
+        c.key,
+        args.candidate.id,
+        args.candidate.revision,
+        c.protected_version,
+        c.runner_class,
+        seq,
+        JSON.stringify(args.trigger),
+        tk,
+        tx.at,
+        args.binding?.environment ?? null,
+        args.binding?.artifact_digest ?? null,
+        args.binding ? JSON.stringify(args.binding.deployment) : null,
+      );
     tx.emit('check.registered', { project: args.project, candidate: args.candidate.id, check_execution: id }, { key: c.key, trigger: args.trigger, execution_seq: seq, check: c.id });
     out.push({ id, check: c.id, key: c.key, created: true });
   }
@@ -616,10 +645,10 @@ export function admitExecution(
 function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): void {
   const rows = tx.db
     .prepare(
-      `SELECT x."id", x."runner_class", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
+      `SELECT x."id", x."runner_class", x."environment", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
        WHERE x."project" = ? AND x."status" = 'queued' ORDER BY x."execution_seq"`,
     )
-    .all(project) as { id: string; runner_class: string; definition: string }[];
+    .all(project) as { id: string; runner_class: string; environment: string | null; definition: string }[];
   if (rows.length === 0) return;
   const q = runnerQualification(tx.db);
   for (const r of rows) {
@@ -630,7 +659,9 @@ function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): vo
       requires = [];
     }
     let reason: string | null = null;
-    if (Array.isArray(requires) && requires.includes('environment')) reason = 'environment_unbound';
+    // An execution a deployment verification bound to its environment is
+    // not unbound (D4 §5.1, X1); every other one that requires one is.
+    if (Array.isArray(requires) && requires.includes('environment') && r.environment === null) reason = 'environment_unbound';
     else if (q === null) reason = 'isolation_unqualified';
     else if (r.runner_class !== 'direct') reason = 'runner_unqualified';
     else if (!selfTestRunning && (q.check_runner === null || q.check_runner.qualified !== true)) reason = 'runner_unqualified';
@@ -839,6 +870,9 @@ export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runne
     execution_seq: x.execution_seq as number,
     started_at: (x.started_at as string | null) ?? null,
     finished_at: tx.at,
+    environment: (x.environment as string | null) ?? null,
+    artifact_digest: (x.artifact_digest as string | null) ?? null,
+    deployment: (x.deployment as string | null) ?? null,
     ...args,
   });
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, args.execution);

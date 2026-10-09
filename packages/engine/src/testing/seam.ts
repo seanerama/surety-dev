@@ -85,6 +85,8 @@ import {
   parseResultBody,
   projectRepo,
 } from './fixtures.js';
+import { addScript, callReport, changeTarget, resetScripted, scriptedAdmission, scriptedBounds, scriptedDeploymentAdapter, setAdmission, setBounds } from './deploy-adapter.js';
+import { installAdapterQualification, installFixtureAuthorization, lapseAdapterQualification, parseAdapterQualification } from './deploy-fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
 const WORKER_BARRIERS = ['migration.before_commit', 'checks.registered'] as const;
@@ -140,6 +142,19 @@ const MAIN_BARRIERS: readonly string[] = [
   'checks.exit_recorded',
   // SEAM.md §193: an evaluation's facts read, its transaction not begun.
   'gate.facts_read',
+  // M4 plan §2.3: the deployment's boundaries (BS4 §8).
+  'deploy.requested',
+  'deploy.intended',
+  'deploy.attempt_recorded',
+  'adapter.before_host_call',
+  'adapter.after_host_call',
+  'deploy.receipt_recorded',
+  'deploy.confirmed',
+  'deploy.before_finalizer',
+  'deploy.round_registered',
+  'verify.after_first_read',
+  'verify.before_second_read',
+  'deploy.before_completion',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -710,6 +725,9 @@ const OP = {
   correction: 'harness.ledger_correction',
   executionProject: 'harness.execution_project',
   scriptedStep: 'harness.scripted_step',
+  adapterQualification: 'harness.adapter_qualification',
+  adapterQualificationLapse: 'harness.adapter_qualification_lapse',
+  fixtureAuthorization: 'harness.fixture_authorization',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -823,6 +841,18 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           ],
         },
       }),
+    };
+  }
+  // The scripted deployment adapter's report and reset (BS4 §8).
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'calls' && get) return { restricted: false, handler: async () => ({ status: 200, body: callReport() }) };
+  if (s.length === 1 && s[0] === 'deploy' && method === 'DELETE') {
+    return {
+      restricted: false,
+      handler: async () => {
+        await hooks.body();
+        resetScripted();
+        return { status: 200, body: callReport() };
+      },
     };
   }
   if (!post) return null;
@@ -990,6 +1020,26 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       return storeOp(OP.scriptedStep, { args: { execution: step.execution, to: step.to, result: step.result, output }, actor: hooks.actor });
     });
   }
+  // M4 plan §2.3 (BS4 §8): the scripted deployment adapter, its model of the
+  // target, its counts, the kernel lane's admission and the bounds; the
+  // labelled adapter qualification; caller-supplied authorization bindings
+  // (J3), which no production route accepts.
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'script' && post) return route(200, async (body) => addScript(body));
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'target' && post) return route(200, async (body) => changeTarget(body));
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'admission' && post) return route(200, async (body) => setAdmission(body));
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'bounds' && post) return route(200, async (body) => setBounds(body));
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'adapter-qualification' && post) {
+    return route(201, async (body) => {
+      parseAdapterQualification(body);
+      return storeOp(OP.adapterQualification, { body, actor: hooks.actor });
+    });
+  }
+  if (s.length === 3 && s[0] === 'fixtures' && s[1] === 'adapter-qualification' && s[2] === 'lapse' && post) {
+    return route(200, async (body) => storeOp(OP.adapterQualificationLapse, { body, actor: hooks.actor }));
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'authorization' && post) {
+    return route(201, async (body) => storeOp(OP.fixtureAuthorization, { body, actor: hooks.actor }));
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'runner-qualification') {
     return route(201, async (body) => {
       parseRunnerQualification(body);
@@ -1146,6 +1196,24 @@ function resolverReport(): unknown {
 // real provider by name: the harness map is never filled there, and Sean's
 // second real-agent run found every name refused `resolve_failed` by it. A
 // name the map does not hold does not resolve.
+// The deployment adapter of this id, in harness mode the scripted one
+// (BS4 §8): production has no other in slice 23.
+export function seamDeploymentAdapter(id: string): unknown {
+  if (!init.harness || id !== 'local_service') return null;
+  return scriptedDeploymentAdapter;
+}
+
+// The adapter's and the orchestration's bounds a test set, in harness mode.
+export function seamDeployBounds(): Partial<{ effectMs: number; readMs: number; outputBytes: number; orchestrationSeconds: number; autoRetries: number }> | null {
+  return init.harness ? scriptedBounds() : null;
+}
+
+// What admission answers for a service domain where no real boundary admits
+// one (the kernel lane): the test's answer; null outside harness mode.
+export function seamDeployAdmission(): 'granted' | 'held' | null {
+  return init.harness ? scriptedAdmission() : null;
+}
+
 export function seamResolver(): { resolve(name: string): Promise<string[]> } | null {
   if (!init.harness || realLane) return null;
   return {
@@ -1261,6 +1329,12 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return executionProject(store(), a.execution as string);
     case OP.scriptedStep:
       return installScriptedStep(store(), a.actor, a.args as unknown as Omit<ScriptedStep, 'runner_id'>);
+    case OP.adapterQualification:
+      return installAdapterQualification(store(), a.actor, a.body);
+    case OP.adapterQualificationLapse:
+      return lapseAdapterQualification(store(), a.actor, a.body);
+    case OP.fixtureAuthorization:
+      return installFixtureAuthorization(store(), a.actor, a.body);
     case OP.correction:
       return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:

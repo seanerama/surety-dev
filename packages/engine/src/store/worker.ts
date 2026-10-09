@@ -85,7 +85,7 @@ import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js
 import { chainBoundary, resumeWork } from './transitions/work.js';
 import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, nominationAncestryPairs, nominationPresenceDue, presenceDue, recordAncestry, recordNominationPresence, recordPresence } from './transitions/evidence.js';
-import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
+import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
@@ -192,7 +192,6 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
   'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
-  'authorization.propose': (tx, a) => proposeAuthorization(tx, a),
   'candidate.request_checks': (tx, a) => ({ ...requestChecks(tx, a), effects: [{ kind: 'tick' }] }),
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
 };

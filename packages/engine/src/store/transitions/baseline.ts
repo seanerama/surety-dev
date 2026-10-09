@@ -370,6 +370,10 @@ export function insertExecutionResult(
     not_run_reason: string | null;
     output: string | null;
     output_dropped_bytes: number | null;
+    // A deployment verification's binding, from its registration (D4 §5.1).
+    environment?: string | null;
+    artifact_digest?: string | null;
+    deployment?: string | null;
   },
 ): string {
   const id = tx.newId('cr_');
@@ -377,8 +381,8 @@ export function insertExecutionResult(
     .prepare(
       `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
          "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at",
-         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification", "deployment")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -390,6 +394,8 @@ export function insertExecutionResult(
       a.protected_version,
       a.runner_class,
       a.runner_id,
+      a.environment ?? null,
+      a.artifact_digest ?? null,
       a.execution_seq,
       a.established ? 1 : 0,
       a.signaled ? 1 : 0,
@@ -403,6 +409,7 @@ export function insertExecutionResult(
       a.orphans === null ? null : a.orphans ? 1 : 0,
       a.output_dropped_bytes,
       a.runner_qualification,
+      a.deployment ?? null,
     );
   tx.emit(
     'check.result',

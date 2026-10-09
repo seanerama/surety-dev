@@ -25,13 +25,14 @@ import { type OobRow, blockingObservation, candidateObservation, nominationRef, 
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
+import { afterCompletion, currentQualification, deploymentVerdict, environmentByName, getEnv, identityMethodOf, qualificationStands } from './deploy.js';
 
 type Db = Tx['db'];
 
-export const COMPUTED_GATES = ['stage', 'alpha_authorize'] as const;
+export const COMPUTED_GATES = ['stage', 'alpha_authorize', 'alpha_complete'] as const;
 // `phase` is among them: D3 §4.2 defines its scope (checks/scope.ts), and the
 // gate stays `unsupported` until its milestone (SEAM.md §70; slice 20, not built).
-export const UNBUILT_GATES = ['phase', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
+export const UNBUILT_GATES = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
 export type GateKind = (typeof COMPUTED_GATES)[number];
 
 export type CheckState = 'missing' | 'stale' | 'skipped' | 'failed' | 'passed';
@@ -339,6 +340,8 @@ export interface EvaluateArgs {
   kind: string;
   stage?: unknown;
   authorization?: unknown;
+  // `alpha_complete` (D4 §5.5): the deploy operation it is evaluated with.
+  operation?: unknown;
   // The protected fingerprint of the integration branch's head, under the
   // effective roots, as the main thread read it; null if not read.
   headFingerprint?: string | null;
@@ -408,7 +411,10 @@ interface AuthorizationRow {
   status: string;
 }
 
-export function evaluationTarget(db: Db, args: EvaluateArgs): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null } {
+export function evaluationTarget(
+  db: Db,
+  args: EvaluateArgs,
+): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null } {
   if ((UNBUILT_GATES as readonly string[]).includes(args.kind) || !(COMPUTED_GATES as readonly string[]).includes(args.kind)) {
     throw new Refusal(501, 'unsupported', `The ${args.kind} gate is outside milestone M1 and is not evaluated by this engine.`, 'Nothing was evaluated. This gate kind needs a later design and milestone.', {
       gate_kind: args.kind,
@@ -421,14 +427,25 @@ export function evaluationTarget(db: Db, args: EvaluateArgs): { candidate: Candi
     if (typeof args.stage !== 'string') throw new Refusal(400, 'invalid_value', '"stage" must name a stage.', 'Send {"stage": "stage_<id>"}.', { field: 'stage' });
     const stage = db.prepare('SELECT "id", "project" FROM "stages" WHERE "id" = ?').get(args.stage) as { id: string; project: string } | undefined;
     if (!stage || stage.project !== args.project) throw notFound('stage', args.stage);
-    return { candidate, kind, stage: stage.id, authorization: null };
+    return { candidate, kind, stage: stage.id, authorization: null, operation: null };
+  }
+  if (kind === 'alpha_complete') {
+    if (typeof args.operation !== 'string') {
+      throw new Refusal(400, 'invalid_value', '"operation" must name the deploy operation of the candidate.', 'Send {"operation": "op_<id>"}.', { field: 'operation' });
+    }
+    const op = db.prepare(`SELECT "id", "project", "kind", "finalizer_inputs" FROM "operations" WHERE "id" = ?`).get(args.operation) as
+      | { id: string; project: string; kind: string; finalizer_inputs: string }
+      | undefined;
+    const frozen = op ? (JSON.parse(op.finalizer_inputs) as { candidate?: string; environment?: { id: string }; artifact?: { digest: string } | null }) : null;
+    if (!op || op.project !== args.project || op.kind !== 'deploy' || frozen?.candidate !== candidate.id) throw notFound('operation', args.operation);
+    return { candidate, kind, stage: null, authorization: null, operation: { id: op.id, environment: frozen.environment!.id, artifact: frozen.artifact?.digest ?? '' } };
   }
   if (typeof args.authorization !== 'string') {
     throw new Refusal(400, 'invalid_value', '"authorization" must name a proposed authorization of the candidate.', 'Send {"authorization": "dauth_<id>"}.', { field: 'authorization' });
   }
   const auth = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(args.authorization) as AuthorizationRow | undefined;
   if (!auth || auth.candidate !== candidate.id) throw notFound('authorization', args.authorization);
-  return { candidate, kind, stage: null, authorization: auth };
+  return { candidate, kind, stage: null, authorization: auth, operation: null };
 }
 
 export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: EvaluationBody } {
@@ -445,8 +462,8 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     candidate,
     kind,
     stage: target.stage,
-    environment: target.authorization?.environment ?? null,
-    artifact: target.authorization?.artifact_digest ?? null,
+    environment: target.authorization?.environment ?? target.operation?.environment ?? null,
+    artifact: target.authorization?.artifact_digest ?? target.operation?.artifact ?? null,
   });
   const reasons: Reason[] = [];
   const add = (code: string, subjects: string[]) => reasons.push({ code, subjects });
@@ -529,9 +546,37 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     states[c.id] = s.state;
     deciders[c.id] = s.decider;
   }
+  // `alpha_complete` (D4 §5.5; J5, J9): its checks are the deciding round's
+  // and nothing else, their results re-read now (AR B05); its deployment
+  // reasons are the verification row's of that round.
+  const verdict = kind === 'alpha_complete' ? deploymentVerdict(db, { project: args.project, candidate: candidate.id, operation: target.operation!.id }) : null;
+  if (verdict !== null) {
+    for (const c of scope.required) {
+      const v = verdict.results.find((x) => x.check === c.id || x.key === c.key);
+      const row = v?.result ? (db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(v.result) as ResultRow | undefined) : undefined;
+      const state: CheckState = v === undefined ? 'missing' : (v.state as CheckState);
+      selected[c.id] = { state, decider: row ? { ...row, reused: false } : null, pending: null, history: null };
+      states[c.id] = state;
+      deciders[c.id] = selected[c.id]!.decider;
+    }
+  }
   const entries = checkEntries(scope, selected, dueEntry);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
+  for (const r of verdict?.reasons ?? []) add(r.code, r.subjects);
+
+  // J4 (D4 §4.1; E121): `alpha_authorize` is not satisfied unless the
+  // completion's obligations can be met: a current qualification of the
+  // environment's adapter, an identity method declared, and a required
+  // `post_deploy_behavior` check in the `alpha_complete` scope.
+  if (kind === 'alpha_authorize') {
+    const env = getEnv(db, target.authorization!.environment);
+    const adapter = env?.adapter ?? null;
+    if (adapter === null || !qualificationStands(db, currentQualification(db, adapter))) add('ADAPTER_UNQUALIFIED', [adapter ?? target.authorization!.environment]);
+    if (!env || identityMethodOf(db, env) === null) add('ACCEPTANCE_SCOPE_INCOMPLETE', ['identity_method']);
+    const completion = buildScope(db, { project: args.project, candidate, kind: 'alpha_complete', stage: null, environment: scope.environment, artifact: scope.artifact });
+    if (!completion.required.some((c) => c.kind === 'post_deploy_behavior')) add('ACCEPTANCE_SCOPE_INCOMPLETE', ['kind:post_deploy_behavior']);
+  }
 
   // (8) Referenced evidence exists and verifies: what a decider's evidence
   // lacks, named by its record (or by the result when it names none).
@@ -729,6 +774,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
 
   if (outcome === 'satisfied' && kind === 'stage' && !refUnread) completeStageWork(tx, candidate, scope.stage!, id);
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
+  if (kind === 'alpha_complete') {
+    afterCompletion(tx, { operation: target.operation!.id, candidate: candidate.id, satisfied: outcome === 'satisfied' && !refUnread, evaluation: id, reasons: reasons.map((r) => r.code) });
+  }
   if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
   tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });

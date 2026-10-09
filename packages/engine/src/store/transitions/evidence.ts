@@ -5,6 +5,9 @@
 
 import { canonical, sha256 } from './common.js';
 import type { Tx } from './tx.js';
+
+// The kinds of an environment-bound check (D4 §5.1).
+export const POST_DEPLOY_KINDS = ['post_deploy_identity', 'post_deploy_behavior'];
 import { MODULE_PRESENCE, type ScopeCheck, type Tier, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf } from '../../checks/scope.js';
 
 const SIGNOFF_ORDER = (s: Signoff): number => ({ candidate: 0, module: 1, security: 2 })[s.scope] ?? 3;
@@ -275,6 +278,19 @@ export interface RequiredSet {
 // consumer: check registration (D3 §2.5), the scope, the sign-offs and the
 // content hash (B04; T12).
 export function requiredSet(db: Db, args: { project: string; candidate: CandidateRow; kind: string; stage: string | null; version: string }): RequiredSet {
+  // `alpha_complete` (D4 §5.1, J4; E121 decision 4): the release-required
+  // obligations only, the required post-deploy checks listing the gate,
+  // whatever requirements are delivered; never a workspace check. Its tier,
+  // sign-offs and unread facts are those of the deployment scope.
+  if (args.kind === 'alpha_complete') {
+    const base = requiredSet(db, { ...args, kind: 'alpha_authorize' });
+    const rows = checksOfVersion(db, args.version);
+    const required = rows.filter((c) => c.required === 1 && POST_DEPLOY_KINDS.includes(c.kind) && gateKindsOf(c).includes('alpha_complete'));
+    const ids = new Set(required.map((c) => c.id));
+    const behaviour = required.some((c) => c.kind === 'post_deploy_behavior');
+    const missing = { criteria: [], uncertain: [], kinds: behaviour ? [] : ['kind:post_deploy_behavior'], areas: [], unread: base.scope.missing.unread };
+    return { ...base, required, scope: { ...base.scope, required: rows.filter((c) => ids.has(c.id)).map(toScopeCheck), missing } };
+  }
   const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
   const delivery = deliveryOf(db, args.project, args.candidate);
   const all = modulesOf(db, args.project);

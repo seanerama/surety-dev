@@ -413,11 +413,9 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
-      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'authorizations' && post) {
-        const candidate = decodeSegment(rest[1]!);
-        if (candidate === null) return null;
-        return { kind: 'command', name: 'authorization.propose', args: (b) => ({ project, candidate, body: b }) };
-      }
+      // J3: no production route takes an authorization's binding from the
+      // caller; `POST …/candidates/:c/authorizations` is gone (404, as any
+      // route this engine does not have). The deployment request derives it.
       if (rest.length === 1 && (rest[0] === 'pause' || rest[0] === 'resume') && post) {
         return {
           kind: 'command',
