@@ -142,6 +142,29 @@ release() { # project, execution
   rm -f "$RELEASE/go"
 }
 
+# The held check's clock (Sean's first hands-on run, 2026-10-09: it stopped
+# fail-closed at step 4 after he spent longer than the deadline at the
+# pauses). Prints the seconds left before the engine ends the execution at
+# its timeout, from its recorded start, or says it cannot tell.
+time_left() { # execution
+  local started now
+  started=$(dbq "SELECT started_at FROM check_executions WHERE id = '$1'" | head -1)
+  if [ -z "$started" ] || ! started=$(date -d "$started" +%s 2>/dev/null); then echo unknown; return 0; fi
+  now=$(date +%s)
+  echo $(( CONTAINED_TIMEOUT - (now - started) ))
+}
+deadline_note() { # execution
+  local left; left=$(time_left "$1")
+  printf '\n\033[1;33m!! A CLOCK IS RUNNING\033[0m\n'
+  note "The check 'contained' is held for you to look, but the engine ends it at its timeout,"
+  if [ "$left" = unknown ]; then left='unknown (its start time could not be read)'
+  elif [ "$left" -le 0 ]; then left='none: the deadline has passed, and step 4 will stop safely'
+  else left="about $left s"; fi
+  note "$CONTAINED_TIMEOUT s after it started, released or not. Time left now: $left."
+  note "If the time runs out, the walkthrough stops safely at step 4: nothing is released and nothing is written."
+  note "Then run it again with a new SURETY_HANDS_ON_DIR, and go on from each pause sooner."
+}
+
 # Tick a project until a store query prints something (a value), at most $3 seconds.
 until_db() { # project, query, seconds, what
   local i v
@@ -181,7 +204,10 @@ printf 'export const answer = 42;\n' > "$PROJ_REPO/.surety/checks/expect/app.js"
 jq -n '{schema: 1, key: "accept", kind: "acceptance", command: ["probe", "expect", "src/app.js", ".surety/checks/expect/app.js"], timeout_s: 60, gate_kinds: ["stage"], covers: {criteria: ["R1.1"]}, inputs: [".surety/checks/expect/app.js"]}' > "$PROJ_REPO/.surety/checks/defs/accept.json"
 # contained: smoke: reports its tree, waits for the release file "go" (so you can look), then tries to
 # write the protected input and the candidate's source file, and reports each outcome.
-jq -n --arg rel "$RELEASE" --arg ns "$HOST_NS" '{schema: 1, key: "contained", kind: "smoke", command: ["probe", "--report", "--hold", "go", "--release-dir", $rel, "--host-ns", $ns, "write", ".surety/checks/expect/app.js", "src/app.js"], timeout_s: 90, gate_kinds: ["stage"], inputs: [".surety/checks/expect/app.js"]}' > "$PROJ_REPO/.surety/checks/defs/contained.json"
+# The held check's deadline: the engine ends it this many seconds after it starts (D3 §2.6), released or
+# not. Step 6 relies on it to show a failed execution in the history; it is not to be lengthened.
+CONTAINED_TIMEOUT=90
+jq -n --argjson timeout "$CONTAINED_TIMEOUT" --arg rel "$RELEASE" --arg ns "$HOST_NS" '{schema: 1, key: "contained", kind: "smoke", command: ["probe", "--report", "--hold", "go", "--release-dir", $rel, "--host-ns", $ns, "write", ".surety/checks/expect/app.js", "src/app.js"], timeout_s: $timeout, gate_kinds: ["stage"], inputs: [".surety/checks/expect/app.js"]}' > "$PROJ_REPO/.surety/checks/defs/contained.json"
 git -C "$PROJ_REPO" add -A && git -C "$PROJ_REPO" commit -q -m 'fixture: the governed file and two checks'
 git -C "$PROJ_REPO" checkout -q --detach
 printf '{"api_port": %s, "tick_interval": 600, "terminate_grace": 3, "kill_grace": 2}\n' "$PORT" > "$SURETY_HOME/config.json"
@@ -233,6 +259,7 @@ echo "cgroup.procs: $PIDS"
 for pid in $PIDS; do printf '   %s  %s\n' "$pid" "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-160)"; done
 check 1 "the check program (program.mjs, under the domain init) is a member of the check domain's cgroup.procs, read from the host" \
   "cat $CG/cgroup.procs; for p in \$(cat $CG/cgroup.procs); do tr '\\0' ' ' < /proc/\$p/cmdline; echo; done"
+deadline_note "$X"
 pause
 TREE=$(find "$SURETY_HOME/checktrees" -type f -path '*/src/app.js' -printf '%h\n' 2>/dev/null | head -1 | xargs -r dirname)
 echo "the check tree of ($P, $REV, the effective version), engine-owned: $TREE"
@@ -240,11 +267,17 @@ find "$TREE" -maxdepth 3 | sed "s|^$TREE|   .|" | head -20
 echo "entries named .git anywhere under $SURETY_HOME/checktrees: $(find "$SURETY_HOME/checktrees" -name .git | wc -l)"
 check 2 "the check's tree holds the candidate's files and the protected inputs, and no .git anywhere" \
   "find $SURETY_HOME/checktrees -name .git    # prints nothing"
+deadline_note "$X"
 pause
 
 # ---------------------------------------------------------------------------------------
 say "4. Release the check: it writes the protected input and the candidate's src/app.js"
 note "Released only after the program is read again from the host, inside its own check domain under the engine's scope."
+# Ended already: the engine reached the deadline while the walkthrough paused (step 3's clock). Nothing is released.
+if [ -n "$(dbq "SELECT result FROM check_executions WHERE id = '$X' AND result IS NOT NULL")" ]; then
+  dbq "SELECT 'the execution ended: deadline_hit=' || deadline_hit || ', signaled=' || signaled || ', exit_status=' || COALESCE(exit_status, 'null') FROM check_results WHERE execution = '$X'" | sed 's/^/   /'
+  die "the check 'contained' ($X) reached its timeout ($CONTAINED_TIMEOUT s from its start) while the walkthrough paused at step 3, so the engine ended it: its program is gone and nothing was released or written. This is the safe stop, not a fault. Run the walkthrough again with a new SURETY_HANDS_ON_DIR and go on from step 3's pauses within the time they show."
+fi
 release "$P" "$X"
 R=$(dbq "SELECT result FROM check_executions WHERE id = '$X'")
 OUT=$(dbq "SELECT output FROM check_results WHERE id = '$R'")
@@ -266,7 +299,7 @@ S -X POST "$API/v1/projects/$P/candidates/$C/gates/stage" -d "{\"stage\": \"$STA
 say "6. Two operator re-runs of 'contained' at the same bindings: the first held past its timeout, the second released"
 [ ! -e "$RELEASE/go" ] || die "the release file is still there: nothing more is started"
 S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, trigger: .trigger.source}]}'
-note "No release file this time: the program waits, and the engine ends it at timeout_s (90 s), TERM then kill."
+note "No release file this time: the program waits, and the engine ends it at timeout_s ($CONTAINED_TIMEOUT s), TERM then kill."
 X2=$(dbq "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' ORDER BY x.execution_seq DESC LIMIT 1")
 until_db "$P" "SELECT result FROM check_executions WHERE id = '$X2' AND result IS NOT NULL" 240 "the held re-run to reach its deadline" >/dev/null
 dbq "SELECT id, execution_established, exit_status, signaled, deadline_hit FROM check_results WHERE execution = '$X2'" | sed 's/^/   held re-run: /'
