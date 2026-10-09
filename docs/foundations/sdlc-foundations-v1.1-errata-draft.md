@@ -1801,3 +1801,12 @@ Then the rehearsal is rerun against the fake, and Sean runs one more attempt (al
 1. **Established:** M239 (a) to (d) pass, 4 of 4; the directory ends with nothing halted. Path two ran on project `proj_01M4G884GMRSHE31XBC0E2E0B4`: `r2-1` failed on the stage's candidate; the real Verifier's finding `fnd_01M4G89DG733E7VGDVM7XTG3N1` named `R2.1` and `r2-1`; the real Reviewer dispositioned it `fix` and raised no other open finding; the engine nominated the fix (E104); `r2-1` passed on that candidate (`cr_01M4G8B18STY2NV9ZV7B3CD7Y7`, trigger `nomination`, in a `check` domain) and the finding resolved through it (`resolution_verification` set); both gates satisfied. (d): no fixture-written check result; the token in no file of the run directory and no git object.
 2. **Spend** in Claude Code's estimates: path two's four runs 0.198 USD (0.039, 0.063, 0.058, 0.037), on Sean's subscription.
 3. **Next:** the Verifier copies `state.json` and `observed/` to `docs/acceptance/reports/M3-real-lane/2026-10-09/` and completes the M3 report so M240 passes; then the full suite, Sean's hands-on run (M241) and his acceptance of M3; then Sean revokes the token.
+
+## E108. M3's acceptance runs on the final main; Sean's hands-on run and decision remain (provisional, 2026-10-09)
+
+**Status: provisional.** The driver's record.
+
+1. **The full `npm test`** on `bb9dc7e` (this workstation): unit 486 of 486 (60 files); acceptance 1,265 of 1,265 in 218 files, none failed, cancelled or skipped; M240 passes with the report final.
+2. **The exhaustion lane** on `mini-hp01`, on `bb9dc7e`, `node scripts/run-tests.mjs acceptance --lane exhaust` with `SURETY_EXHAUSTION_HOST` set there: 12 of 12 (M133, M130 (f) and (g), M205 (g)); every OOM kill in the kernel log `CONSTRAINT_MEMCG` in a `surety-…` `dom_` or `probe_` scope; the staging containers up throughout.
+3. **The logs** are not committed (`.gitignore` has `*.log`); the driver kept copies beside the real lane's records, in `~/surety-m3-real-20261009/logs/` (`final-npmtest.log`, `m3-exhaust-mini-hp01.log`), both searched for the token by its file (no hit).
+4. **The M3 report** (merged) records every BS3 §1 condition as met and M3 as not accepted. **Left for Sean:** the hands-on run (`docs/acceptance/reports/M3-hands-on.sh`, M241), his decision to accept M3, and revoking the subscription token (and deleting `~/.config/surety/claude-subscription.token`).
