@@ -1818,3 +1818,99 @@ Then the rehearsal is rerun against the fake, and Sean runs one more attempt (al
 1. **Accepted.** Sean accepted M3 on the record of E108 (`npm test` 1,265 of 1,265 and unit 486 of 486 on `bb9dc7e`; the exhaustion lane 12 of 12 on `mini-hp01`; the real lane's M239 4 of 4, E107; the report final) and his hands-on run (M241).
 2. **The hands-on run** (`~/surety-m3-hands-on-20261009T140150Z`, main `0c44c76`): the runner self-test qualified (10 of 10); CHECK (1) to (5) shown as M241 states them. His first two attempts stopped fail-closed at step 4: he paused at step 3 past the held check's 90 s timeout, the engine ended the check, and the script's containment read released nothing. The script now shows the clock and its two pauses while a check is held go on by themselves 25 s before the deadline (`0c44c76`). Step 6 printed `"trigger": null` for a field the re-run response does not carry (the stored trigger was `operator_request`, as the gate's history shows); the Verifier corrects the script's line.
 3. **Next:** Sean revokes the M3 subscription token and deletes `~/.config/surety/claude-subscription.token`. M4 starts from D4 (E95): first Astra's cross-review of D4 revised draft 1 (`design/d4`, `ad172de`: approve with amendments, blocking objections B01 to B08), brought to Sean one at a time; then D4's text marked decided; then M4's build spec, opening with D4 §9.6's probe (already run once for feasibility on `design/d4`, `bfea241`).
+
+---
+
+## E110. D4 B01: service supervision after an engine restart (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean chose option (a), the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`, for B01 of `docs/reviews/D4/sdlc-review-D4-Astra.md`.
+
+1. **M4 takes parts 1 and 3.** A service launch is single-use, with automatic application restart disabled. The init retains the original application's identity and terminal exit observation; it never substitutes a descendant. Natural exit, refused setup and failed exec are legal endings; uncertain termination stays quarantined. Startup closes outstanding launch authority, refuses requests from a previous incarnation, and accounts for every surviving or uncertain service domain's resource reservation before admitting new work. Unknown ownership or resources the store cannot account for block affected deployment and admission; they are never adopted or stopped automatically.
+2. **Authenticated reattachment is deferred to D5 with Live.** After an engine restart, a surviving Alpha service may keep running and be inspected through the service manager and `/proc`, but supervision is `unknown` and no verification may pass. Logs and relay stay closed until redeployment or teardown; B07's detailed secret/redaction policy remains a separate decision. Reattachment after an engine restart goes on M4's not-claimed list.
+3. **Accepted cost:** an engine crash during verification ends that round `unknown`; Sean redeploys to restore verification. The alternative of building authenticated reattachment and recovery of the original application's identity and exit state in M4 was not selected (estimated at roughly one extra slice, plus B07's more complex variant).
+
+This records B01 only. B02 to B08 remain undecided; no draft revision, implementation or other work is started by this entry.
+
+---
+
+## E111. D4 B02: reconcile the whole effect before settling or retrying (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B02 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`.
+
+1. **Complete inventory and outcome precedence.** Reconciliation takes a complete, bounded inventory of the environment's recorded resources and exact-prefix unit names, including inactive/failed units and pending manager jobs. Discovery grants no authority to stop a resource. Incomplete inventory or unread required state yields `unknown`; resources outside the frozen attempt's permitted states yield `conflicting`. These take precedence over `applied`, `absent` and `partial`.
+2. **Deploy absence and success must be established.** `absent` requires the next unit and domain absent, no launch granted, the prior state exactly unchanged, no unexpected environment resources, and no outstanding request or launcher able to perform the effect later. `applied` requires the authorized unit invocation and original application instance, matching identity and required prior termination. A refused grant is not proof of unit removal; a remaining refused unit stays pending/partial until bounded cleanup and a new read establish absence.
+3. **Teardown covers every resource.** `applied` requires closure and observed removal of all covered units, populated domain cgroups, link sockets and runtime directories. Surviving owned resources yield `partial`; unexpected or uncertain ownership yields `conflicting`; unread state yields `unknown`. `absent` requires the entire frozen pre-state unchanged and no outstanding stop/cleanup request able to act later. A failed query's empty output never establishes success.
+4. **Settle outstanding effects before proceeding.** Before lease transfer, retry or replacement dispatch, close launch authority and establish quiescence of the prior effect's host calls and manager jobs. Killing a CLI or receiving cancellation is insufficient. Unestablished quiescence leaves the effect ambiguous and prevents interleaving a new effect. Destructive actions remain confined to positively owned exact resources.
+5. **Acceptance obligation and cost:** strengthen D4-A03/A04/O04/O09/O10/O11 for unexpected generations, residual resources, incomplete inventory and delayed manager create/stop jobs after caller cancellation. Estimated cost: contract text and about six acceptance cases; no new mechanism.
+
+This records B02 only. B03 to B08 remain undecided; no draft revision, implementation or other work is started by this entry.
+
+---
+
+## E112. D4 B03: immutable intent for each retry (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B03 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`.
+
+1. **Separate operation and attempt intent.** The operation freezes its authorization, source mapping, artifact, configuration, target set and environment identity. Before each attempt's first host call, one transaction allocates its environment generation and freezes its exact next-unit names, the prior resource instances it may replace and any explicitly authorized cleanup of earlier attempts. Its capability and reconciliation probe use that attempt intent. No attempt changes the operation's authorized inputs or silently acquires authority over unexpected resources; the existing frozen-operation trigger stands.
+2. **A partial retry authorizes only the bounded remaining effects.** Its human preview names the reconciled state and those effects. The dependency manifest binds operation, attempt, environment and lease generations, configuration, qualification, resource identities and the observations used to derive the effects. Changed consequences stale the preview; retry cannot simply replay the original stop/start sequence against changed state.
+3. **Finalization is replay-safe.** The finalizer records the confirmed effect once and creates or returns one durable verification-round identity. External identity reads and check execution occur outside that transaction against that identity. Replay returns the same receipts and creates no additional round; recovery resumes or explicitly supersedes the round under D4 §5.3.
+4. **Acceptance obligation and cost:** extend D4-O03/O05 with two attempts, partial cleanup, refusal of changed artifact/configuration, crashes around finalization and a changed partial-retry preview. Cost: one additional table or column set; no change to the existing frozen-operation trigger.
+
+Sean requested the remaining questions three at a time. B04 to B08 remain undecided; this entry starts no draft revision, implementation or other work.
+
+---
+
+## E113. D4 B04: revalidate gate eligibility immediately before the effect (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B04 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`, in his answer to the B04 to B06 batch.
+
+1. **Recheck eligibility at the point of use.** Immediately before each effect, revalidate the issuing gate's current eligibility for the operation's exact candidate and authorization binding, including effective protected version, policy, deciding registrations/results, required sign-offs and approvals, findings and evidence integrity. This read neither issues nor consumes another authorization.
+2. **Refuse changed preconditions.** A changed binding or unsatisfied eligibility refuses with `EFFECT_PRECONDITION_CHANGED`, with no adapter effect call. The durable precondition manifest identifies these dependencies and the environment facts already required. Registration or invalidation owed by a trigger blocks eligibility; an earlier satisfied evaluation cannot bypass it.
+3. **Acceptance obligation and cost:** extend D4-O02 with protected tightening, pending required rerun, new blocking finding, lost sign-off and expired required evidence between issuance/intent and effect; the positive control preserves the operation's own expected authorization consumption. Cost: a small change, five refusal cases and a positive control.
+
+---
+
+## E114. D4 B05: the newest registered verification round decides (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B05 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`, in his answer to the B04 to B06 batch.
+
+1. **Register before reading.** A verification request records a durable, monotonically ordered round for the operation/attempt and invalidates dependent completion evaluations in the initiating transaction, before its first external identity read. The newest registered round decides regardless of completion order. While it is pending, interrupted, cancelled or quarantined, no earlier pass satisfies completion; earlier evidence and `last_verified` remain historical facts.
+2. **Freeze the round's bindings.** Candidate, source mapping, operation, attempt, environment generation, configuration, protected version and required check set are frozen for the round. Both identity reads and every deciding execution/result name that round. A changed required set or protected version supersedes it and requires fresh bracketing reads and registrations. Recovery preserves bounded retry accounting and records a new deciding round when the bracket must restart; no read or result is relabelled into a later round. E110's refusal of authenticated reattachment in M4 still applies.
+3. **Guard publication and completion.** Verification insertion and environment projection writes check both environment generation and deciding round in one transaction. Completion reevaluates current dependencies and evidence rather than trusting a stored verified label. Qualification is checked at round start and finalization; lapse before finalization makes the round `unknown` and requires a fresh qualified round.
+4. **Acceptance obligation and cost:** extend D4-V01/V03/V04/V06/V08 for reverse completion order, a new request held before its first read, cancelled/quarantined latest rounds, protected change, recovery, qualification lapse and evidence loss. Estimated cost: contract text and about six cases.
+
+---
+
+## E115. D4 B06: bounded orchestration, explicit lease release and check capacity (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B06 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`, in his answer to the B04 to B06 batch. The numeric deadline remains for his later build-spec approval; 15 minutes was an example, not a decided value.
+
+1. **A durable deadline bounds orchestration.** Track a deadline and progress independently of effect success, covering admission waiting, verification registration, reads and infrastructure retries. The deadline survives restart and is never renewed by a tick or retry. Expiry records verification `unknown` with missing execution/resource identities; it never invents a check result or claims termination.
+2. **Every exit path states its lease disposition.** Cover pre-effect refusal, reconciled failure, verification failure/unknown, superseded candidate, completion refusal and cancellation. Release only after outstanding effects are quiescent and unsafe ingress is closed. Unknown termination retains the domain's quarantine and resource reservation even after orchestration ends, without reusable authority. A blocker states the cause and permits bounded re-verification, abandonment of completion or preempting teardown as applicable. Preempting teardown is available during verification as well as ambiguous deployment.
+3. **Reserve verification capacity before deployment.** Service admission reserves room for at least one serial post-deploy check under the configured envelope, or refuses before stopping the prior service. Recovery restores reservations before dispatch. A persistent service reservation must never make its mandatory verification impossible.
+4. **Acceptance obligation and cost:** extend D4-O02/O07/O10 and V04 for pre-launch refusal, superseded queued checks, missing registration, resource starvation, quarantine, restart near the deadline, abandonment and teardown during verification. Keep D3's no-result-on-unknown-termination rule. The reservation means room for one fewer concurrent role run beside Alpha than E95's Q6 note indicated; the deadline value is to be proposed with the build-spec limits.
+
+B07 and B08 remain undecided. These entries record decisions only and start no draft revision, implementation or other work.
+
+---
+
+## E116. D4 B07: withhold surviving-service output after restart (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean chose B07 option (a) in `docs/design/sdlc-design-D4-astra-dispositions.md`, the recommended variant of B07 in `docs/reviews/D4/sdlc-review-D4-Astra.md`, in his answer to the B07 and B08 batch. This follows B01 option (a), E110.
+
+1. **No output publication from a surviving service after engine restart.** Its logs, service link/operator relay and checks against it are refused with an explicit redaction-unavailable condition until the service is safely replaced or torn down. The restarted engine must not publish old captures or new output under a redactor that knows only the newly configured secrets. Authenticated recovery of old secret versions is deferred with reattachment to D5; it is not built in M4.
+2. **Preserve the output boundary.** Raw service output never goes to the service manager's journal, unit standard streams or another persistent sink. Raw capture remains in protected, unswappable volatile storage until screening. Host-read process fields and error details are untrusted output for publication and require the same protection; they cannot bypass the refusal when redaction is unavailable.
+3. **Expose rotation honestly.** The environment read distinguishes the running configuration/secret version from the newly configured version and reports rotation pending replacement when applicable. No raw secret value is published to explain that state.
+4. **Acceptance obligation and cost:** adapt D4-A09/S01/S03/S04 to the M4 refusal policy: rotate S0 to S1, restart with the S0 service surviving, and exercise old captures, new output, attempted checks/relay access and mutable process metadata. Neither raw secrets nor registered escaped forms may reach records, events, responses, unit properties or journal output. Accepted cost: redeploy after an engine restart before reading that service's logs.
+
+---
+
+## E117. D4 B08: canonical artifact modes and bounded preparation (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.** Sean accepted B08 of `docs/reviews/D4/sdlc-review-D4-Astra.md` as written, following the recommendation in `docs/design/sdlc-design-D4-astra-dispositions.md`, in his answer to the B07 and B08 batch. The four numeric defaults remain for his later build-spec approval; no values were decided here.
+
+1. **Canonical modes preserve artifact identity through sealing.** The manifest uses regular-file mode 100644 for non-executable source files and 100755 for executable source files. Sealing removes write permission while preserving executable class; the target reader reconstructs the same class and separately verifies read-only presentation and immutable pathname identity. Ownership, umask and removed write bits do not change the canonical digest; changed executable class does. The sorted projection is complete: extra or missing entries, links and special files are refused or differ, never silently omitted.
+2. **Bound preparation and retained storage.** Declare finite limits on entries, per-artifact bytes, aggregate admitted/retained bytes and elapsed work. Admission preserves the engine's disk reserve before staging writes. Exceeding a limit refuses before deployment, records the specific bound and removes only unreferenced partial staging. Referenced artifacts are never evicted to admit a new one. Materialization and hashing yield within the existing API/tick responsiveness contract.
+3. **Acceptance obligation and cost:** cover executable and non-executable files through sealing and target read, umask variation, added/missing files, byte/entry/aggregate limits, cancellation and interrupted staging cleanup. The M4 acceptance seam fixes numeric defaults and boundary values before implementation, following Sean's approval of the proposed build-spec limits. Cost: contract and boundary cases plus four numeric defaults to decide later.
+
+B01 to B08 are now decided by Sean in E110 to E117. This completes the requested decision recording; no D4 draft revision, status change, M4 build spec, implementation or other work is started here.
