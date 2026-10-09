@@ -100,6 +100,18 @@ describe('M239 the real check journey (real lane, paid)', () => {
       await activation(ctx, { journey: M239_JOURNEY });
       await checksPathOne(ctx);
       const two = await checksPathTwo(ctx);
+      // The third try (SEAM.md §242): the Reviewer of path two's first candidate is shown the commits from the parent
+      // of the project's first recorded revision. None of them may be the harness's: each is the engine's, and a
+      // `.surety/` path in it is either a role's write (a run's commit) or the engine's own setup of the project
+      // (its bootstrap's project.json and its policy revision's policy.json), never a file carried from path one.
+      const range = two.review_range;
+      assert.ok(range?.base && range.commits.length > 0, `the review range of path two's first candidate was recorded (${JSON.stringify(range)})`);
+      assert.deepEqual(range.base_surety.filter((f) => !f.startsWith('.surety/checks/')), [], "the harness carried only path one's protected set: no engine-owned .surety/ file of path one's project at the base");
+      for (const c of range.commits) {
+        assert.equal(c.author, 'Surety Engine <engine@surety.invalid>', `${c.sha}: every commit the Reviewer is shown is the engine's, none the harness's (${JSON.stringify(c)})`);
+        const surety = c.files.filter((f) => f.startsWith('.surety/'));
+        if (c.run === null) assert.ok(c.setup && surety.every((f) => ['.surety/project.json', '.surety/policy.json'].includes(f)), `${c.sha}: a commit no run made is the engine's setup, touching only its own project.json or policy.json (${JSON.stringify(c)})`);
+      }
       assert.equal(two.finding.criterion, M239.defectCriterion, 'the finding names the criterion the defect breaks');
       assert.equal(two.finding.disposition, 'fix', "the Reviewer's disposition is fix");
       assert.ok(two.named_check, `the check it names is a check of the effective version (${two.finding.check})`);

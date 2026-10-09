@@ -45,7 +45,7 @@ import { join } from 'node:path';
 
 import { alphaTarget, effectiveVersion, findingsOf, installGatedPlan, proposalsOf, stageGate } from '../gates.mjs';
 import { changePolicy, createProject, workItemsOf } from '../journal.mjs';
-import { gitQuiet, makeProjectRepo, refOid } from '../repos.mjs';
+import { gitQuiet, makeProjectRepo, refOid, trailersOf } from '../repos.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, workItem } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 import { blobBytes, commitEntries, domainOfExecution, executionsOf, governedText, resultRow, resultsOfProject, versionRead } from '../checks/fixtures.mjs';
@@ -181,8 +181,14 @@ function refuseLeftovers(path, found, { evenIfPaused }) {
 function protectedFilesOf(home, one) {
   const v = withStore(home, (db) => db.prepare('SELECT "id", "authorized_revision" FROM "protected_versions" WHERE "project" = ? AND "authorized" = 1 AND "superseded_by" IS NULL').get(one.project));
   if (!v?.authorized_revision) throw new Error(`M239 path two refused: path one's effective protected version could not be read (${JSON.stringify(v ?? null)}). Nothing was started.`);
+  // Only the protected set: the governed file and its roots (the third try's finding, SEAM.md §242).
+  // `.surety/project.json` and `.surety/policy.json` are the engine's own files of path one's project,
+  // never the checks: carried, they put path one's id and policy into path two's history.
+  const GOVERNED = '.surety/checks/protected-policy.json';
+  const governed = JSON.parse(blobBytes(one.repo, v.authorized_revision, GOVERNED).toString('utf8'));
+  const roots = Array.isArray(governed.protected_paths) && governed.protected_paths.length > 0 ? governed.protected_paths : ['.surety/checks/'];
   const entries = {};
-  const listing = gitQuiet(one.repo, ['ls-tree', '-r', '-z', v.authorized_revision, '--', '.surety/']).split('\0').filter(Boolean);
+  const listing = gitQuiet(one.repo, ['ls-tree', '-r', '-z', v.authorized_revision, '--', GOVERNED, ...roots]).split('\0').filter(Boolean);
   for (const line of listing) {
     const [meta, path] = line.split('\t');
     const [mode, type] = meta.split(' ');
@@ -191,6 +197,30 @@ function protectedFilesOf(home, one) {
   }
   if (!entries['.surety/checks/protected-policy.json']) throw new Error("M239 path two refused: path one's version holds no governed file. Nothing was started.");
   return { version: v.id, revision: v.authorized_revision, entries };
+}
+
+// The commits a Reviewer of the project's first candidate is shown (the
+// engine's rule, src/store/reads.ts: from the parent of the project's first
+// recorded revision to the candidate), each with its author, its run and
+// project trailers and the paths it changes (the third try, SEAM.md §242).
+function reviewRangeOf(home, project, repo, revision) {
+  const first = withStore(home, (db) => db.prepare('SELECT "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "recorded_at", "created_at", "id" LIMIT 1').get(project));
+  if (!first?.parent_sha) return { base: null, commits: [] };
+  const shas = gitQuiet(repo, ['rev-list', '--reverse', `${first.parent_sha}..${revision}`]).split('\n').filter(Boolean);
+  const commits = shas.map((sha) => {
+    const trailers = trailersOf(repo, sha);
+    return {
+      sha,
+      author: gitQuiet(repo, ['show', '-s', '--format=%an <%ae>', sha]),
+      run: trailers['Surety-Run']?.[0] ?? null,
+      role: trailers['Surety-Role']?.[0] ?? null,
+      setup: trailers['Surety-Project']?.[0] ?? null,
+      files: gitQuiet(repo, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', sha]).split('\0').filter(Boolean),
+    };
+  });
+  // What the harness left at the base under `.surety/`: the carried protected set only.
+  const atBase = gitQuiet(repo, ['ls-tree', '-r', '-z', '--name-only', first.parent_sha, '--', '.surety/']).split('\0').filter(Boolean);
+  return { base: first.parent_sha, base_surety: atBase, commits };
 }
 
 // Pause the project before the engine stops, whatever happened (S1).
@@ -444,6 +474,7 @@ export async function checksPathTwo(ctx) {
       if (build.outcome !== 'completed') notEstablished(path, `the stage's Builder run ended ${build.outcome}/${build.reason_class}`, build.reason_text);
       const first = await nthCandidate(fx, project, before + 1);
       const firstSettled = await waitSettled(fx, project, first.id, `the checks of ${first.id}`);
+      const reviewRange = reviewRangeOf(fx.home, project, repo.path, first.revision);
 
       // The Verifier on the stage's candidate.
       const verification = await tickWhile(fx, project, () => workItemsOf(fx.home, project).find((w) => w.kind === 'verification' && w.subject?.candidate === first.id), { timeoutMs: 180_000, everyMs: 5_000, what: `verification work for ${first.id}` });
@@ -480,6 +511,7 @@ export async function checksPathTwo(ctx) {
         qualification,
         stage: stage.id,
         candidates: [first.id, fixCandidate.id],
+        review_range: reviewRange,
         first_executions: firstSettled.map((x) => executionFacts(fx.home, x)),
         fix_executions: fixSettled.map((x) => executionFacts(fx.home, x)),
         all_executions: [first.id, fixCandidate.id].flatMap((c) => executionsOf(fx.home, c).map((x) => executionFacts(fx.home, x))),
