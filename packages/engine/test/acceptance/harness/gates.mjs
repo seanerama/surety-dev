@@ -11,6 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { waitFor } from './engine.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './gitruns.mjs';
@@ -347,20 +348,90 @@ export const stageGate = (fx, ctx, candidate = ctx.candidate, stage = ctx.stage)
 // Record a prospective authorization: candidate, environment, artifact,
 // configuration and exact targets (build spec §6 correction 4). The same
 // binding sent again answers with the same row.
+//
+// M4 slice 23, J3 (D4 §4.1, Appendix C.2; SEAM.md §§246, 253): the
+// production route no longer takes a caller's digest, identity or targets
+// (`POST …/candidates/:c/authorizations` is gone; M303 (a) pins it), so a
+// caller-supplied binding is a harness fixture, through `src/testing/`,
+// with the answers SEAM §75 gave the old route.
 export async function proposeAuthorization(engine, project, candidate, binding) {
-  const res = await engine.post(`/v1/projects/${project}/candidates/${candidate}/authorizations`, binding);
-  assert.ok([200, 201].includes(res.status), `propose an authorization (→ ${res.status} ${res.text})`);
+  const res = await engine.post('/v1/harness/fixtures/authorization', { project, candidate, ...binding });
+  assert.ok([200, 201].includes(res.status), `propose an authorization through the fixture of SEAM.md §246 (→ ${res.status} ${res.text})`);
   assert.ok(hasIdForm(res.body?.authorization?.id, 'dauth_'), `the response carries the authorization (body: ${res.text})`);
   return res.body.authorization;
 }
 
 export const ARTIFACT = `sha256:${'a'.repeat(64)}`;
 
+// ---- J4: what an Alpha authorization now needs (M4 slice 23; SEAM.md §§248, 249, 253) ------
+//
+// `alpha_authorize` is satisfied only when the completion's obligations can
+// be met (D4 §4.1, J4): a current adapter qualification for the
+// environment's adapter, an identity method in its current configuration,
+// and a required `post_deploy_behavior` check in the `alpha_complete` scope.
+// The shared fixture supplies the three as labelled facts and configuration
+// the owner writes, and the gate rule is the engine's, unchanged for them:
+// - the environment is configured through the owner's production route
+//   (`PUT …/environments/:e/config`), adapter `local_service`, identity
+//   method `tree_digest`, one target per name the row gives;
+// - the adapter is qualified by the harness fixture, labelled `test_fixture`;
+// - a required `post_deploy_behavior` check of gate kind `alpha_complete`
+//   only is declared beside the row's checks. It is in no `stage` or
+//   `alpha_authorize` scope, so the check states and required sets the rows
+//   read are what they were.
+// `obligations: false` leaves all three out: M1's setup, which M303 (d)
+// pins as refused.
+
+const RUNTIME_PATH = process.execPath;
+const RUNTIME_SHA256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex');
+export const OBLIGATION_CHECK = 'deploy-behaves';
+
+const environmentNames = (home, project) => rows(home, 'SELECT "name" FROM "environments" WHERE "project" = ?', project).map((r) => r.name);
+
+// An environment configured by the owner. Returns its id.
+export async function configuredEnvironment(fx, ctx, { name, targets = ['alpha-1'] } = {}) {
+  const project = ctx.project.id;
+  const taken = environmentNames(fx.home, project);
+  let chosen = name;
+  for (let n = taken.length + 1; chosen === undefined || (name === undefined && taken.includes(chosen)); n++) chosen = `alpha-${n}`;
+  const content = {
+    adapter: 'local_service',
+    adapter_version: '1',
+    targets,
+    runtime: { path: RUNTIME_PATH, sha256: RUNTIME_SHA256 },
+    start: [RUNTIME_PATH, 'server.js'],
+    port: 8080,
+    env: {},
+    secrets: {},
+    check_secrets: [],
+    egress: [],
+    artifact: { exclude: [] },
+    identity_method: 'tree_digest',
+  };
+  const res = await fx.engine.request('PUT', `/v1/projects/${project}/environments/${chosen}/config`, { body: content });
+  assert.ok([200, 201].includes(res.status), `the owner configures environment ${chosen} (SEAM.md §245) (→ ${res.status} ${res.text})`);
+  return res.body.environment.id;
+}
+
+// The labelled qualification facts and the required post-deploy obligation.
+export async function deployObligations(fx, project) {
+  const q = await fx.engine.post('/v1/harness/fixtures/adapter-qualification', { adapter: 'local_service', adapter_version: '1' });
+  assert.equal(q.status, 201, `the adapter qualification fixture (SEAM.md §248) (body: ${q.text})`);
+  const has = versionChecks(fx.home, project).some((c) => c.kind === 'post_deploy_behavior' && c.required === 1 && JSON.parse(c.gate_kinds).includes('alpha_complete'));
+  if (!has) await installChecks(fx.engine, project, [check(OBLIGATION_CHECK, { kind: 'post_deploy_behavior', gates: ['alpha_complete'], requires: ['environment', 'artifact_digest'] })], { inventory: false });
+}
+
+// The identity of an environment's current configuration, or the M1
+// fixture's stand-in for an environment the harness made with none.
+const currentIdentity = (home, environment) =>
+  rows(home, 'SELECT c."config_identity" AS "id" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."id" = ?', environment)[0]?.id ?? 'config-1';
+
 // A test target and a proposed authorization of the candidate for it.
 // Returns {environment, binding, authorization, evaluate()}.
-export async function alphaTarget(fx, ctx, candidate = ctx.candidate, { environment, targets = ['alpha-1'], artifact = ARTIFACT } = {}) {
-  const env = environment ?? (await addEnvironment(fx.engine, ctx.project.id, { targets }));
-  const binding = { environment: env, artifact_digest: artifact, config_identity: 'config-1', target_set: targets };
+export async function alphaTarget(fx, ctx, candidate = ctx.candidate, { environment, targets = ['alpha-1'], artifact = ARTIFACT, obligations = true } = {}) {
+  const env = environment ?? (obligations ? await configuredEnvironment(fx, ctx, { targets: [targets[0]] }) : await addEnvironment(fx.engine, ctx.project.id, { targets }));
+  if (obligations) await deployObligations(fx, ctx.project.id);
+  const binding = { environment: env, artifact_digest: artifact, config_identity: currentIdentity(fx.home, env), target_set: targets };
   const authorization = await proposeAuthorization(fx.engine, ctx.project.id, candidate.id, binding);
   return { environment: env, binding, authorization, evaluate: () => evaluate(fx.engine, ctx.project.id, candidate.id, 'alpha_authorize', { authorization: authorization.id }) };
 }
