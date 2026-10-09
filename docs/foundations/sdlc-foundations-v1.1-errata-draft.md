@@ -1933,3 +1933,13 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 
 1. **Where the Spec Writer stands.** The Spec Writer (F §4.1), with the Vision assistant and the Architect, is the front of the pipeline, and none of it is built: M1 to M3 start from an approved baseline entered as a fixture (`migrations/0005`; M1 build spec §3), D1 §19.3 left sessions out of M1, and E10 makes the conversational roles engine sessions. The specification change workflow (F §3.8: change request, the Spec Writer's proposed diff, impact analysis, the human's approval) and the retrofit adoption path's baselines (E6: Spec Writer and Architect in retrofit mode) are unbuilt with it. Until it is, the owner writes a project's spec from `docs/spec/templates/project-spec-template.md`.
 2. **Decided:** the design of the interactive roles (Vision, Spec Writer and Architect as engine-metered sessions under E10, the spec change workflow, and the adoption baselines) is written **after M4** is accepted. Its order relative to D5 (Beta and Live) is decided then. M4's scope is unchanged (E95, E110 to E118).
+
+---
+
+## E120. D4 draft 2 approved to build (decided by Sean, 2026-10-09)
+
+**Status: decided by Sean.**
+
+1. **Approved.** D4 draft 2 (`docs/design/sdlc-design-D4-deployment.md`, merged `3b55782`), which applies E95 and E110 to E118, is approved to build. Its status line says so. No draft 3 (E20).
+2. **The draft's "For Sean, not applied" items go to the M4 build spec**, not back into D4: the four decisions (a re-verification's bound after the orchestration deadline; whether a service with supervision `unknown` may read `healthy`; a kill between the launch grant and the init's `started` report; stable arguments in the service's requirements) each as a row with the driver's recommended default for Sean to confirm; the three missing cases (Astra's Switchboard-style reference service whose identity and health pass while a specified user operation fails; `identity_observation_every`; refusal of unsupported configurations) as acceptance rows; `adapter_read_deadline`'s suitability with the five numeric settings of E115 and E117 (`deploy_orchestration_deadline`, `artifact_max_entries`, `artifact_max_bytes`, `artifacts_max_bytes`, `artifact_prepare_deadline`).
+3. **Next:** the M4 build spec and acceptance plan by one architect agent, for Sean's adoption; M4's build spec opens with D4 §9.6's probe confirmation (E95).
