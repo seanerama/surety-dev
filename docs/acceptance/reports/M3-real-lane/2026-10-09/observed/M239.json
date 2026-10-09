@@ -1,0 +1,1862 @@
+{
+  "row": "M239",
+  "written_by": "the real-lane test, never edited by hand",
+  "path_one_domain_samples": [
+    {
+      "at": "2026-10-08T23:34:30.960Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:31.962Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:32.965Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:33.966Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:34.967Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:35.968Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:36.969Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:37.970Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:38.971Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:39.973Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-08T23:34:40.975Z",
+      "domain": "dom_01M4EXWJG7A76CZMT36D6S8ZV9",
+      "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+      "members": [
+        {
+          "pid": 2164218,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 2164225,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 2164249,
+          "argv": [
+            "/home/smahoney/surety-m3-real-20261009/home/backends/claude-2.1.294-27122ca7b624f537",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    }
+  ],
+  "updated_at": "2026-10-09T11:56:27.771Z",
+  "path_one": {
+    "project": "proj_01M4ET7XGKAATZCQBZQ5C4WYD1",
+    "repo": "/home/smahoney/surety-m3-real-20261009/repos/real-check-journey-2",
+    "base": "a370bbe0290cca86901921d6f4e796c4ad394971",
+    "journey_base": "f733affa7115530d79a58d2e5996daac95f36f3d",
+    "qualification": {
+      "id": "hq_01M4ET756HHQWGV4XFN8DN22FV",
+      "profile_fingerprint": "55d491c783c01e839cd1fea992500ca16abfa45086446475fbf99a7c24c81a9d",
+      "cases": [
+        [
+          "exit_zero",
+          "passed"
+        ],
+        [
+          "exit_nonzero",
+          "passed"
+        ],
+        [
+          "prints_passed_exits_nonzero",
+          "passed"
+        ],
+        [
+          "foreign_signal",
+          "passed"
+        ],
+        [
+          "deadline",
+          "passed"
+        ],
+        [
+          "term_handled_after_cancel",
+          "passed"
+        ],
+        [
+          "missing_program",
+          "passed"
+        ],
+        [
+          "input_immutable",
+          "passed"
+        ],
+        [
+          "orphan_stdout_closed",
+          "passed"
+        ],
+        [
+          "egress",
+          "passed"
+        ]
+      ]
+    },
+    "initial_version": {
+      "id": "pv_01M4ET7XHM0GM1S2GEQXB9322N",
+      "checks": [],
+      "discovery_errors": []
+    },
+    "correction": {
+      "work_item": "wi_01M4ET7XW4W8RXM8YG4NQ973AH",
+      "run": {
+        "id": "run_01M4ET7YCW4TWVETDFR1515SCX",
+        "role": "verifier",
+        "work_item": "wi_01M4ET7XW4W8RXM8YG4NQ973AH",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4ET969BKNYRB3J32Y7T4VX5",
+            "created_at": "2026-10-08T22:31:28.809Z",
+            "project": "proj_01M4ET7XGKAATZCQBZQ5C4WYD1",
+            "invocation": "inv_01M4ET7YCXG0XXZW1BK6XC50ZP",
+            "run": "run_01M4ET7YCW4TWVETDFR1515SCX",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":14,\"cache_creation_input_tokens\":13166,\"cache_read_input_tokens\":80778,\"output_tokens\":4626,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.11510759999999999}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 13180,
+            "cached_in": 80778,
+            "out": 4626,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.11510759999999999,
+            "day_utc": "2026-10-08",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      }
+    },
+    "proposal": {
+      "id": "prop_01M4ET96895S1MCMYNP1MT30CC",
+      "class": "tightening",
+      "elements": [
+        {
+          "reason": "check_added",
+          "check": "r1-1"
+        },
+        {
+          "reason": "check_added",
+          "check": "r2-1"
+        },
+        {
+          "reason": "check_added",
+          "check": "r3-1"
+        },
+        {
+          "reason": "check_added",
+          "check": "smoke"
+        }
+      ],
+      "classifier_version": 1,
+      "discovery_errors": [],
+      "decision": "dec_01M4ET985X6J0SRTB1QA4JF2JS",
+      "decision_kind": "check_correction_tightening",
+      "answer": "approve",
+      "status": "applied",
+      "resulting_version": "pv_01M4EXWFXEYNWAJZQEKV4VQ25C"
+    },
+    "version": {
+      "id": "pv_01M4EXWFXEYNWAJZQEKV4VQ25C",
+      "change_kind": "tightening",
+      "discovery_errors": [],
+      "checks": [
+        {
+          "key": "r1-1",
+          "required": true,
+          "kind": "acceptance",
+          "origin": "acceptance",
+          "criteria": [
+            "R1.1"
+          ],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/r1-1.mjs"
+          ]
+        },
+        {
+          "key": "r2-1",
+          "required": true,
+          "kind": "acceptance",
+          "origin": "acceptance",
+          "criteria": [
+            "R2.1"
+          ],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/r2-1.mjs"
+          ]
+        },
+        {
+          "key": "r3-1",
+          "required": true,
+          "kind": "acceptance",
+          "origin": "acceptance",
+          "criteria": [
+            "R3.1"
+          ],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/r3-1.mjs"
+          ]
+        },
+        {
+          "key": "smoke",
+          "required": true,
+          "kind": "smoke",
+          "origin": "acceptance",
+          "criteria": [],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/smoke.mjs"
+          ]
+        }
+      ]
+    },
+    "stage": "stage_01M4ET7XVV2XM5ZVSK3Y6GETSF",
+    "rounds": [
+      {
+        "build": {
+          "id": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+          "role": "builder",
+          "work_item": "wi_01M4ET7XVV2XM5ZVSK3Y6GETSG",
+          "state": "ended",
+          "outcome": "completed",
+          "reason_class": "none",
+          "reason_text": null,
+          "ledger": [
+            {
+              "id": "led_01M4EXWYZFR0YX62DANSNVTZEF",
+              "created_at": "2026-10-08T23:34:42.413Z",
+              "project": "proj_01M4ET7XGKAATZCQBZQ5C4WYD1",
+              "invocation": "inv_01M4EXWJG63AQXVRVF9C0QF7EA",
+              "run": "run_01M4EXWJG63AQXVRVF9C0QF7E4",
+              "turn": null,
+              "role": "builder",
+              "provider": "claude",
+              "model_requested": "claude-sonnet-5-5",
+              "model_observed": "claude-sonnet-5-5",
+              "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":5254,\"cache_read_input_tokens\":44917,\"output_tokens\":894,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0389634}",
+              "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+              "billable_in": 5266,
+              "cached_in": 44917,
+              "out": 894,
+              "usage_complete": 1,
+              "cost_status": "estimated",
+              "cost_usd": 0.0389634,
+              "day_utc": "2026-10-08",
+              "corrects": null,
+              "correction_seq": null,
+              "unknown_allowance_tokens": null
+            }
+          ]
+        },
+        "candidate": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+        "executions": [
+          {
+            "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+            "key": "r1-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+              "generation": 1
+            },
+            "execution_seq": 1,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4EXX6D45H3XQDSPEQB67EPP",
+              "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+              "runner_qualification": "hq_01M4ET756HHQWGV4XFN8DN22FV",
+              "output": "rec_01M4EXX6CV97Z6Y4P7K2PNNE5V"
+            },
+            "domain": {
+              "id": "dom_01M4EXX5VF2QS3D386GV44102Z",
+              "profile": "check",
+              "check_execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4ET72TDGCB9KV96PRMP2NWJ.scope/dom_01M4EXX5VF2QS3D386GV44102Z"
+            }
+          },
+          {
+            "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+            "key": "smoke",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+              "generation": 1
+            },
+            "execution_seq": 2,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4EXX7361NDXBE0BF6CR0S61",
+              "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+              "runner_qualification": "hq_01M4ET756HHQWGV4XFN8DN22FV",
+              "output": "rec_01M4EXX72ZHNHTGBFY61BQJT4R"
+            },
+            "domain": {
+              "id": "dom_01M4EXX6KRKXSWQDSAB2XEZGZ6",
+              "profile": "check",
+              "check_execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4ET72TDGCB9KV96PRMP2NWJ.scope/dom_01M4EXX6KRKXSWQDSAB2XEZGZ6"
+            }
+          }
+        ],
+        "all_executions": [
+          {
+            "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+            "key": "r1-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+              "generation": 1
+            },
+            "execution_seq": 1,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4EXX6D45H3XQDSPEQB67EPP",
+              "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+              "runner_qualification": "hq_01M4ET756HHQWGV4XFN8DN22FV",
+              "output": "rec_01M4EXX6CV97Z6Y4P7K2PNNE5V"
+            },
+            "domain": {
+              "id": "dom_01M4EXX5VF2QS3D386GV44102Z",
+              "profile": "check",
+              "check_execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4ET72TDGCB9KV96PRMP2NWJ.scope/dom_01M4EXX5VF2QS3D386GV44102Z"
+            }
+          },
+          {
+            "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+            "key": "smoke",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+              "generation": 1
+            },
+            "execution_seq": 2,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4EXX7361NDXBE0BF6CR0S61",
+              "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+              "runner_qualification": "hq_01M4ET756HHQWGV4XFN8DN22FV",
+              "output": "rec_01M4EXX72ZHNHTGBFY61BQJT4R"
+            },
+            "domain": {
+              "id": "dom_01M4EXX6KRKXSWQDSAB2XEZGZ6",
+              "profile": "check",
+              "check_execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4ET72TDGCB9KV96PRMP2NWJ.scope/dom_01M4EXX6KRKXSWQDSAB2XEZGZ6"
+            }
+          }
+        ],
+        "stage_gate": {
+          "id": "gate_01M4EXXA9TWJBC853QX235S4GF",
+          "outcome": "satisfied",
+          "reasons": [],
+          "check_states": {
+            "chk_01M4EXWFXEYNWAJZQEKV4VQ25D": "passed",
+            "chk_01M4EXWFXGGRGSNAC0QWYS4FEM": "passed"
+          },
+          "checks": {
+            "chk_01M4EXWFXEYNWAJZQEKV4VQ25D": {
+              "key": "r1-1",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+                "result": "cr_01M4EXX6D45H3XQDSPEQB67EPP",
+                "execution_seq": 1
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4ET7XGKAATZCQBZQ5C4WYD1/candidates/cand_01M4EXWYX4GB7Q63VNHT62HRE5/checks"
+              }
+            },
+            "chk_01M4EXWFXGGRGSNAC0QWYS4FEM": {
+              "key": "smoke",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+                "result": "cr_01M4EXX7361NDXBE0BF6CR0S61",
+                "execution_seq": 2
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4ET7XGKAATZCQBZQ5C4WYD1/candidates/cand_01M4EXWYX4GB7Q63VNHT62HRE5/checks"
+              }
+            }
+          },
+          "missing_verifications": []
+        },
+        "alpha_gate": {
+          "id": "gate_01M4EXXAATKTPCYGWRSG8MAB2J",
+          "outcome": "satisfied",
+          "reasons": [],
+          "check_states": {
+            "chk_01M4EXWFXEYNWAJZQEKV4VQ25D": "passed",
+            "chk_01M4EXWFXGGRGSNAC0QWYS4FEM": "passed"
+          },
+          "checks": {
+            "chk_01M4EXWFXEYNWAJZQEKV4VQ25D": {
+              "key": "r1-1",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4EXWYX7823G9QDN9MQF0JDH",
+                "result": "cr_01M4EXX6D45H3XQDSPEQB67EPP",
+                "execution_seq": 1
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4ET7XGKAATZCQBZQ5C4WYD1/candidates/cand_01M4EXWYX4GB7Q63VNHT62HRE5/checks"
+              }
+            },
+            "chk_01M4EXWFXGGRGSNAC0QWYS4FEM": {
+              "key": "smoke",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4EXWYX8RVM3112EH82XQSJN",
+                "result": "cr_01M4EXX7361NDXBE0BF6CR0S61",
+                "execution_seq": 2
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4ET7XGKAATZCQBZQ5C4WYD1/candidates/cand_01M4EXWYX4GB7Q63VNHT62HRE5/checks"
+              }
+            }
+          },
+          "missing_verifications": []
+        },
+        "authorization": "dauth_01M4EXXAA8YR08YDT2Q6HEC5PC"
+      }
+    ],
+    "candidate": "cand_01M4EXWYX4GB7Q63VNHT62HRE5",
+    "stage_gate": "satisfied",
+    "alpha_gate": "satisfied",
+    "authorization": "dauth_01M4EXXAA8YR08YDT2Q6HEC5PC",
+    "stage_status": "complete"
+  },
+  "key_search": {
+    "roots": [
+      "/home/smahoney/surety-m3-real-20261009"
+    ],
+    "repos": [
+      "/home/smahoney/surety-m3-real-20261009/repos/real-check-journey-2",
+      "/home/smahoney/surety-m3-real-20261009/repos/real-check-journey-two-2",
+      "/home/smahoney/surety-m3-real-20261009/home/qualification/fixture"
+    ],
+    "hits": 0
+  },
+  "path_two": {
+    "project": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+    "repo": "/home/smahoney/surety-m3-real-20261009/repos/real-check-journey-two-2",
+    "carried": {
+      "from_project": "proj_01M4ET7XGKAATZCQBZQ5C4WYD1",
+      "version": "pv_01M4EXWFXEYNWAJZQEKV4VQ25C",
+      "revision": "ab5969e2a38bc6e40f92473c1b8e8ecf0bd77814",
+      "files": [
+        ".surety/checks/defs/r1-1.json",
+        ".surety/checks/defs/r2-1.json",
+        ".surety/checks/defs/r3-1.json",
+        ".surety/checks/defs/smoke.json",
+        ".surety/checks/protected-policy.json",
+        ".surety/checks/run/lib.mjs",
+        ".surety/checks/run/r1-1.mjs",
+        ".surety/checks/run/r2-1.mjs",
+        ".surety/checks/run/r3-1.mjs",
+        ".surety/checks/run/smoke.mjs"
+      ],
+      "initial_version": {
+        "id": "pv_01M4G884HMK9G7ZBHJWK5W89MR",
+        "change_kind": "initial",
+        "checks": [
+          "r1-1",
+          "r2-1",
+          "r3-1",
+          "smoke"
+        ]
+      }
+    },
+    "qualification": {
+      "id": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+      "profile_fingerprint": "55d491c783c01e839cd1fea992500ca16abfa45086446475fbf99a7c24c81a9d",
+      "cases": [
+        [
+          "exit_zero",
+          "passed"
+        ],
+        [
+          "exit_nonzero",
+          "passed"
+        ],
+        [
+          "prints_passed_exits_nonzero",
+          "passed"
+        ],
+        [
+          "foreign_signal",
+          "passed"
+        ],
+        [
+          "deadline",
+          "passed"
+        ],
+        [
+          "term_handled_after_cancel",
+          "passed"
+        ],
+        [
+          "missing_program",
+          "passed"
+        ],
+        [
+          "input_immutable",
+          "passed"
+        ],
+        [
+          "orphan_stdout_closed",
+          "passed"
+        ],
+        [
+          "egress",
+          "passed"
+        ]
+      ]
+    },
+    "stage": "stage_01M4G884VH4THRZ07CXTCFD6Y2",
+    "candidates": [
+      "cand_01M4G88MB6MHNNP578JENC1H6M",
+      "cand_01M4G8AVTZ34574WJS8K7NBKM0"
+    ],
+    "review_range": {
+      "base": "d64de7dba901353fd1d9e550081f84fa8c926299",
+      "base_surety": [
+        ".surety/checks/defs/r1-1.json",
+        ".surety/checks/defs/r2-1.json",
+        ".surety/checks/defs/r3-1.json",
+        ".surety/checks/defs/smoke.json",
+        ".surety/checks/protected-policy.json",
+        ".surety/checks/run/lib.mjs",
+        ".surety/checks/run/r1-1.mjs",
+        ".surety/checks/run/r2-1.mjs",
+        ".surety/checks/run/r3-1.mjs",
+        ".surety/checks/run/smoke.mjs"
+      ],
+      "commits": [
+        {
+          "sha": "19c4060ff46610e0fca2698828031ccc68ac9914",
+          "author": "Surety Engine <engine@surety.invalid>",
+          "run": null,
+          "role": null,
+          "setup": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+          "files": [
+            ".surety/project.json"
+          ]
+        },
+        {
+          "sha": "ef933db9d22ce90107f3e40a11821860da90710c",
+          "author": "Surety Engine <engine@surety.invalid>",
+          "run": null,
+          "role": null,
+          "setup": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+          "files": [
+            ".surety/policy.json"
+          ]
+        },
+        {
+          "sha": "fe2b2b6e9a65dec94099e1a9b3dea89a67882490",
+          "author": "Surety Engine <engine@surety.invalid>",
+          "run": "run_01M4G885FTHVJY95E8GD6NXFQE",
+          "role": "builder",
+          "setup": null,
+          "files": [
+            "src/logout.mjs"
+          ]
+        }
+      ]
+    },
+    "first_executions": [
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+        "key": "r2-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 1,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88QJJR30YTX6WD53Y51A8",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+          "execution_established": 1,
+          "exit_status": 1,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88QJB94TH05R8X2KDRSZX"
+        },
+        "domain": {
+          "id": "dom_01M4G88PZPSRWQ5WS20Q6MXGRF",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88PZPSRWQ5WS20Q6MXGRF"
+        }
+      },
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+        "key": "r3-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 2,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88RG8314KJAG45GE3RNNG",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88RG07JT6ZH4334T0FE8J"
+        },
+        "domain": {
+          "id": "dom_01M4G88R182S9T6PXK7NPT1549",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88R182S9T6PXK7NPT1549"
+        }
+      },
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+        "key": "smoke",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 3,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88SE34CBNR1AMVAF31H5R",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88SDW0ZBX87C8N0CTHWYA"
+        },
+        "domain": {
+          "id": "dom_01M4G88RY5MWP35QQ0DH41QVP4",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88RY5MWP35QQ0DH41QVP4"
+        }
+      }
+    ],
+    "fix_executions": [
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+        "key": "r2-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 4,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B18HYS8D9P037YEHXPA1"
+        },
+        "domain": {
+          "id": "dom_01M4G8B0RBW0T5SV4GZJ55652Q",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B0RBW0T5SV4GZJ55652Q"
+        }
+      },
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+        "key": "r3-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 5,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B27B9QAQ09JDWPPT3ZCJ",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B274RWYDQAF5T0RCN3KZ"
+        },
+        "domain": {
+          "id": "dom_01M4G8B1RG7XHHRS0GKF6A3J93",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B1RG7XHHRS0GKF6A3J93"
+        }
+      },
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+        "key": "smoke",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 6,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B36S7VTBARCW4655CFWH",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B36JQP1VS5F2A26RKX3B"
+        },
+        "domain": {
+          "id": "dom_01M4G8B2QBQ9BZRH89AEP0734F",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B2QBQ9BZRH89AEP0734F"
+        }
+      }
+    ],
+    "all_executions": [
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+        "key": "r2-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 1,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88QJJR30YTX6WD53Y51A8",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+          "execution_established": 1,
+          "exit_status": 1,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88QJB94TH05R8X2KDRSZX"
+        },
+        "domain": {
+          "id": "dom_01M4G88PZPSRWQ5WS20Q6MXGRF",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88PZPSRWQ5WS20Q6MXGRF"
+        }
+      },
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+        "key": "r3-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 2,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88RG8314KJAG45GE3RNNG",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88RG07JT6ZH4334T0FE8J"
+        },
+        "domain": {
+          "id": "dom_01M4G88R182S9T6PXK7NPT1549",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88R182S9T6PXK7NPT1549"
+        }
+      },
+      {
+        "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+        "key": "smoke",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G88MB6MHNNP578JENC1H6M",
+          "generation": 1
+        },
+        "execution_seq": 3,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G88SE34CBNR1AMVAF31H5R",
+          "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G88SDW0ZBX87C8N0CTHWYA"
+        },
+        "domain": {
+          "id": "dom_01M4G88RY5MWP35QQ0DH41QVP4",
+          "profile": "check",
+          "check_execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G88RY5MWP35QQ0DH41QVP4"
+        }
+      },
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+        "key": "r2-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 4,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B18HYS8D9P037YEHXPA1"
+        },
+        "domain": {
+          "id": "dom_01M4G8B0RBW0T5SV4GZJ55652Q",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B0RBW0T5SV4GZJ55652Q"
+        }
+      },
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+        "key": "r3-1",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 5,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B27B9QAQ09JDWPPT3ZCJ",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B274RWYDQAF5T0RCN3KZ"
+        },
+        "domain": {
+          "id": "dom_01M4G8B1RG7XHHRS0GKF6A3J93",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B1RG7XHHRS0GKF6A3J93"
+        }
+      },
+      {
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+        "key": "smoke",
+        "status": "recorded",
+        "trigger": {
+          "source": "nomination",
+          "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+          "generation": 1
+        },
+        "execution_seq": 6,
+        "not_run_reason": null,
+        "result": {
+          "id": "cr_01M4G8B36S7VTBARCW4655CFWH",
+          "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+          "execution_established": 1,
+          "exit_status": 0,
+          "signaled": 0,
+          "deadline_hit": 0,
+          "orphans": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+          "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+          "output": "rec_01M4G8B36JQP1VS5F2A26RKX3B"
+        },
+        "domain": {
+          "id": "dom_01M4G8B2QBQ9BZRH89AEP0734F",
+          "profile": "check",
+          "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+          "status": "terminated",
+          "launch_state": "closed",
+          "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B2QBQ9BZRH89AEP0734F"
+        }
+      }
+    ],
+    "finding": {
+      "id": "fnd_01M4G89DG733E7VGDVM7XTG3N1",
+      "criterion": "R2.1",
+      "check": "r2-1",
+      "message": "src/session.mjs isSessionValid compares age against SESSION_LIFETIME * 1000 * 1000. SESSION_LIFETIME is already in seconds (30*60), so the window is 1,800,000,000 ms (about 500 hours) rather than 1,800,000 ms (30 minutes). Sessions stay valid about 1000 times too long. Fix: use SESSION_LIFETIME * 1000, so that age < 1800000 ms is valid and age >= 1800000 ms is not.",
+      "disposition": "fix",
+      "disposition_seq": 3
+    },
+    "named_check": {
+      "key": "r2-1",
+      "required": true,
+      "kind": "acceptance",
+      "origin": "acceptance",
+      "criteria": [
+        "R2.1"
+      ],
+      "gate_kinds": [
+        "stage",
+        "alpha_authorize"
+      ],
+      "command": [
+        "node",
+        ".surety/checks/run/r2-1.mjs"
+      ]
+    },
+    "blocked_on_first": {
+      "stage": {
+        "id": "gate_01M4G89PZW9S5FAPYS7Q7C8HK4",
+        "outcome": "not_satisfied",
+        "reasons": [
+          {
+            "code": "CHECK_NOT_PASSED",
+            "subjects": [
+              "chk_01M4G884HQS2H7CJVV2HG7TV1F"
+            ]
+          },
+          {
+            "code": "FINDING_BLOCKING",
+            "subjects": [
+              "fnd_01M4G89DG733E7VGDVM7XTG3N1"
+            ]
+          }
+        ],
+        "check_states": {
+          "chk_01M4G884HQS2H7CJVV2HG7TV1F": "failed",
+          "chk_01M4G884HQS2H7CJVV2HG7TV1G": "passed",
+          "chk_01M4G884HQS2H7CJVV2HG7TV1H": "passed"
+        },
+        "checks": {
+          "chk_01M4G884HQS2H7CJVV2HG7TV1F": {
+            "key": "r2-1",
+            "state": "failed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+              "result": "cr_01M4G88QJJR30YTX6WD53Y51A8",
+              "execution_seq": 1
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          },
+          "chk_01M4G884HQS2H7CJVV2HG7TV1G": {
+            "key": "r3-1",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+              "result": "cr_01M4G88RG8314KJAG45GE3RNNG",
+              "execution_seq": 2
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          },
+          "chk_01M4G884HQS2H7CJVV2HG7TV1H": {
+            "key": "smoke",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+              "result": "cr_01M4G88SE34CBNR1AMVAF31H5R",
+              "execution_seq": 3
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          }
+        },
+        "missing_verifications": []
+      },
+      "alpha": {
+        "id": "gate_01M4G89Q16Y690CYG4QAVYF1VB",
+        "outcome": "not_satisfied",
+        "reasons": [
+          {
+            "code": "CHECK_NOT_PASSED",
+            "subjects": [
+              "chk_01M4G884HQS2H7CJVV2HG7TV1F"
+            ]
+          },
+          {
+            "code": "FINDING_BLOCKING",
+            "subjects": [
+              "fnd_01M4G89DG733E7VGDVM7XTG3N1"
+            ]
+          }
+        ],
+        "check_states": {
+          "chk_01M4G884HQS2H7CJVV2HG7TV1F": "failed",
+          "chk_01M4G884HQS2H7CJVV2HG7TV1G": "passed",
+          "chk_01M4G884HQS2H7CJVV2HG7TV1H": "passed"
+        },
+        "checks": {
+          "chk_01M4G884HQS2H7CJVV2HG7TV1F": {
+            "key": "r2-1",
+            "state": "failed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJS",
+              "result": "cr_01M4G88QJJR30YTX6WD53Y51A8",
+              "execution_seq": 1
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          },
+          "chk_01M4G884HQS2H7CJVV2HG7TV1G": {
+            "key": "r3-1",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJV",
+              "result": "cr_01M4G88RG8314KJAG45GE3RNNG",
+              "execution_seq": 2
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          },
+          "chk_01M4G884HQS2H7CJVV2HG7TV1H": {
+            "key": "smoke",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4G88MBAKFQE4N14MVN4EAJX",
+              "result": "cr_01M4G88SE34CBNR1AMVAF31H5R",
+              "execution_seq": 3
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G88MB6MHNNP578JENC1H6M/checks"
+            }
+          }
+        },
+        "missing_verifications": []
+      }
+    },
+    "fix": "wi_01M4G8A8JX5SK8MYFW2A5KY3B0",
+    "runs": [
+      {
+        "id": "run_01M4G885FTHVJY95E8GD6NXFQE",
+        "role": "builder",
+        "work_item": "wi_01M4G884VJZD540KR8DVW0NSXA",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4G88MCEJS71R0F6P8QFGC4Z",
+            "created_at": "2026-10-09T11:55:04.973Z",
+            "project": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+            "invocation": "inv_01M4G885FWNP7S4694SVVSYGM3",
+            "run": "run_01M4G885FTHVJY95E8GD6NXFQE",
+            "turn": null,
+            "role": "builder",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":5326,\"cache_read_input_tokens\":35636,\"output_tokens\":1010,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0385512}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 5336,
+            "cached_in": 35636,
+            "out": 1010,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0385512,
+            "day_utc": "2026-10-09",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M4G88WBYWKAAGYH1QBZXWF2A",
+        "role": "verifier",
+        "work_item": "wi_01M4G88MB7T7Z6VYR3R511NCBY",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4G89DK3HP3CZ85RQ9WHS5RE",
+            "created_at": "2026-10-09T11:55:30.781Z",
+            "project": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+            "invocation": "inv_01M4G88WBZ74EKTV4K8XR7GPRR",
+            "run": "run_01M4G88WBYWKAAGYH1QBZXWF2A",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":12,\"cache_creation_input_tokens\":9063,\"cache_read_input_tokens\":53187,\"output_tokens\":1631,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0632234}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 9075,
+            "cached_in": 53187,
+            "out": 1631,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0632234,
+            "day_utc": "2026-10-09",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M4G89RHA1TZ80S4T1RJNHVCC",
+        "role": "reviewer",
+        "work_item": "wi_01M4G89Q1DRG77Q5S79G6BKWE3",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4G8A8N0YDATBMX4FB39KW72",
+            "created_at": "2026-10-09T11:55:58.496Z",
+            "project": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+            "invocation": "inv_01M4G89RHBMHEC5RDA1YN858KC",
+            "run": "run_01M4G89RHA1TZ80S4T1RJNHVCC",
+            "turn": null,
+            "role": "reviewer",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":9100,\"cache_read_input_tokens\":44889,\"output_tokens\":1292,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0583178}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 9110,
+            "cached_in": 44889,
+            "out": 1292,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0583178,
+            "day_utc": "2026-10-09",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      },
+      {
+        "id": "run_01M4G8ADC96YKXH9X8B4BSPN8Z",
+        "role": "builder",
+        "work_item": "wi_01M4G8A8JX5SK8MYFW2A5KY3B0",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4G8AVX3AFRHXPJNP6J6019K",
+            "created_at": "2026-10-09T11:56:18.209Z",
+            "project": "proj_01M4G884GMRSHE31XBC0E2E0B4",
+            "invocation": "inv_01M4G8ADCAVC6FKXA24S968ER4",
+            "run": "run_01M4G8ADC96YKXH9X8B4BSPN8Z",
+            "turn": null,
+            "role": "builder",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":10,\"cache_creation_input_tokens\":4958,\"cache_read_input_tokens\":37932,\"output_tokens\":992,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.0373584}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 4968,
+            "cached_in": 37932,
+            "out": 992,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.0373584,
+            "day_utc": "2026-10-09",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      }
+    ],
+    "stage_gate": {
+      "id": "gate_01M4G8B4ESPGE93V4P7XCHK2J9",
+      "outcome": "satisfied",
+      "reasons": [],
+      "check_states": {
+        "chk_01M4G884HQS2H7CJVV2HG7TV1F": "passed",
+        "chk_01M4G884HQS2H7CJVV2HG7TV1G": "passed",
+        "chk_01M4G884HQS2H7CJVV2HG7TV1H": "passed"
+      },
+      "checks": {
+        "chk_01M4G884HQS2H7CJVV2HG7TV1F": {
+          "key": "r2-1",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+            "result": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7",
+            "execution_seq": 4
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        },
+        "chk_01M4G884HQS2H7CJVV2HG7TV1G": {
+          "key": "r3-1",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+            "result": "cr_01M4G8B27B9QAQ09JDWPPT3ZCJ",
+            "execution_seq": 5
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        },
+        "chk_01M4G884HQS2H7CJVV2HG7TV1H": {
+          "key": "smoke",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+            "result": "cr_01M4G8B36S7VTBARCW4655CFWH",
+            "execution_seq": 6
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        }
+      },
+      "missing_verifications": []
+    },
+    "alpha_gate": {
+      "id": "gate_01M4G8B4FVGHABF51CZXXJH1R1",
+      "outcome": "satisfied",
+      "reasons": [],
+      "check_states": {
+        "chk_01M4G884HQS2H7CJVV2HG7TV1F": "passed",
+        "chk_01M4G884HQS2H7CJVV2HG7TV1G": "passed",
+        "chk_01M4G884HQS2H7CJVV2HG7TV1H": "passed"
+      },
+      "checks": {
+        "chk_01M4G884HQS2H7CJVV2HG7TV1F": {
+          "key": "r2-1",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+            "result": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7",
+            "execution_seq": 4
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        },
+        "chk_01M4G884HQS2H7CJVV2HG7TV1G": {
+          "key": "r3-1",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114M",
+            "result": "cr_01M4G8B27B9QAQ09JDWPPT3ZCJ",
+            "execution_seq": 5
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        },
+        "chk_01M4G884HQS2H7CJVV2HG7TV1H": {
+          "key": "smoke",
+          "state": "passed",
+          "deciding": {
+            "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114P",
+            "result": "cr_01M4G8B36S7VTBARCW4655CFWH",
+            "execution_seq": 6
+          },
+          "not_run_reason": null,
+          "pending": null,
+          "due": null,
+          "history": {
+            "count": 0,
+            "executions": [],
+            "link": "/v1/projects/proj_01M4G884GMRSHE31XBC0E2E0B4/candidates/cand_01M4G8AVTZ34574WJS8K7NBKM0/checks"
+          }
+        }
+      },
+      "missing_verifications": []
+    },
+    "authorization": "dauth_01M4G8B4FAH11AFT5ECQWEHT3Y",
+    "resolved": {
+      "status": "resolved",
+      "resolution_verification": {
+        "evaluation": "gate_01M4G8B4ESPGE93V4P7XCHK2J9",
+        "check_result": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7"
+      }
+    },
+    "resolving": {
+      "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+      "key": "r2-1",
+      "status": "recorded",
+      "trigger": {
+        "source": "nomination",
+        "id": "cand_01M4G8AVTZ34574WJS8K7NBKM0",
+        "generation": 1
+      },
+      "execution_seq": 4,
+      "not_run_reason": null,
+      "result": {
+        "id": "cr_01M4G8B18STY2NV9ZV7B3CD7Y7",
+        "execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+        "execution_established": 1,
+        "exit_status": 0,
+        "signaled": 0,
+        "deadline_hit": 0,
+        "orphans": 0,
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/55d491c783c0",
+        "runner_qualification": "hq_01M4G87G5ETZ7K2M2EZXK0M6NN",
+        "output": "rec_01M4G8B18HYS8D9P037YEHXPA1"
+      },
+      "domain": {
+        "id": "dom_01M4G8B0RBW0T5SV4GZJ55652Q",
+        "profile": "check",
+        "check_execution": "cx_01M4G8AVV1N22ZBWT4SEJ9114J",
+        "status": "terminated",
+        "launch_state": "closed",
+        "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-ab0709bec962e9d8-inc_01M4G87DH5JBY0KHS1DHQMEDX6.scope/dom_01M4G8B0RBW0T5SV4GZJ55652Q"
+      }
+    },
+    "fix_status": "complete",
+    "stage_status": "parked"
+  }
+}
