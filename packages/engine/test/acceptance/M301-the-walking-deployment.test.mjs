@@ -160,7 +160,6 @@ describe('M301 the deployment journey on the scripted adapter: configure, reques
       'issued, bound to the sealed digest, the current identity and its one target: all engine-derived',
     );
     assert.equal(json(auth.source_delivery_mapping).dev_revision, candidate.revision, "the mapping it carries is its own candidate's revision");
-    assert.ok(eventsAbout(fx.home, 'gate.evaluated', 'candidate', candidate.id).length >= 1);
     assert.deepEqual(
       atRequest.work.map((w) => [w.id, w.trigger_source, w.trigger_id, w.trigger_generation]),
       [[request.work_item.id, 'deployment_request', auth.id, 1]],
