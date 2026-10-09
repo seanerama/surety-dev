@@ -1061,6 +1061,11 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
   const f = args.facts;
   const facts: Fact[] = [];
   const fact = (name: string, held: boolean, read: unknown) => facts.push({ fact: name, held, read });
+  // The preconditions are read immediately before the effect (§4.1): while
+  // admission is held, the operation waits, within its deadline, and reads
+  // them when admission is granted.
+  const deadlinePassed = Date.parse(f.now) > Date.parse(op.orchestration_deadline_at ?? op.deadline_at);
+  if (op.kind === 'deploy' && f.admission !== 'granted' && !deadlinePassed) return { verdict: 'wait', facts: [] };
 
   const lease = environmentLease(tx.db, env.id);
   fact('environment_lease', lease?.id === frozen.lease.id && lease.generation === frozen.lease.generation, { held: lease ? { id: lease.id, generation: lease.generation } : null, expected: frozen.lease });
@@ -1086,7 +1091,6 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
     const e = eligible(tx, op, frozen, f.gate, evaluate);
     fact('gate_eligibility', e.ok, { gate: 'alpha_authorize', reasons: e.reasons });
   }
-  const deadlinePassed = Date.parse(f.now) > Date.parse(op.orchestration_deadline_at ?? op.deadline_at);
   fact('orchestration_deadline', !deadlinePassed, { deadline: op.orchestration_deadline_at, now: f.now, admission: f.admission });
   const failed = facts.find((x) => !x.held);
   if (failed) return { verdict: 'fail', fact: failed.fact, facts };

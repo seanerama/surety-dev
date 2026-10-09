@@ -65,12 +65,9 @@ export class ReleaseOperator {
       const made = await this.rt.engine<{ operation?: string }>('deploy.intend_teardown', { environment: env, incarnation: this.rt.incarnation });
       if (made.operation) work.drive.push(made.operation);
     }
-    // Each operation is driven in the background (an adapter call may take
-    // longer than a tick); the tick waits a moment for each.
-    for (const op of [...new Set(work.drive)]) {
-      const p = this.drive(op);
-      await Promise.race([p, new Promise((r) => setTimeout(r, 200).unref())]);
-    }
+    // Each operation is driven as far as it can go now; the tick waits for
+    // it, every adapter call bounded by its deadline.
+    for (const op of [...new Set(work.drive)]) await this.drive(op);
   }
 
   drive(operation: string): Promise<void> {

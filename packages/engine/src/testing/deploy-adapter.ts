@@ -64,19 +64,23 @@ interface Answer {
   value?: unknown;
 }
 
+// What survives an engine restart, as a real target's state does: the
+// target, the answers queued and the admission. The calls are this engine
+// process's, counted from its start.
 interface State {
   target: { complete: boolean; units: Unit[] };
-  calls: { call: CallName; at: string; capability: unknown; answer: Answer | null }[];
   answers: Partial<Record<CallName, Answer[]>>;
   admission: 'granted' | 'held';
 }
+type Call = { call: CallName; at: string; capability: unknown; answer: Answer | null };
+const calls = new Map<string, Call[]>();
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the scripted adapter request.', { field });
 const now = () => new Date().toISOString();
 const ENV_ID = /^env_[0-9A-Z]{26}$/;
 
-const fresh = (): State => ({ target: { complete: true, units: [] }, calls: [], answers: {}, admission: 'granted' });
+const fresh = (): State => ({ target: { complete: true, units: [] }, answers: {}, admission: 'granted' });
 
 function stateFile(dir: string, env: string): string {
   if (!ENV_ID.test(env)) throw invalid('environment', 'must be an environment id');
@@ -124,7 +128,7 @@ const sameInstance = (a: Instance | Unread, b: Instance | null): boolean => a !=
 function takeAnswer(dir: string, env: string, call: CallName, capability: unknown): { state: State; answer: Answer | null } {
   const state = load(dir, env);
   const answer = state.answers[call]?.shift() ?? null;
-  state.calls.push({ call, at: now(), capability, answer });
+  calls.set(env, [...(calls.get(env) ?? []), { call, at: now(), capability, answer }]);
   save(dir, env, state);
   return { state, answer };
 }
@@ -281,9 +285,9 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
 // ---- the harness routes' halves (SEAM.md §247) ----------------------------------------------
 
 // GET …/deploy/environments/:e: the target, every call, the admission.
-export function adapterReport(dir: string | null, env: string): { target: State['target']; calls: State['calls']; admission: State['admission'] } {
+export function adapterReport(dir: string | null, env: string): { target: State['target']; calls: Call[]; admission: State['admission'] } {
   const state = dir === null ? fresh() : load(dir, env);
-  return { target: state.target, calls: state.calls, admission: state.admission };
+  return { target: state.target, calls: calls.get(env) ?? [], admission: state.admission };
 }
 
 const needDir = (dir: string | null): string => {
