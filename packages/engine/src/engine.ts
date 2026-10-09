@@ -39,6 +39,7 @@ import { QualificationDriver } from './trust/attempts.js';
 import { CHECK_LIMIT_KEYS, setCheckLimits } from './checks/limits.js';
 import { migrateFingerprints } from './protected/migrate.js';
 import { CheckRunner } from './checks/run.js';
+import { ReleaseOperator } from './deploy/release-operator.js';
 import { RunnerSelfTest, sweepPriorSelfTestBoxes, sweepSelfTestLeftovers } from './checks/selftest.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
@@ -290,6 +291,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   configureGit({ deadlineSeconds: config.values.git_deadline, outputCap: config.values.git_output_cap, home: opts.home, incarnation: lock.incarnation_id });
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
   runtime.checks = new CheckRunner(runtime);
+  runtime.deploy = new ReleaseOperator(runtime);
   runtime.scope = scope.scope;
   const journal = new Journal(runtime);
   runtime.journal = journal;
@@ -336,6 +338,13 @@ export async function serve(opts: ServeOptions): Promise<void> {
     return fail('recovery', err);
   }
   state.completed.push('recovery');
+  // The deployment's part of the start (D4 §3.2, RV5): the HMAC key, and the
+  // configurations whose held secret values changed marked secrets_changed.
+  try {
+    await runtime.deploy.atStart();
+  } catch (err) {
+    log('deployment start', err);
+  }
 
   // 4b. What a crash during an earlier start's runner self-test left: this
   // home's own trees and box areas, and its boxes in a prior incarnation's

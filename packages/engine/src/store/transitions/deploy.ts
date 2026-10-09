@@ -27,6 +27,7 @@ import { raiseFinding } from './findings.js';
 import { registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import type { Tx } from './tx.js';
+import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, Reconciliation, ReconcileOutcome } from '../../deploy/adapter.js';
 
 type Db = Tx['db'];
@@ -462,7 +463,7 @@ export function requestDeployment(
   tx: Tx,
   args: RequestArgs,
   evaluate: (tx: Tx, a: Record<string, unknown>) => { evaluation: { id: string; outcome: string; reasons: unknown[] } },
-): { status: number; body: unknown; effects?: { kind: string }[] } {
+): CommandResult {
   const candidate = getCandidate(tx.db, args.candidate);
   if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
   const env = environmentByName(tx.db, args.project, args.environment);
@@ -495,7 +496,7 @@ export function requestDeployment(
         work_item: w ? { id: w.id, status: w.status } : null,
         evaluation,
       },
-      effects: [{ kind: 'tick' }],
+      effects: [{ kind: 'tick' as const }],
     };
   };
   // Coalescing (J3): the same binding pending returns it and creates nothing.
@@ -1166,6 +1167,19 @@ export function recordReconcile(
   }
 }
 
+// An attempt `started` by an earlier incarnation (D4 §4.3): its launch is
+// closed first, so that nothing of that incarnation can still make the
+// effect happen; the attempt becomes `ambiguous`, for the reconcile read.
+export function attemptOrphaned(tx: Tx, args: { attempt: string; incarnation: string }): void {
+  const a = tx.db.prepare('SELECT * FROM "operation_attempts" WHERE "id" = ?').get(args.attempt) as AttemptRow | undefined;
+  if (!a || a.status !== 'started' || a.incarnation === args.incarnation) return;
+  const op = getOp(tx.db, a.operation)!;
+  if (a.launch_state !== 'closed') tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'closed' WHERE "id" = ?`).run(a.id);
+  setAttempt(tx, a, 'ambiguous');
+  if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, cause: 'engine_restart' });
+  refreshOp(tx, op.id);
+}
+
 // ---- the finalizer and the first round (D4 §4.2; E112) --------------------------------------------
 
 interface RoundRow {
@@ -1540,8 +1554,8 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
           rec.id,
         );
     } else writeAttempted(tx, op, a, outcome === 'failed' ? 'verification_failed' : 'verification_unknown');
-    tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'completion' WHERE "id" = ? AND "orchestration_stage" = 'verification'`).run(op.id);
   }
+  tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'completion' WHERE "id" = ? AND "orchestration_stage" = 'verification'`).run(op.id);
   tx.db.prepare(`UPDATE "gate_evaluations" SET "stale" = 1 WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' AND "stale" = 0`).run(r.candidate);
   return { outcome, decides: invalidated === null };
 }
@@ -1618,7 +1632,7 @@ export function afterCompletion(tx: Tx, args: { operation: string | null; candid
 // POST /v1/projects/:p/environments/:e/teardown: an ordinary teardown, by
 // the operator's command, no gate. It takes the environment lease or waits
 // for it (`environment_busy`).
-export function requestTeardown(tx: Tx, args: { project: string; environment: string; incarnation: string; deadlineSeconds: number }): { status: number; body: unknown; effects?: { kind: string }[] } {
+export function requestTeardown(tx: Tx, args: { project: string; environment: string; incarnation: string; deadlineSeconds: number }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   const held = environmentLease(tx.db, env.id);
@@ -1644,7 +1658,7 @@ export function requestTeardown(tx: Tx, args: { project: string; environment: st
     lease: { id: lease.id, generation: lease.generation },
   };
   const op = insertOperation(tx, { project: args.project, kind: 'teardown', env, subject: { environment: env.id }, key: sha256(canonical({ kind: 'teardown', environment: env.id, n })), frozen, deadline, authorization: null });
-  return { status: 202, body: { operation: { id: op.id, kind: 'teardown', status: op.status } }, effects: [{ kind: 'tick' }] };
+  return { status: 202, body: { operation: { id: op.id, kind: 'teardown', status: op.status } }, effects: [{ kind: 'tick' as const }] };
 }
 
 // ---- reads (D4 §6.1; N02: stored reads only) --------------------------------------------------------

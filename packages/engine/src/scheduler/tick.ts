@@ -176,6 +176,14 @@ export class Scheduler {
       if (remaining() <= 0) break;
       await this.rt.checks?.step(project).catch((err) => log('tick checks', err, { project }));
     }
+    // Deployments (D4 §§4, 5; the Release Operator, engine code, D4 §8):
+    // deploy work intended under the environment lease, and every
+    // operation whose orchestration has not ended taken on. Not a
+    // prerequisite of dispatch.
+    for (const project of projects) {
+      if (remaining() <= 0) break;
+      await this.rt.deploy?.step(project).catch((err) => log('tick deploy', err, { project }));
+    }
     // Authorized qualification attempts: their canaries are dispatched by
     // their own authority (D2 §7.2, K10), not by the queue below.
     await this.rt.services?.qualificationStep().catch((err) => log('qualification', err));

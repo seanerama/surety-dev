@@ -17,6 +17,7 @@ import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
 import { envelopeHold } from './transitions/envelope.js';
+import { deployParts, readEnvironment } from './transitions/deploy.js';
 import { projectPolicy } from './transitions/settings.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -404,8 +405,9 @@ export function readOperations(db: Db, args: { project: string }) {
   const rows = db
     .prepare(
       `SELECT o."id", o."seq", o."kind", o."status", o."subject", o."target", o."finalizer_inputs", o."outcome_detail", o."remaining_scope", o."linked_prior",
-         o."created_at", o."finalized_at", s."journal_kind", s."state"
-       FROM "operations" o LEFT JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."project" = ? ORDER BY o."seq"`,
+         o."created_at", o."finalized_at", COALESCE(s."journal_kind", d."journal_kind") AS "journal_kind", COALESCE(s."state", d."state") AS "state"
+       FROM "operations" o LEFT JOIN "git_journal_state" s ON s."operation" = o."id" LEFT JOIN "deploy_journal_state" d ON d."operation" = o."id"
+       WHERE o."project" = ? ORDER BY o."seq"`,
     )
     .all(args.project) as OperationRow[];
   const intended = db.prepare(`SELECT "payload" FROM "git_journal_events" WHERE "operation" = ? AND "event_kind" = 'intended' ORDER BY "seq" LIMIT 1`);
@@ -419,6 +421,7 @@ export function readOperations(db: Db, args: { project: string }) {
       const intent = intended.get(o.id) as { payload: string } | undefined;
       const held = blocker.get(o.id) as { id: string } | undefined;
       const inputs = parseJson<{ purpose?: string }>(o.finalizer_inputs);
+      const deployment = o.kind === 'deploy' || o.kind === 'teardown' ? deployParts(db, o.id) : null;
       return {
         id: o.id,
         seq: o.seq,
@@ -427,7 +430,7 @@ export function readOperations(db: Db, args: { project: string }) {
         state: o.state,
         status: o.status,
         purpose: inputs?.purpose ?? null,
-        intent: intent ? (JSON.parse(intent.payload) as Record<string, unknown>) : null,
+        intent: intent ? (JSON.parse(intent.payload) as Record<string, unknown>) : (deployment?.intent ?? null),
         subject: parseJson<Record<string, unknown>>(o.subject),
         attempts: (attempts.all(o.id) as { attempt_number: number; status: string; started_at: string; finished_at: string | null; reconciliation_reads: string }[]).map((a) => ({
           attempt_number: a.attempt_number,
@@ -442,6 +445,9 @@ export function readOperations(db: Db, args: { project: string }) {
         created_at: o.created_at,
         finalized_at: o.finalized_at,
         blocker: held?.id ?? null,
+        // A deploy or teardown operation (D4 §§4.1, 4.2): its frozen intent,
+        // its attempts' frozen intents and its verification rounds.
+        ...(deployment !== null ? { deployment } : {}),
       };
     }),
   };
@@ -451,6 +457,15 @@ export function readOperations(db: Db, args: { project: string }) {
 // environments with their current observation, as the project read shows
 // them. M1 keeps no observation history and runs no observation job, so
 // there is none to show.
+// GET /v1/projects/:p/environments/:e (D4 §6.1; N02): the three facts apart,
+// the configuration in force beside what the running service was launched
+// with, the generation and the operation in flight, all as stored. A read:
+// no adapter call, no record written, no observation's age refreshed.
+export function readOneEnvironment(db: Db, args: { project: string; environment: string }) {
+  mustProject(db, args.project);
+  return { ...envelope(db), ...readEnvironment(db, args) };
+}
+
 export function readEnvironments(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
