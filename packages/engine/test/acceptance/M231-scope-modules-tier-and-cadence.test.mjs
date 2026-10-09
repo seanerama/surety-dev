@@ -13,7 +13,8 @@
 // the scope incomplete. (c) The scope tier sets the cadence: in a T1
 // project, the integration of a stage whose module is T2 nominates by
 // engine cadence with no Builder's request, and so does the integration of
-// a fix naming a finding whose revision holds a T2 module.
+// a fix naming a finding whose revision holds a T2 module; under E104 a fix
+// naming a finding is nominated at T1 with no T2 module too (the control).
 //
 // The checks are discovered; results are the check-result fixture's
 // (SEAM.md §189); sign-offs are a Reviewer's run's; findings a Verifier's.
@@ -176,7 +177,7 @@ describe('M231 (b) which modules a scope takes', () => {
 });
 
 describe('M231 (c) the scope tier sets the cadence', () => {
-  test('in a T1 project with no Builder asking, the integration of a stage whose module is T2 nominates by engine cadence, the stage whose module has no override does not, and the integration of a fix naming a finding, its revision holding the T2 module, nominates by engine cadence; the same fix in a project with no T2 module does not', async (t) => {
+  test('in a T1 project with no Builder asking, the integration of a stage whose module is T2 nominates by engine cadence, the stage whose module has no override does not, and the integration of a fix naming a finding, its revision holding the T2 module, nominates by engine cadence; under E104 the same fix in a project with no T2 module is nominated by the engine too, while its stages still are not', async (t) => {
     const fx = await scriptedEngine(t);
     const shape = (override) => ({
       defs: { acc: def('acceptance', { criteria: ['R1.1', 'R2.1'] }), smoke: def('smoke') },
@@ -216,12 +217,14 @@ describe('M231 (c) the scope tier sets the cadence', () => {
     const c2 = await fixCandidate(p, c1);
     assert.equal(c2?.nominated_by, 'engine_cadence', `the fix's integration, its revision holding the T2 module billing, nominated by engine cadence (Q10 (a)) (candidate: ${JSON.stringify(c2 ?? null)})`);
 
-    // The control: the same shape with no override. Its stages nominate nothing; a fix-free candidate is made on request, then the same fix nominates nothing.
+    // The control: the same shape with no override. Its stages nominate nothing; a fix-free candidate is made on request. The same fix,
+    // its Builder asking for nothing: before E104 it nominated nothing at T1 (the straddle; COVERAGE.md, "M3 slice 22: E104"); now the
+    // integration of a fix that names a finding is a nomination point at every tier (E104, Sean 2026-10-08), by engine cadence as at T2.
     const q = await scopeProject(fx, shape(false));
     await buildStages(fx, q, { steps });
     assert.deepEqual(candidatesOfProject(fx.home, q.id), [], 'the control: in a T1 project with no T2 module, no stage integration nominates without a request');
     const d1 = await nextCandidate(fx, q.id);
     const d2 = await fixCandidate(q, d1);
-    assert.equal(d2, undefined, 'the control: the fix of a finding nominates nothing at T1 without a request');
+    assert.equal(d2?.nominated_by, 'engine_cadence', `E104: the fix of a finding is nominated at T1 with no request, by engine cadence (candidate: ${JSON.stringify(d2 ?? null)})`);
   });
 });

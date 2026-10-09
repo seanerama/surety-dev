@@ -45,10 +45,10 @@ import { join } from 'node:path';
 
 import { alphaTarget, effectiveVersion, findingsOf, installGatedPlan, proposalsOf, stageGate } from '../gates.mjs';
 import { changePolicy, createProject, workItemsOf } from '../journal.mjs';
-import { makeProjectRepo, refOid } from '../repos.mjs';
+import { gitQuiet, makeProjectRepo, refOid } from '../repos.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, workItem } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { domainOfExecution, executionsOf, governedText, resultRow, resultsOfProject, versionRead } from '../checks/fixtures.mjs';
+import { blobBytes, commitEntries, domainOfExecution, executionsOf, governedText, resultRow, resultsOfProject, versionRead } from '../checks/fixtures.mjs';
 import { activeQualification, selfTestArgs, SELF_TEST_CASES } from '../checks/execution.mjs';
 import { findingRow } from '../checks/repair.mjs';
 import { realPolicy } from './attempt.mjs';
@@ -174,6 +174,23 @@ function refuseLeftovers(path, found, { evenIfPaused }) {
     `${path} refused: work of an earlier attempt could be dispatched (${JSON.stringify(bad).slice(0, 900)}). Nothing was started or resumed. ` +
       'Settle it first (cancel it as its owner, or let it end), or start a new run directory.',
   );
+}
+
+// Path one's effective protected files, from the version's authorized revision
+// in path one's repository, each with its git mode (commitEntries' form).
+function protectedFilesOf(home, one) {
+  const v = withStore(home, (db) => db.prepare('SELECT "id", "authorized_revision" FROM "protected_versions" WHERE "project" = ? AND "authorized" = 1 AND "superseded_by" IS NULL').get(one.project));
+  if (!v?.authorized_revision) throw new Error(`M239 path two refused: path one's effective protected version could not be read (${JSON.stringify(v ?? null)}). Nothing was started.`);
+  const entries = {};
+  const listing = gitQuiet(one.repo, ['ls-tree', '-r', '-z', v.authorized_revision, '--', '.surety/']).split('\0').filter(Boolean);
+  for (const line of listing) {
+    const [meta, path] = line.split('\t');
+    const [mode, type] = meta.split(' ');
+    if (type !== 'blob' || !['100644', '100755'].includes(mode)) throw new Error(`M239 path two refused: ${path} in path one's checks is not a regular file (${mode} ${type}). Nothing was started.`);
+    entries[path] = { content: blobBytes(one.repo, v.authorized_revision, path), mode };
+  }
+  if (!entries['.surety/checks/protected-policy.json']) throw new Error("M239 path two refused: path one's version holds no governed file. Nothing was started.");
+  return { version: v.id, revision: v.authorized_revision, entries };
 }
 
 // Pause the project before the engine stops, whatever happened (S1).
@@ -395,22 +412,33 @@ export async function checksPathTwo(ctx) {
   return realStep(ctx, 'm3_path_two', async () => {
     const path = 'M239 path two';
     const one = stepValue(ctx, 'm3_path_one');
-    const project = one.project;
     const home = join(ctx.runDir, 'home');
-    // Path one (or an earlier try of path two) left the project paused; nothing of it may start with the engine.
-    refuseLeftovers(path, leftovers(home, [project]), { evenIfPaused: false });
+    // Every earlier project of the journey (path one's, an earlier try's) is paused, or has nothing to dispatch.
+    refuseLeftovers(path, leftovers(home), { evenIfPaused: false });
+    // The checks path one's real Verifier wrote and Sean approved: the protected files of path one's
+    // effective version, read from its authorized revision before any engine starts (SEAM.md §241).
+    const carried = protectedFilesOf(home, one);
     const prior = priorQualification(ctx);
     const fx = await journeyEngine(ctx, 'home', { extra: SELF_TEST });
     fx.priorQualification = prior;
+    let project = null;
     try {
       const qualification = await selfTested(fx, path);
-      await pauseProject(fx.engine, project).catch(() => null);
-      await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
-      const before = candidates(fx.home, project).length;
-      // Before the project is resumed: nothing an earlier try left may be dispatched with this one's stage.
-      refuseLeftovers(path, leftovers(fx.home, [project]), { evenIfPaused: true });
-      const plan = await installGatedPlan(fx.engine, project, { requirements: M239.requirements, constraints: M239.constraints, stages: [M239.stageTwo] });
+      // A project of its own (the second try's finding, SEAM.md §241): path one's project holds the
+      // integrations of any earlier try of this path, the seeded defect's fix among them, so it can no
+      // longer show a defect being found. This one starts from the seeded defect and the carried checks.
+      let dir = join(ctx.runDir, 'repos', `${M239.name}-two`);
+      for (let n = 2; existsSync(dir); n++) dir = join(ctx.runDir, 'repos', `${M239.name}-two-${n}`);
+      const repo = makeProjectRepo(dir, { files: { [SEEDED_DEFECT_M3.path]: SEEDED_DEFECT_M3.content } });
+      commitEntries(repo.path, repo.ref, carried.entries, `fixture: the checks of path one's version ${carried.version}, as Sean approved them`);
+      ({ id: project } = await createProject(fx.engine, { repoPath: repo.path, name: `${M239.name}-two`, tier: M239.tier }));
+      await changePolicy(fx.engine, project, { ...realPolicy(REAL.dayVerifiedUsd.pathOne), backend_builder: REAL.backend, backend_verifier: REAL.backend, backend_reviewer: REAL.backend, repair_attempts_max: 0 });
+      await pauseProject(fx.engine, project);
+      const before = 0;
+      const plan = await installGatedPlan(fx.engine, project, { requirements: M239.requirements, constraints: M239.constraints, stages: [{ ...M239.stageTwo, number: 1 }] });
       const stage = plan.stages[0];
+      const version = await versionRead(fx.engine, project, effectiveVersion(fx.home, project).id);
+      if (version.discovery_errors.length > 0) notEstablished(path, "the carried checks have discovery errors in path two's project", version.discovery_errors);
       await resumeProject(fx.engine, project);
       const build = await runEnds(fx, project, stage.work_item);
       if (build.outcome !== 'completed') notEstablished(path, `the stage's Builder run ended ${build.outcome}/${build.reason_class}`, build.reason_text);
@@ -442,12 +470,13 @@ export async function checksPathTwo(ctx) {
       const fixSettled = await waitSettled(fx, project, fixCandidate.id, `the checks of ${fixCandidate.id}`);
       const evaluated = await gatesOn(fx, project, fixCandidate, stage.id);
       const resolved = findingRow(fx.home, found.id);
-      const version = await versionRead(fx.engine, project, effectiveVersion(fx.home, project).id);
       const named = version.checks.find((c) => c.key === found.check) ?? null;
       const resolvingResult = resolved.resolution_verification?.check_result ? resultRow(fx.home, resolved.resolution_verification.check_result) : null;
       const resolvingExecution = resolvingResult ? executionsOf(fx.home, fixCandidate.id).find((x) => x.id === resolvingResult.execution) ?? null : null;
       const out = {
         project,
+        repo: repo.path,
+        carried: { from_project: one.project, version: carried.version, revision: carried.revision, files: Object.keys(carried.entries), initial_version: { id: version.id, change_kind: version.change_kind, checks: version.checks.map((c) => c.key) } },
         qualification,
         stage: stage.id,
         candidates: [first.id, fixCandidate.id],

@@ -38,7 +38,7 @@ import { M239, checksPathOne, checksPathTwo, projectResults } from './harness/re
 
 const preflight = () => realPreflight({ confirm: CONFIRM_PHRASE_M3 });
 // What Sean is told the activation lets run (attempt.mjs): one project, its day limit in estimates.
-const M239_JOURNEY = Object.freeze({ name: 'the M3 real check journey (M239)', limits: `the journey's one project has a day limit of ${REAL.dayVerifiedUsd.pathOne} USD in estimates` });
+const M239_JOURNEY = Object.freeze({ name: 'the M3 real check journey (M239)', limits: `each of the journey's two projects (path one's, path two's) has a day limit of ${REAL.dayVerifiedUsd.pathOne} USD in estimates` });
 
 // Every result of the journey: an engine execution, established, in a check domain of its own, bound to a self-tested qualification.
 function assertEngineExecution(f, qualification, what) {
@@ -125,11 +125,18 @@ describe('M239 the real check journey (real lane, paid)', () => {
     const ctx = preflight();
     await judged(ctx, 'M239 (d)', async () => {
       const one = stepValue(ctx, 'm3_path_one');
-      const results = projectResults(ctx, one.project);
+      // Path two's project too, once path two has run (it is a project of its own, SEAM.md §241).
+      let two = null;
+      try {
+        two = stepValue(ctx, 'm3_path_two');
+      } catch {
+        two = null;
+      }
+      const results = [...projectResults(ctx, one.project), ...(two ? projectResults(ctx, two.project) : [])];
       assert.ok(results.length > 0, 'the journey recorded check results');
       const fixture = results.filter((r) => r.execution === null || r.runner_id === 'test_fixture');
       assert.deepEqual(fixture.map((r) => r.id), [], 'every result names an engine execution, none the fixture runner');
-      const repos = [one.repo, readObserved(ctx, 'attempt').host_witness?.before?.repo].filter(Boolean);
+      const repos = [one.repo, two?.repo, readObserved(ctx, 'attempt').host_witness?.before?.repo].filter(Boolean);
       const hits = secretHits(ctx.keyValue, { roots: [ctx.runDir], repos });
       observe(ctx, 'M239', 'key_search', { roots: [ctx.runDir], repos, hits: hits.length });
       assert.deepEqual(hits, [], `the ${ctx.authMode} credential is in no file and no git object`);
