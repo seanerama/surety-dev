@@ -2,6 +2,8 @@
 // 11.3–11.4, 19.3. Every excluded capability reachable through the API fails
 // before any effect with a declared refusal; nothing is fabricated; reserved
 // tables do not exist; the test seam is unreachable outside harness mode.
+// M4 slice 23: the deploy refusal is narrowed now that POST …/deployments
+// exists (D4 Appendix C.2; SEAM.md §253); the other refusals stand.
 // Deferred (COVERAGE.md): scheduler-intent refusals and the real
 // backend/version/mode refusal to slice 2; phase and completion gate refusals
 // to slice 5.
@@ -67,13 +69,19 @@ describe('M08 excluded capabilities are refused at the API', () => {
     await assertExcluded(fx, 'POST', `${p}/management/activate`, { codes: ['unsupported', 'not_found'] });
   });
 
-  test('deploy, publish and export requests are refused before any effect', async (t) => {
+  // M4 slice 23 narrows this case (D4 Appendix C.2; SEAM.md §253; COVERAGE.md): `POST …/deployments` is the one way to ask
+  // for a deployment, and the gate it evaluates decides whether anything is deployed (M301, M303). Every other deploy path,
+  // and publish, export and releases, stay refused before any effect; the deployments route refuses a request it cannot
+  // read before any effect too, so the narrowing opens no path around the gate.
+  test('publish, export and release requests, and every deploy path but POST …/deployments, are refused before any effect; a deployment request naming no candidate is refused with no effect', async (t) => {
     const fx = await projectFixture(t);
     const p = `/v1/projects/${fx.project}`;
     const candidate = newId('cand_');
-    for (const path of [`${p}/deploy`, `${p}/publish`, `${p}/export`, `${p}/releases`, `${p}/candidates/${candidate}/deploy`]) {
+    for (const path of [`${p}/deploy`, `${p}/publish`, `${p}/export`, `${p}/releases`, `${p}/candidates/${candidate}/deploy`, `${p}/candidates/${candidate}/authorizations`]) {
       await assertExcluded(fx, 'POST', path, { codes: ['unsupported', 'not_found'] });
     }
+    const res = await assertExcluded(fx, 'POST', `${p}/deployments`, { status: 400, codes: 'invalid_value' });
+    assert.equal(res.body.subject?.field, 'candidate', 'the request is refused for the candidate it does not name');
   });
 
   test('tables reserved for later designs, and environment observation tables, do not exist', async (t) => {

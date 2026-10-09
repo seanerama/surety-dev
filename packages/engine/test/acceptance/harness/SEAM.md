@@ -4982,6 +4982,143 @@ Each pattern is one argument; node expands it (no shell). `sum-child.test.mjs` r
 
 **The case:** M125 (i), sandbox lane, scripted roles: a T1 project made through the API (the engine's bootstrap commit), a policy change (its policy revision commit), a stage's Builder commit integrated with no nomination, then a fix's Builder commit whose summary carries `Surety-Project: <project id>` and which asks for the nomination: candidate 1, whose range holds the four commits. A Reviewer on it dumps its package (`context_dump`). Read sentence by sentence from every file but the diff and the manifest: each setup commit (by the store, `created_by_run` null) is named by at least its first seven hexadecimal digits in a sentence calling it the engine's or the owner's; no sentence naming either Builder commit calls it so. † "Named" is read as the commit's id (seven digits or more); a description without the id is not pinned. (3) as written: through the engine a role's commit always carries `Surety-Run` and its summary goes indented into the message body, so no role's commit can carry `Surety-Project` without `Surety-Run`; the case gives a Builder commit the `Surety-Project` line in its message, the nearest a role can come.
 
+## 244. What the slice-23 tests assume throughout
+
+(M4 plan §3.1, §2; BS4 §§4, 8, 9; written 2026-10-09 on `verify/m4-s23` from `main` at `a686e88`. Rows M301 to M306, all kernel lane. Helpers in `deploy/kernel.mjs`.)
+
+- **The kernel lane only** (BS4 §4.1): the scripted roles, real SQLite and git, the scripted check boundary of section 190 and the **scripted deployment adapter** of section 247. No slice-23 file creates a unit, runs `systemd-run` or `systemctl`, reads a host process, or signals anything. Every engine is started with a disposable `SURETY_HOME` and `HOME` (section 2's `engineEnv`).
+- **The deployable project** (`deployable`): T1; checks discovered from its protected set: `acc` (acceptance, criterion R1.1) and `smoke`, both of gate kinds `stage` and `alpha_authorize`, and `behaves` (`post_deploy_behavior`, gate kinds `["alpha_complete"]` only, `requires` `["environment", "artifact_digest"]`); beside them `server.js` and `lib/greeting.js`; one stage implementing R1, built by a scripted Builder that asks for the nomination; the nomination's registrations of `acc` and `smoke` recorded exit 0 through section 190; environment `alpha` configured by the owner's route (section 245) with `configContent()`; the adapter qualified by the fixture of section 248.
+- **No result from the check-result fixture** (section 67) in any slice-23 file: every result names an execution the engine registered, at the nomination or in a round, moved by section 190.
+- **The clock.** The orchestration deadline (D4 §4.7) is measured on the engine's clock, which the harness's controlled clock moves (section 18).
+
+## 245. The environment configuration (D4 §3.2, §3.3; Q5; N04)
+
+**`PUT /v1/projects/:p/environments/:e/config`** (`surety env config`), the owner's route with the engine token (section 6; 401 `token_required` without it). `:e` is the environment's **name**, `[a-z][a-z0-9-]{0,31}`, unique per project; the first version creates the environment, its `adapter` the content's. The body is the version's **content**, a closed JSON object:
+
+| Key | Value |
+|---|---|
+| `adapter` | `local_service` (required) |
+| `adapter_version` | a non-empty string of at most 64 characters (required). The qualification is matched by it (section 248) |
+| `targets` | an array of target names, `[a-z][a-z0-9-]{0,31}` (required); `local_service` takes exactly one (its refusal is M312's, slice 24) |
+| `runtime` | `{"path": <absolute>, "sha256": <64 lower-case hex>}` (required); checked against the host at the request, not here (M312) |
+| `start` | an argument array: the runtime's path, then paths in the artifact (required; checked at the request, M312) |
+| `port` | an integer, 1024 to 65535 (required) |
+| `env` | `{NAME: string}`, `NAME` `[A-Z_][A-Z0-9_]*`; default `{}` |
+| `secrets` | `{NAME: <reference>}`; default `{}` |
+| `check_secrets` | `[<reference>]`; default `[]` |
+| `egress` | `[]` (a non-empty list is M312's refusal); default `[]` |
+| `artifact` | `{"exclude": [<repository path>]}`; default `{"exclude": []}` |
+| `identity_method` | `tree_digest`, optional; absent, `alpha_authorize` carries `IDENTITY_METHOD_MISSING` (section 249) |
+
+**The answer.** **201** `{"environment": {"id": "env_…", "name"}, "config": {"id": "envc_…", "version", "config_identity", "status"}}` for a new version. Content equal to the current version's: **200** or **201** with the **same** `config_identity` (whether a row is written is not pinned). **Refusals:** **422** `config_invalid`, nothing written, `subject.field` the member as a dotted path (`secrets.APP_TOKEN`, `check_secrets.0`, an unknown key's own name).
+
+**References** (D4 §§3.2, 7.1; N04). A deployment reference is `deploy/<name>`, `<name>` `[a-z][a-z0-9_]{0,62}`; the engine holds it from **`--secret-file deploy/<name>=<path>`**, section 160's flag with its file rules, extended to this namespace. A reference in neither the deployment nor the backend namespace (section 160), or a deployment reference the engine does not hold, is `config_invalid` naming the field.
+
+**`config_identity`** is `sha256:` and 64 hex digits: SHA-256 of the canonical content with each reference replaced by `{ref, digest}`, `digest` HMAC-SHA256 of the held value under **`$SURETY_HOME/secret-digest.key`** (a regular, non-empty file of mode 0600 the engine makes once, no later than the first version naming a reference). The canonical form and the digest's encoding are the engine's; what is pinned is that every field, a reference, a held value, the adapter version and the target set each change the identity, equal content and equal values give equal identity, and neither a value nor its unkeyed SHA-256 is anywhere the tests search (M302 (c)). The key is under the engine home, which no role, check or service mount plan holds (M110, M201, M310).
+
+**The store.** `environment_configs` as D4 A.3: `content` as written (references by name only), `secret_digests` `[{ref, digest}]`, `status` `current`, `secrets_changed` or `superseded`; a trigger refuses DELETE and an UPDATE of any column but `status` (`SQLITE_CONSTRAINT…`, section 8). `environments` gains `current_config`, `deployment_generation` (0 before any attempt), `current_generation` and `prefix` (section 250). Each version emits **`environment.configured`**: `subject.project`, `subject.environment`, `payload.version`.
+
+## 246. The deployment request, and the fixture authorization (J3)
+
+**`POST /v1/projects/:p/deployments`** (`surety deploy`) with `{"candidate": "cand_…", "environment": <name>}`, a closed body: any other key is **400** `unknown_field` naming it, before anything is read or recorded (only the audit event, section 7). A missing or malformed `candidate` or `environment` is **400** `invalid_value` naming it; one that is not the project's is **404** `not_found`. In the request (D4 §4.1): the artifact is sealed, or found sealed (section 250); the authorization is recorded `proposed` with the engine-derived binding (the sealed digest and its mapping, the current configuration identity, its targets); `alpha_authorize` is evaluated for it (section 70, with section 249's obligations); satisfied, it is `issued` and one **`deploy` work item** is made: trigger `(deployment_request, <authorization>, 1)`, `subject` `{candidate, environment, authorization}`, not chained, never dispatched to a role.
+
+| Outcome | Answer |
+|---|---|
+| issued | **201** `{"authorization": {"id", "status": "issued", "generation"}, "work_item": {"id"}, "evaluation": <section 70's object>}` |
+| coalesced | **200**, the same shape, naming the pending authorization and work item; nothing created, nothing issued again |
+| not satisfied | **409** `authorization_not_issued`; `subject.authorization` the proposed row, `subject.evaluation` its id, `subject.reasons` the evaluation's reasons; no work item |
+
+**Coalescing** (J3, E118). While the candidate and environment have an issued authorization not yet consumed, or a deploy operation not terminal, a request is answered with it. A repeat whose evaluation was not satisfied re-evaluates the same `proposed` row. Once the operation is terminal, a request makes a new authorization whose `generation` is the last one's plus one (its `binding_hash` differs).
+
+**The M1 route is removed.** `POST /v1/projects/:p/candidates/:c/authorizations` (section 75) is **404** `not_found` (no route), with no effect. **`POST /v1/harness/fixtures/authorization`** with `{"project", "candidate", "environment": "env_…", "artifact_digest", "config_identity", "target_set"}` takes its place for fixtures: section 75's answers exactly (**201** for a new row, **200** for the same binding again), every event labelled `test_fixture`, harness-only (section 7; M336 (b)). Evaluating `alpha_authorize` for such a row (section 75's route, unchanged) applies the same gate rule.
+
+## 247. The scripted deployment adapter (kernel lane)
+
+**`--harness-deploy-adapter <scripted|real>`**, accepted only with `--harness`; **`scripted` is the default in harness mode**, so no M1 to M3 engine and no kernel-lane test reaches the host's service manager; the sandbox lane passes `real` (slice 24). Outside harness mode there is no switch. Under `scripted`, every adapter call for an environment of adapter `local_service` goes through `adapterCall` and its capability check (D4 §2.2), unchanged, to the scripted adapter in `src/testing/`, which touches nothing on the host. Its state lives under `<scripted dir>/deploy/` (the directory `--harness-scripted` names) and **survives an engine restart**, as a real target does; with no scripted directory every read fails `unavailable` and every effect is `not_issued`.
+
+| Route (`:e` the environment's id) | Body | Answer |
+|---|---|---|
+| `GET /v1/harness/deploy/environments/:e` | — | **200** `{"target": {"complete", "units": [Unit]}, "calls": [Call], "admission"}` |
+| `POST /v1/harness/deploy/environments/:e/target` | `{"complete"?: <bool, default true>, "units": [Unit]}` | **200**; replaces the target |
+| `POST /v1/harness/deploy/environments/:e/answers` | `{"call": <AdapterCall>, "answers": [Answer]}` | **200**; appended to that call's queue |
+| `POST /v1/harness/deploy/environments/:e/admission` | `{"answer": "granted" \| "held"}` | **200** |
+
+- **Unit:** `{"name", "state": "active"|"inactive"|"failed"|"unread", "invocation_id", "cgroup", "pending_job": <bool>|"unread", "generation", "instance": {"pid", "start_time"}|"unread", "init": {"pid", "start_time"}|"unread", "tree": "sha256:…"|"unread"}`. Every value may be `"unread"`.
+- **Call:** `{"call", "at", "capability": <what adapterCall passed; null for a read>, "answer": <the queued answer used, or null when the target answered>}`, every call, in order. The tests count effect calls here.
+- **An effect answer** (`deploy`, `teardown`): `{"result": <AdapterEffectResult>, "apply"?: <bool, default false>, "hang"?: <bool>, "output_bytes"?: <int>}`. With `apply`, a `deploy` removes every `prior` unit of its capability and adds each `create_units` unit `active`, with a new `invocation_id` and `cgroup`, its `generation` from its name and its `tree` the capability's digest; a `teardown` removes every unit its capability names. `hang`: the call does not return until the engine aborts it at its deadline. `output_bytes`: the call produces that many bytes. The change is made before the hang or the output. **An effect with no answer queued is `not_issued` and changes nothing.**
+- **A read answer** (`reconcile`, `status`, `verify`, `logs`): `{"failure": <AdapterReadFailure>}` (every value it would return `unread`), `{"hang": true}`, `{"output_bytes": <int>}`, or `{"value": <the call's Appendix B return value>}`. **With none queued, the read answers from the target:** `status` per unit; `verify` per expected target, from the unit of the expected generation: `match` when it is `active`, its `instance` is the expected instance and its `tree` the expected digest, `unread` when any of those is `unread` or the unit is missing from an incomplete target, `differs` otherwise, `read` its `tree`; `reconcile` the inventory (every unit, `recorded` when an attempt intent of the environment names it), `complete` the target's, with those reads. **The outcome is D4 §2.4's mapping of what was read, by the engine code that maps `local_service`'s reads** (D4 §2.4; BS4 §7 `reconcile.ts`).
+- **The launch stand-in.** An applying `deploy` stands in for the launcher and the init: before it returns it asks the engine for the attempt's launch authorization as a service launcher would (D4 §9.2: the attempt, the incarnation, the lease generation and an init `{pid, start_time}`) and, granted, reports the application `started` with its `instance`; pids are drawn from 100000 up, distinct, start times positive, `exe` and `argv` the configuration's runtime and start command. The engine records `init_instance` and `app_instance` on the attempt by its own single-use grant rule. A refused grant leaves the unit `active` with `instance` `unread`.
+- **Admission** (D4 §4.7). In the kernel lane the service domain's admission is this route's answer: `granted` (the default) or `held`, when the operation waits before its effect within its orchestration deadline, reading its preconditions again when it is granted.
+
+## 248. The adapter qualification fixture (labelled qualification facts, J4)
+
+**`POST /v1/harness/fixtures/adapter-qualification`** with `{"adapter": "local_service", "adapter_version"}` → **201** `{"adapter_qualification": "aq_…"}`: a durable `adapter_qualifications` row, `status` `current`, `cases` `[]` (no case ran: a real qualification records D4 §2.6's nine, M338), `engine_build` and `profile_fingerprint` the engine's, `host_qualification` the active row or **null under section 114's `unrun`** †; `adapter.qualified` with `payload.test_fixture = true`. With `{"adapter_qualification": "aq_…", "status": "lapsed"}` → **200**: the fixture's row moves to `lapsed` by the engine's lapse transition (`adapter.qualification_lapsed`, labelled). Another adapter is **400** `invalid_value`. Harness-only (section 7; M336 (b)). **Current for an environment** (D4 §2.6): a `current` row with the environment's current configuration's adapter and `adapter_version`, the engine's build and profile fingerprint, and its host qualification (null matching null under `unrun`).
+
+## 249. J4's reasons at `alpha_authorize`, and `alpha_complete`
+
+**`alpha_authorize`** (D4 §4.1 (3); J4) adds, beside section 70's: **`ADAPTER_UNQUALIFIED`**, `subjects` `[<environment id>]`; **`IDENTITY_METHOD_MISSING`** †, `subjects` `[<environment id>]`; **`ACCEPTANCE_SCOPE_INCOMPLETE`** with the subject **`kind:post_deploy_behavior`** (section 226's form) when no required `post_deploy_behavior` check is in the `alpha_complete` scope. An environment with no configuration (the harness fixture of section 67) gives all three. They add reasons only: the evaluation's `check_states` and the scope's `required_check_ids` are what they were, and a check of gate kind `alpha_complete` alone is in neither and is not registered at a nomination (section 180).
+
+**`POST /v1/projects/:p/candidates/:c/gates/alpha_complete`** with `{"operation": "op_…"}` → **200** with section 70's evaluation object. With no `operation` it is **400** `invalid_value`, `subject.field` `operation`, no effect; an operation that is not the candidate's deploy is **404**. Its required set is the post-deploy obligations of the `alpha_complete` scope and never a workspace check. Its reasons (D4 §5.5, §4.5): `DEPLOY_VERIFICATION_MISSING`, `…_PENDING` (the deciding round open), `…_UNKNOWN`, `…_FAILED`, `DEPLOY_GENERATION_SUPERSEDED`, `CANDIDATE_SUPERSEDED`, `OUT_OF_BAND_CHANGE`, and `EVIDENCE_MISSING` naming a deciding result's missing or corrupt output record (section 72), the evidence re-read at the evaluation. **Satisfied:** in the evaluation's transaction (one `events.tx`, section 180) `gate.evaluated`, the candidate `developing → alpha_deployed` (`candidate.advanced`, `subject.candidate`), and the `deploy` work item `complete` (a `work.*` event with `payload.to` `complete`). The engine evaluates it by itself at the tick after the verification row (D1 §8.1 step 7). The other gate kinds of M44's last case stay **501** `unsupported`.
+
+## 250. What the tests read of an operation
+
+- **The artifact** (slice 23's minimal one; bounds and refusals are slice 24's). `artifacts` and `artifact_mappings` as D4 A.3; `artifacts.path` an absolute directory under `$SURETY_HOME/artifacts/` holding exactly the projection (the candidate's tracked files minus `.surety/` and the excludes), each file its blob's bytes with no write bit; `artifact.sealed` once per sealed digest. `deployment_authorizations.source_delivery_mapping` holds at least `dev_revision` and `artifact_digest`.
+- **The lease:** a `leases` row, `resource_kind` `environment`, `resource_id` the environment's id; released when `released_at` is set.
+- **The operation** (kind `deploy` or `teardown`): `target` `{environment}`, `subject` `{candidate, artifact_digest}`; `finalizer_inputs` (the frozen intent) `{authorization, mapping, artifact_digest, manifest, config_version (the environment_configs id), config_identity, target_set, environment, prefix}` and no unit name; `orchestration_deadline_at` exactly `created_at` plus `deploy_orchestration_deadline`; `orchestration_stage` (A.2). **A pre-effect failure** is `status` `failed` with `outcome_detail` the JSON text `{"code": "EFFECT_PRECONDITION_CHANGED", "fact": <fact>, "manifest": <record id>}`. **The facts** †: `authorization`, `candidate_superseded`, `gate_eligibility`, `configuration_changed`, `config_secrets_changed`, `artifact_integrity`, `out_of_band`, `adapter_qualification`, `host_qualification`, `environment_lease`, `unknown_ownership`, and `orchestration_deadline` (admission not granted by the deadline). **The precondition manifest** is a `records` row of kind `deploy_precondition_manifest` whose bytes are `{"operation", "attempt": <id or null>, "facts": [{"fact", "held": <bool>, "read": <what was read>}]}`.
+- **Attempts:** `operation_attempts` as section 44, with D4 A.3's `deployment_generation`, `capability` (`{environment, operation, attempt, generation, incarnation, lease_generation, artifact_digest, config_identity, create_units, prior, cleanup}`), `launch_state`, `init_instance`, `app_instance` (`{pid, start_time, exe, exe_sha256, argv}`) and `receipt` (`{result, provenance: "claimed", steps}`); `reconciliation_reads` entries carry `result`, a ReconcileOutcome. An `issued` or `uncertain` effect read `applied` is `succeeded`; an effect made `ambiguous` (its deadline, `output_exceeded`, a read `unknown` or `conflicting`) is `reconciled_*` once a read settles it; `refused` and `not_issued` are `failed` with no read. `attempt_intents` as D4 A.3.
+- **Unit names:** `surety-<h>-<env>-g<n>.service`, `<h>` the first 12 hex digits of SHA-256 of `$SURETY_HOME` as the engine is given it, **`<env>` the environment's id** † (D4 §9.3; the plan's M307 writes `alpha` there); `environments.prefix` is `surety-<h>-<env>-`.
+- **The journal** (J1): kinds `deploy_apply` and `teardown_apply`, events as section 44's table. Where they are stored is the Builder's (J1); **the operations read of section 108** shows every deploy and teardown operation with `journal_kind` and `state`, and gains for every operation **`journal`**: `[{"seq", "event_kind"}]`, in order.
+- **Rounds and verification:** `verification_rounds` and `deployment_verifications` as D4 A.3; `identity_reads` entries `{target, method, expected, read, match, instance, generation, at, bracket}`; `missing` `[{kind, id}]`. A round's executions: `trigger` `{"source": "deployment_verification", "id": "<operation id>:<attempt number>", "generation": <round number>}`; `deployment` `{operation, attempt (its id), deployment_generation, round (the verification_rounds id)}`; `environment` the environment's id; `artifact_digest`.
+- **The record:** `environment_records.attempted` `{operation, attempt, generation, outcome, at, cleanup?}`; `last_verified` `{candidate, artifact_digest, config_identity, generation, round (its id), at, verification (the row's id)}`; `observed` is never written by a deploy or a teardown.
+- **Teardown:** `POST /v1/projects/:p/environments/:e/teardown` (`:e` the name) with `{}` → **202**; the operation is intended at a tick, under the lease. `preempt` is slice 27's.
+
+## 251. Barriers of slice 23
+
+Section 33's rules (arming while the engine runs, `pause` and `kill`, one firing per arming).
+
+| Name | Fires |
+|---|---|
+| `deploy.intended` | after the transaction that records the deploy operation, consumes its authorization and writes its intent and the journal's `intended`, before its preconditions are read for its first attempt |
+| `deploy.receipt_recorded` | after the transition that records an effect's receipt, before its reconcile read |
+| `verify.row_recorded` | after the transaction that writes a `deployment_verifications` row, before `alpha_complete` is evaluated on it |
+
+The plan's other barriers (§2.3) are named by the slices whose rows use them.
+
+## 252. D4's configuration keys (the slice-23 straddle)
+
+(D4 A.7; BS4 §11.3 as approved, E121 item 3; `../contract/config.json`; rows M07, M73.) The closed configuration gains the engine keys `adapter_effect_deadline` (120 s; 10 to 900), `adapter_read_deadline` (10 s; 1 to 120), `adapter_output_max_bytes` (1 MiB; 64 KiB to 16 MiB), `artifact_max_entries` (20,000; 100 to 200,000), `artifact_max_bytes` (256 MiB; 1 MiB to 2 GiB), `artifacts_max_bytes` (2 GiB; 1 MiB to 64 GiB, `at_least` the effective `artifact_max_bytes`), `artifact_prepare_deadline` (600 s; 10 to 3,600) and the four `service_link_*` keys at D2's `egress_*` values; and the project keys `deploy_orchestration_deadline` (1,800 s; 300 to 10,800), `deploy_auto_retries_max` (1; 0 to 3), `identity_observation_every` (10; 1 to 100) and Q6's `service_memory_max`, `service_tasks_max`, `service_writable_bytes`, `service_writable_inodes`, `service_log_max_bytes`. M304 sets the three `adapter_*` keys to the bottom of their ranges.
+
+## 253. The accepted rows under J3, J4 and deployment (the slice-23 straddle)
+
+(D4 Appendix C.2; M4 plan §4.3; BS4 §9.2. What each change keeps is in `../COVERAGE.md`, "M4 slice 23".)
+
+- **J3.** `proposeAuthorization` in `gates.mjs` posts to the fixture route of section 246. Every row that proposes an Alpha authorization does so through it, with the binding it gave before. M303 (a) pins the M1 route gone.
+- **J4.** `alphaTarget` in `gates.mjs` configures its environment through section 245's route (one target, `tree_digest`; a name `alpha-<n>` unused in the project), records the labelled qualification of section 248, and declares one required `post_deploy_behavior` check, `deploy-behaves`, of gate kind `alpha_complete` only, once per protected version. The binding's `config_identity` is the environment's current one. `obligations: false` keeps M1's setup (the harness environment fixture, `config-1`, no obligations), which M303 (d) pins as refused. M01, M44 and every other row that reaches an Alpha authorization through `alphaTarget` (M24, M35, M38, M39, M41, M42, M43, M52, M105, both M201 files, M202, M204, M208, M209, both M218 files, M222, M228, M229, M231, M232, M237; M01's two files through `journey.mjs`; M239's sandbox-lane file through `real/checks-journey.mjs`) are unchanged in what they assert. **M140**'s real-lane journey (and M239's real-lane file) reach theirs through `alphaTarget` in `real/journey.mjs` and `real/checks-journey.mjs`, so they gain the same: rewritten by this change, not run (BS4 §9.2).
+- **M44.** The environment of its changed-scope case is configured with one target; its second binding still names two, through the fixture. `alpha_complete` leaves the refused kinds, and a new case pins that the route refuses a request with no operation (`invalid_value`) before any effect.
+- **M08.** The deploy refusal is narrowed: `POST …/deployments` exists, and a request it cannot read is refused (`invalid_value`) with no effect; `…/deploy`, `…/candidates/:c/deploy`, `…/candidates/:c/authorizations`, publish, export and releases stay refused. The scheduler file is unchanged: a `deploy` trigger through section 15's fixture stays refused, and a `deploy` item seeded into the store is never launched or completed.
+
+## 254. Names the Verifier fixed in this pass, and what is deferred
+
+**What this pass changes in earlier sections.** Section 7's routes gain sections 246 to 248's; section 18's barriers gain section 251's; section 75's proposal route is replaced by section 246's fixture; section 70's unbuilt kinds lose `alpha_complete` (section 249); section 108's operations read gains `journal` and shows deploy and teardown operations (section 250); section 160's `--secret-file` takes `deploy/<name>` (section 245); section 114's switches gain `--harness-deploy-adapter` (section 247).
+
+| What | Fixed as | Why |
+|---|---|---|
+| `:e` in the routes | the environment's name; ids in bodies | The CLI says `--env alpha`; the coordinator's choice |
+| The configuration's keys † | section 245's table | D4 §3.2 lists the fields and names none |
+| A reference's form † | `deploy/<name>` | Beside section 160's `backend/<provider>/<kind>`; the coordinator's choice |
+| The deployment request's answers † | 201, 200 coalesced, 409 `authorization_not_issued` with the reasons | A.6's code; D4 §4.1 "answered with the reasons" |
+| The fixture authorization | `POST /v1/harness/fixtures/authorization`, section 75's answers | J3: caller bindings only through `src/testing/` |
+| The scripted adapter | section 247 | Plan §2.6 leaves its interface to the seam |
+| The qualification fixture | section 248, one route for kernel facts and the sandbox stand-in | E92 item 2's pattern; BS4 §8 |
+| `IDENTITY_METHOD_MISSING` † | a gate reason naming the environment | D4 J4 names no code; the coordinator asked for one |
+| `host_qualification` null under `unrun` † | allowed on a fixture row | D4 A.3 marks it required; the kernel lane has no host qualification (section 114) |
+| The precondition facts † | section 250's twelve names | D4 §4.1 names facts, not codes |
+| `<env>` in a unit's name † | the environment's id | D4 §9.3; names are unique per project only |
+| `alpha_complete`'s route | section 70's route with `{operation}` | the coordinator's choice |
+| The round's trigger id | `<operation id>:<attempt number>` | The plan's `(deployment_verification, O:1, 1)` |
+
+**Deferred** (`../COVERAGE.md`, "M4 slice 23"; each a question for Sean): M305 (d)'s invalidated result; M306's lost sign-off, open out-of-band observation, lease lost and unknown ownership.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", and "M4 slice 23".

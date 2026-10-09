@@ -2,6 +2,13 @@
 // RN R1 and §4; build spec §3 and §6 correction 4; D1 §§9.1, 9.3, 9.6, 19.3,
 // the M1 part of D1-25; Review B03; E30 item 16; SEAM.md §§70, 75.
 //
+// M4 slice 23 changes what this row's fixtures supply, and nothing it
+// asserts (D4 Appendix C.2; J3, J4; SEAM.md §253; COVERAGE.md): the
+// authorization is proposed through the harness fixture, the shared
+// fixture configures its environment and supplies J4's obligations, and
+// `alpha_complete` leaves the unbuilt kinds. The former setup is pinned as
+// refused in M303 (d).
+//
 // M1 computes two gate kinds. A satisfied `stage` gate completes its
 // stage's work and issues nothing. An `alpha_authorize` evaluation is made
 // for an authorization that was recorded first, as `proposed`, with its
@@ -28,7 +35,7 @@ import { describe, test } from 'node:test';
 import { armFault, waitFor } from './harness/engine.mjs';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { assertNoEffect, assertRefused, maxEventSeq, storeState } from './harness/fixtures.mjs';
-import { addEnvironment, alphaTarget, authorizationsOf, check, effectiveVersion, evaluationsOf, installChecks, installGatedPlan, nominated, passAll, postResult, proposeAuthorization, reasonCodes, review, stageGate } from './harness/gates.mjs';
+import { alphaTarget, authorizationsOf, check, configuredEnvironment, effectiveVersion, evaluationsOf, installChecks, installGatedPlan, nominated, passAll, postResult, proposeAuthorization, reasonCodes, review, stageGate } from './harness/gates.mjs';
 import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { candidatesOf, eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
@@ -39,7 +46,8 @@ import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
 
 const LOGIN = check('login', { requirements: ['R1'] });
-const UNBUILT_KINDS = ['phase', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
+// M4 slice 23 (D4 §5.5; SEAM.md §§249, 253): `alpha_complete` is computed now, for an operation; the other kinds stay refused.
+const UNBUILT_KINDS = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
 
 // A nominated candidate with one required check declared and, unless
 // `pass` is false, passed.
@@ -178,7 +186,9 @@ describe('M44 an Alpha authorization', () => {
     // T2: the Alpha gate needs the Reviewer's sign-off.
     const { fx, ctx, project, c, k } = await candidate(t, { tier: 'T2' });
     await review(fx, project, c.id, { signoffs: [{ scope: 'candidate' }] });
-    const environment = await addEnvironment(fx.engine, project, { targets: ['alpha-1', 'alpha-2'] });
+    // M4 slice 23 (J4; SEAM.md §253): the environment is the owner's configuration, of one target (`local_service` takes one, D4 §10 X2);
+    // the second binding still names two targets, through the fixture authorization of SEAM.md §246, as the M1 route took them.
+    const environment = await configuredEnvironment(fx, ctx, { targets: ['alpha-1'] });
     const one = await alphaTarget(fx, ctx, c, { environment, targets: ['alpha-1'] });
     assert.equal((await one.evaluate()).outcome, 'satisfied', 'the fixture is live: candidate 1 is authorized for one target');
 
@@ -214,5 +224,15 @@ describe('M44 the gate kinds M1 does not compute (row M08)', () => {
       assertRefused(res, 501, 'unsupported', `evaluating the ${kind} gate`);
       assertNoEffect(fx.home, before, seq, `evaluating the ${kind} gate`);
     }
+  });
+
+  test('alpha_complete is no longer refused as unsupported: it is evaluated for an operation, and a request that names none is refused invalid_value before any effect (M4 slice 23)', async (t) => {
+    const { fx, project, c } = await candidate(t);
+    const before = storeState(fx.home);
+    const seq = maxEventSeq(fx.home);
+    const res = await fx.engine.post(`/v1/projects/${project}/candidates/${c.id}/gates/alpha_complete`, {});
+    assertRefused(res, 400, 'invalid_value', 'evaluating alpha_complete with no operation');
+    assert.equal(res.body.subject?.field, 'operation', 'the refusal names the operation it needs');
+    assertNoEffect(fx.home, before, seq, 'evaluating alpha_complete with no operation');
   });
 });
