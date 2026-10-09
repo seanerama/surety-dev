@@ -22,7 +22,7 @@ import { eventsOfType } from '../journal.mjs';
 import { recordExit } from '../checks/selection.mjs';
 import { buildAndNominate, def } from '../checks/repair.mjs';
 import { scopeProject } from '../checks/scope.mjs';
-import { tick, tickUntil } from '../runs.mjs';
+import { requestTick, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
@@ -153,6 +153,23 @@ export async function atBarrier(engine, name) {
 
 export { releaseBarrier };
 
+// Ask for ticks of the project until the engine waits at the paused barrier
+// `name` (armed beforehand). A paused tick does not end, so each request is
+// answered 202 and not waited for.
+export async function tickToBarrier(fx, project, name, { attempts = 10 } = {}) {
+  const waiting = async () => (await fx.engine.get('/v1/harness/barriers')).body?.barriers?.some((b) => b.name === name && b.state === 'waiting');
+  for (let i = 0; i < attempts; i++) {
+    await requestTick(fx.engine, project);
+    try {
+      await waitFor(waiting, { timeoutMs: 3000, what: `the engine to wait at ${name}` });
+      return;
+    } catch {
+      // not yet: another tick
+    }
+  }
+  throw new Error(`the engine never waited at ${name} after ${attempts} tick requests`);
+}
+
 // ---- store reads (SEAM.md §250) -------------------------------------------------------------
 
 const parseOp = (r) => r && { ...r, target: json(r.target), subject: json(r.subject), finalizer_inputs: json(r.finalizer_inputs), outcome_detail: r.outcome_detail === null ? null : safeJson(r.outcome_detail) };
@@ -271,3 +288,10 @@ export function filesUnder(dir, base = dir, out = {}) {
 }
 
 export const isWritable = (path) => (statSync(path).mode & 0o222) !== 0;
+
+// The unit names of an environment (D4 §9.3; SEAM.md §250): `<h>` the first
+// 12 hex digits of SHA-256 of $SURETY_HOME as the engine is given it, `<env>`
+// the environment's id.
+export const homeHash = (home) => createHash('sha256').update(home).digest('hex').slice(0, 12);
+export const unitPrefix = (home, environment) => `surety-${homeHash(home)}-${environment}-`;
+export const unitName = (home, environment, generation) => `${unitPrefix(home, environment)}g${generation}.service`;
