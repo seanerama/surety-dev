@@ -83,7 +83,7 @@ import { type EngineSettings, setEngineSettings } from './transitions/settings.j
 import { setCheckLimits } from '../checks/limits.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
-import { cadencePresenceDue, captureRunProposal, recordRunReport } from './transitions/accept.js';
+import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, nominationAncestryPairs, nominationPresenceDue, presenceDue, recordAncestry, recordNominationPresence, recordPresence } from './transitions/evidence.js';
 import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
@@ -241,7 +241,6 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'ancestry.nomination_pairs': (d, a: { project: string }) => nominationAncestryPairs(d, a),
   'presence.due': (d, a: { project: string }) => presenceDue(d, a),
   'presence.nomination': (d, a: { project: string }) => nominationPresenceDue(d, a),
-  'accept.cadence_presence': (d, a: { run: string }) => cadencePresenceDue(d, a),
   // The engine's own qualification fixture project, by its repository.
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,

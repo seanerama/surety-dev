@@ -228,24 +228,25 @@ test('a nomination owing its registration records checks_due as {trigger, at, ow
   assert.deepEqual(dueOwed(null), []);
 });
 
-test('cadence (Q10): an unread presence never lowers the tier; with no module able to raise it, nothing is read and nothing nominates', async (t) => {
+// E104 (Sean, 2026-10-08), replacing Q10's presence-dependent case: a fix
+// naming a finding is a cadence point at every tier, T1 included, whatever
+// modules exist or are present; no presence is read for it. A fix naming no
+// finding never is. A stage's cadence still follows its scope's tier.
+test('cadence (E104): a fix naming a finding nominates at every tier with no presence read; a fix naming none never does; a stage by its scope tier', async (t) => {
   const { cadenceOf } = await import(join(dist, 'store', 'transitions', 'accept.js'));
   const raising = store(t, { modules: [{ ...billing, tier_override: 'T2' }] });
-  const at = (db, presence) => transact(db, ENGINE_ACTOR, (tx) => cadenceOf(tx, { project: 'prj_1', tier: 'T1', kind: 'fix', stage: null, namesFinding: true, presence }));
-  assert.deepEqual(at(raising.db, 'unread'), { cadence: true, unread: true });
-  assert.deepEqual(at(raising.db, undefined), { cadence: true, unread: true });
-  const mod = raising.db.prepare(`SELECT id FROM modules WHERE name = 'billing'`).get().id;
-  const basis = moduleBasis(raising.db, 'prj_1');
-  assert.deepEqual(at(raising.db, { modules: [mod], basis }), { cadence: true, unread: false });
-  assert.deepEqual(at(raising.db, { modules: [], basis }), { cadence: false, unread: false });
-  assert.deepEqual(at(raising.db, { modules: [mod], basis: 'stale' }), { cadence: true, unread: true }, 'a read under other definitions is unread');
   const plain = store(t, { modules: [billing] });
-  assert.deepEqual(at(plain.db, 'unread'), { cadence: false, unread: false });
-  assert.deepEqual(
-    transact(plain.db, ENGINE_ACTOR, (tx) => cadenceOf(tx, { project: 'prj_1', tier: 'T1', kind: 'fix', stage: null, namesFinding: false, presence: 'unread' })),
-    { cadence: false, unread: false },
-    'a fix naming no finding is no cadence point at T1',
-  );
+  const at = (db, tier, kind, namesFinding, stage = null) => transact(db, ENGINE_ACTOR, (tx) => cadenceOf(tx, { project: 'prj_1', tier, kind, stage, namesFinding }));
+  for (const db of [raising.db, plain.db]) {
+    for (const tier of ['T1', 'T2', 'T3']) {
+      assert.deepEqual(at(db, tier, 'fix', true), { cadence: true }, `a fix naming a finding at ${tier}`);
+      assert.deepEqual(at(db, tier, 'fix', false), { cadence: false }, `a fix naming no finding at ${tier}`);
+    }
+  }
+  assert.deepEqual(at(plain.db, 'T1', 'stage_build', false), { cadence: false }, 'a T1 stage with no raising module: no cadence');
+  assert.deepEqual(at(plain.db, 'T2', 'stage_build', false), { cadence: true }, 'a T2 stage: cadence');
+  const { cadencePresenceDue } = await import(join(dist, 'store', 'transitions', 'accept.js'));
+  assert.equal(cadencePresenceDue, undefined, 'nothing reads module presence for a fix\'s cadence');
 });
 
 // ---- the slice-20 review's fixes ----------------------------------------------------------
