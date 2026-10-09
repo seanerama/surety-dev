@@ -165,6 +165,22 @@ deadline_note() { # execution
   note "Then run it again with a new SURETY_HANDS_ON_DIR, and go on from each pause sooner."
 }
 
+# A pause while the check is held (Sean's second run, 2026-10-09: a warning
+# was not enough to beat the clock). It never waits past the deadline less
+# HELD_MARGIN seconds, so that step 4's containment read and release happen
+# well inside the timeout; with the time left unknown or under the margin it
+# does not wait at all.
+HELD_MARGIN=25
+held_pause() { # execution
+  local left wait _
+  [ "${SURETY_HANDS_ON_NO_PAUSE:-}" = 1 ] && return 0
+  left=$(time_left "$1")
+  if [ "$left" = unknown ]; then note "No pause: the check's time left cannot be read, so the walkthrough goes straight on."; return 0; fi
+  wait=$(( left - HELD_MARGIN ))
+  if [ "$wait" -le 0 ]; then note "No pause: under $HELD_MARGIN s are left before the check's deadline, so the walkthrough goes straight on."; return 0; fi
+  read -r -t "$wait" -p "   It goes on by itself in $wait s, or sooner when you press enter. " _ || echo
+}
+
 # Tick a project until a store query prints something (a value), at most $3 seconds.
 until_db() { # project, query, seconds, what
   local i v
@@ -260,7 +276,7 @@ for pid in $PIDS; do printf '   %s  %s\n' "$pid" "$(tr '\0' ' ' < "/proc/$pid/cm
 check 1 "the check program (program.mjs, under the domain init) is a member of the check domain's cgroup.procs, read from the host" \
   "cat $CG/cgroup.procs; for p in \$(cat $CG/cgroup.procs); do tr '\\0' ' ' < /proc/\$p/cmdline; echo; done"
 deadline_note "$X"
-pause
+held_pause "$X"
 TREE=$(find "$SURETY_HOME/checktrees" -type f -path '*/src/app.js' -printf '%h\n' 2>/dev/null | head -1 | xargs -r dirname)
 echo "the check tree of ($P, $REV, the effective version), engine-owned: $TREE"
 find "$TREE" -maxdepth 3 | sed "s|^$TREE|   .|" | head -20
@@ -268,7 +284,7 @@ echo "entries named .git anywhere under $SURETY_HOME/checktrees: $(find "$SURETY
 check 2 "the check's tree holds the candidate's files and the protected inputs, and no .git anywhere" \
   "find $SURETY_HOME/checktrees -name .git    # prints nothing"
 deadline_note "$X"
-pause
+held_pause "$X"
 
 # ---------------------------------------------------------------------------------------
 say "4. Release the check: it writes the protected input and the candidate's src/app.js"
