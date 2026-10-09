@@ -423,8 +423,13 @@ export async function deployObligations(fx, project) {
 
 // The identity of an environment's current configuration, or the M1
 // fixture's stand-in for an environment the harness made with none.
+// A store without the table (an engine before M4) has no configuration either.
 const currentIdentity = (home, environment) =>
-  rows(home, 'SELECT c."config_identity" AS "id" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."id" = ?', environment)[0]?.id ?? 'config-1';
+  withStore(home, (db) =>
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'environment_configs'`).get()
+      ? db.prepare('SELECT c."config_identity" AS "id" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."id" = ?').get(environment)?.id
+      : undefined,
+  ) ?? 'config-1';
 
 // A test target and a proposed authorization of the candidate for it.
 // Returns {environment, binding, authorization, evaluate()}.
