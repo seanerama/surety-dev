@@ -25,7 +25,7 @@ import { type OobRow, blockingObservation, candidateObservation, nominationRef, 
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
-import { afterCompletion, currentQualification, deploymentVerdict, environmentByName, getEnv, identityMethodOf, qualificationStands } from './deploy.js';
+import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 
 type Db = Tx['db'];
 
@@ -549,7 +549,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // `alpha_complete` (D4 §5.5; J5, J9): its checks are the deciding round's
   // and nothing else, their results re-read now (AR B05); its deployment
   // reasons are the verification row's of that round.
-  const verdict = kind === 'alpha_complete' ? deploymentVerdict(db, { project: args.project, candidate: candidate.id, operation: target.operation!.id }) : null;
+  const verdict = kind === 'alpha_complete' ? deploymentVerdict(db, { operation: target.operation!.id }) : null;
   if (verdict !== null) {
     for (const c of scope.required) {
       const v = verdict.results.find((x) => x.check === c.id || x.key === c.key);
@@ -570,10 +570,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // environment's adapter, an identity method declared, and a required
   // `post_deploy_behavior` check in the `alpha_complete` scope.
   if (kind === 'alpha_authorize') {
-    const env = getEnv(db, target.authorization!.environment);
-    const adapter = env?.adapter ?? null;
-    if (adapter === null || !qualificationStands(db, currentQualification(db, adapter))) add('ADAPTER_UNQUALIFIED', [adapter ?? target.authorization!.environment]);
-    if (!env || identityMethodOf(db, env) === null) add('ACCEPTANCE_SCOPE_INCOMPLETE', ['identity_method']);
+    const envId = target.authorization!.environment;
+    const env = getEnv(db, envId);
+    if (!env || qualificationFor(db, env) === undefined) add('ADAPTER_UNQUALIFIED', [envId]);
+    if (!env || identityMethodOf(db, env) === null) add('IDENTITY_METHOD_MISSING', [envId]);
     const completion = buildScope(db, { project: args.project, candidate, kind: 'alpha_complete', stage: null, environment: scope.environment, artifact: scope.artifact });
     if (!completion.required.some((c) => c.kind === 'post_deploy_behavior')) add('ACCEPTANCE_SCOPE_INCOMPLETE', ['kind:post_deploy_behavior']);
   }
@@ -837,6 +837,9 @@ function issueAuthorization(tx: Tx, auth: AuthorizationRow, evaluation: string):
     tx.db.prepare(`UPDATE "deployment_authorizations" SET "status" = 'superseded' WHERE "id" = ?`).run(e.id);
     tx.emit('authorization.superseded', { project: auth.project, candidate: auth.candidate, authorization: e.id }, { by: auth.id });
   }
+  // A consumed one whose deploy has made no attempt yet is superseded too:
+  // its effect has not begun, and its precondition then fails (D4 §4.1).
+  supersedeUnattempted(tx, auth);
   assertEdge('AuthorizationStatus', auth.status, 'issued', { authorization: auth.id });
   tx.db.prepare(`UPDATE "deployment_authorizations" SET "status" = 'issued', "evaluation" = ? WHERE "id" = ?`).run(evaluation, auth.id);
   tx.emit('authorization.issued', { project: auth.project, candidate: auth.candidate, authorization: auth.id }, { evaluation, environment: auth.environment });

@@ -59,11 +59,23 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   checktree_max_entries: int(200_000, 1000, 2_000_000),
   checktrees_max_bytes: int(8_589_934_592, 67_108_864, 137_438_953_472),
   check_infra_retries_max: int(2, 0, 5),
+  // D4 A.7, with BS4 §11.3's values (E121 item 3; SEAM.md §252).
+  adapter_effect_deadline: int(120, 10, 900),
+  adapter_read_deadline: int(10, 1, 120),
+  adapter_output_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  artifact_max_entries: int(20_000, 100, 200_000),
+  artifact_max_bytes: int(268_435_456, 1_048_576, 2_147_483_648),
+  artifacts_max_bytes: int(2_147_483_648, 1_048_576, 68_719_476_736),
+  artifact_prepare_deadline: int(600, 10, 3600),
+  service_link_connect_timeout: int(10, 1, 60),
+  service_link_tunnel_max_seconds: int(1800, 60, 10_800),
+  service_link_tunnels_max: int(16, 1, 128),
+  service_link_buffer_max_bytes: int(1_048_576, 65_536, 16_777_216),
 };
 
 // A numeric engine key that may not be below another's effective value
 // (SEAM.md §186: `at_least`).
-export const ENGINE_AT_LEAST: Record<string, string> = { checktrees_max_bytes: 'checktree_max_bytes' };
+export const ENGINE_AT_LEAST: Record<string, string> = { checktrees_max_bytes: 'checktree_max_bytes', artifacts_max_bytes: 'artifact_max_bytes' };
 
 export const ENGINE_FIXED: Record<string, number> = { body_cap: BODY_CAP, upload_cap: UPLOAD_CAP };
 
@@ -129,6 +141,18 @@ export const ENGINE_KEYS = [
   'classifier_authority',
   // E69: the host is designated for the exhaustion probe P20.
   'isolation_probe_exhaustion',
+  // D4 A.7 (SEAM.md §252).
+  'adapter_effect_deadline',
+  'adapter_read_deadline',
+  'adapter_output_max_bytes',
+  'artifact_max_entries',
+  'artifact_max_bytes',
+  'artifacts_max_bytes',
+  'artifact_prepare_deadline',
+  'service_link_connect_timeout',
+  'service_link_tunnel_max_seconds',
+  'service_link_tunnels_max',
+  'service_link_buffer_max_bytes',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
@@ -213,6 +237,15 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   snapshot_max_file_bytes: int(10_485_760, 1024, 1_073_741_824),
   // D3 A.7: check executions running at once; not a widening.
   max_concurrent_checks: int(1, 1, 8),
+  // D4 A.7 (BS4 §11.3; Q6, Q9; SEAM.md §252).
+  deploy_orchestration_deadline: int(1800, 300, 10_800),
+  deploy_auto_retries_max: int(1, 0, 3),
+  identity_observation_every: int(10, 1, 100),
+  service_memory_max: int(536_870_912, 67_108_864, 8_589_934_592),
+  service_tasks_max: int(128, 16, 4096),
+  service_writable_bytes: int(67_108_864, 1_048_576, 1_073_741_824),
+  service_writable_inodes: int(4096, 256, 65_536),
+  service_log_max_bytes: int(1_048_576, 65_536, 16_777_216),
 };
 
 // The finer a budget boundary, the earlier in this list (D2 A.2

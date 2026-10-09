@@ -17,7 +17,7 @@ import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
 import { envelopeHold } from './transitions/envelope.js';
-import { deployParts, readEnvironment } from './transitions/deploy.js';
+import { deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { projectPolicy } from './transitions/settings.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -428,6 +428,8 @@ export function readOperations(db: Db, args: { project: string }) {
         kind: o.kind,
         journal_kind: o.journal_kind,
         state: o.state,
+        // SEAM.md §250: the journal's events, in order.
+        journal: journalEvents(db, o.id),
         status: o.status,
         purpose: inputs?.purpose ?? null,
         intent: intent ? (JSON.parse(intent.payload) as Record<string, unknown>) : (deployment?.intent ?? null),

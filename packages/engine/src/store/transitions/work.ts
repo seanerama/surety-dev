@@ -150,7 +150,7 @@ export interface TriggerInput {
   engineRaised?: boolean;
 }
 
-const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation'];
+const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization'];
 
 // Observe a trigger (D1 §8.2): create-or-return across every status, terminal
 // included. Re-observing an identity creates nothing and raises nothing.

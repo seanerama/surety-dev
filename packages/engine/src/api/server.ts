@@ -19,7 +19,6 @@ import { answerFacts } from '../decisions/facts.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
 import { prepareConfig, prepareDeployment } from '../deploy/commands.js';
-import { deployBounds } from '../deploy/adapter.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes } from '../records/files.js';
@@ -296,7 +295,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           name: 'environment.teardown',
           args: (b) => {
             noFields(b);
-            return { project, environment, incarnation: runtime().incarnation, deadlineSeconds: deployBounds().orchestrationSeconds };
+            return { project, environment };
           },
         };
       }

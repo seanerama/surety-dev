@@ -194,6 +194,20 @@ const COLUMN_ENUMS: Record<string, string> = {
   'execution_domains.observation': 'DomainObservation',
   'invocation_status_observations.exit_class': 'ExitClass',
   'execution_domains.exit_class': 'ExitClass',
+  // D4 A.2 (M4 slice 23).
+  'deploy_journal_events.journal_kind': 'DeployJournalKind',
+  'deploy_journal_state.journal_kind': 'DeployJournalKind',
+  'deploy_journal_events.event_kind': 'JournalEventKind',
+  'deploy_journal_state.state': 'JournalState',
+  'environment_configs.status': 'EnvironmentConfigStatus',
+  'artifacts.status': 'ArtifactStatus',
+  'adapter_qualifications.status': 'AdapterQualificationStatus',
+  'operations.orchestration_stage': 'OrchestrationStage',
+  'operation_attempts.launch_state': 'LaunchState',
+  'verification_rounds.status': 'VerificationRoundStatus',
+  'verification_rounds.step': 'VerificationRoundStep',
+  'deployment_verifications.outcome': 'VerificationOutcome',
+  'deployment_verifications.invalidated_reason': 'VerificationInvalidation',
 };
 
 const pascal = (text: string): string =>

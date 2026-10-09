@@ -52,7 +52,7 @@ export function parseRefValue(flag: string, text: string): { ref: string; value:
   const value = at <= 0 ? '' : text.slice(at + 1);
   // D4 §§3.2, 7.1 (N04): a deployment secret's reference has its own
   // namespace beside the backends' (`deploy/<name>`), for --secret-file only.
-  const deployment = flag === '--secret-file' && /^deploy\/[a-z0-9_]{1,64}$/.test(ref);
+  const deployment = flag === '--secret-file' && /^deploy\/[a-z][a-z0-9_]{0,62}$/.test(ref);
   if ((!(KEY_REFERENCES as readonly string[]).includes(ref) && !deployment) || value === '') return `${flag} takes <${KEY_REFERENCES.join('|')}|deploy/<name>>=<value>`;
   return { ref, value };
 }

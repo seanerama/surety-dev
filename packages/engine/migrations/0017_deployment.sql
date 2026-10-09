@@ -40,6 +40,9 @@ ALTER TABLE environments ADD COLUMN current_config TEXT REFERENCES environment_c
 ALTER TABLE environments ADD COLUMN deployment_generation INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE environments ADD COLUMN current_generation INTEGER;
 ALTER TABLE environments ADD COLUMN prefix TEXT;
+-- Engine-owned: an ordinary teardown the operator asked for, not yet
+-- intended (it waits for the environment lease, D4 §4.6).
+ALTER TABLE environments ADD COLUMN teardown_requested_at TEXT;
 CREATE UNIQUE INDEX environments_configured_name ON environments(project, name) WHERE prefix IS NOT NULL;
 
 -- D4 §3.1, A.3: sealed bytes, one row per digest per project. `manifest`
@@ -106,7 +109,7 @@ CREATE TABLE adapter_qualifications (
   lapsed_reason TEXT,
   label TEXT
 );
-CREATE UNIQUE INDEX adapter_qualifications_one_current ON adapter_qualifications(adapter) WHERE status = 'current';
+CREATE UNIQUE INDEX adapter_qualifications_one_current ON adapter_qualifications(adapter, adapter_version) WHERE status = 'current';
 CREATE TRIGGER adapter_qualifications_never_current_again BEFORE UPDATE OF status ON adapter_qualifications
 WHEN OLD.status = 'lapsed' AND NEW.status <> 'lapsed'
 BEGIN SELECT RAISE(ABORT, 'adapter_qualifications: a lapsed row is never current again'); END;
@@ -286,3 +289,34 @@ DROP TABLE leases;
 ALTER TABLE leases_0017 RENAME TO leases;
 CREATE UNIQUE INDEX leases_one_holder ON leases(resource_kind, resource_id) WHERE released_at IS NULL;
 CREATE INDEX leases_by_resource ON leases(resource_id);
+
+-- D4 A.2 RecordKind gains the deployment's records (the precondition
+-- manifest of D4 §4.1; the logs and link records of later slices). Rebuilt
+-- as 0007 did, rows kept.
+CREATE TABLE records_0017 (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  project TEXT REFERENCES projects(id),
+  kind TEXT NOT NULL CHECK (kind IN (
+    'transcript', 'tool_output', 'check_output', 'result', 'raw_user_report', 'parked_result',
+    'proposal_rationale', 'assessment_evidence', 'containment_evidence', 'recovery_plan',
+    'provider_files', 'egress_log', 'qualification_evidence', 'unaccepted_result',
+    'deployment_logs', 'service_link_log', 'deploy_precondition_manifest')),
+  path TEXT,
+  sha256 TEXT,
+  bytes INTEGER,
+  redaction_version TEXT NOT NULL,
+  published INTEGER NOT NULL CHECK (published IN (0, 1)),
+  post_scan TEXT NOT NULL CHECK (post_scan IN ('pending', 'clean', 'hit')),
+  post_scan_finding TEXT,
+  retain_until TEXT,
+  run TEXT REFERENCES runs(id),
+  published_at TEXT,
+  missing_at TEXT,
+  CHECK (published = 0 OR (sha256 IS NOT NULL AND bytes IS NOT NULL))
+);
+INSERT INTO records_0017 SELECT * FROM records;
+DROP TABLE records;
+ALTER TABLE records_0017 RENAME TO records;
+CREATE INDEX records_by_run ON records(run);
+CREATE INDEX records_by_project ON records(project, published);

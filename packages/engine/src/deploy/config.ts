@@ -12,7 +12,8 @@ import { join } from 'node:path';
 
 import { Refusal } from '../refusal.js';
 import { heldSecret } from '../records/redact.js';
-import { ADAPTERS, type ConfigContent, SECRET_REFERENCE } from '../store/transitions/deploy.js';
+import { ADAPTERS, type ConfigContent } from '../store/transitions/deploy.js';
+import { KEY_REFERENCES } from '../invoke/keys.js';
 import { canonical } from '../store/transitions/common.js';
 
 export const SECRET_DIGEST_KEY = 'secret-digest.key';
@@ -58,56 +59,66 @@ const invalid = (field: string, why: string): Refusal =>
   new Refusal(422, 'config_invalid', `The configuration's ${field} ${why}.`, 'Correct the configuration and write it again; no version was written.', { field });
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const VARIABLE = /^[A-Z_][A-Z0-9_]{0,63}$/;
-const TARGET = /^[a-z][a-z0-9_-]{0,31}$/;
-const FIELDS = ['adapter', 'adapter_version', 'targets', 'identity_method', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'artifact', 'egress', 'persistent_state', 'build'];
+const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
+const TARGET = /^[a-z][a-z0-9-]{0,31}$/;
+// A deployment reference (SEAM.md §245; N04) beside the backends' (§160).
+export const DEPLOY_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
+const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method'];
 
-// The content of a version, validated; the refusals of D4 X2 and Q4: a build
-// step, persistent state, a non-empty egress list, a target count other
-// than one, another adapter.
+const isReference = (v: unknown): v is string => typeof v === 'string' && (DEPLOY_REFERENCE.test(v) || (KEY_REFERENCES as readonly string[]).includes(v));
+
+// The content of a version, validated (SEAM.md §245): a closed object.
+// A reference names the deployment or the backend namespace, and the
+// engine must hold it (its digest is part of the identity). The refusals of
+// D4 X2 that depend on the host are the request's (M312).
 export function validateConfig(body: unknown): ConfigContent {
   if (!isObject(body)) throw invalid('body', 'must be a JSON object');
   for (const k of Object.keys(body)) if (!FIELDS.includes(k)) throw invalid(k, 'is not a configuration field');
   if (!(ADAPTERS as readonly string[]).includes(body.adapter as string)) throw invalid('adapter', `must be ${ADAPTERS.join(' or ')}`);
-  if (body.adapter_version !== undefined && (typeof body.adapter_version !== 'string' || body.adapter_version === '')) throw invalid('adapter_version', 'must be a non-empty string');
-  if (body.build !== undefined) throw invalid('build', 'is not supported: M4 builds the projection only (Q4)');
-  if (body.persistent_state !== undefined && body.persistent_state !== false) throw invalid('persistent_state', 'is not supported by local_service in M4 (X2)');
-  if (body.egress !== undefined && (!Array.isArray(body.egress) || body.egress.length > 0)) throw invalid('egress', 'must be empty: local_service has no egress in M4 (X2)');
-  if (!Array.isArray(body.targets) || body.targets.length !== 1) throw invalid('targets', 'must name exactly one target (X2)');
-  const targets = body.targets.map((t, i) => {
-    if (!isObject(t) || typeof t.name !== 'string' || !TARGET.test(t.name) || Object.keys(t).some((k) => k !== 'name')) throw invalid(`targets[${i}]`, 'must be {"name": <a lower-case name>}');
-    return { name: t.name };
+  if (typeof body.adapter_version !== 'string' || body.adapter_version === '' || body.adapter_version.length > 64) throw invalid('adapter_version', 'must be a non-empty string of at most 64 characters');
+  if (!Array.isArray(body.targets) || body.targets.length !== 1) throw invalid('targets', 'must name exactly one target (local_service, X2)');
+  body.targets.forEach((t, i) => {
+    if (typeof t !== 'string' || !TARGET.test(t)) throw invalid(`targets.${i}`, 'must be a target name');
   });
-  if (body.identity_method !== undefined && body.identity_method !== 'tree_digest') throw invalid('identity_method', 'must be tree_digest');
-  if (body.runtime !== undefined) {
-    const r = body.runtime;
-    if (!isObject(r) || typeof r.path !== 'string' || !r.path.startsWith('/') || typeof r.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(r.sha256) || Object.keys(r).some((k) => k !== 'path' && k !== 'sha256')) {
-      throw invalid('runtime', 'must be {"path": <absolute path>, "sha256": <64 hex>}');
-    }
+  const r = body.runtime;
+  if (!isObject(r) || typeof r.path !== 'string' || !r.path.startsWith('/') || typeof r.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(r.sha256) || Object.keys(r).some((k) => k !== 'path' && k !== 'sha256')) {
+    throw invalid('runtime', 'must be {"path": <absolute path>, "sha256": <64 lower-case hex>}');
   }
-  if (body.start !== undefined && (!Array.isArray(body.start) || body.start.length === 0 || body.start.some((a) => typeof a !== 'string'))) throw invalid('start', 'must be a non-empty argument array');
-  if (body.port !== undefined && (!Number.isInteger(body.port) || (body.port as number) < 1 || (body.port as number) > 65535)) throw invalid('port', 'must be a port number');
-  if (body.env !== undefined && (!isObject(body.env) || Object.entries(body.env).some(([k, v]) => !VARIABLE.test(k) || typeof v !== 'string'))) throw invalid('env', 'must map variable names to strings');
+  if (!Array.isArray(body.start) || body.start.length === 0 || body.start.some((a) => typeof a !== 'string')) throw invalid('start', 'must be a non-empty argument array');
+  if (!Number.isInteger(body.port) || (body.port as number) < 1024 || (body.port as number) > 65535) throw invalid('port', 'must be an integer from 1024 to 65535');
+  if (body.env !== undefined) {
+    if (!isObject(body.env)) throw invalid('env', 'must map variable names to strings');
+    for (const [k, v] of Object.entries(body.env)) if (!VARIABLE.test(k) || typeof v !== 'string') throw invalid(`env.${k}`, 'must be a variable name with a string value');
+  }
   if (body.secrets !== undefined) {
     if (!isObject(body.secrets)) throw invalid('secrets', 'must map variable names to secret references');
     for (const [k, v] of Object.entries(body.secrets)) {
       if (!VARIABLE.test(k)) throw invalid(`secrets.${k}`, 'is not a variable name');
-      if (typeof v !== 'string' || !SECRET_REFERENCE.test(v)) throw invalid(`secrets.${k}`, `names ${JSON.stringify(v)}, which is not a reference of the deployment namespace (deploy/<name>)`);
+      if (!isReference(v)) throw invalid(`secrets.${k}`, `names ${JSON.stringify(v)}, a reference in neither the deployment (deploy/<name>) nor the backend namespace`);
     }
   }
   if (body.check_secrets !== undefined) {
     if (!Array.isArray(body.check_secrets)) throw invalid('check_secrets', 'must be an array of secret references');
     body.check_secrets.forEach((v, i) => {
-      if (typeof v !== 'string' || !SECRET_REFERENCE.test(v)) throw invalid(`check_secrets[${i}]`, `names ${JSON.stringify(v)}, which is not a reference of the deployment namespace (deploy/<name>)`);
+      if (!isReference(v)) throw invalid(`check_secrets.${i}`, `names ${JSON.stringify(v)}, a reference in neither the deployment (deploy/<name>) nor the backend namespace`);
     });
   }
+  if (body.egress !== undefined && !Array.isArray(body.egress)) throw invalid('egress', 'must be an array');
   if (body.artifact !== undefined) {
     const a = body.artifact;
     if (!isObject(a) || Object.keys(a).some((k) => k !== 'exclude') || (a.exclude !== undefined && (!Array.isArray(a.exclude) || a.exclude.some((p) => typeof p !== 'string' || p === '' || p.startsWith('/') || p.split('/').includes('..'))))) {
-      throw invalid('artifact', 'must be {"exclude": [<relative paths>]}');
+      throw invalid('artifact', 'must be {"exclude": [<repository paths>]}');
     }
   }
-  return { ...(body as Record<string, unknown>), targets, adapter: body.adapter as string, adapter_version: (body.adapter_version as string | undefined) ?? '1' } as ConfigContent;
+  if (body.identity_method !== undefined && body.identity_method !== 'tree_digest') throw invalid('identity_method', 'must be tree_digest');
+  return body as unknown as ConfigContent;
+}
+
+// The field a reference stands in (for a refusal naming it).
+function fieldOf(content: ConfigContent, ref: string): string {
+  for (const [k, v] of Object.entries(content.secrets ?? {})) if (v === ref) return `secrets.${k}`;
+  const i = (content.check_secrets ?? []).indexOf(ref);
+  return i >= 0 ? `check_secrets.${i}` : 'secrets';
 }
 
 // Every secret reference a version names, each once.
@@ -121,7 +132,7 @@ export function secretDigests(home: string, content: ConfigContent): { ref: stri
   const key = secretDigestKey(home);
   return referencesOf(content).map((ref) => {
     const value = heldSecret(ref);
-    if (value === null) throw invalid(`secret ${ref}`, 'is not held by this engine (name it with --secret-file at start)');
+    if (value === null) throw invalid(fieldOf(content, ref), `names ${ref}, which this engine does not hold (name it with --secret-file at start)`);
     return { ref, digest: digestOf(key, value) };
   });
 }

@@ -4,17 +4,18 @@
 // `claimed`): no adapter result completes an attempt (§2.3). A read returns
 // what it could not read as unread, never as a default (CH 9).
 //
-// `adapterCall` is the one entry point of an effect: it checks the
-// capability against the store before any host call (§2.2), and bounds the
-// call. Reads go through `adapterRead`, bounded alike. Main thread only; no
-// transaction is held across a call (D1 §6.1).
+// An effect is made only after its capability passed the store check of
+// D4 §2.2 (release-operator.ts, `adapterCall`). Reads and effects are
+// bounded here by `adapter_effect_deadline`, `adapter_read_deadline` and
+// `adapter_output_max_bytes`. Main thread only; no transaction is held
+// across a call (D1 §6.1).
 //
-// Slice 23 builds no production adapter: `local_service` is slice 24's. The
-// registry answers the scripted adapter of the seam where it has one, and
-// otherwise an adapter that has nothing to call, whose every effect is
+// Slice 23 builds no production adapter: `local_service` is slice 24's. In
+// harness mode the seam answers the scripted adapter (SEAM.md §247);
+// otherwise an adapter with nothing to call answers, whose every effect is
 // `not_issued` and every read `unavailable`, so unknown.
 
-import { seamDeploymentAdapter, seamDeployBounds } from '../testing/seam.js';
+import { seamDeploymentAdapter } from '../testing/seam.js';
 
 export type AdapterEffectResult = 'issued' | 'refused' | 'not_issued' | 'uncertain';
 export type AdapterReadFailure = 'unavailable' | 'deadline' | 'output_exceeded' | 'invalid_response';
@@ -22,10 +23,10 @@ export type ReconcileOutcome = 'applied' | 'absent' | 'partial' | 'conflicting' 
 export type IdentityMatch = 'match' | 'differs' | 'unread';
 export type Supervision = 'attached' | 'unknown';
 
+// A process instance, as /proc names it: a pid and its start time.
 export interface Instance {
-  invocationId: string;
   pid: number;
-  startTime: number;
+  start_time: number;
 }
 
 export interface DeployCapability {
@@ -35,12 +36,13 @@ export interface DeployCapability {
   attempt: string;
   generation: number;
   incarnation: string;
-  leaseGeneration: number;
-  artifact: { digest: string; sealedPath: string };
-  configIdentity: string;
-  configVersion: number;
+  lease_generation: number;
+  artifact_digest: string;
+  sealed_path: string;
+  config_identity: string;
+  config_version: string;
   targets: string[];
-  createUnits: string[];
+  create_units: string[];
   prior: { unit: string; instance: Instance | null }[];
   cleanup: string[];
 }
@@ -52,9 +54,9 @@ export interface TeardownCapability {
   attempt: string;
   generation: number;
   incarnation: string;
-  leaseGeneration: number;
+  lease_generation: number;
   // The exact units its frozen intent names; nothing else is stopped.
-  stopUnits: string[];
+  stop_units: string[];
 }
 
 export type Capability = DeployCapability | TeardownCapability;
@@ -64,12 +66,17 @@ export interface EffectReceipt {
   steps: { at: string; step: string; detail: string }[];
 }
 
+// What a read found of one unit of the environment.
 export interface InventoryEntry {
   resource: string;
   kind: 'unit' | 'cgroup' | 'socket' | 'directory';
   recorded: boolean;
   state: string;
   pendingJob: boolean | 'unread';
+  generation?: number | 'unread' | null;
+  invocation_id?: string | 'unread' | null;
+  instance?: Instance | 'unread' | null;
+  tree?: string | 'unread' | null;
 }
 
 export interface TargetStatus {
@@ -133,14 +140,22 @@ export interface OperationIntent {
 export interface AttemptIntent {
   attempt: string;
   generation: number;
-  createUnits: string[];
+  create_units: string[];
   prior: { unit: string; instance: Instance | null }[];
   cleanup: string[];
-  stopUnits: string[];
-  // The units every frozen intent of the environment named: what the store
+  stop_units: string[];
+  // Every unit a frozen intent of the environment names: what the store
   // recorded for it.
-  recordedUnits: string[];
-  instance: Instance | null;
+  recorded_units: string[];
+}
+
+// The engine's launch socket, as a service launcher reaches it (D4 §9.2):
+// the launch authorization asked once with the init's instance, and the
+// init's `started` report of the application. The reply names what the
+// launcher is to run.
+export interface LaunchChannel {
+  authorize(init: Instance): Promise<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] }>;
+  started(app: Instance & { exe: string; exe_sha256: string | null; argv: string[] }): Promise<void>;
 }
 
 export interface DeploymentAdapter {
@@ -148,7 +163,7 @@ export interface DeploymentAdapter {
   readonly version: string;
   readonly reach: 'service_link' | 'proxy';
   readonly identityMethod: string;
-  deploy(cap: DeployCapability, signal: AbortSignal): Promise<EffectReceipt>;
+  deploy(cap: DeployCapability, signal: AbortSignal, launch: LaunchChannel): Promise<EffectReceipt>;
   teardown(cap: TeardownCapability, signal: AbortSignal): Promise<EffectReceipt>;
   reconcile(op: OperationIntent, attempt: AttemptIntent, signal: AbortSignal): Promise<Reconciliation>;
   status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetStatus[]>;
@@ -156,35 +171,29 @@ export interface DeploymentAdapter {
   logs(env: EnvRef, target: string, maxBytes: number, signal: AbortSignal): Promise<LogTail>;
 }
 
-// D4 A.7's values (BS4 §11.3). Their configuration keys come with the
-// artifact's bounds (row M309, slice 24); the seam may lower them.
-export const ADAPTER_EFFECT_DEADLINE_S = 120;
-export const ADAPTER_READ_DEADLINE_S = 10;
-export const ADAPTER_OUTPUT_MAX_BYTES = 1_048_576;
-export const DEPLOY_ORCHESTRATION_DEADLINE_S = 1800;
-export const DEPLOY_AUTO_RETRIES_MAX = 1;
-
 export interface DeployBounds {
   effectMs: number;
   readMs: number;
   outputBytes: number;
-  orchestrationSeconds: number;
-  autoRetries: number;
 }
 
-export function deployBounds(): DeployBounds {
-  const base: DeployBounds = {
-    effectMs: ADAPTER_EFFECT_DEADLINE_S * 1000,
-    readMs: ADAPTER_READ_DEADLINE_S * 1000,
-    outputBytes: ADAPTER_OUTPUT_MAX_BYTES,
-    orchestrationSeconds: DEPLOY_ORCHESTRATION_DEADLINE_S,
-    autoRetries: DEPLOY_AUTO_RETRIES_MAX,
-  };
-  return { ...base, ...(seamDeployBounds() ?? {}) };
+const FAILURE_CLASSES: readonly AdapterReadFailure[] = ['unavailable', 'deadline', 'output_exceeded', 'invalid_response'];
+
+export class AdapterUnavailable extends Error {
+  constructor(readonly failure: AdapterReadFailure) {
+    super(`adapter read failed: ${failure}`);
+  }
+}
+
+// The class a failed call reported, or `unavailable`: an error the adapter
+// raised without one is a call that could not be made.
+function failureClass(err: unknown): AdapterReadFailure {
+  const f = (err as { failure?: unknown } | null)?.failure;
+  return FAILURE_CLASSES.includes(f as AdapterReadFailure) ? (f as AdapterReadFailure) : 'unavailable';
 }
 
 // An adapter with nothing to call: nothing is issued and nothing is read.
-const NONE = (id: string): DeploymentAdapter => ({
+const none = (id: string): DeploymentAdapter => ({
   id,
   version: 'none',
   reach: 'service_link',
@@ -205,23 +214,8 @@ const NONE = (id: string): DeploymentAdapter => ({
   },
 });
 
-export class AdapterUnavailable extends Error {
-  constructor(readonly failure: AdapterReadFailure) {
-    super(`adapter read failed: ${failure}`);
-  }
-}
-
-const FAILURE_CLASSES: readonly AdapterReadFailure[] = ['unavailable', 'deadline', 'output_exceeded', 'invalid_response'];
-
-// The class a failed call reported, or `unavailable`: an error the adapter
-// raised without one is a call that could not be made.
-function failureClass(err: unknown): AdapterReadFailure {
-  const f = (err as { failure?: unknown } | null)?.failure;
-  return FAILURE_CLASSES.includes(f as AdapterReadFailure) ? (f as AdapterReadFailure) : 'unavailable';
-}
-
 export function adapterFor(id: string): DeploymentAdapter {
-  return (seamDeploymentAdapter(id) as DeploymentAdapter | null) ?? NONE(id);
+  return (seamDeploymentAdapter(id) as DeploymentAdapter | null) ?? none(id);
 }
 
 // A call bounded by its deadline and its output bound. The signal is
@@ -255,21 +249,21 @@ async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number,
   }
 }
 
-// An effect, after the capability check (the caller's, against the store).
-// Past its deadline or its output bound, or failed in a way it cannot
-// interpret, the effect is `uncertain`: ambiguous until reconciled (§2.1).
-export async function effectCall(adapter: DeploymentAdapter, cap: Capability): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null }> {
-  const b = deployBounds();
-  const r = await bounded((signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal) : adapter.teardown(cap, signal)), b.effectMs, b.outputBytes);
-  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at: new Date().toISOString(), step: 'bound', detail: r.failure }] }, bound: r.failure };
+// An effect. Past its deadline or its output bound, or answered in a way
+// that cannot be interpreted, it is `uncertain`: ambiguous until a read
+// settles it (§2.1).
+export async function effectCall(adapter: DeploymentAdapter, cap: Capability, launch: LaunchChannel, b: DeployBounds): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null }> {
+  const r = await bounded((signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)), b.effectMs, b.outputBytes);
+  const at = new Date().toISOString();
+  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure };
   const receipt = r.ok;
   if (!receipt || !['issued', 'refused', 'not_issued', 'uncertain'].includes(receipt.result)) {
-    return { receipt: { result: 'uncertain', steps: [{ at: new Date().toISOString(), step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response' };
+    return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response' };
   }
-  return { receipt: { result: receipt.result, steps: Array.isArray(receipt.steps) ? receipt.steps : [] }, bound: null };
+  const steps = Array.isArray(receipt.steps) ? receipt.steps.map((s) => ({ at: String(s.at), step: String(s.step), detail: String(s.detail).slice(0, 2000) })) : [];
+  return { receipt: { result: receipt.result, steps }, bound: null };
 }
 
-export async function readCall<T>(call: (signal: AbortSignal) => Promise<T>): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
-  const b = deployBounds();
+export function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
   return bounded(call, b.readMs, b.outputBytes);
 }

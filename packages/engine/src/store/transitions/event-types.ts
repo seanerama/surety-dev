@@ -113,6 +113,7 @@ export const EVENT_OWNERS = {
   'deploy.journal_ambiguous': 'store/transitions/deploy.ts',
   'deploy.journal_finalized': 'store/transitions/deploy.ts',
   'deploy.capability_refused': 'store/transitions/deploy.ts',
+  'deploy.launch_authorized': 'store/transitions/deploy.ts',
   'deploy.round_registered': 'store/transitions/deploy.ts',
   'deploy.round_superseded': 'store/transitions/deploy.ts',
   'deploy.orchestration_deadline': 'store/transitions/deploy.ts',

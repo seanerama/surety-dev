@@ -87,6 +87,8 @@ import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, nominationAncestryPairs, nominationPresenceDue, presenceDue, recordAncestry, recordNominationPresence, recordPresence } from './transitions/evidence.js';
 import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs } from './transitions/gates.js';
 import {
+  applicationStarted,
+  artifactFoundCorrupt,
   attemptOrphaned,
   capabilityCheck,
   capabilityRefused,
@@ -96,7 +98,11 @@ import {
   finalizeDeploy,
   finalizeRound,
   intendDeploy,
+  intendTeardown,
+  launchAuthorize,
   markSecretsChanged,
+  preconditionFailed,
+  readPreconditions,
   recordReceipt,
   recordReconcile,
   requestDeployment,
@@ -450,7 +456,13 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The Release Operator's steps (D4 §§4, 5; deploy/release-operator.ts).
   'deploy.secrets_changed': (tx, a) => markSecretsChanged(tx, a),
   'deploy.intend': (tx, a) => intendDeploy(tx, a),
+  'deploy.intend_teardown': (tx, a) => intendTeardown(tx, a),
+  'deploy.preconditions': (tx, a) => readPreconditions(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'deploy.precondition_failed': (tx, a) => preconditionFailed(tx, a),
+  'deploy.artifact_corrupt': (tx, a) => artifactFoundCorrupt(tx, a),
   'deploy.attempt': (tx, a) => startDeployAttempt(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'deploy.launch_authorize': (tx, a) => launchAuthorize(tx, a),
+  'deploy.app_started': (tx, a) => applicationStarted(tx, a),
   'deploy.capability_refused': (tx, a) => capabilityRefused(tx, a),
   'deploy.receipt': (tx, a) => recordReceipt(tx, a),
   'deploy.reconciled': (tx, a) => recordReconcile(tx, a),
