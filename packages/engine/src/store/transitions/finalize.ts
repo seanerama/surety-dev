@@ -72,8 +72,6 @@ export interface RefInputs {
   by?: 'engine_cadence' | 'builder_request';
   // the revision's module presence as read before the intent (D3 §4.1)
   module_presence?: { modules: string[]; read_at: string; basis: string };
-  // integration: a cadence decided on a module presence that was unread
-  cadence_presence?: 'unread';
   // policy
   revision?: number;
   blob?: string;

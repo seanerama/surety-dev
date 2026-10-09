@@ -15,8 +15,8 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, transitionWork } from './work.js';
-import { type Presence, presenceIn, presenceModules } from './evidence.js';
-import { TIER_RANK, cadenceTier, mayRaise } from '../../checks/scope.js';
+import { type Presence } from './evidence.js';
+import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
 
 export interface RunResult {
   summary: string;
@@ -268,44 +268,23 @@ interface ModuleTierRow {
 const projectModules = (db: Tx['db'], project: string): ModuleTierRow[] =>
   db.prepare('SELECT "id", "tier_override" FROM "modules" WHERE "project" = ? ORDER BY "id"').all(project) as ModuleTierRow[];
 
-// A `fix` naming a finding: its integration's cadence tier is the highest of
-// the project's tier and the tiers of the modules present at its revision
-// (D3 §4.1; Q10 (a)). What the main thread reads first: the modules and
-// their basis, or null when no module could raise the tier, so nothing need
-// be read.
-export function cadencePresenceDue(db: Tx['db'], args: { run: string }): { basis: string; modules: { id: string; paths: string[] }[] } | null {
-  const run = db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string } | undefined;
-  if (!run) return null;
-  const item = db.prepare('SELECT "kind", "subject" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { kind: string; subject: string } | undefined;
-  if (item?.kind !== 'fix') return null;
-  const tier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(run.project) as { tier: string }).tier;
-  if (!mayRaise(tier, projectModules(db, run.project))) return null;
-  return presenceModules(db, run.project);
-}
-
-// The cadence of an integration by the scope tier (D3 §4.1; B04; L3; Q10;
-// SEAM.md §224): a `stage_build` by its stage scope's tier (the project's
-// and its stage's modules' overrides); a `fix` naming a finding by the
-// project's and the present modules' tiers. An unread presence never lowers
-// the tier: when a module could raise it, the integration nominates by
-// cadence, recorded as decided on an unread fact. When no module could,
-// there is nothing to raise and nothing is read.
-export function cadenceOf(
-  tx: Tx,
-  args: { project: string; tier: string; kind: string; stage: string | null; namesFinding: boolean; presence?: { modules: string[]; basis: string } | 'unread' | undefined },
-): { cadence: boolean; unread: boolean } {
-  const modules = projectModules(tx.db, args.project);
+// The cadence of an integration (D3 §4.1; B04; L3; SEAM.md §224): a
+// `stage_build` by its stage scope's tier (the project's and its stage's
+// modules' overrides), a cadence point at T2 or T3. A `fix` naming a finding
+// is a cadence point at every tier, T1 included (E104; E43 at T2 and T3):
+// nothing else would nominate the fixed code, whose candidate resolves the
+// finding. So no module's presence decides a fix's cadence, and none is
+// read for it (Q10's tier for a fix's cadence no longer changes the
+// outcome). A fix naming no finding is no cadence point; at T1 the Builder
+// may ask for the nomination.
+export function cadenceOf(tx: Tx, args: { project: string; tier: string; kind: string; stage: string | null; namesFinding: boolean }): { cadence: boolean } {
   if (args.kind === 'stage_build') {
+    const modules = projectModules(tx.db, args.project);
     const row = args.stage ? (tx.db.prepare('SELECT "modules" FROM "stages" WHERE "id" = ?').get(args.stage) as { modules: string } | undefined) : undefined;
     const ids = row ? (JSON.parse(row.modules) as string[]) : [];
-    return { cadence: TIER_RANK[cadenceTier(args.tier, modules.filter((m) => ids.includes(m.id)))]! >= 2, unread: false };
+    return { cadence: TIER_RANK[cadenceTier(args.tier, modules.filter((m) => ids.includes(m.id)))]! >= 2 };
   }
-  if (!args.namesFinding) return { cadence: false, unread: false };
-  if ((TIER_RANK[args.tier] ?? 0) >= 2) return { cadence: true, unread: false };
-  if (!mayRaise(args.tier, modules)) return { cadence: false, unread: false };
-  const read = args.presence === undefined || args.presence === 'unread' ? null : presenceIn(tx.db, args.project, { ...args.presence, read_at: tx.at } as Presence);
-  if (read === null) return { cadence: true, unread: true };
-  return { cadence: TIER_RANK[cadenceTier(args.tier, modules.filter((m) => read.includes(m.id)))]! >= 2, unread: false };
+  return { cadence: args.namesFinding };
 }
 
 // The intent of an integration: the compare-and-swap of the integration
@@ -320,8 +299,6 @@ export function intendIntegration(
     commit: string;
     plans: PlanInput[];
     deadlineSeconds: number;
-    // A fix's module presence at `commit`, read beforehand (cadencePresenceDue).
-    presence?: { modules: string[]; basis: string } | 'unread';
   },
 ): IntentResult {
   const run = getRun(tx, args.run)!;
@@ -331,13 +308,14 @@ export function intendIntegration(
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
   const subject = JSON.parse(item.subject) as { stage?: string; finding?: string };
-  // At a T2 or T3 scope tier the integration of a stage is a cadence point,
-  // and so is the integration of a fix that names a finding: nothing else
-  // would nominate the fixed code, whose candidate resolves the finding (E43;
-  // SEAM.md §§42, 224). The scope tier, not the project's (B04; L3; Q10).
+  // At a T2 or T3 scope tier the integration of a stage is a cadence point
+  // (the scope tier, not the project's: B04; L3), and at every tier so is the
+  // integration of a fix that names a finding: nothing else would nominate
+  // the fixed code, whose candidate resolves the finding (E43; E104; SEAM.md
+  // §§42, 224).
   const namesFinding =
     item.kind === 'fix' && typeof subject.finding === 'string' && tx.db.prepare('SELECT 1 FROM "findings" WHERE "id" = ? AND "project" = ?').get(subject.finding, run.project) !== undefined;
-  const cadence = cadenceOf(tx, { project: run.project, tier: p.tier, kind: item.kind, stage: subject.stage ?? null, namesFinding, presence: args.presence });
+  const cadence = cadenceOf(tx, { project: run.project, tier: p.tier, kind: item.kind, stage: subject.stage ?? null, namesFinding });
   let nominate: RefInputs['nominate'] = null;
   if (cadence.cadence) nominate = { by: 'engine_cadence' };
   else if (p.tier === 'T1' && result?.nominate === true && (item.kind === 'stage_build' || item.kind === 'fix')) nominate = { by: 'builder_request' };
@@ -355,7 +333,6 @@ export function intendIntegration(
     nominate,
     chain: extra.chain,
     fence: true,
-    ...(cadence.unread ? { cadence_presence: 'unread' as const } : {}),
   };
   return intendOperation(tx, {
     project: run.project,
