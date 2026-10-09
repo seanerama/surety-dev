@@ -1,0 +1,82 @@
+# command: timeout -s TERM -k 30 180 bash probe.sh /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244
+# host: 6.6.87.2-microsoft-standard-WSL2; systemd 255 (255.4-1ubuntu8.17); started 2026-10-07T21:24:04Z
+21:24:04.757 == probe d7714647232d: unit surety-probe-d7714647232d.service, node /home/smahoney/.nvm/versions/node/v22.22.0/bin/node (1bec56ef7cfa9a76...)
+21:24:04.765 pre-check LoadState of surety-probe-d7714647232d.service: 'not-found'
+21:24:04.772 == 1. create the unit from a separate creator process
+21:24:04.986 systemd-run said: Running as unit: surety-probe-d7714647232d.service; invocation ID: bc78b734610e4e9cbac7e8ee1d8c6b26 rc=0 
+21:24:04.989 creator pid 1269197, cgroup /init.scope, cmdline: bash -c systemd-run --user --unit="$1" --description="Surety D4 feasibility probe" -p Delegate=yes -p MemoryMax=64M -p MemorySwapMax=0 -p TasksMax=32 -p RuntimeMaxSec=300 -- /bin/bash "$2/launcher.sh" >"$2/systemd-run.out" 2>&1; echo "rc=$?" >>"$2/systemd-run.out"; exec 3<>"$2/hold"; read -t 280 -u 3; : surety-probe-creator-d7714647232d surety-probe-d7714647232d.service /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244 
+21:24:04.990 == 2. first observation: unit properties
+21:24:04.991 $ systemctl --user show surety-probe-d7714647232d.service -p ActiveState -p SubState -p Result -p InvocationID -p MainPID -p ControlGroup -p Delegate -p MemoryMax -p TasksMax
+    MainPID=1269201
+    Result=success
+    ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/surety-probe-d7714647232d.service
+    Delegate=yes
+    MemoryMax=67108864
+    TasksMax=32
+    ActiveState=active
+    SubState=running
+    InvocationID=bc78b734610e4e9cbac7e8ee1d8c6b26
+21:24:04.997   rc=0
+21:24:05.031 cgroup limits read back: memory.max=67108864 memory.swap.max=0 pids.max=32
+21:24:05.032 members (cgroup.procs, recursive):
+21:24:05.046   pid=1269201 ppid=3350374 NSpid=[ 1269201] start=54734490 exe=/usr/bin/unshare argv=unshare -Urm --fork bash -c mount --bind "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/app" "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt" && mount -o remount,bind,ro "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt" && exec unshare -Ur --pid --fork bash "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh" 
+21:24:05.053   pid=1269202 ppid=1269201 NSpid=[ 1269202] start=54734490 exe=/usr/bin/unshare argv=unshare -Ur --pid --fork bash /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh 
+21:24:05.061   pid=1269205 ppid=1269202 NSpid=[ 1269205 1] start=54734491 exe=/usr/bin/bash argv=bash /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh 
+21:24:05.068   pid=1269206 ppid=1269205 NSpid=[ 1269206 2] start=54734491 exe=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node argv=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt/server.js 
+21:24:05.078 MainPID=1269201 (launcher) init(host)=1269205 application(host)=1269206 init-reported application ns pid=2
+21:24:05.080 binding: MainPID is the application? no; init report and host read agree? yes
+21:24:05.152 application exe=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node exe sha256=1bec56ef7cfa9a76... start=54734491
+21:24:05.153 mountinfo for the artifact path:
+    738 542 8:48 /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/app /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt ro,relatime - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+21:24:05.156 artifact via /proc/1269206/root: 1e9b1278001e2707b2f6c20c62a1e779fa59de79633e9ef9fdd6c8a4bb9e63ab
+21:24:05.159 artifact source on host:       1e9b1278001e2707b2f6c20c62a1e779fa59de79633e9ef9fdd6c8a4bb9e63ab
+21:24:05.160 host write through /proc root: refused
+21:24:05.165 unit cgroup under the creator's cgroup? no
+21:24:05.166 == 3. SIGKILL the creator only (pid 1269197, marker checked)
+21:24:05.168 $ kill -KILL 1269197
+probe.sh: line 17: 1269197 Killed                  bash -c 'systemd-run --user --unit="$1" --description="Surety D4 feasibility probe" -p Delegate=yes -p MemoryMax=64M -p MemorySwapMax=0 -p TasksMax=32 -p RuntimeMaxSec=300 -- /bin/bash "$2/launcher.sh" >"$2/systemd-run.out" 2>&1; echo "rc=$?" >>"$2/systemd-run.out"; exec 3<>"$2/hold"; read -t 280 -u 3; :' "$MARK" "$UNIT" "$WORK"
+21:24:05.171   rc=0
+21:24:06.192 creator alive? no; unit ActiveState=active InvocationID unchanged? yes; application pid 1269206 alive with same start? yes
+21:24:06.193 == 4. restart the unit
+21:24:06.195 $ systemctl --user restart surety-probe-d7714647232d.service
+21:24:06.243   rc=0
+21:24:06.447 == 4. after restart: unit properties
+21:24:06.448 $ systemctl --user show surety-probe-d7714647232d.service -p ActiveState -p SubState -p Result -p InvocationID -p MainPID -p ControlGroup -p Delegate -p MemoryMax -p TasksMax
+    MainPID=1269338
+    Result=success
+    ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/surety-probe-d7714647232d.service
+    Delegate=yes
+    MemoryMax=67108864
+    TasksMax=32
+    ActiveState=active
+    SubState=running
+    InvocationID=093a9ad8f91d4250b721225f688fbd69
+21:24:06.455   rc=0
+21:24:06.489 cgroup limits read back: memory.max=67108864 memory.swap.max=0 pids.max=32
+21:24:06.490 members (cgroup.procs, recursive):
+21:24:06.501   pid=1269338 ppid=3350374 NSpid=[ 1269338] start=54734629 exe=/usr/bin/unshare argv=unshare -Urm --fork bash -c mount --bind "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/app" "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt" && mount -o remount,bind,ro "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt" && exec unshare -Ur --pid --fork bash "/tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh" 
+21:24:06.509   pid=1269340 ppid=1269338 NSpid=[ 1269340] start=54734633 exe=/usr/bin/unshare argv=unshare -Ur --pid --fork bash /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh 
+21:24:06.516   pid=1269345 ppid=1269340 NSpid=[ 1269345 1] start=54734633 exe=/usr/bin/bash argv=bash /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/init.sh 
+21:24:06.523   pid=1269346 ppid=1269345 NSpid=[ 1269346 2] start=54734633 exe=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node argv=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt/server.js 
+21:24:06.534 MainPID=1269338 (launcher) init(host)=1269345 application(host)=1269346 init-reported application ns pid=2
+21:24:06.536 binding: MainPID is the application? no; init report and host read agree? yes
+21:24:06.609 application exe=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node exe sha256=1bec56ef7cfa9a76... start=54734633
+21:24:06.610 mountinfo for the artifact path:
+    738 542 8:48 /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/app /tmp/claude-1000/-home-smahoney-projects-sdlc-x/754832f0-d00d-491f-98d2-da5ef29661cc/scratchpad/d4-unit-probe-1791408244/mnt ro,relatime - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+21:24:06.614 artifact via /proc/1269346/root: 1e9b1278001e2707b2f6c20c62a1e779fa59de79633e9ef9fdd6c8a4bb9e63ab
+21:24:06.616 artifact source on host:       1e9b1278001e2707b2f6c20c62a1e779fa59de79633e9ef9fdd6c8a4bb9e63ab
+21:24:06.618 host write through /proc root: refused
+21:24:06.622 InvocationID changed? yes (bc78b734610e4e9cbac7e8ee1d8c6b26 -> 093a9ad8f91d4250b721225f688fbd69); old application pid 1269206 gone or reused with another start? yes
+21:24:06.623 == 5. stop: closure and emptiness
+21:24:06.624 $ systemctl --user stop surety-probe-d7714647232d.service
+21:24:06.699   rc=0
+21:24:06.719 after stop: LoadState=not-found ActiveState=inactive cgroup directory exists? no populated=n/a
+21:24:06.720 application pid 1269346 alive? no
+21:24:06.721 == probe complete
+21:24:06.722 == cleanup
+21:24:06.739 unit LoadState/ActiveState before cleanup: not-found/inactive
+21:24:06.779 unit after cleanup: LoadState=not-found ActiveState=inactive
+21:24:06.781 unit cgroup directory exists after cleanup: no
+21:24:06.784 work directory removed: yes
+21:24:06.786 == cleanup done
+# exit status: 0
