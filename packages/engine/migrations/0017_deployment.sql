@@ -25,10 +25,7 @@ CREATE UNIQUE INDEX environment_configs_one_current ON environment_configs(envir
 
 CREATE TRIGGER environment_configs_no_delete BEFORE DELETE ON environment_configs
 BEGIN SELECT RAISE(ABORT, 'environment_configs: a version is never deleted'); END;
-CREATE TRIGGER environment_configs_immutable BEFORE UPDATE ON environment_configs
-WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project IS NOT OLD.project OR NEW.environment IS NOT OLD.environment
-  OR NEW.version IS NOT OLD.version OR NEW.content IS NOT OLD.content OR NEW.config_identity IS NOT OLD.config_identity
-  OR NEW.secret_digests IS NOT OLD.secret_digests OR NEW.written_by IS NOT OLD.written_by OR NEW.written_at IS NOT OLD.written_at
+CREATE TRIGGER environment_configs_immutable BEFORE UPDATE OF id, created_at, project, environment, version, content, config_identity, secret_digests, written_by, written_at ON environment_configs
 BEGIN SELECT RAISE(ABORT, 'environment_configs: a version is never edited; a change is a new version'); END;
 CREATE TRIGGER environment_configs_superseded_final BEFORE UPDATE OF status ON environment_configs
 WHEN OLD.status = 'superseded' AND NEW.status <> 'superseded'
