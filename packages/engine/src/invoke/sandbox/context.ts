@@ -41,6 +41,7 @@ export type ContextFacts = {
     assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
     signoffs: { role: string; scope: string; module?: string }[];
     diff_base: { revision: string | null; from: string | null };
+    revision_records?: Record<string, { by_run: boolean; kinds: string[]; purpose: string | null }> | null;
   } | null;
   finding?: FindingFacts | null;
   // The project's checks (E87), for a Verifier, a Reviewer and a fix Builder.
@@ -76,7 +77,59 @@ export type FindingFacts = {
 // The candidate's diff as the engine could take it (D2 §1.3): from `base` to
 // the candidate's revision. `state` says what the patch is: the whole diff,
 // its first bytes, only its file summary, or nothing, with why.
-export type CandidateDiff = { base: string | null; base_from: string | null; revision: string; state: 'complete' | 'truncated' | 'stat_only' | 'unavailable'; text: string; detail: string | null };
+export type CandidateDiff = {
+  base: string | null;
+  base_from: string | null;
+  revision: string;
+  state: 'complete' | 'truncated' | 'stat_only' | 'unavailable';
+  text: string;
+  detail: string | null;
+  // The commits of the range the engine made on no role run's behalf (E106),
+  // or why they are unknown. Absent: not established for this package.
+  engine_commits?: EngineCommitsInRange;
+};
+
+// `commits`: those the engine's records say the engine or the owner made;
+// `unrecorded`: those with no record, whose maker is unknown; `more`: the
+// range held more commits than were classified.
+export type EngineCommitsInRange = { state: 'known'; commits: { sha: string; purpose: string }[]; unrecorded: string[]; more: boolean } | { state: 'unknown'; detail: string };
+
+// What each kind of engine commit is, and whose (E106).
+const ENGINE_COMMIT: Record<string, string> = {
+  bootstrap: "the project's bootstrap (`.surety/project.json`), the engine's",
+  policy: "a policy revision through the policy route (`.surety/policy.json`), the owner's",
+  protected: 'an approved change to the protected checks, applied by the engine on its approval, not the Builder\'s',
+  adopt: "the owner's out-of-band edits, committed by the engine on the owner's answer, the owner's",
+  stash: "the owner's out-of-band edits, stashed by the engine, the owner's",
+  // By the kind of its record, where no commit operation names a purpose.
+  engine_commit: "a commit the engine made on no role run's behalf, the engine's",
+  out_of_band: "a change of the integration branch made outside the engine and adopted by the owner, the owner's",
+};
+export const engineCommitText = (purpose: string): string => ENGINE_COMMIT[purpose] ?? `a commit the engine made on no role run's behalf (${purpose}), the engine's`;
+
+// The lines naming them under the candidate.diff line (E106). A role's
+// commit is never named here.
+export function engineCommitLines(e: EngineCommitsInRange | undefined): string[] {
+  if (e === undefined) return [];
+  if (e.state === 'unknown')
+    return [
+      `  Which commits in this range the engine or the owner made (the project's bootstrap, a policy revision), rather than the Builder, is unknown: ${e.detail}. Do not take every change in it as the Builder's work without checking.`,
+    ];
+  const out: string[] = [];
+  if (e.commits.length === 0) out.push("  By the engine's records, no commit in this range was made by the engine or the owner.");
+  else
+    out.push(
+      "  By the engine's records, these commits in this range were made by the engine or the owner, on no role run's behalf. Their changes are the engine's or the owner's, not the Builder's work to review; they stay in the diff, and you may still report on them:",
+      ...e.commits.map((c) => `  - ${c.sha}: ${engineCommitText(c.purpose)}.`),
+    );
+  if (e.unrecorded.length > 0)
+    out.push(
+      "  The engine has no record of these commits in this range, so who made them is unknown (the engine, the owner or a role):",
+      ...e.unrecorded.map((sha) => `  - ${sha}: unknown.`),
+    );
+  if (e.more) out.push('  The range holds more commits than the engine classified here (its newest); who made its older commits is unknown.');
+  return out;
+}
 
 export type ContextKind =
   | 'prompt'
@@ -341,6 +394,7 @@ export function writeContextPackage(
         ...(diff
           ? [
               `- /surety/context/candidate.diff: the candidate's changes, from ${diff.base ?? '(no base: the engine has no earlier revision of this project)'}${diff.base_from ? ` (${diff.base_from.replace(/_/g, ' ')})` : ''} to ${diff.revision}; ${DIFF_STATE[diff.state]}${diff.detail ? ` (${diff.detail})` : ''}.`,
+              ...engineCommitLines(diff.engine_commits),
             ]
           : []),
         `- /surety/context/findings.json: the ${review.findings.length} finding(s) that apply to this candidate, ${open.length} of them open, each by the id your result names it by.${
@@ -500,7 +554,9 @@ export function writeContextPackage(
             candidate: facts!.candidate!.id,
             revision: facts!.candidate!.revision,
             acceptance_content_hash: facts!.candidate!.acceptance_content_hash,
-            diff: diff ? { base: diff.base, base_from: diff.base_from, revision: diff.revision, state: diff.state, detail: diff.detail } : null,
+            diff: diff
+              ? { base: diff.base, base_from: diff.base_from, revision: diff.revision, state: diff.state, detail: diff.detail, ...(diff.engine_commits ? { engine_commits: diff.engine_commits } : {}) }
+              : null,
             signoffs_required: review.signoffs,
             assessments: review.assessments,
           },

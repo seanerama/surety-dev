@@ -171,6 +171,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
     signoffs: { role: string; scope: string; module?: string }[];
     diff_base: { revision: string | null; from: 'previous_candidate' | 'first_recorded_parent' | null };
+    revision_records?: RevisionRecords | null;
   } | null = null;
   if (candidate && (role === 'reviewer' || role === 'verifier')) {
     const findings = (db.prepare(`SELECT * FROM "findings" WHERE "project" = ? AND "status" IN ('open', 'dispositioned') ORDER BY "seq"`).all(item.project) as Finding[])
@@ -188,6 +189,10 @@ export function contextFacts(db: Database, args: { run: string }) {
       assessments,
       signoffs: role === 'reviewer' ? candidateSignoffs(db, item.project, candidate) : [],
       diff_base: previous ? { revision: previous.revision, from: 'previous_candidate' } : first ? { revision: first.parent_sha, from: 'first_recorded_parent' } : { revision: null, from: null },
+      // A Reviewer is told which commits of its diff's range are the
+      // engine's or the owner's (E106): the range is read from git when the
+      // package is written, each commit classified by these records.
+      ...(role === 'reviewer' ? { revision_records: revisionRecords(db, item.project) } : {}),
     };
   }
   // A fix's finding (D1 §9; F §6.2): the Builder is told what it fixes.
@@ -284,6 +289,47 @@ function stagePlan(db: Database, project: string, requirements: readonly { id: s
       if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) throw new Error('unreadable implements');
       return { number: s.number, status: s.status, implements: [...new Set(ids.map(keyOf))] };
     });
+  } catch {
+    return null;
+  }
+}
+
+// What the engine recorded of each commit of a project (E106), by its
+// `revisions` rows, never by a commit's trailers, which a role could write:
+// `by_run` true when any row names the run that made it (a role's work),
+// false when every row names none (the engine's or the owner's: the
+// bootstrap, a policy revision, an applied protected change, adopted
+// out-of-band edits); `kind` the rows' kinds; `purpose` the purpose of the
+// engine's commit operation for that commit, where there is one. A commit
+// with no row is absent: who made it is unknown. null when the records
+// cannot be read.
+export type RevisionRecords = Record<string, { by_run: boolean; kinds: string[]; purpose: string | null }>;
+export function revisionRecords(db: Database, project: string): RevisionRecords | null {
+  try {
+    const rows = db.prepare('SELECT "sha", "kind", "created_by_run" FROM "revisions" WHERE "project" = ? ORDER BY "recorded_at", "created_at", "id"').all(project) as {
+      sha: string;
+      kind: string;
+      created_by_run: string | null;
+    }[];
+    const out: RevisionRecords = {};
+    for (const r of rows) {
+      const e = (out[r.sha] ??= { by_run: false, kinds: [], purpose: null });
+      if (r.created_by_run !== null) e.by_run = true;
+      if (!e.kinds.includes(r.kind)) e.kinds.push(r.kind);
+    }
+    // The purpose only names what the engine's commit was; it never decides
+    // whose a commit is. An operation that cannot be read names none.
+    const ops = db.prepare(`SELECT "finalizer_inputs" FROM "operations" WHERE "project" = ? AND "kind" = 'git_commit' ORDER BY "seq"`).all(project) as { finalizer_inputs: string | null }[];
+    for (const o of ops) {
+      let inputs: { sha?: unknown; purpose?: unknown } | null = null;
+      try {
+        inputs = JSON.parse(o.finalizer_inputs ?? 'null') as { sha?: unknown; purpose?: unknown } | null;
+      } catch {
+        inputs = null;
+      }
+      if (inputs && typeof inputs.sha === 'string' && typeof inputs.purpose === 'string' && out[inputs.sha]) out[inputs.sha]!.purpose ??= inputs.purpose;
+    }
+    return out;
   } catch {
     return null;
   }
