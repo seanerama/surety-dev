@@ -314,12 +314,12 @@ S -X POST "$API/v1/projects/$P/candidates/$C/gates/stage" -d "{\"stage\": \"$STA
 # ---------------------------------------------------------------------------------------
 say "6. Two operator re-runs of 'contained' at the same bindings: the first held past its timeout, the second released"
 [ ! -e "$RELEASE/go" ] || die "the release file is still there: nothing more is started"
-S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, trigger: .trigger.source}]}'
+S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, key}]}'
 note "No release file this time: the program waits, and the engine ends it at timeout_s ($CONTAINED_TIMEOUT s), TERM then kill."
 X2=$(dbq "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' ORDER BY x.execution_seq DESC LIMIT 1")
 until_db "$P" "SELECT result FROM check_executions WHERE id = '$X2' AND result IS NOT NULL" 240 "the held re-run to reach its deadline" >/dev/null
 dbq "SELECT id, execution_established, exit_status, signaled, deadline_hit FROM check_results WHERE execution = '$X2'" | sed 's/^/   held re-run: /'
-S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, trigger: .trigger.source}]}'
+S -X POST "$API/v1/projects/$P/candidates/$C/checks" -d '{"keys": ["contained"]}' | jq -c '{executions: [.executions[] | {id, key}]}'
 X3=$(dbq "SELECT x.id FROM check_executions x JOIN checks c ON c.id = x.\"check\" WHERE x.candidate = '$C' AND c.key = 'contained' ORDER BY x.execution_seq DESC LIMIT 1")
 until_db "$P" "SELECT id FROM check_executions WHERE id = '$X3' AND status = 'running'" 180 "the second re-run to be running" >/dev/null
 note "Released, as in step 4, only after its own containment read."
