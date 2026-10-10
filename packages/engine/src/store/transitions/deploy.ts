@@ -349,9 +349,9 @@ function artifactCorrupt(tx: Tx, project: string, a: ArtifactRow, where: string)
 
 // The sealed copy found changed at a precondition read (main thread's
 // rehash): recorded before the operation fails on it.
-export function artifactFoundCorrupt(tx: Tx, args: { project: string; digest: string }): void {
+export function artifactFoundCorrupt(tx: Tx, args: { project: string; digest: string; where?: 'precondition' | 'reuse' }): void {
   const a = getArtifact(tx.db, args.project, args.digest);
-  if (a) artifactCorrupt(tx, args.project, a, 'precondition');
+  if (a) artifactCorrupt(tx, args.project, a, args.where ?? 'precondition');
 }
 
 function recordArtifact(tx: Tx, project: string, s: SealedArtifact): ArtifactRow {
@@ -476,7 +476,8 @@ export interface RequestArgs {
   project: string;
   candidate: string;
   environment: string;
-  sealed: SealedArtifact;
+  // null: prepared as coalescing with a pending deployment, nothing sealed.
+  sealed: SealedArtifact | null;
   specFingerprint: string;
   builder: string;
   // The gate's facts, read on the main thread (gates/prepare.ts).
@@ -492,7 +493,39 @@ export function requestFacts(db: Db, args: { project: string; candidate: string;
   const config = currentConfig(db, env);
   if (!config) throw notFound('environment configuration', args.environment);
   const repo = (db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string }).dev_repo_path;
-  return { candidate: candidate.id, revision: candidate.revision, environment: env.id, name: env.name, config: { id: config.id, version: config.version, status: config.status, content: configContent(config) }, repo };
+  // Whether a request now would coalesce (J3): decided before anything is
+  // sealed, so a coalesced request seals nothing (the slice-23 review's m5).
+  const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate.id, env.id) as AuthRow[];
+  const pendingNow = all.some((a) => pending(db, a));
+  return {
+    candidate: candidate.id,
+    revision: candidate.revision,
+    environment: env.id,
+    name: env.name,
+    config: { id: config.id, version: config.version, status: config.status, content: configContent(config) },
+    repo,
+    pending: pendingNow,
+  };
+}
+
+// Artifact admission (D4 §3.1): whether a row of the project records the
+// digest, and the bytes every row of the home records.
+export function artifactAdmission(db: Db, args: { project: string; digest: string }): { recorded: boolean; total: number } {
+  const recorded = getArtifact(db, args.project, args.digest) !== undefined;
+  const { total } = db.prepare('SELECT COALESCE(SUM("bytes"), 0) AS total FROM "artifacts"').get() as { total: number };
+  return { recorded, total };
+}
+
+// Every recorded artifact's path, and whether the project has any (the
+// start sweep's and a request's cleanup's read).
+export function artifactPaths(db: Db): string[] {
+  return (db.prepare('SELECT "path" FROM "artifacts"').all() as { path: string }[]).map((r) => r.path);
+}
+
+// An artifact refused at the request (D4 §3.1, A.2): the bound recorded on
+// `artifact.failed`; no row, since no sealed bytes exist.
+export function artifactRefused(tx: Tx, args: { project: string; refusal: string; detail: Record<string, unknown>; candidate: string; environment: string }): void {
+  tx.emit('artifact.failed', { project: args.project, candidate: args.candidate, environment: args.environment }, { refusal: args.refusal, ...args.detail });
 }
 
 export type Evaluate = (tx: Tx, a: Record<string, unknown>) => { evaluation: { id: string; outcome: string; reasons: unknown[] } };
@@ -540,6 +573,14 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     throw new Refusal(409, 'config_secrets_changed', `A secret the current configuration of ${env.name} names has a value other than its version records.`, 'Write a new configuration version, then request the deployment again.', {
       environment: env.id,
       config: config.id,
+    });
+  }
+  if (args.sealed === null) {
+    // Prepared as a coalescing request, and nothing is pending any more: the
+    // request is made again, and seals then.
+    throw new Refusal(409, 'illegal_transition', `The ${env.name} deployment of candidate ${candidate.id} that this request would have joined ended while it was prepared.`, 'Request the deployment again.', {
+      candidate: candidate.id,
+      environment: env.id,
     });
   }
   const artifact = recordArtifact(tx, args.project, args.sealed);

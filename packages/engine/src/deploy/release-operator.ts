@@ -21,7 +21,7 @@ import { type Runtime, log } from '../runtime.js';
 import type { DeployDetail, Fact, RoundDetail, Verdict } from '../store/transitions/deploy.js';
 import { pausePoint, seamDeployAdmission } from '../testing/seam.js';
 import { type Capability, type DeployBounds, type IdentityRead, type Instance, type LaunchChannel, type Reconciliation, adapterFor, effectCall, readCall } from './adapter.js';
-import { type ManifestEntry, rehash } from './artifact.js';
+import { type ManifestEntry, rehash, sweepArtifacts } from './artifact.js';
 import { heldDigests, secretDigestKey } from './config.js';
 import { judgeReconcile } from './reconcile.js';
 
@@ -46,6 +46,11 @@ export class ReleaseOperator {
   // configuration whose held values no longer give its digests marked
   // `secrets_changed` (RV5).
   async atStart(): Promise<void> {
+    // What an earlier incarnation's request sealed or staged and never
+    // recorded (D4-I08; the slice-23 review's m5), removed before the API
+    // serves a request that could make one.
+    const swept = sweepArtifacts(this.rt.home, await this.rt.read<string[]>('deploy.artifact_paths'));
+    for (const path of swept.refused) log('artifact sweep', new Error(`not removed: ${path}`));
     secretDigestKey(this.rt.home);
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {

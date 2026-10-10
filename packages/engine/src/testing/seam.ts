@@ -146,6 +146,11 @@ const MAIN_BARRIERS: readonly string[] = [
   'deploy.intended',
   'deploy.receipt_recorded',
   'verify.row_recorded',
+  // SEAM.md §262: slice 24's.
+  'artifact.staging_written',
+  'adapter.before_host_call',
+  'deploy.round_registered',
+  'identity.between_halves',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -205,6 +210,8 @@ export interface HarnessSwitches {
   classifierVersion?: number | null;
   // SEAM.md §247: `--harness-deploy-adapter <scripted|real>`.
   deployAdapter?: 'scripted' | 'real';
+  // SEAM.md §260: `--harness-artifact-free-bytes <n>`.
+  artifactFreeBytes?: number | null;
 }
 
 export interface CheckDomainLimits {
@@ -1571,6 +1578,7 @@ export function setHarnessSwitches(values: {
   checkDomainLimits?: string | null;
   classifierVersion?: string | null;
   deployAdapter?: string | null;
+  artifactFreeBytes?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1614,6 +1622,11 @@ export function setHarnessSwitches(values: {
     classifierVersion = Number(values.classifierVersion);
   }
   if (values.deployAdapter != null && values.deployAdapter !== 'scripted' && values.deployAdapter !== 'real') return `--harness-deploy-adapter takes scripted or real, not ${values.deployAdapter}`;
+  let artifactFreeBytes: number | null = null;
+  if (values.artifactFreeBytes != null) {
+    if (!/^\d{1,15}$/.test(values.artifactFreeBytes)) return `--harness-artifact-free-bytes takes a number of bytes, not ${values.artifactFreeBytes}`;
+    artifactFreeBytes = Number(values.artifactFreeBytes);
+  }
   if (!init.harness) return null;
   init = {
     ...init,
@@ -1629,6 +1642,7 @@ export function setHarnessSwitches(values: {
       checkDomainLimits,
       classifierVersion,
       deployAdapter: (values.deployAdapter as 'scripted' | 'real' | null | undefined) ?? 'scripted',
+      artifactFreeBytes,
     },
   };
   return null;
@@ -1650,6 +1664,10 @@ export const seamSelfTestForced = (): Record<string, 'failed' | 'not_exercised'>
 export const seamCheckProfileVariant = (): string | null => (init.harness ? (init.switches?.checkProfileVariant ?? null) : null);
 // SEAM.md §212: limits below the configured minimums for every check domain.
 export const seamCheckDomainLimits = (): CheckDomainLimits | null => (init.harness ? (init.switches?.checkDomainLimits ?? null) : null);
+// SEAM.md §260: the free bytes artifact admission takes, or null (statfs).
+export const seamArtifactFreeBytes = (): number | null => (init.harness ? (init.switches?.artifactFreeBytes ?? null) : null);
+// SEAM.md §247: whether this harness start uses the real deployment adapter.
+export const seamRealDeployAdapter = (): boolean => !init.harness || init.switches?.deployAdapter === 'real';
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
 // The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays
