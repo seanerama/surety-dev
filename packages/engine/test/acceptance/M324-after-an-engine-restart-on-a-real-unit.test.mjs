@@ -75,7 +75,7 @@ import {
   unitShow,
 } from './harness/deploy/host.mjs';
 import { roundsOf, verificationsOf, verifyAgain, workEntry } from './harness/deploy/rounds.mjs';
-import { backupNow, killOwnEngine, restoreInPlace, storeWrite, unitsNamedIn } from './harness/deploy/recover.mjs';
+import { backupNow, killOwnEngine, restoreInPlace, storeWrite, unitsNamedIn, startAgain } from './harness/deploy/recover.mjs';
 import { withStore } from './harness/store.mjs';
 
 const ENGINE = Object.freeze({ max_concurrent_domains: 2, domain_memory_max: CONTRACT.engine.domain_memory_max.min });
@@ -122,6 +122,7 @@ describe('M324 after an engine restart, on real units', () => {
   function assertRefusedRound({ row, executions }, svc) {
     assert.equal(row.outcome, 'unknown', `no verification passes on a service of unknown supervision (${row.outcome})`);
     assert.ok((row.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (${JSON.stringify(row.missing)})`);
+    assert.ok(executions.length > 0, 'the round registers its required check, which is then refused, not run (SEAM.md §278); a round with no execution would make the refusal unread');
     for (const x of executions) {
       const result = resultOf(ctx.fx.home, x.id);
       assert.ok(result, `the check ${x.id} has a result`);
@@ -152,7 +153,7 @@ describe('M324 after an engine restart, on real units', () => {
 
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       await tick(ctx.fx.engine, ctx.project, { rounds: 2 });
 
       // (f) J2: role and check domains closed as before; only the service domain survives.
@@ -219,7 +220,7 @@ describe('M324 after an engine restart, on real units', () => {
     try {
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       assert.ok(serviceDomainOf(ctx.fx.home, d.svc.attempt.id)?.reservation?.check_capacity, 'the survivor\'s reservation is recorded');
       const first = await roleHolding(ctx.fx, other.id, await addItem(ctx.fx, other.id, 'fix'), { name: 'one' });
       runs.push(first.run);
@@ -251,7 +252,7 @@ describe('M324 after an engine restart, on real units', () => {
       const from = backupNow(ctx.fx);
       restoreInPlace(ctx.fx, from, Object.fromEntries([[ctx.project, ctx.p.repo.path], ...others.map((o) => [o.id, o.repo.path])]));
       storeWrite(ctx.fx, (db) => db.prepare(`UPDATE "execution_domains" SET "cgroup_path" = "cgroup_path" || '-elsewhere' WHERE "attempt" = ?`).run(d.svc.attempt.id));
-      await ctx.fx.start();
+      await startAgain(ctx);
 
       const known = new Set(operationsOf(ctx.fx.home, ctx.project, 'deploy').map((o) => o.id));
       await deploy(ctx.fx.engine, ctx.project, ctx.candidate.id, d.env.name);
@@ -274,7 +275,7 @@ describe('M324 after an engine restart, on real units', () => {
       // The store's record put back as the host reports it, so the engine's own teardown can remove what it owns.
       if (ctx.fx.engine.isRunning()) await ctx.fx.engine.stop();
       storeWrite(ctx.fx, (db) => db.prepare(`UPDATE "execution_domains" SET "cgroup_path" = replace("cgroup_path", '-elsewhere', '') WHERE "attempt" = ?`).run(d.svc.attempt.id));
-      await ctx.fx.start();
+      await startAgain(ctx);
       await endEnvironment(ctx, d.env);
       if (item) for (const r of runsOf(ctx.fx.home, item)) await stopRun(ctx.fx.engine, other.id, r.id).catch(() => undefined);
     }

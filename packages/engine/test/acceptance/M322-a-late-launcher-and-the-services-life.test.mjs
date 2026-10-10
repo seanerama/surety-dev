@@ -70,7 +70,7 @@ import {
   unitShow,
   verificationOf,
 } from './harness/deploy/host.mjs';
-import { answerOn, armBarrier, barriersOf, killOwnEngine, leaseHeld, openOn, readsOf, releaseBarrier, waitingAt } from './harness/deploy/recover.mjs';
+import { answerOn, armBarrier, barriersOf, killOwnEngine, leaseHeld, openOn, readsOf, releaseBarrier, waitingAt, startAgain } from './harness/deploy/recover.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
 const ENGINE = Object.freeze({ adapter_effect_deadline: 10 });
@@ -163,7 +163,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
 
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first); the next incarnation closes the launch.
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       assert.equal(attemptsOf(ctx.fx.home, op.id)[0].launch_state, 'closed', 'the launch is closed before any request is accepted');
       await waitingAt(ctx.fx.engine, 'launcher.before_authorization', { timeoutMs: 30_000 });
       await releaseBarrier(ctx.fx.engine, 'launcher.before_authorization');

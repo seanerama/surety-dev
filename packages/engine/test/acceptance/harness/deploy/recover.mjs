@@ -25,7 +25,7 @@ import { backup, restore } from '../backup.mjs';
 import { CODES, answer, decision, decisionsOn } from '../decisions.mjs';
 import { requestTick, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { adapterState, armBarrier, attemptsOf, environmentLeases, operationsOf, operationsRead, releaseBarrier, setTarget } from './kernel.mjs';
+import { adapterState, armBarrier, attemptsOf, environmentLeases, operationsOf, operationsRead, qualifyByFixture, releaseBarrier, setTarget } from './kernel.mjs';
 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +75,17 @@ export async function killOwnEngine(fx) {
   assert.ok(environ.includes(`SURETY_HOME=${fx.home}`), `pid ${pid} is this test's engine (SURETY_HOME=${fx.home}); nothing is signalled otherwise`);
   await engine.kill();
   assert.equal(engine.isRunning(), false, 'the engine child has exited');
+}
+
+// A sandbox-lane engine started again on its home, and the adapter's
+// labelled qualification (SEAM.md §248) recorded again: a start records a new
+// host qualification (M110), so the qualification made before it is no
+// longer current (D4 §2.6), and a deployment after the restart would be
+// refused ADAPTER_UNQUALIFIED for that reason alone (SEAM.md §273).
+export async function startAgain(ctx, opts) {
+  await ctx.fx.start(opts);
+  ctx.qualification = await qualifyByFixture(ctx.fx.engine);
+  return ctx.fx.engine;
 }
 
 // ---- barriers (SEAM.md §§18, 125, 274) --------------------------------------------------------
