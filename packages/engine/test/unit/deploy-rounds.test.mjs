@@ -20,7 +20,9 @@ const derived = () => true;
 test('S1: a listing that could not be made turns a match into unread, naming the generation and the listing; never left a match', () => {
   const r = judgeOtherGeneration(matched, x, PREFIX, null, derived);
   assert.deepEqual([r.read, r.match, r.instance, r.generation], ['unread', 'unread', 'unread', 'unread']);
-  assert.deepEqual(r.detail, { field: 'generation', failure: 'listing' });
+  assert.equal(r.detail.field, 'generation');
+  assert.equal(r.detail.failure, 'listing');
+  assert.match(r.detail.why, /listing/);
 });
 
 test('S1: a read that already differs stays differs when the listing fails', () => {

@@ -616,7 +616,7 @@ export class LocalService implements DeploymentAdapter {
 export function judgeOtherGeneration(read: IdentityRead, x: TargetExpectation, prefix: string, listing: string | null, derived: (unit: string) => boolean): IdentityRead {
   if (listing === null) {
     if (read.match === 'differs') return read;
-    return { ...read, read: 'unread', match: 'unread', instance: 'unread', generation: 'unread', detail: { field: 'generation', failure: 'listing' } };
+    return { ...read, read: 'unread', match: 'unread', instance: 'unread', generation: 'unread', detail: { field: 'generation', failure: 'listing', why: "the listing of the environment's units could not be made, so whether another generation runs is unread" } };
   }
   const other = listing
     .split('\n')
