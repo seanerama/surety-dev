@@ -311,6 +311,12 @@
       "failed",
       "unknown"
     ],
+    "ObservationHistoryCondition": [
+      "healthy",
+      "degraded",
+      "down",
+      "unknown"
+    ],
     "AttemptStatus": [
       "started",
       "succeeded",
@@ -350,12 +356,21 @@
     "IntegritySubject": [
       "ref",
       "checkout",
-      "repository"
+      "repository",
+      "environment"
     ],
     "OobDisposition": [
       "discard",
       "adopt",
-      "stash"
+      "stash",
+      "teardown",
+      "acknowledge"
+    ],
+    "OutOfBandChangesChange": [
+      "stopped",
+      "restarted",
+      "unexpected_unit",
+      "identity_differs"
     ],
     "BaselineState": [
       "idea",
@@ -704,6 +719,9 @@
       "deploy.round_superseded",
       "deploy.orchestration_deadline",
       "deploy.service_exited",
+      "deploy.preempted",
+      "environment.out_of_band",
+      "environment.observation_missed",
       "engine.backup",
       "host.qualified",
       "host.qualification_lapsed",
@@ -1883,6 +1901,40 @@
         }
       }
     },
+    "environment_logs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "record": {
+          "required": true,
+          "references": "records"
+        },
+        "generation": {
+          "required": false
+        },
+        "at": {
+          "required": true
+        },
+        "collected_at": {
+          "required": true
+        },
+        "bytes": {
+          "required": true
+        }
+      }
+    },
     "environment_records": {
       "fields": {
         "id": {
@@ -1954,6 +2006,12 @@
           "required": false
         },
         "teardown_requested_at": {
+          "required": false
+        },
+        "expected_revision": {
+          "required": true
+        },
+        "logs_requested_at": {
           "required": false
         }
       }
@@ -2744,6 +2802,88 @@
         }
       }
     },
+    "observation_history": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "observed_at": {
+          "required": true
+        },
+        "source": {
+          "required": true
+        },
+        "condition": {
+          "required": true,
+          "enum": "ObservationHistoryCondition"
+        },
+        "detail": {
+          "required": false
+        },
+        "read_interval": {
+          "required": true
+        },
+        "expected_revision": {
+          "required": true
+        },
+        "deployment_generation": {
+          "required": false
+        },
+        "facts": {
+          "required": true
+        },
+        "installed": {
+          "required": true
+        },
+        "stale_reason": {
+          "required": false
+        }
+      }
+    },
+    "observation_jobs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "cadence_s": {
+          "required": true
+        },
+        "next_due": {
+          "required": true
+        },
+        "last_success_at": {
+          "required": false
+        },
+        "last_attempt_at": {
+          "required": false
+        },
+        "error_class": {
+          "required": false
+        }
+      }
+    },
     "operation_attempts": {
       "fields": {
         "id": {
@@ -2918,6 +3058,26 @@
           "references": "decisions"
         },
         "closed_at": {
+          "required": false
+        },
+        "environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "acknowledged": {
+          "required": false
+        },
+        "resource": {
+          "required": false
+        },
+        "change": {
+          "required": false,
+          "enum": "OutOfBandChangesChange"
+        },
+        "observation": {
+          "required": false
+        },
+        "closed_by": {
           "required": false
         }
       }
@@ -5189,7 +5349,7 @@
       "owner": "store/transitions/notify.ts"
     },
     "environment.observed": {
-      "owner": "store/transitions/environments.ts"
+      "owner": "store/transitions/environments.ts, store/transitions/observe.ts"
     },
     "environment.configured": {
       "owner": "store/transitions/deploy.ts"
@@ -5247,6 +5407,15 @@
     },
     "deploy.service_exited": {
       "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.preempted": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "environment.out_of_band": {
+      "owner": "store/transitions/observe.ts"
+    },
+    "environment.observation_missed": {
+      "owner": "store/transitions/observe.ts"
     },
     "engine.backup": {
       "owner": "store/transitions/engine.ts"

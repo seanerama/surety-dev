@@ -21,7 +21,7 @@ const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { contextFacts, revisionRecords } = await import(join(dist, 'store', 'reads.js'));
 const { writeContextPackage, engineCommitLines } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
-const { candidateDiff, engineCommitsInRange } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
+const { candidateDiff, engineCommitsInRange, resolveDiffBase } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
 
 const AT = '2026-10-09T00:00:00.000Z';
@@ -215,4 +215,22 @@ test("contextFacts gives a Reviewer the engine's commits, a Verifier none of thi
   run('run_ver', 2, 'wi_ver', 'verifier');
   assert.deepEqual(contextFacts(db, { run: 'run_rev' }).review.revision_records, { ['b'.repeat(40)]: { by_run: false, kinds: ['engine_commit'], purpose: 'bootstrap' } });
   assert.equal(contextFacts(db, { run: 'run_ver' }).review.revision_records, undefined);
+});
+
+// E106's ordering race (E129 item 10; SEAM.md §299): the first candidate's
+// base is the parent of the recorded revision earliest in the candidate's
+// own history, whatever order the records were made in.
+test("the first candidate's base is chosen by git ancestry, never by record time; a history that cannot be listed leaves it unknown", async (t) => {
+  const r = repository(t);
+  // Recorded with the bootstrap last by the clock: the base is still its parent.
+  const recorded = { [r.builder]: r.policy, [r.policy]: r.bootstrap, [r.bootstrap]: r.owner };
+  assert.deepEqual(await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded }, r.builder), { revision: r.owner, from: 'first_recorded_parent' });
+  // Only a later revision recorded: its parent, by ancestry.
+  assert.deepEqual(await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded: { [r.builder]: r.policy } }, r.builder), { revision: r.policy, from: 'first_recorded_parent' });
+  // The previous candidate's base is given as it is.
+  assert.deepEqual(await resolveDiffBase(r.repo, { revision: r.policy, from: 'previous_candidate' }, r.builder), { revision: r.policy, from: 'previous_candidate' });
+  // A revision git does not have: unknown, said, never guessed.
+  const unknown = await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded }, 'f'.repeat(40));
+  assert.equal(unknown.revision, null);
+  assert.match(unknown.unknown ?? '', /unknown/);
 });
