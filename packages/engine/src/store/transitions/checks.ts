@@ -562,6 +562,9 @@ export interface Admission {
   // attempt and generation frozen on it, its environment, and the targets
   // with the port each is reached on inside the check's own namespace.
   link: { attempt: string; environment: string; generation: number; targets: string[]; port: number } | null;
+  // Bound to a deployment verification (D4 §5.1): its source projection is
+  // empty.
+  deployment: boolean;
 }
 
 const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
@@ -640,6 +643,7 @@ export function admitExecution(
     runner_qualification: q.id,
     execution_seq: x.execution_seq as number,
     link: linkOf(tx.db, x),
+    deployment: typeof x.deployment === 'string',
   };
 }
 

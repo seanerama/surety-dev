@@ -1951,7 +1951,11 @@ export function roundStep(
   const why = roundRebound(tx.db, r, requiredOf);
   if (why !== null) return { state: 'superseded', next: supersedeRound(tx, r, why, requiredOf).id };
   const a = getAttempt(tx.db, r.attempt)!;
-  if (attemptSupervision(tx.db, a) !== 'attached') {
+  // A service that survived an engine restart (E110): nothing verifies on
+  // it, so its round is decided now. A channel lost within this incarnation
+  // leaves the round to its reads, which say what changed (M316 (b)); its
+  // row names `supervision` all the same.
+  if (supervisionOf(a) !== 'attached') {
     const done = finalizeRound(tx, { round: r.id, reads: null, failure: null }, requiredOf);
     return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
   }
@@ -2095,6 +2099,9 @@ export function supervisionLost(tx: Tx, args: { attempt: string; why: string }):
   const a = getAttempt(tx.db, args.attempt);
   const d = a ? serviceDomainOf(tx.db, a.id) : undefined;
   if (!a || !d || (d as { supervision_lost_at?: string | null }).supervision_lost_at) return;
+  // A domain whose application's exit was reported, or whose closure was
+  // observed, has nothing left to supervise.
+  if (d.app_exit !== null || d.status === 'terminated') return;
   // The record is the column; D4 A.5 names no event for it.
   tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, d.id);
 }
@@ -2247,8 +2254,12 @@ export function finalizeRound(
       continue;
     }
     for (const x of entry.reads) {
-      if (x.match === 'unread' || x.instance === 'unread') missing.push({ kind: 'identity_read', id: `${bracket}:${x.target}` });
-      else if (x.match === 'differs' || !sameInstance(x.instance, app)) differs = true;
+      // A read that differs is a difference whatever else it could not
+      // read (another generation's unit, M316 (d)); an unread one is absent
+      // evidence; a match on another instance is a difference too.
+      if (x.match === 'differs') differs = true;
+      else if (x.match === 'unread' || x.instance === 'unread') missing.push({ kind: 'identity_read', id: `${bracket}:${x.target}` });
+      else if (!sameInstance(x.instance, app)) differs = true;
     }
   }
   // The deciding results of the round's required checks (item 6).

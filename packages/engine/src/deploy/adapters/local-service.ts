@@ -577,16 +577,36 @@ export class LocalService implements DeploymentAdapter {
     const faults = { startTimeSkew: seamTakeDeployFault(env.environment, 'identity_start_time'), procUnreadable: seamTakeDeployFault(env.environment, 'identity_proc_unreadable') };
     const out: IdentityRead[] = [];
     for (const x of expect) {
-      out.push(
-        await readIdentity({
-          expect: x,
-          signal,
-          faults,
-          readUnit: async () => (x.unit ? unitState((await this.show(env.environment, [x.unit], signal))?.[0]) : null),
-        }),
-      );
+      const read = await readIdentity({
+        expect: x,
+        signal,
+        faults,
+        readUnit: async () => (x.unit ? unitState((await this.show(env.environment, [x.unit], signal))?.[0]) : null),
+      });
+      out.push(await this.otherGeneration(env.environment, x, read, signal));
     }
     return out;
+  }
+
+  // Another generation at the target (D4 §3.4: "another generation
+  // `differs`"; the slice-25 design Q11): an active unit of the
+  // environment's prefix other than the expected one is what answers there,
+  // so the read differs, naming that generation. A read-only listing of the
+  // exact prefix; a listing that cannot be made leaves the read as it was.
+  private async otherGeneration(env: string, x: TargetExpectation, read: IdentityRead, signal: AbortSignal): Promise<IdentityRead> {
+    const prefix = unitPrefix(this.rt.home, env);
+    if (x.unit === null || !x.unit.startsWith(prefix)) return read;
+    const listed = await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
+    if (!listed.ok || listed.code !== 0) return read;
+    const other = listed.stdout
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/))
+      .filter((f) => (f[0] ?? '').startsWith(prefix) && (f[0] ?? '').endsWith('.service') && f[0] !== x.unit && f[2] === 'active')
+      .map((f) => f[0]!)
+      .find((u) => ownUnit(this.rt.home, env, u) === null);
+    if (other === undefined) return read;
+    const generation = generationOf(other);
+    return { ...read, match: 'differs', generation: generation ?? 'unread', detail: { field: 'generation', expected: x.generation, read: generation ?? other } };
   }
 
   async logs(_env: EnvRef, _target: string, _maxBytes: number, _signal: AbortSignal): Promise<LogTail> {

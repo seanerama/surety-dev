@@ -146,6 +146,8 @@ const MAIN_BARRIERS: readonly string[] = [
   'deploy.intended',
   'deploy.receipt_recorded',
   'verify.row_recorded',
+  // SEAM.md §270: slice 25's, in the tick after the row, before completion.
+  'deploy.before_completion',
   // SEAM.md §262: slice 24's.
   'artifact.staging_written',
   'adapter.before_host_call',

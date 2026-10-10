@@ -288,6 +288,10 @@ export async function readIdentity(args: {
     const first = await snapshot();
     const check = (s: typeof first, half: string) => {
       if (s.unit === null) throw new Unread('unit', `the unit could not be read (${half})`);
+      // Another invocation of the unit (a restart, by the manager or by
+      // hand) is a positive read of a change, whatever state the new
+      // invocation is in: `differs`, naming it (M316 (b); D4 §3.4).
+      if (s.unit.loaded && s.unit.invocationId !== null && s.unit.invocationId !== want.invocation_id) throw new Differs('invocation_id', want.invocation_id, s.unit.invocationId);
       if (!s.unit.loaded || !s.unit.active) throw new Unread('unit', `the unit is not active (${half})`);
       if (s.unit.invocationId !== want.invocation_id) throw new Differs('invocation_id', want.invocation_id, s.unit.invocationId);
       if (s.unit.cgroup !== x.cgroup) throw new Differs('cgroup', x.cgroup, s.unit.cgroup);
