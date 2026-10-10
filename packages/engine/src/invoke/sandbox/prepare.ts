@@ -357,7 +357,9 @@ export async function resolveDiffBase(
   const listed = await git(repoContext(repo), ['rev-list', '--reverse', '--topo-order', revision, '--']);
   if (listed.code !== 0) return unknown("the candidate's history could not be listed, so the diff's base is unknown");
   const root = listed.stdout.split('\n').find((sha) => sha.length > 0 && Object.prototype.hasOwnProperty.call(base.recorded, sha));
-  if (root === undefined) return { revision: null, from: null };
+  // Recorded revisions, none of them in the candidate's history: the base is
+  // unknown, never the empty tree (the slice-27 review, m7).
+  if (root === undefined) return unknown("none of the project's recorded revisions is in the candidate's history, so the diff's base is unknown");
   const parent = base.recorded[root]!;
   return SHA.test(parent) ? { revision: parent, from: base.from } : unknown("the recorded parent of the first revision is not an object id, so the diff's base is unknown");
 }

@@ -175,20 +175,35 @@ function closeChange(tx: Tx, row: EnvChangeRow, by: string, why: string): void {
   tx.db.prepare('UPDATE "out_of_band_changes" SET "closed_at" = ?, "closed_by" = ? WHERE "id" = ? AND "closed_at" IS NULL').run(tx.at, by, row.id);
   const d = tx.db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(row.decision) as DecisionRow | undefined;
   if (d && d.status === 'open') invalidateDecision(tx, d, why);
+  // `alpha_complete` read it (the slice-27 review, m2).
+  staleCompletion(tx, row.project);
 }
 
 // Record the changes a read found, once each: the same change found again
 // adds nothing; an open row whose subject changed again is closed and its
 // decision invalidated, and the change found now recorded (SEAM.md §293).
-export function recordChanges(tx: Tx, args: { environment: string; changes: Change[]; observation: string | null }): string[] {
+// `state`: the read was of the units' states (an inventory read), so an
+// open row of a resource it found otherwise is superseded by what it found;
+// an identity read supersedes only a row of its own kind.
+export function recordChanges(tx: Tx, args: { environment: string; changes: Change[]; observation: string | null; state?: boolean }): string[] {
   if (args.changes.length === 0) return [];
   const env = getEnv(tx.db, args.environment);
   if (!env) return [];
   const made: string[] = [];
+  const same = (r: EnvChangeRow, c: Change) => sameChange({ change: r.change, resource: r.resource, found: json<Record<string, unknown>>(r.found) }, c);
+  // An open row of a resource this read found in another state (stopped,
+  // then restarted; another invocation) is closed and its decision
+  // invalidated, and the change found now recorded (the slice-27 review, m3).
+  for (const resource of new Set(args.changes.map((c) => c.resource))) {
+    const found = args.changes.filter((c) => c.resource === resource);
+    for (const r of openChanges(tx.db, env.id)) {
+      if (r.resource !== resource || found.some((c) => same(r, c))) continue;
+      if (args.state === true || found.some((c) => c.change === r.change)) closeChange(tx, r, args.observation ?? 'read', 'the subject changed again');
+    }
+  }
   for (const c of args.changes) {
     const rows = unresolvedChanges(tx.db, env.id).filter((r) => r.resource === c.resource && r.change === c.change);
-    if (rows.some((r) => sameChange({ change: r.change, resource: r.resource, found: json<Record<string, unknown>>(r.found) }, c))) continue;
-    for (const r of rows) if (r.disposition === null) closeChange(tx, r, args.observation ?? 'read', 'the subject changed again');
+    if (rows.some((r) => same(r, c))) continue;
     const id = tx.newId('oob_');
     const row: EnvChangeRow = {
       id,
@@ -260,7 +275,7 @@ export function recordInventoryRead(
       if (r.change === 'unexpected_unit' && !listed.has(r.resource)) closeChange(tx, r, args.observation ?? 'read', 'the unit is gone');
     }
   }
-  return recordChanges(tx, { environment: env.id, changes, observation: args.observation });
+  return recordChanges(tx, { environment: env.id, changes, observation: args.observation, state: true });
 }
 
 // What identity reads (a round's, or the observation job's) show.
@@ -293,16 +308,23 @@ export function inventoryOfRead(read: unknown): { complete: boolean; inventory: 
 
 // An engine operation replaced what runs (a later generation applied, or a
 // teardown applied): every change not yet settled is resolved (D4 §6.3).
+// A row answered `teardown` closes with it too (the slice-27 review, S1).
+// A unit the engine cannot account for was never touched by the operation:
+// its row stays until a complete read no longer finds it (m1).
 export function resolveOnReplacement(tx: Tx, args: { environment: string; operation: string }): void {
-  for (const r of unresolvedChanges(tx.db, args.environment)) closeChange(tx, r, args.operation, 'an engine operation replaced what runs');
+  for (const r of changeRows(tx.db, args.environment)) {
+    if (r.closed_at === null && r.change !== 'unexpected_unit') closeChange(tx, r, args.operation, 'an engine operation replaced what runs');
+  }
 }
 
 // The changes a verification round's interval holds (D4 §5.3 item 6; the
 // driver's ruling): every row detected from its first read to its decision,
 // and every row open at its first read; never an acknowledged one.
+// Only rows with no disposition count (the slice-27 review, S1): one
+// answered `teardown` or `acknowledge` is settled by its answer.
 export function changesInInterval(db: Db, args: { environment: string; from: string; to: string }): string[] {
   return changeRows(db, args.environment)
-    .filter((r) => r.disposition !== 'acknowledge')
+    .filter((r) => r.disposition === null)
     .filter((r) => (r.detected_at >= args.from && r.detected_at <= args.to) || (r.detected_at < args.from && (r.closed_at === null || r.closed_at >= args.from)))
     .map((r) => r.id);
 }
@@ -358,7 +380,7 @@ export function observationsDue(db: Db, args: { now: string }): { environment: s
     const bound = projectPolicy(db, j.project).observation_freshness_bound! * 1000;
     const due = Date.parse(j.next_due) <= now;
     const since = Date.parse(j.last_success_at ?? j.created_at);
-    const missed = j.error_class !== 'freshness_bound' && Number.isFinite(since) && now - since > bound;
+    const missed = (j as JobRow & { lapse_reported?: string | null }).lapse_reported !== (j.last_success_at ?? j.created_at) && Number.isFinite(since) && now - since > bound;
     if (due || missed) out.push({ environment: j.environment, project: j.project, due, missed });
   }
   return out;
@@ -507,7 +529,11 @@ export function recordObservation(
   }
   const missed = (reason: string, extra: Record<string, unknown> = {}) =>
     tx.emit('environment.observation_missed', { project: env.project, environment: env.id, observation: id }, { reason, ...extra });
-  if (args.missed === true) missed('freshness_bound', { last_success_at: job?.last_success_at ?? null });
+  // A lapse past the freshness bound, reported once (the slice-27 review, m6).
+  if (args.missed === true && job && (job as JobRow & { lapse_reported?: string | null }).lapse_reported !== (job.last_success_at ?? job.created_at)) {
+    missed('freshness_bound', { last_success_at: job.last_success_at });
+    tx.db.prepare('UPDATE "observation_jobs" SET "lapse_reported" = ? WHERE "id" = ?').run(job.last_success_at ?? job.created_at, job.id);
+  }
   let observed: Record<string, unknown>;
   let condition: string;
   if ('failure' in args.status) {
@@ -577,7 +603,7 @@ export function recordObservation(
 export function observationLapsed(tx: Tx, args: { environment: string }): { observation: string } | null {
   const env = getEnv(tx.db, args.environment);
   const job = tx.db.prepare('SELECT * FROM "observation_jobs" WHERE "environment" = ?').get(args.environment) as JobRow | undefined;
-  if (!env || !job || job.error_class === 'freshness_bound') return null;
+  if (!env || !job || (job as JobRow & { lapse_reported?: string | null }).lapse_reported === (job.last_success_at ?? job.created_at)) return null;
   const id = tx.newId('obsh_');
   const previous = newestIdentity(tx.db, env.id);
   const detail = { code: 'freshness_bound', last_success_at: job.last_success_at };
@@ -592,7 +618,7 @@ export function observationLapsed(tx: Tx, args: { environment: string }): { obse
     installed: true,
   });
   writeObserved(tx, env, observed);
-  tx.db.prepare(`UPDATE "observation_jobs" SET "error_class" = 'freshness_bound', "last_attempt_at" = ? WHERE "id" = ?`).run(tx.at, job.id);
+  tx.db.prepare(`UPDATE "observation_jobs" SET "error_class" = 'freshness_bound', "lapse_reported" = ?, "last_attempt_at" = ? WHERE "id" = ?`).run(job.last_success_at ?? job.created_at, tx.at, job.id);
   tx.emit('environment.observation_missed', { project: env.project, environment: env.id, observation: id }, { reason: 'freshness_bound', last_success_at: job.last_success_at });
   tx.emit('environment.observed', { project: env.project, environment: env.id, observation: id }, { condition: 'unknown', observed_at: tx.at, source: 'observation_job', detail });
   return { observation: id };

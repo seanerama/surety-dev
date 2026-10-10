@@ -2095,6 +2095,10 @@ export function recordReceipt(tx: Tx, args: { attempt: string; receipt: { result
   const a = getAttempt(tx.db, args.attempt);
   if (!a) throw notFound('attempt', args.attempt);
   const op = getOp(tx.db, a.operation)!;
+  // A receipt arriving after the operation's orchestration ended (superseded
+  // or failed by a preempting teardown) appends nothing and changes nothing
+  // (the slice-27 review, m5).
+  if (op.orchestration_stage === 'ended') return { reconcile: false };
   if (a.status !== 'started') return { reconcile: a.status === 'ambiguous' };
   tx.db.prepare('UPDATE "operation_attempts" SET "receipt" = ? WHERE "id" = ?').run(JSON.stringify({ result: args.receipt.result, provenance: 'claimed', steps: args.receipt.steps, bound: args.bound }), a.id);
   const j = journalOf(tx.db, op.id)!;

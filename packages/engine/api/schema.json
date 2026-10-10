@@ -2881,6 +2881,9 @@
         },
         "error_class": {
           "required": false
+        },
+        "lapse_reported": {
+          "required": false
         }
       }
     },

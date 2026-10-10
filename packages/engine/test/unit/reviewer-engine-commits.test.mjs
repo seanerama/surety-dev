@@ -229,6 +229,10 @@ test("the first candidate's base is chosen by git ancestry, never by record time
   assert.deepEqual(await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded: { [r.builder]: r.policy } }, r.builder), { revision: r.policy, from: 'first_recorded_parent' });
   // The previous candidate's base is given as it is.
   assert.deepEqual(await resolveDiffBase(r.repo, { revision: r.policy, from: 'previous_candidate' }, r.builder), { revision: r.policy, from: 'previous_candidate' });
+  // Recorded revisions, none in the candidate's history: unknown, never the empty tree (review m7).
+  const elsewhere = await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded: { ['e'.repeat(40)]: 'd'.repeat(40) } }, r.builder);
+  assert.equal(elsewhere.revision, null);
+  assert.match(elsewhere.unknown ?? '', /unknown/);
   // A revision git does not have: unknown, said, never guessed.
   const unknown = await resolveDiffBase(r.repo, { revision: null, from: 'first_recorded_parent', recorded }, 'f'.repeat(40));
   assert.equal(unknown.revision, null);

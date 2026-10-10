@@ -15,8 +15,10 @@ ALTER TABLE environments ADD COLUMN logs_requested_at TEXT;
 
 -- D1 A.3, D4 §6.2: one job per configured environment, made with its first
 -- configuration version (SEAM.md §291). `next_due` is the engine's clock;
--- `error_class` the last observation's failure, or `freshness_bound` once a
--- missed bound has been recorded.
+-- `error_class` the last observation's failure, or `freshness_bound`;
+-- `lapse_reported` (engine-owned) the last successful observation (or the
+-- job's creation) whose lapse past the freshness bound was reported, so a
+-- lapse is reported once (the slice-27 review, m6).
 CREATE TABLE observation_jobs (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
@@ -26,7 +28,8 @@ CREATE TABLE observation_jobs (
   next_due TEXT NOT NULL,
   last_success_at TEXT,
   last_attempt_at TEXT,
-  error_class TEXT
+  error_class TEXT,
+  lapse_reported TEXT
 );
 -- Existing configured environments have one, due one cadence from now.
 INSERT INTO observation_jobs (id, created_at, project, environment, cadence_s, next_due, last_success_at, last_attempt_at, error_class)
@@ -121,3 +124,13 @@ CREATE TABLE environment_logs (
 );
 CREATE TRIGGER environment_logs_no_update BEFORE UPDATE ON environment_logs
 BEGIN SELECT RAISE(ABORT, 'environment_logs is append-only'); END;
+
+-- D4 §4.6 step 2 (the slice-27 review, m4): an execution a preempting
+-- teardown cancelled while it ran is `quarantined` when its termination is
+-- not observed, as any running execution would be, and `cancelled` again
+-- once its closure is observed; no other change of a terminal status.
+DROP TRIGGER check_executions_terminal;
+CREATE TRIGGER check_executions_terminal BEFORE UPDATE OF status ON check_executions
+WHEN OLD.status IN ('recorded', 'interrupted', 'cancelled') AND NEW.status <> OLD.status
+  AND NOT (OLD.status = 'cancelled' AND NEW.status = 'quarantined' AND OLD.finished_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'check_executions: a terminal execution never changes status'); END;

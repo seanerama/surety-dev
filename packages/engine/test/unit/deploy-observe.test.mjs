@@ -86,3 +86,41 @@ test("a teardown's read: an owned survivor it does not name is partial; a unit i
   assert.equal(judgeReconcile(read([unit(G1)]), teardown({ stop_units: [G1] })).outcome, 'absent');
   assert.equal(judgeReconcile(read([]), teardown({ stop_units: [G1] })).outcome, 'applied');
 });
+
+// The slice-27 review, S2: a target read active whose application was not
+// read is unread, whatever is expected.
+test('an active target whose application was not read is unknown, expected or not', () => {
+  const read = { complete: true, inventory: [unit(G1)], targets: [target({ instance: 'unread' })] };
+  for (const exp of [expected(), null]) {
+    assert.equal(judgeCondition({ read, identityUnread: false, expected: exp, supervision: null, newestIdentity: null, unexpectedActive: false, drift: 0 }).condition, 'unknown');
+  }
+});
+
+// The slice-27 review, S1: only a row with no disposition counts in a
+// round's interval; one answered teardown or acknowledge is settled.
+test("a round's interval counts only rows with no disposition", async (t) => {
+  const { default: Database } = await import('better-sqlite3');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { migrate } = await import(join(dist, 'store', 'migrate.js'));
+  const { changesInInterval } = await import(join(dist, 'store', 'transitions', 'observe.js'));
+  const dir = mkdtempSync(join(tmpdir(), 'surety-unit-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = new Database(join(dir, 'store.db'));
+  t.after(() => db.close());
+  migrate(db, join(dist, '..', 'migrations'));
+  db.pragma('foreign_keys = OFF');
+  const row = (id, detected, disposition, closed = null) =>
+    db
+      .prepare(
+        `INSERT INTO out_of_band_changes (id, created_at, project, subject_kind, expected, found, detected_at, disposition, decision, closed_at, environment, resource, change)
+         VALUES (?, ?, 'prj_1', 'environment', '{}', '{}', ?, ?, 'dec_x', ?, 'env_1', 'u', 'stopped')`,
+      )
+      .run(id, detected, detected, disposition, closed);
+  row('oob_open_before', '2026-10-10T00:00:00.000Z', null);
+  row('oob_in', '2026-10-10T00:05:00.000Z', null);
+  row('oob_teardown', '2026-10-10T00:05:00.000Z', 'teardown');
+  row('oob_ack', '2026-10-10T00:05:00.000Z', 'acknowledge');
+  row('oob_closed_before', '2026-10-10T00:00:00.000Z', null, '2026-10-10T00:01:00.000Z');
+  assert.deepEqual(changesInInterval(db, { environment: 'env_1', from: '2026-10-10T00:02:00.000Z', to: '2026-10-10T00:10:00.000Z' }).sort(), ['oob_in', 'oob_open_before']);
+});

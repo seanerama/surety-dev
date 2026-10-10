@@ -183,7 +183,11 @@ export function judgeCondition(args: {
   if (r.complete !== true || entries.some((e) => e.state === 'unread' || e.state === undefined || e.pendingJob === 'unread')) return { condition: 'unknown', detail: { code: 'state_unread' } };
   const x = args.expected;
   const t = x ? r.targets.find((s) => s.unit === x.unit) : undefined;
-  if (t && (t.active === 'unread' || (t.active === true && t.instance === 'unread'))) return { condition: 'unknown', detail: { code: 'state_unread', unit: x!.unit } };
+  // Any target read active whose application was not read, expected or not
+  // (an operation in flight, after a teardown or a failed attempt): unread
+  // (the slice-27 review, S2).
+  const unreadTarget = r.targets.find((s) => s.active === 'unread' || (s.active === true && s.instance === 'unread'));
+  if (unreadTarget) return { condition: 'unknown', detail: { code: 'state_unread', unit: unreadTarget.unit } };
   if (args.identityUnread) return { condition: 'unknown', detail: { code: 'identity_unread' } };
   if (args.appUnread === true) return { condition: 'unknown', detail: { code: 'state_unread' } };
   const running = r.targets.some((s) => s.active === true && isInstance(s.instance));
