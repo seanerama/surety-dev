@@ -38,7 +38,7 @@ import { nowMs } from '../../clock.js';
 import { readPopulated } from '../../boundary/cgroup.js';
 import { type Runtime, log } from '../../runtime.js';
 import { seamTakeDeployFault } from '../../testing/seam.js';
-import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAdapter, EffectReceipt, EnvRef, IdentityRead, InventoryEntry, LogTail, OperationIntent, Reconciliation, TargetExpectation, TargetStatus, TeardownCapability } from '../adapter.js';
+import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAdapter, EffectReceipt, EnvRef, IdentityRead, InventoryEntry, LogTail, OperationIntent, Reconciliation, TargetExpectation, TargetInventory, TargetStatus, TeardownCapability } from '../adapter.js';
 import { AdapterUnavailable } from '../adapter.js';
 import { readIdentity, type UnitState, procStat } from '../identity.js';
 import type { ServiceHost } from '../service-host.js';
@@ -80,8 +80,15 @@ export function hostTool(name: 'systemctl' | 'systemd-run'): string | null {
 }
 
 // The environment of a call to the user manager: the bus address from the
-// engine's own environment, and nothing else.
-function managerEnv(): Record<string, string> | null {
+// engine's own environment, and nothing else. `missingBus` (the harness
+// fault `bus_address_missing`, SEAM.md §277; D4 §2.6 `unreadable`; BS4 §4.1
+// rule 4): the bus address and the runtime directory name a path that does
+// not exist, so the call cannot reach the manager; the manager itself is
+// untouched.
+function managerEnv(missingBus: string | null = null): Record<string, string> | null {
+  if (missingBus !== null) {
+    return { PATH: SYSTEM_DIRS.join(':'), LANG: 'C.UTF-8', SYSTEMD_PAGER: '', SYSTEMD_COLORS: '0', XDG_RUNTIME_DIR: missingBus, DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(missingBus, 'bus')}` };
+  }
   const runtime = process.env.XDG_RUNTIME_DIR;
   const bus = process.env.DBUS_SESSION_BUS_ADDRESS;
   if (!runtime && !bus) return null;
@@ -92,9 +99,9 @@ type HostResult = { ok: true; code: number; stdout: string; stderr: string } | {
 
 // One host call: an argument array, the constructed environment, a deadline
 // and an output bound. Never throws.
-function host(tool: 'systemctl' | 'systemd-run', args: string[], opts: { timeoutMs: number; outputBytes: number; signal?: AbortSignal | undefined }): Promise<HostResult> {
+function host(tool: 'systemctl' | 'systemd-run', args: string[], opts: { timeoutMs: number; outputBytes: number; signal?: AbortSignal | undefined; missingBus?: string | null }): Promise<HostResult> {
   const path = hostTool(tool);
-  const env = managerEnv();
+  const env = managerEnv(opts.missingBus ?? null);
   if (path === null) return Promise.resolve({ ok: false, failure: 'unavailable', detail: `${tool} is not installed` });
   if (env === null) return Promise.resolve({ ok: false, failure: 'unavailable', detail: 'the user manager is not reachable (XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS unset)' });
   if (opts.signal?.aborted) return Promise.resolve({ ok: false, failure: 'deadline', detail: 'the call passed its deadline before it started' });
@@ -143,10 +150,18 @@ const OUTPUT_DEFAULT = 1_048_576;
 // `systemctl --user show` of exact unit names, of this home's prefix for
 // `env`: one {property: value} per name, in order; null when the manager
 // could not be read (unread, never "absent").
-export async function showUnits(names: string[], opts: { home: string; env: string; timeoutMs: number; outputBytes?: number; signal?: AbortSignal | undefined }): Promise<Record<string, string>[] | null> {
+export async function showUnits(
+  names: string[],
+  opts: { home: string; env: string; timeoutMs: number; outputBytes?: number; signal?: AbortSignal | undefined; missingBus?: string | null },
+): Promise<Record<string, string>[] | null> {
   if (names.length === 0) return [];
   for (const n of names) if (ownUnit(opts.home, opts.env, n) !== null) throw new Error(`refused to read ${n}: ${ownUnit(opts.home, opts.env, n)}`);
-  const r = await host('systemctl', ['--user', 'show', `--property=${SHOW_PROPS.join(',')}`, '--', ...names], { timeoutMs: opts.timeoutMs, outputBytes: opts.outputBytes ?? OUTPUT_DEFAULT, signal: opts.signal });
+  const r = await host('systemctl', ['--user', 'show', `--property=${SHOW_PROPS.join(',')}`, '--', ...names], {
+    timeoutMs: opts.timeoutMs,
+    outputBytes: opts.outputBytes ?? OUTPUT_DEFAULT,
+    signal: opts.signal,
+    missingBus: opts.missingBus ?? null,
+  });
   if (!r.ok || r.code !== 0) return null;
   const blocks = r.stdout.split(/\n\s*\n/).filter((b) => b.trim() !== '');
   const out = blocks.map((b) => {
@@ -211,6 +226,14 @@ interface Resource {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// One observation of a service domain's closure: its cgroup's emptiness or
+// absence (D2 §3.2). The harness fault `service_closure_unread` (SEAM.md
+// §277) makes the environment's next one fail to read, as EACCES.
+export function closureRead(environment: string, path: string): ReturnType<typeof readPopulated> {
+  if (seamTakeDeployFault(environment, 'service_closure_unread')) return { state: 'unreadable', detail: `${path}: EACCES (the harness fault service_closure_unread)` } as ReturnType<typeof readPopulated>;
+  return readPopulated(path);
+}
+
 export class LocalService implements DeploymentAdapter {
   readonly id = 'local_service';
   readonly version = '1';
@@ -264,7 +287,7 @@ export class LocalService implements DeploymentAdapter {
     const closed = async (): Promise<boolean | null> => {
       const until = performance.now() + grace;
       for (;;) {
-        const p = readPopulated(r.cgroup_path!);
+        const p = closureRead(env, r.cgroup_path!);
         if (p.state === 'absent' || (p.state === 'populated' && p.value === 0)) return true;
         if (p.state === 'unreadable') return null;
         if (performance.now() > until || signal.aborted) return false;
@@ -289,7 +312,12 @@ export class LocalService implements DeploymentAdapter {
       step('closed', `${unit}: closure observed`);
       return true;
     }
-    step('closed', `${unit}: closure not observed (${done === null ? 'unreadable' : 'still populated'})`);
+    // A termination not observed (D4 §9.2, A.4): the domain is quarantined,
+    // keeping its reservation and conferring no launch, until its closure is
+    // observed (release-operator.ts observes it again after kill_grace).
+    const why = `${unit}: closure not observed (${done === null ? 'unreadable' : 'still populated'})`;
+    await this.rt.engine('deploy.domain_quarantined', { domain: r.domain, observed: why });
+    step('closed', why);
     return false;
   }
 
@@ -299,8 +327,9 @@ export class LocalService implements DeploymentAdapter {
     const deadline = nowMs() + this.rt.config.values.adapter_effect_deadline * 1000;
     const unit = cap.create_units[0];
     // The guard: every name, before any host call.
-    for (const u of [...cap.create_units, ...cap.prior.map((p) => p.unit)]) {
-      const why = ownUnit(this.rt.home, cap.environment, u, [...cap.create_units, ...cap.prior.map((p) => p.unit)]);
+    const cleanup = cap.cleanup ?? [];
+    for (const u of [...cap.create_units, ...cap.prior.map((p) => p.unit), ...cleanup]) {
+      const why = ownUnit(this.rt.home, cap.environment, u, [...cap.create_units, ...cap.prior.map((p) => p.unit), ...cleanup]);
       if (why !== null) {
         step('guard', why);
         return { result: 'refused', steps };
@@ -329,8 +358,32 @@ export class LocalService implements DeploymentAdapter {
       step('show', `${unit} exists already (${now[0]!.LoadState} ${now[0]!.ActiveState}): a name in use is refused`);
       return { result: 'refused', steps };
     }
-    // The prior instances the intent replaces: stopped only when positively owned.
     let changed = false;
+    // The earlier attempts' units the human's retry authorized cleaning up
+    // (D4 §4.4; E112): each stopped and reset by exact name only when
+    // positively owned, its closure observed; one not owned is left alone.
+    if (cleanup.length > 0) {
+      const shown = await this.show(cap.environment, cleanup, signal);
+      if (shown === null) {
+        step('show', 'the user manager could not be read');
+        return { result: 'not_issued', steps };
+      }
+      for (const [i, u] of cleanup.entries()) {
+        const s = shown[i]!;
+        if (s.LoadState === 'not-found') {
+          step('cleanup', `${u} is not loaded`);
+          continue;
+        }
+        const r = resources.find((x) => x.unit === u);
+        if (!this.owned(s, r)) {
+          step('cleanup', `${u} is not positively owned (cgroup or invocation not the recorded ones): left alone`);
+          return { result: changed ? 'uncertain' : 'refused', steps };
+        }
+        changed = true;
+        if (!(await this.stopOwned(cap.environment, u, r, deadline, step, signal))) return { result: 'uncertain', steps };
+      }
+    }
+    // The prior instances the intent replaces: stopped only when positively owned.
     for (const [i, p] of cap.prior.entries()) {
       const s = now[i + 1]!;
       if (s.LoadState === 'not-found') {
@@ -390,6 +443,9 @@ export class LocalService implements DeploymentAdapter {
       lk.domain.id,
       cap.incarnation,
       String(cap.lease_generation),
+      // Where a launcher released from a wait after this engine is gone asks
+      // again (SEAM.md §274): it is refused there.
+      sock,
     ];
     const made = await host('systemd-run', args, { timeoutMs: Math.max(1000, deadline - nowMs()), outputBytes: this.outputBytes, signal });
     step('systemd-run', made.ok ? `exit ${made.code}${made.stderr ? `: ${made.stderr.trim().slice(0, 300)}` : ''}` : made.failure);
@@ -456,7 +512,8 @@ export class LocalService implements DeploymentAdapter {
     // What is left of the environment's recorded domains whose closure was
     // observed: their runtime directories and link sockets.
     for (const r of await this.resources(cap.environment)) {
-      if (r.unit === null) continue;
+      // A quarantined domain is observed again later, never here (D4 §9.2).
+      if (r.unit === null || r.status === 'quarantined') continue;
       const s = (await this.show(cap.environment, [r.unit], signal))?.[0];
       if (!s || s.LoadState !== 'not-found') continue;
       const gone = r.cgroup_path === null || readPopulated(r.cgroup_path).state === 'absent';
@@ -467,14 +524,23 @@ export class LocalService implements DeploymentAdapter {
     return { result: uncertain ? 'uncertain' : 'issued', steps };
   }
 
-  async reconcile(op: OperationIntent, attempt: AttemptIntent, signal: AbortSignal): Promise<Reconciliation> {
-    const env = op.environment;
+  // The environment's inventory (D4 §2.4, §9.3; E111): every unit carrying
+  // its exact prefix in any state, with the manager's pending jobs for them,
+  // and every unit `extra` names (the store's), each by exact name; then the
+  // store's recorded resources (domain cgroups, ingress and link sockets,
+  // runtime directories). A listing is a read: it grants nothing. null: the
+  // manager could not be read (unknown, never empty).
+  private async takeInventory(
+    env: string,
+    extra: string[],
+    signal: AbortSignal,
+  ): Promise<{ complete: boolean; inventory: InventoryEntry[]; shows: Map<string, Record<string, string>> } | null> {
     const prefix = unitPrefix(this.rt.home, env);
-    const incomplete = (): Reconciliation => ({ outcome: 'unknown', complete: false, inventory: [], reads: [], identity: [] });
-    if (prefix !== op.prefix) return incomplete();
-    const listed = await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
-    const jobs = await host('systemctl', ['--user', 'list-jobs', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
-    if (!listed.ok || listed.code !== 0 || !jobs.ok || jobs.code !== 0) return incomplete();
+    const missingBus = seamTakeDeployFault(env, 'bus_address_missing') ? join(this.rt.home, 'run', 'no-such-bus') : null;
+    const call = { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal, missingBus };
+    const listed = await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], call);
+    const jobs = await host('systemctl', ['--user', 'list-jobs', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], call);
+    if (!listed.ok || listed.code !== 0 || !jobs.ok || jobs.code !== 0) return null;
     const listedUnits = listed.stdout
       .split('\n')
       .map((l) => l.trim().split(/\s+/)[0] ?? '')
@@ -485,49 +551,30 @@ export class LocalService implements DeploymentAdapter {
         .map((l) => l.trim().split(/\s+/)[1] ?? '')
         .filter((u) => u.startsWith(prefix)),
     );
-    const unitNames = [...new Set([...listedUnits, ...attempt.recorded_units, ...attempt.create_units, ...attempt.prior.map((p) => p.unit), ...attempt.stop_units])].filter((u) => ownUnit(this.rt.home, env, u) === null);
+    const unitNames = [...new Set([...listedUnits, ...extra])].filter((u) => ownUnit(this.rt.home, env, u) === null);
     // A unit carrying the prefix that is no name the engine derives is still
     // the environment's: listed, unreadable as an owned unit.
     const strangers = listedUnits.filter((u) => ownUnit(this.rt.home, env, u) !== null);
-    const shows = await this.show(env, unitNames, signal);
-    if (shows === null) return incomplete();
+    const shown = await showUnits(unitNames, { home: this.rt.home, env, timeoutMs: this.readMs, outputBytes: this.outputBytes, signal, missingBus });
+    if (shown === null) return null;
+    const shows = new Map<string, Record<string, string>>();
     const inventory: InventoryEntry[] = strangers.map((u) => ({ resource: u, kind: 'unit', recorded: false, state: 'unread', pendingJob: 'unread' }));
-    const identity: IdentityRead[] = [];
-    const g = new Set(attempt.create_units);
+    const recordedNames = new Set(extra);
     for (const [i, name] of unitNames.entries()) {
-      const s = shows[i]!;
+      const s = shown[i]!;
       if (s.LoadState === 'not-found') continue;
-      const entry: InventoryEntry = {
+      shows.set(name, s);
+      inventory.push({
         resource: name,
         kind: 'unit',
-        recorded: attempt.recorded_units.includes(name),
+        recorded: recordedNames.has(name),
         state: s.ActiveState || 'unread',
         pendingJob: jobUnits.has(name),
         generation: generationOf(name),
         invocation_id: s.InvocationID || null,
-      };
-      if (s.ActiveState === 'active' && g.has(name) && op.kind === 'deploy') {
-        const expect = (attempt.expect ?? []).find((e) => e.unit === name);
-        if (expect && expect.instance) {
-          const read = await readIdentity({ expect, readUnit: async () => unitState((await this.show(env, [name], signal))?.[0]), signal });
-          identity.push(read);
-          entry.instance = read.instance === 'unread' ? 'unread' : { pid: read.instance.pid, start_time: read.instance.start_time };
-          entry.tree = read.match === 'match' ? read.read : read.match === 'unread' ? 'unread' : `differs:${read.detail?.field ?? 'tree'}`;
-        } else {
-          entry.instance = 'unread';
-          entry.tree = 'unread';
-        }
-      } else if (s.ActiveState === 'active') {
-        const p = attempt.prior.find((x) => x.unit === name);
-        if (p?.instance) {
-          const now = procStat(p.instance.pid);
-          entry.instance = now && now.start_time === p.instance.start_time ? p.instance : 'unread';
-        }
-      }
-      inventory.push(entry);
+        cgroup: s.ControlGroup ? join('/sys/fs/cgroup', s.ControlGroup) : null,
+      });
     }
-    // The store's recorded resources (D4 §2.4): domain cgroups, ingress and
-    // link sockets, runtime directories.
     let complete = true;
     for (const r of await this.resources(env)) {
       if (r.cgroup_path !== null && r.status !== 'terminated') {
@@ -550,26 +597,65 @@ export class LocalService implements DeploymentAdapter {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') complete = false;
     }
-    return { outcome: 'unknown', complete, inventory, reads: [], identity };
+    return { complete, inventory, shows };
   }
 
-  async status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetStatus[]> {
+  async reconcile(op: OperationIntent, attempt: AttemptIntent, signal: AbortSignal): Promise<Reconciliation> {
+    const env = op.environment;
+    const incomplete = (): Reconciliation => ({ outcome: 'unknown', complete: false, inventory: [], reads: [], identity: [] });
+    if (unitPrefix(this.rt.home, env) !== op.prefix) return incomplete();
+    const taken = await this.takeInventory(env, [...attempt.recorded_units, ...attempt.create_units, ...attempt.prior.map((p) => p.unit), ...attempt.cleanup, ...attempt.stop_units], signal);
+    if (taken === null) return incomplete();
+    const identity: IdentityRead[] = [];
+    const g = new Set(attempt.create_units);
+    for (const entry of taken.inventory) {
+      if (entry.kind !== 'unit') continue;
+      const name = entry.resource;
+      const s = taken.shows.get(name);
+      if (!s) continue;
+      if (s.ActiveState === 'active' && g.has(name) && op.kind === 'deploy') {
+        const expect = (attempt.expect ?? []).find((e) => e.unit === name);
+        if (expect && expect.instance) {
+          const read = await readIdentity({ expect, readUnit: async () => unitState((await this.show(env, [name], signal))?.[0]), signal });
+          identity.push(read);
+          entry.instance = read.instance === 'unread' ? 'unread' : { pid: read.instance.pid, start_time: read.instance.start_time };
+          entry.tree = read.match === 'match' ? read.read : read.match === 'unread' ? 'unread' : `differs:${read.detail?.field ?? 'tree'}`;
+        } else {
+          entry.instance = 'unread';
+          entry.tree = 'unread';
+        }
+      } else if (s.ActiveState === 'active') {
+        const p = attempt.prior.find((x) => x.unit === name);
+        if (p?.instance) {
+          const now = procStat(p.instance.pid);
+          entry.instance = now && now.start_time === p.instance.start_time ? p.instance : 'unread';
+        }
+      }
+    }
+    return { outcome: 'unknown', complete: taken.complete, inventory: taken.inventory, reads: [], identity };
+  }
+
+  // The environment's inventory and each target's status (D4 §9.3; Appendix
+  // B: `status` takes the inventory). Read only.
+  async status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory> {
+    const recorded = (await this.resources(env.environment)).map((r) => r.unit).filter((u): u is string => typeof u === 'string');
     const names = expect.map((e) => e.unit).filter((u): u is string => typeof u === 'string');
-    const shows = await this.show(env.environment, names, signal);
-    if (shows === null) throw new AdapterUnavailable('unavailable');
-    return expect.map((e) => {
-      const s = e.unit ? shows[names.indexOf(e.unit)] : undefined;
+    const taken = await this.takeInventory(env.environment, [...recorded, ...names], signal);
+    if (taken === null) throw new AdapterUnavailable('unavailable');
+    const targets = expect.map((e): TargetStatus => {
+      const s = e.unit ? taken.shows.get(e.unit) : undefined;
       const alive = e.instance ? procStat(e.instance.pid)?.start_time === e.instance.start_time : false;
       return {
         target: e.target,
         unit: e.unit,
-        active: s ? s.ActiveState === 'active' : 'unread',
+        active: e.unit ? (s ? s.ActiveState === 'active' : false) : 'unread',
         instance: e.instance && alive ? e.instance : 'unread',
         generation: e.generation ?? 'unread',
         supervision: e.attempt && this.services.attached(e.attempt) ? 'attached' : 'unknown',
         at: new Date().toISOString(),
       };
     });
+    return { complete: taken.complete, inventory: taken.inventory, targets };
   }
 
   async verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]> {

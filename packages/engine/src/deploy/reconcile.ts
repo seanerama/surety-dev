@@ -24,6 +24,10 @@ export interface ReconcileInputs {
   stop_units: string[];
   // Every unit a frozen intent of the environment named.
   recorded: string[];
+  // The cgroup the store recorded for each unit's domain, where it recorded
+  // one (the launcher's placement): a unit the target reports in another
+  // cgroup is not the one the engine created (D4 §4.6; SEAM.md §278).
+  recorded_cgroups?: Record<string, string | null>;
   // Whether a launch for g was ever granted (the init's instance recorded at
   // the grant), and the application instance recorded at its launch.
   launch_granted: boolean;
@@ -46,10 +50,34 @@ const sameInstance = (a: unknown, b: Instance | null): boolean =>
 // The unit a resource of the inventory belongs to: a unit is its own; a
 // cgroup, socket or directory is its generation's unit's. null: no unit any
 // frozen intent of the environment names.
-function ownerOf(e: InventoryEntry, units: string[], prefix: string): string | null {
-  if (e.kind === 'unit') return units.includes(e.resource) ? e.resource : null;
+function ownerOf(e: InventoryEntry, units: string[], prefix: string, cgroups: Record<string, string | null> = {}): string | null {
+  if (e.kind === 'unit') return units.includes(e.resource) && !otherCgroup(e, cgroups) ? e.resource : null;
   const name = Number.isInteger(e.generation) ? `${prefix}g${e.generation as number}.service` : null;
   return name !== null && units.includes(name) ? name : null;
+}
+
+// A unit read in another cgroup than the one recorded for it, both known (the
+// driver's reading of slice 26: ownership is the name in an intent and the
+// recorded cgroup equal to the read one whenever both exist).
+function otherCgroup(e: InventoryEntry, cgroups: Record<string, string | null>): boolean {
+  const recorded = cgroups[e.resource] ?? null;
+  return typeof e.cgroup === 'string' && e.cgroup !== 'unread' && e.cgroup !== '' && recorded !== null && e.cgroup !== recorded;
+}
+
+// The units of an inventory whose ownership the store cannot account for
+// (D4 §§4.1, 9.2; SEAM.md §278): a unit carrying the environment's prefix
+// that no frozen intent of the environment names, or that the target
+// reports in another cgroup than the one recorded. Listed, never adopted or
+// stopped. Pure, for the precondition and the developer tests.
+export function unaccountedUnits(inventory: InventoryEntry[], recorded: string[], cgroups: Record<string, string | null>): { unit: string; why: 'no_intent' | 'other_cgroup'; cgroup: string | null; recorded_cgroup: string | null }[] {
+  const out: { unit: string; why: 'no_intent' | 'other_cgroup'; cgroup: string | null; recorded_cgroup: string | null }[] = [];
+  for (const e of inventory) {
+    if (typeof e !== 'object' || e === null || e.kind !== 'unit' || typeof e.resource !== 'string') continue;
+    const cgroup = typeof e.cgroup === 'string' && e.cgroup !== 'unread' ? e.cgroup : null;
+    if (!recorded.includes(e.resource)) out.push({ unit: e.resource, why: 'no_intent', cgroup, recorded_cgroup: null });
+    else if (otherCgroup(e, cgroups)) out.push({ unit: e.resource, why: 'other_cgroup', cgroup, recorded_cgroup: cgroups[e.resource] ?? null });
+  }
+  return out;
 }
 
 // A value that was not read: `unread`, or absent from the entry altogether
@@ -63,7 +91,16 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
   const inventory = r.inventory.filter((e): e is InventoryEntry => typeof e === 'object' && e !== null);
   const read = {
     complete: r.complete === true,
-    inventory: inventory.map((e) => ({ resource: e.resource ?? null, kind: e.kind ?? null, state: e.state ?? null, pending_job: e.pendingJob ?? null, generation: e.generation ?? null, tree: e.tree ?? null, instance: e.instance ?? null })),
+    inventory: inventory.map((e) => ({
+      resource: e.resource ?? null,
+      kind: e.kind ?? null,
+      state: e.state ?? null,
+      pending_job: e.pendingJob ?? null,
+      generation: e.generation ?? null,
+      cgroup: e.cgroup ?? null,
+      tree: e.tree ?? null,
+      instance: e.instance ?? null,
+    })),
   };
   const answer = (outcome: ReconcileOutcome): Judged => ({ outcome, read });
   // Unknown: an incomplete inventory; any resource, of any kind, whose
@@ -78,7 +115,7 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
   const units = inventory.filter((e) => e.kind === 'unit');
   const known = [...new Set([...x.recorded, ...x.create_units, ...x.prior.map((p) => p.unit), ...x.stop_units])];
   // Every resource read, by the unit it belongs to.
-  const owner = new Map(inventory.map((e) => [e, ownerOf(e, known, x.prefix)] as const));
+  const owner = new Map(inventory.map((e) => [e, ownerOf(e, known, x.prefix, x.recorded_cgroups ?? {})] as const));
 
   if (x.kind === 'teardown') {
     // Conflicting: a resource of the environment whose ownership is

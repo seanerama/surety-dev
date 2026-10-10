@@ -28,12 +28,14 @@ import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
 import { cancelExecution, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { quarantineDomain } from './runs.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import { hostEligibility } from './trust.js';
 import { serviceAdmissionHold } from './envelope.js';
 import type { Tx } from './tx.js';
 import type { CommandResult } from './control.js';
-import type { Capability, IdentityRead, Instance, TargetExpectation } from '../../deploy/adapter.js';
+import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
+import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { engineBuild, profileFingerprint } from '../../deploy/qualification.js';
 
 type Db = Tx['db'];
@@ -774,14 +776,163 @@ function closeBlocker(tx: Tx, op: string, why: string): void {
 }
 
 // The blocker an ambiguous deploy or teardown operation holds (queue.ts).
-export function deployBlockerPreview(db: Db, id: string): { manifest: Record<string, unknown>; question: string } | null {
+// Its manifest names the outcome the last read gave and what that read
+// listed (SEAM.md §276); a deploy's `partial` is `rollout_partial`'s, and an
+// operation whose orchestration ended blocks nothing.
+export function deployBlockerPreview(db: Db, id: string): { manifest: Record<string, unknown>; question: string; environment: string } | null {
   const op = getOp(db, id);
   const j = op ? journalOf(db, id) : undefined;
-  if (!op || !j || j.state !== 'ambiguous') return null;
+  if (!op || !j || j.state !== 'ambiguous' || op.orchestration_stage === 'ended') return null;
+  const latest = attemptsOf(db, id).at(-1);
+  if (op.kind === 'deploy' && latest?.status === 'reconciled_partial') return null;
+  const last = latest ? lastRead(latest) : null;
+  const outcome = last?.result ?? 'unknown';
+  const frozen = frozenOf(op);
   return {
-    manifest: { operation: op.id, journal_kind: j.journal_kind, subject_status: j.state, cause: 'effect_unconfirmed', quarantined: false, evidence: [], continuation: null },
-    question: `Operation ${op.id} (${op.kind}) cannot go on: the reconcile read could not establish what the target holds.`,
+    manifest: {
+      operation: op.id,
+      journal_kind: j.journal_kind,
+      subject_status: j.state,
+      cause: `effect_${outcome}`,
+      quarantined: false,
+      evidence: { attempt: latest?.id ?? null, read: outcome, complete: last?.read?.complete ?? null, inventory: inventoryNames(last?.read) },
+      continuation: null,
+    },
+    question:
+      `Operation ${op.id} (${op.kind} of ${frozen.environment_name}) cannot go on: the reconcile read found its effect ${outcome}. ` +
+      'Nothing is retried, completed or finalized, and nothing found is stopped, until a read can tell what the target holds; it is read again at every tick. ' +
+      'Tear the environment down to stop what the engine owns of it.',
+    environment: frozen.environment,
   };
+}
+
+// The newest reconcile read recorded on an attempt.
+function lastRead(a: AttemptRow): { result: string; read: { complete?: boolean; inventory?: { resource?: string; kind?: string; state?: string; pending_job?: unknown; generation?: unknown }[] } | null } | null {
+  const reads = JSON.parse(a.reconciliation_reads) as { result: string; read: unknown }[];
+  const r = reads.at(-1);
+  return r ? { result: r.result, read: (r.read ?? null) as never } : null;
+}
+
+const inventoryNames = (read: { inventory?: { resource?: string; kind?: string }[] } | null | undefined) =>
+  Array.isArray(read?.inventory) ? read!.inventory.map((e) => ({ resource: e.resource ?? null, kind: e.kind ?? null })) : null;
+
+// ---- rollout_partial, and the preempting teardown (D4 §§4.4, 4.6; E112; SEAM.md §276) ----------------
+
+// The question a deploy reconciled `partial` asks (D1 A.8; D4 §4.4): retry
+// the bounded remaining effects, tear down, or abandon. Its manifest binds
+// what the retry's effects were derived from, so a change to any of them
+// stales it (BS §6 correction 22). null: the question does not stand.
+export function rolloutPartialPreview(
+  db: Db,
+  id: string,
+): { manifest: Record<string, unknown>; options: { key: string; label: string; consequence: string; effect: Record<string, unknown> }[]; question: string } | null {
+  const op = getOp(db, id);
+  const j = op ? journalOf(db, id) : undefined;
+  if (!op || !j || op.kind !== 'deploy' || j.state !== 'ambiguous' || op.orchestration_stage === 'ended') return null;
+  const attempts = attemptsOf(db, id);
+  const latest = attempts.at(-1);
+  if (!latest || latest.status !== 'reconciled_partial') return null;
+  const frozen = frozenOf(op);
+  const env = getEnv(db, frozen.environment)!;
+  const lease = environmentLease(db, env.id);
+  const config = currentConfig(db, env);
+  const q = qualificationOf(db, frozen.adapter, frozen.adapter_version);
+  const last = lastRead(latest);
+  const inventory = (last?.read?.inventory ?? []).map((e) => ({ resource: e.resource ?? null, kind: e.kind ?? null, state: e.state ?? null, pending_job: e.pending_job ?? null, generation: e.generation ?? null }));
+  // The units of this operation's attempts, by the attempt that created them.
+  const byUnit = new Map<string, string>();
+  for (const a of attempts) {
+    const intent = db.prepare('SELECT "create_units" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string } | undefined;
+    for (const u of intent ? (JSON.parse(intent.create_units) as string[]) : []) byUnit.set(u, a.id);
+  }
+  const present = inventory.filter((e) => e.kind === 'unit' && typeof e.resource === 'string' && byUnit.has(e.resource));
+  const resources = present.map((e) => ({ resource: e.resource as string, attempt: byUnit.get(e.resource as string)! }));
+  const next = unitName(frozen.prefix, env.deployment_generation + 1);
+  const stop = recordedUnits(db, env.id);
+  return {
+    manifest: {
+      operation: op.id,
+      operation_status: op.status,
+      attempt: latest.id,
+      deployment_generation: latest.deployment_generation,
+      environment_generation: { current: env.current_generation, allocated: env.deployment_generation },
+      lease_generation: lease?.generation ?? null,
+      config_identity: config?.config_identity ?? null,
+      config_version: config?.id ?? null,
+      adapter_qualification: q?.id ?? null,
+      reconciled: { outcome: last?.result ?? null, complete: last?.read?.complete ?? null, inventory },
+      resources,
+      observations: present,
+    },
+    options: [
+      {
+        key: 'retry',
+        label: 'Retry',
+        consequence: `A new attempt of the operation cleans up ${resources.length === 0 ? 'nothing' : resources.map((r) => r.resource).join(', ')} and starts ${next}, after its preconditions are read again.`,
+        effect: { operation: op.id, cleanup: resources.map((r) => r.resource), create: [next] },
+      },
+      {
+        key: 'teardown',
+        label: 'Tear down',
+        consequence: 'A teardown of the environment takes the lease from this deploy and stops only what the engine positively owns of it.',
+        effect: { environment: env.id, teardown: { preempting: op.id, stop: stop } },
+      },
+      { key: 'abandon', label: 'Abandon', consequence: 'The operation ends failed; its authorization stays consumed; the lease is released. Nothing is rolled back.', effect: { operation: op.id, to: 'failed', code: 'abandoned' } },
+    ],
+    question:
+      `Operation ${op.id} (deploy of ${frozen.environment_name}) was reconciled partial: attempt ${latest.attempt_number} took effect in part. ` +
+      'Retry the bounded remaining effects, tear the environment down, or abandon the operation.',
+  };
+}
+
+// The answer to `rollout_partial` (SEAM.md §276): `retry` is taken by the
+// Release Operator at its next tick, with the preconditions read again;
+// `teardown` preempts; `abandon` ends the operation `failed`, `abandoned`,
+// the effect being quiescent (a `partial` read is only made after it).
+export function answerRolloutPartial(tx: Tx, args: { operation: string; option: string }): void {
+  const op = getOp(tx.db, args.operation)!;
+  if (args.option === 'teardown') {
+    preemptTeardown(tx, { environment: frozenOf(op).environment, cause: `rollout_partial of ${op.id}` });
+    return;
+  }
+  if (args.option === 'abandon') {
+    const latest = attemptsOf(tx.db, op.id).at(-1);
+    failOperation(tx, op, { code: 'abandoned', attempt: latest?.id ?? null });
+  }
+}
+
+// The preempting teardown (D4 §4.6), as a decision's `teardown` option
+// reaches it (slice 26; the route and the preemption's own records are
+// M327's). One transaction, before any host call: the launch of every
+// non-terminal attempt of the environment closed, so no launcher can be
+// authorized again; every operation of the environment whose orchestration
+// has not ended ended, its leases released and its open rounds recorded;
+// the teardown intended under a new lease generation. Its effect starts
+// only once any call of the preempted attempt has settled (release-operator).
+export function preemptTeardown(tx: Tx, args: { environment: string; cause: string }): { operation: string } {
+  const env = getEnv(tx.db, args.environment);
+  if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  const incarnation = engineSettings().incarnation;
+  if (incarnation === undefined) throw illegal('a preempting teardown with no running incarnation', { environment: env.id });
+  const ops = tx.db
+    .prepare(
+      `SELECT * FROM "operations" WHERE json_extract("target", '$.environment') = ? AND "kind" IN ('deploy', 'teardown')
+         AND ("orchestration_stage" IS NULL OR "orchestration_stage" <> 'ended') ORDER BY "seq"`,
+    )
+    .all(env.id) as OpRow[];
+  for (const op of ops) {
+    for (const a of attemptsOf(tx.db, op.id)) if (a.launch_state !== null && a.launch_state !== 'closed') closeAttemptLaunch(tx, a, 'preempted');
+    const open = tx.db.prepare(`SELECT * FROM "verification_rounds" WHERE "operation" = ? AND "status" = 'open'`).all(op.id) as RoundRow[];
+    for (const r of open) {
+      cancelRoundQueue(tx, r, 'a preempting teardown');
+      finalizeRound(tx, { round: r.id, reads: null, failure: null, reason: 'preempted' });
+    }
+    closeBlocker(tx, op.id, 'a preempting teardown');
+    closeRollout(tx, op.id, 'a preempting teardown');
+    endOperation(tx, op, 'cancelled', 'preempted');
+  }
+  const teardown = insertTeardown(tx, env, incarnation);
+  return { operation: teardown.id };
 }
 
 // The operation's way out (D4 §4.7): the lease released, the orchestration
@@ -963,8 +1114,15 @@ export function intendTeardown(tx: Tx, args: { environment: string; incarnation:
   if (!env || env.teardown_requested_at === null || env.prefix === null) return { skipped: 'no teardown asked for' };
   const held = environmentLease(tx.db, env.id);
   if (held) return { busy: held.id };
+  return { operation: insertTeardown(tx, env, args.incarnation).id };
+}
+
+// A teardown operation of the environment, intended under a new environment
+// lease (the ordinary teardown's, and the preempting one's once the lease
+// was taken from the operation it preempts).
+function insertTeardown(tx: Tx, env: EnvRow, incarnation: string): OpRow {
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, env.project).deploy_orchestration_deadline!);
-  const lease = takeLease(tx, env.id, args.incarnation, deadline);
+  const lease = takeLease(tx, env.id, incarnation, deadline);
   const { n } = tx.db.prepare(`SELECT COUNT(*) + 1 AS n FROM "operations" WHERE "kind" = 'teardown' AND json_extract("target", '$.environment') = ?`).get(env.id) as { n: number };
   const frozen: FrozenIntent = {
     purpose: 'teardown',
@@ -982,7 +1140,7 @@ export function intendTeardown(tx: Tx, args: { environment: string; incarnation:
     target_set: [],
     environment: env.id,
     environment_name: env.name,
-    prefix: env.prefix,
+    prefix: env.prefix ?? '',
     adapter: env.adapter,
     adapter_version: null,
     runtime: null,
@@ -1000,7 +1158,7 @@ export function intendTeardown(tx: Tx, args: { environment: string; incarnation:
     authorization: null,
   });
   tx.db.prepare('UPDATE "environments" SET "teardown_requested_at" = NULL WHERE "id" = ?').run(env.id);
-  return { operation: op.id };
+  return op;
 }
 
 // ---- what the main thread reads of an operation -----------------------------------------------
@@ -1034,6 +1192,11 @@ export interface DeployDetail {
   }[];
   // Every unit a frozen intent of the environment named (D4 §4.6).
   recorded_units: string[];
+  // The cgroup recorded for each unit's domain, where one was (SEAM.md §278).
+  recorded_cgroups: Record<string, string | null>;
+  // The bounded cleanup a consumed `retry` of `rollout_partial` authorized
+  // for the next attempt (D4 §4.4; E112), or null.
+  retry: { cleanup: { resource: string; attempt: string }[] } | null;
   rounds: { id: string; round: number; status: string; step: string; lease: number | null }[];
   blocker: string | null;
 }
@@ -1046,7 +1209,13 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
   const intents = new Map(
     (db.prepare('SELECT * FROM "attempt_intents" WHERE "operation" = ?').all(op.id) as { attempt: string; create_units: string; prior: string; cleanup: string; resources: string }[]).map((r) => [
       r.attempt,
-      { create_units: JSON.parse(r.create_units) as string[], prior: JSON.parse(r.prior) as { unit: string; instance: Instance | null }[], cleanup: JSON.parse(r.cleanup) as string[], resources: JSON.parse(r.resources) as string[] },
+      {
+        create_units: JSON.parse(r.create_units) as string[],
+        prior: JSON.parse(r.prior) as { unit: string; instance: Instance | null }[],
+        // Each cleanup entry is {resource, attempt} (D4 A.3); by its unit here.
+        cleanup: (JSON.parse(r.cleanup) as ({ resource: string } | string)[]).map((x) => (typeof x === 'string' ? x : x.resource)),
+        resources: JSON.parse(r.resources) as string[],
+      },
     ]),
   );
   return {
@@ -1074,6 +1243,8 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
       expect: frozen.target_set.map((t) => expectationOf(db, a, frozen, t, intents.get(a.id)?.create_units[0] ?? null, a.deployment_generation)),
     })),
     recorded_units: recordedUnits(db, frozen.environment),
+    recorded_cgroups: recordedCgroups(db, frozen.environment),
+    retry: retryApproved(db, op.id, attemptsOf(db, op.id).at(-1)),
     rounds: db.prepare('SELECT "id", "round", "status", "step", "lease" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op.id) as DeployDetail['rounds'],
     blocker: openBlocker(db, op.id)?.id ?? null,
   };
@@ -1091,6 +1262,38 @@ export function environmentResources(db: Db, args: { environment: string }) {
        WHERE d."profile" = 'service' AND json_extract(o."target", '$.environment') = ? ORDER BY d."created_at", d."id"`,
     )
     .all(args.environment) as { domain: string; unit: string | null; cgroup_path: string | null; cgroup_inode: number | null; invocation_id: string | null; runtime_dir: string | null; status: string; attempt: string; generation: number }[];
+}
+
+// The cgroup the store recorded for each unit of the environment, at its
+// domain's placement (the real launcher's, or the kernel lane's stand-in):
+// what ownership compares the target's report with (D4 §4.6; SEAM.md §278).
+export function recordedCgroups(db: Db, env: string): Record<string, string | null> {
+  const rows = db
+    .prepare(
+      `SELECT d."unit", d."cgroup_path" FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
+       WHERE d."profile" = 'service' AND d."unit" IS NOT NULL AND json_extract(o."target", '$.environment') = ? ORDER BY d."created_at", d."id"`,
+    )
+    .all(env) as { unit: string; cgroup_path: string | null }[];
+  const out: Record<string, string | null> = {};
+  for (const r of rows) out[r.unit] = r.cgroup_path ?? out[r.unit] ?? null;
+  return out;
+}
+
+// The human's `retry` of the operation's `rollout_partial` for its latest
+// attempt, consumed (D4 §4.4; SEAM.md §276): the bounded cleanup its
+// preview named, or null.
+export function retryApproved(db: Db, operation: string, latest: { id: string; status: string } | undefined): { cleanup: { resource: string; attempt: string }[] } | null {
+  if (!latest || latest.status !== 'reconciled_partial') return null;
+  const rows = db
+    .prepare(`SELECT "answer", "dependency_manifest" FROM "decisions" WHERE "kind" = 'rollout_partial' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'consumed' ORDER BY "seq" DESC`)
+    .all(operation) as { answer: string | null; dependency_manifest: string }[];
+  for (const r of rows) {
+    const m = parseJson<{ attempt?: string; resources?: { resource: string; attempt: string }[] }>(r.dependency_manifest);
+    if (m?.attempt !== latest.id) continue;
+    if (parseJson<{ option?: string }>(r.answer)?.option !== 'retry') return null;
+    return { cleanup: Array.isArray(m.resources) ? m.resources.filter((x) => typeof x?.resource === 'string' && typeof x?.attempt === 'string') : [] };
+  }
+  return null;
 }
 
 export function recordedUnits(db: Db, env: string): string[] {
@@ -1115,6 +1318,9 @@ export interface PreconditionFacts {
   // The issuing gate's facts (gates/prepare.ts).
   gate: Record<string, unknown>;
   now: string;
+  // The environment's inventory (the adapter's `status`, D4 §9.3), for the
+  // unit of unknown ownership (D4 §§4.1, 9.2); null: not read.
+  inventory?: { complete: boolean; inventory: InventoryEntry[] } | { failure: string } | null;
 }
 
 export interface Fact {
@@ -1153,17 +1359,23 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
   const j = journalOf(tx.db, op.id)!;
   const latest = attemptsOf(tx.db, op.id).at(-1);
   if (j.state === 'failed' || j.state === 'finalized' || j.state === 'confirmed') return { verdict: 'none', why: `journal ${j.state}` };
-  if (latest && latest.status !== 'reconciled_absent') return { verdict: 'none', why: `attempt ${latest.status}` };
+  if (latest && latest.status !== 'reconciled_absent' && retryApproved(tx.db, op.id, latest) === null) return { verdict: 'none', why: `attempt ${latest.status}` };
   const frozen = frozenOf(op);
   const env = getEnv(tx.db, frozen.environment)!;
   const f = args.facts;
   const facts: Fact[] = [];
   const fact = (name: string, held: boolean, read: unknown) => facts.push({ fact: name, held, read });
+  const ownership = op.kind === 'deploy' ? ownershipFact(tx.db, frozen, f.inventory ?? null) : null;
   // The preconditions are read immediately before the effect (§4.1): while
   // admission is held, the operation waits, within its deadline, and reads
-  // them when admission is granted.
+  // them when admission is granted. A unit of unknown ownership read
+  // meanwhile blocks deployment to the environment at once (D4 §9.2): the
+  // wait would otherwise hold it to its deadline.
   const deadlinePassed = Date.parse(f.now) > Date.parse(op.orchestration_deadline_at ?? op.deadline_at);
-  if (op.kind === 'deploy' && f.admission !== 'granted' && !deadlinePassed) return { verdict: 'wait', facts: [] };
+  if (op.kind === 'deploy' && f.admission !== 'granted' && !deadlinePassed) {
+    if (ownership !== null && ownership.unaccounted) return { verdict: 'fail', fact: 'unknown_ownership', facts: [{ fact: 'unknown_ownership', held: false, read: ownership.read }] };
+    return { verdict: 'wait', facts: [] };
+  }
 
   const lease = environmentLease(tx.db, env.id);
   fact('environment_lease', lease?.id === frozen.lease.id && lease.generation === frozen.lease.generation, { held: lease ? { id: lease.id, generation: lease.generation } : null, expected: frozen.lease });
@@ -1190,10 +1402,31 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
     fact('gate_eligibility', e.ok, { gate: 'alpha_authorize', reasons: e.reasons });
   }
   fact('orchestration_deadline', !deadlinePassed, { deadline: op.orchestration_deadline_at, now: f.now, admission: f.admission });
+  if (ownership !== null) fact('unknown_ownership', ownership.held, ownership.read);
   const failed = facts.find((x) => !x.held);
   if (failed) return { verdict: 'fail', fact: failed.fact, facts };
   if (op.kind === 'deploy' && f.admission !== 'granted') return { verdict: 'wait', facts };
   return { verdict: 'hold', facts };
+}
+
+// No unit or domain of the environment of unknown ownership (D4 §§4.1, 9.2;
+// SEAM.md §278): read from the environment's inventory; a unit carrying the
+// prefix that no intent names, or reported in another cgroup than the one
+// recorded, is listed by its exact name. An inventory not read, failed or
+// incomplete holds nothing: unknown is never an empty inventory.
+function ownershipFact(db: Db, frozen: FrozenIntent, inv: PreconditionFacts['inventory']): { held: boolean; unaccounted: boolean; read: Record<string, unknown> } {
+  if (inv === null || inv === undefined) return { held: false, unaccounted: false, read: { inventory: 'not_read' } };
+  if ('failure' in inv) return { held: false, unaccounted: false, read: { inventory: 'unread', failure: inv.failure } };
+  const list = Array.isArray(inv.inventory) ? inv.inventory : [];
+  const units = unaccountedUnits(list, recordedUnits(db, frozen.environment), recordedCgroups(db, frozen.environment));
+  const read = {
+    complete: inv.complete === true,
+    units: units,
+    inventory: list.filter((e) => typeof e === 'object' && e !== null && e.kind === 'unit').map((e) => e.resource),
+  };
+  if (units.length > 0) return { held: false, unaccounted: true, read };
+  if (inv.complete !== true) return { held: false, unaccounted: false, read: { ...read, inventory: 'incomplete' } };
+  return { held: true, unaccounted: false, read };
 }
 
 // A failed precondition (D4 §4.1): the operation ends `failed` with
@@ -1205,7 +1438,7 @@ export function preconditionFailed(tx: Tx, args: { operation: string; fact: stri
   if (!op) throw notFound('operation', args.operation);
   const j = journalOf(tx.db, op.id)!;
   const latest = attemptsOf(tx.db, op.id).at(-1);
-  if (j.state === 'failed' || j.state === 'finalized' || j.state === 'confirmed' || (latest && latest.status !== 'reconciled_absent')) return { failed: false };
+  if (j.state === 'failed' || j.state === 'finalized' || j.state === 'confirmed' || (latest && latest.status !== 'reconciled_absent' && retryApproved(tx.db, op.id, latest) === null)) return { failed: false };
   if (args.fact === 'orchestration_deadline') tx.emit('deploy.orchestration_deadline', { project: op.project, operation: op.id }, { stage: 'effect' });
   failOperation(tx, op, { code: 'EFFECT_PRECONDITION_CHANGED', fact: args.fact, manifest: args.manifest });
   return { failed: true };
@@ -1289,6 +1522,10 @@ export function startDeployAttempt(
   const prefix = frozen.prefix;
   const prior = op.kind === 'deploy' ? priorOf(tx.db, env.id) : [];
   const create = op.kind === 'deploy' ? [unitName(prefix, g)] : [];
+  // After `partial`, only the cleanup the human's retry authorized (D4 §4.4;
+  // E112): the earlier attempts' units its preview named, each with its
+  // attempt (D4 A.3).
+  const cleanup = op.kind === 'deploy' ? (retryApproved(tx.db, op.id, latest)?.cleanup ?? []) : [];
   const resources = op.kind === 'teardown' ? recordedUnits(tx.db, env.id) : [];
   const capability: Capability =
     op.kind === 'deploy'
@@ -1307,7 +1544,7 @@ export function startDeployAttempt(
           targets: frozen.target_set,
           create_units: create,
           prior,
-          cleanup: [],
+          cleanup: cleanup.map((c) => c.resource),
         }
       : { kind: 'teardown', environment: env.id, operation: op.id, attempt, generation: g, incarnation: args.incarnation, lease_generation: frozen.lease.generation, stop_units: resources };
   tx.db
@@ -1320,9 +1557,9 @@ export function startDeployAttempt(
   tx.db
     .prepare(
       `INSERT INTO "attempt_intents" ("id", "created_at", "project", "operation", "attempt", "generation", "create_units", "prior", "cleanup", "resources", "preconditions")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(tx.newId('ati_'), tx.at, op.project, op.id, attempt, g, JSON.stringify(create), JSON.stringify(prior), JSON.stringify(resources), args.manifest);
+    .run(tx.newId('ati_'), tx.at, op.project, op.id, attempt, g, JSON.stringify(create), JSON.stringify(prior), JSON.stringify(cleanup), JSON.stringify(resources), args.manifest);
   tx.emit('operation.attempt_started', { project: op.project, operation: op.id, environment: env.id }, { attempt_number: n, deployment_generation: g });
   // Any later attempt of O invalidates every earlier row of O (D4 §5.3 item
   // 8, `later_attempt`). Rows exist only after a confirmed effect, after
@@ -1372,7 +1609,7 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
   if (!env || a.deployment_generation !== c.generation || env.current_generation !== c.generation) return { field: 'generation' };
   const lease = environmentLease(db, env.id);
   if (!lease || lease.id !== frozen.lease.id || lease.generation !== c.lease_generation) return { field: 'lease_generation' };
-  const intent = db.prepare('SELECT * FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string; prior: string; resources: string } | undefined;
+  const intent = db.prepare('SELECT * FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string; prior: string; cleanup: string; resources: string } | undefined;
   if (!intent) return { field: 'attempt' };
   const prefix = frozen.prefix;
   if (prefix === '' || env.prefix !== prefix) return { field: 'units' };
@@ -1387,7 +1624,8 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
     const prior = (JSON.parse(intent.prior) as { unit: string }[]).map((p) => p.unit);
     if (!c.create_units.every((u) => derived(u) && create.includes(u))) return { field: 'units' };
     if (!c.prior.every((p) => derived(p.unit) && prior.includes(p.unit))) return { field: 'units' };
-    if (c.cleanup.length > 0) return { field: 'units' };
+    const cleanup = (JSON.parse(intent.cleanup) as { resource: string }[]).map((x) => x.resource);
+    if (!Array.isArray(c.cleanup) || !c.cleanup.every((u) => derived(u) && cleanup.includes(u))) return { field: 'units' };
   } else {
     const resources = JSON.parse(intent.resources) as string[];
     if (!c.stop_units.every((u) => derived(u) && resources.includes(u))) return { field: 'units' };
@@ -1406,6 +1644,7 @@ export function capabilityRefused(tx: Tx, args: { attempt: string; field: string
   const op = getOp(tx.db, a.operation)!;
   tx.emit('deploy.capability_refused', { project: op.project, operation: op.id, attempt: a.id }, { field: args.field });
   if (a.status === 'started') setAttempt(tx, a, 'failed');
+  writeAttemptedOnce(tx, op, a, 'failed');
   failOperation(tx, op, { code: 'deploy_capability_refused', field: args.field });
 }
 
@@ -1590,12 +1829,12 @@ export function applicationExited(tx: Tx, args: { attempt: string; exit: { at: s
 export function openServiceDomains(db: Db, args: { project?: string }) {
   const rows = db
     .prepare(
-      `SELECT d."id", d."attempt", d."status", d."launch_state", d."cgroup_path", d."cgroup_inode", d."unit", d."runtime_dir", d."launched_by_incarnation",
+      `SELECT d."id", d."attempt", d."status", d."launch_state", d."cgroup_path", d."cgroup_inode", d."unit", d."runtime_dir", d."launched_by_incarnation", d."observed_at",
               json_extract(o."target", '$.environment') AS "environment"
        FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
        WHERE d."profile" = 'service' AND d."status" <> 'terminated' ${args.project ? 'AND d."project" = ?' : ''} ORDER BY d."created_at", d."id"`,
     )
-    .all(...(args.project ? [args.project] : [])) as { id: string; attempt: string; status: string; launch_state: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; launched_by_incarnation: string | null; environment: string }[];
+    .all(...(args.project ? [args.project] : [])) as { id: string; attempt: string; status: string; launch_state: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; launched_by_incarnation: string | null; observed_at: string | null; environment: string }[];
   return rows;
 }
 
@@ -1610,6 +1849,41 @@ export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: st
   tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`).run(tx.at, tx.at, d.id);
   tx.emit('domain.terminated', { project: d.project, domain: d.id, attempt: d.attempt }, { observed: args.observed, profile: 'service' });
   return { terminated: true };
+}
+
+// A service domain whose termination was not observed (D4 §9.2, A.4): its
+// launch closed, `quarantined`, keeping its reservation and conferring
+// nothing, until a later observation of its closure terminates it.
+export function serviceDomainQuarantined(tx: Tx, args: { domain: string; observed: string }): { quarantined: boolean } {
+  const d = tx.db.prepare(`SELECT * FROM "execution_domains" WHERE "id" = ? AND "profile" = 'service'`).get(args.domain) as ServiceDomainRow | undefined;
+  if (!d || d.status === 'terminated' || d.status === 'quarantined') return { quarantined: false };
+  const a = getAttempt(tx.db, d.attempt);
+  if (a) closeAttemptLaunch(tx, a, 'closure_unobserved');
+  else if (d.launch_state !== 'closed') tx.db.prepare(`UPDATE "execution_domains" SET "launch_state" = 'closed', "launch_closed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);
+  quarantineDomain(tx, { domain: d.id, subject: { attempt: d.attempt } });
+  tx.db.prepare('UPDATE "execution_domains" SET "observed_at" = ? WHERE "id" = ?').run(tx.at, d.id);
+  return { quarantined: true };
+}
+
+// What the latest observation of a live service domain found (the driver's
+// ruling on slice 26, item A): `unknown` while its unit is loaded under
+// another cgroup than the one recorded (its reservation cannot be accounted,
+// and every admission is held), `running` once it reads as recorded again.
+export function serviceDomainObserved(tx: Tx, args: { domain: string; observation: 'running' | 'unknown' }): void {
+  const d = tx.db.prepare(`SELECT "status", "observation" FROM "execution_domains" WHERE "id" = ? AND "profile" = 'service'`).get(args.domain) as { status: string; observation: string | null } | undefined;
+  if (!d || d.status === 'terminated' || d.observation === args.observation) return;
+  tx.db.prepare('UPDATE "execution_domains" SET "observation" = ?, "observed_at" = ? WHERE "id" = ?').run(args.observation, tx.at, args.domain);
+}
+
+// At start, before any launch request is accepted (D4 §9.2; SEAM.md §278):
+// the launch of every attempt an earlier incarnation granted or left
+// authorizable is closed, on the attempt and on its service domain.
+export function closePriorLaunches(tx: Tx, args: { incarnation: string }): { closed: number } {
+  const rows = tx.db
+    .prepare(`SELECT * FROM "operation_attempts" WHERE "launch_state" IN ('authorizable', 'authorized') AND ("incarnation" IS NULL OR "incarnation" <> ?)`)
+    .all(args.incarnation) as AttemptRow[];
+  for (const a of rows) closeAttemptLaunch(tx, a, 'engine_restart');
+  return { closed: rows.length };
 }
 
 // The executions of an operation's rounds not yet ended (the review's m1):
@@ -1674,6 +1948,7 @@ export function recordReceipt(tx: Tx, args: { attempt: string; receipt: { result
   }
   if (args.bound === null && (args.receipt.result === 'refused' || args.receipt.result === 'not_issued')) {
     setAttempt(tx, a, 'failed');
+    writeAttemptedOnce(tx, op, a, 'failed');
     closeAttemptLaunch(tx, a, 'not_issued');
     failOperation(tx, op, { code: args.receipt.result, attempt: a.id });
     return { reconcile: false };
@@ -1697,13 +1972,20 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
   const j = journalOf(tx.db, op.id)!;
   if (j.state === 'confirmed' || j.state === 'finalized') return { way: 'confirmed' };
   if (j.state === 'failed') return { way: 'failed' };
+  // An operation whose orchestration ended (preempted, abandoned) takes no
+  // further way on.
+  if (op.orchestration_stage === 'ended') return { way: 'failed' };
   const read = { outcome: args.outcome, read: args.read };
+  // Nothing of the environment runs, by a complete read (SEAM.md §278): the
+  // environment read then shows nothing running.
+  if (args.outcome !== 'unknown' && !activeIn(args.read)) clearRunning(tx, op, a);
   switch (args.outcome) {
     case 'applied': {
       setAttempt(tx, a, a.status === 'started' ? 'succeeded' : 'reconciled_succeeded', read);
       if (journalOf(tx.db, op.id)!.state !== 'applied') journalAppend(tx, op, 'applied', { provenance: 'reconcile', attempt: a.id });
       journalAppend(tx, op, 'confirmed', { attempt: a.id });
       closeBlocker(tx, op.id, 'the reconcile read confirmed the effect');
+      closeRollout(tx, op.id, 'the reconcile read confirmed the effect');
       refreshOp(tx, op.id);
       return { way: 'confirmed' };
     }
@@ -1712,20 +1994,72 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
       if (a.launch_state === 'authorizable') closeAttemptLaunch(tx, a, 'reconciled_absent');
       if (journalOf(tx.db, op.id)!.state === 'applied') journalAppend(tx, op, 'ambiguous', { attempt: a.id });
       closeBlocker(tx, op.id, 'the reconcile read found the effect absent');
+      closeRollout(tx, op.id, 'the reconcile read found the effect absent');
       const absent = attemptsOf(tx.db, op.id).filter((x) => x.status === 'reconciled_absent').length;
       refreshOp(tx, op.id);
       if (absent <= projectPolicy(tx.db, op.project).deploy_auto_retries_max!) return { way: 'retry' };
+      writeAttemptedOnce(tx, op, a, 'failed');
       failOperation(tx, op, { code: 'reconciled_absent', attempt: a.id, retries: absent - 1 });
       return { way: 'failed' };
     }
-    default: {
-      setAttempt(tx, a, args.outcome === 'partial' ? 'reconciled_partial' : 'ambiguous', read);
+    case 'partial': {
+      // A deploy's `partial` asks the human (D4 §§2.4, 4.4): `rollout_partial`,
+      // its retry, teardown or abandonment; it is read again at every tick
+      // while the question is open, and a changed outcome takes its own way
+      // and invalidates it. A teardown's `partial` blocks, as `unknown` does.
+      setAttempt(tx, a, 'reconciled_partial', read);
       if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, outcome: args.outcome });
+      writeAttemptedOnce(tx, op, a, 'partial');
+      refreshOp(tx, op.id);
+      if (op.kind === 'deploy') {
+        closeBlocker(tx, op.id, 'the reconcile read found the effect partial');
+        raiseQuestion(tx, { project: op.project, kind: 'rollout_partial', subjectType: 'operation', subjectId: op.id });
+      } else block(tx, op, args.outcome);
+      return { way: 'blocked' };
+    }
+    default: {
+      setAttempt(tx, a, 'ambiguous', read);
+      if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, outcome: args.outcome });
+      writeAttemptedOnce(tx, op, a, 'ambiguous');
+      closeRollout(tx, op.id, `the reconcile read found the effect ${args.outcome}`);
       refreshOp(tx, op.id);
       block(tx, op, args.outcome);
       return { way: 'blocked' };
     }
   }
+}
+
+// Whether a recorded read found any unit of the environment active.
+function activeIn(read: unknown): boolean {
+  const inv = (read as { inventory?: { kind?: string; state?: string }[] } | null)?.inventory;
+  if (!Array.isArray(inv)) return true;
+  return inv.some((e) => e?.kind === 'unit' && e.state === 'active');
+}
+
+// `running` cleared when a read of the current generation's attempt found
+// nothing of the environment running (D4 §4.4: "nothing shown running when
+// nothing is"; SEAM.md §278); `last_verified` is untouched.
+function clearRunning(tx: Tx, op: OpRow, a: AttemptRow): void {
+  const env = getEnv(tx.db, frozenOf(op).environment)!;
+  if (a.deployment_generation === null || env.current_generation !== a.deployment_generation) return;
+  tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ? AND "running" IS NOT NULL').run(env.id);
+}
+
+// `attempted` with this attempt's outcome, written once per change (a read
+// made again at every tick rewrites nothing).
+function writeAttemptedOnce(tx: Tx, op: OpRow, a: AttemptRow, outcome: string): void {
+  const rec = tx.db.prepare('SELECT "attempted" FROM "environment_records" WHERE "environment" = ?').get(frozenOf(op).environment) as { attempted: string | null } | undefined;
+  const now = parseJson<{ attempt?: string; outcome?: string }>(rec?.attempted ?? null);
+  if (now?.attempt === a.id && now.outcome === outcome) return;
+  writeAttempted(tx, op, a, outcome);
+}
+
+const openRollout = (db: Db, op: string): DecisionRow | undefined =>
+  db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'rollout_partial' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'open'`).get(op) as DecisionRow | undefined;
+
+function closeRollout(tx: Tx, op: string, why: string): void {
+  const d = openRollout(tx.db, op);
+  if (d) invalidateDecision(tx, d, why);
 }
 
 // An attempt `started` by an earlier incarnation (D4 §4.3): its launch is
@@ -2263,7 +2597,7 @@ export const resultState = (r: Pick<ResultRow, 'execution_established' | 'signal
 // the round decides.
 export function finalizeRound(
   tx: Tx,
-  args: { round: string; reads: IdentityRead[] | null; failure: string | null; reason?: 'deadline' },
+  args: { round: string; reads: IdentityRead[] | null; failure: string | null; reason?: 'deadline' | 'preempted' },
   requiredOf?: RequiredOf,
 ): { outcome: string; decides: boolean } | null {
   const r = getRound(tx.db, args.round);
@@ -2286,7 +2620,7 @@ export function finalizeRound(
   const detail = roundDetail(tx.db, { round: r.id })!;
   const entries = JSON.parse(r.reads) as ReadEntry[];
   const executions = JSON.parse(r.executions) as string[];
-  if (args.reason !== 'deadline' && r.step === 'second_read' && executions.length > 0) {
+  if (args.reason === undefined && r.step === 'second_read' && executions.length > 0) {
     entries.push({ bracket: 'second', reads: readsFor(frozen.target_set, detail.expect, args.reads, tx.at), failure: args.failure, at: tx.at });
   }
   const missing: { kind: string; id: string }[] = [];
@@ -2322,7 +2656,8 @@ export function finalizeRound(
     const afterLoss = res !== undefined && lostAt !== null && (res.finished_at === null || Date.parse(res.finished_at) >= Date.parse(lostAt));
     const state = res && res.invalidated_at === null && resultBoundTo(res, r) && !afterLoss ? resultState(res) : 'missing';
     if (state === 'failed') failedCheck = true;
-    if (state !== 'passed' && state !== 'failed') missing.push({ kind: reg ? 'check_result' : 'check_execution', id: reg?.id ?? c.key });
+    // A required check never registered is named by its id (SEAM.md §279).
+    if (state !== 'passed' && state !== 'failed') missing.push({ kind: reg ? 'check_result' : 'check_execution', id: reg?.id ?? c.id });
     results.push({ check: c.id, key: c.key, kind: c.kind, execution: reg?.id ?? null, result: res?.id ?? null, state });
   }
   const behaviour = results.some((x) => x.kind === 'post_deploy_behavior' && x.state === 'passed');
@@ -2330,6 +2665,8 @@ export function finalizeRound(
   const qualified = r.adapter_qualification !== null && q?.id === r.adapter_qualification;
   if (!qualified) missing.push({ kind: 'qualification', id: r.adapter_qualification ?? frozen.adapter });
   if (args.reason === 'deadline') missing.push({ kind: 'deadline', id: detail.deadline });
+  // Ended by a preempting teardown (D4 §4.6): unknown, never decided on.
+  if (args.reason === 'preempted') missing.push({ kind: 'preempted', id: r.operation });
   // The service's supervision, attached throughout (item 6; E110): after a
   // restart the round is `unknown`, naming it.
   if (attemptSupervision(tx.db, a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });

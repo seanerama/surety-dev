@@ -111,7 +111,7 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   // admission (the slice-24 review, m4).
   const all = db
     .prepare(
-      `SELECT d."id", d."cgroup_path", d."profile", d."reservation", d."project", (x."deployment" IS NOT NULL) AS "bound"
+      `SELECT d."id", d."cgroup_path", d."profile", d."reservation", d."project", d."status", d."observation", (x."deployment" IS NOT NULL) AS "bound"
        FROM "execution_domains" d LEFT JOIN "check_executions" x ON x."id" = d."check_execution"
        WHERE d."status" <> 'terminated' AND (d."cgroup_path" IS NOT NULL OR d."profile" = 'service')`,
     )
@@ -121,6 +121,8 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
     profile: string;
     reservation: string | null;
     project: string;
+    status: string;
+    observation: string | null;
     bound: number;
   }[];
   const services = all.filter((d) => d.profile === 'service');
@@ -148,6 +150,17 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
     reason,
     subject: { running_domains: running.length, ...(services.length > 0 ? { service_domains: services.length } : {}), ...(boxes.length > 0 ? { self_test_boxes: boxes.length } : {}), ...subject },
   });
+  // A surviving service domain whose unit the host reports under another
+  // cgroup than the one recorded cannot be accounted (D4 §9.2; E110 item 1;
+  // the driver's ruling on slice 26, item A): no domain is admitted while
+  // one is, a service's included.
+  const unaccounted = services.filter((d) => (d.status === 'allocated' || d.status === 'launched') && d.observation === 'unknown');
+  if (unaccounted.length > 0) {
+    return hold(`the reservation of ${unaccounted.length === 1 ? 'a service domain' : `${unaccounted.length} service domains`} cannot be accounted: the host reports its unit under another cgroup than the one recorded.`, {
+      limit: 'unaccounted_service',
+      domains: unaccounted.map((d) => d.id),
+    });
+  }
   const domains = running.length + boxes.length + (reserveCheck ? 1 : 0);
   if (domains + newDomains > s.max_concurrent_domains) {
     return hold(

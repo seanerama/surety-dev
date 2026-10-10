@@ -45,6 +45,8 @@ export interface DeployCapability {
   targets: string[];
   create_units: string[];
   prior: { unit: string; instance: Instance | null }[];
+  // The units of earlier attempts of the operation this attempt may clean
+  // up (D4 §4.4; E112: only after `partial`, by the human's retry).
   cleanup: string[];
 }
 
@@ -78,8 +80,20 @@ export interface InventoryEntry {
   // cgroup's, socket's or directory's, as read).
   generation?: number | 'unread' | null;
   invocation_id?: string | 'unread' | null;
+  // A unit's cgroup as the target reports it (a real unit's ControlGroup
+  // under /sys/fs/cgroup); null when it has none (inactive, failed).
+  cgroup?: string | 'unread' | null;
   instance?: Instance | 'unread' | null;
   tree?: string | 'unread' | null;
+}
+
+// What `status` reads (D4 §9.3; Appendix B: "reconcile and status take §2.4's
+// inventory"): the environment's inventory, whether it was complete, and per
+// target its status.
+export interface TargetInventory {
+  complete: boolean;
+  inventory: InventoryEntry[];
+  targets: TargetStatus[];
 }
 
 export interface TargetStatus {
@@ -175,6 +189,10 @@ export interface AttemptIntent {
 // init's `started` report of the application. The reply names what the
 // launcher is to run.
 export interface LaunchChannel {
+  // The kernel lane's launch stand-in only (SEAM.md §247): the scripted
+  // unit's cgroup and invocation recorded on the domain, as the real
+  // launcher's placement records the unit's ControlGroup (SEAM.md §278).
+  placed?(p: { unit: string; cgroup: string; invocation_id: string; pid: number }): Promise<void>;
   authorize(init: Instance): Promise<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] }>;
   started(app: Instance & { exe: string; exe_sha256: string | null; argv: string[] }): Promise<void>;
 }
@@ -187,7 +205,7 @@ export interface DeploymentAdapter {
   deploy(cap: DeployCapability, signal: AbortSignal, launch: LaunchChannel): Promise<EffectReceipt>;
   teardown(cap: TeardownCapability, signal: AbortSignal): Promise<EffectReceipt>;
   reconcile(op: OperationIntent, attempt: AttemptIntent, signal: AbortSignal): Promise<Reconciliation>;
-  status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetStatus[]>;
+  status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory>;
   verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]>;
   logs(env: EnvRef, target: string, maxBytes: number, signal: AbortSignal): Promise<LogTail>;
 }

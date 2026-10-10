@@ -27,7 +27,8 @@ export type DecisionKind =
   | 'check_correction_loosening'
   | 'check_correction_unclassifiable'
   | 'qualification_approval'
-  | 'trust_activation';
+  | 'trust_activation'
+  | 'rollout_partial';
 
 export interface OptionSpec {
   key: string;

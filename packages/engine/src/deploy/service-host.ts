@@ -51,7 +51,7 @@ import { INIT_SCRIPT } from '../invoke/sandboxed.js';
 import { engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from '../invoke/sandbox/tools.js';
 import { heldSecret } from '../records/redact.js';
 import { type Runtime, log } from '../runtime.js';
-import { seamTakeDeployFault } from '../testing/seam.js';
+import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamTakeDeployFault } from '../testing/seam.js';
 import { exeSha, innerPid, membersNamed, procStat, cgroupOf, cmdlineOf } from './identity.js';
 import { showUnits } from './adapters/local-service.js';
 import { APP_DIR, INGRESS_SOCKET, buildServicePlan } from './service-profile.js';
@@ -531,6 +531,14 @@ export class ServiceHost {
     return true;
   }
 
+  // The harness fault `control_channel_dropped` (SEAM.md §277): the engine
+  // closes its own end of the attempt's control channel, as a lost
+  // connection; the service goes on, its supervision `unknown`.
+  dropChannel(attempt: string): void {
+    const s = this.services.get(attempt);
+    if (s?.channel && !s.channel.closed) s.channel.socket.destroy();
+  }
+
   attached(attempt: string): boolean {
     const s = this.services.get(attempt);
     return s?.channel !== null && s?.channel !== undefined && !s.channel.closed;
@@ -603,10 +611,26 @@ export class ServiceHost {
     if (!placed.placed) return refuse(placed.reason ?? 'not placed');
     const tools = await resolveSandboxTools();
     if (!tools.paths.unshare) return refuse('unshare is not installed');
-    ch.send({ t: 'spec', unshare: tools.paths.unshare, node: engineNode(), init: INIT_SCRIPT });
+    // D2's launcher barriers, for a service launcher too (SEAM.md §274), and
+    // the harness fault `service_setup_refused` (SEAM.md §277): harness only.
+    const w = seamLauncherBarriers(this.rt.home);
+    const refuseSetup = seamTakeDeployFault(lk.environment, 'service_setup_refused');
+    ch.send({
+      t: 'spec',
+      unshare: tools.paths.unshare,
+      node: engineNode(),
+      init: INIT_SCRIPT,
+      ...(w && Object.keys(w.barriers).length > 0 ? { waits: w.barriers, releaseDir: w.releaseDir } : {}),
+      ...(refuseSetup ? { refuse_setup: true } : {}),
+    });
 
     // The init's authorization, before anything of the application exists.
-    const asked = await ch.next(60_000);
+    // A launcher waiting at a barrier says so first; its wait may be long.
+    let asked = await ch.next(60_000);
+    while (asked && asked.t === 'wait') {
+      seamLauncherReached(String(asked.name), String(asked.action));
+      asked = await ch.next(3_600_000);
+    }
     if (!asked || asked.t !== 'authorize') return refuse('no authorization asked');
     const init = asked.init as { pid?: unknown; start_time?: unknown } | undefined;
     const ipid = Number(init?.pid);
@@ -637,6 +661,7 @@ export class ServiceHost {
       this.lost.add(s.attempt);
       void this.recordLoss(s.attempt);
     };
+    await pausePoint('deploy.launch_granted');
     ch.send({ t: 'granted' });
     await this.drive(ch, s, lk, { pid: ipid, start_time: istart }, cgroup);
   }
@@ -688,7 +713,10 @@ export class ServiceHost {
             env[name] = value;
           }
           if (lk.port !== null) env.PORT = String(lk.port);
-          ch.send({ t: 'backend', backend: { argv: lk.start, env, cwd: APP_DIR, stdin: null, service: { port: lk.port, ingress: INGRESS_SOCKET, logMax: lk.limits.log_max_bytes } } });
+          // The harness fault `service_exec_failed` (SEAM.md §277): the start
+          // command names a program that does not exist, so its exec fails.
+          const argv = seamTakeDeployFault(lk.environment, 'service_exec_failed') ? [`${APP_DIR}/.surety-exec-failed`, ...(lk.start ?? []).slice(1)] : lk.start;
+          ch.send({ t: 'backend', backend: { argv, env, cwd: APP_DIR, stdin: null, service: { port: lk.port, ingress: INGRESS_SOCKET, logMax: lk.limits.log_max_bytes } } });
         }
         return;
       case 'ready':
@@ -699,6 +727,7 @@ export class ServiceHost {
         log('service launch', new Error(`${String(m.t)}: ${String(m.detail ?? '').slice(0, 300)}`), { attempt: s.attempt });
         return;
       case 'started': {
+        await pausePoint('init.app_started');
         let nsPid = Number(m.pid);
         const reported = m.start_time === null || m.start_time === undefined ? null : Number(m.start_time);
         if (seamTakeDeployFault(lk.environment, 'init_report_altered')) nsPid = 1;

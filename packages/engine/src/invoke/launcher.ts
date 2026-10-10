@@ -22,6 +22,7 @@
 // This file imports nothing of the engine's: it runs as its own program.
 
 import { closeSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -138,7 +139,7 @@ const ignoreTerm = (): void => {};
 
 // A named wait point: mark the wait, tell the engine, and wait for its
 // release file, whatever happens to the engine meanwhile.
-async function waitPoint(spec: Spec, name: string): Promise<void> {
+async function waitPoint(spec: Spec, name: string, stopIfClosed = true): Promise<void> {
   const action = spec.waits?.[name];
   if (!action || !spec.releaseDir) return;
   const mark = join(spec.releaseDir, `${name}.${process.pid}.waiting`);
@@ -160,7 +161,7 @@ async function waitPoint(spec: Spec, name: string): Promise<void> {
       }
     }
   }
-  if (closed) stop();
+  if (closed && stopIfClosed) stop();
 }
 
 // The `service` profile (D4 §9.2; E121 item 4). Started by the user's
@@ -174,7 +175,7 @@ async function waitPoint(spec: Spec, name: string): Promise<void> {
 // asks for the launch authorization with its own instance before anything
 // of the application exists. Refused, it exits having run nothing.
 async function service(argv: string[]): Promise<void> {
-  const [attempt, domain, incarnation, generation] = argv;
+  const [attempt, domain, incarnation, generation, socketPath] = argv;
   const ownCgroup = (() => {
     try {
       const line = readFileSync('/proc/self/cgroup', 'utf8')
@@ -185,9 +186,28 @@ async function service(argv: string[]): Promise<void> {
       return null;
     }
   })();
-  const answer = await ask({ t: 'hello', profile: 'service', attempt, domain, incarnation, lease_generation: Number(generation), pid: process.pid, cgroup: ownCgroup });
+  const hello = { t: 'hello', profile: 'service', attempt, domain, incarnation, lease_generation: Number(generation), pid: process.pid, cgroup: ownCgroup };
+  const answer = await ask(hello);
   if (answer?.t !== 'spec' || ended) stop();
-  const spec = answer as unknown as { unshare: string; node: string; init: string };
+  const spec = answer as unknown as { unshare: string; node: string; init: string; waits?: Record<string, string>; releaseDir?: string | null; refuse_setup?: boolean };
+  // The test mode's refused setup (the harness fault service_setup_refused):
+  // the launcher refuses its own setup, before any grant, and runs nothing.
+  if (spec.refuse_setup === true) {
+    send({ t: 'setup_failed', detail: 'the launcher refused its setup (a mount plan it cannot build)' });
+    stop();
+  }
+  // D2's wait points, handed by the engine in its test mode. A wait outlives
+  // the engine that handed it; released after that engine is gone, the
+  // launcher asks whatever engine now holds the launch socket, which refuses
+  // a launch of an earlier incarnation, and runs nothing either way.
+  const asView = { ...spec, domain, invocation: attempt, incarnation, generation: Number(generation), cgroup: ownCgroup } as unknown as Spec;
+  await waitPoint(asView, 'launcher.placed', false);
+  await waitPoint(asView, 'launcher.before_authorization', false);
+  if (closed || ended) {
+    if (!closed || typeof socketPath !== 'string' || socketPath === '') stop();
+    await askAgain(socketPath, hello);
+    stop();
+  }
   const now = readFileSync('/proc/self/cgroup', 'utf8')
     .split('\n')
     .find((l) => l.startsWith('0::'));
@@ -197,6 +217,35 @@ async function service(argv: string[]): Promise<void> {
   (process as unknown as { execve(file: string, args: string[], env: Record<string, string>): never }).execve(spec.unshare, args, {
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     LANG: 'C.UTF-8',
+  });
+}
+
+// A launch request on a new connection to the launch socket, its answer
+// read and ignored: nothing here goes on past it.
+function askAgain(path: string, msg: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    try {
+      const sock = createConnection(path);
+      sock.on('error', finish);
+      sock.on('close', finish);
+      sock.on('data', () => {
+        sock.destroy();
+        finish();
+      });
+      sock.on('connect', () => sock.write(`${JSON.stringify(msg)}\n`));
+      setTimeout(() => {
+        sock.destroy();
+        finish();
+      }, 30_000).unref();
+    } catch {
+      finish();
+    }
   });
 }
 

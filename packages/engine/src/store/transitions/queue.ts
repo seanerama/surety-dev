@@ -35,7 +35,7 @@ import {
 import { contentHash, getCandidate, markStale, predecessors } from './evidence.js';
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
-import { deployBlockerPreview } from './deploy.js';
+import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, rolloutPartialPreview } from './deploy.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
@@ -246,6 +246,13 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
             consequence: 'Records that you have seen this. It establishes nothing: the operation goes on only once a read can tell what the target holds.',
             effect: { record: 'acknowledgement' },
           },
+          {
+            // The preempting teardown (D4 §4.6; SEAM.md §276).
+            key: 'teardown',
+            label: 'Tear down',
+            consequence: 'A teardown of the environment takes the lease from this operation and stops only what the engine positively owns of it; nothing of uncertain ownership is stopped.',
+            effect: { environment: deploy.environment, teardown: { preempting: d.subject_id } },
+          },
         ],
         question: deploy.question,
         blockedOperation: d.subject_id,
@@ -324,10 +331,47 @@ const BLOCKER: KindSpec = {
       else transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
       return consumed(d);
     }
+    // A deploy or teardown operation's `teardown`: the preempting teardown
+    // (D4 §4.6), intended in this transaction.
+    if (d.subject_type === 'operation' && option === 'teardown') {
+      const p = deployBlockerPreview(tx.db, d.subject_id);
+      consumeDecision(tx, d, option, note);
+      if (p !== null) preemptTeardown(tx, { environment: p.environment, cause: `blocker ${d.id}` });
+      return consumed(d, [{ kind: 'tick' }]);
+    }
     // A quarantine's or an operation's acknowledgement establishes nothing
     // (build spec §6 correction 2).
     consumeDecision(tx, d, option, note);
     return consumed(d);
+  },
+};
+
+// ---- rollout_partial (D1 A.8; D4 §4.4; E112; SEAM.md §276) ----------------------------
+
+const ROLLOUT_PARTIAL: KindSpec = {
+  preview(tx, d) {
+    if (d.subject_type !== 'operation') return null;
+    const p = rolloutPartialPreview(tx.db, d.subject_id);
+    return p === null ? null : { manifest: p.manifest, options: p.options, question: p.question, blockedOperation: d.subject_id };
+  },
+  manifest: (tx, d) =>
+    (d.subject_type === 'operation' ? rolloutPartialPreview(tx.db, d.subject_id)?.manifest : undefined) ?? {
+      operation_status: null,
+      attempt: null,
+      deployment_generation: null,
+      environment_generation: null,
+      lease_generation: null,
+      config_identity: null,
+      adapter_qualification: null,
+      reconciled: null,
+      resources: null,
+      observations: null,
+    },
+  reraise: true,
+  answer(tx, d, option, note) {
+    consumeDecision(tx, d, option, note);
+    answerRolloutPartial(tx, { operation: d.subject_id, option });
+    return consumed(d, [{ kind: 'tick' }]);
   },
 };
 
@@ -1193,6 +1237,7 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   check_correction_unclassifiable: correctionSpec('unclassifiable'),
   qualification_approval: QUALIFICATION_APPROVAL,
   trust_activation: TRUST_ACTIVATION,
+  rollout_partial: ROLLOUT_PARTIAL,
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1221,6 +1266,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,
   out_of_band_change: ['subject_kind', 'expected', 'found'],
+  rollout_partial: ['operation_status', 'attempt', 'deployment_generation', 'environment_generation', 'lease_generation', 'config_identity', 'adapter_qualification', 'reconciled', 'resources', 'observations'],
   policy_widening: ['base_revision', 'base_blob', 'proposed_policy', 'widens'],
   finding_disposition: [
     'finding_status',
