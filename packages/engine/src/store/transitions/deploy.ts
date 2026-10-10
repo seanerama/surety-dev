@@ -745,8 +745,12 @@ function refreshOp(tx: Tx, id: string): string {
 }
 
 function setAttempt(tx: Tx, a: AttemptRow, status: string, read?: { outcome: string; read: unknown }): void {
-  const reads = JSON.parse(a.reconciliation_reads) as unknown[];
-  if (read) reads.push({ at: tx.at, read: read.read, result: read.outcome });
+  const reads = JSON.parse(a.reconciliation_reads) as { at: string; read: unknown; result: string }[];
+  // A read made again at every tick that found exactly what the last one
+  // found is not recorded again (the attempt's record would otherwise grow
+  // by one copy of the same inventory per tick).
+  const last = reads.at(-1);
+  if (read && !(last && last.result === read.outcome && canonical(last.read) === canonical(read.read))) reads.push({ at: tx.at, read: read.read, result: read.outcome });
   tx.db
     .prepare(`UPDATE "operation_attempts" SET "status" = ?, "finished_at" = CASE WHEN ? = 'started' THEN NULL ELSE COALESCE("finished_at", ?) END, "reconciliation_reads" = ? WHERE "id" = ?`)
     .run(status, status, tx.at, JSON.stringify(reads), a.id);
