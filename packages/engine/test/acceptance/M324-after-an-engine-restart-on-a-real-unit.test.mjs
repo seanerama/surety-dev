@@ -58,7 +58,7 @@ import { attemptsOf, deploy, environmentRead, operationsOf } from './harness/dep
 import {
   armDeployFault,
   domainRowOf,
-  endEnvironment,
+  endCase, endEnvironment,
   heldCheck,
   hostDeployable,
   hostEnvironment,
@@ -199,7 +199,7 @@ describe('M324 after an engine restart, on real units', () => {
     } finally {
       if (!stopped) await stopRun(ctx.fx.engine, other.id, role.run.id).catch(() => undefined);
       await waitForRunState(ctx.fx.home, role.run.id, 'ended', { timeoutMs: 60_000 }).catch(() => undefined);
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
@@ -210,7 +210,7 @@ describe('M324 after an engine restart, on real units', () => {
       await ticksUntil(ctx.fx, ctx.project, async () => ((await environmentRead(ctx.fx.engine, ctx.project, d.env.name)).supervision === 'unknown' ? true : undefined), { what: 'supervision to read unknown' });
       assertRefusedRound(await roundOn(d.env, d.op), d.svc);
     } finally {
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
@@ -244,7 +244,7 @@ describe('M324 after an engine restart, on real units', () => {
     } finally {
       for (const r of runs) await stopRun(ctx.fx.engine, r.project, r.id).catch(() => undefined);
       for (const r of runs) await waitForRunState(ctx.fx.home, r.id, 'ended', { timeoutMs: 60_000 }).catch(() => undefined);
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
@@ -282,7 +282,7 @@ describe('M324 after an engine restart, on real units', () => {
       if (ctx.fx.engine.isRunning()) await ctx.fx.engine.stop();
       storeWrite(ctx.fx, (db) => db.prepare(`UPDATE "execution_domains" SET "cgroup_path" = replace("cgroup_path", '-elsewhere', '') WHERE "attempt" = ?`).run(d.svc.attempt.id));
       await startAgain(ctx);
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
       if (item) for (const r of runsOf(ctx.fx.home, item)) await stopRun(ctx.fx.engine, other.id, r.id).catch(() => undefined);
     }
   });

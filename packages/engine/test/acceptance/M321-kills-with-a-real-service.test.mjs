@@ -46,7 +46,7 @@ import { eventsOfType } from './harness/journal.mjs';
 import { requestTick } from './harness/runs.mjs';
 import { CGROUP_ROOT, procsOf } from './harness/sandbox/cgroup.mjs';
 import { attemptIntent, attemptsOf, candidateRow, deploy, operationsOf, requestDeployment, roundsOf, verificationsOf } from './harness/deploy/kernel.mjs';
-import { endEnvironment, hostDeployable, hostEnvironment, hostUntil, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
+import { endCase, endEnvironment, hostDeployable, hostEnvironment, hostUntil, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
 import { answerOn, barriersOf, killAt, killOwnEngine, openOn, optionKeys, readsOf, releaseBarrier, armBarrier, waitingAt, startAgain } from './harness/deploy/recover.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -142,7 +142,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       assert.ok(!readsOf(settled).includes('applied'), 'never applied');
       noVerificationPassed(ctx, op);
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -169,7 +169,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       noVerificationPassed(ctx, op);
       await teardownThrough(ctx, env, await openDecision(ctx, op));
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -204,7 +204,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       const op2 = await ticksUntil(ctx.fx, ctx.project, () => (newestOperation(ctx, env)?.id !== op.id ? newestOperation(ctx, env) : undefined), { what: 'the new deploy' });
       await settleRound(ctx, env, op2, { plan: { get: ['/hello'], exit: 1 } });
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 });

@@ -23,7 +23,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import { attemptIntent, attemptsOf, deploy, unitPrefix } from './harness/deploy/kernel.mjs';
-import { armDeployFault, endEnvironment, hostDeployable, hostEnvironment, listUnits, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
+import { armDeployFault, endCase, endEnvironment, hostDeployable, hostEnvironment, listUnits, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
 import { answerOn, openOn, readsOf, unitsNamedIn } from './harness/deploy/recover.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
@@ -72,7 +72,7 @@ describe('M323 the partial retry on a real unit', () => {
       assert.deepEqual(ofEnv, [g2], 'no other unit of the environment');
       await settleRound(ctx, env, op, { plan: { get: ['/hello'], exit: 1 } });
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 });
