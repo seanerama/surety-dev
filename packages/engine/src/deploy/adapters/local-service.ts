@@ -230,7 +230,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // absence (D2 §3.2). The harness fault `service_closure_unread` (SEAM.md
 // §277) makes the environment's next one fail to read, as EACCES.
 export function closureRead(environment: string, path: string): ReturnType<typeof readPopulated> {
-  if (seamTakeDeployFault(environment, 'service_closure_unread')) return { state: 'unreadable', detail: `${path}: EACCES (the harness fault service_closure_unread)` } as ReturnType<typeof readPopulated>;
+  if (seamTakeDeployFault(environment, 'service_closure_unread')) return { state: 'unreadable', detail: `${path}: EACCES` } as ReturnType<typeof readPopulated>;
   return readPopulated(path);
 }
 
