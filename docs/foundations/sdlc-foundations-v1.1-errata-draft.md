@@ -2007,3 +2007,13 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - A race found by the Builder's full run: the Release Operator read the artifact's rehash before admission; it now reads admission first and the rehash last (`b2480c2`; M306).
 7. **Open, intermittent:** M205 (an M3 sandbox file) failed in 2 of 4 full runs on slice-23 code, each time its setup waiting 60 s for six checks to be recorded, while it passes alone (about 49 s, as in every full run before slice 23) and passed in the gate. The Builder found no cause in slice 23's code (nothing on the check runner's path changed) and could not reproduce it; the gate run recorded free memory every 10 s and it never fell below 12.9 GiB. If it recurs, the driver reruns M205 with `SURETY_KEEP_TMP=1` and has its store read before anything else.
 8. **Deferred cases** (must be added by later Verifiers): M305 (d) to slice 25; M306's lost sign-off to slice 25 or 28; M306's out-of-band observation and lease lost to slice 27; M306's unit of unknown ownership to slice 26.
+
+---
+
+## E126. A running Alpha service counts by memory, not by a domain slot (decided by Sean, 2026-10-10)
+
+**Status: decided by Sean** (amends D4 §9.2's "admitted by D2 §3.7's envelope like any domain"; E115 item 3).
+
+1. **As built in slice 24:** a service domain takes no `max_concurrent_domains` slot. It holds its memory (`service_memory_max`) and writable bytes in the envelope from admission until its closure is observed, and while any service runs one check's capacity (`domain_memory_max`, `domain_writable_bytes`, one domain slot) is kept free and shared by all services, since post-deploy checks run one at a time. Each service's reservation is still recorded per service as `{memory, check_capacity}` (SEAM §§256 to 263).
+2. **Consequences:** the number of live services is bounded by memory and disk, not by slots (each environment has at most one); at the default limits no role run fits beside a running Alpha service on this workstation, and a teardown frees the room.
+3. **Considered and not chosen:** each service also taking a slot, as D4 §9.2 reads literally; at the default of two, a service plus its reserved check would fill both, and a second environment's service could never run alongside.
