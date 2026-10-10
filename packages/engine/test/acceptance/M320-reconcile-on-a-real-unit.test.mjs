@@ -24,7 +24,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import { attemptsOf, deploy, operationsOf, teardown } from './harness/deploy/kernel.mjs';
-import { armDeployFault, endEnvironment, hostDeployable, hostEnvironment, listUnits, managerState, newestOperation, operatorGuard, settleRound, ticksUntil } from './harness/deploy/host.mjs';
+import { armDeployFault, endCase, endEnvironment, hostDeployable, hostEnvironment, listUnits, managerState, newestOperation, operatorGuard, settleRound, ticksUntil } from './harness/deploy/host.mjs';
 import { readsOf } from './harness/deploy/recover.mjs';
 import { unitPrefix } from './harness/deploy/kernel.mjs';
 
@@ -71,7 +71,7 @@ describe('M320 (c) a failed query\'s empty result on a real unit', () => {
       assert.equal(readsOf(down).find((r) => r !== 'unknown'), 'applied', 'the next read settles it: applied');
       assert.deepEqual((listUnits() ?? []).filter((u) => u.unit.startsWith(unitPrefix(ctx.fx.home, env.id))), [], 'host-read: no unit of the environment is left');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 });

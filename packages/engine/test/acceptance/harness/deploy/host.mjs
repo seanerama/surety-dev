@@ -831,6 +831,22 @@ export async function endEnvironment(ctx, env, { engineTeardown = true } = {}) {
   return left;
 }
 
+// A case's environment ended whatever happened (slice 26): a post-deploy
+// check still held is let go first (a benign plan, no act, exit 1), so a
+// failed case leaves no check holding the one check capacity kept free for
+// the next case's round (as M311's heldCase does); the release file is taken
+// away after.
+export async function endCase(ctx, env) {
+  const file = join(ctx.prog.releaseDir, RELEASE);
+  const wrote = !existsSync(file);
+  if (wrote) writeFileSync(file, JSON.stringify({ get: [], exit: 1 }));
+  try {
+    return await endEnvironment(ctx, env);
+  } finally {
+    if (wrote) rmSync(file, { force: true });
+  }
+}
+
 // Every entry under $SURETY_HOME/artifacts/ that lies within no recorded artifact's path (SEAM.md §260).
 // Compared by real path (SEAM.md §264): a row recorded under one spelling of
 // the home (a symbolic link to it, or its real path) records the same

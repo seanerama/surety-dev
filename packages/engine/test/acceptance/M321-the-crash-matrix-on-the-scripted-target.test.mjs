@@ -125,7 +125,10 @@ describe('M321 (a), (d), (f) a kill at each point of D4 §4.3, on the scripted t
     const row = await rowAfterRestart(ctx, op.id);
     assert.equal(row.outcome, 'unknown', 'no verification passes on a service whose supervision is unknown (E110)');
     assert.ok((row.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (${JSON.stringify(row.missing)})`);
-    assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 1, 'nothing deployed twice');
+    // The scripted adapter's call list is the running engine process's (objection 042): the dead
+    // engine's deploy call is not in it, so "nothing deployed twice" is no deploy call by this one.
+    assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 0, 'nothing deployed twice: the restarted engine makes no deploy call');
+    assert.equal((await adapterState(fx.engine, ctx.env.id)).target.units.filter((u) => u.state === 'active').length, 1, 'and the target holds the one unit the dead engine\'s call made');
     await assertInvariants(ctx);
   });
 
@@ -233,5 +236,32 @@ describe('M321 (g) CD3: a kill between the launch grant and the init\'s started 
     assert.equal(next.status, 201, `a new request makes a new authorization (→ ${next.status} ${next.text})`);
     assert.notEqual(next.body.authorization.id, ctx.request.authorization.id);
     assert.equal(authorizationRow(fx.home, ctx.request.authorization.id).status, 'consumed', 'the first stays consumed');
+  });
+});
+
+describe('M321 (g) the blocker\'s teardown with a manager job pending (the slice-26 review\'s S1)', () => {
+  test('a read unknown for a pending job, then the blocker\'s teardown: before its effect the engine reads the pending job, so the teardown\'s attempt is ambiguous, no teardown call is made, and the owned unit is untouched', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
+    await scriptCall(fx.engine, ctx.env.id, 'teardown', [{ result: 'issued', apply: true }]);
+    const g1 = unitName(fx.home, ctx.env.id, 1);
+    const op = await atReceipt(ctx, 'deploy', () => deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name), (target) => ({ ...target, units: target.units.map((u) => (u.name === g1 ? { ...u, pending_job: true } : u)) }));
+    const a = await attemptWhen(ctx, op.id, 1, (x) => x.reconciliation_reads.length > 0, 'the deploy\'s read');
+    assert.equal(readsOf(a)[0], 'unknown', `a pending manager job: no quiescence, unknown (D4 §2.4) (${JSON.stringify(readsOf(a))})`);
+    const unitBefore = (await adapterState(fx.engine, ctx.env.id)).target.units.find((u) => u.name === g1);
+    assert.equal(unitBefore?.pending_job, true, 'the fixture is live: the job is still pending');
+    const blocker = await openDecisionOn(ctx, 'blocker', op.id);
+    await answerOn(ctx, blocker, 'teardown');
+    const down = await tickUntil(fx.engine, ctx.project, () => {
+      const o = operationsOf(fx.home, ctx.project, 'teardown')[0];
+      const [x] = o ? attemptsOf(fx.home, o.id) : [];
+      return x && x.status !== 'started' ? { o, x } : undefined;
+    }, { max: 16, what: 'the teardown\'s attempt to settle' });
+    await tick(fx.engine, ctx.project, { rounds: 2 });
+    assert.equal(attemptsOf(fx.home, down.o.id)[0].status, 'ambiguous', `the teardown's attempt is ambiguous: a job is pending under the prefix (D4 §§2.4, 4.6 step 1; SEAM.md §281) (${down.x.status})`);
+    const calls = (await adapterState(fx.engine, ctx.env.id)).calls;
+    assert.deepEqual(calls.filter((c) => c.call === 'teardown'), [], 'no teardown (stop) call is made');
+    assert.deepEqual((await adapterState(fx.engine, ctx.env.id)).target.units.find((u) => u.name === g1), unitBefore, 'the owned unit is untouched');
   });
 });

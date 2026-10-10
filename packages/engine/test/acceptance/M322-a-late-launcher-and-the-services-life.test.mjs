@@ -54,6 +54,7 @@ import {
   armDeployFault,
   assertServiceContained,
   deployHeld,
+  endCase,
   endEnvironment,
   hostDeployable,
   hostEnvironment,
@@ -70,7 +71,7 @@ import {
   unitShow,
   verificationOf,
 } from './harness/deploy/host.mjs';
-import { answerOn, armBarrier, barriersOf, killOwnEngine, leaseHeld, openOn, readsOf, releaseBarrier, waitingAt } from './harness/deploy/recover.mjs';
+import { answerOn, armBarrier, barriersOf, killOwnEngine, leaseHeld, openOn, readsOf, releaseBarrier, waitingAt, startAgain } from './harness/deploy/recover.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
 const ENGINE = Object.freeze({ adapter_effect_deadline: 10 });
@@ -163,7 +164,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
 
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first); the next incarnation closes the launch.
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       assert.equal(attemptsOf(ctx.fx.home, op.id)[0].launch_state, 'closed', 'the launch is closed before any request is accepted');
       await waitingAt(ctx.fx.engine, 'launcher.before_authorization', { timeoutMs: 30_000 });
       await releaseBarrier(ctx.fx.engine, 'launcher.before_authorization');
@@ -187,7 +188,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       const absentAt = settled.reconciliation_reads.find((r) => r.result === 'absent').at;
       assert.ok(ms(lease.released_at) >= ms(absentAt), 'released only after the read that established absence');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -211,7 +212,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       assert.ok(childInstance === null || gone(childInstance), 'the descendant ended in the closure');
       assert.equal(grantsOf(ctx.fx.home, svc.attempt.id).length, 1, 'one grant: never restarted');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -228,7 +229,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       assert.deepEqual(grantsOf(ctx.fx.home, attempt.id), [], 'no grant');
       assert.equal(attemptsOf(ctx.fx.home, op.id)[0].app_instance ?? null, null, 'no application instance');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -246,7 +247,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       const row = await ticksUntil(ctx.fx, ctx.project, () => [...openOn(ctx.fx.home, 'rollout_partial', op.id), ...openOn(ctx.fx.home, 'blocker', op.id)][0], { what: 'a decision on the attempt' });
       await answerOn(ctx, row, row.kind === 'rollout_partial' ? 'abandon' : 'teardown');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -269,7 +270,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       const terminated = await domainWhen(ctx, svc.attempt.id, (d) => d.state === 'terminated', 'closure to be observed later');
       assert.ok(terminated.terminated_at, 'quarantined → terminated');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -291,7 +292,7 @@ describe('M322 a late launcher, and the service\'s life, on real units', () => {
       const after = attemptsOf(ctx.fx.home, op.id).at(-1).app_instance;
       assert.deepEqual([after.pid, after.start_time], [before.pid, before.start_time], 'the recorded instance is unchanged');
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 });

@@ -51,14 +51,14 @@ import { sharedFixture } from './harness/gates.mjs';
 import { addGitProject, addItem } from './harness/gitruns.mjs';
 import { readFileSync } from 'node:fs';
 import { recordFile, recordRow } from './harness/records.mjs';
-import { runsOf, stopRun, tick, waitForRun, waitForRunState } from './harness/runs.mjs';
+import { runsOf, stopRun, tick, waitForRunState } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { domainOf, roleHolding } from './harness/sandbox/lane.mjs';
 import { attemptsOf, deploy, environmentRead, operationsOf } from './harness/deploy/kernel.mjs';
 import {
   armDeployFault,
   domainRowOf,
-  endEnvironment,
+  endCase, endEnvironment,
   heldCheck,
   hostDeployable,
   hostEnvironment,
@@ -71,11 +71,12 @@ import {
   serviceLinkLogs,
   serviceOf,
   settleRound,
+  teardownOnHost,
   ticksUntil,
   unitShow,
 } from './harness/deploy/host.mjs';
 import { roundsOf, verificationsOf, verifyAgain, workEntry } from './harness/deploy/rounds.mjs';
-import { backupNow, killOwnEngine, restoreInPlace, storeWrite, unitsNamedIn } from './harness/deploy/recover.mjs';
+import { backupNow, killOwnEngine, restoreInPlace, storeWrite, unitsNamedIn, startAgain } from './harness/deploy/recover.mjs';
 import { withStore } from './harness/store.mjs';
 
 const ENGINE = Object.freeze({ max_concurrent_domains: 2, domain_memory_max: CONTRACT.engine.domain_memory_max.min });
@@ -122,6 +123,7 @@ describe('M324 after an engine restart, on real units', () => {
   function assertRefusedRound({ row, executions }, svc) {
     assert.equal(row.outcome, 'unknown', `no verification passes on a service of unknown supervision (${row.outcome})`);
     assert.ok((row.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (${JSON.stringify(row.missing)})`);
+    assert.ok(executions.length > 0, 'the round registers its required check, which is then refused, not run (SEAM.md §278); a round with no execution would make the refusal unread');
     for (const x of executions) {
       const result = resultOf(ctx.fx.home, x.id);
       assert.ok(result, `the check ${x.id} has a result`);
@@ -152,7 +154,7 @@ describe('M324 after an engine restart, on real units', () => {
 
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       await tick(ctx.fx.engine, ctx.project, { rounds: 2 });
 
       // (f) J2: role and check domains closed as before; only the service domain survives.
@@ -197,7 +199,7 @@ describe('M324 after an engine restart, on real units', () => {
     } finally {
       if (!stopped) await stopRun(ctx.fx.engine, other.id, role.run.id).catch(() => undefined);
       await waitForRunState(ctx.fx.home, role.run.id, 'ended', { timeoutMs: 60_000 }).catch(() => undefined);
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
@@ -208,36 +210,41 @@ describe('M324 after an engine restart, on real units', () => {
       await ticksUntil(ctx.fx, ctx.project, async () => ((await environmentRead(ctx.fx.engine, ctx.project, d.env.name)).supervision === 'unknown' ? true : undefined), { what: 'supervision to read unknown' });
       assertRefusedRound(await roundOn(d.env, d.op), d.svc);
     } finally {
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
   test('(d) recovery accounts for a surviving service before any admission: of two role dispatches that would otherwise fit, one is held resource_envelope until the survivor is torn down (M319 (c))', async () => {
     const d = await deployed('account');
+    // Two other projects, one role run each: a project runs one role at a time, so two runs of one project would not show the envelope.
     const other = await newOtherProject();
+    const third = await newOtherProject();
     const runs = [];
     try {
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       assert.ok(serviceDomainOf(ctx.fx.home, d.svc.attempt.id)?.reservation?.check_capacity, 'the survivor\'s reservation is recorded');
       const first = await roleHolding(ctx.fx, other.id, await addItem(ctx.fx, other.id, 'fix'), { name: 'one' });
       runs.push(first.run);
-      const second = await addItem(ctx.fx, other.id, 'fix');
+      const second = await addItem(ctx.fx, third.id, 'fix');
       ctx.fx.scripted.script(second, [script.hold('two')]);
-      await tick(ctx.fx.engine, other.id, { rounds: 2 });
+      await tick(ctx.fx.engine, third.id, { rounds: 2 });
       assert.deepEqual(runsOf(ctx.fx.home, second), [], 'the second role run is not dispatched');
-      const entry = await workEntry(ctx.fx.engine, other.id, second);
+      const entry = await workEntry(ctx.fx.engine, third.id, second);
       assert.equal(entry?.dispatch_hold?.code, 'resource_envelope', `held for the envelope, the survivor's check capacity counted (D4 §9.2; E126) (${JSON.stringify(entry)})`);
-      await endEnvironment(ctx, d.env);
-      await tick(ctx.fx.engine, other.id, { rounds: 2 });
-      const run2 = await waitForRun(ctx.fx.home, second, { state: 'executing', timeoutMs: 120_000 });
+      // The survivor torn down by the engine (an ordinary teardown: the lease is free), its closure observed.
+      const down = await teardownOnHost(ctx, d.env);
+      assert.equal(attemptsOf(ctx.fx.home, down.id).at(-1)?.status, 'succeeded', `the survivor's teardown is applied (${JSON.stringify(attemptsOf(ctx.fx.home, down.id).map((a) => [a.status, a.reconciliation_reads?.map((r) => r.result)]))})`);
+      assert.equal(serviceDomainOf(ctx.fx.home, d.svc.attempt.id)?.state, 'terminated', 'its domain is terminated, its reservation freed');
+      // Ticks of the other project until it dispatches (the harness engine ticks only when asked).
+      const run2 = await ticksUntil(ctx.fx, third.id, () => runsOf(ctx.fx.home, second).find((r) => r.state === 'executing'), { timeoutMs: 180_000, what: 'the second role run to be dispatched once the survivor is torn down' });
       runs.push(run2);
       assert.ok(run2, 'once the survivor\'s closure is observed, the second dispatch is admitted (the control)');
     } finally {
-      for (const r of runs) await stopRun(ctx.fx.engine, other.id, r.id).catch(() => undefined);
+      for (const r of runs) await stopRun(ctx.fx.engine, r.project, r.id).catch(() => undefined);
       for (const r of runs) await waitForRunState(ctx.fx.home, r.id, 'ended', { timeoutMs: 60_000 }).catch(() => undefined);
-      await endEnvironment(ctx, d.env);
+      await endCase(ctx, d.env);
     }
   });
 
@@ -251,7 +258,7 @@ describe('M324 after an engine restart, on real units', () => {
       const from = backupNow(ctx.fx);
       restoreInPlace(ctx.fx, from, Object.fromEntries([[ctx.project, ctx.p.repo.path], ...others.map((o) => [o.id, o.repo.path])]));
       storeWrite(ctx.fx, (db) => db.prepare(`UPDATE "execution_domains" SET "cgroup_path" = "cgroup_path" || '-elsewhere' WHERE "attempt" = ?`).run(d.svc.attempt.id));
-      await ctx.fx.start();
+      await startAgain(ctx);
 
       const known = new Set(operationsOf(ctx.fx.home, ctx.project, 'deploy').map((o) => o.id));
       await deploy(ctx.fx.engine, ctx.project, ctx.candidate.id, d.env.name);
@@ -274,8 +281,8 @@ describe('M324 after an engine restart, on real units', () => {
       // The store's record put back as the host reports it, so the engine's own teardown can remove what it owns.
       if (ctx.fx.engine.isRunning()) await ctx.fx.engine.stop();
       storeWrite(ctx.fx, (db) => db.prepare(`UPDATE "execution_domains" SET "cgroup_path" = replace("cgroup_path", '-elsewhere', '') WHERE "attempt" = ?`).run(d.svc.attempt.id));
-      await ctx.fx.start();
-      await endEnvironment(ctx, d.env);
+      await startAgain(ctx);
+      await endCase(ctx, d.env);
       if (item) for (const r of runsOf(ctx.fx.home, item)) await stopRun(ctx.fx.engine, other.id, r.id).catch(() => undefined);
     }
   });
