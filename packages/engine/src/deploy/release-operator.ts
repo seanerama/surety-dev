@@ -118,16 +118,19 @@ export class ReleaseOperator {
   }
 
   // The preconditions' facts, read with no transaction held (D4 §4.1).
+  // Admission is read first: it alone may wait, and the facts read after a
+  // grant are read after it, nearest the effect (the sealed copy last).
   private async facts(d: DeployDetail): Promise<Record<string, unknown>> {
     const f = d.frozen;
-    const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
-    const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
-    const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
     // Admission (D4 §4.7): the kernel lane's scripted answer. Outside it no
     // admission of a service domain exists before slice 24, so none is
     // granted: the operation waits, and fails at its orchestration deadline
     // with nothing applied (review m3).
-    return { rehash: rehashed, secretDigests, admission: seamDeployAdmission(f.environment) ?? 'held', gate, now: nowIso() };
+    const admission = seamDeployAdmission(f.environment) ?? 'held';
+    const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
+    const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
+    const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
+    return { rehash: rehashed, secretDigests, admission, gate, now: nowIso() };
   }
 
   // The manifest of a precondition read, as a record (SEAM.md §250).
