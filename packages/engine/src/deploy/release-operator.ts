@@ -20,10 +20,10 @@ import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AdmissionHold, DeployDetail, Fact, PreconditionFacts, RoundDetail, Verdict } from '../store/transitions/deploy.js';
 import { pausePoint, seamDeployAdmission, seamRealDeployAdapter, seamTakeDeployFault } from '../testing/seam.js';
-import { cgroupInode } from '../boundary/cgroup.js';
+import { cgroupInode, readPopulated } from '../boundary/cgroup.js';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { LocalService, closureRead, showUnits } from './adapters/local-service.js';
+import { LocalService, showUnits } from './adapters/local-service.js';
 import { ServiceHost } from './service-host.js';
 import {
   type Capability,
@@ -136,7 +136,7 @@ export class ReleaseOperator {
       let closed = false;
       let observed = '';
       if (d.cgroup_path !== null) {
-        const p = closureRead(d.environment, d.cgroup_path);
+        const p = readPopulated(d.cgroup_path);
         if (p.state === 'unreadable') continue;
         const inode = p.state === 'absent' ? null : cgroupInode(d.cgroup_path);
         if (p.state === 'absent' && existsSync(dirname(d.cgroup_path))) {
@@ -175,6 +175,8 @@ export class ReleaseOperator {
 
   // One tick's work for a project.
   async step(project: string): Promise<void> {
+    // Closures the host shows now, before any operation reads the target.
+    await this.observeServiceDomains(project).catch((err) => log('service domains', err, { project }));
     const work = await this.rt.read<{ intend: { work_item: string }[]; teardowns: string[]; drive: string[] }>('deploy.work', { project });
     for (const w of work.intend) {
       const made = await this.rt.engine<{ operation?: string }>('deploy.intend', { workItem: w.work_item, incarnation: this.rt.incarnation });

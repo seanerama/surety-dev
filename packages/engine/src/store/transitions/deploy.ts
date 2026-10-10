@@ -845,8 +845,12 @@ export function rolloutPartialPreview(
     const intent = db.prepare('SELECT "create_units" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string } | undefined;
     for (const u of intent ? (JSON.parse(intent.create_units) as string[]) : []) byUnit.set(u, a.id);
   }
-  const present = inventory.filter((e) => e.kind === 'unit' && typeof e.resource === 'string' && byUnit.has(e.resource));
-  const resources = present.map((e) => ({ resource: e.resource as string, attempt: byUnit.get(e.resource as string)! }));
+  // The cleanup: every unit this operation's attempts created, each with its
+  // attempt (D4 A.3), whether or not the read still found it (one gone is
+  // nothing to stop); what the read found of them is the observation the
+  // preview binds.
+  const resources = [...byUnit.entries()].map(([resource, attempt]) => ({ resource, attempt }));
+  const present = inventory.filter((e) => e.kind !== null && typeof e.resource === 'string' && (byUnit.has(e.resource) || attemptGenerations(attempts).includes(e.generation as number)));
   const next = unitName(frozen.prefix, env.deployment_generation + 1);
   const stop = recordedUnits(db, env.id);
   return {
@@ -884,6 +888,8 @@ export function rolloutPartialPreview(
       'Retry the bounded remaining effects, tear the environment down, or abandon the operation.',
   };
 }
+
+const attemptGenerations = (attempts: AttemptRow[]): number[] => attempts.map((a) => a.deployment_generation).filter((g): g is number => g !== null);
 
 // The answer to `rollout_partial` (SEAM.md §276): `retry` is taken by the
 // Release Operator at its next tick, with the preconditions read again;

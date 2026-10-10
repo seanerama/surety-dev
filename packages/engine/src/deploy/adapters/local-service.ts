@@ -534,9 +534,9 @@ export class LocalService implements DeploymentAdapter {
     env: string,
     extra: string[],
     signal: AbortSignal,
+    missingBus: string | null = null,
   ): Promise<{ complete: boolean; inventory: InventoryEntry[]; shows: Map<string, Record<string, string>> } | null> {
     const prefix = unitPrefix(this.rt.home, env);
-    const missingBus = seamTakeDeployFault(env, 'bus_address_missing') ? join(this.rt.home, 'run', 'no-such-bus') : null;
     const call = { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal, missingBus };
     const listed = await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], call);
     const jobs = await host('systemctl', ['--user', 'list-jobs', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], call);
@@ -604,7 +604,10 @@ export class LocalService implements DeploymentAdapter {
     const env = op.environment;
     const incomplete = (): Reconciliation => ({ outcome: 'unknown', complete: false, inventory: [], reads: [], identity: [] });
     if (unitPrefix(this.rt.home, env) !== op.prefix) return incomplete();
-    const taken = await this.takeInventory(env, [...attempt.recorded_units, ...attempt.create_units, ...attempt.prior.map((p) => p.unit), ...attempt.cleanup, ...attempt.stop_units], signal);
+    // The harness fault `bus_address_missing` (SEAM.md §277): this reconcile
+    // read's host calls cannot reach the manager.
+    const missingBus = seamTakeDeployFault(env, 'bus_address_missing') ? join(this.rt.home, 'run', 'no-such-bus') : null;
+    const taken = await this.takeInventory(env, [...attempt.recorded_units, ...attempt.create_units, ...attempt.prior.map((p) => p.unit), ...attempt.cleanup, ...attempt.stop_units], signal, missingBus);
     if (taken === null) return incomplete();
     const identity: IdentityRead[] = [];
     const g = new Set(attempt.create_units);
