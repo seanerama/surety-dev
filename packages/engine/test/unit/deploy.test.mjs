@@ -42,9 +42,10 @@ const DIGEST = `sha256:${'a'.repeat(64)}`;
 const APP = { pid: 100001, start_time: 1002 };
 const OLD = { pid: 100000, start_time: 1001 };
 const unit = (name, over = {}) => ({ resource: name, kind: 'unit', recorded: true, state: 'active', pendingJob: false, generation: 1, instance: APP, tree: DIGEST, ...over });
-const res = (kind, name, over = {}) => ({ resource: `/user.slice/app.slice/${name}${kind === 'socket' ? '.sock' : ''}`, kind, recorded: true, state: 'present', pendingJob: false, ...over });
+const res = (kind, name, over = {}) => ({ resource: `/run/${name}/${kind}`, kind, recorded: true, state: kind === 'cgroup' ? 'populated' : 'present', pendingJob: false, generation: Number(/g(\d+)$/.exec(name)[1]), ...over });
 const deploy = (over = {}) => ({
   kind: 'deploy',
+  prefix: 'p-',
   digest: DIGEST,
   create_units: ['p-g2.service'],
   prior: [],
@@ -66,6 +67,8 @@ test('reconcile: a failed or incomplete read, any resource with a state or job u
   assert.equal(judge([unit('p-g2.service', { pendingJob: true })], deploy()), 'unknown', 'no quiescence');
   assert.equal(judge([unit('p-g2.service'), res('cgroup', 'p-g2', { state: 'unread' })], deploy()), 'unknown', 'a cgroup unread (S3)');
   assert.equal(judge([res('cgroup', 'p-g2', { state: 'unread' })], teardown()), 'unknown', 'a teardown with a cgroup unread is never applied (S3)');
+  assert.equal(judge([res('socket', 'p-g2', { generation: 'unread' })], teardown()), 'unknown', 'a resource whose generation is unread belongs to no unit the engine can name');
+  assert.equal(judge([res('cgroup', 'p-g7')], teardown()), 'conflicting', 'a resource of a generation no intent names');
   const { pendingJob: _p, ...noJob } = unit('p-g2.service');
   const { state: _s, ...noState } = unit('p-g2.service');
   assert.equal(judge([noJob], deploy()), 'unknown', 'a missing pending job is unknown, not none (m2)');

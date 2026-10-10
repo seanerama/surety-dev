@@ -73,6 +73,8 @@ export interface InventoryEntry {
   recorded: boolean;
   state: string;
   pendingJob: boolean | 'unread';
+  // The generation the resource belongs to (a unit's, from its name; a
+  // cgroup's, socket's or directory's, as read).
   generation?: number | 'unread' | null;
   invocation_id?: string | 'unread' | null;
   instance?: Instance | 'unread' | null;

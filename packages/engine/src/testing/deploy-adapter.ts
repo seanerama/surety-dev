@@ -55,6 +55,16 @@ export interface Unit {
   tree: string | Unread;
 }
 
+// A resource of the environment beside its units (SEAM.md §§247, 255): a
+// domain cgroup (`populated`), a link socket or a runtime directory
+// (`present`). Only the target route changes them.
+export interface Resource {
+  kind: 'cgroup' | 'socket' | 'directory';
+  path: string;
+  generation: number | Unread;
+  state: string;
+}
+
 interface Answer {
   result?: (typeof RESULTS)[number];
   apply?: boolean;
@@ -68,7 +78,7 @@ interface Answer {
 // target, the answers queued and the admission. The calls are this engine
 // process's, counted from its start.
 interface State {
-  target: { complete: boolean; units: Unit[] };
+  target: { complete: boolean; units: Unit[]; resources: Resource[] };
   answers: Partial<Record<CallName, Answer[]>>;
   admission: 'granted' | 'held';
 }
@@ -80,7 +90,7 @@ const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value'
 const now = () => new Date().toISOString();
 const ENV_ID = /^env_[0-9A-Z]{26}$/;
 
-const fresh = (): State => ({ target: { complete: true, units: [] }, answers: {}, admission: 'granted' });
+const fresh = (): State => ({ target: { complete: true, units: [], resources: [] }, answers: {}, admission: 'granted' });
 
 function stateFile(dir: string, env: string): string {
   if (!ENV_ID.test(env)) throw invalid('environment', 'must be an environment id');
@@ -90,7 +100,9 @@ function stateFile(dir: string, env: string): string {
 function load(dir: string, env: string): State {
   const file = stateFile(dir, env);
   if (!existsSync(file)) return fresh();
-  return JSON.parse(readFileSync(file, 'utf8')) as State;
+  const state = JSON.parse(readFileSync(file, 'utf8')) as State;
+  state.target.resources ??= [];
+  return state;
 }
 
 function save(dir: string, env: string, state: State): void {
@@ -240,6 +252,9 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           instance: u.instance,
           tree: u.tree,
         }));
+        for (const r of state.target.resources) {
+          inventory.push({ resource: r.path, kind: r.kind, recorded: true, state: r.state, pendingJob: false, generation: r.generation });
+        }
         // The outcome is the engine's mapping of these reads (SEAM.md §247).
         return { outcome: 'unknown', complete: state.target.complete, inventory, reads: [], identity: [] };
       });
@@ -317,13 +332,22 @@ function parseUnit(v: unknown, i: number): Unit {
   };
 }
 
+function parseResource(v: unknown, i: number): Resource {
+  if (!isObject(v) || !['cgroup', 'socket', 'directory'].includes(v.kind as string)) throw invalid(`resources[${i}].kind`, 'must be cgroup, socket or directory');
+  if (typeof v.path !== 'string' || v.path === '') throw invalid(`resources[${i}].path`, 'must be a path');
+  if (v.generation !== 'unread' && !Number.isInteger(v.generation)) throw invalid(`resources[${i}].generation`, 'must be an integer or "unread"');
+  if (typeof v.state !== 'string' || v.state === '') throw invalid(`resources[${i}].state`, 'must be a state or "unread"');
+  return { kind: v.kind as Resource['kind'], path: v.path, generation: v.generation as number | Unread, state: v.state };
+}
+
 // POST …/deploy/environments/:e/target: the target replaced.
 export function setTarget(dir: string | null, env: string, body: unknown): { target: State['target'] } {
   const d = needDir(dir);
   if (!isObject(body) || !Array.isArray(body.units)) throw invalid('units', 'must be an array of units');
   if (body.complete !== undefined && typeof body.complete !== 'boolean') throw invalid('complete', 'must be a boolean');
+  if (body.resources !== undefined && !Array.isArray(body.resources)) throw invalid('resources', 'must be an array of resources');
   const state = load(d, env);
-  state.target = { complete: (body.complete as boolean | undefined) ?? true, units: body.units.map(parseUnit) };
+  state.target = { complete: (body.complete as boolean | undefined) ?? true, units: body.units.map(parseUnit), resources: ((body.resources as unknown[] | undefined) ?? []).map(parseResource) };
   save(d, env, state);
   return { target: state.target };
 }

@@ -207,6 +207,7 @@ export class ReleaseOperator {
     );
     const judged = judgeReconcile(result as { ok: Reconciliation } | { failure: never }, {
       kind: d.kind,
+      prefix: f.prefix,
       digest: f.artifact_digest,
       create_units: a.intent?.create_units ?? [],
       prior: a.intent?.prior ?? [],

@@ -12,6 +12,9 @@ import type { AdapterReadFailure, Instance, InventoryEntry, Reconciliation, Reco
 
 export interface ReconcileInputs {
   kind: 'deploy' | 'teardown';
+  // The environment's unit-name prefix: a resource of generation n belongs
+  // to the unit `<prefix>g<n>.service`.
+  prefix: string;
   digest: string | null;
   // The attempt's frozen intent: g's units, the prior units it replaces
   // (with the instance each ran when it was frozen), and for a teardown the
@@ -38,11 +41,12 @@ const sameInstance = (a: unknown, b: Instance | null): boolean =>
   typeof a === 'object' && a !== null && b !== null && (a as Instance).pid === b.pid && (a as Instance).start_time === b.start_time;
 
 // The unit a resource of the inventory belongs to: a unit is its own; a
-// cgroup, socket or directory names its unit in its path. null: no unit of
-// the environment.
-function ownerOf(e: InventoryEntry, units: string[]): string | null {
+// cgroup, socket or directory is its generation's unit's. null: no unit any
+// frozen intent of the environment names.
+function ownerOf(e: InventoryEntry, units: string[], prefix: string): string | null {
   if (e.kind === 'unit') return units.includes(e.resource) ? e.resource : null;
-  return units.find((u) => e.resource.includes(u.replace(/\.service$/, ''))) ?? null;
+  const name = Number.isInteger(e.generation) ? `${prefix}g${e.generation as number}.service` : null;
+  return name !== null && units.includes(name) ? name : null;
 }
 
 // A value that was not read: `unread`, or absent from the entry altogether
@@ -64,11 +68,14 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
   // pending (no quiescence).
   if (r.complete !== true || inventory.length !== r.inventory.length) return answer('unknown');
   if (inventory.some((e) => typeof e.resource !== 'string' || !['unit', 'cgroup', 'socket', 'directory'].includes(e.kind) || unread(e.state) || unread(e.pendingJob) || e.pendingJob === true)) return answer('unknown');
+  // A cgroup, socket or directory whose generation was not read belongs to
+  // no unit the engine can name: unknown.
+  if (inventory.some((e) => e.kind !== 'unit' && unread(e.generation))) return answer('unknown');
 
   const units = inventory.filter((e) => e.kind === 'unit');
   const known = [...new Set([...x.recorded, ...x.create_units, ...x.prior.map((p) => p.unit), ...x.stop_units])];
   // Every resource read, by the unit it belongs to.
-  const owner = new Map(inventory.map((e) => [e, ownerOf(e, known)] as const));
+  const owner = new Map(inventory.map((e) => [e, ownerOf(e, known, x.prefix)] as const));
 
   if (x.kind === 'teardown') {
     // Conflicting: a resource of the environment whose ownership is
