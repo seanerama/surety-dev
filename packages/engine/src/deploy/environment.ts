@@ -167,6 +167,10 @@ export type Condition = 'healthy' | 'degraded' | 'down' | 'unknown';
 export function judgeCondition(args: {
   read: { complete: boolean; inventory: InventoryEntry[]; targets: TargetStatus[] } | null;
   identityUnread: boolean;
+  // An active unit the engine owns whose application the read did not
+  // read (none expected of it now, as while an operation is in flight):
+  // whether its application runs is unread (rule 1), never `down`.
+  appUnread?: boolean;
   expected: ExpectedService | null;
   supervision: 'attached' | 'unknown' | null;
   newestIdentity: { match: string } | null;
@@ -181,6 +185,7 @@ export function judgeCondition(args: {
   const t = x ? r.targets.find((s) => s.unit === x.unit) : undefined;
   if (t && (t.active === 'unread' || (t.active === true && t.instance === 'unread'))) return { condition: 'unknown', detail: { code: 'state_unread', unit: x!.unit } };
   if (args.identityUnread) return { condition: 'unknown', detail: { code: 'identity_unread' } };
+  if (args.appUnread === true) return { condition: 'unknown', detail: { code: 'state_unread' } };
   const running = r.targets.some((s) => s.active === true && isInstance(s.instance));
   if (!running && !args.unexpectedActive) return { condition: 'down', detail: args.drift > 0 ? { code: 'out_of_band' } : null };
   if (args.unexpectedActive || args.drift > 0) return { condition: 'degraded', detail: { code: args.drift > 0 ? 'out_of_band' : 'unexpected_unit' } };

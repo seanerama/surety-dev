@@ -44,18 +44,22 @@ interface AttemptLike {
 // The current generation's service as the engine recorded it, if the
 // environment's record says it runs (`running`, written at the finalizer and
 // cleared by a teardown or a read that found nothing running).
-export function expectedService(db: Db, environment: string): { expected: ExpectedService; attempt: AttemptLike; frozen: Record<string, unknown> } | null {
+// `anyGeneration`: what the record says runs even when a later attempt (an
+// operation in flight) made another generation current: read, so that its
+// application is not unread, but never expected.
+export function expectedService(db: Db, environment: string, anyGeneration = false): { expected: ExpectedService; attempt: AttemptLike; frozen: Record<string, unknown> } | null {
   const env = getEnv(db, environment);
   if (!env || env.prefix === null || env.current_generation === null) return null;
   const rec = db.prepare('SELECT "running" FROM "environment_records" WHERE "environment" = ?').get(environment) as { running: string | null } | undefined;
   const running = json<{ generation?: number }>(rec?.running);
-  if (!running || running.generation !== env.current_generation) return null;
+  if (!running || typeof running.generation !== 'number' || (!anyGeneration && running.generation !== env.current_generation)) return null;
+  const generation = running.generation;
   const a = db
     .prepare(
       `SELECT a.*, o."finalizer_inputs" AS "frozen_text" FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation"
        WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND a."deployment_generation" = ? ORDER BY a."created_at" DESC LIMIT 1`,
     )
-    .get(environment, env.current_generation) as (AttemptLike & { frozen_text: string }) | undefined;
+    .get(environment, generation) as (AttemptLike & { frozen_text: string }) | undefined;
   if (!a) return null;
   const frozen = JSON.parse(a.frozen_text) as { artifact_digest?: string | null; target_set?: string[] };
   const app = json<Instance>(a.app_instance);
@@ -69,8 +73,8 @@ export function expectedService(db: Db, environment: string): { expected: Expect
     frozen,
     expected: {
       target: frozen.target_set?.[0] ?? 'app',
-      unit: unitName(env.prefix, env.current_generation),
-      generation: env.current_generation,
+      unit: unitName(env.prefix, generation),
+      generation,
       invocation: d?.invocation_id ?? null,
       instance: app ? { pid: app.pid, start_time: app.start_time } : null,
       digest: frozen.artifact_digest ?? null,
@@ -383,12 +387,14 @@ export function observationPlan(db: Db, args: { environment: string }) {
   const env = getEnv(db, args.environment);
   if (!env || env.prefix === null) return null;
   const exp = expectedService(db, env.id);
+  // What runs, read even when not expected now (an operation in flight).
+  const read = exp ?? expectedService(db, env.id, true);
   const every = projectPolicy(db, env.project).identity_observation_every!;
   const k = historyCount(db, env.id) + 1;
   let expect: TargetExpectation[] = [];
-  if (exp) {
-    const frozen = exp.frozen as unknown as Parameters<typeof expectationOf>[2];
-    expect = (frozen.target_set ?? [exp.expected.target]).map((t) => expectationOf(db, exp.attempt as unknown as Parameters<typeof expectationOf>[1], frozen, t, exp.expected.unit, exp.expected.generation));
+  if (read) {
+    const frozen = read.frozen as unknown as Parameters<typeof expectationOf>[2];
+    expect = (frozen.target_set ?? [read.expected.target]).map((t) => expectationOf(db, read.attempt as unknown as Parameters<typeof expectationOf>[1], frozen, t, read.expected.unit, read.expected.generation));
   }
   return {
     project: env.project,
@@ -538,10 +544,13 @@ export function recordObservation(
       recordedCgroups(tx.db, env.id),
     );
     const unexpectedActive = unaccounted.some((u) => ACTIVE.has(String(inventory.find((e) => e.resource === u.unit)?.state)));
+    const strangers = new Set(unaccounted.map((u) => u.unit));
+    const appUnread = inventory.some((e) => e.kind === 'unit' && ACTIVE.has(String(e.state)) && !strangers.has(e.resource) && !targets.some((x) => x.unit === e.resource));
     const newest = identityFact && (identityFact.observation === id || previous?.generation === env.current_generation) ? { match: identityFact.match } : null;
     const judged = judgeCondition({
       read: { complete, inventory, targets },
       identityUnread,
+      appUnread,
       expected: exp?.expected ?? null,
       supervision: exp ? attemptSupervision(tx.db, exp.attempt as unknown as Parameters<typeof attemptSupervision>[1]) : null,
       newestIdentity: newest,
@@ -626,7 +635,9 @@ export function requestLogs(tx: Tx, args: { project: string; environment: string
   const row = tx.db.prepare('SELECT "logs_requested_at" FROM "environments" WHERE "id" = ?').get(env.id) as { logs_requested_at: string | null };
   const at = row.logs_requested_at ?? tx.at;
   if (row.logs_requested_at === null) tx.db.prepare('UPDATE "environments" SET "logs_requested_at" = ? WHERE "id" = ?').run(at, env.id);
-  return { status: 202, body: { environment: { id: env.id, name: env.name }, collection: { requested_at: at } }, effects: [{ kind: 'tick' }] };
+  // Taken up at the next tick the scheduler makes (SEAM.md §294: "at a later
+  // tick"); the request asks for none itself.
+  return { status: 202, body: { environment: { id: env.id, name: env.name }, collection: { requested_at: at } } };
 }
 
 export function logsDue(db: Db, args: { project: string }): { environment: string; prefix: string; adapter: string; generation: number | null; target: string }[] {
