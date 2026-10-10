@@ -31,7 +31,7 @@ import { describe, test } from 'node:test';
 
 import { recordRow } from './harness/records.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
-import { adapterState, completeRound, configContent, configure, deploy, deployable, deployToRound, environmentRead, operationsOf, scriptCall } from './harness/deploy/kernel.mjs';
+import { adapterState, attemptsOf, completeRound, configContent, configure, deploy, deployable, deployToRound, environmentRead, operationsOf, scriptCall } from './harness/deploy/kernel.mjs';
 import { changeTarget, recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
 import { collectLogs, logsRead, observe, observedOf, scriptObservation, storeFootprint } from './harness/deploy/observe.mjs';
 
@@ -66,15 +66,19 @@ describe('M328 (a) the three facts apart, and what the read shows beside them', 
     assert.deepEqual(pick(failed.attempted, ['operation', 'outcome']), { operation: op1.id, outcome: 'failed' }, `attempted carries the failed attempt (${JSON.stringify(failed.attempted)})`);
     assert.equal(failed.last_verified ?? null, null, 'nothing was verified');
 
-    const { operation: op2, execution } = await deployToRound(ctx);
+    // deployToRound names the project's first deploy operation; the one in flight is the newest (operation 1 failed).
+    const { execution } = await deployToRound(ctx);
+    const op2 = operationsOf(fx.home, project, 'deploy').at(-1);
+    assert.notEqual(op2.id, op1.id, 'the fixture is live: a second deploy operation');
+    const g2 = attemptsOf(fx.home, op2.id)[0].deployment_generation;
     const during = await environmentRead(fx.engine, project, env.name);
     assert.equal(during.operation_in_flight?.id, op2.id, `the operation in flight is shown (${JSON.stringify(during.operation_in_flight)})`);
     await completeRound(ctx, execution);
     await tick(fx.engine, project, { rounds: 2 });
     const verified = await environmentRead(fx.engine, project, env.name);
-    assert.equal(verified.last_verified?.generation, 1, `last_verified names generation 1 (${JSON.stringify(verified.last_verified)})`);
-    assert.deepEqual([verified.attempted?.operation, verified.attempted?.generation], [op2.id, 1], 'attempted is operation 2\'s');
-    assert.equal(verified.current_generation, 1, 'the current generation');
+    assert.equal(verified.last_verified?.generation, g2, `last_verified names operation 2's generation (${JSON.stringify(verified.last_verified)})`);
+    assert.deepEqual([verified.attempted?.operation, verified.attempted?.generation], [op2.id, g2], 'attempted is operation 2\'s');
+    assert.equal(verified.current_generation, g2, 'the current generation');
     assert.equal(verified.supervision, 'attached', 'the running service\'s supervision');
     assert.equal(verified.running?.config, verified.config?.id, 'the running service was launched with the current configuration version');
     assert.equal(verified.operation_in_flight ?? null, null, 'no operation in flight');
