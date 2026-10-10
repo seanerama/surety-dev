@@ -16,6 +16,12 @@
 // integration branch) needs ticks, and the row and the completion it allows
 // are made in the same tick; a barrier between them holds every tick. It
 // belongs with the generation and round guards of slice 25 (M317, M318).
+//
+// The slice-23 review's S1 (SEAM.md §255): a service that survived an engine
+// restart, which the new incarnation did not launch, has supervision
+// `unknown`, and no verification passes on it (D4 §§2.4, 4.3, 5.3; E110), so
+// completion cannot advance the candidate; the environment read shows the
+// supervision and its condition, and never `healthy` (E121 CD2).
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
@@ -37,12 +43,17 @@ import {
   deployToRound,
   deployWork,
   effectCalls,
+  environmentRead,
+  environmentRecord,
   evaluateAlphaComplete,
   operationsOf,
   releaseBarrier,
+  postDeployExecutions,
   requestDeployment,
+  roundsOf,
   scriptCall,
   tickToBarrier,
+  verificationsOf,
 } from './harness/deploy/kernel.mjs';
 
 const hasTable = (home, name) => withStore(home, (db) => db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) !== undefined);
@@ -151,5 +162,52 @@ describe('M305 (d) completion re-reads the evidence the verification row rests o
     const last = alphaCompleteRows(fx.home, ctx.candidate.id).at(-1);
     assert.equal(last?.outcome, 'not_satisfied', 'the completion evaluation is not satisfied');
     assert.ok(JSON.parse(last.reasons).some((r) => r.code === 'EVIDENCE_MISSING' && r.subjects.includes(result.output)), `EVIDENCE_MISSING names the record (reasons: ${last.reasons})`);
+  });
+});
+
+describe('M305 (c) completion advances only from a verification that could pass: a survivor of a restart is never verified (the slice-23 review, S1)', () => {
+  test('a kill at deploy.receipt_recorded and a restart: the surviving service, which this incarnation did not launch, has supervision unknown; its round is unknown naming supervision, the candidate stays developing, last_verified is not written, and the environment read shows supervision unknown, never healthy', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
+    await armBarrier(fx.engine, 'deploy.receipt_recorded', 'kill');
+    await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
+    const dying = fx.engine;
+    await tickToBarrier(fx, ctx.project, 'deploy.receipt_recorded').catch(() => undefined);
+    await dying.exited;
+    await fx.start();
+
+    // The new incarnation reconciles the effect it did not make. Whatever
+    // post-deploy execution the round queues is recorded passing (if the
+    // engine queues one at all: D4 §4.3 refuses checks against such a
+    // service), so the only thing that can keep the row from `verified` is
+    // the service's supervision.
+    const [op] = operationsOf(fx.home, ctx.project, 'deploy');
+    const row = await tickUntil(
+      fx.engine,
+      ctx.project,
+      async () => {
+        const round = roundsOf(fx.home, op.id).at(-1);
+        const [v] = round ? verificationsOf(fx.home, round.id) : [];
+        if (v) return v;
+        for (const x of postDeployExecutions(fx.home, ctx.candidate.id)) if (x.status === 'queued') await recordExit(fx.engine, x.id, 0);
+        return undefined;
+      },
+      { max: 24, what: 'the round on the surviving service to record its verification' },
+    );
+    await tick(fx.engine, ctx.project, { rounds: 3 });
+
+    assert.equal(row.outcome, 'unknown', `the service survived a restart, so its supervision is unknown and no verification passes on it (D4 §§4.3, 5.3; E110): the row is unknown (outcome ${row.outcome}, missing ${JSON.stringify(row.missing)})`);
+    assert.ok((row.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (D4 A.2 VerificationMissing) (${JSON.stringify(row.missing)})`);
+    assert.equal(candidateRow(fx.home, ctx.candidate.id).progress, 'developing', 'the candidate stays developing');
+    assert.equal(eventsOfType(fx.home, 'candidate.advanced').length, 0, 'no advance');
+    const record = environmentRecord(fx.home, ctx.env.id);
+    assert.equal(record.last_verified ?? null, null, 'last_verified is not written');
+    assert.equal(record.attempted?.outcome, 'verification_unknown', `attempted names the unknown verification (D4 §5.3 item 8) (${JSON.stringify(record.attempted)})`);
+
+    const read = await environmentRead(fx.engine, ctx.project, ctx.env.name);
+    assert.equal(read.supervision, 'unknown', `the environment read shows the running service's supervision unknown (D4 §6.1, §9.2) (${JSON.stringify(read)})`);
+    assert.ok((read.conditions ?? []).includes('supervision_unknown'), `with the condition supervision_unknown beside the three facts (D4 A.2 EnvironmentReadCondition) (${JSON.stringify(read.conditions)})`);
+    assert.notEqual(read.observed?.condition, 'healthy', 'and it never reads healthy (E121 CD2)');
   });
 });

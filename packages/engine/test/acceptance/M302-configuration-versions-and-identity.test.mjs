@@ -7,7 +7,8 @@
 // reference replaced by `{ref, digest}`, the digest an HMAC of the secret's
 // value under `$SURETY_HOME/secret-digest.key`. The engine holds deployment
 // secrets from `--secret-file deploy/<name>=<path>` (SEAM §160, extended in
-// §245). The values here are synthetic and random, in 0600 files of a
+// §245), and only those: a backend reference is refused (SEAM §255; D4
+// §§7.1, 7.4). The values here are synthetic and random, in 0600 files of a
 // directory outside the test's root, which is the tree searched.
 //
 // Not here: the mount plans (the key is under the engine home, which every
@@ -153,6 +154,30 @@ describe('M302 configuration versions and their identity', () => {
     } finally {
       db.close();
     }
+  });
+
+  test('(d) only the deployment namespace: a backend reference the engine holds, in secrets or in check_secrets, is refused config_invalid naming the field and nothing is written; a held deployment reference is accepted (the slice-23 review, S4; D4 §§7.1, 7.4; SEAM §§245, 255)', async (t) => {
+    const dir = makeTempDir('m302-backend');
+    t.after(() => removeDir(dir));
+    // Both held, so neither refusal can be "not held": the backend one is refused for its namespace alone.
+    const { fx } = await engineWithSecrets(t, { 'backend/codex/api_key': secretFile(dir, 'codex', secret()), 'deploy/app_token': secretFile(dir, 'app', secret()) });
+    const project = (await addGitProject(fx, { tier: 'T1' })).id;
+    for (const [what, content, field] of [
+      ['a held backend reference in secrets', configContent({ secrets: { APP_TOKEN: 'deploy/app_token', BACKEND_KEY: 'backend/codex/api_key' } }), 'secrets.BACKEND_KEY'],
+      ['a held backend reference in check_secrets', configContent({ secrets: { APP_TOKEN: 'deploy/app_token' }, check_secrets: ['deploy/app_token', 'backend/codex/api_key'] }), 'check_secrets.1'],
+    ]) {
+      const res = await putConfig(fx.engine, project, 'alpha', content);
+      assertRefused(res, 422, 'config_invalid', `${what} (D4 §7.1: a deployment configuration's <ref> is in the deployment namespace)`);
+      assert.equal(res.body.subject?.field, field, `${what}: the refusal names ${field}`);
+    }
+    const db = openStore(storePath(fx.home), { readonly: true });
+    try {
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM "environment_configs"').get().n, 0, 'no version was written');
+    } finally {
+      db.close();
+    }
+    const control = await putConfig(fx.engine, project, 'alpha', configContent({ secrets: { APP_TOKEN: 'deploy/app_token' }, check_secrets: ['deploy/app_token'] }));
+    assert.equal(control.status, 201, `the control: the same configuration naming only the held deployment reference is written (→ ${control.status} ${control.text})`);
   });
 
   test('(e) a version row is never changed or deleted; the route is refused without the owner\'s token', async (t) => {
