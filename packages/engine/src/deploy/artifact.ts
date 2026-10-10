@@ -73,6 +73,10 @@ async function project(repo: string, revision: string, exclude: string[]): Promi
     const tab = record.indexOf('\t');
     const [mode, type, oid] = record.slice(0, tab).split(' ') as [string, string, string];
     const path = record.slice(tab + 1);
+    // A path the object store can hold but a directory cannot (an empty,
+    // `.` or `..` segment, or an absolute path) is never written: nothing is
+    // created outside the staging directory (review m4).
+    if (path === '' || path.startsWith('/') || path.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) throw refuse('special_file', `${JSON.stringify(path)} is not a path inside the tree`);
     if (excluded(path, exclude)) continue;
     if (type === 'commit') throw refuse('submodule', `${path} is a submodule`);
     if (mode === '120000') throw refuse('symlink', `${path} is a symbolic link`);
@@ -197,6 +201,8 @@ export async function sealArtifact(args: { home: string; project: string; repo: 
   try {
     for (const b of blobs) {
       const p = join(staging, ...b.path.split('/'));
+      const rel = relative(staging, p);
+      if (rel === '' || rel.startsWith('..') || rel.startsWith(sep)) throw refuse('special_file', `${JSON.stringify(b.path)} is not a path inside the tree`);
       mkdirSync(dirname(p), { recursive: true, mode: 0o755 });
       writeFileSync(p, bytes.get(b.oid)!, { mode: b.mode === '100755' ? 0o755 : 0o644, flag: 'wx' });
       chmodSync(p, b.mode === '100755' ? 0o755 : 0o644);

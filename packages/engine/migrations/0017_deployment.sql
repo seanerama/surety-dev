@@ -41,6 +41,10 @@ ALTER TABLE environments ADD COLUMN prefix TEXT;
 -- intended (it waits for the environment lease, D4 §4.6).
 ALTER TABLE environments ADD COLUMN teardown_requested_at TEXT;
 CREATE UNIQUE INDEX environments_configured_name ON environments(project, name) WHERE prefix IS NOT NULL;
+-- The prefix is fixed once (D4 §9.3): every unit name derives from it.
+CREATE TRIGGER environments_prefix_fixed BEFORE UPDATE OF prefix ON environments
+WHEN OLD.prefix IS NOT NULL AND NEW.prefix IS NOT OLD.prefix
+BEGIN SELECT RAISE(ABORT, 'environments: the prefix is fixed when the environment is created'); END;
 
 -- D4 §3.1, A.3: sealed bytes, one row per digest per project. `manifest`
 -- (inline, engine-owned): the canonical manifest, the complete sorted list
@@ -117,6 +121,10 @@ ALTER TABLE operations ADD COLUMN orchestration_deadline_at TEXT;
 ALTER TABLE operations ADD COLUMN orchestration_stage TEXT CHECK (orchestration_stage IN ('effect', 'verification', 'completion', 'ended'));
 ALTER TABLE operations ADD COLUMN "authorization" TEXT REFERENCES deployment_authorizations(id);
 CREATE UNIQUE INDEX operations_one_per_authorization ON operations("authorization") WHERE "authorization" IS NOT NULL;
+-- E115: the orchestration deadline survives a restart and is never renewed.
+CREATE TRIGGER operations_orchestration_deadline_fixed BEFORE UPDATE OF orchestration_deadline_at ON operations
+WHEN OLD.orchestration_deadline_at IS NOT NULL AND NEW.orchestration_deadline_at IS NOT OLD.orchestration_deadline_at
+BEGIN SELECT RAISE(ABORT, 'operations: the orchestration deadline is never renewed'); END;
 
 -- D4 §§3.4, 4.2, A.3 `operation_attempts`, added.
 ALTER TABLE operation_attempts ADD COLUMN deployment_generation INTEGER;
@@ -218,6 +226,7 @@ CREATE TABLE verification_rounds (
 );
 CREATE TRIGGER verification_rounds_bindings_frozen BEFORE UPDATE ON verification_rounds
 WHEN NEW.operation IS NOT OLD.operation OR NEW.attempt IS NOT OLD.attempt OR NEW.round IS NOT OLD.round OR NEW.candidate IS NOT OLD.candidate
+  OR NEW.environment IS NOT OLD.environment OR NEW.project IS NOT OLD.project OR NEW.registered_at IS NOT OLD.registered_at
   OR NEW.mapping IS NOT OLD.mapping OR NEW.deployment_generation IS NOT OLD.deployment_generation OR NEW.config_identity IS NOT OLD.config_identity
   OR NEW.protected_version IS NOT OLD.protected_version OR NEW.required_checks IS NOT OLD.required_checks
   OR NEW.adapter_qualification IS NOT OLD.adapter_qualification OR NEW.deadline_at IS NOT OLD.deadline_at
@@ -253,10 +262,13 @@ CREATE TABLE deployment_verifications (
 );
 CREATE TRIGGER deployment_verifications_no_delete BEFORE DELETE ON deployment_verifications
 BEGIN SELECT RAISE(ABORT, 'deployment_verifications: obsolete evidence is kept as history'); END;
-CREATE TRIGGER deployment_verifications_outcome_fixed BEFORE UPDATE ON deployment_verifications
-WHEN NEW.outcome IS NOT OLD.outcome OR NEW.identity_reads IS NOT OLD.identity_reads OR NEW.behavioral_results IS NOT OLD.behavioral_results
-  OR NEW.round IS NOT OLD.round OR NEW.deployment_generation IS NOT OLD.deployment_generation
-  OR (OLD.invalidated_at IS NOT NULL AND (NEW.invalidated_at IS NOT OLD.invalidated_at OR NEW.invalidated_reason IS NOT OLD.invalidated_reason))
+CREATE TRIGGER deployment_verifications_outcome_fixed BEFORE UPDATE OF id, created_at, project, environment, operation, attempt, round, deployment_generation, candidate,
+  target_set, artifact_digest, mapping, config_identity, protected_version, identity_reads, behavioral_results, adapter_qualification, outcome, missing, computed_at
+  ON deployment_verifications
+BEGIN SELECT RAISE(ABORT, 'deployment_verifications: a computed row is never relabelled'); END;
+-- An invalidation is recorded once and never withdrawn or changed.
+CREATE TRIGGER deployment_verifications_invalidated_once BEFORE UPDATE OF invalidated_at, invalidated_reason ON deployment_verifications
+WHEN OLD.invalidated_at IS NOT NULL AND (NEW.invalidated_at IS NOT OLD.invalidated_at OR NEW.invalidated_reason IS NOT OLD.invalidated_reason)
 BEGIN SELECT RAISE(ABORT, 'deployment_verifications: a computed row is never relabelled'); END;
 
 -- D4 A.3 `environment_records`, added: what the running service was

@@ -36,47 +36,74 @@ const scratch = (t) => {
   return dir;
 };
 
-// ---- reconcile (D4 §2.4) --------------------------------------------------------------------
+// ---- reconcile (D4 §2.4; D4-A03; review S2, S3, m2) -----------------------------------------------
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const APP = { pid: 100001, start_time: 1002 };
+const OLD = { pid: 100000, start_time: 1001 };
 const unit = (name, over = {}) => ({ resource: name, kind: 'unit', recorded: true, state: 'active', pendingJob: false, generation: 1, instance: APP, tree: DIGEST, ...over });
-const deploy = (over = {}) => ({ kind: 'deploy', digest: DIGEST, create_units: ['p-g2.service'], prior: [], stop_units: [], recorded: ['p-g1.service', 'p-g2.service'], launch_state: 'authorized', app_instance: APP, ...over });
+const res = (kind, name, over = {}) => ({ resource: `/user.slice/app.slice/${name}${kind === 'socket' ? '.sock' : ''}`, kind, recorded: true, state: 'present', pendingJob: false, ...over });
+const deploy = (over = {}) => ({
+  kind: 'deploy',
+  digest: DIGEST,
+  create_units: ['p-g2.service'],
+  prior: [],
+  stop_units: [],
+  recorded: ['p-g1.service', 'p-g2.service'],
+  launch_granted: true,
+  app_instance: APP,
+  ...over,
+});
+const teardown = (over = {}) => deploy({ kind: 'teardown', create_units: [], stop_units: ['p-g1.service', 'p-g2.service'], ...over });
 const read = (inventory, complete = true) => ({ ok: { outcome: 'unknown', complete, inventory, reads: [], identity: [] } });
+const judge = (inventory, x, complete) => judgeReconcile(read(inventory, complete), x).outcome;
 
-test('reconcile: a failed or incomplete read, an unread state or a pending job is unknown, before anything else', () => {
+test('reconcile: a failed or incomplete read, any resource with a state or job unread or missing, or a pending job is unknown, before anything else', () => {
   assert.equal(judgeReconcile({ failure: 'deadline' }, deploy()).outcome, 'unknown');
-  assert.equal(judgeReconcile(read([unit('p-g2.service')], false), deploy()).outcome, 'unknown');
-  assert.equal(judgeReconcile(read([unit('p-g2.service'), unit('other.service', { recorded: false })], false), deploy()).outcome, 'unknown', 'unknown takes precedence over conflicting');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { state: 'unread' })]), deploy()).outcome, 'unknown');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { pendingJob: true })]), deploy()).outcome, 'unknown', 'no quiescence');
+  assert.equal(judge([unit('p-g2.service')], deploy(), false), 'unknown');
+  assert.equal(judge([unit('p-g2.service'), unit('other.service', { recorded: false })], deploy(), false), 'unknown', 'unknown takes precedence over conflicting');
+  assert.equal(judge([unit('p-g2.service', { state: 'unread' })], deploy()), 'unknown');
+  assert.equal(judge([unit('p-g2.service', { pendingJob: true })], deploy()), 'unknown', 'no quiescence');
+  assert.equal(judge([unit('p-g2.service'), res('cgroup', 'p-g2', { state: 'unread' })], deploy()), 'unknown', 'a cgroup unread (S3)');
+  assert.equal(judge([res('cgroup', 'p-g2', { state: 'unread' })], teardown()), 'unknown', 'a teardown with a cgroup unread is never applied (S3)');
+  const { pendingJob: _p, ...noJob } = unit('p-g2.service');
+  const { state: _s, ...noState } = unit('p-g2.service');
+  assert.equal(judge([noJob], deploy()), 'unknown', 'a missing pending job is unknown, not none (m2)');
+  assert.equal(judge([noState], deploy()), 'unknown', 'a missing state is unknown, not inactive (m2)');
   assert.equal(judgeReconcile({ ok: null }, deploy()).outcome, 'unknown', 'an answer that is not a reconciliation');
 });
 
-test('reconcile: applied needs the authorized unit with the recorded instance and the frozen digest, and nothing else active', () => {
-  assert.equal(judgeReconcile(read([unit('p-g2.service')]), deploy()).outcome, 'applied');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { tree: `sha256:${'b'.repeat(64)}` })]), deploy()).outcome, 'conflicting', 'another tree');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { instance: { pid: 7, start_time: 1 } })]), deploy()).outcome, 'conflicting', 'another instance');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { instance: 'unread' })]), deploy()).outcome, 'unknown', 'the instance unread');
-  assert.equal(judgeReconcile(read([unit('p-g2.service')]), deploy({ app_instance: null })).outcome, 'unknown', 'no instance recorded at launch: the binding is unread');
-  assert.equal(judgeReconcile(read([unit('p-g2.service'), unit('p-g1.service')]), deploy({ prior: ['p-g1.service'] })).outcome, 'conflicting', 'two generations active');
-  assert.equal(judgeReconcile(read([unit('p-g2.service'), unit('stray.service', { recorded: false })]), deploy()).outcome, 'conflicting', 'a unit no intent names');
+test('reconcile: applied needs the authorized unit with the recorded instance and the frozen digest, the prior gone, nothing else live', () => {
+  assert.equal(judge([unit('p-g2.service'), res('cgroup', 'p-g2')], deploy()), 'applied');
+  assert.equal(judge([unit('p-g2.service', { tree: `sha256:${'b'.repeat(64)}` })], deploy()), 'conflicting', 'another tree');
+  assert.equal(judge([unit('p-g2.service', { instance: { pid: 7, start_time: 1 } })], deploy()), 'conflicting', 'another instance');
+  assert.equal(judge([unit('p-g2.service', { instance: 'unread' })], deploy()), 'unknown', 'the instance unread');
+  assert.equal(judge([unit('p-g2.service')], deploy({ app_instance: null })), 'unknown', 'no instance recorded at launch: the binding is unread');
+  const prior = [{ unit: 'p-g1.service', instance: OLD }];
+  assert.equal(judge([unit('p-g2.service'), unit('p-g1.service', { instance: OLD })], deploy({ prior })), 'conflicting', 'two generations active');
+  assert.equal(judge([unit('p-g2.service'), res('cgroup', 'p-g1')], deploy({ prior })), 'partial', 'the prior domain still populated: its termination not established');
+  assert.equal(judge([unit('p-g2.service'), unit('stray.service', { recorded: false })], deploy()), 'conflicting', 'a unit no intent names');
+  assert.equal(judge([unit('p-g2.service'), unit('stray.service', { recorded: false, state: 'failed' })], deploy()), 'conflicting', 'in any state');
 });
 
-test('reconcile: absent only with g absent, no launch granted and the prior as frozen; anything else permitted is partial', () => {
-  assert.equal(judgeReconcile(read([]), deploy({ launch_state: 'authorizable' })).outcome, 'absent');
-  assert.equal(judgeReconcile(read([unit('p-g1.service')]), deploy({ launch_state: 'authorizable', prior: ['p-g1.service'] })).outcome, 'absent', 'the prior intact');
-  assert.equal(judgeReconcile(read([]), deploy({ launch_state: 'authorizable', prior: ['p-g1.service'] })).outcome, 'partial', 'the prior stopped and g absent');
-  assert.equal(judgeReconcile(read([]), deploy({ launch_state: 'authorized' })).outcome, 'partial', 'a launch granted and its unit gone');
-  assert.equal(judgeReconcile(read([unit('p-g2.service', { state: 'failed' })]), deploy()).outcome, 'partial', 'g present but failed');
+test('reconcile: absent only with g and its domain absent, no launch ever granted, the prior exactly as frozen; a granted launch whose unit is gone is partial (S2)', () => {
+  const prior = [{ unit: 'p-g1.service', instance: OLD }];
+  assert.equal(judge([], deploy({ launch_granted: false })), 'absent');
+  assert.equal(judge([unit('p-g1.service', { instance: OLD })], deploy({ launch_granted: false, prior })), 'absent', 'the prior intact');
+  assert.equal(judge([], deploy({ launch_granted: true })), 'partial', 'a launch granted and its unit gone (S2)');
+  assert.equal(judge([res('cgroup', 'p-g2')], deploy({ launch_granted: false })), 'partial', "g's domain still there (S3)");
+  assert.equal(judge([], deploy({ launch_granted: false, prior })), 'partial', 'the prior stopped and g absent');
+  assert.equal(judge([unit('p-g1.service', { instance: APP })], deploy({ launch_granted: false, prior })), 'conflicting', 'the prior running another instance than the one frozen (S3)');
+  assert.equal(judge([unit('p-g2.service', { state: 'failed' })], deploy()), 'partial', 'g present but failed');
 });
 
-test('reconcile: a teardown is applied only with every unit it stops gone; an unowned active unit is conflicting', () => {
-  const td = deploy({ kind: 'teardown', create_units: [], stop_units: ['p-g1.service', 'p-g2.service'] });
-  assert.equal(judgeReconcile(read([]), td).outcome, 'applied');
-  assert.equal(judgeReconcile(read([unit('p-g1.service'), unit('p-g2.service')]), td).outcome, 'absent');
-  assert.equal(judgeReconcile(read([unit('p-g2.service')]), td).outcome, 'partial');
-  assert.equal(judgeReconcile(read([unit('x.service', { recorded: false })]), td).outcome, 'conflicting');
+test('reconcile: a teardown is applied only with every resource it covers gone; residue is partial; an unowned resource in any state is conflicting (S3)', () => {
+  assert.equal(judge([], teardown()), 'applied');
+  assert.equal(judge([unit('p-g1.service'), unit('p-g2.service')], teardown()), 'absent');
+  assert.equal(judge([unit('p-g2.service')], teardown()), 'partial');
+  assert.equal(judge([res('cgroup', 'p-g2'), res('socket', 'p-g2')], teardown()), 'partial', 'no unit left, but a populated cgroup and a socket');
+  assert.equal(judge([unit('p-g1.service'), unit('p-g2.service'), unit('p-g3.service', { recorded: false, state: 'failed' })], teardown()), 'conflicting', 'every unit unchanged plus an extra prefixed unit, failed');
+  assert.equal(judge([unit('x.service', { recorded: false })], teardown()), 'conflicting');
 });
 
 // ---- configuration (D4 §3.2; SEAM.md §245) -----------------------------------------------------
@@ -91,7 +118,7 @@ const content = (over = {}) => ({
   ...over,
 });
 
-test('configuration: the closed content; a refusal names the field as a dotted path', () => {
+test('configuration: the closed content; only deployment references (review S4); a refusal names the field as a dotted path', () => {
   assert.deepEqual(validateConfig(content()), content());
   const refused = (body, field) =>
     assert.throws(
@@ -104,6 +131,8 @@ test('configuration: the closed content; a refusal names the field as a dotted p
   refused(content({ targets: ['app', 'web'] }), 'targets');
   refused(content({ port: 80 }), 'port');
   refused(content({ secrets: { APP_TOKEN: 'vault/x' } }), 'secrets.APP_TOKEN');
+  refused(content({ secrets: { APP_TOKEN: 'backend/claude/api_key' } }), 'secrets.APP_TOKEN');
+  refused(content({ check_secrets: ['backend/claude/subscription_token'] }), 'check_secrets.0');
   refused(content({ check_secrets: ['deploy/ok', 'vault/x'] }), 'check_secrets.1');
   refused(content({ identity_method: 'banner' }), 'identity_method');
 });
@@ -173,7 +202,13 @@ test('bounded calls: an effect past its deadline or bound is uncertain; a read p
   const odd = { deploy: async () => ({ result: 'done' }) };
   assert.equal((await effectCall(odd, cap, null, bounds)).receipt.result, 'uncertain', 'an answer that is no result');
   const fine = { deploy: async () => ({ result: 'refused', steps: [] }) };
-  assert.deepEqual(await effectCall(fine, cap, null, bounds), { receipt: { result: 'refused', steps: [] }, bound: null });
+  const settled = await effectCall(fine, cap, null, bounds);
+  assert.deepEqual([settled.receipt, settled.bound], [{ result: 'refused', steps: [] }, null]);
+  // Review m1: the call's own promise, which the operator awaits before any
+  // reconcile read, settles even after a deadline.
+  const late = await effectCall(hang, cap, null, bounds);
+  assert.equal(late.bound, 'deadline');
+  await late.settled;
   assert.deepEqual(await readCall(() => new Promise(() => {}), bounds), { failure: 'deadline' });
   assert.deepEqual(await readCall(async () => 'x'.repeat(2000), bounds), { failure: 'output_exceeded' });
   assert.deepEqual(await readCall(async () => Promise.reject(Object.assign(new Error('x'), { failure: 'invalid_response' })), bounds), { failure: 'invalid_response' });
@@ -200,4 +235,21 @@ test('store: a configuration version is never edited or deleted; only its status
   }
   db.prepare(`UPDATE environment_configs SET status = 'superseded'`).run();
   assert.throws(() => db.prepare(`UPDATE environment_configs SET status = 'current'`).run(), /superseded/);
+  // Review m6: a prefix is fixed once.
+  db.prepare(`UPDATE environments SET prefix = 'surety-000000000000-env_1-'`).run();
+  assert.throws(() => db.prepare(`UPDATE environments SET prefix = 'surety-111111111111-env_1-'`).run(), /prefix is fixed/);
+});
+
+// ---- supervision (D4 §9.2; E110; review S1) ------------------------------------------------------
+
+test('supervision: attached only while the incarnation that granted the launch runs; unknown after a restart or with no grant', async () => {
+  const { supervisionOf } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+  const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+  setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_now' });
+  const granted = JSON.stringify({ pid: 1, start_time: 2 });
+  assert.equal(supervisionOf({ incarnation: 'inc_now', init_instance: granted }), 'attached');
+  assert.equal(supervisionOf({ incarnation: 'inc_before', init_instance: granted }), 'unknown', 'launched by an earlier incarnation');
+  assert.equal(supervisionOf({ incarnation: 'inc_now', init_instance: null }), 'unknown', 'no launch granted');
+  setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
+  assert.equal(supervisionOf({ incarnation: 'inc_now', init_instance: granted }), 'unknown', 'no running incarnation known');
 });

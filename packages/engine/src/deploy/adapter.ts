@@ -221,7 +221,7 @@ export function adapterFor(id: string): DeploymentAdapter {
 // A call bounded by its deadline and its output bound. The signal is
 // aborted at the deadline; an adapter that does not settle then is left,
 // and its outcome is `deadline`.
-async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number, outputBytes: number): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
+async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number, outputBytes: number, settled?: (p: Promise<unknown>) => void): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
   const ctl = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<{ failure: AdapterReadFailure }>((resolve) => {
@@ -243,6 +243,10 @@ async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number,
       },
       (err): { failure: AdapterReadFailure } => ({ failure: failureClass(err) }),
     );
+    // The call itself, settled however long it takes after its deadline:
+    // an effect is reconciled only once its host calls have returned or
+    // been awaited (D4 §2.4, quiescence).
+    settled?.(done);
     return await Promise.race([done, deadline]);
   } finally {
     clearTimeout(timer);
@@ -252,16 +256,24 @@ async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number,
 // An effect. Past its deadline or its output bound, or answered in a way
 // that cannot be interpreted, it is `uncertain`: ambiguous until a read
 // settles it (§2.1).
-export async function effectCall(adapter: DeploymentAdapter, cap: Capability, launch: LaunchChannel, b: DeployBounds): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null }> {
-  const r = await bounded((signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)), b.effectMs, b.outputBytes);
+export async function effectCall(
+  adapter: DeploymentAdapter,
+  cap: Capability,
+  launch: LaunchChannel,
+  b: DeployBounds,
+): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null; settled: Promise<unknown> }> {
+  let settled: Promise<unknown> = Promise.resolve();
+  const r = await bounded((signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)), b.effectMs, b.outputBytes, (p) => {
+    settled = p.catch(() => undefined);
+  });
   const at = new Date().toISOString();
-  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure };
+  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure, settled };
   const receipt = r.ok;
   if (!receipt || !['issued', 'refused', 'not_issued', 'uncertain'].includes(receipt.result)) {
-    return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response' };
+    return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response', settled };
   }
   const steps = Array.isArray(receipt.steps) ? receipt.steps.map((s) => ({ at: String(s.at), step: String(s.step), detail: String(s.detail).slice(0, 2000) })) : [];
-  return { receipt: { result: receipt.result, steps }, bound: null };
+  return { receipt: { result: receipt.result, steps }, bound: null, settled };
 }
 
 export function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds): Promise<{ ok: T } | { failure: AdapterReadFailure }> {

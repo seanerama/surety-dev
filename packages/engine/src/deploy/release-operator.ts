@@ -30,6 +30,10 @@ export class ReleaseOperator {
   // Attempts whose effect this process issued (D4 §4.3): any other attempt
   // left `started` is an earlier incarnation's.
   private readonly issued = new Set<string>();
+  // Effects whose host call has not yet returned (it passed its deadline
+  // and is being awaited): no reconcile read and no retry until it has
+  // (D4 §2.4, quiescence; review m1).
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly rt: Runtime) {}
 
@@ -119,7 +123,11 @@ export class ReleaseOperator {
     const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
     const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
     const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
-    return { rehash: rehashed, secretDigests, admission: seamDeployAdmission(f.environment) ?? 'granted', gate, now: nowIso() };
+    // Admission (D4 §4.7): the kernel lane's scripted answer. Outside it no
+    // admission of a service domain exists before slice 24, so none is
+    // granted: the operation waits, and fails at its orchestration deadline
+    // with nothing applied (review m3).
+    return { rehash: rehashed, secretDigests, admission: seamDeployAdmission(f.environment) ?? 'held', gate, now: nowIso() };
   }
 
   // The manifest of a precondition read, as a record (SEAM.md §250).
@@ -158,7 +166,14 @@ export class ReleaseOperator {
         await this.rt.engine('deploy.app_started', { attempt, app });
       },
     };
-    const { receipt, bound } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds());
+    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds());
+    if (bound !== null) {
+      this.inFlight.set(attempt, settled);
+      void settled.finally(() => {
+        this.inFlight.delete(attempt);
+        this.rt.services?.requestTick();
+      });
+    }
     const r = await this.rt.engine<{ reconcile: boolean }>('deploy.receipt', { attempt, receipt, bound });
     await pausePoint('deploy.receipt_recorded');
     if (!r.reconcile) return false;
@@ -167,6 +182,9 @@ export class ReleaseOperator {
   }
 
   private async reconcile(d: DeployDetail, attempt: string): Promise<boolean> {
+    // An effect whose call is still out is not quiescent: nothing is read
+    // as its outcome yet; the attempt stays ambiguous.
+    if (this.inFlight.has(attempt)) return false;
     const a = d.attempts.find((x) => x.id === attempt);
     if (!a || a.generation === null) return false;
     const f = d.frozen;
@@ -191,10 +209,12 @@ export class ReleaseOperator {
       kind: d.kind,
       digest: f.artifact_digest,
       create_units: a.intent?.create_units ?? [],
-      prior: (a.intent?.prior ?? []).map((p) => p.unit),
+      prior: a.intent?.prior ?? [],
       stop_units: a.intent?.resources ?? [],
       recorded: d.recorded_units,
-      launch_state: a.launch_state,
+      // A launch granted is a launch granted, whatever its state now: the
+      // grant's record, the init's instance, outlives the closure (S2).
+      launch_granted: a.init_instance !== null || a.launch_state === 'authorized',
       app_instance: a.app_instance,
     });
     const way = await this.rt.engine<{ way: string }>('deploy.reconciled', { attempt: a.id, outcome: judged.outcome, read: judged.read });

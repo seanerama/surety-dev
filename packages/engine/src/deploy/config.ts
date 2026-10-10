@@ -13,7 +13,6 @@ import { join } from 'node:path';
 import { Refusal } from '../refusal.js';
 import { heldSecret } from '../records/redact.js';
 import { ADAPTERS, type ConfigContent } from '../store/transitions/deploy.js';
-import { KEY_REFERENCES } from '../invoke/keys.js';
 import { canonical } from '../store/transitions/common.js';
 
 export const SECRET_DIGEST_KEY = 'secret-digest.key';
@@ -61,15 +60,17 @@ const invalid = (field: string, why: string): Refusal =>
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
 const TARGET = /^[a-z][a-z0-9-]{0,31}$/;
-// A deployment reference (SEAM.md §245; N04) beside the backends' (§160).
+// A deployment reference (SEAM.md §245; N04).
 export const DEPLOY_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
 const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method'];
 
-const isReference = (v: unknown): v is string => typeof v === 'string' && (DEPLOY_REFERENCE.test(v) || (KEY_REFERENCES as readonly string[]).includes(v));
+// Only the deployment namespace (D4 §§3.2, 7.1, 7.4; the driver's ruling on
+// review S4): an Alpha environment holds none of the backends' credentials,
+// so a backend reference is refused like any other outside it.
+const isReference = (v: unknown): v is string => typeof v === 'string' && DEPLOY_REFERENCE.test(v);
 
 // The content of a version, validated (SEAM.md §245): a closed object.
-// A reference names the deployment or the backend namespace, and the
-// engine must hold it (its digest is part of the identity). The refusals of
+// A reference names the deployment namespace, and the engine must hold it (its digest is part of the identity). The refusals of
 // D4 X2 that depend on the host are the request's (M312).
 export function validateConfig(body: unknown): ConfigContent {
   if (!isObject(body)) throw invalid('body', 'must be a JSON object');
@@ -94,13 +95,13 @@ export function validateConfig(body: unknown): ConfigContent {
     if (!isObject(body.secrets)) throw invalid('secrets', 'must map variable names to secret references');
     for (const [k, v] of Object.entries(body.secrets)) {
       if (!VARIABLE.test(k)) throw invalid(`secrets.${k}`, 'is not a variable name');
-      if (!isReference(v)) throw invalid(`secrets.${k}`, `names ${JSON.stringify(v)}, a reference in neither the deployment (deploy/<name>) nor the backend namespace`);
+      if (!isReference(v)) throw invalid(`secrets.${k}`, `names ${JSON.stringify(v)}, which is not a reference of the deployment namespace (deploy/<name>)`);
     }
   }
   if (body.check_secrets !== undefined) {
     if (!Array.isArray(body.check_secrets)) throw invalid('check_secrets', 'must be an array of secret references');
     body.check_secrets.forEach((v, i) => {
-      if (!isReference(v)) throw invalid(`check_secrets.${i}`, `names ${JSON.stringify(v)}, a reference in neither the deployment (deploy/<name>) nor the backend namespace`);
+      if (!isReference(v)) throw invalid(`check_secrets.${i}`, `names ${JSON.stringify(v)}, which is not a reference of the deployment namespace (deploy/<name>)`);
     });
   }
   if (body.egress !== undefined && !Array.isArray(body.egress)) throw invalid('egress', 'must be an array');

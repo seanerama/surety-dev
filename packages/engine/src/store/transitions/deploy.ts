@@ -28,7 +28,7 @@ import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
 import { registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
-import { projectPolicy } from './settings.js';
+import { engineSettings, projectPolicy } from './settings.js';
 import { hostEligibility } from './trust.js';
 import type { Tx } from './tx.js';
 import type { CommandResult } from './control.js';
@@ -112,9 +112,9 @@ interface AttemptRow {
   receipt: string | null;
 }
 
-// What the intent froze (D4 §4.1; SEAM.md §250): the operation's authorized
-// inputs. It names no unit and no prior state, which are each attempt's
-// (E112), nor the unit prefix, which the environment fixes once.
+// What the intent froze (D4 §4.1; SEAM.md §250; objection 033): the
+// operation's authorized inputs and the environment's identity and prefix.
+// It names no unit and no prior state, which are each attempt's (E112).
 export interface FrozenIntent {
   purpose: 'deploy' | 'teardown';
   work_item: string | null;
@@ -131,6 +131,7 @@ export interface FrozenIntent {
   target_set: string[];
   environment: string;
   environment_name: string;
+  prefix: string;
   adapter: string;
   adapter_version: string | null;
   runtime: { path: string; sha256: string } | null;
@@ -850,6 +851,7 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
     target_set: JSON.parse(auth.target_set) as string[],
     environment: env.id,
     environment_name: env.name,
+    prefix: env.prefix ?? '',
     adapter: env.adapter,
     adapter_version: content?.adapter_version ?? null,
     runtime: content?.runtime ?? null,
@@ -908,6 +910,7 @@ export function intendTeardown(tx: Tx, args: { environment: string; incarnation:
     target_set: [],
     environment: env.id,
     environment_name: env.name,
+    prefix: env.prefix,
     adapter: env.adapter,
     adapter_version: null,
     runtime: null,
@@ -948,6 +951,8 @@ export interface DeployDetail {
     generation: number | null;
     capability: Capability | null;
     launch_state: string | null;
+    // The init's instance recorded at the grant: a launch was granted.
+    init_instance: Instance | null;
     app_instance: Instance | null;
     intent: { create_units: string[]; prior: { unit: string; instance: Instance | null }[]; cleanup: string[]; resources: string[] } | null;
   }[];
@@ -986,6 +991,7 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
       generation: a.deployment_generation,
       capability: parseJson<Capability>(a.capability),
       launch_state: a.launch_state,
+      init_instance: parseJson<Instance>(a.init_instance),
       app_instance: parseJson<Instance>(a.app_instance),
       intent: intents.get(a.id) ?? null,
     })),
@@ -1153,7 +1159,7 @@ export function startDeployAttempt(
   tx.db.prepare('UPDATE "environments" SET "deployment_generation" = ?, "current_generation" = ? WHERE "id" = ?').run(g, g, env.id);
   const n = (latest?.attempt_number ?? 0) + 1;
   const attempt = tx.newId('att_');
-  const prefix = env.prefix ?? '';
+  const prefix = frozen.prefix;
   const prior = op.kind === 'deploy' ? priorOf(tx.db, env.id) : [];
   const create = op.kind === 'deploy' ? [unitName(prefix, g)] : [];
   const resources = op.kind === 'teardown' ? recordedUnits(tx.db, env.id) : [];
@@ -1215,11 +1221,15 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
   if (!lease || lease.id !== frozen.lease.id || lease.generation !== c.lease_generation) return { field: 'lease_generation' };
   const intent = db.prepare('SELECT * FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string; prior: string; resources: string } | undefined;
   if (!intent) return { field: 'attempt' };
-  const prefix = env.prefix ?? '';
+  const prefix = frozen.prefix;
+  if (prefix === '' || env.prefix !== prefix) return { field: 'units' };
   const derived = (u: string) => prefix !== '' && UNIT_CHARS.test(u) && u.startsWith(prefix) && /^g\d+\.service$/.test(u.slice(prefix.length));
   if (c.kind === 'deploy') {
     if (frozen.artifact_digest === null || c.artifact_digest !== frozen.artifact_digest) return { field: 'artifact_digest' };
+    if (frozen.artifact_path === null || c.sealed_path !== frozen.artifact_path) return { field: 'sealed_path' };
     if (frozen.config_identity === null || c.config_identity !== frozen.config_identity) return { field: 'config_identity' };
+    if (frozen.config_version === null || c.config_version !== frozen.config_version) return { field: 'config_version' };
+    if (!Array.isArray(c.targets) || canonical([...c.targets].sort()) !== canonical([...frozen.target_set].sort())) return { field: 'targets' };
     const create = JSON.parse(intent.create_units) as string[];
     const prior = (JSON.parse(intent.prior) as { unit: string }[]).map((p) => p.unit);
     if (!c.create_units.every((u) => derived(u) && create.includes(u))) return { field: 'units' };
@@ -1229,6 +1239,9 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
     const resources = JSON.parse(intent.resources) as string[];
     if (!c.stop_units.every((u) => derived(u) && resources.includes(u))) return { field: 'units' };
   }
+  // And it is the capability the attempt's transaction minted, whole: no
+  // field a check above does not name differs from it (review m7).
+  if (a.capability === null || canonical(JSON.parse(a.capability)) !== canonical(c)) return { field: 'capability' };
   return null;
 }
 
@@ -1533,6 +1546,21 @@ interface ReadEntry {
 
 const sameInstance = (x: Instance | 'unread', y: Instance | null): boolean => x !== 'unread' && y !== null && x.pid === y.pid && x.start_time === y.start_time;
 
+// The supervision of an attempt's service (D4 §9.2; E110): `attached` only
+// while the incarnation that granted its launch is the running one; after
+// an engine restart it is `unknown` for the rest of the domain's life, and
+// no verification passes on it (§5.3). A launch never granted supervises
+// nothing.
+export function supervisionOf(a: { incarnation: string | null; init_instance: string | null }): 'attached' | 'unknown' {
+  let current: string | undefined;
+  try {
+    current = engineSettings().incarnation;
+  } catch {
+    current = undefined;
+  }
+  return a.init_instance !== null && current !== undefined && a.incarnation === current ? 'attached' : 'unknown';
+}
+
 // The reads a bracket recorded, one per target: what the adapter answered,
 // or, when the read failed, every value it should have returned `unread`.
 function readsFor(targets: string[], expect: RoundDetail['expect'], reads: IdentityRead[] | null, at: string): IdentityRead[] {
@@ -1678,6 +1706,9 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
   const qualified = r.adapter_qualification !== null && q?.id === r.adapter_qualification;
   if (!qualified) missing.push({ kind: 'qualification', id: r.adapter_qualification ?? frozen.adapter });
   if (args.reason === 'deadline') missing.push({ kind: 'deadline', id: detail.deadline });
+  // The service's supervision, attached throughout (item 6; E110): after a
+  // restart the round is `unknown`, naming it.
+  if (supervisionOf(a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });
   let outcome: 'verified' | 'failed' | 'unknown';
   if (differs || failedCheck) outcome = 'failed';
   else if (missing.length === 0 && behaviour && results.every((x) => x.state === 'passed')) outcome = 'verified';
@@ -1818,6 +1849,12 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
     .get(env.id) as { id: string; kind: string; status: string; orchestration_stage: string } | undefined;
   const conditions: string[] = [];
   if (running && config && (running.config !== config.id || canonical(running.secret_digests) !== canonical(JSON.parse(config.secret_digests)))) conditions.push('rotation_pending_replacement');
+  // The running service's supervision (§§6.1, 9.2; E110; CD2): the attempt
+  // that launched it, from the environment's `attempted` fact.
+  const attempted = parseJson<{ attempt?: string; outcome?: string }>(rec?.attempted ?? null);
+  const launched = running && attempted?.attempt ? getAttempt(db, attempted.attempt) : undefined;
+  const supervision = launched ? supervisionOf(launched) : null;
+  if (supervision === 'unknown') conditions.push('supervision_unknown');
   return {
     environment: {
       id: env.id,
@@ -1832,6 +1869,7 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       attempted: parseJson<Record<string, unknown>>(rec?.attempted ?? null),
       observed: parseJson<Record<string, unknown>>(rec?.observed ?? null),
       operation_in_flight: inFlight ? { id: inFlight.id, kind: inFlight.kind, status: inFlight.status, stage: inFlight.orchestration_stage } : null,
+      supervision,
       teardown_requested_at: env.teardown_requested_at,
       conditions,
     },

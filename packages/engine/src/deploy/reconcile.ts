@@ -1,26 +1,29 @@
-// What a reconcile read establishes (D4 §2.4; E111): the engine's mapping of
-// what was read of the target, never the adapter's label and never a
-// receipt. The answer is decided from the inventory read now and the
-// engine's own records (the frozen intents, the launch it granted, the
-// application instance recorded at the launch). `unknown` and then
-// `conflicting` take precedence over `applied`, `absent` and `partial`, so
-// every state has exactly one answer, and no success rests on a failed
-// query's empty result.
+// What a reconcile read establishes (D4 §2.4; E111; D4-A03): the engine's
+// mapping of what was read of the target, never the adapter's label and
+// never a receipt. The answer is decided from the complete inventory read
+// now (every resource of the environment: units, domain cgroups, link
+// sockets, runtime directories) and the engine's own records (the frozen
+// intents, the launch it granted, the instances recorded). `unknown` and
+// then `conflicting` take precedence over `applied`, `absent` and
+// `partial`, so every state has exactly one answer, and no success rests on
+// a failed query's empty result or on a value that was not read.
 
 import type { AdapterReadFailure, Instance, InventoryEntry, Reconciliation, ReconcileOutcome } from './adapter.js';
 
 export interface ReconcileInputs {
   kind: 'deploy' | 'teardown';
   digest: string | null;
-  // The attempt's frozen intent: g's units, the prior units it replaces,
-  // and for a teardown the units it stops.
+  // The attempt's frozen intent: g's units, the prior units it replaces
+  // (with the instance each ran when it was frozen), and for a teardown the
+  // units it stops.
   create_units: string[];
-  prior: string[];
+  prior: { unit: string; instance: Instance | null }[];
   stop_units: string[];
   // Every unit a frozen intent of the environment named.
   recorded: string[];
-  // The launch the engine granted, and the application it recorded then.
-  launch_state: string | null;
+  // Whether a launch for g was ever granted (the init's instance recorded at
+  // the grant), and the application instance recorded at its launch.
+  launch_granted: boolean;
   app_instance: Instance | null;
 }
 
@@ -31,52 +34,91 @@ export interface Judged {
   read: Record<string, unknown>;
 }
 
-const isUnit = (e: InventoryEntry) => e.kind === 'unit';
-const unread = (v: unknown) => v === 'unread' || v === undefined;
-const sameInstance = (a: Instance | 'unread' | null | undefined, b: Instance | null): boolean =>
-  a !== 'unread' && a !== null && a !== undefined && b !== null && a.pid === b.pid && a.start_time === b.start_time;
+const sameInstance = (a: unknown, b: Instance | null): boolean =>
+  typeof a === 'object' && a !== null && b !== null && (a as Instance).pid === b.pid && (a as Instance).start_time === b.start_time;
+
+// The unit a resource of the inventory belongs to: a unit is its own; a
+// cgroup, socket or directory names its unit in its path. null: no unit of
+// the environment.
+function ownerOf(e: InventoryEntry, units: string[]): string | null {
+  if (e.kind === 'unit') return units.includes(e.resource) ? e.resource : null;
+  return units.find((u) => e.resource.includes(u.replace(/\.service$/, ''))) ?? null;
+}
+
+// A value that was not read: `unread`, or absent from the entry altogether
+// (missing is unknown, never false or inactive).
+const unread = (v: unknown): boolean => v === undefined || v === null || v === 'unread';
 
 export function judgeReconcile(result: { ok: Reconciliation } | { failure: AdapterReadFailure }, x: ReconcileInputs): Judged {
   if ('failure' in result) return { outcome: 'unknown', read: { failure: result.failure } };
   const r = result.ok as Partial<Reconciliation> | null;
   if (!r || typeof r !== 'object' || !Array.isArray(r.inventory)) return { outcome: 'unknown', read: { failure: 'invalid_response' } };
-  const units = r.inventory.filter(isUnit);
+  const inventory = r.inventory.filter((e): e is InventoryEntry => typeof e === 'object' && e !== null);
   const read = {
     complete: r.complete === true,
-    units: units.map((u) => ({ name: u.resource, state: u.state, pending_job: u.pendingJob, generation: u.generation ?? null, tree: u.tree ?? null, instance: u.instance ?? null })),
+    inventory: inventory.map((e) => ({ resource: e.resource ?? null, kind: e.kind ?? null, state: e.state ?? null, pending_job: e.pendingJob ?? null, generation: e.generation ?? null, tree: e.tree ?? null, instance: e.instance ?? null })),
   };
   const answer = (outcome: ReconcileOutcome): Judged => ({ outcome, read });
-  // Unknown: an incomplete inventory, a state left unread, or a manager job
-  // still pending (no quiescence).
-  if (r.complete !== true) return answer('unknown');
-  if (units.some((u) => u.state === 'unread' || u.pendingJob === 'unread' || u.pendingJob === true)) return answer('unknown');
-  const active = units.filter((u) => u.state === 'active');
+  // Unknown: an incomplete inventory; any resource, of any kind, whose
+  // name, kind, state or pending job was not read; a manager job still
+  // pending (no quiescence).
+  if (r.complete !== true || inventory.length !== r.inventory.length) return answer('unknown');
+  if (inventory.some((e) => typeof e.resource !== 'string' || !['unit', 'cgroup', 'socket', 'directory'].includes(e.kind) || unread(e.state) || unread(e.pendingJob) || e.pendingJob === true)) return answer('unknown');
+
+  const units = inventory.filter((e) => e.kind === 'unit');
+  const known = [...new Set([...x.recorded, ...x.create_units, ...x.prior.map((p) => p.unit), ...x.stop_units])];
+  // Every resource read, by the unit it belongs to.
+  const owner = new Map(inventory.map((e) => [e, ownerOf(e, known)] as const));
+
   if (x.kind === 'teardown') {
-    // A unit of the environment no intent names, still active: ownership
-    // unexpected, conflicting.
-    if (active.some((u) => !x.stop_units.includes(u.resource))) return answer('conflicting');
-    const left = units.filter((u) => x.stop_units.includes(u.resource));
-    if (left.length === 0) return answer('applied');
-    if (left.length === x.stop_units.length && left.every((u) => u.state === 'active')) return answer('absent');
+    // Conflicting: a resource of the environment whose ownership is
+    // unexpected (a prefixed unit no intent names, in any state, or a
+    // resource of one); unread state was answered above.
+    if (inventory.some((e) => owner.get(e) === null || !x.stop_units.includes(owner.get(e)!))) return answer('conflicting');
+    if (inventory.length === 0) return answer('applied');
+    // The entire frozen pre-state unchanged: every unit it stops still there
+    // and active.
+    if (x.stop_units.every((u) => units.some((e) => e.resource === u && e.state === 'active'))) return answer('absent');
+    // Owned resources that survive: a unit, a populated cgroup, a socket or
+    // a directory the teardown covers.
     return answer('partial');
   }
-  // Conflicting: an active unit no frozen intent of the environment names,
-  // or one of a generation this attempt's intent does not name.
-  if (active.some((u) => !x.recorded.includes(u.resource) && !x.create_units.includes(u.resource))) return answer('conflicting');
-  if (active.some((u) => !x.create_units.includes(u.resource) && !x.prior.includes(u.resource))) return answer('conflicting');
-  const g = units.find((u) => x.create_units.includes(u.resource));
-  const priorsActive = active.filter((u) => x.prior.includes(u.resource));
-  if (g && g.state === 'active') {
-    if (priorsActive.length > 0) return answer('conflicting');
+
+  // Deploy of generation g.
+  const g = new Set(x.create_units);
+  const priors = new Set(x.prior.map((p) => p.unit));
+  // Conflicting: a resource of a unit no frozen intent of the environment
+  // names, in any state; an active unit of a generation this attempt's
+  // intent does not name; a prior unit running another instance than the
+  // one frozen.
+  if (inventory.some((e) => owner.get(e) === null)) return answer('conflicting');
+  if (units.some((e) => e.state === 'active' && !g.has(e.resource) && !priors.has(e.resource))) return answer('conflicting');
+  for (const p of x.prior) {
+    const e = units.find((u) => u.resource === p.unit && u.state === 'active');
+    if (e && p.instance !== null && (unread(e.instance) || !sameInstance(e.instance, p.instance))) return unread(e.instance) ? answer('unknown') : answer('conflicting');
+  }
+  const gUnit = units.find((e) => g.has(e.resource));
+  const gResources = inventory.filter((e) => g.has(owner.get(e)!));
+  // What still runs or holds: an active unit, or a cgroup, socket or
+  // directory that is there at all (an inactive or failed unit of a recorded
+  // generation runs nothing).
+  const live = (e: InventoryEntry) => e.kind !== 'unit' || e.state === 'active';
+  const priorResources = inventory.filter((e) => priors.has(owner.get(e)!) && live(e));
+  const others = inventory.filter((e) => !g.has(owner.get(e)!) && !priors.has(owner.get(e)!) && live(e));
+
+  if (gUnit && gUnit.state === 'active') {
+    if (units.some((e) => priors.has(e.resource) && e.state === 'active')) return answer('conflicting');
     // The binding of g's invocation to the application recorded at launch.
-    if (x.app_instance === null) return answer('unknown');
-    if (unread(g.tree) || unread(g.instance)) return answer('unknown');
-    if (g.tree !== x.digest || !sameInstance(g.instance, x.app_instance)) return answer('conflicting');
-    return answer('applied');
+    if (x.app_instance === null || unread(gUnit.tree) || unread(gUnit.instance)) return answer('unknown');
+    if (gUnit.tree !== x.digest || !sameInstance(gUnit.instance, x.app_instance)) return answer('conflicting');
+    // Applied: the termination of every prior established (nothing of it
+    // left) and nothing else of the environment there.
+    if (priorResources.length === 0 && others.length === 0) return answer('applied');
+    return answer('partial');
   }
-  if (!g) {
-    const priorsAsFrozen = x.prior.every((p) => priorsActive.some((u) => u.resource === p));
-    if (x.launch_state !== 'authorized' && priorsAsFrozen) return answer('absent');
-  }
+  // Absent: g's unit and domain absent in every state; no launch for g ever
+  // granted; the prior exactly as frozen; nothing else of the environment.
+  const priorsAsFrozen = x.prior.every((p) => units.some((e) => e.resource === p.unit && e.state === 'active'));
+  if (gResources.length === 0 && !x.launch_granted && priorsAsFrozen && others.length === 0) return answer('absent');
   return answer('partial');
 }
