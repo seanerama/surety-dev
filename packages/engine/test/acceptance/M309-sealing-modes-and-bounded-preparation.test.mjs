@@ -22,7 +22,12 @@
 //       removed, the referenced artifact kept; and the slice-23 review's
 //       minor m5: a request that is not authorized, coalesced, or refused
 //       for `config_secrets_changed` leaves nothing under artifacts/ that no
-//       `artifacts` row records, within `artifacts_max_bytes`;
+//       `artifacts` row records, within `artifacts_max_bytes`; and the
+//       slice-24 review's S1 (SEAM.md §264): an artifact sealed while
+//       SURETY_HOME is a symbolic link to the home, the engine started
+//       again under the real path (and the reverse): every recorded
+//       artifact survives the start sweep byte for byte, sealed; only
+//       unrecorded staging and a digest directory no row records go;
 //   (e) the API answered while a preparation is under way;
 //   (f) the defaults BS4 §11.3 set, and a value outside its range refused
 //       at start.
@@ -33,12 +38,12 @@
 // with the operator's guard (row M313).
 
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
-import { appendFileSync, chmodSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
-import { EXIT, freePort, makeTempDir, removeDir, startRefused, writeEngineConfig } from './harness/engine.mjs';
+import { EXIT, freePort, makeTempDir, removeDir, startEngine, startRefused, writeEngineConfig } from './harness/engine.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import { armBarrier, eventsOfType } from './harness/journal.mjs';
 import { advanceClock, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
@@ -87,6 +92,80 @@ async function assertRefusedBound(fx, ctx, env, refusal) {
   const envId = withStore(fx.home, (db) => db.prepare('SELECT "id" FROM "environments" WHERE "project" = ? AND "name" = ?').get(ctx.project, env))?.id;
   assert.deepEqual(authorizationsOf(fx.home, ctx.candidate.id, envId), [], 'nothing authorized');
   assert.ok(eventsOfType(fx.home, 'artifact.failed').some((e) => e.payload?.refusal === refusal), `artifact.failed records the bound (${refusal})`);
+  assert.deepEqual(unrecordedUnderArtifacts(fx.home), [], 'nothing under artifacts/ but recorded artifacts');
+}
+
+// Every entry of a sealed copy, its top directory included, as
+// [relative path, kind, permission bits, sha256 of a file's bytes]: the
+// byte-for-byte and seal-for-seal record S1's case compares.
+function sealedTree(root) {
+  const out = [];
+  const visit = (dir) => {
+    const st = lstatSync(dir);
+    out.push([relative(root, dir) || '.', 'dir', st.mode & 0o7777, null]);
+    for (const name of readdirSync(dir).sort()) {
+      const full = join(dir, name);
+      const s2 = lstatSync(full);
+      if (s2.isDirectory()) visit(full);
+      else out.push([relative(root, full), s2.isFile() ? 'file' : 'other', s2.mode & 0o7777, s2.isFile() ? createHash('sha256').update(readFileSync(full)).digest('hex') : null]);
+    }
+  };
+  visit(root);
+  return out;
+}
+
+// The slice-24 review's S1 (SEAM.md §264): artifacts sealed under one
+// spelling of the engine home, a start under the other. `sealUnder` and
+// `startUnder` are 'link' (a symbolic link to the home) or 'real' (its real
+// path). Before the restart the test places, in the engine's own home, one
+// staging directory and one digest directory no `artifacts` row records
+// (each named as the engine names its own, its files sealed): the start
+// sweep must remove those two and nothing recorded.
+async function spelledOtherwise(shared, guard, sealUnder, startUnder) {
+  const fx = guard.track(await scriptedEngine(shared.context, { homeSymlink: sealUnder === 'link' }));
+  const real = realpathSync(fx.home);
+  const link = sealUnder === 'link' ? fx.home : join(fx.root, 'home-link');
+  if (sealUnder === 'real') symlinkSync(real, link);
+  assert.notEqual(link, real, 'two spellings of one home');
+  assert.equal(realpathSync(link), real);
+
+  const files = { 'pad-a.bin': pad('a', 4 * KiB), 'pad-b.bin': pad('b', 4 * KiB) };
+  const ctx = await deployable(fx, { files });
+  await only(fx, ctx, 'second', ['pad-b.bin']);
+  await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
+  await deploy(fx.engine, ctx.project, ctx.candidate.id, 'second');
+  const rows = artifactsOf(fx.home, ctx.project);
+  assert.equal(rows.length, 2, 'two artifacts sealed and recorded');
+  const before = new Map(rows.map((r) => [r.id, sealedTree(r.path)]));
+  for (const [id, tree] of before) {
+    assert.deepEqual(tree.filter((e) => e[2] & 0o222).map((e) => e[0]), [], `${id}: sealed, no write bit anywhere, before the restart`);
+  }
+
+  const projectDir = join(real, 'artifacts', ctx.project);
+  const staging = join(real, 'artifacts', `.staging-${randomBytes(8).toString('hex')}`);
+  const orphan = join(projectDir, randomBytes(32).toString('hex'));
+  for (const dir of [staging, orphan]) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'left.txt'), 'left by the test\n', { mode: 0o444 });
+    chmodSync(dir, 0o555);
+  }
+
+  await fx.engine.stop();
+  const home = startUnder === 'link' ? link : real;
+  assert.notEqual(home, sealUnder === 'link' ? link : real, 'the restart spells the home the other way');
+  const engine = await startEngine({ home, port: fx.port, args: fx.scripted.flag });
+  fx.engines.push(engine);
+  fx.engine = engine;
+  await tick(engine, ctx.project);
+
+  for (const r of rows) {
+    assert.ok(existsSync(r.path), `${r.id}: the recorded artifact directory ${r.path} survives the start sweep (S1: a recorded artifact is never removed, D4-I08, A.7)`);
+    assert.deepEqual(sealedTree(r.path), before.get(r.id), `${r.id}: byte for byte and mode for mode as sealed`);
+    assert.equal(manifestDigest(treeManifest(r.path).entries), r.digest, `${r.id}: it hashes to its recorded digest`);
+  }
+  assert.deepEqual(artifactsOf(fx.home, ctx.project).map((r) => [r.id, r.status]), rows.map((r) => [r.id, 'sealed']), 'every row still sealed');
+  assert.equal(existsSync(staging), false, 'the unrecorded staging directory is removed');
+  assert.equal(existsSync(orphan), false, 'the digest directory no row records is removed');
   assert.deepEqual(unrecordedUnderArtifacts(fx.home), [], 'nothing under artifacts/ but recorded artifacts');
 }
 
@@ -340,6 +419,14 @@ describe('M309 sealing, modes and bounded preparation (kernel lane)', () => {
     const changed = await requestDeployment(fx.engine, ctx.project, ctx.candidate.id, 'beta');
     assert.deepEqual([changed.status, changed.body?.code], [409, 'config_secrets_changed'], `the secret changed across the restart: refused (${changed.text})`);
     clean('refused for config_secrets_changed');
+  });
+
+  test('(d) S1: artifacts sealed while SURETY_HOME is a symbolic link to the home, the engine started again under its real path: every recorded artifact survives the start sweep byte for byte and sealed; only the unrecorded staging and a row-less digest directory are removed', async () => {
+    await spelledOtherwise(shared, guard, 'link', 'real');
+  });
+
+  test('(d) S1, the reverse: artifacts sealed under the real path, the engine started again under a symbolic link to it: every recorded artifact survives the start sweep byte for byte and sealed; only the unrecorded staging and a row-less digest directory are removed', async () => {
+    await spelledOtherwise(shared, guard, 'real', 'link');
   });
 
   test('(f) the defaults BS4 §11.3 set are in force, and a value outside its range is refused at start', async (t) => {

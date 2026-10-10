@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { freePort, httpRequest } from '../engine.mjs';
@@ -41,6 +41,9 @@ import { CGROUP_ROOT, cgroupOfPid, procsOf } from '../sandbox/cgroup.mjs';
 import { hostProcess } from '../sandbox/procs.mjs';
 import { hostNamespaces, namespacesOf } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
+// The real-path comparison of unrecordedUnderArtifacts (SEAM.md §264).
+import { realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy } from '../journal.mjs';
 import {
@@ -78,10 +81,59 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The switch that gives a harness engine the real `local_service` adapter
-// (SEAM.md §247). Every start of a sandbox-lane slice-24 engine carries it:
-// an engine without the switch refuses to start (a usage error) before it
-// creates anything.
+// (SEAM.md §247). Every start of a sandbox-lane slice-24 engine carries it.
+// The engine does not refuse to start without it (in harness mode the
+// scripted adapter is the default, so M1 to M3 engines start unchanged):
+// the harness makes and checks it instead (SEAM.md §265, `realAdapterStarts`).
 export const REAL_ADAPTER = Object.freeze(['--harness-deploy-adapter', 'real']);
+
+// The adapter a running harness engine selected, read back from its own
+// argument vector (`/proc/<pid>/cmdline`, or the vector it was spawned with
+// once it has exited): `real` or `scripted` by SEAM.md §247's rule (the
+// switch's value; `scripted` when it is absent), or `ambiguous` when the
+// switch is given more than once. `proc` false (an engine not yet known to
+// have reached its own code, `until: 'none'`) reads the spawned vector.
+export function deployAdapterOf(engine, { proc = true } = {}) {
+  let argv = null;
+  if (proc && engine.isRunning()) {
+    try {
+      argv = readFileSync(`/proc/${engine.pid}/cmdline`, 'utf8').replace(/\0$/, '').split('\0');
+    } catch {
+      argv = null;
+    }
+  }
+  if (argv === null) argv = engine.proc.child.spawnargs;
+  const at = argv.flatMap((a, i) => (a === '--harness-deploy-adapter' ? [i] : []));
+  if (at.length > 1) return 'ambiguous';
+  return at.length === 0 ? 'scripted' : argv[at[0] + 1];
+}
+
+export function assertRealAdapter(engine, what = 'the engine', opts = {}) {
+  const adapter = deployAdapterOf(engine, opts);
+  assert.equal(adapter, 'real', `${what} runs the real local_service adapter (--harness-deploy-adapter real, SEAM.md §265); it reads ${JSON.stringify(adapter)}, so a sandbox-lane file would be passing on the scripted adapter`);
+}
+
+// SEAM.md §265: every start of `fx` carries the real adapter's switch (added
+// when a start's arguments do not name one; a start naming another value
+// fails), and the started engine's own argument vector is read back to
+// select `real`. hostDeployable applies it; a sandbox-lane file that builds
+// its engine otherwise applies it before the first start.
+export function realAdapterStarts(fx) {
+  if (fx.realAdapter) return fx;
+  const plainStart = fx.start;
+  fx.start = async (opts = {}) => {
+    const args = [...(opts.args ?? [])];
+    const named = args.flatMap((a, i) => (a === '--harness-deploy-adapter' ? [args[i + 1]] : []));
+    assert.ok(named.every((v) => v === 'real'), `a sandbox-lane engine is started with --harness-deploy-adapter real only (asked for ${JSON.stringify(named)}; SEAM.md §265)`);
+    if (named.length === 0) args.unshift(...REAL_ADAPTER);
+    else if (named.length > 1) assert.fail(`--harness-deploy-adapter given ${named.length} times (SEAM.md §265)`);
+    const engine = await plainStart({ ...opts, args });
+    assertRealAdapter(engine, 'the sandbox-lane engine just started', { proc: opts.until !== 'none' });
+    return engine;
+  };
+  fx.realAdapter = true;
+  return fx;
+}
 
 export const UID = process.getuid();
 // Where the user manager's units have their cgroups (cgroup v2, the tests
@@ -355,6 +407,49 @@ export function ppidOf(pid) {
   return Number(line?.slice(5).trim());
 }
 
+// The inode of the socket `pid` holds listening on 127.0.0.1:<port> in its
+// own network namespace, read from the host (`/proc/<pid>/net/tcp` and
+// `/proc/<pid>/fd`), or null when it holds none (or is gone).
+export function listenerOf(pid, port) {
+  let table;
+  try {
+    table = readFileSync(`/proc/${pid}/net/tcp`, 'utf8').split('\n').slice(1);
+  } catch {
+    return null;
+  }
+  const local = `0100007F:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+  const inodes = table.map((l) => l.trim().split(/\s+/)).filter((f) => f[1] === local && f[3] === '0A').map((f) => f[9]);
+  if (inodes.length === 0) return null;
+  let fds;
+  try {
+    fds = readdirSync(`/proc/${pid}/fd`);
+  } catch {
+    return null;
+  }
+  for (const fd of fds) {
+    let link;
+    try {
+      link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+    } catch {
+      continue;
+    }
+    const inode = /^socket:\[(\d+)\]$/.exec(link)?.[1];
+    if (inode !== undefined && inodes.includes(inode)) return inode;
+  }
+  return null;
+}
+
+// Poll a host-read fact until `probe` answers (no engine tick), bounded.
+export async function hostUntil(probe, { timeoutMs = 30_000, intervalMs = 25, what = 'the expected host state' } = {}) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const got = probe();
+    if (got !== undefined && got !== null && got !== false) return got;
+    if (Date.now() > until) assert.fail(`timed out after ${timeoutMs} ms waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
 export const cmdlineOf = (pid) => readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter((a, i, all) => !(a === '' && i === all.length - 1));
 export const exeShaOf = (pid) => sha256(readFileSync(`/proc/${pid}/exe`));
 
@@ -390,6 +485,8 @@ export const appRoot = (pid) => `/proc/${pid}/root/surety/app`;
 export const FIXTURE_SERVICE = readFileSync(new URL('./fixture-service.cjs', import.meta.url), 'utf8');
 const TARGET_CHECK = readFileSync(new URL('./target-check.mjs', import.meta.url), 'utf8');
 export const RELEASE = 'go';
+// The second release of a plan with `then` (section 258): the check ends only once the test writes it.
+export const RELEASE_AGAIN = 'again';
 
 // The post-deploy check program, beside the M3 check program in its
 // directory (so the same read_paths reach it), with a shebang naming the
@@ -424,7 +521,7 @@ export async function hostConfig(over = {}) {
 // the adapter by §248's (the qualification stand-in). `guard` tracks the
 // engine's home. Returns {fx, prog, project, p, candidate, stage, envs: {}}.
 export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], policy = {}, files = {}, entries, governed = {}, qualify = true } = {}) {
-  const fx = await sandboxEngine(t, { start: false, config: engineConfig });
+  const fx = realAdapterStarts(await sandboxEngine(t, { start: false, config: engineConfig }));
   guard.track(fx);
   await fx.start({ args: [...REAL_ADAPTER, ...engineArgs] });
   const prog = installCheckProgram(fx.root);
@@ -582,6 +679,12 @@ export function releaseCheck(ctx, svc, plan = { get: ['/hello'], exit: 0 }) {
   writeFileSync(join(ctx.prog.releaseDir, RELEASE), JSON.stringify(plan));
 }
 
+// The second release of a held check whose plan named `then: RELEASE_AGAIN`. It names no act.
+export function releaseAgain(ctx, plan = { get: [], exit: 0 }) {
+  assert.ok(!(plan.get ?? []).some((p) => p.startsWith('/act/')), 'the second release names no act');
+  writeFileSync(join(ctx.prog.releaseDir, RELEASE_AGAIN), JSON.stringify(plan));
+}
+
 // Ask for ticks until the operation's newest round has its verification
 // row; then take the release file away for the next round. Returns {round, row}.
 export async function verificationOf(ctx, op, { timeoutMs = 300_000 } = {}) {
@@ -596,6 +699,7 @@ export async function verificationOf(ctx, op, { timeoutMs = 300_000 } = {}) {
     { timeoutMs, what: `the verification row of ${op.id}` },
   );
   rmSync(join(ctx.prog.releaseDir, RELEASE), { force: true });
+  rmSync(join(ctx.prog.releaseDir, RELEASE_AGAIN), { force: true });
   return found;
 }
 
@@ -663,10 +767,22 @@ export async function endEnvironment(ctx, env, { engineTeardown = true } = {}) {
 }
 
 // Every entry under $SURETY_HOME/artifacts/ that lies within no recorded artifact's path (SEAM.md §260).
+// Compared by real path (SEAM.md §264): a row recorded under one spelling of
+// the home (a symbolic link to it, or its real path) records the same
+// directory under the other.
+// A path that no longer exists is resolved through its nearest existing ancestor.
+const realOr = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    const up = dirname(p);
+    return up === p ? p : join(realOr(up), basename(p));
+  }
+};
 export function unrecordedUnderArtifacts(home) {
-  const root = join(home, 'artifacts');
-  if (!existsSync(root)) return [];
-  const paths = withStore(home, (db) => db.prepare('SELECT "path" FROM "artifacts"').all()).map((r) => r.path);
+  if (!existsSync(join(home, 'artifacts'))) return [];
+  const root = realpathSync(join(home, 'artifacts'));
+  const paths = withStore(home, (db) => db.prepare('SELECT "path" FROM "artifacts"').all()).map((r) => realOr(r.path));
   const inside = (p) => paths.some((a) => p === a || p.startsWith(`${a}${sep}`));
   const covers = (p) => paths.some((a) => a.startsWith(`${p}${sep}`));
   const out = [];

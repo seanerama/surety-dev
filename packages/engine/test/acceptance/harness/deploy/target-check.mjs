@@ -13,12 +13,19 @@
 //
 // Arguments:
 //   --hold <name>         wait until <release-dir>/<name> exists (at most 280 s);
-//                         its content, JSON, is the plan: {"get": [<path>…], "exit": <n>}
+//                         its content, JSON, is the plan: {"get": [<path>…], "exit": <n>,
+//                         "then": <name2>}; with "then", after asking for the plan's
+//                         paths it waits again, until <release-dir>/<name2> exists (at
+//                         most 280 s), whose content is a second plan {"get", "exit"}:
+//                         it asks for those paths too and exits with that plan's `exit`
+//                         (so the test can let it end only after a fact it reads from
+//                         the host)
 //   --release-dir <dir>   where the release files are (a test path in read_paths)
 //   --get <path>          the path to ask for when not held (repeatable; default /hello)
 // It asks SURETY_TARGET_APP for each path in turn (one GET, at most 15 s
 // each), writes one line `SURETY-TARGET-REPORT <json>`
-// ({"target", "results": [{"path", "status", "body", "error"}], "plan"}),
+// ({"target", "results": [{"path", "status", "body", "error"}], "plan",
+// and with "then" "plan2"}),
 // and exits: with the plan's `exit` when held, else 0 when every answer was
 // 200 and 1 otherwise; 3 when SURETY_TARGET_APP is absent (nothing asked).
 
@@ -78,23 +85,29 @@ function get(base, path) {
   });
 }
 
+// Wait (at most 280 s) until <release-dir>/<name> exists; its plan, or null on the timeout.
+async function holdFor(name, fallback) {
+  const file = join(opts.releaseDir ?? '/nonexistent', name);
+  const until = Date.now() + 280_000;
+  while (!existsSync(file)) {
+    if (Date.now() > until) return null;
+    await sleep(100);
+  }
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
 async function main() {
   const target = process.env.SURETY_TARGET_APP ?? null;
   let plan = null;
   if (opts.hold !== null) {
-    const file = join(opts.releaseDir ?? '/nonexistent', opts.hold);
-    const until = Date.now() + 280_000;
-    while (!existsSync(file)) {
-      if (Date.now() > until) {
-        out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results: [], plan: null, error: 'hold_timeout' })}`);
-        process.exit(98);
-      }
-      await sleep(100);
-    }
-    try {
-      plan = JSON.parse(readFileSync(file, 'utf8'));
-    } catch {
-      plan = { get: ['/hello'], exit: 0 };
+    plan = await holdFor(opts.hold, { get: ['/hello'], exit: 0 });
+    if (plan === null) {
+      out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results: [], plan: null, error: 'hold_timeout' })}`);
+      process.exit(98);
     }
   }
   if (target === null) {
@@ -104,6 +117,16 @@ async function main() {
   const paths = plan?.get ?? (opts.get.length > 0 ? opts.get : ['/hello']);
   const results = [];
   for (const path of paths) results.push(await get(target, path));
+  if (typeof plan?.then === 'string') {
+    const plan2 = await holdFor(plan.then, { get: [], exit: Number.isInteger(plan.exit) ? plan.exit : 0 });
+    if (plan2 === null) {
+      out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results, plan, plan2: null, error: 'hold_timeout' })}`);
+      process.exit(98);
+    }
+    for (const path of plan2.get ?? []) results.push(await get(target, path));
+    out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results, plan, plan2 })}`);
+    process.exit(Number.isInteger(plan2.exit) ? plan2.exit : 0);
+  }
   out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results, plan })}`);
   if (plan !== null) process.exit(Number.isInteger(plan.exit) ? plan.exit : 0);
   process.exit(results.every((r) => r.status === 200) ? 0 : 1);

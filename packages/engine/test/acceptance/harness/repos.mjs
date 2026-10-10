@@ -15,9 +15,12 @@ import { git, gitEnv } from './git.mjs';
 
 // Test-side git that runs nothing a repository configures: no hook, no
 // file-system monitor. Used wherever a fixture has planted such things.
+// Its output may be as large as GIT_OUTPUT_MAX (64 MiB, not Node's 1 MiB
+// default): a tree at artifact_max_entries lists to more than 1 MiB (M311 (h)).
 const QUIET = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+const GIT_OUTPUT_MAX = 64 * 1024 * 1024;
 export const gitQuiet = (repo, args, opts = {}) =>
-  execFileSync('git', [...QUIET, '-C', repo, ...args], { env: { ...gitEnv(repo), ...(opts.env ?? {}) }, encoding: 'utf8', input: opts.input, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  execFileSync('git', [...QUIET, '-C', repo, ...args], { env: { ...gitEnv(repo), ...(opts.env ?? {}) }, encoding: 'utf8', input: opts.input, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: opts.maxBuffer ?? GIT_OUTPUT_MAX }).trim();
 
 function writeFiles(dir, files) {
   for (const [path, content] of Object.entries(files)) {
