@@ -223,8 +223,8 @@ export async function settleDeployment(rt: Runtime, prepared: unknown): Promise<
 
 async function cleanup(rt: Runtime, project: string, sealed: Sealed | null): Promise<void> {
   if (sealed === null || !sealed.created) return;
-  const paths = await rt.read<string[]>('deploy.artifact_paths');
-  if (paths.includes(sealed.path)) return;
-  const projectRecorded = paths.some((p) => p.startsWith(`${sealed.path.slice(0, sealed.path.lastIndexOf('/'))}/`));
-  removeUnrecorded(rt.home, sealed.path, projectRecorded);
+  // Recorded by its project and digest, whatever the spelling of its path.
+  const rows = await rt.read<{ project: string; digest: string; path: string }[]>('deploy.artifact_rows');
+  if (rows.some((r) => r.project === project && r.digest === sealed.digest)) return;
+  removeUnrecorded(rt.home, sealed.path, rows.some((r) => r.project === project));
 }

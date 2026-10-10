@@ -180,6 +180,11 @@ async function walkTree(root: string, limit: { entries: number; bytes: number },
         odd = `${relPath} is no regular file`;
         return;
       }
+      // Presented read-only (D4 §3.1, §3.4): a write bit is `differs`.
+      if (st.mode & 0o222) {
+        odd = `${relPath} has a write bit`;
+        return;
+      }
       if (entries.length + 1 > limit.entries || bytes + st.size > limit.bytes) {
         odd = 'more entries or bytes than the manifest holds';
         return;
@@ -219,6 +224,11 @@ export async function readIdentity(args: {
   const app = x.instance;
   const done = (r: Omit<IdentityRead, 'target' | 'method' | 'expected' | 'generation' | 'at' | 'duration_ms'>): IdentityRead => ({ ...base, ...r, duration_ms: Math.round(performance.now() - started) });
   if (!app || !x.init || !x.cgroup) return done({ read: 'unread', match: 'unread', instance: 'unread', detail: { field: 'instance', why: 'no original application instance was recorded at its launch' } });
+  // Every fact the read compares must be expected: a missing one is not a
+  // check skipped but a read that cannot be made (the slice-24 review, m2).
+  const missing = (['invocation_id', 'exe_sha256', 'argv', 'sealed_path', 'manifest'] as const).filter((k) => x[k] === null || x[k] === undefined || x[k] === '');
+  if (missing.length > 0) return done({ read: 'unread', match: 'unread', instance: 'unread', detail: { field: missing[0]!, why: `nothing recorded to compare ${missing.join(', ')} with` } });
+  const want = { invocation_id: x.invocation_id!, exe_sha256: x.exe_sha256!, argv: x.argv!, sealed_path: x.sealed_path!, manifest: x.manifest! };
   const procRead = (path: string) => {
     if (args.faults?.procUnreadable && path.startsWith(`/proc/${app.pid}/`)) {
       const err = new Error(`EACCES: permission denied, ${path}`) as NodeJS.ErrnoException;
@@ -239,7 +249,7 @@ export async function readIdentity(args: {
     const check = (s: typeof first, half: string) => {
       if (s.unit === null) throw new Unread('unit', `the unit could not be read (${half})`);
       if (!s.unit.loaded || !s.unit.active) throw new Unread('unit', `the unit is not active (${half})`);
-      if (x.invocation_id && s.unit.invocationId !== x.invocation_id) throw new Differs('invocation_id', x.invocation_id, s.unit.invocationId);
+      if (s.unit.invocationId !== want.invocation_id) throw new Differs('invocation_id', want.invocation_id, s.unit.invocationId);
       if (s.unit.cgroup !== x.cgroup) throw new Differs('cgroup', x.cgroup, s.unit.cgroup);
       if (s.init === null) throw new Unread('init', `the recorded init ${x.init!.pid} is gone (${half})`);
       if (s.init !== x.init!.start_time) throw new Differs('init', x.init!.start_time, s.init);
@@ -261,11 +271,11 @@ export async function readIdentity(args: {
     procRead(`/proc/${app.pid}/exe`);
     const exe = await exeSha(app.pid, signal);
     if (exe === null) throw new Unread('exe', 'the executable could not be read');
-    if (x.exe_sha256 && exe !== x.exe_sha256) throw new Differs('exe', x.exe_sha256, exe);
+    if (exe !== want.exe_sha256) throw new Differs('exe', want.exe_sha256, exe);
     procRead(`/proc/${app.pid}/cmdline`);
     const argv = cmdlineOf(app.pid);
     if (argv === null) throw new Unread('argv', 'the arguments could not be read');
-    if (x.argv && JSON.stringify(argv) !== JSON.stringify(x.argv)) throw new Differs('argv', x.argv, argv);
+    if (JSON.stringify(argv) !== JSON.stringify(want.argv)) throw new Differs('argv', want.argv, argv);
     // The mounts: /surety/app a read-only bind of the sealed directory; / and /surety read-only.
     procRead(`/proc/${app.pid}/mountinfo`);
     let mounts: ReturnType<typeof mountsOf>;
@@ -278,13 +288,11 @@ export async function readIdentity(args: {
     if (!appMount || appMount.point !== '/surety/app') throw new Differs('mounts', '/surety/app a mount of its own', appMount?.point ?? null);
     const ro = (m: (typeof mounts)[number] | undefined) => m !== undefined && (m.options.includes('ro') || m.superopts.includes('ro')) && !(m.fstype === 'overlay' && m.superopts.some((o) => o.startsWith('upperdir=')));
     for (const p of ['/', '/surety', '/surety/app']) if (!ro(mountAt(mounts, p))) throw new Differs('mounts', `${p} read-only`, mountAt(mounts, p)?.options ?? null);
-    if (x.sealed_path) {
-      const want = hostBindRoot(x.sealed_path);
-      if (want === null) throw new Unread('mounts', "the sealed directory's mount could not be read");
-      if (appMount.dev !== want.dev || appMount.root !== want.root) throw new Differs('mounts', want, { dev: appMount.dev, root: appMount.root });
-    }
+    const bind = hostBindRoot(want.sealed_path);
+    if (bind === null) throw new Unread('mounts', "the sealed directory's mount could not be read");
+    if (appMount.dev !== bind.dev || appMount.root !== bind.root) throw new Differs('mounts', bind, { dev: appMount.dev, root: appMount.root });
     // The tree.
-    const manifest = (x.manifest ?? []) as Entry[];
+    const manifest = want.manifest as Entry[];
     const limit = { entries: manifest.length, bytes: manifest.reduce((n, e) => n + Number(e[3] ?? 0), 0) };
     const root = `/proc/${app.pid}/root/surety/app`;
     procRead(root);

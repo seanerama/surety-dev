@@ -64,7 +64,7 @@ export class ReleaseOperator {
     // What an earlier incarnation's request sealed or staged and never
     // recorded (D4-I08; the slice-23 review's m5), removed before the API
     // serves a request that could make one.
-    const swept = sweepArtifacts(this.rt.home, await this.rt.read<string[]>('deploy.artifact_paths'));
+    const swept = sweepArtifacts(this.rt.home, await this.rt.read<{ project: string; digest: string; path: string }[]>('deploy.artifact_rows'));
     for (const path of swept.refused) log('artifact sweep', new Error(`not removed: ${path}`));
     secretDigestKey(this.rt.home);
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');

@@ -19,7 +19,8 @@ const dist = join(root, 'dist');
 const { mayKillAll } = await import(join(dist, 'invoke', 'domain-init.js'));
 const { ownUnit, unitPrefix, writeServiceKill, homeHash12 } = await import(join(dist, 'deploy', 'adapters', 'local-service.js'));
 const { checkStart } = await import(join(dist, 'deploy', 'commands.js'));
-const { sweepArtifacts, removeUnrecorded, removeStaging } = await import(join(dist, 'deploy', 'artifact.js'));
+const { sweepArtifacts, removeUnrecorded, removeStaging, artifactsDir } = await import(join(dist, 'deploy', 'artifact.js'));
+const { readIdentity } = await import(join(dist, 'deploy', 'identity.js'));
 const { judgeReconcile } = await import(join(dist, 'deploy', 'reconcile.js'));
 
 const ENV = 'env_01M4J9JJJ4KMQNWQCR5XPPTVNJ';
@@ -133,7 +134,7 @@ test("the artifact sweep removes staging and sealed directories no row records, 
   writeFileSync(join(outside, 'keep'), 'keep');
   symlinkSync(outside, join(proj, hex('c')));
   writeFileSync(join(arts, 'notes.txt'), 'not the engine\'s');
-  const { removed, refused } = sweepArtifacts(home, [recorded]);
+  const { removed, refused } = sweepArtifacts(home, [{ project: PROJECT, digest: `sha256:${hex('a')}`, path: recorded }]);
   assert.deepEqual(removed.sort(), [join(arts, '.staging-0123456789abcdef'), join(proj, '.staging-fedcba9876543210'), unrecorded].sort(), 'the staging and the unrecorded sealed directory');
   assert.deepEqual(refused, [join(proj, hex('c'))], 'a link in place of a sealed directory is refused');
   assert.ok(existsSync(join(recorded, 'f')), 'the recorded artifact is kept');
@@ -150,4 +151,35 @@ test("reconcile reads a launch whose init's report and host read disagreed as co
   const base = { kind: 'deploy', prefix, digest: 'sha256:x', create_units: [unit], prior: [], stop_units: [], recorded: [unit], launch_granted: true, app_instance: null };
   assert.equal(judgeReconcile(result, base).outcome, 'unknown', 'no instance recorded: unknown');
   assert.equal(judgeReconcile(result, { ...base, binding_conflict: true }).outcome, 'conflicting', 'a disagreement recorded: conflicting');
+});
+
+test("the start sweep never removes a recorded artifact whatever the home's spelling: a row recorded under a link to the home, the sweep under its real path, and the reverse (the slice-24 review, S1)", (t) => {
+  const base = scratch(t);
+  const real = join(base, 'real');
+  mkdirSync(real);
+  const link = join(base, 'link');
+  symlinkSync(real, link);
+  const hex = 'd'.repeat(64);
+  const sealed = join(real, 'artifacts', PROJECT, hex);
+  mkdirSync(sealed, { recursive: true });
+  writeFileSync(join(sealed, 'server.js'), 'x');
+  chmodSync(join(sealed, 'server.js'), 0o444);
+  chmodSync(sealed, 0o555);
+  for (const [rowHome, sweepHome] of [[link, real], [real, link]]) {
+    // Recorded by project and digest, and by its row's path spelled through the other home.
+    const row = { project: PROJECT, digest: `sha256:${hex}`, path: join(rowHome, 'artifacts', PROJECT, hex) };
+    assert.deepEqual(sweepArtifacts(sweepHome, [row]), { removed: [], refused: [] }, `row under ${rowHome}, sweep under ${sweepHome}: nothing removed`);
+    assert.ok(existsSync(join(sealed, 'server.js')), 'the recorded artifact is intact');
+    // By its path alone (another digest named, the same directory by real path).
+    assert.deepEqual(sweepArtifacts(sweepHome, [{ ...row, digest: `sha256:${'e'.repeat(64)}` }]).removed, [], 'recorded by its real path alone: kept');
+  }
+  assert.equal(artifactsDir(link), join(real, 'artifacts'), "the artifacts directory is under the home's real path");
+});
+
+test('an identity read with a fact it has nothing recorded to compare with is unread, never a skipped check (the slice-24 review, m2)', async () => {
+  const expect = { target: 'app', digest: 'sha256:x', unit: 'u', generation: 1, instance: { pid: 2, start_time: 1 }, init: { pid: 3, start_time: 1 }, cgroup: '/sys/fs/cgroup/x', invocation_id: 'a'.repeat(32), exe_sha256: 'b'.repeat(64), argv: ['/n', 's.js'], sealed_path: '/s', manifest: [] };
+  for (const key of ['invocation_id', 'exe_sha256', 'argv', 'sealed_path', 'manifest']) {
+    const read = await readIdentity({ expect: { ...expect, [key]: null }, readUnit: async () => { throw new Error('the unit is never read'); }, signal: new AbortController().signal });
+    assert.deepEqual([read.match, read.detail?.field], ['unread', key], `${key} missing: unread, naming it`);
+  }
 });

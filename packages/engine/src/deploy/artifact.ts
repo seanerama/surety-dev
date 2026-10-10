@@ -52,7 +52,18 @@ import { pausePoint } from '../testing/seam.js';
 export type ManifestEntry = [path: string, type: 'file', mode: '100644' | '100755', size: number, sha256: string];
 export type ArtifactRefusal = 'symlink' | 'submodule' | 'special_file' | 'too_many' | 'too_large' | 'retention_full' | 'disk_reserve' | 'prepare_deadline';
 
-export const artifactsDir = (home: string): string => join(home, 'artifacts');
+// The artifacts directory under the home's real path (the slice-24 review,
+// S1): a home spelled through a link and its real path name the same
+// directory, so a recorded artifact's path never depends on the spelling.
+export const artifactsDir = (home: string): string => {
+  let real = home;
+  try {
+    real = realpathSync(home);
+  } catch {
+    // judged as given
+  }
+  return join(real, 'artifacts');
+};
 export const BUILDER = `engine-projection@${ENGINE_VERSION}`;
 export const PROJECT_ID = /^proj_[0-9A-HJKMNP-TV-Z]{26}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
@@ -406,8 +417,11 @@ export async function sealArtifact(args: { home: string; project: string; repo: 
 // At start, before the API serves (D4-I08; the slice-23 review's m5): every
 // staging directory, every sealed directory no `artifacts` row records, and
 // every project directory left with nothing recorded, removed by the guards
-// above. `recorded` is every row's path.
-export function sweepArtifacts(home: string, recorded: string[]): { removed: string[]; refused: string[] } {
+// above. A sealed directory is recorded when a row names its project and
+// digest, or when its real path is the real path of any row's `path` (the
+// slice-24 review, S1): however the home is spelled, a recorded artifact is
+// never removed.
+export function sweepArtifacts(home: string, rows: { project: string; digest: string; path: string }[]): { removed: string[]; refused: string[] } {
   const root = artifactsDir(home);
   const removed: string[] = [];
   const refused: string[] = [];
@@ -417,7 +431,16 @@ export function sweepArtifacts(home: string, recorded: string[]): { removed: str
   } catch {
     return { removed, refused };
   }
-  const paths = new Set(recorded);
+  const realOf = (p: string): string | null => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const ids = new Set(rows.map((r) => `${r.project}/${r.digest.replace(/^sha256:/, '')}`));
+  const projects = new Set(rows.map((r) => r.project));
+  const reals = new Set(rows.map((r) => realOf(r.path)).filter((p): p is string => p !== null));
   const attempt = (path: string, fn: () => void) => {
     try {
       fn();
@@ -442,9 +465,13 @@ export function sweepArtifacts(home: string, recorded: string[]): { removed: str
     for (const child of inner) {
       const p = join(path, child);
       if (STAGING.test(child)) attempt(p, () => removeStaging(home, p));
-      else if (DIGEST_DIR.test(child) && !paths.has(p)) attempt(p, () => removeUnrecorded(home, p, true));
+      else if (DIGEST_DIR.test(child)) {
+        const real = realOf(p);
+        if (ids.has(`${name}/${child}`) || (real !== null && reals.has(real))) continue;
+        attempt(p, () => removeUnrecorded(home, p, true));
+      }
     }
-    if (![...paths].some((r) => r.startsWith(`${path}${sep}`))) removeEmptyProjectDir(home, path);
+    if (!projects.has(name)) removeEmptyProjectDir(home, path);
   }
   return { removed, refused };
 }

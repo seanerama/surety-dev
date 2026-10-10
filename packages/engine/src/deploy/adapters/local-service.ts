@@ -239,11 +239,15 @@ export class LocalService implements DeploymentAdapter {
 
   // A unit's domain is positively owned when its recorded cgroup and
   // invocation are what the manager reports for its exact name (D4 §4.6).
+  // Both the recorded cgroup and the recorded invocation are required (the
+  // slice-24 review, m1). A unit loaded `failed` or `inactive` has no
+  // ControlGroup: it is owned by its recorded invocation alone, and only
+  // while its recorded cgroup is gone (m5), so it can be reset by exact name.
   private owned(show: Record<string, string>, r: Resource | undefined): r is Resource {
-    if (!r || r.cgroup_path === null || !show.ControlGroup) return false;
-    if (join('/sys/fs/cgroup', show.ControlGroup) !== r.cgroup_path) return false;
-    if (r.invocation_id !== null && r.invocation_id !== '' && show.InvocationID !== r.invocation_id) return false;
-    return true;
+    if (!r || r.cgroup_path === null || r.invocation_id === null || r.invocation_id === '') return false;
+    if (show.InvocationID !== r.invocation_id) return false;
+    if (show.ControlGroup) return join('/sys/fs/cgroup', show.ControlGroup) === r.cgroup_path;
+    return (show.ActiveState === 'failed' || show.ActiveState === 'inactive') && readPopulated(r.cgroup_path).state === 'absent';
   }
 
   // Stop one positively owned unit and observe its domain's closure (D2
@@ -441,7 +445,10 @@ export class LocalService implements DeploymentAdapter {
         continue;
       }
       if (!this.owned(s, r)) {
+        // Left alone and running: whether the teardown took effect is for
+        // reconcile to say (the slice-24 review, m6).
         step('left', `${u}: not positively owned (cgroup or invocation not the recorded ones); left alone`);
+        uncertain = true;
         continue;
       }
       if (!(await this.stopOwned(cap.environment, u, r, deadline, step, signal))) uncertain = true;

@@ -30,6 +30,7 @@ import { registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import { hostEligibility } from './trust.js';
+import { serviceAdmissionHold } from './envelope.js';
 import type { Tx } from './tx.js';
 import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, TargetExpectation } from '../../deploy/adapter.js';
@@ -521,6 +522,11 @@ export function artifactAdmission(db: Db, args: { project: string; digest: strin
 // start sweep's and a request's cleanup's read).
 export function artifactPaths(db: Db): string[] {
   return (db.prepare('SELECT "path" FROM "artifacts"').all() as { path: string }[]).map((r) => r.path);
+}
+
+// Every artifact row's project, digest and path (the start sweep's read).
+export function artifactRows(db: Db): { project: string; digest: string; path: string }[] {
+  return db.prepare('SELECT "project", "digest", "path" FROM "artifacts"').all() as { project: string; digest: string; path: string }[];
 }
 
 // An artifact refused at the request (D4 §3.1, A.2): the bound recorded on
@@ -1214,6 +1220,9 @@ export function startDeployAttempt(
   const v = readPreconditions(tx, { operation: args.operation, facts: args.facts }, evaluate);
   if (v.verdict !== 'hold') return { retry: true };
   const op = getOp(tx.db, args.operation)!;
+  // Admission and allocation in one transaction (D4 §4.7; the slice-24
+  // review, m4): the service domain holds its reservation from here.
+  if (op.kind === 'deploy' && args.service && serviceAdmissionHold(tx.db, { project: op.project }).admission !== 'granted') return { retry: true };
   const frozen = frozenOf(op);
   const env = getEnv(tx.db, frozen.environment)!;
   const latest = attemptsOf(tx.db, op.id).at(-1);
@@ -1440,6 +1449,7 @@ export function serviceLauncherPlaced(
   if (!d || d.id !== args.domain) return no("the domain is not the attempt's");
   if (d.status !== 'allocated' || d.launch_state !== 'authorizable') return no(`the domain is ${d.status}, its launch ${d.launch_state}`);
   if (d.unit !== args.unit) return no("the unit is not the attempt's");
+  if (typeof args.invocation_id !== 'string' || !/^[0-9a-f]{32}$/.test(args.invocation_id)) return no("the unit's invocation was not read");
   if (d.cgroup_path !== null && d.cgroup_path !== args.cgroup) return no('the domain was placed in another cgroup');
   tx.db
     .prepare('UPDATE "execution_domains" SET "cgroup_path" = ?, "cgroup_inode" = ?, "invocation_id" = ?, "placed_at" = COALESCE("placed_at", ?) WHERE "id" = ?')

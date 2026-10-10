@@ -103,9 +103,14 @@ export type Admitting = { kind: 'role' } | { kind: 'check' } | { kind: 'service'
 export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): EnvelopeHold | null {
   const s = settings;
   if (s === null) return null;
-  const all = db.prepare(`SELECT "id", "cgroup_path", "profile", "reservation", "project" FROM "execution_domains" WHERE "status" <> 'terminated' AND "cgroup_path" IS NOT NULL`).all() as {
+  // Every live domain with a cgroup, and every service domain not
+  // terminated, placed or not: a service holds its reservation from its
+  // admission (the slice-24 review, m4).
+  const all = db
+    .prepare(`SELECT "id", "cgroup_path", "profile", "reservation", "project" FROM "execution_domains" WHERE "status" <> 'terminated' AND ("cgroup_path" IS NOT NULL OR "profile" = 'service')`)
+    .all() as {
     id: string;
-    cgroup_path: string;
+    cgroup_path: string | null;
     profile: string;
     reservation: string | null;
     project: string;
@@ -147,7 +152,7 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   const admitted = running.length + newDomains + (reserveCheck ? 1 : 0);
   const needed = s.host_reserve_memory + s.domain_memory_max * admitted + boxes.reduce((n, b) => n + b.memoryMax, 0) + serviceMemory + (newService?.memory ?? 0);
   const available = memAvailable();
-  const held = [...all.map((d) => d.cgroup_path), ...boxes.map((b) => b.cgroup)].map((path) => readNumber(join(path, 'memory.current')));
+  const held = [...all.map((d) => d.cgroup_path).filter((p): p is string => p !== null), ...boxes.map((b) => b.cgroup)].map((path) => readNumber(join(path, 'memory.current')));
   const unread = held.some((v) => v === null);
   const room = available === null || unread ? null : available + (held as number[]).reduce((a, b) => a + b, 0);
   if (room === null || room < needed) {

@@ -394,9 +394,17 @@ export class ServiceHost {
     if (lk.status !== 'started' || lk.launch_state !== 'authorizable' || lk.domain.launch_state !== 'authorizable') return refuse(`the launch is ${lk.launch_state}`);
     if (lk.domain.id !== hello.domain) return refuse("not the attempt's domain");
     if (!lk.lease || lk.lease.generation !== hello.lease_generation) return refuse('the lease generation is not current');
+    // Every secret the configuration names must be held, or nothing is
+    // launched (the slice-24 review, m7): a service is never started
+    // without a value its configuration names.
+    const unheld = Object.values(lk.secrets).filter((ref) => heldSecret(ref) === null);
+    if (unheld.length > 0) return refuse(`the secrets ${unheld.join(', ')} are not held by this engine`);
     const pid = Number(hello.pid);
     const [unit] = (await showUnits([lk.unit], { home: this.rt.home, env: lk.environment, timeoutMs: this.rt.config.values.adapter_read_deadline * 1000 })) ?? [];
     if (!unit || unit.LoadState !== 'loaded' || !unit.ControlGroup) return refuse('the unit is not loaded');
+    // Its invocation is what positive ownership is later checked by (D4 §4.6):
+    // none read, no grant (the slice-24 review, m1).
+    if (!unit.InvocationID || !/^[0-9a-f]{32}$/.test(unit.InvocationID)) return refuse("the unit's InvocationID could not be read");
     const cgroup = join('/sys/fs/cgroup', unit.ControlGroup);
     if (Number(unit.MainPID) !== pid) return refuse("the launcher is not the unit's MainPID");
     if (hello.cgroup !== cgroup || cgroupOf(pid) !== cgroup || !cgroup.endsWith(`/${lk.unit}`)) return refuse("the launcher is not in the unit's own cgroup");
@@ -411,7 +419,7 @@ export class ServiceHost {
       pid,
       cgroup,
       inode: cgroupInode(cgroup),
-      invocation_id: unit.InvocationID ?? '',
+      invocation_id: unit.InvocationID,
       unit: lk.unit,
     });
     if (!placed.placed) return refuse(placed.reason ?? 'not placed');
@@ -482,7 +490,14 @@ export class ServiceHost {
           const env: Record<string, string> = { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', TMPDIR: '/tmp', ...lk.env };
           for (const [name, ref] of Object.entries(lk.secrets)) {
             const value = heldSecret(ref);
-            if (value !== null) env[name] = value;
+            if (value === null) {
+              // Checked at the launcher's hello; gone since: nothing starts.
+              log('service launch', new Error(`refused: the secret ${ref} is not held`), { attempt: s.attempt });
+              ch.send({ t: 'term' });
+              ch.end();
+              return;
+            }
+            env[name] = value;
           }
           if (lk.port !== null) env.PORT = String(lk.port);
           ch.send({ t: 'backend', backend: { argv: lk.start, env, cwd: APP_DIR, stdin: null, service: { port: lk.port, ingress: INGRESS_SOCKET, logMax: lk.limits.log_max_bytes } } });
