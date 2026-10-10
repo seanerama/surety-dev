@@ -221,6 +221,38 @@ export const storeFootprint = (home, environment) =>
     jobs: JSON.stringify(db.prepare('SELECT * FROM "observation_jobs" WHERE "environment" = ?').all(environment)),
   }));
 
+// The footprint once the engine is quiet: two reads `intervalMs` apart
+// that agree, within `timeoutMs`, else the case fails saying so (so the
+// engine's own start-up or background work is not taken for a read's
+// write). Returns the settled footprint.
+export async function quietFootprint(home, environment, { intervalMs = 3000, timeoutMs = 60_000, what = 'the engine' } = {}) {
+  const until = Date.now() + timeoutMs;
+  let last = storeFootprint(home, environment);
+  for (;;) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const now = storeFootprint(home, environment);
+    if (JSON.stringify(now) === JSON.stringify(last)) return now;
+    if (Date.now() > until) assert.fail(`${what} never settled: its store kept changing for ${timeoutMs} ms (events ${describeEventsSince(home, last.seq)}), so a read's write could not be told from its own work`);
+    last = now;
+  }
+}
+
+// Each event after `seq`, as its type and the kinds of its payload's members.
+export function describeEventsSince(home, seq) {
+  const events = withStore(home, (db) => db.prepare('SELECT "seq", "type", "subject", "payload" FROM "events" WHERE "seq" > ? ORDER BY "seq"').all(seq));
+  return JSON.stringify(events.map((e) => {
+    const payload = json(e.payload) ?? {};
+    return { seq: e.seq, type: e.type, subject: Object.keys(json(e.subject) ?? {}), payload: Object.fromEntries(Object.entries(payload).map(([k, v]) => [k, Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v])) };
+  }));
+}
+
+// The reads wrote nothing: the footprint is unchanged; if not, the message
+// names every new event by type and payload kind.
+export function assertFootprintUnchanged(home, environment, before, what) {
+  const after = storeFootprint(home, environment);
+  assert.deepEqual(after, before, `${what}: nothing written (no event, record, observation or job changed); new events: ${describeEventsSince(home, before.seq)}`);
+}
+
 // ---- a byte changed in the sealed copy (SEAM.md §297; M306's practice) ---------------------------
 
 export function changeSealedByte(home, project) {
