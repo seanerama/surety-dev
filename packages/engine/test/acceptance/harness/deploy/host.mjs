@@ -828,27 +828,56 @@ export function targetReport(ctx, execution) {
   return { result, report: JSON.parse(line.slice('SURETY-TARGET-REPORT '.length)) };
 }
 
-// The operator's teardown of `env`, and ticks until it is finalized. Returns the operation.
+// The operator's teardown of `env`, and ticks until *that* teardown is
+// applied (its operation finalized, its latest attempt `succeeded` or
+// `reconciled_succeeded`). It is the operation the request names, if the
+// answer names one, or else a teardown operation of the environment that did
+// not exist before the request; an earlier operation is never taken for it
+// (a finalized earlier teardown made it return at once: the slice-26
+// Builder's diagnosis, SEAM.md §257). An attempt read `ambiguous` (a stop job
+// still pending, S1) is read again at later ticks until applied, within the
+// timeout. Returns the operation.
 export async function teardownOnHost(ctx, env, { timeoutMs = 240_000 } = {}) {
+  const ofEnv = () => operationsOf(ctx.fx.home, ctx.project, 'teardown').filter((o) => o.target?.environment === env.id);
+  const earlier = new Set(ofEnv().map((o) => o.id));
   const asked = await teardown(ctx.fx.engine, ctx.project, env.name);
   assert.ok(asked.status >= 200 && asked.status < 300, `the operator's teardown of ${env.name} is accepted (→ ${asked.status} ${asked.text})`);
-  return ticksUntil(ctx.fx, ctx.project, () => operationsOf(ctx.fx.home, ctx.project, 'teardown').filter((o) => o.target?.environment === env.id && o.finalized_at !== null).at(-1), { timeoutMs, what: `the teardown of ${env.name} to be finalized` });
+  const named = asked.body?.operation?.id ?? asked.body?.teardown?.operation ?? null;
+  assert.ok(named === null || !earlier.has(named), `the teardown request names a new operation, not an earlier one (${named})`);
+  return ticksUntil(
+    ctx.fx,
+    ctx.project,
+    () => {
+      const op = named !== null ? ofEnv().find((o) => o.id === named) : ofEnv().find((o) => !earlier.has(o.id));
+      if (!op || op.finalized_at === null) return undefined;
+      const latest = attemptsOf(ctx.fx.home, op.id).at(-1);
+      return latest && ['succeeded', 'reconciled_succeeded'].includes(latest.status) ? op : undefined;
+    },
+    { timeoutMs, what: `the teardown of ${env.name} requested now to be applied` },
+  );
 }
 
-// After a case: the environment torn down by the engine when it can be; a
-// unit the engine could not tear down (its lease held by an ambiguous
-// attempt) stopped by the test by its exact name. Returns what was left.
+// After a case: the environment torn down by the engine, its own teardown
+// waited for until applied; only if it is not applied within the timeout (its
+// lease held by an ambiguous attempt, or the teardown itself unsettled) are
+// the units left stopped by the test by their exact names, and that fallback
+// is reported as a note naming each unit. Returns what was left.
 export async function endEnvironment(ctx, env, { engineTeardown = true } = {}) {
+  let why = engineTeardown ? null : 'no engine teardown was asked for';
   if (engineTeardown) {
     try {
       await teardownOnHost(ctx, env, { timeoutMs: 120_000 });
-    } catch {
-      // the lease is held (an ambiguous attempt) or the teardown did not end: the test's own stop below
+    } catch (err) {
+      why = `the engine's teardown was not applied: ${err.message}`;
     }
   }
   const prefix = unitPrefix(ctx.fx.home, env.id);
   const left = (listUnits() ?? []).filter((u) => u.unit.startsWith(prefix)).map((u) => u.unit);
-  for (const name of left) if (intendedUnits(ctx.fx.home).includes(name)) stopOwnUnit(ctx.fx.home, name);
+  for (const name of left) {
+    if (!intendedUnits(ctx.fx.home).includes(name)) continue;
+    console.log(`# note: ${name} stopped by the test by its exact name after the case (${why ?? 'left loaded after an applied teardown'})`);
+    stopOwnUnit(ctx.fx.home, name);
+  }
   return left;
 }
 
