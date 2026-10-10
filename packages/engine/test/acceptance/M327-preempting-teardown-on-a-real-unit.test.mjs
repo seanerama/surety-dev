@@ -31,12 +31,14 @@
 // carries the real-adapter switch (`hostDeployable`).
 
 import assert from 'node:assert/strict';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import { procsOf } from './harness/sandbox/cgroup.mjs';
 import { attemptsOf, environmentLeases, environmentRead, operationRow, roundsOf, unitPrefix, verificationsOf } from './harness/deploy/kernel.mjs';
-import { armDeployFault, deployHeld, domainRowOf, endEnvironment, hostDeployable, hostEnvironment, listUnits, managerState, operatorGuard, procInstance, ticksUntil, unitShow } from './harness/deploy/host.mjs';
+import { RELEASE, armDeployFault, deployHeld, releaseCheck, domainRowOf, endEnvironment, hostDeployable, hostEnvironment, listUnits, managerState, operatorGuard, procInstance, ticksUntil, unitShow } from './harness/deploy/host.mjs';
 import { answerOn, openOn } from './harness/deploy/recover.mjs';
 import { assertPreemption, observeOnHost, oobRows, preempt } from './harness/deploy/observe.mjs';
 import { withStore } from './harness/store.mjs';
@@ -44,6 +46,16 @@ import { withStore } from './harness/store.mjs';
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
 const heldLease = (home, env) => environmentLeases(home, env).find((l) => l.released_at === null);
 const loadedOfPrefix = (home, env) => (listUnits() ?? []).filter((u) => u.unit.startsWith(unitPrefix(home, env))).map((u) => u.unit);
+// After a case that did not preempt (a failure), the round's held check is
+// released with a plan naming no act and exiting 1, so the round ends, the
+// lease is released and the engine's own teardown can end the environment
+// (found showing the failures on main: otherwise the ordinary teardown waits
+// for the held check, and the unit is stopped by exact name, leaving its
+// runtime files). It names no act, so it needs no containment read.
+async function letRoundEnd(ctx, svc) {
+  if (svc && !existsSync(join(ctx.prog.releaseDir, RELEASE))) releaseCheck(ctx, svc, { get: [], exit: 1 });
+}
+
 const executionRow = (home, id) => withStore(home, (db) => db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(id));
 
 describe('M327 the preempting teardown on a real unit', () => {
@@ -64,8 +76,11 @@ describe('M327 the preempting teardown on a real unit', () => {
 
   test('(b) a confirmed deploy waiting in verification: its running check cancelled and its domain closed, its round unknown naming it, its unit stopped, the deploy superseded', async () => {
     const env = await hostEnvironment(ctx, 'verifying');
+    let svc;
     try {
-      const { op, held, svc } = await deployHeld(ctx, env);
+      const deployed = await deployHeld(ctx, env);
+      svc = deployed.svc;
+      const { op, held } = deployed;
       const [round] = roundsOf(ctx.fx.home, op.id);
       const leaseBefore = heldLease(ctx.fx.home, env.id);
       const attemptsBefore = attemptsOf(ctx.fx.home, op.id);
@@ -96,16 +111,21 @@ describe('M327 the preempting teardown on a real unit', () => {
       assert.equal(operationRow(ctx.fx.home, op.id).status, 'superseded', 'the deploy is superseded');
       assert.deepEqual(attemptsOf(ctx.fx.home, op.id).map((a) => a.status), attemptsBefore.map((a) => a.status), 'its attempt is kept as it was');
     } finally {
+      await letRoundEnd(ctx, svc);
       await endEnvironment(ctx, env);
+      rmSync(join(ctx.prog.releaseDir, RELEASE), { force: true });
     }
   });
 
   test('(e) the manager unreadable: launch authority closed, nothing stopped, the teardown ambiguous, observations unknown with no out-of-band fact; restored, a read succeeds', async () => {
     const env = await hostEnvironment(ctx, 'unreadable');
     let teardownId;
+    let svc;
     try {
       assert.equal(managerState(), 'running', 'the manager is running before');
-      const { op, svc } = await deployHeld(ctx, env);
+      const deployed = await deployHeld(ctx, env);
+      svc = deployed.svc;
+      const { op } = deployed;
       const before = unitShow(svc.unit, ['ActiveState', 'InvocationID']);
       const leaseBefore = heldLease(ctx.fx.home, env.id);
       await armDeployFault(ctx, env, 'bus_address_missing_until_cleared');
@@ -140,7 +160,9 @@ describe('M327 the preempting teardown on a real unit', () => {
           return loadedOfPrefix(ctx.fx.home, env.id).length === 0 ? true : undefined;
         }, { timeoutMs: 180_000, what: 'the environment to be torn down once readable' }).catch(() => undefined);
       }
+      await letRoundEnd(ctx, svc);
       await endEnvironment(ctx, env, { engineTeardown: loadedOfPrefix(ctx.fx.home, env.id).length > 0 });
+      rmSync(join(ctx.prog.releaseDir, RELEASE), { force: true });
     }
   });
 });
