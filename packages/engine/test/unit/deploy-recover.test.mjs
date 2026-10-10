@@ -52,3 +52,12 @@ test('unknown ownership: a prefixed unit no intent names, and a recorded one in 
   );
   assert.deepEqual(unaccountedUnits([unit('p-g2.service', { cgroup: null, state: 'failed' })], ['p-g2.service'], { 'p-g2.service': '/cg/p-g2.service' }), [], 'a unit with no cgroup (failed) is accounted by its name');
 });
+
+test('teardown: a runtime directory, link socket or populated cgroup of a covered generation left is partial, never applied; with none left it is applied', () => {
+  const teardown = { kind: 'teardown', prefix: 'p-', digest: null, create_units: [], prior: [], stop_units: ['p-g3.service'], recorded: ['p-g3.service'], recorded_cgroups: {}, launch_granted: false, app_instance: null };
+  for (const kind of ['directory', 'socket', 'cgroup']) {
+    const left = { resource: `/home/run/env-g3${kind === 'socket' ? '/in.sock' : ''}`, kind, recorded: true, state: kind === 'cgroup' ? 'populated' : 'present', pendingJob: false, generation: 3 };
+    assert.equal(judgeReconcile(read([left]), teardown).outcome, 'partial', `a ${kind} left`);
+  }
+  assert.equal(judgeReconcile(read([]), teardown).outcome, 'applied');
+});
