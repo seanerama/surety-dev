@@ -2003,7 +2003,7 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
   const decides = newest.id === r.id && latestAttempt.id === r.attempt;
   const invalidated = !current ? 'generation_superseded' : !decides ? 'round_superseded' : null;
   const id = tx.newId('dv_');
-  const identityReads = entries.flatMap((e) => e.reads.map((x) => ({ target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at, bracket: e.bracket })));
+  const identityReads = entries.flatMap((e) => e.reads.map((x) => ({ target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at, duration_ms: x.duration_ms ?? null, detail: x.detail ?? null, bracket: e.bracket })));
   tx.db
     .prepare(
       `INSERT INTO "deployment_verifications" ("id", "created_at", "project", "environment", "operation", "attempt", "round", "deployment_generation", "candidate", "target_set", "artifact_digest",
