@@ -183,7 +183,13 @@ describe('M301 the deployment journey on the scripted adapter: configure, reques
       "the operation's frozen intent: the authorization, digest, configuration version and identity, targets and environment",
     );
     assert.ok(typeof fi.mapping === 'string' && fi.mapping.length > 0, 'and the source mapping');
-    assert.doesNotMatch(JSON.stringify(fi), /\.service|surety-[0-9a-f]{12}-/, 'it names no unit');
+    // D4 §4.1, SEAM §250 (objection 033): the frozen intent holds the environment's prefix and names no unit.
+    const prefix = environmentRow(fx.home, env.id)?.prefix;
+    assert.match(prefix ?? '', new RegExp(`^surety-[0-9a-f]{12}-${env.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-$`), "the environment's stored prefix is surety-<h>-<env>-");
+    assert.equal(fi.prefix, prefix, "the frozen intent holds the environment's prefix");
+    const strings = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
+    assert.doesNotMatch(JSON.stringify(fi), /\.service/, 'it names no unit: no .service');
+    assert.deepEqual(strings(fi).filter((s) => /surety-[0-9a-f]{12}-/.test(s) && s !== prefix), [], 'it names no unit: no string is the prefix followed by a generation or suffix');
     assert.deepEqual([atIntent.read?.journal_kind, (atIntent.read?.journal ?? []).map((e) => e.event_kind)], ['deploy_apply', ['intended']], 'the journal: intended, of kind deploy_apply');
     assert.equal(Date.parse(op.orchestration_deadline_at) - Date.parse(op.created_at), 1800 * 1000, 'the orchestration deadline is the intent plus deploy_orchestration_deadline (1,800 s)');
     assert.equal(op.orchestration_stage, 'effect');
