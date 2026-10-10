@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { freePort, httpRequest } from '../engine.mjs';
@@ -355,6 +355,49 @@ export function ppidOf(pid) {
   return Number(line?.slice(5).trim());
 }
 
+// The inode of the socket `pid` holds listening on 127.0.0.1:<port> in its
+// own network namespace, read from the host (`/proc/<pid>/net/tcp` and
+// `/proc/<pid>/fd`), or null when it holds none (or is gone).
+export function listenerOf(pid, port) {
+  let table;
+  try {
+    table = readFileSync(`/proc/${pid}/net/tcp`, 'utf8').split('\n').slice(1);
+  } catch {
+    return null;
+  }
+  const local = `0100007F:${port.toString(16).toUpperCase().padStart(4, '0')}`;
+  const inodes = table.map((l) => l.trim().split(/\s+/)).filter((f) => f[1] === local && f[3] === '0A').map((f) => f[9]);
+  if (inodes.length === 0) return null;
+  let fds;
+  try {
+    fds = readdirSync(`/proc/${pid}/fd`);
+  } catch {
+    return null;
+  }
+  for (const fd of fds) {
+    let link;
+    try {
+      link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+    } catch {
+      continue;
+    }
+    const inode = /^socket:\[(\d+)\]$/.exec(link)?.[1];
+    if (inode !== undefined && inodes.includes(inode)) return inode;
+  }
+  return null;
+}
+
+// Poll a host-read fact until `probe` answers (no engine tick), bounded.
+export async function hostUntil(probe, { timeoutMs = 30_000, intervalMs = 25, what = 'the expected host state' } = {}) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const got = probe();
+    if (got !== undefined && got !== null && got !== false) return got;
+    if (Date.now() > until) assert.fail(`timed out after ${timeoutMs} ms waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
 export const cmdlineOf = (pid) => readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter((a, i, all) => !(a === '' && i === all.length - 1));
 export const exeShaOf = (pid) => sha256(readFileSync(`/proc/${pid}/exe`));
 
@@ -390,6 +433,8 @@ export const appRoot = (pid) => `/proc/${pid}/root/surety/app`;
 export const FIXTURE_SERVICE = readFileSync(new URL('./fixture-service.cjs', import.meta.url), 'utf8');
 const TARGET_CHECK = readFileSync(new URL('./target-check.mjs', import.meta.url), 'utf8');
 export const RELEASE = 'go';
+// The second release of a plan with `then` (section 258): the check ends only once the test writes it.
+export const RELEASE_AGAIN = 'again';
 
 // The post-deploy check program, beside the M3 check program in its
 // directory (so the same read_paths reach it), with a shebang naming the
@@ -582,6 +627,12 @@ export function releaseCheck(ctx, svc, plan = { get: ['/hello'], exit: 0 }) {
   writeFileSync(join(ctx.prog.releaseDir, RELEASE), JSON.stringify(plan));
 }
 
+// The second release of a held check whose plan named `then: RELEASE_AGAIN`. It names no act.
+export function releaseAgain(ctx, plan = { get: [], exit: 0 }) {
+  assert.ok(!(plan.get ?? []).some((p) => p.startsWith('/act/')), 'the second release names no act');
+  writeFileSync(join(ctx.prog.releaseDir, RELEASE_AGAIN), JSON.stringify(plan));
+}
+
 // Ask for ticks until the operation's newest round has its verification
 // row; then take the release file away for the next round. Returns {round, row}.
 export async function verificationOf(ctx, op, { timeoutMs = 300_000 } = {}) {
@@ -596,6 +647,7 @@ export async function verificationOf(ctx, op, { timeoutMs = 300_000 } = {}) {
     { timeoutMs, what: `the verification row of ${op.id}` },
   );
   rmSync(join(ctx.prog.releaseDir, RELEASE), { force: true });
+  rmSync(join(ctx.prog.releaseDir, RELEASE_AGAIN), { force: true });
   return found;
 }
 
