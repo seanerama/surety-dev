@@ -62,7 +62,11 @@ export interface CheckPlanInput {
   initScript: string;
   // The domain's egress socket, only when the definition names `egress`.
   egressSocket?: string | null;
+  // The execution's service link (D4 §5.2), bound beside the init.
+  linkSocket?: string | null;
 }
+
+export const LINK_SOCKET = '/.init/link.sock';
 
 // The top-level components of the workspace that hold the manifest's
 // inputs, each once, in order.
@@ -73,6 +77,7 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
   const vol = join(input.area, 'vol');
   const b = new Builder(stage, hostMountPoints());
   systemRoot(b, input);
+  if (input.linkSocket) b.bind(input.linkSocket, { target: LINK_SOCKET, noexec: true });
   b.dir('/surety');
   b.dir(WORKSPACE);
   b.line(

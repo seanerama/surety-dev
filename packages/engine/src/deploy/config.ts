@@ -62,7 +62,7 @@ const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
 const TARGET = /^[a-z][a-z0-9-]{0,31}$/;
 // A deployment reference (SEAM.md §245; N04).
 export const DEPLOY_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
-const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method'];
+const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method', 'persistent_state'];
 
 // Only the deployment namespace (D4 §§3.2, 7.1, 7.4; the driver's ruling on
 // review S4): an Alpha environment holds none of the backends' credentials,
@@ -74,6 +74,10 @@ const isReference = (v: unknown): v is string => typeof v === 'string' && DEPLOY
 // D4 X2 that depend on the host are the request's (M312).
 export function validateConfig(body: unknown): ConfigContent {
   if (!isObject(body)) throw invalid('body', 'must be a JSON object');
+  // What M4 does not run (D4 §10 X2, Q4; SEAM.md §261): a build step and
+  // persistent state are refused by name, before anything else.
+  if (body.build !== undefined) throw invalid('build', 'declares a build step, which M4 does not run (Q4): deploy a project that needs none');
+  if (body.persistent_state !== undefined && body.persistent_state !== false) throw invalid('persistent_state', 'declares persistent state, which local_service does not keep in M4 (X2)');
   for (const k of Object.keys(body)) if (!FIELDS.includes(k)) throw invalid(k, 'is not a configuration field');
   if (!(ADAPTERS as readonly string[]).includes(body.adapter as string)) throw invalid('adapter', `must be ${ADAPTERS.join(' or ')}`);
   if (typeof body.adapter_version !== 'string' || body.adapter_version === '' || body.adapter_version.length > 64) throw invalid('adapter_version', 'must be a non-empty string of at most 64 characters');
@@ -104,7 +108,7 @@ export function validateConfig(body: unknown): ConfigContent {
       if (!isReference(v)) throw invalid(`check_secrets.${i}`, `names ${JSON.stringify(v)}, which is not a reference of the deployment namespace (deploy/<name>)`);
     });
   }
-  if (body.egress !== undefined && !Array.isArray(body.egress)) throw invalid('egress', 'must be an array');
+  if (body.egress !== undefined && (!Array.isArray(body.egress) || body.egress.length > 0)) throw invalid('egress', 'must be empty: local_service reaches no host in M4 (X2)');
   if (body.artifact !== undefined) {
     const a = body.artifact;
     if (!isObject(a) || Object.keys(a).some((k) => k !== 'exclude') || (a.exclude !== undefined && (!Array.isArray(a.exclude) || a.exclude.some((p) => typeof p !== 'string' || p === '' || p.startsWith('/') || p.split('/').includes('..'))))) {

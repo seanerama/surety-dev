@@ -66,6 +66,7 @@ let checkProfileVariantValue: string | null = null;
 let checkDomainLimitsValue: string | null = null;
 let classifierVersionValue: string | null = null;
 let deployAdapterValue: string | null = null;
+let artifactFreeBytesValue: string | null = null;
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -115,7 +116,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-check-profile-variant' ||
     flag === '--harness-check-domain-limits' ||
     flag === '--harness-classifier-version' ||
-    flag === '--harness-deploy-adapter'
+    flag === '--harness-deploy-adapter' ||
+    flag === '--harness-artifact-free-bytes'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -166,6 +168,9 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-deploy-adapter') {
       // SEAM.md §247: the scripted deployment adapter (the default) or the real one.
       deployAdapterValue = value;
+    } else if (flag === '--harness-artifact-free-bytes') {
+      // SEAM.md §260: the free bytes artifact admission takes for the home.
+      artifactFreeBytesValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -197,6 +202,7 @@ const switchProblem = setHarnessSwitches({
   checkDomainLimits: checkDomainLimitsValue,
   classifierVersion: classifierVersionValue,
   deployAdapter: deployAdapterValue,
+  artifactFreeBytes: artifactFreeBytesValue,
 });
 if (switchProblem !== null) usage(switchProblem);
 

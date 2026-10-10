@@ -30,7 +30,7 @@ export const EVENT_OWNERS = {
   'run.finalizing': 'store/transitions/runs.ts',
   'run.ended': 'store/transitions/runs.ts',
   'run.quarantined': 'store/transitions/runs.ts',
-  'domain.terminated': 'store/transitions/runs.ts',
+  'domain.terminated': 'store/transitions/runs.ts, store/transitions/deploy.ts',
   'domain.quarantined': 'store/transitions/runs.ts',
   'decision.raised': 'store/transitions/decisions.ts',
   'decision.answered': 'store/transitions/decisions.ts',
@@ -117,6 +117,7 @@ export const EVENT_OWNERS = {
   'deploy.round_registered': 'store/transitions/deploy.ts',
   'deploy.round_superseded': 'store/transitions/deploy.ts',
   'deploy.orchestration_deadline': 'store/transitions/deploy.ts',
+  'deploy.service_exited': 'store/transitions/deploy.ts',
   'engine.backup': 'store/transitions/engine.ts',
   // D2 A.5, the trust table's part. The egress and secret events join with
   // the sandbox lane's later slices, which emit them.
@@ -129,9 +130,9 @@ export const EVENT_OWNERS = {
   'trust.activated': 'store/transitions/trust.ts',
   'trust.revoked': 'store/transitions/trust.ts',
   // D2 A.5, the boundary's part (M2 slice 11).
-  'domain.placed': 'store/transitions/boundary.ts',
+  'domain.placed': 'store/transitions/boundary.ts, store/transitions/deploy.ts',
   'domain.launch_authorized': 'store/transitions/boundary.ts',
-  'domain.launch_closed': 'store/transitions/boundary.ts',
+  'domain.launch_closed': 'store/transitions/boundary.ts, store/transitions/deploy.ts',
   'run.lease_regranted': 'store/transitions/boundary.ts',
   // D2 A.5, the sandbox's part (M2 slice 12).
   'domain.egress_refused': 'store/transitions/boundary.ts',

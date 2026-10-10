@@ -197,7 +197,8 @@
     "SandboxProfile": [
       "role",
       "probe",
-      "check"
+      "check",
+      "service"
     ],
     "LaunchState": [
       "authorizable",
@@ -693,6 +694,7 @@
       "deploy.round_registered",
       "deploy.round_superseded",
       "deploy.orchestration_deadline",
+      "deploy.service_exited",
       "engine.backup",
       "host.qualified",
       "host.qualification_lapsed",
@@ -2101,6 +2103,29 @@
         "check_execution": {
           "required": false,
           "references": "check_executions"
+        },
+        "attempt": {
+          "required": false,
+          "references": "operation_attempts"
+        },
+        "launched_by_incarnation": {
+          "required": false,
+          "references": "engine_incarnations"
+        },
+        "app_exit": {
+          "required": false
+        },
+        "reservation": {
+          "required": false
+        },
+        "unit": {
+          "required": false
+        },
+        "invocation_id": {
+          "required": false
+        },
+        "runtime_dir": {
+          "required": false
         }
       }
     },
@@ -2758,6 +2783,9 @@
           "required": false
         },
         "receipt": {
+          "required": false
+        },
+        "app_disagreement": {
           "required": false
         }
       }
@@ -4924,7 +4952,7 @@
       "owner": "store/transitions/runs.ts"
     },
     "domain.terminated": {
-      "owner": "store/transitions/runs.ts"
+      "owner": "store/transitions/runs.ts, store/transitions/deploy.ts"
     },
     "domain.quarantined": {
       "owner": "store/transitions/runs.ts"
@@ -5181,6 +5209,9 @@
     "deploy.orchestration_deadline": {
       "owner": "store/transitions/deploy.ts"
     },
+    "deploy.service_exited": {
+      "owner": "store/transitions/deploy.ts"
+    },
     "engine.backup": {
       "owner": "store/transitions/engine.ts"
     },
@@ -5209,13 +5240,13 @@
       "owner": "store/transitions/trust.ts"
     },
     "domain.placed": {
-      "owner": "store/transitions/boundary.ts"
+      "owner": "store/transitions/boundary.ts, store/transitions/deploy.ts"
     },
     "domain.launch_authorized": {
       "owner": "store/transitions/boundary.ts"
     },
     "domain.launch_closed": {
-      "owner": "store/transitions/boundary.ts"
+      "owner": "store/transitions/boundary.ts, store/transitions/deploy.ts"
     },
     "run.lease_regranted": {
       "owner": "store/transitions/boundary.ts"

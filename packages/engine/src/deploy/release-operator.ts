@@ -19,9 +19,14 @@ import { gateFacts } from '../gates/prepare.js';
 import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { DeployDetail, Fact, RoundDetail, Verdict } from '../store/transitions/deploy.js';
-import { pausePoint, seamDeployAdmission } from '../testing/seam.js';
-import { type Capability, type DeployBounds, type IdentityRead, type Instance, type LaunchChannel, type Reconciliation, adapterFor, effectCall, readCall } from './adapter.js';
-import { type ManifestEntry, rehash } from './artifact.js';
+import { pausePoint, seamDeployAdmission, seamRealDeployAdapter } from '../testing/seam.js';
+import { cgroupInode, readPopulated } from '../boundary/cgroup.js';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { LocalService, showUnits } from './adapters/local-service.js';
+import { ServiceHost } from './service-host.js';
+import { type Capability, type DeployBounds, type IdentityRead, type Instance, type LaunchChannel, type Reconciliation, adapterFor, effectCall, readCall, setProductionAdapter } from './adapter.js';
+import { type ManifestEntry, rehash, sweepArtifacts } from './artifact.js';
 import { heldDigests, secretDigestKey } from './config.js';
 import { judgeReconcile } from './reconcile.js';
 
@@ -35,7 +40,17 @@ export class ReleaseOperator {
   // (D4 §2.4, quiescence; review m1).
   private readonly inFlight = new Map<string, Promise<unknown>>();
 
+  // The real `local_service` adapter's host side (service-host.ts), built
+  // at start when this engine deploys to real units.
+  services: ServiceHost | null = null;
+
   constructor(private readonly rt: Runtime) {}
+
+  // Is the real adapter in use (outside harness mode, or with
+  // `--harness-deploy-adapter real`, SEAM.md §247)?
+  private get real(): boolean {
+    return seamRealDeployAdapter();
+  }
 
   private bounds(): DeployBounds {
     const v = this.rt.config.values as unknown as Record<string, number>;
@@ -46,6 +61,11 @@ export class ReleaseOperator {
   // configuration whose held values no longer give its digests marked
   // `secrets_changed` (RV5).
   async atStart(): Promise<void> {
+    // What an earlier incarnation's request sealed or staged and never
+    // recorded (D4-I08; the slice-23 review's m5), removed before the API
+    // serves a request that could make one.
+    const swept = sweepArtifacts(this.rt.home, await this.rt.read<{ project: string; digest: string; path: string }[]>('deploy.artifact_rows'));
+    for (const path of swept.refused) log('artifact sweep', new Error(`not removed: ${path}`));
     secretDigestKey(this.rt.home);
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
@@ -53,6 +73,56 @@ export class ReleaseOperator {
       return { config: c.config, changed: c.digests.filter((d) => now[d.ref] !== d.digest).map((d) => d.ref) };
     });
     if (changed.some((c) => c.changed.length > 0)) await this.rt.engine('deploy.secrets_changed', { configs: changed });
+    // The launch socket, once recovery has closed every earlier launch (D4
+    // §9.2: before the engine accepts any launch request), and the real
+    // adapter that creates the units its launchers connect from.
+    if (this.real) {
+      this.services = new ServiceHost(this.rt);
+      await this.services.start();
+      setProductionAdapter(new LocalService(this.rt, this.services));
+    }
+  }
+
+  stop(): void {
+    this.services?.stop();
+  }
+
+  // The service domains of a project whose closure the host now shows (D2
+  // §3.2; D4 §9.2): a recorded cgroup absent, or, for a domain never placed
+  // whose attempt has ended, its unit not loaded. Observed, never caused:
+  // nothing here stops or kills anything.
+  private async observeServiceDomains(project: string): Promise<void> {
+    if (!this.real || this.services === null) return;
+    const open = await this.rt.read<{ id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string }[]>('deploy.service_domains', { project });
+    for (const d of open) {
+      let closed = false;
+      let observed = '';
+      if (d.cgroup_path !== null) {
+        const p = readPopulated(d.cgroup_path);
+        const inode = p.state === 'absent' ? null : cgroupInode(d.cgroup_path);
+        if (p.state === 'absent' && existsSync(dirname(d.cgroup_path))) {
+          closed = true;
+          observed = `${d.cgroup_path} is gone`;
+        } else if (d.cgroup_inode !== null && inode !== null && inode !== d.cgroup_inode) {
+          // A directory made again at the recorded path is another cgroup
+          // (D2 §3.4): the domain's own is gone.
+          closed = true;
+          observed = `${d.cgroup_path} was made again (inode ${inode}, recorded ${d.cgroup_inode}): the domain's own cgroup is gone`;
+        }
+      } else if (d.unit !== null) {
+        const lk = await this.rt.read<{ status: string } | null>('deploy.launch_lookup', { attempt: d.attempt });
+        if (lk && lk.status !== 'started' && !this.inFlight.has(d.attempt)) {
+          const show = await showUnits([d.unit], { home: this.rt.home, env: d.environment, timeoutMs: this.bounds().readMs }).catch(() => null);
+          if (show?.[0]?.LoadState === 'not-found') {
+            closed = true;
+            observed = `${d.unit} was never placed and is not loaded`;
+          }
+        }
+      }
+      if (!closed) continue;
+      await this.rt.engine('deploy.domain_closed', { domain: d.id, observed });
+      this.services.dispose({ attempt: d.attempt, runtimeDir: d.runtime_dir });
+    }
   }
 
   // One tick's work for a project.
@@ -72,6 +142,7 @@ export class ReleaseOperator {
     // Each operation is driven as far as it can go now; the tick waits for
     // it, every adapter call bounded by its deadline.
     for (const op of [...new Set(work.drive)]) await this.drive(op);
+    await this.observeServiceDomains(project).catch((err) => log('service domains', err, { project }));
   }
 
   drive(operation: string): Promise<void> {
@@ -94,7 +165,8 @@ export class ReleaseOperator {
       if (!d || d.stage === 'ended' || d.journal === 'failed') return;
       const latest = d.attempts.at(-1);
       if (d.journal === 'confirmed') {
-        await this.rt.engine('deploy.finalize', { operation });
+        const fin = await this.rt.engine<{ round: string | null; replay: boolean }>('deploy.finalize', { operation });
+        if (fin.round !== null && !fin.replay) await pausePoint('deploy.round_registered');
         continue;
       }
       if (d.journal === 'finalized') {
@@ -122,11 +194,12 @@ export class ReleaseOperator {
   // grant are read after it, nearest the effect (the sealed copy last).
   private async facts(d: DeployDetail): Promise<Record<string, unknown>> {
     const f = d.frozen;
-    // Admission (D4 §4.7): the kernel lane's scripted answer. Outside it no
-    // admission of a service domain exists before slice 24, so none is
-    // granted: the operation waits, and fails at its orchestration deadline
-    // with nothing applied (review m3).
-    const admission = seamDeployAdmission(f.environment) ?? 'held';
+    // Admission (D4 §4.7): the kernel lane's scripted answer; with the real
+    // adapter, the resource envelope's for a service domain and the check
+    // capacity it keeps (store/transitions/envelope.ts); with neither, none
+    // is granted: the operation waits, and fails at its orchestration
+    // deadline with nothing applied (review m3).
+    const admission = seamDeployAdmission(f.environment) ?? (this.real ? (await this.rt.read<{ admission: 'granted' | 'held' }>('deploy.admission', { project: d.project })).admission : 'held');
     const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
     const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
     const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
@@ -151,7 +224,13 @@ export class ReleaseOperator {
       await this.rt.engine('deploy.precondition_failed', { operation: d.id, fact: v.fact, manifest });
       return false;
     }
-    const made = await this.rt.engine<{ attempt?: string; capability?: Capability; retry?: true }>('deploy.attempt', { operation: d.id, incarnation: this.rt.incarnation, facts, manifest });
+    const made = await this.rt.engine<{ attempt?: string; capability?: Capability; retry?: true }>('deploy.attempt', {
+      operation: d.id,
+      incarnation: this.rt.incarnation,
+      facts,
+      manifest,
+      service: { home: this.rt.home, checkCapacity: this.rt.setting('domain_memory_max') },
+    });
     if (!made.attempt || !made.capability) return true;
     this.issued.add(made.attempt);
     const cap = made.capability;
@@ -169,6 +248,7 @@ export class ReleaseOperator {
         await this.rt.engine('deploy.app_started', { attempt, app });
       },
     };
+    await pausePoint('adapter.before_host_call');
     const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds());
     if (bound !== null) {
       this.inFlight.set(attempt, settled);
@@ -203,6 +283,7 @@ export class ReleaseOperator {
             cleanup: a.intent?.cleanup ?? [],
             stop_units: a.intent?.resources ?? [],
             recorded_units: d.recorded_units,
+            expect: a.expect,
           },
           signal,
         ),
@@ -220,6 +301,7 @@ export class ReleaseOperator {
       // grant's record, the init's instance, outlives the closure (S2).
       launch_granted: a.init_instance !== null || a.launch_state === 'authorized',
       app_instance: a.app_instance,
+      binding_conflict: a.app_disagreement !== null,
     });
     const way = await this.rt.engine<{ way: string }>('deploy.reconciled', { attempt: a.id, outcome: judged.outcome, read: judged.read });
     return way.way === 'confirmed' || way.way === 'retry';

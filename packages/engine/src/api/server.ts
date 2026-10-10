@@ -18,7 +18,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
-import { prepareConfig, prepareDeployment } from '../deploy/commands.js';
+import { prepareConfig, prepareDeployment, settleDeployment } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes } from '../records/files.js';
@@ -68,7 +68,7 @@ type Route =
   | { kind: 'stream'; open: (r: Request) => Promise<(res: ServerResponse) => Promise<void>> }
   | { kind: 'refuse'; refusal: Refusal }
   | { kind: 'command'; name: string; args: (body: unknown) => unknown }
-  | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown> };
+  | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown>; settle?: (prepared: unknown) => Promise<void> };
 
 const MUTATING = (method: string) => method !== 'GET' && method !== 'HEAD';
 
@@ -300,7 +300,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         };
       }
       if (rest.length === 1 && rest[0] === 'deployments' && post) {
-        return { kind: 'prepared', name: 'deployment.request', prepare: async (b) => prepareDeployment(runtime(), project, b) };
+        return { kind: 'prepared', name: 'deployment.request', prepare: async (b) => prepareDeployment(runtime(), project, b), settle: (prepared) => settleDeployment(runtime(), prepared) };
       }
       // D3 A.7; SEAM.md §§178, 180: a protected version as discovery read it,
       // and a candidate's check executions; reads.
@@ -673,9 +673,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         }
         try {
           const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
+          if (route.kind === 'prepared' && route.settle) await route.settle(args);
           send({ status: result.status, body: result.body });
           if (result.effects && result.effects.length > 0) state.runtime?.afterCommit(result.effects);
         } catch (err) {
+          if (route.kind === 'prepared' && route.settle) await route.settle(args).catch(() => {});
           refuse(err);
         }
         return;

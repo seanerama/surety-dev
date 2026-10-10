@@ -146,6 +146,11 @@ const MAIN_BARRIERS: readonly string[] = [
   'deploy.intended',
   'deploy.receipt_recorded',
   'verify.row_recorded',
+  // SEAM.md §262: slice 24's.
+  'artifact.staging_written',
+  'adapter.before_host_call',
+  'deploy.round_registered',
+  'identity.between_halves',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -205,6 +210,8 @@ export interface HarnessSwitches {
   classifierVersion?: number | null;
   // SEAM.md §247: `--harness-deploy-adapter <scripted|real>`.
   deployAdapter?: 'scripted' | 'real';
+  // SEAM.md §260: `--harness-artifact-free-bytes <n>`.
+  artifactFreeBytes?: number | null;
 }
 
 export interface CheckDomainLimits {
@@ -1013,6 +1020,26 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     if (s[3] === 'answers') return route(200, async (body) => addAnswers(init.scripted, env, body));
     if (s[3] === 'admission') return route(200, async (body) => setAdmission(init.scripted, env, body));
   }
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'faults') {
+    return {
+      restricted: false,
+      handler: async () => {
+        const body = await hooks.body();
+        const b = isObject(body) ? body : {};
+        const env = b.environment;
+        const fault = b.fault;
+        if (typeof fault !== 'string' || !(DEPLOY_FAULTS as readonly string[]).includes(fault)) {
+          throw new Refusal(400, 'invalid_value', `"fault" must be one of ${DEPLOY_FAULTS.join(', ')}.`, 'Send {"environment": "env_…", "fault": <a fault of SEAM.md §262>}.', { field: 'fault' });
+        }
+        const known = typeof env === 'string' && (await hooks.store().call('read', { name: 'deploy.environment_known', args: { environment: env } })) === true;
+        if (!known) throw new Refusal(400, 'invalid_value', 'No such environment.', 'Send {"environment": "env_…"}.', { field: 'environment' });
+        const armed = deployFaults.get(env as string) ?? new Set<DeployFault>();
+        armed.add(fault as DeployFault);
+        deployFaults.set(env as string, armed);
+        return { status: 200, body: { environment: env, faults: [...armed] } };
+      },
+    };
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'adapter-qualification') {
     return { restricted: false, handler: async () => (await storeOp(OP.adapterQualification, { body: await hooks.body(), actor: hooks.actor })) as { status: number; body: unknown } };
   }
@@ -1181,6 +1208,20 @@ function resolverReport(): unknown {
 export function seamDeploymentAdapter(id: string): unknown {
   if (!init.harness || id !== 'local_service' || (init.switches?.deployAdapter ?? 'scripted') !== 'scripted') return null;
   return scriptedDeploymentAdapter(init.scripted);
+}
+
+// SEAM.md §262: the real adapter's one-shot faults, armed per environment.
+const DEPLOY_FAULTS = ['init_report_altered', 'identity_start_time', 'identity_proc_unreadable'] as const;
+type DeployFault = (typeof DEPLOY_FAULTS)[number];
+const deployFaults = new Map<string, Set<DeployFault>>();
+
+// Is `fault` armed for `environment`? Taken (disarmed) when it is.
+export function seamTakeDeployFault(environment: string, fault: DeployFault): boolean {
+  if (!init.harness) return false;
+  const armed = deployFaults.get(environment);
+  if (!armed?.has(fault)) return false;
+  armed.delete(fault);
+  return true;
 }
 
 // What admission answers for a service domain where no real boundary
@@ -1571,6 +1612,7 @@ export function setHarnessSwitches(values: {
   checkDomainLimits?: string | null;
   classifierVersion?: string | null;
   deployAdapter?: string | null;
+  artifactFreeBytes?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1614,6 +1656,11 @@ export function setHarnessSwitches(values: {
     classifierVersion = Number(values.classifierVersion);
   }
   if (values.deployAdapter != null && values.deployAdapter !== 'scripted' && values.deployAdapter !== 'real') return `--harness-deploy-adapter takes scripted or real, not ${values.deployAdapter}`;
+  let artifactFreeBytes: number | null = null;
+  if (values.artifactFreeBytes != null) {
+    if (!/^\d{1,15}$/.test(values.artifactFreeBytes)) return `--harness-artifact-free-bytes takes a number of bytes, not ${values.artifactFreeBytes}`;
+    artifactFreeBytes = Number(values.artifactFreeBytes);
+  }
   if (!init.harness) return null;
   init = {
     ...init,
@@ -1629,6 +1676,7 @@ export function setHarnessSwitches(values: {
       checkDomainLimits,
       classifierVersion,
       deployAdapter: (values.deployAdapter as 'scripted' | 'real' | null | undefined) ?? 'scripted',
+      artifactFreeBytes,
     },
   };
   return null;
@@ -1650,6 +1698,10 @@ export const seamSelfTestForced = (): Record<string, 'failed' | 'not_exercised'>
 export const seamCheckProfileVariant = (): string | null => (init.harness ? (init.switches?.checkProfileVariant ?? null) : null);
 // SEAM.md §212: limits below the configured minimums for every check domain.
 export const seamCheckDomainLimits = (): CheckDomainLimits | null => (init.harness ? (init.switches?.checkDomainLimits ?? null) : null);
+// SEAM.md §260: the free bytes artifact admission takes, or null (statfs).
+export const seamArtifactFreeBytes = (): number | null => (init.harness ? (init.switches?.artifactFreeBytes ?? null) : null);
+// SEAM.md §247: whether this harness start uses the real deployment adapter.
+export const seamRealDeployAdapter = (): boolean => !init.harness || init.switches?.deployAdapter === 'real';
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
 // The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays

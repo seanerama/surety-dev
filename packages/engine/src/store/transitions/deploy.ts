@@ -30,9 +30,10 @@ import { registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import { hostEligibility } from './trust.js';
+import { serviceAdmissionHold } from './envelope.js';
 import type { Tx } from './tx.js';
 import type { CommandResult } from './control.js';
-import type { Capability, IdentityRead, Instance } from '../../deploy/adapter.js';
+import type { Capability, IdentityRead, Instance, TargetExpectation } from '../../deploy/adapter.js';
 import { engineBuild, profileFingerprint } from '../../deploy/qualification.js';
 
 type Db = Tx['db'];
@@ -109,6 +110,7 @@ interface AttemptRow {
   launch_state: string | null;
   init_instance: string | null;
   app_instance: string | null;
+  app_disagreement: string | null;
   receipt: string | null;
 }
 
@@ -349,9 +351,9 @@ function artifactCorrupt(tx: Tx, project: string, a: ArtifactRow, where: string)
 
 // The sealed copy found changed at a precondition read (main thread's
 // rehash): recorded before the operation fails on it.
-export function artifactFoundCorrupt(tx: Tx, args: { project: string; digest: string }): void {
+export function artifactFoundCorrupt(tx: Tx, args: { project: string; digest: string; where?: 'precondition' | 'reuse' }): void {
   const a = getArtifact(tx.db, args.project, args.digest);
-  if (a) artifactCorrupt(tx, args.project, a, 'precondition');
+  if (a) artifactCorrupt(tx, args.project, a, args.where ?? 'precondition');
 }
 
 function recordArtifact(tx: Tx, project: string, s: SealedArtifact): ArtifactRow {
@@ -476,7 +478,8 @@ export interface RequestArgs {
   project: string;
   candidate: string;
   environment: string;
-  sealed: SealedArtifact;
+  // null: prepared as coalescing with a pending deployment, nothing sealed.
+  sealed: SealedArtifact | null;
   specFingerprint: string;
   builder: string;
   // The gate's facts, read on the main thread (gates/prepare.ts).
@@ -492,7 +495,44 @@ export function requestFacts(db: Db, args: { project: string; candidate: string;
   const config = currentConfig(db, env);
   if (!config) throw notFound('environment configuration', args.environment);
   const repo = (db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string }).dev_repo_path;
-  return { candidate: candidate.id, revision: candidate.revision, environment: env.id, name: env.name, config: { id: config.id, version: config.version, status: config.status, content: configContent(config) }, repo };
+  // Whether a request now would coalesce (J3): decided before anything is
+  // sealed, so a coalesced request seals nothing (the slice-23 review's m5).
+  const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate.id, env.id) as AuthRow[];
+  const pendingNow = all.some((a) => pending(db, a));
+  return {
+    candidate: candidate.id,
+    revision: candidate.revision,
+    environment: env.id,
+    name: env.name,
+    config: { id: config.id, version: config.version, status: config.status, content: configContent(config) },
+    repo,
+    pending: pendingNow,
+  };
+}
+
+// Artifact admission (D4 §3.1): whether a row of the project records the
+// digest, and the bytes every row of the home records.
+export function artifactAdmission(db: Db, args: { project: string; digest: string }): { recorded: boolean; total: number } {
+  const recorded = getArtifact(db, args.project, args.digest) !== undefined;
+  const { total } = db.prepare('SELECT COALESCE(SUM("bytes"), 0) AS total FROM "artifacts"').get() as { total: number };
+  return { recorded, total };
+}
+
+// Every recorded artifact's path, and whether the project has any (the
+// start sweep's and a request's cleanup's read).
+export function artifactPaths(db: Db): string[] {
+  return (db.prepare('SELECT "path" FROM "artifacts"').all() as { path: string }[]).map((r) => r.path);
+}
+
+// Every artifact row's project, digest and path (the start sweep's read).
+export function artifactRows(db: Db): { project: string; digest: string; path: string }[] {
+  return db.prepare('SELECT "project", "digest", "path" FROM "artifacts"').all() as { project: string; digest: string; path: string }[];
+}
+
+// An artifact refused at the request (D4 §3.1, A.2): the bound recorded on
+// `artifact.failed`; no row, since no sealed bytes exist.
+export function artifactRefused(tx: Tx, args: { project: string; refusal: string; detail: Record<string, unknown>; candidate: string; environment: string }): void {
+  tx.emit('artifact.failed', { project: args.project, candidate: args.candidate, environment: args.environment }, { refusal: args.refusal, ...args.detail });
 }
 
 export type Evaluate = (tx: Tx, a: Record<string, unknown>) => { evaluation: { id: string; outcome: string; reasons: unknown[] } };
@@ -540,6 +580,14 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     throw new Refusal(409, 'config_secrets_changed', `A secret the current configuration of ${env.name} names has a value other than its version records.`, 'Write a new configuration version, then request the deployment again.', {
       environment: env.id,
       config: config.id,
+    });
+  }
+  if (args.sealed === null) {
+    // Prepared as a coalescing request, and nothing is pending any more: the
+    // request is made again, and seals then.
+    throw new Refusal(409, 'illegal_transition', `The ${env.name} deployment of candidate ${candidate.id} that this request would have joined ended while it was prepared.`, 'Request the deployment again.', {
+      candidate: candidate.id,
+      environment: env.id,
     });
   }
   const artifact = recordArtifact(tx, args.project, args.sealed);
@@ -954,7 +1002,11 @@ export interface DeployDetail {
     // The init's instance recorded at the grant: a launch was granted.
     init_instance: Instance | null;
     app_instance: Instance | null;
+    // The init's report and the host read disagreed (§3.4 step 3).
+    app_disagreement: Record<string, unknown> | null;
     intent: { create_units: string[]; prior: { unit: string; instance: Instance | null }[]; cleanup: string[]; resources: string[] } | null;
+    // What an identity read of its generation expects (§3.4).
+    expect: TargetExpectation[];
   }[];
   // Every unit a frozen intent of the environment named (D4 §4.6).
   recorded_units: string[];
@@ -993,12 +1045,28 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
       launch_state: a.launch_state,
       init_instance: parseJson<Instance>(a.init_instance),
       app_instance: parseJson<Instance>(a.app_instance),
+      app_disagreement: parseJson<Record<string, unknown>>(a.app_disagreement),
       intent: intents.get(a.id) ?? null,
+      expect: frozen.target_set.map((t) => expectationOf(db, a, frozen, t, intents.get(a.id)?.create_units[0] ?? null, a.deployment_generation)),
     })),
     recorded_units: recordedUnits(db, frozen.environment),
     rounds: db.prepare('SELECT "id", "round", "status", "step" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op.id) as DeployDetail['rounds'],
     blocker: openBlocker(db, op.id)?.id ?? null,
   };
+}
+
+// Every resource the store recorded for an environment's service domains
+// (D4 §2.4's inventory, the store's half): each domain's unit, generation,
+// cgroup, invocation and runtime directory, and whether its closure was
+// observed.
+export function environmentResources(db: Db, args: { environment: string }) {
+  return db
+    .prepare(
+      `SELECT d."id" AS "domain", d."unit", d."cgroup_path", d."cgroup_inode", d."invocation_id", d."runtime_dir", d."status", a."id" AS "attempt", a."deployment_generation" AS "generation"
+       FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
+       WHERE d."profile" = 'service' AND json_extract(o."target", '$.environment') = ? ORDER BY d."created_at", d."id"`,
+    )
+    .all(args.environment) as { domain: string; unit: string | null; cgroup_path: string | null; cgroup_inode: number | null; invocation_id: string | null; runtime_dir: string | null; status: string; attempt: string; generation: number }[];
 }
 
 export function recordedUnits(db: Db, env: string): string[] {
@@ -1146,12 +1214,15 @@ function priorOf(db: Db, env: string): { unit: string; instance: Instance | null
 // precondition manifest's record; its capability; its launch authorizable.
 export function startDeployAttempt(
   tx: Tx,
-  args: { operation: string; incarnation: string; facts: PreconditionFacts; manifest: string },
+  args: { operation: string; incarnation: string; facts: PreconditionFacts; manifest: string; service?: { home: string; checkCapacity: number } },
   evaluate: Evaluate,
-): { attempt: string; capability: Capability } | { retry: true } {
+): { attempt: string; capability: Capability; domain?: string } | { retry: true } {
   const v = readPreconditions(tx, { operation: args.operation, facts: args.facts }, evaluate);
   if (v.verdict !== 'hold') return { retry: true };
   const op = getOp(tx.db, args.operation)!;
+  // Admission and allocation in one transaction (D4 §4.7; the slice-24
+  // review, m4): the service domain holds its reservation from here.
+  if (op.kind === 'deploy' && args.service && serviceAdmissionHold(tx.db, { project: op.project }).admission !== 'granted') return { retry: true };
   const frozen = frozenOf(op);
   const env = getEnv(tx.db, frozen.environment)!;
   const latest = attemptsOf(tx.db, op.id).at(-1);
@@ -1197,9 +1268,29 @@ export function startDeployAttempt(
     )
     .run(tx.newId('ati_'), tx.at, op.project, op.id, attempt, g, JSON.stringify(create), JSON.stringify(prior), JSON.stringify(resources), args.manifest);
   tx.emit('operation.attempt_started', { project: op.project, operation: op.id, environment: env.id }, { attempt_number: n, deployment_generation: g });
+  // The service domain of a deploy attempt (J2; D4 §§4.7, 9.2): allocated
+  // with the attempt, its reservation and its runtime directory recorded
+  // before anything of it exists.
+  let domain: string | undefined;
+  if (op.kind === 'deploy') {
+    domain = tx.newId('dom_');
+    const policy = projectPolicy(tx.db, op.project) as Record<string, number>;
+    const reservation = { memory: policy.service_memory_max ?? null, check_capacity: args.service?.checkCapacity ?? null };
+    const runtimeDir = args.service ? serviceRuntimeDir(args.service.home, env.id, g) : null;
+    tx.db
+      .prepare(
+        `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "check_execution", "attempt", "status", "profile", "launch_state", "reservation", "unit", "runtime_dir")
+         VALUES (?, ?, ?, NULL, NULL, NULL, ?, 'allocated', 'service', 'authorizable', ?, ?, ?)`,
+      )
+      .run(domain, tx.at, op.project, attempt, JSON.stringify(reservation), create[0] ?? null, runtimeDir);
+  }
   refreshOp(tx, op.id);
-  return { attempt, capability };
+  return { attempt, capability, ...(domain ? { domain } : {}) };
 }
+
+// A service domain's runtime directory (SEAM.md §259): under
+// $SURETY_HOME/run/, its name carrying the environment's id and generation.
+export const serviceRuntimeDir = (home: string, env: string, generation: number): string => `${home.replace(/\/+$/, '')}/run/${env}-g${generation}`;
 
 // adapterCall's check (D4 §2.2): every field of the capability against the
 // store, before any host call. null: it holds; otherwise the field that
@@ -1256,25 +1347,149 @@ export function capabilityRefused(tx: Tx, args: { attempt: string; field: string
   failOperation(tx, op, { code: 'deploy_capability_refused', field: args.field });
 }
 
-// ---- the launch (D4 §§3.4, 9.2; SEAM.md §247's stand-in) -------------------------------------------
+// ---- the launch (D4 §§3.4, 9.2; SEAM.md §§247, 259) -------------------------------------------------
 
-// A service launcher asks for its attempt's launch, presenting the
-// incarnation, the lease generation and the init's instance. Granted once,
-// in one transaction, only while all are current and the launch is
-// authorizable (single use: `authorizable → authorized`, never back).
-export function launchAuthorize(
+interface ServiceDomainRow {
+  id: string;
+  project: string;
+  attempt: string;
+  status: string;
+  launch_state: string;
+  cgroup_path: string | null;
+  cgroup_inode: number | null;
+  unit: string | null;
+  invocation_id: string | null;
+  runtime_dir: string | null;
+  reservation: string | null;
+  launched_by_incarnation: string | null;
+  app_exit: string | null;
+}
+
+const serviceDomainOf = (db: Db, attempt: string): ServiceDomainRow | undefined =>
+  db.prepare(`SELECT * FROM "execution_domains" WHERE "attempt" = ? AND "profile" = 'service'`).get(attempt) as ServiceDomainRow | undefined;
+
+// The attempt's launch closed, on the attempt and on its service domain:
+// from here no launcher of it is ever granted (D4 §9.2).
+function closeAttemptLaunch(tx: Tx, a: AttemptRow, cause: string): void {
+  if (a.launch_state !== null && a.launch_state !== 'closed') tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'closed' WHERE "id" = ?`).run(a.id);
+  const d = serviceDomainOf(tx.db, a.id);
+  if (d && d.launch_state !== 'closed') {
+    tx.db.prepare(`UPDATE "execution_domains" SET "launch_state" = 'closed', "launch_closed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);
+    tx.emit('domain.launch_closed', { project: d.project, domain: d.id, attempt: a.id }, { from: d.launch_state, reason: cause });
+  }
+}
+
+// What a service launcher's first message is checked against (D4 §9.2):
+// the attempt, its launch state, incarnation and lease, its service domain,
+// and what the launch will run. null: no such attempt.
+export function launchLookup(db: Db, args: { attempt: string }) {
+  const a = getAttempt(db, args.attempt);
+  if (!a) return null;
+  const op = getOp(db, a.operation)!;
+  const frozen = frozenOf(op);
+  const lease = environmentLease(db, frozen.environment);
+  const d = serviceDomainOf(db, a.id);
+  const config = getConfig(db, frozen.config_version);
+  const content = config ? configContent(config) : null;
+  const intent = db.prepare('SELECT "create_units" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string } | undefined;
+  const policy = projectPolicy(db, op.project) as Record<string, number>;
+  return {
+    attempt: a.id,
+    operation: op.id,
+    project: op.project,
+    status: a.status,
+    launch_state: a.launch_state,
+    incarnation: a.incarnation,
+    generation: a.deployment_generation,
+    environment: frozen.environment,
+    prefix: frozen.prefix,
+    unit: intent ? ((JSON.parse(intent.create_units) as string[])[0] ?? null) : null,
+    lease: lease && lease.id === frozen.lease.id ? { generation: lease.generation } : null,
+    lease_expected: frozen.lease.generation,
+    domain: d ? { id: d.id, status: d.status, launch_state: d.launch_state, cgroup_path: d.cgroup_path, unit: d.unit, invocation_id: d.invocation_id, runtime_dir: d.runtime_dir } : null,
+    init_instance: parseJson<Instance>(a.init_instance),
+    app_instance: parseJson<Instance & { exe: string; exe_sha256: string | null; argv: string[] }>(a.app_instance),
+    artifact: { digest: frozen.artifact_digest, path: frozen.artifact_path },
+    runtime: frozen.runtime,
+    start: frozen.start,
+    port: typeof content?.port === 'number' ? content.port : null,
+    env: (content?.env as Record<string, string> | undefined) ?? {},
+    secrets: content?.secrets ?? {},
+    limits: {
+      memory_max: policy.service_memory_max ?? null,
+      memory_swap_max: 0,
+      pids_max: policy.service_tasks_max ?? null,
+      writable_bytes: policy.service_writable_bytes ?? null,
+      writable_inodes: policy.service_writable_inodes ?? null,
+      log_max_bytes: policy.service_log_max_bytes ?? null,
+    },
+  };
+}
+
+// The service launcher's placement, read from the host by the main thread
+// (D4 §9.2; E121 item 4): its pid the unit's MainPID, its cgroup the unit's
+// own ControlGroup, the limits read back from the cgroup files. Recorded on
+// the domain only while the launch is authorizable, the attempt started and
+// of this incarnation, the lease current. The answer says why not.
+export function serviceLauncherPlaced(
   tx: Tx,
-  args: { attempt: string; incarnation: string; lease_generation: number; init: Instance },
-): { granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] } {
+  args: { attempt: string; domain: string; incarnation: string; lease_generation: number; pid: number; cgroup: string; inode: number | null; invocation_id: string; unit: string },
+): { placed: boolean; reason: string | null } {
   const a = getAttempt(tx.db, args.attempt);
-  if (!a || a.status !== 'started' || a.launch_state !== 'authorizable' || a.incarnation !== args.incarnation) return { granted: false };
+  const no = (reason: string) => ({ placed: false, reason });
+  if (!a) return no('no such attempt');
+  if (a.status !== 'started') return no(`the attempt is ${a.status}`);
+  if (a.launch_state !== 'authorizable') return no(`the launch is ${a.launch_state}`);
+  if (a.incarnation !== args.incarnation) return no('the incarnation is not the one that started the attempt');
   const op = getOp(tx.db, a.operation)!;
   const frozen = frozenOf(op);
   const lease = environmentLease(tx.db, frozen.environment);
-  if (!lease || lease.id !== frozen.lease.id || lease.generation !== args.lease_generation) return { granted: false };
-  if (!Number.isInteger(args.init?.pid) || !Number.isInteger(args.init?.start_time)) return { granted: false };
-  tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'authorized', "init_instance" = ? WHERE "id" = ?`).run(JSON.stringify({ pid: args.init.pid, start_time: args.init.start_time }), a.id);
-  tx.emit('deploy.launch_authorized', { project: op.project, operation: op.id, attempt: a.id }, { init: { pid: args.init.pid, start_time: args.init.start_time } });
+  if (!lease || lease.id !== frozen.lease.id || lease.generation !== args.lease_generation) return no('the environment lease is not current');
+  const d = serviceDomainOf(tx.db, a.id);
+  if (!d || d.id !== args.domain) return no("the domain is not the attempt's");
+  if (d.status !== 'allocated' || d.launch_state !== 'authorizable') return no(`the domain is ${d.status}, its launch ${d.launch_state}`);
+  if (d.unit !== args.unit) return no("the unit is not the attempt's");
+  if (typeof args.invocation_id !== 'string' || !/^[0-9a-f]{32}$/.test(args.invocation_id)) return no("the unit's invocation was not read");
+  if (d.cgroup_path !== null && d.cgroup_path !== args.cgroup) return no('the domain was placed in another cgroup');
+  tx.db
+    .prepare('UPDATE "execution_domains" SET "cgroup_path" = ?, "cgroup_inode" = ?, "invocation_id" = ?, "placed_at" = COALESCE("placed_at", ?) WHERE "id" = ?')
+    .run(args.cgroup, args.inode, args.invocation_id, tx.at, d.id);
+  tx.emit('domain.placed', { project: d.project, domain: d.id, attempt: a.id }, { cgroup_path: args.cgroup, launcher_pid: args.pid, launch_state: d.launch_state, invocation_id: args.invocation_id });
+  return { placed: true, reason: null };
+}
+
+// A service launcher asks for its attempt's launch, presenting the
+// incarnation, the lease generation and the init's instance (read and
+// checked on the host by the main thread, D4 §3.4 step 2). Granted once, in
+// one transaction, only while all are current and the launch is
+// authorizable (single use: `authorizable → authorized`, never back), on the
+// attempt and on its service domain together.
+export function launchAuthorize(
+  tx: Tx,
+  args: { attempt: string; incarnation: string; lease_generation: number; init: Instance; limits?: Record<string, number> },
+): { granted: false; reason?: string } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] } {
+  const a = getAttempt(tx.db, args.attempt);
+  if (!a || a.status !== 'started' || a.launch_state !== 'authorizable' || a.incarnation !== args.incarnation) return { granted: false, reason: 'the attempt is not started, authorizable and of this incarnation' };
+  const op = getOp(tx.db, a.operation)!;
+  const frozen = frozenOf(op);
+  const lease = environmentLease(tx.db, frozen.environment);
+  if (!lease || lease.id !== frozen.lease.id || lease.generation !== args.lease_generation) return { granted: false, reason: 'the environment lease is not current' };
+  if (!Number.isInteger(args.init?.pid) || !Number.isInteger(args.init?.start_time)) return { granted: false, reason: 'no init instance' };
+  const d = serviceDomainOf(tx.db, a.id);
+  if (d && (d.status !== 'allocated' || d.launch_state !== 'authorizable')) return { granted: false, reason: `the domain is ${d.status}, its launch ${d.launch_state}` };
+  const init = { pid: args.init.pid, start_time: args.init.start_time };
+  tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'authorized', "init_instance" = ? WHERE "id" = ?`).run(JSON.stringify(init), a.id);
+  if (d) {
+    const binding = { attempt: a.id, incarnation: args.incarnation, lease_generation: args.lease_generation };
+    tx.db
+      .prepare(`UPDATE "execution_domains" SET "launch_state" = 'authorized', "launch_binding" = ?, "launch_authorized_at" = ?, "status" = 'launched', "launched_by_incarnation" = ? WHERE "id" = ?`)
+      .run(JSON.stringify(binding), tx.at, args.incarnation, d.id);
+  }
+  tx.emit(
+    'deploy.launch_authorized',
+    { project: op.project, operation: op.id, attempt: a.id, environment: frozen.environment, ...(d ? { domain: d.id } : {}) },
+    { init, ...(args.limits ? { limits: args.limits } : {}) },
+  );
   return { granted: true, exe: frozen.runtime?.path ?? '', exe_sha256: frozen.runtime?.sha256 ?? null, argv: frozen.start ?? [] };
 }
 
@@ -1282,10 +1497,57 @@ export function launchAuthorize(
 // once and never rebound (§3.4), only under a granted launch.
 export function applicationStarted(tx: Tx, args: { attempt: string; app: Instance & { exe: string; exe_sha256: string | null; argv: string[] } }): { recorded: boolean } {
   const a = getAttempt(tx.db, args.attempt);
-  if (!a || a.launch_state !== 'authorized' || a.app_instance !== null) return { recorded: false };
+  if (!a || a.launch_state !== 'authorized' || a.app_instance !== null || a.app_disagreement !== null) return { recorded: false };
   const app = { pid: args.app.pid, start_time: args.app.start_time, exe: args.app.exe, exe_sha256: args.app.exe_sha256, argv: args.app.argv };
   tx.db.prepare('UPDATE "operation_attempts" SET "app_instance" = ? WHERE "id" = ?').run(JSON.stringify(app), a.id);
   return { recorded: true };
+}
+
+// The init's report and the host read disagree (§3.4 step 3): neither binds
+// anything; what each said is kept, and reconcile reads `conflicting`.
+export function applicationDisagreement(tx: Tx, args: { attempt: string; detail: Record<string, unknown> }): void {
+  const a = getAttempt(tx.db, args.attempt);
+  if (!a || a.app_instance !== null || a.app_disagreement !== null) return;
+  tx.db.prepare('UPDATE "operation_attempts" SET "app_disagreement" = ? WHERE "id" = ?').run(JSON.stringify(args.detail), a.id);
+}
+
+// The application's terminal exit, as the init reported it while attached
+// (D4 §9.2): kept on the domain; `deploy.service_exited`.
+export function applicationExited(tx: Tx, args: { attempt: string; exit: { at: string; code: number | null; signal: number | null } }): void {
+  const a = getAttempt(tx.db, args.attempt);
+  const d = a ? serviceDomainOf(tx.db, a.id) : undefined;
+  if (!a || !d || d.app_exit !== null) return;
+  const exit = { at: args.exit.at, code: args.exit.code, signal: args.exit.signal };
+  tx.db.prepare('UPDATE "execution_domains" SET "app_exit" = ? WHERE "id" = ?').run(JSON.stringify(exit), d.id);
+  const op = getOp(tx.db, a.operation)!;
+  tx.emit('deploy.service_exited', { project: d.project, operation: op.id, attempt: a.id, domain: d.id }, exit);
+}
+
+// The service domains of a project not yet terminated, with what the main
+// thread needs to observe their closure.
+export function openServiceDomains(db: Db, args: { project?: string }) {
+  const rows = db
+    .prepare(
+      `SELECT d."id", d."attempt", d."status", d."launch_state", d."cgroup_path", d."cgroup_inode", d."unit", d."runtime_dir", d."launched_by_incarnation",
+              json_extract(o."target", '$.environment') AS "environment"
+       FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
+       WHERE d."profile" = 'service' AND d."status" <> 'terminated' ${args.project ? 'AND d."project" = ?' : ''} ORDER BY d."created_at", d."id"`,
+    )
+    .all(...(args.project ? [args.project] : [])) as { id: string; attempt: string; status: string; launch_state: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; launched_by_incarnation: string | null; environment: string }[];
+  return rows;
+}
+
+// A service domain's closure observed (D2 §3.2, absence in the verified
+// hierarchy; D4 §9.2): its launch closed first, then `terminated`.
+export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: string }): { terminated: boolean } {
+  const d = tx.db.prepare(`SELECT * FROM "execution_domains" WHERE "id" = ? AND "profile" = 'service'`).get(args.domain) as ServiceDomainRow | undefined;
+  if (!d || d.status === 'terminated') return { terminated: false };
+  const a = getAttempt(tx.db, d.attempt);
+  if (a) closeAttemptLaunch(tx, a, 'closure_observed');
+  else if (d.launch_state !== 'closed') tx.db.prepare(`UPDATE "execution_domains" SET "launch_state" = 'closed', "launch_closed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);
+  tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`).run(tx.at, tx.at, d.id);
+  tx.emit('domain.terminated', { project: d.project, domain: d.id, attempt: d.attempt }, { observed: args.observed, profile: 'service' });
+  return { terminated: true };
 }
 
 // ---- the receipt and the reconcile read (D4 §§2.3, 2.4; J1) ---------------------------------------
@@ -1308,7 +1570,7 @@ export function recordReceipt(tx: Tx, args: { attempt: string; receipt: { result
   }
   if (args.bound === null && (args.receipt.result === 'refused' || args.receipt.result === 'not_issued')) {
     setAttempt(tx, a, 'failed');
-    if (a.launch_state === 'authorizable') tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'closed' WHERE "id" = ?`).run(a.id);
+    closeAttemptLaunch(tx, a, 'not_issued');
     failOperation(tx, op, { code: args.receipt.result, attempt: a.id });
     return { reconcile: false };
   }
@@ -1343,7 +1605,7 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
     }
     case 'absent': {
       setAttempt(tx, a, 'reconciled_absent', read);
-      if (a.launch_state === 'authorizable') tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'closed' WHERE "id" = ?`).run(a.id);
+      if (a.launch_state === 'authorizable') closeAttemptLaunch(tx, a, 'reconciled_absent');
       if (journalOf(tx.db, op.id)!.state === 'applied') journalAppend(tx, op, 'ambiguous', { attempt: a.id });
       closeBlocker(tx, op.id, 'the reconcile read found the effect absent');
       const absent = attemptsOf(tx.db, op.id).filter((x) => x.status === 'reconciled_absent').length;
@@ -1369,7 +1631,7 @@ export function attemptOrphaned(tx: Tx, args: { attempt: string; incarnation: st
   const a = getAttempt(tx.db, args.attempt);
   if (!a || a.status !== 'started' || a.incarnation === args.incarnation) return;
   const op = getOp(tx.db, a.operation)!;
-  if (a.launch_state !== null && a.launch_state !== 'closed') tx.db.prepare(`UPDATE "operation_attempts" SET "launch_state" = 'closed' WHERE "id" = ?`).run(a.id);
+  closeAttemptLaunch(tx, a, 'engine_restart');
   setAttempt(tx, a, 'ambiguous');
   if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, cause: 'engine_restart' });
   refreshOp(tx, op.id);
@@ -1509,9 +1771,35 @@ export interface RoundDetail {
   status: string;
   step: string;
   environment: { id: string; prefix: string };
-  expect: { target: string; digest: string; unit: string | null; generation: number | null; instance: Instance | null }[];
+  expect: TargetExpectation[];
   deadline: string;
   executions: string[];
+}
+
+// What an identity read of target `t` of attempt `a` expects (D4 §3.4): the
+// sealed digest and manifest, the unit and its recorded invocation and
+// cgroup, the init and the original application instance, the runtime's hash
+// and the start command.
+export function expectationOf(db: Db, a: AttemptRow, frozen: FrozenIntent, t: string, unit: string | null, generation: number | null): TargetExpectation {
+  const app = parseJson<Instance & { exe: string; exe_sha256: string | null; argv: string[] }>(a.app_instance);
+  const init = parseJson<Instance>(a.init_instance);
+  const d = serviceDomainOf(db, a.id);
+  return {
+    target: t,
+    digest: frozen.artifact_digest ?? '',
+    unit,
+    generation,
+    instance: app ? { pid: app.pid, start_time: app.start_time } : null,
+    init,
+    attempt: a.id,
+    cgroup: d?.cgroup_path ?? null,
+    invocation_id: d?.invocation_id ?? null,
+    exe_sha256: frozen.runtime?.sha256 ?? null,
+    exe: frozen.runtime?.path ?? null,
+    argv: frozen.start ?? null,
+    sealed_path: frozen.artifact_path,
+    manifest: (frozen.manifest as unknown[] | null) ?? null,
+  };
 }
 
 export function roundDetail(db: Db, args: { round: string }): RoundDetail | null {
@@ -1531,7 +1819,7 @@ export function roundDetail(db: Db, args: { round: string }): RoundDetail | null
     status: r.status,
     step: r.step,
     environment: { id: frozen.environment, prefix: prefixOf(db, frozen.environment) },
-    expect: frozen.target_set.map((t) => ({ target: t, digest: frozen.artifact_digest!, unit, generation: r.deployment_generation, instance: app ? { pid: app.pid, start_time: app.start_time } : null })),
+    expect: frozen.target_set.map((t) => expectationOf(db, a, frozen, t, unit, r.deployment_generation)),
     deadline: r.deadline_at ?? op.orchestration_deadline_at ?? op.deadline_at,
     executions: JSON.parse(r.executions) as string[],
   };
@@ -1566,8 +1854,8 @@ export function supervisionOf(a: { incarnation: string | null; init_instance: st
 function readsFor(targets: string[], expect: RoundDetail['expect'], reads: IdentityRead[] | null, at: string): IdentityRead[] {
   return targets.map((t) => {
     const x = Array.isArray(reads) ? reads.find((y) => y?.target === t) : undefined;
-    if (x) return { target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at };
-    return { target: t, method: 'tree_digest', expected: expect.find((e) => e.target === t)?.digest ?? '', read: 'unread', match: 'unread', instance: 'unread', generation: 'unread', at };
+    if (x) return { target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at, duration_ms: x.duration_ms ?? null, detail: x.detail ?? null };
+    return { target: t, method: 'tree_digest', expected: expect.find((e) => e.target === t)?.digest ?? '', read: 'unread', match: 'unread', instance: 'unread', generation: 'unread', at, duration_ms: null, detail: { field: 'read', failure: 'no read' } };
   });
 }
 
@@ -1725,7 +2013,7 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
   const decides = newest.id === r.id && latestAttempt.id === r.attempt;
   const invalidated = !current ? 'generation_superseded' : !decides ? 'round_superseded' : null;
   const id = tx.newId('dv_');
-  const identityReads = entries.flatMap((e) => e.reads.map((x) => ({ target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at, bracket: e.bracket })));
+  const identityReads = entries.flatMap((e) => e.reads.map((x) => ({ target: x.target, method: x.method, expected: x.expected, read: x.read, match: x.match, instance: x.instance, generation: x.generation, at: x.at, duration_ms: x.duration_ms ?? null, detail: x.detail ?? null, bracket: e.bracket })));
   tx.db
     .prepare(
       `INSERT INTO "deployment_verifications" ("id", "created_at", "project", "environment", "operation", "attempt", "round", "deployment_generation", "candidate", "target_set", "artifact_digest",

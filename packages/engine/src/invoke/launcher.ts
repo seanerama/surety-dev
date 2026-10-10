@@ -163,7 +163,45 @@ async function waitPoint(spec: Spec, name: string): Promise<void> {
   if (closed) stop();
 }
 
+// The `service` profile (D4 §9.2; E121 item 4). Started by the user's
+// service manager as a unit's main process, with standard input and output
+// one connection to the engine's launch socket (the unit's StandardInput= and
+// StandardOutput= name it). Its arguments name the attempt, the domain, the
+// incarnation and the lease generation. It presents them with its pid and
+// its cgroup, which must be the unit's own: it writes nothing to any
+// cgroup.procs. On the engine's `spec` it becomes `unshare` in place, so the
+// domain init it forks is its child, with the same connection; the init
+// asks for the launch authorization with its own instance before anything
+// of the application exists. Refused, it exits having run nothing.
+async function service(argv: string[]): Promise<void> {
+  const [attempt, domain, incarnation, generation] = argv;
+  const ownCgroup = (() => {
+    try {
+      const line = readFileSync('/proc/self/cgroup', 'utf8')
+        .split('\n')
+        .find((l) => l.startsWith('0::'));
+      return line ? join('/sys/fs/cgroup', line.slice(3)) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const answer = await ask({ t: 'hello', profile: 'service', attempt, domain, incarnation, lease_generation: Number(generation), pid: process.pid, cgroup: ownCgroup });
+  if (answer?.t !== 'spec' || ended) stop();
+  const spec = answer as unknown as { unshare: string; node: string; init: string };
+  const now = readFileSync('/proc/self/cgroup', 'utf8')
+    .split('\n')
+    .find((l) => l.startsWith('0::'));
+  if (!now || join('/sys/fs/cgroup', now.slice(3)) !== ownCgroup) stop();
+  const args = [spec.unshare, '--user', '--map-root-user', '--mount', '--pid', '--net', '--ipc', '--uts', '--cgroup', '--fork', '--propagation', 'private', '--', spec.node, '--no-warnings', '--disable-sigusr1', spec.init, 'setup', 'service'];
+  closeInherited();
+  (process as unknown as { execve(file: string, args: string[], env: Record<string, string>): never }).execve(spec.unshare, args, {
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    LANG: 'C.UTF-8',
+  });
+}
+
 async function main(): Promise<void> {
+  if (process.argv[2] === 'service') return service(process.argv.slice(3));
   const spec = (await next()) as unknown as Spec | null;
   if (!spec) stop();
   await waitPoint(spec, 'launcher.before_placement');

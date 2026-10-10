@@ -28,6 +28,9 @@ export interface ReconcileInputs {
   // the grant), and the application instance recorded at its launch.
   launch_granted: boolean;
   app_instance: Instance | null;
+  // The init's report and the host read disagreed at `started` (§3.4 step
+  // 3): nothing was bound, and the binding is `conflicting`.
+  binding_conflict?: boolean;
 }
 
 export interface Judged {
@@ -116,6 +119,7 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
   if (gUnit && gUnit.state === 'active') {
     if (units.some((e) => priors.has(e.resource) && e.state === 'active')) return answer('conflicting');
     // The binding of g's invocation to the application recorded at launch.
+    if (x.binding_conflict === true) return answer('conflicting');
     if (x.app_instance === null || unread(gUnit.tree) || unread(gUnit.instance)) return answer('unknown');
     if (gUnit.tree !== x.digest || !sameInstance(gUnit.instance, x.app_instance)) return answer('conflicting');
     // Applied: the termination of every prior established (nothing of it
