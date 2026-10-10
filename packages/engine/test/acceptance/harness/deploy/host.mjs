@@ -41,6 +41,9 @@ import { CGROUP_ROOT, cgroupOfPid, procsOf } from '../sandbox/cgroup.mjs';
 import { hostProcess } from '../sandbox/procs.mjs';
 import { hostNamespaces, namespacesOf } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
+// The real-path comparison of unrecordedUnderArtifacts (SEAM.md §264).
+import { realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy } from '../journal.mjs';
 import {
@@ -78,10 +81,59 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The switch that gives a harness engine the real `local_service` adapter
-// (SEAM.md §247). Every start of a sandbox-lane slice-24 engine carries it:
-// an engine without the switch refuses to start (a usage error) before it
-// creates anything.
+// (SEAM.md §247). Every start of a sandbox-lane slice-24 engine carries it.
+// The engine does not refuse to start without it (in harness mode the
+// scripted adapter is the default, so M1 to M3 engines start unchanged):
+// the harness makes and checks it instead (SEAM.md §265, `realAdapterStarts`).
 export const REAL_ADAPTER = Object.freeze(['--harness-deploy-adapter', 'real']);
+
+// The adapter a running harness engine selected, read back from its own
+// argument vector (`/proc/<pid>/cmdline`, or the vector it was spawned with
+// once it has exited): `real` or `scripted` by SEAM.md §247's rule (the
+// switch's value; `scripted` when it is absent), or `ambiguous` when the
+// switch is given more than once. `proc` false (an engine not yet known to
+// have reached its own code, `until: 'none'`) reads the spawned vector.
+export function deployAdapterOf(engine, { proc = true } = {}) {
+  let argv = null;
+  if (proc && engine.isRunning()) {
+    try {
+      argv = readFileSync(`/proc/${engine.pid}/cmdline`, 'utf8').replace(/\0$/, '').split('\0');
+    } catch {
+      argv = null;
+    }
+  }
+  if (argv === null) argv = engine.proc.child.spawnargs;
+  const at = argv.flatMap((a, i) => (a === '--harness-deploy-adapter' ? [i] : []));
+  if (at.length > 1) return 'ambiguous';
+  return at.length === 0 ? 'scripted' : argv[at[0] + 1];
+}
+
+export function assertRealAdapter(engine, what = 'the engine', opts = {}) {
+  const adapter = deployAdapterOf(engine, opts);
+  assert.equal(adapter, 'real', `${what} runs the real local_service adapter (--harness-deploy-adapter real, SEAM.md §265); it reads ${JSON.stringify(adapter)}, so a sandbox-lane file would be passing on the scripted adapter`);
+}
+
+// SEAM.md §265: every start of `fx` carries the real adapter's switch (added
+// when a start's arguments do not name one; a start naming another value
+// fails), and the started engine's own argument vector is read back to
+// select `real`. hostDeployable applies it; a sandbox-lane file that builds
+// its engine otherwise applies it before the first start.
+export function realAdapterStarts(fx) {
+  if (fx.realAdapter) return fx;
+  const plainStart = fx.start;
+  fx.start = async (opts = {}) => {
+    const args = [...(opts.args ?? [])];
+    const named = args.flatMap((a, i) => (a === '--harness-deploy-adapter' ? [args[i + 1]] : []));
+    assert.ok(named.every((v) => v === 'real'), `a sandbox-lane engine is started with --harness-deploy-adapter real only (asked for ${JSON.stringify(named)}; SEAM.md §265)`);
+    if (named.length === 0) args.unshift(...REAL_ADAPTER);
+    else if (named.length > 1) assert.fail(`--harness-deploy-adapter given ${named.length} times (SEAM.md §265)`);
+    const engine = await plainStart({ ...opts, args });
+    assertRealAdapter(engine, 'the sandbox-lane engine just started', { proc: opts.until !== 'none' });
+    return engine;
+  };
+  fx.realAdapter = true;
+  return fx;
+}
 
 export const UID = process.getuid();
 // Where the user manager's units have their cgroups (cgroup v2, the tests
@@ -469,7 +521,7 @@ export async function hostConfig(over = {}) {
 // the adapter by §248's (the qualification stand-in). `guard` tracks the
 // engine's home. Returns {fx, prog, project, p, candidate, stage, envs: {}}.
 export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], policy = {}, files = {}, entries, governed = {}, qualify = true } = {}) {
-  const fx = await sandboxEngine(t, { start: false, config: engineConfig });
+  const fx = realAdapterStarts(await sandboxEngine(t, { start: false, config: engineConfig }));
   guard.track(fx);
   await fx.start({ args: [...REAL_ADAPTER, ...engineArgs] });
   const prog = installCheckProgram(fx.root);
@@ -715,10 +767,22 @@ export async function endEnvironment(ctx, env, { engineTeardown = true } = {}) {
 }
 
 // Every entry under $SURETY_HOME/artifacts/ that lies within no recorded artifact's path (SEAM.md §260).
+// Compared by real path (SEAM.md §264): a row recorded under one spelling of
+// the home (a symbolic link to it, or its real path) records the same
+// directory under the other.
+// A path that no longer exists is resolved through its nearest existing ancestor.
+const realOr = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    const up = dirname(p);
+    return up === p ? p : join(realOr(up), basename(p));
+  }
+};
 export function unrecordedUnderArtifacts(home) {
-  const root = join(home, 'artifacts');
-  if (!existsSync(root)) return [];
-  const paths = withStore(home, (db) => db.prepare('SELECT "path" FROM "artifacts"').all()).map((r) => r.path);
+  if (!existsSync(join(home, 'artifacts'))) return [];
+  const root = realpathSync(join(home, 'artifacts'));
+  const paths = withStore(home, (db) => db.prepare('SELECT "path" FROM "artifacts"').all()).map((r) => realOr(r.path));
   const inside = (p) => paths.some((a) => p === a || p.startsWith(`${a}${sep}`));
   const covers = (p) => paths.some((a) => a.startsWith(`${p}${sep}`));
   const out = [];
