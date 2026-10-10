@@ -2512,6 +2512,10 @@ The sandbox lane, because the defect is in the real adapter's read; the scripted
 
 The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 
+## M4 slice 26: the operator's guard and an idle socket-activated service
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from `main` at `8b5a9bd`, on the coordinator's ruling. M324's sandbox file on the Builder's build passed 4 of 4 cases. Its file-end guard then failed on `snapd.session-agent.service`, which went from `active running` to `inactive dead` during the run. The coordinator read the host: the service is `TriggeredBy=snapd.session-agent.socket`, the socket is still `active`, and the service went inactive at 14:50:37 CDT. A socket-activated service exiting while idle is normal and nothing a test did. `operatorGuard` (`harness/deploy/host.mjs`, `idleSocketActivated`) now waives exactly that case, under SEAM §257's conditions: `inactive dead`, never `failed`; `TriggeredBy` naming `.socket` units only; each socket `active` before and after. The waiver is printed as a `# note:` line. Checked read-only against the live unit (waived, with its note) and against a before listing with its socket inactive (kept as a finding); only `node --check` otherwise.
+
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
