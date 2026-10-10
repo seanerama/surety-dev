@@ -31,8 +31,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, sep } from 'node:path';
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 
 import { freePort, httpRequest } from '../engine.mjs';
 import { tick } from '../runs.mjs';
@@ -41,6 +41,9 @@ import { CGROUP_ROOT, cgroupOfPid, procsOf } from '../sandbox/cgroup.mjs';
 import { hostProcess } from '../sandbox/procs.mjs';
 import { hostNamespaces, namespacesOf } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
+// The real-path comparison of unrecordedUnderArtifacts (SEAM.md §264).
+import { realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy } from '../journal.mjs';
 import {
