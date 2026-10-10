@@ -2498,6 +2498,20 @@ The sandbox lane, because the defect is in the real adapter's read; the scripted
 
 **What was run, 2026-10-10, on this branch:** `node --check` on every new and changed file; an import-resolution check that every named import of the new files resolves against its harness module (no engine started). **No acceptance or sandbox file was run**: slice 25's review and gate held the machine (the driver's instruction; E123). The failures will be shown when the driver says the machine is free.
 
+## M4 slice 26: the review's S1 and objections 042 to 045
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from the coordinator's ruling on the slice-26 Reviewer's S1 and the Builder's objections 042 to 045 on `build/m4-s26`. Names in SEAM §281.
+
+| Item | Row, file | Case or change | D4 |
+|---|---|---|---|
+| S1 (the review) | M321, `M321-the-crash-matrix-on-the-scripted-target.test.mjs` (kernel) | **New case, from the review:** "M321 (g) the blocker's teardown with a manager job pending…". A read made `unknown` by a pending job is answered with the blocker's `teardown`. The teardown's attempt is `ambiguous`, no `teardown` call is made, and the owned unit is untouched | §2.4; §4.6 step 1 |
+| 042, upheld | M321 (a), same file | "after the effect, before its receipt": 0 deploy calls in the restarted engine (the call list is per process), and the target holds the one unit the dead engine made | SEAM §§247, 281 |
+| 043, upheld | `harness/deploy/recover.mjs` `assertInvariants` | a `reconciled_partial` attempt that a later attempt of its operation superseded is final | §2.4 (ruling) |
+| 044, upheld | M324 (e), `M324-a-restored-store-on-the-scripted-target.test.mjs` | "no instance is recorded from it" now compares the recorded instances before and after the refused request | §3.4; §9.2 |
+| 045, upheld | `harness/deploy/recover.mjs` `startAgain` | the check runner's fixture is recorded again too, before the adapter's | §2.6; M110 |
+
+The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
+
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.

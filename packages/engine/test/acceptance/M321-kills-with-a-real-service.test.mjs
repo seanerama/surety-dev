@@ -46,8 +46,8 @@ import { eventsOfType } from './harness/journal.mjs';
 import { requestTick } from './harness/runs.mjs';
 import { CGROUP_ROOT, procsOf } from './harness/sandbox/cgroup.mjs';
 import { attemptIntent, attemptsOf, candidateRow, deploy, operationsOf, requestDeployment, roundsOf, verificationsOf } from './harness/deploy/kernel.mjs';
-import { endEnvironment, hostDeployable, hostEnvironment, hostUntil, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
-import { answerOn, barriersOf, killAt, killOwnEngine, openOn, optionKeys, readsOf, releaseBarrier, armBarrier, waitingAt } from './harness/deploy/recover.mjs';
+import { endCase, endEnvironment, hostDeployable, hostEnvironment, hostUntil, newestOperation, operatorGuard, settleRound, ticksUntil, unitShow } from './harness/deploy/host.mjs';
+import { answerOn, barriersOf, killAt, killOwnEngine, openOn, optionKeys, readsOf, releaseBarrier, armBarrier, waitingAt, startAgain } from './harness/deploy/recover.mjs';
 import { withStore } from './harness/store.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
@@ -120,7 +120,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
 
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
       await killOwnEngine(ctx.fx);
-      await ctx.fx.start();
+      await startAgain(ctx);
       const closed = attemptsOf(ctx.fx.home, op.id)[0];
       assert.equal(closed.launch_state, 'closed', 'the earlier incarnation\'s launch is closed before the new one accepts any launch request (D4 §9.2)');
       await waitingAt(ctx.fx.engine, 'launcher.before_authorization', { timeoutMs: 30_000 });
@@ -142,7 +142,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       assert.ok(!readsOf(settled).includes('applied'), 'never applied');
       noVerificationPassed(ctx, op);
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -155,7 +155,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       const [attempt] = attemptsOf(ctx.fx.home, op.id);
       assert.ok(attempt.init_instance, 'the fixture is live: the grant is recorded (the init)');
       const unit = attemptIntent(ctx.fx.home, attempt.id).create_units[0];
-      await ctx.fx.start();
+      await startAgain(ctx);
       await hostUntil(() => {
         assert.deepEqual(applicationsIn(unit), [], 'nothing of the application runs');
         return unitShow(unit, ['LoadState'])?.LoadState !== 'loaded';
@@ -169,7 +169,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       noVerificationPassed(ctx, op);
       await teardownThrough(ctx, env, await openDecision(ctx, op));
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 
@@ -182,7 +182,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       const [attempt] = attemptsOf(ctx.fx.home, op.id);
       assert.equal(attempt.app_instance ?? null, null, 'the fixture is live: no application instance recorded');
       const unit = attemptIntent(ctx.fx.home, attempt.id).create_units[0];
-      await ctx.fx.start();
+      await startAgain(ctx);
       assert.equal(applicationsIn(unit).length, 1, 'host-read: the application runs, surviving the engine (D4 §9.2)');
       const a = await ticksUntil(ctx.fx, ctx.project, () => {
         const x = attemptsOf(ctx.fx.home, op.id)[0];
@@ -204,7 +204,7 @@ describe('M321 (b), (e), (g) the engine killed during a real service\'s launch',
       const op2 = await ticksUntil(ctx.fx, ctx.project, () => (newestOperation(ctx, env)?.id !== op.id ? newestOperation(ctx, env) : undefined), { what: 'the new deploy' });
       await settleRound(ctx, env, op2, { plan: { get: ['/hello'], exit: 1 } });
     } finally {
-      await endEnvironment(ctx, env);
+      await endCase(ctx, env);
     }
   });
 });

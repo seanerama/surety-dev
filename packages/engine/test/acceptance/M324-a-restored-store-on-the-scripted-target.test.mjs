@@ -29,11 +29,15 @@ import { withStore } from './harness/store.mjs';
 import { adapterState, attemptsOf, completeRound, deploy, deployToRound, deployable, effectCalls, operationsOf, scriptCall, setTarget, unitName } from './harness/deploy/kernel.mjs';
 import { backupNow, restoreInPlace, unitsNamedIn } from './harness/deploy/recover.mjs';
 
+// Every attempt's recorded application instance, by attempt.
+const appInstances = (home) => withStore(home, (db) => db.prepare('SELECT "id", "app_instance" FROM "operation_attempts" WHERE "app_instance" IS NOT NULL ORDER BY "id"').all());
+
 // The deploy request made after the restore, and its operation once ended.
 async function requestAfterRestore(ctx) {
   const { fx, project, candidate, env } = ctx;
   await scriptCall(fx.engine, env.id, 'deploy', [{ result: 'issued', apply: true }]);
   const callsBefore = (await adapterState(fx.engine, env.id)).calls.length;
+  const instancesBefore = appInstances(fx.home);
   const known = new Set(operationsOf(fx.home, project, 'deploy').map((o) => o.id));
   await deploy(fx.engine, project, candidate.id, env.name);
   const op = await tickUntil(fx.engine, project, () => {
@@ -41,10 +45,10 @@ async function requestAfterRestore(ctx) {
     return o && o.status !== 'intended' && o.status !== 'in_progress' ? o : undefined;
   }, { max: 16, what: 'the request after the restore to end or attempt its effect' });
   await tick(fx.engine, project, { rounds: 2 });
-  return { op, callsBefore };
+  return { op, callsBefore, instancesBefore };
 }
 
-async function assertBlockedAndUntouched(ctx, { op, callsBefore }, g1Before) {
+async function assertBlockedAndUntouched(ctx, { op, callsBefore, instancesBefore }, g1Before) {
   const { fx, env } = ctx;
   assert.deepEqual([op.status, op.outcome_detail?.code, op.outcome_detail?.fact], ['failed', 'EFFECT_PRECONDITION_CHANGED', 'unknown_ownership'], `deployment to the environment is blocked before its effect (D4 §§4.1, 9.2) (${JSON.stringify(op.outcome_detail)})`);
   const manifest = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, op.outcome_detail.manifest))).toString('utf8'));
@@ -55,8 +59,9 @@ async function assertBlockedAndUntouched(ctx, { op, callsBefore }, g1Before) {
   assert.deepEqual(state.calls.slice(callsBefore).filter((c) => c.call === 'deploy' || c.call === 'teardown'), [], 'no effect call: nothing is stopped or started');
   assert.deepEqual(state.target.units.find((u) => u.name === g1Before.name), g1Before, 'the unit is untouched');
   assert.deepEqual(attemptsOf(fx.home, op.id), [], 'no attempt of the blocked operation, so no intent or capability adopts the unit');
-  const instances = withStore(fx.home, (db) => db.prepare('SELECT "app_instance" FROM "operation_attempts" WHERE "app_instance" IS NOT NULL').all()).map((r) => JSON.parse(r.app_instance));
-  assert.ok(!instances.some((i) => i.pid === g1Before.instance.pid), 'no instance is recorded from it');
+  // Nothing is recorded from it after the restore: the recorded instances are those the restored store
+  // held before the request (in the second case, g1's own, recorded at its launch; objection 044).
+  assert.deepEqual(appInstances(fx.home), instancesBefore, 'no instance is recorded from it');
 }
 
 describe('M324 (e) a restored store that cannot account for a prefixed unit', () => {
