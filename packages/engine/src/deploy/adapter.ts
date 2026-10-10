@@ -266,8 +266,21 @@ export function adapterFor(id: string): DeploymentAdapter {
 // A call bounded by its deadline and its output bound. The signal is
 // aborted at the deadline; an adapter that does not settle then is left,
 // and its outcome is `deadline`.
-async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, ms: number, outputBytes: number, settled?: (p: Promise<unknown>) => void): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
+async function bounded<T>(
+  call: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  outputBytes: number,
+  settled?: (p: Promise<unknown>) => void,
+  external?: AbortSignal,
+): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
   const ctl = new AbortController();
+  // A cancellation from outside the call (a preempting teardown, D4 §4.6
+  // step 1) aborts it as its deadline would: the adapter's own children are
+  // killed through their handles, and nothing else.
+  if (external) {
+    if (external.aborted) ctl.abort();
+    else external.addEventListener('abort', () => ctl.abort(), { once: true });
+  }
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<{ failure: AdapterReadFailure }>((resolve) => {
     timer = setTimeout(() => {
@@ -306,11 +319,20 @@ export async function effectCall(
   cap: Capability,
   launch: LaunchChannel,
   b: DeployBounds,
+  cancel?: AbortSignal,
+  onStart?: (settled: Promise<unknown>) => void,
 ): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null; settled: Promise<unknown> }> {
   let settled: Promise<unknown> = Promise.resolve();
-  const r = await bounded((signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)), b.effectMs, b.outputBytes, (p) => {
-    settled = p.catch(() => undefined);
-  });
+  const r = await bounded(
+    (signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)),
+    b.effectMs,
+    b.outputBytes,
+    (p) => {
+      settled = p.catch(() => undefined);
+      onStart?.(settled);
+    },
+    cancel,
+  );
   const at = new Date().toISOString();
   if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure, settled };
   const receipt = r.ok;

@@ -302,7 +302,11 @@ export class LocalService implements DeploymentAdapter {
     }
     const after = await this.show(env, [unit], signal);
     const s = after?.[0];
-    if (s && s.LoadState === 'loaded' && s.ActiveState === 'failed') {
+    // Reset only the invocation the engine recorded (the slice-26 review, m6):
+    // a unit started again meanwhile under the same name is not reset.
+    if (s && s.LoadState === 'loaded' && s.ActiveState === 'failed' && s.InvocationID !== r.invocation_id) {
+      step('reset-failed', `${unit}: its invocation ${s.InvocationID || 'unread'} is not the recorded ${r.invocation_id ?? 'none'}; left alone`);
+    } else if (s && s.LoadState === 'loaded' && s.ActiveState === 'failed') {
       const reset = await host('systemctl', ['--user', 'reset-failed', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal });
       step('reset-failed', reset.ok ? `exit ${reset.code}` : reset.failure);
     }

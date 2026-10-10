@@ -337,7 +337,7 @@ const BLOCKER: KindSpec = {
       const p = deployBlockerPreview(tx.db, d.subject_id);
       consumeDecision(tx, d, option, note);
       if (p !== null) preemptTeardown(tx, { environment: p.environment, cause: `blocker ${d.id}` });
-      return consumed(d, [{ kind: 'tick' }]);
+      return consumed(d, [{ kind: 'tick' }, ...(p !== null ? [{ kind: 'preempt' as const, environment: p.environment }] : [])]);
     }
     // A quarantine's or an operation's acknowledgement establishes nothing
     // (build spec §6 correction 2).
@@ -370,8 +370,8 @@ const ROLLOUT_PARTIAL: KindSpec = {
   reraise: true,
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
-    answerRolloutPartial(tx, { operation: d.subject_id, option });
-    return consumed(d, [{ kind: 'tick' }]);
+    const env = answerRolloutPartial(tx, { operation: d.subject_id, option });
+    return consumed(d, [{ kind: 'tick' }, ...(option === 'teardown' && env !== null ? [{ kind: 'preempt' as const, environment: env }] : [])]);
   },
 };
 

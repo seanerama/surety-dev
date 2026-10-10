@@ -98,6 +98,7 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
       pending_job: e.pendingJob ?? null,
       generation: e.generation ?? null,
       cgroup: e.cgroup ?? null,
+      invocation: e.invocation_id ?? null,
       tree: e.tree ?? null,
       instance: e.instance ?? null,
     })),

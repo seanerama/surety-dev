@@ -55,6 +55,16 @@ export class ReleaseOperator {
   // teardown's effect waits until every call of its environment has settled
   // (D4 §4.6 step 1).
   private readonly inFlightEnv = new Map<string, string>();
+  // Every effect call running now, by attempt, with its environment and the
+  // controller a preempting teardown cancels it by (D4 §4.6 step 1).
+  private readonly calls = new Map<string, { env: string; ac: AbortController; settled: Promise<unknown> | null }>();
+
+  // A preempting teardown of `env` was intended (the decision's answer,
+  // runtime.ts): every effect call of the environment running now is
+  // cancelled, through the adapter's own child handles and nothing else.
+  cancelCalls(env: string): void {
+    for (const c of this.calls.values()) if (c.env === env) c.ac.abort();
+  }
   // The admission hold each operation's facts read last (SEAM.md §271).
   private readonly holds = new Map<string, AdmissionHold | null>();
 
@@ -234,7 +244,18 @@ export class ReleaseOperator {
       }
       // After `reconciled_absent`, or `reconciled_partial` once the human's
       // retry of `rollout_partial` is consumed (D4 §4.4; E112).
-      if (latest === undefined || latest.status === 'reconciled_absent' || (latest.status === 'reconciled_partial' && d.retry !== null)) {
+      if (latest !== undefined && latest.status === 'reconciled_partial' && d.retry !== null) {
+        // The human's retry: the target read again first; a read that differs
+        // from the state its preview bound withdraws it, and the question is
+        // asked again (the slice-26 review, m5).
+        await this.reconcile(d, latest.id);
+        const again = await this.detail(operation);
+        const now = again?.attempts.at(-1);
+        if (!again || again.retry === null || now?.id !== latest.id || now.status !== 'reconciled_partial') continue;
+        if (!(await this.attempt(again))) return;
+        continue;
+      }
+      if (latest === undefined || latest.status === 'reconciled_absent') {
         if (!(await this.attempt(d))) return;
         continue;
       }
@@ -309,7 +330,10 @@ export class ReleaseOperator {
   private async attempt(d: DeployDetail): Promise<boolean> {
     // A teardown's effect starts only once every call of its environment
     // has settled (D4 §4.6 step 1: the preempted call awaited; §2.4).
-    if (d.kind === 'teardown' && [...this.inFlightEnv.values()].includes(d.frozen.environment)) return false;
+    if (d.kind === 'teardown') {
+      this.cancelCalls(d.frozen.environment);
+      if ([...this.calls.values()].some((c) => c.env === d.frozen.environment) || [...this.inFlightEnv.values()].includes(d.frozen.environment)) return false;
+    }
     const facts = await this.facts(d);
     if (facts.rehash === 'corrupt' && d.frozen.artifact_digest) await this.rt.engine('deploy.artifact_corrupt', { project: d.project, digest: d.frozen.artifact_digest });
     const v = await this.rt.engine<Verdict>('deploy.preconditions', { operation: d.id, facts });
@@ -366,8 +390,27 @@ export class ReleaseOperator {
         await this.rt.engine('deploy.app_started', { attempt, app });
       },
     };
+    // A teardown's effect waits for every manager job of the environment
+    // (D4 §§2.4, 4.6; the slice-26 review, S1): a job pending, or a listing
+    // that cannot be read, leaves the attempt ambiguous with no host call.
+    if (d.kind === 'teardown') {
+      const jobs = await this.pendingJobs(d);
+      if (jobs !== null) {
+        await this.rt.engine('deploy.receipt', { attempt, receipt: { result: 'uncertain', steps: [{ at: nowIso(), step: 'jobs', detail: jobs }] }, bound: 'pending_job' });
+        return false;
+      }
+    }
     await pausePoint('adapter.before_host_call');
-    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds());
+    const ac = new AbortController();
+    const call = { env: d.frozen.environment, ac, settled: null as Promise<unknown> | null };
+    this.calls.set(attempt, call);
+    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds(), ac.signal, (s) => {
+      call.settled = s;
+      void s.finally(() => {
+        if (this.calls.get(attempt) === call) this.calls.delete(attempt);
+        this.rt.services?.requestTick();
+      });
+    });
     if (bound !== null) {
       this.inFlight.set(attempt, settled);
       this.inFlightEnv.set(attempt, d.frozen.environment);
@@ -383,6 +426,19 @@ export class ReleaseOperator {
     if (!r.reconcile) return false;
     const now = await this.detail(d.id);
     return now !== null && this.reconcile(now, attempt);
+  }
+
+  // Whether a manager job of the environment is pending, by the inventory's
+  // listing of its exact prefix (the adapter's `status`): null when none is;
+  // otherwise what was read (a failed or incomplete listing included).
+  private async pendingJobs(d: DeployDetail): Promise<string | null> {
+    const r = await readCall((signal) => adapterFor(d.frozen.adapter).status({ environment: d.frozen.environment, prefix: d.prefix }, [], signal), this.bounds());
+    if ('failure' in r) return `the listing of the environment's jobs failed (${r.failure})`;
+    const inv = r.ok as TargetInventory | null;
+    if (!inv || !Array.isArray(inv.inventory)) return 'the listing of the environment\'s jobs was not an inventory';
+    if (inv.complete !== true) return "the listing of the environment's jobs was incomplete";
+    const pending = inv.inventory.filter((e) => e.pendingJob !== false).map((e) => `${e.resource} (${e.pendingJob === true ? 'job pending' : 'job unread'})`);
+    return pending.length > 0 ? `a manager job of the environment is pending or unread: ${pending.join(', ')}` : null;
   }
 
   private async reconcile(d: DeployDetail, attempt: string): Promise<boolean> {

@@ -749,8 +749,9 @@ function setAttempt(tx: Tx, a: AttemptRow, status: string, read?: { outcome: str
   // A read made again at every tick that found exactly what the last one
   // found is not recorded again (the attempt's record would otherwise grow
   // by one copy of the same inventory per tick).
-  const last = reads.at(-1);
-  if (read && !(last && last.result === read.outcome && canonical(last.read) === canonical(read.read))) reads.push({ at: tx.at, read: read.read, result: read.outcome });
+  const last = reads.at(-1) as ({ at: string; read: unknown; result: string; last_at?: string } | undefined);
+  if (read && last && last.result === read.outcome && canonical(last.read) === canonical(read.read)) last.last_at = tx.at;
+  else if (read) reads.push({ at: tx.at, read: read.read, result: read.outcome });
   tx.db
     .prepare(`UPDATE "operation_attempts" SET "status" = ?, "finished_at" = CASE WHEN ? = 'started' THEN NULL ELSE COALESCE("finished_at", ?) END, "reconciliation_reads" = ? WHERE "id" = ?`)
     .run(status, status, tx.at, JSON.stringify(reads), a.id);
@@ -763,15 +764,28 @@ const openBlocker = (db: Db, op: string): DecisionRow | undefined =>
 
 function block(tx: Tx, op: OpRow, outcome: string): void {
   if (openBlocker(tx.db, op.id)) return;
-  raiseQuestion(tx, {
-    project: op.project,
-    kind: 'blocker',
-    subjectType: 'operation',
-    subjectId: op.id,
-    question:
-      `Operation ${op.id} (${op.kind} of ${frozenOf(op).environment_name}) cannot go on: the reconcile read found its effect ${outcome}. ` +
-      'Nothing is retried, completed or finalized, and nothing found is stopped, until a read can tell what the target holds; it is read again at every tick.',
-  });
+  void outcome;
+  // The question is the preview's (deployBlockerPreview), which names the
+  // outcome read.
+  raiseQuestion(tx, { project: op.project, kind: 'blocker', subjectType: 'operation', subjectId: op.id });
+}
+
+// What a blocker on an operation says of the outcome read (D4 §§2.4, 4.6).
+function blockerQuestion(op: OpRow, outcome: string): string {
+  const head = `Operation ${op.id} (${op.kind} of ${frozenOf(op).environment_name}) cannot go on: `;
+  if (outcome === 'partial') {
+    return (
+      head +
+      'the reconcile read found its effect partial: owned resources of the environment survive the teardown. Nothing more is stopped by itself; it is read again at every tick, and is applied once a read finds every resource it covers gone. ' +
+      'Tear the environment down again to stop what the engine owns of it.'
+    );
+  }
+  return (
+    head +
+    `the reconcile read found its effect ${outcome}. ` +
+    'Nothing is retried, completed or finalized, and nothing found is stopped, until a read can tell what the target holds; it is read again at every tick. ' +
+    'Tear the environment down to stop what the engine owns of it.'
+  );
 }
 
 function closeBlocker(tx: Tx, op: string, why: string): void {
@@ -802,11 +816,29 @@ export function deployBlockerPreview(db: Db, id: string): { manifest: Record<str
       evidence: { attempt: latest?.id ?? null, read: outcome, complete: last?.read?.complete ?? null, inventory: inventoryNames(last?.read) },
       continuation: null,
     },
-    question:
-      `Operation ${op.id} (${op.kind} of ${frozen.environment_name}) cannot go on: the reconcile read found its effect ${outcome}. ` +
-      'Nothing is retried, completed or finalized, and nothing found is stopped, until a read can tell what the target holds; it is read again at every tick. ' +
-      'Tear the environment down to stop what the engine owns of it.',
+    question: blockerQuestion(op, outcome),
     environment: frozen.environment,
+  };
+}
+
+// The state a reconcile read found, as `rollout_partial` binds it: its
+// outcome, completeness and each entry of its inventory.
+function reconciledOf(a: AttemptRow): { outcome: string | null; complete: boolean | null; inventory: { resource: string | null; kind: string | null; state: string | null; pending_job: unknown; generation: unknown; cgroup: unknown; invocation: unknown; instance: unknown }[] } {
+  const last = lastRead(a);
+  const inv = (last?.read?.inventory ?? []) as { resource?: string; kind?: string; state?: string; pending_job?: unknown; generation?: unknown; cgroup?: unknown; invocation?: unknown; instance?: unknown }[];
+  return {
+    outcome: last?.result ?? null,
+    complete: last?.read?.complete ?? null,
+    inventory: inv.map((e) => ({
+      resource: e.resource ?? null,
+      kind: e.kind ?? null,
+      state: e.state ?? null,
+      pending_job: e.pending_job ?? null,
+      generation: e.generation ?? null,
+      cgroup: e.cgroup ?? null,
+      invocation: e.invocation ?? null,
+      instance: e.instance ?? null,
+    })),
   };
 }
 
@@ -841,8 +873,11 @@ export function rolloutPartialPreview(
   const lease = environmentLease(db, env.id);
   const config = currentConfig(db, env);
   const q = qualificationOf(db, frozen.adapter, frozen.adapter_version);
-  const last = lastRead(latest);
-  const inventory = (last?.read?.inventory ?? []).map((e) => ({ resource: e.resource ?? null, kind: e.kind ?? null, state: e.state ?? null, pending_job: e.pending_job ?? null, generation: e.generation ?? null }));
+  // A retry already consumed for this attempt, whose state still holds, asks
+  // nothing again.
+  if (retryApproved(db, id, latest) !== null) return null;
+  const reconciled = reconciledOf(latest);
+  const inventory = reconciled.inventory;
   // The units of this operation's attempts, by the attempt that created them.
   const byUnit = new Map<string, string>();
   for (const a of attempts) {
@@ -853,7 +888,13 @@ export function rolloutPartialPreview(
   // attempt (D4 A.3), whether or not the read still found it (one gone is
   // nothing to stop); what the read found of them is the observation the
   // preview binds.
-  const resources = [...byUnit.entries()].map(([resource, attempt]) => ({ resource, attempt }));
+  // Each with what the read found of it (D4 §4.4: the resource identities):
+  // its cgroup, invocation and application instance, null where it found
+  // nothing.
+  const resources = [...byUnit.entries()].map(([resource, attempt]) => {
+    const e = inventory.find((x) => x.kind === 'unit' && x.resource === resource);
+    return { resource, attempt, cgroup: e?.cgroup ?? null, invocation: e?.invocation ?? null, instance: e?.instance ?? null };
+  });
   const present = inventory.filter((e) => e.kind !== null && typeof e.resource === 'string' && (byUnit.has(e.resource) || attemptGenerations(attempts).includes(e.generation as number)));
   const next = unitName(frozen.prefix, env.deployment_generation + 1);
   const stop = recordedUnits(db, env.id);
@@ -868,7 +909,7 @@ export function rolloutPartialPreview(
       config_identity: config?.config_identity ?? null,
       config_version: config?.id ?? null,
       adapter_qualification: q?.id ?? null,
-      reconciled: { outcome: last?.result ?? null, complete: last?.read?.complete ?? null, inventory },
+      reconciled,
       resources,
       observations: present,
     },
@@ -899,16 +940,17 @@ const attemptGenerations = (attempts: AttemptRow[]): number[] => attempts.map((a
 // Release Operator at its next tick, with the preconditions read again;
 // `teardown` preempts; `abandon` ends the operation `failed`, `abandoned`,
 // the effect being quiescent (a `partial` read is only made after it).
-export function answerRolloutPartial(tx: Tx, args: { operation: string; option: string }): void {
+export function answerRolloutPartial(tx: Tx, args: { operation: string; option: string }): string | null {
   const op = getOp(tx.db, args.operation)!;
   if (args.option === 'teardown') {
     preemptTeardown(tx, { environment: frozenOf(op).environment, cause: `rollout_partial of ${op.id}` });
-    return;
+    return frozenOf(op).environment;
   }
   if (args.option === 'abandon') {
     const latest = attemptsOf(tx.db, op.id).at(-1);
     failOperation(tx, op, { code: 'abandoned', attempt: latest?.id ?? null });
   }
+  return null;
 }
 
 // The preempting teardown (D4 §4.6), as a decision's `teardown` option
@@ -1292,7 +1334,9 @@ export function recordedCgroups(db: Db, env: string): Record<string, string | nu
 // The human's `retry` of the operation's `rollout_partial` for its latest
 // attempt, consumed (D4 §4.4; SEAM.md §276): the bounded cleanup its
 // preview named, or null.
-export function retryApproved(db: Db, operation: string, latest: { id: string; status: string } | undefined): { cleanup: { resource: string; attempt: string }[] } | null {
+// The retry stands only while the target reads as its preview bound it: a
+// read that differs withdraws it (the slice-26 review, m5).
+export function retryApproved(db: Db, operation: string, latest: AttemptRow | undefined): { cleanup: { resource: string; attempt: string }[] } | null {
   if (!latest || latest.status !== 'reconciled_partial') return null;
   const rows = db
     .prepare(`SELECT "answer", "dependency_manifest" FROM "decisions" WHERE "kind" = 'rollout_partial' AND "subject_type" = 'operation' AND "subject_id" = ? AND "status" = 'consumed' ORDER BY "seq" DESC`)
@@ -1301,6 +1345,7 @@ export function retryApproved(db: Db, operation: string, latest: { id: string; s
     const m = parseJson<{ attempt?: string; resources?: { resource: string; attempt: string }[] }>(r.dependency_manifest);
     if (m?.attempt !== latest.id) continue;
     if (parseJson<{ option?: string }>(r.answer)?.option !== 'retry') return null;
+    if (canonical((m as { reconciled?: unknown }).reconciled ?? null) !== canonical(reconciledOf(latest))) return null;
     return { cleanup: Array.isArray(m.resources) ? m.resources.filter((x) => typeof x?.resource === 'string' && typeof x?.attempt === 'string') : [] };
   }
   return null;
@@ -1828,7 +1873,8 @@ export function applicationExited(tx: Tx, args: { attempt: string; exit: { at: s
   const a = getAttempt(tx.db, args.attempt);
   const d = a ? serviceDomainOf(tx.db, a.id) : undefined;
   if (!a || !d || d.app_exit !== null) return;
-  const exit = { at: args.exit.at, code: args.exit.code, signal: args.exit.signal };
+  // D4 A.3, SEAM.md §278: {at, status}, the status as the init reported it.
+  const exit = { at: args.exit.at, status: { code: args.exit.code, signal: args.exit.signal } };
   tx.db.prepare('UPDATE "execution_domains" SET "app_exit" = ? WHERE "id" = ?').run(JSON.stringify(exit), d.id);
   const op = getOp(tx.db, a.operation)!;
   tx.emit('deploy.service_exited', { project: d.project, operation: op.id, attempt: a.id, domain: d.id }, exit);
@@ -1983,12 +2029,15 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
   if (j.state === 'confirmed' || j.state === 'finalized') return { way: 'confirmed' };
   if (j.state === 'failed') return { way: 'failed' };
   // An operation whose orchestration ended (preempted, abandoned) takes no
-  // further way on.
+  // further way on; nor does an attempt a later one superseded, which is
+  // final and never relabelled (the driver's ruling on slice 26: D4 §2.4
+  // governs a deploy attempt while it is its operation's latest).
   if (op.orchestration_stage === 'ended') return { way: 'failed' };
+  if (attemptsOf(tx.db, op.id).at(-1)?.id !== a.id) return { way: 'blocked' };
   const read = { outcome: args.outcome, read: args.read };
   // Nothing of the environment runs, by a complete read (SEAM.md §278): the
   // environment read then shows nothing running.
-  if (args.outcome !== 'unknown' && !activeIn(args.read)) clearRunning(tx, op, a);
+  if (args.outcome !== 'unknown' && nothingRuns(args.read)) clearRunning(tx, op, a);
   switch (args.outcome) {
     case 'applied': {
       setAttempt(tx, a, a.status === 'started' ? 'succeeded' : 'reconciled_succeeded', read);
@@ -2039,11 +2088,14 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
   }
 }
 
-// Whether a recorded read found any unit of the environment active.
-function activeIn(read: unknown): boolean {
+// Whether a recorded read found nothing of the environment running (the
+// slice-26 review, m3): no domain cgroup populated, and every unit it found
+// inactive or failed. Anything else, unread included, runs or may.
+function nothingRuns(read: unknown): boolean {
   const inv = (read as { inventory?: { kind?: string; state?: string }[] } | null)?.inventory;
-  if (!Array.isArray(inv)) return true;
-  return inv.some((e) => e?.kind === 'unit' && e.state === 'active');
+  if (!Array.isArray(inv)) return false;
+  if (inv.some((e) => e?.kind === 'cgroup' && e.state !== 'absent')) return false;
+  return inv.every((e) => e?.kind !== 'unit' || e.state === 'inactive' || e.state === 'failed');
 }
 
 // `running` cleared when a read of the current generation's attempt found

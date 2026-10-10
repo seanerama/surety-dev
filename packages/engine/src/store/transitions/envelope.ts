@@ -154,7 +154,7 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   // cgroup than the one recorded cannot be accounted (D4 §9.2; E110 item 1;
   // the driver's ruling on slice 26, item A): no domain is admitted while
   // one is, a service's included.
-  const unaccounted = services.filter((d) => (d.status === 'allocated' || d.status === 'launched') && d.observation === 'unknown');
+  const unaccounted = services.filter((d) => (d.status === 'allocated' || d.status === 'launched' || d.status === 'quarantined') && d.observation === 'unknown');
   if (unaccounted.length > 0) {
     return hold(`the reservation of ${unaccounted.length === 1 ? 'a service domain' : `${unaccounted.length} service domains`} cannot be accounted: the host reports its unit under another cgroup than the one recorded.`, {
       limit: 'unaccounted_service',
