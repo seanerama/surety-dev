@@ -22,10 +22,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { backup, restore } from '../backup.mjs';
+import { qualifyRunnerByFixture } from '../checks/fixtures.mjs';
 import { CODES, answer, decision, decisionsOn } from '../decisions.mjs';
 import { requestTick, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { adapterState, armBarrier, attemptsOf, environmentLeases, operationsOf, operationsRead, releaseBarrier, setTarget } from './kernel.mjs';
+import { adapterState, armBarrier, attemptsOf, environmentLeases, operationsOf, operationsRead, qualifyByFixture, releaseBarrier, setTarget } from './kernel.mjs';
 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +76,20 @@ export async function killOwnEngine(fx) {
   assert.ok(environ.includes(`SURETY_HOME=${fx.home}`), `pid ${pid} is this test's engine (SURETY_HOME=${fx.home}); nothing is signalled otherwise`);
   await engine.kill();
   assert.equal(engine.isRunning(), false, 'the engine child has exited');
+}
+
+// A sandbox-lane engine started again on its home, and the check runner's
+// (SEAM.md §181) and the adapter's (SEAM.md §248) qualification fixtures
+// recorded again: a start records a new host qualification (M110), which
+// holds neither, so the qualifications made before it are no longer current
+// (D4 §2.6; objection 045), and a deployment after the restart would be
+// refused ADAPTER_UNQUALIFIED for that reason alone (SEAM.md §273).
+export async function startAgain(ctx, opts) {
+  await ctx.fx.start(opts);
+  // The check runner's fixture (SEAM.md §181) lives on the host qualification too (objection 045).
+  await qualifyRunnerByFixture(ctx.fx.engine);
+  ctx.qualification = await qualifyByFixture(ctx.fx.engine);
+  return ctx.fx.engine;
 }
 
 // ---- barriers (SEAM.md §§18, 125, 274) --------------------------------------------------------
@@ -178,8 +193,10 @@ const TERMINAL = ['succeeded', 'reconciled_succeeded', 'failed', 'reconciled_abs
 const UNIT = /surety-[0-9a-f]{12}-env_[0-9A-HJKMNP-TV-Z]{26}-g[1-9][0-9]*\.service/g;
 
 // After a kill and recovery (D4 §4.3; D1 §16.2): no generation used twice;
-// no unit started twice (no two applying effect calls create one name); no
-// attempt lost or left started: every attempt terminal, or ambiguous or
+// no unit started twice (no two effect calls of the running engine process
+// create one name: the scripted call list is per process, SEAM.md §281); no
+// attempt lost or left started: every attempt terminal (a partial one that
+// a later attempt of its operation superseded included), or ambiguous or
 // partial with an open decision on its operation; every operation's journal
 // numbered from 1 without a gap and opened by `intended`; at most one
 // deploy operation per authorization.
@@ -194,6 +211,9 @@ export async function assertInvariants(ctx) {
   assert.equal(new Set(created).size, created.length, `no unit is started twice: no two deploy calls create one name (${JSON.stringify(created)})`);
   for (const a of attempts) {
     if (TERMINAL.includes(a.status)) continue;
+    // A partial attempt that a later attempt of its operation superseded (the human's retry) is final
+    // (D4 §2.4 over D1 A.5, the coordinator's ruling on objection 043).
+    if (a.status === 'reconciled_partial' && attempts.some((b) => b.op.id === a.op.id && b.attempt_number > a.attempt_number)) continue;
     assert.ok(['ambiguous', 'reconciled_partial'].includes(a.status), `attempt ${a.attempt_number} of ${a.op.id} is terminal or ambiguous, never left ${a.status}`);
     const open = [...openOn(fx.home, 'blocker', a.op.id), ...openOn(fx.home, 'rollout_partial', a.op.id)];
     assert.ok(open.length > 0, `the ${a.status} attempt ${a.attempt_number} of ${a.op.id} has an open decision on its operation`);

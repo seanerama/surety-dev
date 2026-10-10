@@ -2500,6 +2500,28 @@ The sandbox lane, because the defect is in the real adapter's read; the scripted
 
 **What was run, 2026-10-10, on this branch:** `node --check` on every new and changed file; an import-resolution check that every named import of the new files resolves against its harness module (no engine started). **No acceptance or sandbox file was run**: slice 25's review and gate held the machine (the driver's instruction; E123). The failures will be shown when the driver says the machine is free.
 
+## M4 slice 26: the review's S1 and objections 042 to 045
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from the coordinator's ruling on the slice-26 Reviewer's S1 and the Builder's objections 042 to 045 on `build/m4-s26`. Names in SEAM §281.
+
+| Item | Row, file | Case or change | D4 |
+|---|---|---|---|
+| S1 (the review) | M321, `M321-the-crash-matrix-on-the-scripted-target.test.mjs` (kernel) | **New case, from the review:** "M321 (g) the blocker's teardown with a manager job pending…". A read made `unknown` by a pending job is answered with the blocker's `teardown`. The teardown's attempt is `ambiguous`, no `teardown` call is made, and the owned unit is untouched | §2.4; §4.6 step 1 |
+| 042, upheld | M321 (a), same file | "after the effect, before its receipt": 0 deploy calls in the restarted engine (the call list is per process), and the target holds the one unit the dead engine made | SEAM §§247, 281 |
+| 043, upheld | `harness/deploy/recover.mjs` `assertInvariants` | a `reconciled_partial` attempt that a later attempt of its operation superseded is final | §2.4 (ruling) |
+| 044, upheld | M324 (e), `M324-a-restored-store-on-the-scripted-target.test.mjs` | "no instance is recorded from it" now compares the recorded instances before and after the refused request | §3.4; §9.2 |
+| 045, upheld | `harness/deploy/recover.mjs` `startAgain` | the check runner's fixture is recorded again too, before the adapter's | §2.6; M110 |
+
+The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
+
+## M4 slice 26: the operator's guard and an idle socket-activated service
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from `main` at `8b5a9bd`, on the coordinator's ruling. M324's sandbox file on the Builder's build passed 4 of 4 cases. Its file-end guard then failed on `snapd.session-agent.service`, which went from `active running` to `inactive dead` during the run. The coordinator read the host: the service is `TriggeredBy=snapd.session-agent.socket`, the socket is still `active`, and the service went inactive at 14:50:37 CDT. A socket-activated service exiting while idle is normal and nothing a test did. `operatorGuard` (`harness/deploy/host.mjs`, `idleSocketActivated`) now waives exactly that case, under SEAM §257's conditions: `inactive dead`, never `failed`; `TriggeredBy` naming `.socket` units only; each socket `active` before and after. The waiver is printed as a `# note:` line. Checked read-only against the live unit (waived, with its note) and against a before listing with its socket inactive (kept as a finding); only `node --check` otherwise.
+
+## M4 slice 26: ending a case waits for its own teardown (found by the Builder's diagnosis)
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from `main` at `995a65b`. The slice-26 Builder kept a home on `d8d755d` and found where M321 sandbox's leftover `run/<env>-g3` came from, in the case "CD3, between the grant and the init's started". `teardownOnHost` took the newest *finalized* teardown of the environment, which was g2's earlier preempting teardown, so it returned at once. `endEnvironment` then stopped g3 by exact name. The engine's own teardown read g3's stop job still pending and was `ambiguous`, correctly by S1, and the file ended before closure was observed. Now `teardownOnHost` (`harness/deploy/host.mjs`) waits for the operation its request made (named by the answer, or else one that did not exist before the request), and waits until that operation is applied, ticking through an `ambiguous` read. `endEnvironment` falls back to stopping by exact name only after that times out, and reports each such stop as a `# note:` line (SEAM §257). Callers in slices 24 to 26 (M307, M308, M309, M310, M313, M324 and every `endEnvironment`/`endCase`) are unchanged. Only `node --check` was run; the gate exercises it.
+
 ## M4 slice 27: tear down and observe (BS4 §9; E111, E115, E118, E120 item 2, E121 CD2)
 
 2026-10-10, by the Verifier of slice 27 on `verify/m4-s27`, cut from `main` at `52f128c`. Rows M326 to M331 of `docs/acceptance/sdlc-M4-acceptance-plan.md` §3.5, and five cases earlier slices deferred here. The seam's §§290 to 298 fix what the plan's §2.6 and D4 leave to the tests for these rows: the observation job (its first due, the k-th observation's identity read, `facts` with each fact's own source timestamp, `read_interval`, `expected_revision`, `observation_missed`), the conditions and CD2's detail, the environment's out-of-band rows and their decision, the environment read's `out_of_band`, the logs routes, a teardown's `cleanup`, the preempting teardown's route and transaction, the persistent bus fault and the test's own stray unit; §247 is amended for the driver's rulings (`by`, the observation's first due) and gains `instance` null and the `hold` answer. The plan's letters are the cases. Helpers: `harness/deploy/observe.mjs` (new).

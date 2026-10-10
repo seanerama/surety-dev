@@ -412,7 +412,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `severity_lower`: enabled; manifest finding_status, effective_severity, to, sensitive_area, evidence, scope, applicable, candidate_revision, acceptance_content_hash, policy_revision
 - `blocker`: enabled; manifest subject_status, quarantined, cause, evidence, continuation
 - `out_of_band_change`: enabled; manifest subject_kind, expected, found
-- `rollout_partial`: not enabled in M1
+- `rollout_partial`: enabled; manifest operation_status, attempt, deployment_generation, environment_generation, lease_generation, config_identity, adapter_qualification, reconciled, resources, observations
 - `publication_first_visibility`: not enabled in M1
 - `publication_subsequent`: not enabled in M1
 - `allowlist_widening`: not enabled in M1

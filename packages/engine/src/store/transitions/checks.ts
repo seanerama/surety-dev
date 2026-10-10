@@ -676,7 +676,14 @@ function linkOf(db: Db, x: Record<string, unknown>): Admission['link'] {
 //   - runner_unqualified: a class other than `direct`, which nothing
 //     qualifies; or `direct` while the runner is not qualified at this start
 //     and no self-test of this start is still in progress.
-function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): void {
+// Only the refusal of checks against a service of unknown supervision
+// (redaction_unavailable), recorded as soon as its round reaches them, in
+// either lane (deploy.ts, the round's step).
+export function refuseUnsupervised(tx: Tx, project: string): void {
+  recordUnrunnable(tx, project, false, true);
+}
+
+function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean, unsupervisedOnly = false): void {
   const rows = tx.db
     .prepare(
       `SELECT x."id", x."runner_class", x."environment", x."deployment", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
@@ -699,6 +706,7 @@ function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): vo
     // A check against a service whose supervision is `unknown` is refused,
     // not run (D4 §§5.1, 7.3; E116).
     else if (r.deployment !== null && !deploymentSupervised(tx, r.deployment)) reason = 'redaction_unavailable';
+    else if (unsupervisedOnly) reason = null;
     else if (q === null) reason = 'isolation_unqualified';
     else if (r.runner_class !== 'direct') reason = 'runner_unqualified';
     else if (!selfTestRunning && (q.check_runner === null || q.check_runner.qualified !== true)) reason = 'runner_unqualified';

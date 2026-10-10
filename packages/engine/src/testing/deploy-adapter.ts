@@ -32,7 +32,7 @@ import type {
   OperationIntent,
   Reconciliation,
   TargetExpectation,
-  TargetStatus,
+  TargetInventory,
   TeardownCapability,
 } from '../deploy/adapter.js';
 
@@ -185,7 +185,9 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
       if (answer === null) return { result: 'not_issued', steps: [{ at: now(), step: 'scripted', detail: 'no answer queued' }] };
       if (answer.apply) {
         const state = load(dir, cap.environment);
-        const priors = new Set(cap.prior.map((p) => p.unit));
+        // The prior units it replaces and the earlier attempts' units its
+        // cleanup names (SEAM.md §273): removed, as a real deploy stops them.
+        const priors = new Set([...cap.prior.map((p) => p.unit), ...(cap.cleanup ?? [])]);
         state.target.units = state.target.units.filter((u) => !priors.has(u.name));
         const made: { unit: Unit; init: Instance }[] = [];
         for (const name of cap.create_units) {
@@ -208,6 +210,9 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
         // The launch stand-in (SEAM.md §247): the launcher's authorization
         // asked with the init's instance; granted, the application started.
         for (const m of made) {
+          if (launch.placed && m.unit.invocation_id !== 'unread' && m.unit.cgroup !== 'unread') {
+            await launch.placed({ unit: m.unit.name, cgroup: m.unit.cgroup, invocation_id: m.unit.invocation_id, pid: m.init.pid });
+          }
           const grant = await launch.authorize(m.init);
           if (!grant.granted) continue;
           const app = nextInstance(dir);
@@ -249,6 +254,7 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           pendingJob: u.pending_job,
           generation: u.generation,
           invocation_id: u.invocation_id,
+          cgroup: u.state === 'active' ? u.cgroup : null,
           instance: u.instance,
           tree: u.tree,
         }));
@@ -260,9 +266,25 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
       });
     },
 
-    status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetStatus[]> {
-      return readAnswer(dir, env.environment, 'status', signal, (state) =>
-        state.target.units.map((u) => ({
+    status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory> {
+      return readAnswer(dir, env.environment, 'status', signal, (state) => ({
+        complete: state.target.complete,
+        inventory: [
+          ...state.target.units.map(
+            (u): InventoryEntry => ({
+              resource: u.name,
+              kind: 'unit',
+              recorded: false,
+              state: u.state,
+              pendingJob: u.pending_job,
+              generation: u.generation,
+              invocation_id: u.invocation_id,
+              cgroup: u.state === 'active' ? u.cgroup : null,
+            }),
+          ),
+          ...state.target.resources.map((r): InventoryEntry => ({ resource: r.path, kind: r.kind, recorded: true, state: r.state, pendingJob: false, generation: r.generation })),
+        ],
+        targets: state.target.units.map((u) => ({
           target: expect.find((e) => e.unit === u.name)?.target ?? expect[0]?.target ?? u.name,
           unit: u.name,
           active: u.state === 'unread' ? 'unread' : u.state === 'active',
@@ -271,7 +293,7 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           supervision: 'attached',
           at: now(),
         })),
-      );
+      }));
     },
 
     verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]> {

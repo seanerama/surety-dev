@@ -18,14 +18,26 @@ import { nowIso } from '../clock.js';
 import { gateFacts } from '../gates/prepare.js';
 import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
-import type { AdmissionHold, DeployDetail, Fact, RoundDetail, Verdict } from '../store/transitions/deploy.js';
-import { pausePoint, seamDeployAdmission, seamRealDeployAdapter } from '../testing/seam.js';
+import type { AdmissionHold, DeployDetail, Fact, PreconditionFacts, RoundDetail, Verdict } from '../store/transitions/deploy.js';
+import { pausePoint, seamDeployAdmission, seamRealDeployAdapter, seamTakeDeployFault } from '../testing/seam.js';
 import { cgroupInode, readPopulated } from '../boundary/cgroup.js';
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { LocalService, showUnits } from './adapters/local-service.js';
 import { ServiceHost } from './service-host.js';
-import { type Capability, type DeployBounds, type IdentityRead, type Instance, type LaunchChannel, type Reconciliation, adapterFor, effectCall, readCall, setProductionAdapter } from './adapter.js';
+import {
+  type Capability,
+  type DeployBounds,
+  type IdentityRead,
+  type Instance,
+  type LaunchChannel,
+  type Reconciliation,
+  type TargetInventory,
+  adapterFor,
+  effectCall,
+  readCall,
+  setProductionAdapter,
+} from './adapter.js';
 import { type ManifestEntry, rehash, sweepArtifacts } from './artifact.js';
 import { heldDigests, secretDigestKey } from './config.js';
 import { judgeReconcile } from './reconcile.js';
@@ -39,6 +51,20 @@ export class ReleaseOperator {
   // and is being awaited): no reconcile read and no retry until it has
   // (D4 §2.4, quiescence; review m1).
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  // The environment of each attempt whose call is in flight: a preempting
+  // teardown's effect waits until every call of its environment has settled
+  // (D4 §4.6 step 1).
+  private readonly inFlightEnv = new Map<string, string>();
+  // Every effect call running now, by attempt, with its environment and the
+  // controller a preempting teardown cancels it by (D4 §4.6 step 1).
+  private readonly calls = new Map<string, { env: string; ac: AbortController; settled: Promise<unknown> | null }>();
+
+  // A preempting teardown of `env` was intended (the decision's answer,
+  // runtime.ts): every effect call of the environment running now is
+  // cancelled, through the adapter's own child handles and nothing else.
+  cancelCalls(env: string): void {
+    for (const c of this.calls.values()) if (c.env === env) c.ac.abort();
+  }
   // The admission hold each operation's facts read last (SEAM.md §271).
   private readonly holds = new Map<string, AdmissionHold | null>();
 
@@ -69,6 +95,9 @@ export class ReleaseOperator {
     const swept = sweepArtifacts(this.rt.home, await this.rt.read<{ project: string; digest: string; path: string }[]>('deploy.artifact_rows'));
     for (const path of swept.refused) log('artifact sweep', new Error(`not removed: ${path}`));
     secretDigestKey(this.rt.home);
+    // Before any launch request is accepted (D4 §9.2; SEAM.md §278): every
+    // launch an earlier incarnation granted or left authorizable is closed.
+    await this.rt.engine('deploy.close_prior_launches', { incarnation: this.rt.incarnation });
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
       const now = heldDigests(this.rt.home, c.refs);
@@ -95,29 +124,52 @@ export class ReleaseOperator {
   }
 
   // The service domains of a project whose closure the host now shows (D2
-  // §3.2; D4 §9.2): a recorded cgroup absent, or, for a domain never placed
-  // whose attempt has ended, its unit not loaded. Observed, never caused:
-  // nothing here stops or kills anything.
+  // §3.2; D4 §9.2): a recorded cgroup absent and the exact unit not loaded,
+  // or a directory made again at the recorded path; for a domain never
+  // placed whose attempt has ended, its unit not loaded. Observed, never
+  // caused: nothing here stops or kills anything. A unit still loaded under
+  // another cgroup than the one recorded is not terminated: its
+  // observation is `unknown` and its reservation unaccounted (the driver's
+  // ruling on slice 26, item A). A quarantined domain is observed again
+  // once kill_grace has passed since its quarantine.
   private async observeServiceDomains(project: string | null): Promise<void> {
     if (!this.real || this.services === null) return;
-    const open = await this.rt.read<{ id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string }[]>(
-      'deploy.service_domains',
-      project === null ? {} : { project },
-    );
+    const open = await this.rt.read<
+      { id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string; observed_at: string | null }[]
+    >('deploy.service_domains', project === null ? {} : { project });
+    const grace = this.rt.setting('kill_grace') * 1000;
     for (const d of open) {
+      if (d.status === 'quarantined' && d.observed_at !== null && Date.parse(nowIso()) - Date.parse(d.observed_at) < grace) continue;
+      // The harness fault `control_channel_dropped` (SEAM.md §277): the
+      // engine closes its own end of the current domain's control channel.
+      if (d.status === 'launched' && seamTakeDeployFault(d.environment, 'control_channel_dropped')) this.services.dropChannel(d.attempt);
       let closed = false;
       let observed = '';
       if (d.cgroup_path !== null) {
         const p = readPopulated(d.cgroup_path);
+        if (p.state === 'unreadable') continue;
         const inode = p.state === 'absent' ? null : cgroupInode(d.cgroup_path);
         if (p.state === 'absent' && existsSync(dirname(d.cgroup_path))) {
-          closed = true;
-          observed = `${d.cgroup_path} is gone`;
+          const show = d.unit === null ? [] : await showUnits([d.unit], { home: this.rt.home, env: d.environment, timeoutMs: this.bounds().readMs }).catch(() => null);
+          const s = show?.[0];
+          if (d.unit === null || s?.LoadState === 'not-found') {
+            closed = true;
+            observed = `${d.cgroup_path} is gone and ${d.unit ?? 'no unit'} is not loaded`;
+          } else if (s && s.LoadState === 'loaded' && !s.ControlGroup && s.ActiveState !== 'active' && s.ActiveState !== 'activating') {
+            // Loaded but ended (failed or inactive), with no cgroup at all.
+            closed = true;
+            observed = `${d.cgroup_path} is gone and ${d.unit} is ${s.ActiveState} with no cgroup`;
+          } else if (s && s.LoadState === 'loaded' && s.ControlGroup && join('/sys/fs/cgroup', s.ControlGroup) !== d.cgroup_path) {
+            await this.rt.engine('deploy.domain_observed', { domain: d.id, observation: 'unknown' });
+            continue;
+          }
         } else if (d.cgroup_inode !== null && inode !== null && inode !== d.cgroup_inode) {
           // A directory made again at the recorded path is another cgroup
           // (D2 §3.4): the domain's own is gone.
           closed = true;
           observed = `${d.cgroup_path} was made again (inode ${inode}, recorded ${d.cgroup_inode}): the domain's own cgroup is gone`;
+        } else if (p.state !== 'absent') {
+          await this.rt.engine('deploy.domain_observed', { domain: d.id, observation: 'running' });
         }
       } else if (d.unit !== null) {
         const lk = await this.rt.read<{ status: string } | null>('deploy.launch_lookup', { attempt: d.attempt });
@@ -137,6 +189,8 @@ export class ReleaseOperator {
 
   // One tick's work for a project.
   async step(project: string): Promise<void> {
+    // Closures the host shows now, before any operation reads the target.
+    await this.observeServiceDomains(project).catch((err) => log('service domains', err, { project }));
     const work = await this.rt.read<{ intend: { work_item: string }[]; teardowns: string[]; drive: string[] }>('deploy.work', { project });
     for (const w of work.intend) {
       const made = await this.rt.engine<{ operation?: string }>('deploy.intend', { workItem: w.work_item, incarnation: this.rt.incarnation });
@@ -178,6 +232,7 @@ export class ReleaseOperator {
       if (d.stage === 'ended' && !d.rounds.some((r) => r.status === 'open')) return;
       const latest = d.attempts.at(-1);
       if (d.journal === 'confirmed') {
+        await pausePoint('deploy.before_finalizer');
         const fin = await this.rt.engine<{ round: string | null; replay: boolean }>('deploy.finalize', { operation });
         if (fin.round !== null && !fin.replay) await pausePoint('deploy.round_registered');
         continue;
@@ -185,6 +240,19 @@ export class ReleaseOperator {
       if (d.journal === 'finalized') {
         if (d.kind === 'teardown') return;
         if (!(await this.verify(d))) return;
+        continue;
+      }
+      // After `reconciled_absent`, or `reconciled_partial` once the human's
+      // retry of `rollout_partial` is consumed (D4 §4.4; E112).
+      if (latest !== undefined && latest.status === 'reconciled_partial' && d.retry !== null) {
+        // The human's retry: the target read again first; a read that differs
+        // from the state its preview bound withdraws it, and the question is
+        // asked again (the slice-26 review, m5).
+        await this.reconcile(d, latest.id);
+        const again = await this.detail(operation);
+        const now = again?.attempts.at(-1);
+        if (!again || again.retry === null || now?.id !== latest.id || now.status !== 'reconciled_partial') continue;
+        if (!(await this.attempt(again))) return;
         continue;
       }
       if (latest === undefined || latest.status === 'reconciled_absent') {
@@ -229,8 +297,18 @@ export class ReleaseOperator {
     this.holds.set(d.id, hold);
     const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
     const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
+    // The environment's inventory, for a unit of unknown ownership (D4 §§4.1,
+    // 9.2; SEAM.md §278): the adapter's `status`, a read. Not read where no
+    // adapter admits a service (nothing is deployed there).
+    let inventory: PreconditionFacts['inventory'] = null;
+    if (d.kind === 'deploy' && (admission === 'granted' || scripted !== null || this.real)) {
+      const r = await readCall((signal) => adapterFor(f.adapter).status({ environment: f.environment, prefix: d.prefix }, [], signal), this.bounds());
+      if ('failure' in r) inventory = { failure: r.failure };
+      else if (!r.ok || typeof r.ok !== 'object' || !Array.isArray((r.ok as TargetInventory).inventory)) inventory = { failure: 'invalid_response' };
+      else inventory = { complete: (r.ok as TargetInventory).complete === true, inventory: (r.ok as TargetInventory).inventory };
+    }
     const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
-    return { rehash: rehashed, secretDigests, admission, gate, now: nowIso() };
+    return { rehash: rehashed, secretDigests, admission, gate, inventory, now: nowIso() };
   }
 
   // A deploy waiting for its service's admission: the hold on its work item
@@ -250,6 +328,12 @@ export class ReleaseOperator {
   // Preconditions, the attempt, the capability check, the effect, the
   // receipt and the reconcile read. false: nothing more to do now.
   private async attempt(d: DeployDetail): Promise<boolean> {
+    // A teardown's effect starts only once every call of its environment
+    // has settled (D4 §4.6 step 1: the preempted call awaited; §2.4).
+    if (d.kind === 'teardown') {
+      this.cancelCalls(d.frozen.environment);
+      if ([...this.calls.values()].some((c) => c.env === d.frozen.environment) || [...this.inFlightEnv.values()].includes(d.frozen.environment)) return false;
+    }
     const facts = await this.facts(d);
     if (facts.rehash === 'corrupt' && d.frozen.artifact_digest) await this.rt.engine('deploy.artifact_corrupt', { project: d.project, digest: d.frozen.artifact_digest });
     const v = await this.rt.engine<Verdict>('deploy.preconditions', { operation: d.id, facts });
@@ -283,26 +367,78 @@ export class ReleaseOperator {
       return false;
     }
     const attempt = made.attempt;
+    // The kernel lane's launch stand-in (SEAM.md §247) speaks through this
+    // channel; the real launcher through the launch socket (service-host.ts).
     const launch: LaunchChannel = {
-      authorize: (init: Instance) => this.rt.engine('deploy.launch_authorize', { attempt, incarnation: this.rt.incarnation, lease_generation: cap.lease_generation, init }),
+      placed: async (p) => {
+        const lk = await this.rt.read<{ domain: { id: string } | null } | null>('deploy.launch_lookup', { attempt });
+        if (!lk?.domain) return;
+        await this.rt.engine('deploy.launcher_placed', { attempt, domain: lk.domain.id, incarnation: this.rt.incarnation, lease_generation: cap.lease_generation, pid: p.pid, cgroup: p.cgroup, inode: null, invocation_id: p.invocation_id, unit: p.unit });
+      },
+      authorize: async (init: Instance) => {
+        const grant = await this.rt.engine<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] }>('deploy.launch_authorize', {
+          attempt,
+          incarnation: this.rt.incarnation,
+          lease_generation: cap.lease_generation,
+          init,
+        });
+        if (grant.granted) await pausePoint('deploy.launch_granted');
+        return grant;
+      },
       started: async (app) => {
+        await pausePoint('init.app_started');
         await this.rt.engine('deploy.app_started', { attempt, app });
       },
     };
+    // A teardown's effect waits for every manager job of the environment
+    // (D4 §§2.4, 4.6; the slice-26 review, S1): a job pending, or a listing
+    // that cannot be read, leaves the attempt ambiguous with no host call.
+    if (d.kind === 'teardown') {
+      const jobs = await this.pendingJobs(d);
+      if (jobs !== null) {
+        await this.rt.engine('deploy.receipt', { attempt, receipt: { result: 'uncertain', steps: [{ at: nowIso(), step: 'jobs', detail: jobs }] }, bound: 'pending_job' });
+        return false;
+      }
+    }
     await pausePoint('adapter.before_host_call');
-    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds());
+    const ac = new AbortController();
+    const call = { env: d.frozen.environment, ac, settled: null as Promise<unknown> | null };
+    this.calls.set(attempt, call);
+    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds(), ac.signal, (s) => {
+      call.settled = s;
+      void s.finally(() => {
+        if (this.calls.get(attempt) === call) this.calls.delete(attempt);
+        this.rt.services?.requestTick();
+      });
+    });
     if (bound !== null) {
       this.inFlight.set(attempt, settled);
+      this.inFlightEnv.set(attempt, d.frozen.environment);
       void settled.finally(() => {
         this.inFlight.delete(attempt);
+        this.inFlightEnv.delete(attempt);
         this.rt.services?.requestTick();
       });
     }
+    await pausePoint('adapter.after_host_call');
     const r = await this.rt.engine<{ reconcile: boolean }>('deploy.receipt', { attempt, receipt, bound });
     await pausePoint('deploy.receipt_recorded');
     if (!r.reconcile) return false;
     const now = await this.detail(d.id);
     return now !== null && this.reconcile(now, attempt);
+  }
+
+  // Whether a manager job of the environment is pending, by the inventory's
+  // listing of its exact prefix (the adapter's `status`): null when none is;
+  // otherwise what was read (a failed or incomplete listing included).
+  private async pendingJobs(d: DeployDetail): Promise<string | null> {
+    const r = await readCall((signal) => adapterFor(d.frozen.adapter).status({ environment: d.frozen.environment, prefix: d.prefix }, [], signal), this.bounds());
+    if ('failure' in r) return `the listing of the environment's jobs failed (${r.failure})`;
+    const inv = r.ok as TargetInventory | null;
+    if (!inv || !Array.isArray(inv.inventory)) return 'the listing of the environment\'s jobs was not an inventory';
+    if (inv.complete !== true) return "the listing of the environment's jobs was incomplete";
+    const pending = inv.inventory.filter((e) => e.pendingJob !== false).map((e) => `${e.resource} (${e.pendingJob === true ? 'job pending' : 'job unread'})`);
+    return pending.length > 0 ? `a manager job of the environment is pending or unread: ${pending.join(', ')}` : null;
   }
 
   private async reconcile(d: DeployDetail, attempt: string): Promise<boolean> {
@@ -338,6 +474,7 @@ export class ReleaseOperator {
       prior: a.intent?.prior ?? [],
       stop_units: a.intent?.resources ?? [],
       recorded: d.recorded_units,
+      recorded_cgroups: d.recorded_cgroups,
       // A launch granted is a launch granted, whatever its state now: the
       // grant's record, the init's instance, outlives the closure (S2).
       launch_granted: a.init_instance !== null || a.launch_state === 'authorized',
@@ -408,6 +545,7 @@ export class ReleaseOperator {
     };
     if (step.step === 'first_read') {
       await this.rt.engine('deploy.round_first_read', { round: rd.id, ...(await read()) });
+      await pausePoint('verify.after_first_read');
       return true;
     }
     if (step.step === 'checks') {
@@ -416,6 +554,15 @@ export class ReleaseOperator {
     }
     // A first read that did not match left no checks to bracket: the second
     // read is not made.
+    if (rd.executions.length > 0) {
+      await pausePoint('verify.before_second_read');
+      // The deadline, again: reached while the second read was outstanding,
+      // the read is never made and the round is `unknown` (SEAM.md §279).
+      if (Date.parse(nowIso()) > Date.parse(rd.deadline)) {
+        await finalize({ reads: null, failure: null, reason: 'deadline' });
+        return false;
+      }
+    }
     const r = rd.executions.length > 0 ? await read() : { reads: null, failure: null };
     await finalize(r);
     return false;

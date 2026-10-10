@@ -153,6 +153,13 @@ const MAIN_BARRIERS: readonly string[] = [
   'adapter.before_host_call',
   'deploy.round_registered',
   'identity.between_halves',
+  // SEAM.md §274: slice 26's kill points.
+  'adapter.after_host_call',
+  'deploy.launch_granted',
+  'init.app_started',
+  'deploy.before_finalizer',
+  'verify.after_first_read',
+  'verify.before_second_read',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -1213,7 +1220,18 @@ export function seamDeploymentAdapter(id: string): unknown {
 }
 
 // SEAM.md §262: the real adapter's one-shot faults, armed per environment.
-const DEPLOY_FAULTS = ['init_report_altered', 'identity_start_time', 'identity_proc_unreadable', 'identity_listing_failed'] as const;
+// SEAM.md §277: slice 26's five.
+const DEPLOY_FAULTS = [
+  'init_report_altered',
+  'identity_start_time',
+  'identity_proc_unreadable',
+  'identity_listing_failed',
+  'bus_address_missing',
+  'service_setup_refused',
+  'service_exec_failed',
+  'service_closure_unread',
+  'control_channel_dropped',
+] as const;
 type DeployFault = (typeof DEPLOY_FAULTS)[number];
 const deployFaults = new Map<string, Set<DeployFault>>();
 
@@ -1615,6 +1633,7 @@ export function setHarnessSwitches(values: {
   classifierVersion?: string | null;
   deployAdapter?: string | null;
   artifactFreeBytes?: string | null;
+  clockOffset?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1663,7 +1682,10 @@ export function setHarnessSwitches(values: {
     if (!/^\d{1,15}$/.test(values.artifactFreeBytes)) return `--harness-artifact-free-bytes takes a number of bytes, not ${values.artifactFreeBytes}`;
     artifactFreeBytes = Number(values.artifactFreeBytes);
   }
+  // SEAM.md §274: a restart near a deadline the test moved the clock to.
+  if (values.clockOffset != null && !/^[1-9][0-9]{0,9}$/.test(values.clockOffset)) return `--harness-clock-offset takes a positive number of seconds, not ${values.clockOffset}`;
   if (!init.harness) return null;
+  if (values.clockOffset != null && clockCell !== null) Atomics.store(clockCell, 0, BigInt(Number(values.clockOffset) * 1000));
   init = {
     ...init,
     switches: {

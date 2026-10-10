@@ -211,6 +211,8 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   // D2 A.7: default target 2 d.
   qualification_approval: 172_800,
   trust_activation: 172_800,
+  // D4 §4.4 (M4 slice 26): as a blocker's, for the deploy it holds.
+  rollout_partial: 14_400,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project

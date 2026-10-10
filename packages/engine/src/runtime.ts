@@ -428,9 +428,10 @@ export class Runtime {
   }
 
   // Work a committed API command asked for (D1 §1.5, §8.4).
-  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string; control?: string }[]): void {
+  afterCommit(effects: { kind: string; run?: string; project?: string; intent?: string; control?: string; environment?: string }[]): void {
     for (const effect of effects) {
       if (effect.kind === 'tick') this.services?.requestTick();
+      if (effect.kind === 'preempt' && effect.environment) this.deploy?.cancelCalls(effect.environment);
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
       // A Stop or an Abandon confirmed after the backend's own exit (S2).
       if (effect.kind === 'control_after_exit' && effect.run && (effect.control === 'stop' || effect.control === 'abandon')) {
