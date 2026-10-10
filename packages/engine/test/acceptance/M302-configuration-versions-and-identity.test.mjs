@@ -136,7 +136,7 @@ describe('M302 configuration versions and their identity', () => {
     }
   });
 
-  test('(d) a reference outside the deployment and backend namespaces, and a deployment reference the engine does not hold, are refused config_invalid naming the field; no version is written', async (t) => {
+  test('(d) a reference in no namespace, and a deployment reference the engine does not hold, are refused config_invalid naming the field; no version is written', async (t) => {
     const fx = await scriptedEngine(t);
     const project = (await addGitProject(fx, { tier: 'T1' })).id;
     for (const [what, content, field] of [
