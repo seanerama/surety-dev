@@ -4,6 +4,10 @@
 // tables do not exist; the test seam is unreachable outside harness mode.
 // M4 slice 23: the deploy refusal is narrowed now that POST …/deployments
 // exists (D4 Appendix C.2; SEAM.md §253); the other refusals stand.
+// M4 slice 27: the environment observation tables are built (D4 §6.2; SEAM.md
+// §291), so the case that they do not exist is narrowed to: they exist and a
+// project with no configured environment has no job and no observation in
+// them (nothing fabricated); the reserved tables still do not exist.
 // Deferred (COVERAGE.md): scheduler-intent refusals and the real
 // backend/version/mode refusal to slice 2; phase and completion gate refusals
 // to slice 5.
@@ -44,7 +48,8 @@ async function assertExcluded(fx, method, path, { status, codes }) {
 }
 
 const RESERVED = ['mechanic_issues', 'triage_dispositions', 'product_intent_contracts', 'adoption_analyses', 'export_records', 'promotion_records'];
-const NOT_BUILT = ['observation_jobs', 'observation_history'];
+// Built by M4 slice 27 (D4 §6.2; SEAM.md §291): present, and empty for a project with no configured environment.
+const OBSERVATION_TABLES = ['observation_jobs', 'observation_history'];
 
 describe('M08 excluded capabilities are refused at the API', () => {
   test('session open, turn, save and close are refused before any effect', async (t) => {
@@ -84,10 +89,16 @@ describe('M08 excluded capabilities are refused at the API', () => {
     assert.equal(res.body.subject?.field, 'candidate', 'the request is refused for the candidate it does not name');
   });
 
-  test('tables reserved for later designs, and environment observation tables, do not exist', async (t) => {
+  test('tables reserved for later designs do not exist; the environment observation tables hold nothing for a project with no configured environment', async (t) => {
     const { home } = await projectFixture(t);
     const tables = withStore(home, (db) => tableNames(db));
-    for (const name of [...RESERVED, ...NOT_BUILT]) assert.ok(!tables.includes(name), `${name} is not created in M1`);
+    for (const name of RESERVED) assert.ok(!tables.includes(name), `${name} is not created`);
+    withStore(home, (db) => {
+      for (const name of OBSERVATION_TABLES) {
+        assert.ok(tables.includes(name), `${name} exists (M4 slice 27)`);
+        assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n, 0, `${name}: nothing observed or scheduled for a project with no configured environment`);
+      }
+    });
   });
 
   test('a fixture-installed project is labelled as test setup', async (t) => {
