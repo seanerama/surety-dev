@@ -1977,3 +1977,12 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 2. **The Builder runs less.** From slice 24 the Builder runs its own slice's files, every earlier acceptance file its change or the Verifier's straddle touches, and the unit tests, one at a time, and reports those figures; it no longer runs the full suite. A regression in an untouched earlier file is then found by the driver's run and goes back to the same slice's Builder.
 3. **Overlap.** While the driver's full run of slice N goes, slice N+1's fresh Verifier writes its cases and its Builder sends its design; only slice N's merge waits on the run. Slice N+1's cases merge after slice N.
 4. **Why:** each slice paid for the full run (about 80 minutes at slice 23, growing with M4) twice. A full run per slice stays because it keeps catching breaks in earlier files that a slice's own files miss (slice 23's change to declaring checks broke M01's through-the-API cases; slices 20 and 21 each broke an older file). Considered and not chosen: a full run every two slices (saves about an hour a pair; a break then lands on a moved main and is harder to trace), and running files in parallel (the runner runs files one at a time on purpose; earlier slices had test races even so).
+
+---
+
+## E124. The first real unit on this workstation: go-ahead given (decided by Sean, 2026-10-10)
+
+**Status: decided by Sean** (BS4 §3 item 13, §16 question 3, option (a)).
+
+1. **Go-ahead given in advance.** The driver starts slice 24's first sandbox run that creates a real `local_service` unit once slice 24 is built, and shows Sean that run's before-and-after unit lists; every later run proceeds under BS4 §4.1 without asking.
+2. **Unchanged:** §4.1's rules (unit names derived from the test's own home, stopped only by exact name; the user manager never stopped, restarted, reloaded, re-executed or reloaded by daemon-reload; no Docker, no system manager; nothing on `mini-hp01`), E64, and the runner's before-and-after check, which fails a run that leaves a `surety-*` unit. The first run is the driver's, not an agent's; until it has passed, no agent runs a sandbox file that creates a unit.
