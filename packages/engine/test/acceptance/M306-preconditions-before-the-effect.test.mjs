@@ -13,9 +13,7 @@
 //
 // Deferred (COVERAGE.md; each a question for Sean): a lost sign-off (it
 // needs a T2 candidate's Reviewer sign-off and a change of its acceptance
-// content: slice 28, COVERAGE "M4 slice 25"); an open out-of-band
-// observation of the environment (the observation job of slice 27, M331
-// (b)); the lease lost (preempting teardown, slice 27). The target here
+// content: slice 28, COVERAGE "M4 slice 25"). The target here
 // holds no prior service, so "the prior service untouched" is read as the
 // target unchanged; a prior is slice 26's (M323).
 //
@@ -25,6 +23,16 @@
 // and the effect (D4 §§4.1, 9.2; SEAM.md §§250, 278). The fact is
 // `unknown_ownership`; the precondition's read lists the unit; nothing
 // adopts or stops it. Its restored-store form is M324 (e).
+//
+// Added by slice 27 (deferred here by slice 23, E125 item 8, E127 item 9;
+// SEAM.md §§291, 293, 296, 298): an open out-of-band observation of the
+// environment (generation 1 restarted by hand, found by the observation
+// job while a second deploy waits for admission): fact `out_of_band`; and
+// the lease lost before the effect, to a preempting teardown while the
+// deploy waits for admission: `failed`, fact `environment_lease`, the
+// teardown's `linked_prior`, `deploy.preempted` (the driver's ruling: a
+// deploy preempted before any attempt fails; one with an attempt is
+// `superseded`, M327).
 
 import assert from 'node:assert/strict';
 import { appendFileSync, chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,6 +43,8 @@ import { makeTempDir, removeDir } from './harness/engine.mjs';
 import { capturedProposal, evaluate, humanApplies, raiseFindings, successor } from './harness/gates.mjs';
 import { operatorRequest } from './harness/checks/selection.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
+import { recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
+import { assertPreemption, observe, openOob, preempt } from './harness/deploy/observe.mjs';
 import { advanceClock, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 import {
@@ -47,6 +57,8 @@ import {
   configContent,
   deploy,
   deployable,
+  deployToRound,
+  operationRow,
   effectCalls,
   environmentLeases,
   fixtureAuthorization,
@@ -242,5 +254,57 @@ describe('M306 a unit of unknown ownership (slice 26; deferred by slice 23)', ()
     assert.ok(JSON.stringify(read ?? null).includes(stray.name), `the precondition's read lists the unit (${JSON.stringify(read)})`);
     assert.deepEqual((await adapterState(ctx.fx.engine, ctx.env.id)).target.units.find((u) => u.name === stray.name), stray, 'the unit is untouched: never adopted, never stopped');
     assert.deepEqual(attemptsOf(ctx.fx.home, op.id), [], 'no attempt, so no intent or capability names it');
+  });
+});
+
+describe('M306 an open out-of-band observation, and the lease lost (slice 27; deferred by slice 23)', () => {
+  test('generation 1 restarted by hand while a second deploy waits for admission: the observation job opens an out-of-band row, and the deploy is refused naming out_of_band, with no effect call', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    const { operation: op1, execution } = await deployToRound(ctx);
+    await recordExit(fx.engine, execution.id, 1);
+    await rowWhen(ctx, roundsOf(fx.home, op1.id)[0].id);
+    await tick(fx.engine, ctx.project, { rounds: 2 });
+    const deploysBefore = effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length;
+
+    await setAdmission(fx.engine, ctx.env.id, 'held');
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
+    const request = await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
+    const op2 = await tickUntil(fx.engine, ctx.project, () => operationsOf(fx.home, ctx.project, 'deploy').find((o) => o.id !== op1.id), { max: 8, what: 'the second deploy to be intended' });
+    const target = (await adapterState(fx.engine, ctx.env.id)).target;
+    await setTarget(fx.engine, ctx.env.id, { ...target, units: target.units.map((u) => (u.generation === 1 ? { ...u, invocation_id: 'e'.repeat(32) } : u)) });
+    await observe(ctx);
+    assert.equal(openOob(fx.home, ctx.env.id).length, 1, 'the fixture is live: an out-of-band row is open');
+    const changed = (await adapterState(fx.engine, ctx.env.id)).target;
+
+    await setAdmission(fx.engine, ctx.env.id, 'granted');
+    const op = await tickUntil(fx.engine, ctx.project, () => {
+      const o = operationRow(fx.home, op2.id);
+      return ['intended', 'in_progress'].includes(o.status) && attemptsOf(fx.home, o.id).length === 0 ? undefined : o;
+    }, { max: 12, what: 'the second deploy to end or attempt its effect' });
+    assert.equal(op.status, 'failed', `the deploy fails before its effect (${op.status} ${JSON.stringify(op.outcome_detail)})`);
+    assert.deepEqual([op.outcome_detail?.code, op.outcome_detail?.fact], ['EFFECT_PRECONDITION_CHANGED', 'out_of_band'], `naming the open out-of-band observation (${JSON.stringify(op.outcome_detail)})`);
+    const facts = JSON.parse(readFileSync(recordFile(fx.home, recordRow(fx.home, op.outcome_detail.manifest))).toString('utf8')).facts ?? [];
+    assert.ok(facts.some((f) => f.fact === 'out_of_band' && f.held === false), `the manifest records out_of_band not held (${JSON.stringify(facts)})`);
+    const state = await adapterState(fx.engine, ctx.env.id);
+    assert.equal(effectCalls(state, 'deploy').length, deploysBefore, 'no adapter effect call');
+    assert.deepEqual(state.target, changed, 'the target is as it was');
+    assert.equal(authorizationRow(fx.home, request.authorization.id).status, 'consumed');
+  });
+
+  test('the lease lost to a preempting teardown while the deploy waits for admission: failed naming environment_lease, the teardown\'s linked_prior, deploy.preempted, and no effect call ever', async (t) => {
+    const ctx = await waiting(t);
+    const { fx } = ctx;
+    const leaseBefore = environmentLeases(fx.home, ctx.env.id).find((l) => l.released_at === null);
+    const teardownId = await preempt(fx.engine, ctx.project, ctx.env.name);
+    assertPreemption(ctx, { deploy: ctx.op, teardownId, leaseBefore });
+    const op = operationRow(fx.home, ctx.op.id);
+    assert.equal(op.status, 'failed', `a deploy preempted before any attempt fails (the driver's ruling) (${op.status})`);
+    assert.deepEqual([op.outcome_detail?.code, op.outcome_detail?.fact], ['EFFECT_PRECONDITION_CHANGED', 'environment_lease'], `naming the lease (${JSON.stringify(op.outcome_detail)})`);
+    await grant(ctx);
+    await tick(fx.engine, ctx.project, { rounds: 4 });
+    assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 0, 'no deploy effect call, before or after admission');
+    assert.deepEqual(attemptsOf(fx.home, ctx.op.id), [], 'no attempt');
+    assert.equal(authorizationRow(fx.home, ctx.request.authorization.id).status, 'consumed', 'the authorization stays consumed');
   });
 });

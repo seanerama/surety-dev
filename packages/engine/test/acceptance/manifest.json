@@ -306,6 +306,16 @@
       "M324-after-an-engine-restart-on-a-real-unit.test.mjs",
       "M321-kills-with-a-real-service.test.mjs",
       "M322-a-late-launcher-and-the-services-life.test.mjs"
+    ],
+    "27": [
+      "M327-preempting-teardown-on-the-scripted-target.test.mjs",
+      "M328-three-facts-and-stored-reads.test.mjs",
+      "M329-the-observation-job-on-the-scripted-target.test.mjs",
+      "M330-identity-observation-every.test.mjs",
+      "M329-observing-a-real-unit.test.mjs",
+      "M326-exact-teardown-on-a-real-unit.test.mjs",
+      "M327-preempting-teardown-on-a-real-unit.test.mjs",
+      "M331-out-of-band-changes-on-a-real-unit.test.mjs"
     ]
   },
   "sandbox": [
@@ -376,7 +386,11 @@
     "M323-the-partial-retry-on-a-real-unit.test.mjs",
     "M324-after-an-engine-restart-on-a-real-unit.test.mjs",
     "M321-kills-with-a-real-service.test.mjs",
-    "M322-a-late-launcher-and-the-services-life.test.mjs"
+    "M322-a-late-launcher-and-the-services-life.test.mjs",
+    "M329-observing-a-real-unit.test.mjs",
+    "M326-exact-teardown-on-a-real-unit.test.mjs",
+    "M327-preempting-teardown-on-a-real-unit.test.mjs",
+    "M331-out-of-band-changes-on-a-real-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

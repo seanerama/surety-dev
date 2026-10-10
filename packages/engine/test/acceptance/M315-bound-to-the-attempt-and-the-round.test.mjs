@@ -121,7 +121,7 @@ describe('M315 (i) a round is registered before any read: its bindings frozen, t
     assert.equal(alphaCompleteRows(fx.home, ctx.candidate.id).find((e) => e.id === evaluation.id).stale, 1, 'the dependent alpha_complete evaluation is stale in the registering transaction');
     const registered = eventsOfType(fx.home, 'deploy.round_registered').filter((e) => e.subject?.round === round.id);
     assert.equal(registered.length, 1, 'deploy.round_registered names the round once');
-    assert.equal((await adapterState(fx.engine, ctx.env.id)).calls.filter((c) => c.call === 'verify').length, 0, 'no identity read was made before the registration (counted at the scripted adapter)');
+    assert.equal((await adapterState(fx.engine, ctx.env.id)).calls.filter((c) => c.call === 'verify' && c.by !== 'observation').length, 0, 'no identity read was made before the registration (counted at the scripted adapter; the observation job\'s own reads, SEAM.md §247 by, apart)');
     await releaseBarrier(fx.engine, 'deploy.round_registered');
   });
 });
@@ -193,7 +193,7 @@ describe('M315 (c) the newest round decides, whatever order rounds finish in', (
 describe('M315 (d), (e) an older pass never stands in for a newer round', () => {
   test('(d) an old pass, then a new request held before its first read: completion is not satisfied, DEPLOY_VERIFICATION_PENDING; the candidate stays developing', async (t) => {
     const ctx = await passedThenAgain(t);
-    assert.equal((await adapterState(ctx.fx.engine, ctx.env.id)).calls.filter((c) => c.call === 'verify').length, 2, 'round 2 has made no read yet (round 1\'s two only)');
+    assert.equal((await adapterState(ctx.fx.engine, ctx.env.id)).calls.filter((c) => c.call === 'verify' && c.by !== 'observation').length, 2, 'round 2 has made no read yet (round 1\'s two only; the observation job\'s own reads apart)');
     const evaluation = await completion(ctx.fx.engine, ctx.project, ctx.candidate.id, ctx.operation.id);
     assert.equal(evaluation.outcome, 'not_satisfied');
     assert.ok(reasonCodesOf(evaluation).includes('DEPLOY_VERIFICATION_PENDING'), `the newest round is open (${JSON.stringify(evaluation.reasons)})`);
