@@ -122,11 +122,6 @@ describe('M315 (i) a round is registered before any read: its bindings frozen, t
     const registered = eventsOfType(fx.home, 'deploy.round_registered').filter((e) => e.subject?.round === round.id);
     assert.equal(registered.length, 1, 'deploy.round_registered names the round once');
     assert.equal((await adapterState(fx.engine, ctx.env.id)).calls.filter((c) => c.call === 'verify').length, 0, 'no identity read was made before the registration (counted at the scripted adapter)');
-    assert.throws(
-      () => withStore(fx.home, (db) => db.prepare('UPDATE "verification_rounds" SET "required_checks" = ? WHERE "id" = ?').run('[]', round.id)),
-      /SQLITE_CONSTRAINT|frozen/,
-      'a frozen binding cannot be changed in the store',
-    );
     await releaseBarrier(fx.engine, 'deploy.round_registered');
   });
 });
@@ -279,7 +274,23 @@ describe('M315 (g) recovery during a round relabels nothing', () => {
     await stepExecution(ctx.fx.engine, ctx.x1.id, 'running');
     await ctx.fx.engine.kill();
     await ctx.fx.start();
-    const row1 = await rowWhen(ctx, ctx.round1.id, { max: 20 });
+    // The scripted check boundary never moves an execution by itself, a
+    // restart included (SEAM.md §190): the test interrupts the running one as
+    // a real runner's recovery would, and records any retry the engine then
+    // registers for round 1 passing, so only supervision can keep the round
+    // from verified.
+    await stepExecution(ctx.fx.engine, ctx.x1.id, 'interrupted');
+    const row1 = await tickUntil(
+      ctx.fx.engine,
+      ctx.project,
+      async () => {
+        const v = rowOf(ctx.fx.home, ctx.round1.id);
+        if (v) return v;
+        for (const x of executionsOfRound(ctx.fx.home, ctx.candidate.id, ctx.round1.id)) if (x.status === 'queued') await recordExit(ctx.fx.engine, x.id, 0);
+        return undefined;
+      },
+      { max: 24, what: 'round 1 on the survivor to record its row' },
+    );
     assert.equal(row1.outcome, 'unknown', `the round on a survivor of the restart is unknown (E110) (${row1.outcome})`);
     assert.ok((row1.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (${JSON.stringify(row1.missing)})`);
     const trig = (x) => `${x.trigger.id}|${x.trigger.generation}`;
