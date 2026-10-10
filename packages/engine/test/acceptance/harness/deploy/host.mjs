@@ -290,6 +290,22 @@ const listOf = (dir, prefix) => {
   }
 };
 
+// A service that is the idle exit of socket activation, not anything a test
+// did (SEAM.md §257): read after the file, it is `inactive dead` (never
+// `failed`), its `TriggeredBy` names one or more `.socket` units, and each of
+// those sockets was `active` in the before listing and is `active` in the
+// after listing. Returns those sockets, or null, which keeps the finding:
+// failed, not loaded, a socket that changed state or cannot be read, no
+// `TriggeredBy`, or any read that fails.
+function idleSocketActivated(unit, beforeUnits, nowUnits) {
+  const show = unitShow(unit, ['LoadState', 'ActiveState', 'SubState', 'TriggeredBy']);
+  if (show === null || show.LoadState !== 'loaded' || show.ActiveState !== 'inactive' || show.SubState !== 'dead') return null;
+  const sockets = (show.TriggeredBy ?? '').split(/\s+/).filter((n) => n !== '');
+  if (sockets.length === 0 || !sockets.every((n) => n.endsWith('.socket'))) return null;
+  const activeIn = (list, name) => (list ?? []).some((x) => x.unit === name && x.active === 'active');
+  return sockets.every((n) => activeIn(beforeUnits, n) && activeIn(nowUnits, n)) ? sockets : null;
+}
+
 // Taken first thing in a file. `track(fx)` names a home whose units are the
 // file's; `decoy(name)` names a decoy the file created; `root(dir)` a
 // directory of the file's own under /tmp. `finish()` makes the after-check
@@ -322,6 +338,7 @@ export function operatorGuard() {
     homes,
     finish() {
       const problems = [];
+      const notes = [];
       const stopped = [];
       const after = managerState();
       if (after !== 'running') problems.push(`the user manager reports ${JSON.stringify(after)} after the file, not running`);
@@ -371,16 +388,20 @@ export function operatorGuard() {
       const activeBefore = before.units.filter((u) => u.unit.endsWith('.service') && u.active === 'active' && !u.unit.startsWith('surety-') && !decoys.includes(u.unit));
       for (const u of activeBefore) {
         const s = (now ?? []).find((x) => x.unit === u.unit);
-        if (s === undefined || s.active !== 'active') problems.push(`a unit outside the prefix changed state: ${u.unit} was ${u.active} ${u.sub}, now ${s ? `${s.active} ${s.sub}` : 'not loaded'}`);
+        if (s !== undefined && s.active === 'active') continue;
+        const idle = s === undefined ? null : idleSocketActivated(u.unit, before.units, now);
+        if (idle !== null) notes.push(`note: ${u.unit} was ${u.active} ${u.sub}, now inactive dead; exempt as an idle socket-activated service, its socket${idle.length > 1 ? 's' : ''} ${idle.join(', ')} active before and after (SEAM.md §257)`);
+        else problems.push(`a unit outside the prefix changed state: ${u.unit} was ${u.active} ${u.sub}, now ${s ? `${s.active} ${s.sub}` : 'not loaded'}`);
       }
       const mine = (path) => roots.some((r) => path === r || path.startsWith(`${r}${sep}`));
       for (const [dir, prefix, key] of [['/tmp', 'surety-', 'tmp'], ['/dev/shm', 'surety', 'shm']]) {
         for (const path of listOf(dir, prefix) ?? []) if (!before[key].includes(path) && !mine(path)) problems.push(`file left: ${path}`);
       }
-      return { problems, stopped };
+      return { problems, stopped, notes };
     },
     assertClean() {
-      const { problems, stopped } = guard.finish();
+      const { problems, stopped, notes } = guard.finish();
+      for (const note of notes) console.log(`# ${note}`);
       assert.deepEqual(problems, [], `the file left something of its own or changed something of the operator's (M313; reported by exact name${stopped.length > 0 ? `; the test home's own units ${stopped.join(', ')} were then stopped by exact name` : ''})`);
     },
   };
@@ -807,27 +828,56 @@ export function targetReport(ctx, execution) {
   return { result, report: JSON.parse(line.slice('SURETY-TARGET-REPORT '.length)) };
 }
 
-// The operator's teardown of `env`, and ticks until it is finalized. Returns the operation.
+// The operator's teardown of `env`, and ticks until *that* teardown is
+// applied (its operation finalized, its latest attempt `succeeded` or
+// `reconciled_succeeded`). It is the operation the request names, if the
+// answer names one, or else a teardown operation of the environment that did
+// not exist before the request; an earlier operation is never taken for it
+// (a finalized earlier teardown made it return at once: the slice-26
+// Builder's diagnosis, SEAM.md §257). An attempt read `ambiguous` (a stop job
+// still pending, S1) is read again at later ticks until applied, within the
+// timeout. Returns the operation.
 export async function teardownOnHost(ctx, env, { timeoutMs = 240_000 } = {}) {
+  const ofEnv = () => operationsOf(ctx.fx.home, ctx.project, 'teardown').filter((o) => o.target?.environment === env.id);
+  const earlier = new Set(ofEnv().map((o) => o.id));
   const asked = await teardown(ctx.fx.engine, ctx.project, env.name);
   assert.ok(asked.status >= 200 && asked.status < 300, `the operator's teardown of ${env.name} is accepted (→ ${asked.status} ${asked.text})`);
-  return ticksUntil(ctx.fx, ctx.project, () => operationsOf(ctx.fx.home, ctx.project, 'teardown').filter((o) => o.target?.environment === env.id && o.finalized_at !== null).at(-1), { timeoutMs, what: `the teardown of ${env.name} to be finalized` });
+  const named = asked.body?.operation?.id ?? asked.body?.teardown?.operation ?? null;
+  assert.ok(named === null || !earlier.has(named), `the teardown request names a new operation, not an earlier one (${named})`);
+  return ticksUntil(
+    ctx.fx,
+    ctx.project,
+    () => {
+      const op = named !== null ? ofEnv().find((o) => o.id === named) : ofEnv().find((o) => !earlier.has(o.id));
+      if (!op || op.finalized_at === null) return undefined;
+      const latest = attemptsOf(ctx.fx.home, op.id).at(-1);
+      return latest && ['succeeded', 'reconciled_succeeded'].includes(latest.status) ? op : undefined;
+    },
+    { timeoutMs, what: `the teardown of ${env.name} requested now to be applied` },
+  );
 }
 
-// After a case: the environment torn down by the engine when it can be; a
-// unit the engine could not tear down (its lease held by an ambiguous
-// attempt) stopped by the test by its exact name. Returns what was left.
+// After a case: the environment torn down by the engine, its own teardown
+// waited for until applied; only if it is not applied within the timeout (its
+// lease held by an ambiguous attempt, or the teardown itself unsettled) are
+// the units left stopped by the test by their exact names, and that fallback
+// is reported as a note naming each unit. Returns what was left.
 export async function endEnvironment(ctx, env, { engineTeardown = true } = {}) {
+  let why = engineTeardown ? null : 'no engine teardown was asked for';
   if (engineTeardown) {
     try {
       await teardownOnHost(ctx, env, { timeoutMs: 120_000 });
-    } catch {
-      // the lease is held (an ambiguous attempt) or the teardown did not end: the test's own stop below
+    } catch (err) {
+      why = `the engine's teardown was not applied: ${err.message}`;
     }
   }
   const prefix = unitPrefix(ctx.fx.home, env.id);
   const left = (listUnits() ?? []).filter((u) => u.unit.startsWith(prefix)).map((u) => u.unit);
-  for (const name of left) if (intendedUnits(ctx.fx.home).includes(name)) stopOwnUnit(ctx.fx.home, name);
+  for (const name of left) {
+    if (!intendedUnits(ctx.fx.home).includes(name)) continue;
+    console.log(`# note: ${name} stopped by the test by its exact name after the case (${why ?? 'left loaded after an applied teardown'})`);
+    stopOwnUnit(ctx.fx.home, name);
+  }
   return left;
 }
 

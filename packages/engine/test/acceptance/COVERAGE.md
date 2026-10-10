@@ -2512,6 +2512,14 @@ The sandbox lane, because the defect is in the real adapter's read; the scripted
 
 The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 
+## M4 slice 26: the operator's guard and an idle socket-activated service
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from `main` at `8b5a9bd`, on the coordinator's ruling. M324's sandbox file on the Builder's build passed 4 of 4 cases. Its file-end guard then failed on `snapd.session-agent.service`, which went from `active running` to `inactive dead` during the run. The coordinator read the host: the service is `TriggeredBy=snapd.session-agent.socket`, the socket is still `active`, and the service went inactive at 14:50:37 CDT. A socket-activated service exiting while idle is normal and nothing a test did. `operatorGuard` (`harness/deploy/host.mjs`, `idleSocketActivated`) now waives exactly that case, under SEAM §257's conditions: `inactive dead`, never `failed`; `TriggeredBy` naming `.socket` units only; each socket `active` before and after. The waiver is printed as a `# note:` line. Checked read-only against the live unit (waived, with its note) and against a before listing with its socket inactive (kept as a finding); only `node --check` otherwise.
+
+## M4 slice 26: ending a case waits for its own teardown (found by the Builder's diagnosis)
+
+2026-10-10, by the Verifier of slice 26 on `verify/m4-s26`, from `main` at `995a65b`. The slice-26 Builder kept a home on `d8d755d` and found where M321 sandbox's leftover `run/<env>-g3` came from, in the case "CD3, between the grant and the init's started". `teardownOnHost` took the newest *finalized* teardown of the environment, which was g2's earlier preempting teardown, so it returned at once. `endEnvironment` then stopped g3 by exact name. The engine's own teardown read g3's stop job still pending and was `ambiguous`, correctly by S1, and the file ended before closure was observed. Now `teardownOnHost` (`harness/deploy/host.mjs`) waits for the operation its request made (named by the answer, or else one that did not exist before the request), and waits until that operation is applied, ticking through an `ambiguous` read. `endEnvironment` falls back to stopping by exact name only after that times out, and reports each such stop as a `# note:` line (SEAM §257). Callers in slices 24 to 26 (M307, M308, M309, M310, M313, M324 and every `endEnvironment`/`endCase`) are unchanged. Only `node --check` was run; the gate exercises it.
+
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
