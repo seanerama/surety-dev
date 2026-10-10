@@ -26,7 +26,7 @@ import { effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
-import { cancelExecution, registerExecutions } from './checks.js';
+import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
 import { engineSettings, projectPolicy } from './settings.js';
@@ -2336,6 +2336,7 @@ export function roundStep(
   // round's required checks are registered and refused, not run,
   // `redaction_unavailable` (checks.ts; E116; SEAM.md §278); the row names
   // `supervision`, so nothing verifies on it (E110).
+  if (attemptSupervision(tx.db, getAttempt(tx.db, r.attempt)!) !== 'attached') refuseUnsupervised(tx, r.project);
   if (!roundTakeLease(tx, r, args.incarnation)) return { state: 'wait', reason: 'environment_busy' };
   return { state: 'go', step: r.step };
 }
