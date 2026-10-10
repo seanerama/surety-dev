@@ -38,8 +38,15 @@ export const roundRow = (home, id) => {
 // The verification row of a round (one per round), or undefined.
 export const rowOf = (home, round) => verificationsOf(home, round)[0];
 
-// Every post-deploy execution the engine registered for a round, by its binding.
-export const executionsOfRound = (home, candidate, round) => postDeployExecutions(home, candidate).filter((x) => x.deployment?.round === round);
+// Every post-deploy execution the engine registered for a round, by its
+// binding (`check_executions.deployment.round`) only, whatever its trigger:
+// a recovery retry of a round's execution keeps its deployment binding and
+// has the trigger source `recovery` (SEAM.md §204; D4 §5.3 item 7;
+// objection 039).
+export const executionsOfRound = (home, candidate, round) =>
+  withStore(home, (db) => db.prepare(`SELECT x.*, c."key" AS "key" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? ORDER BY x."execution_seq"`).all(candidate))
+    .map((x) => ({ ...x, trigger: json(x.trigger), deployment: json(x.deployment) }))
+    .filter((x) => x.deployment?.round === round);
 
 // The executions of a round once at least `n` are registered, asking for ticks meanwhile.
 export const roundExecutions = (ctx, round, { n = 1, max = 16 } = {}) =>
