@@ -3,7 +3,8 @@
 -- engine-owned are not in D4 A.3.
 
 -- D4 A.2 NotRunReason gains secret_not_allowed (§7.2) and
--- redaction_unavailable (§7.3), on the execution and on its result. SQLite
+-- redaction_unavailable (§7.3), on the execution and on its result; the
+-- execution gains its `service_link_log` record (engine-owned). SQLite
 -- cannot relax a CHECK in place: both tables are rebuilt, their rows,
 -- triggers and indexes kept, as 0012 and 0018 did.
 CREATE TABLE check_executions_0019 (
@@ -37,6 +38,7 @@ CREATE TABLE check_executions_0019 (
   registered_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
+  service_link_log TEXT REFERENCES records(id),
   UNIQUE (project, execution_seq),
   UNIQUE (project, trigger_key)
 );
@@ -54,6 +56,11 @@ CREATE INDEX check_executions_by_status ON check_executions(status);
 CREATE TRIGGER check_executions_terminal BEFORE UPDATE OF status ON check_executions
 WHEN OLD.status IN ('recorded', 'interrupted', 'cancelled') AND NEW.status <> OLD.status
 BEGIN SELECT RAISE(ABORT, 'check_executions: a terminal execution never changes status'); END;
+-- D4 §5.2 (SEAM.md §268; the slice-25 review's m5): the execution's
+-- `service_link_log` record (engine-owned), set once.
+CREATE TRIGGER check_executions_service_link_log_once BEFORE UPDATE OF service_link_log ON check_executions
+WHEN OLD.service_link_log IS NOT NULL AND NEW.service_link_log IS NOT OLD.service_link_log
+BEGIN SELECT RAISE(ABORT, 'check_executions: an execution''s service link log is recorded once'); END;
 
 CREATE TABLE check_results_0019 (
   id TEXT PRIMARY KEY,

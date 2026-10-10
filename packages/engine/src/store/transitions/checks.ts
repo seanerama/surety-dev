@@ -812,6 +812,12 @@ export function quarantineExecution(tx: Tx, args: { execution: string; why: stri
   markStale(tx, { candidate: x.candidate });
 }
 
+// A deployment verification's `service_link_log` record (D4 §5.2; SEAM.md
+// §268), tied to its execution once written.
+export function recordLinkLog(tx: Tx, args: { execution: string; record: string }): void {
+  tx.db.prepare('UPDATE "check_executions" SET "service_link_log" = ? WHERE "id" = ? AND "service_link_log" IS NULL').run(args.record, args.execution);
+}
+
 // Ended with no row (D3 §2.6): its domain's closure observed, and nothing
 // established about the check's own process.
 export function interruptExecution(tx: Tx, args: { execution: string; why: string }): void {

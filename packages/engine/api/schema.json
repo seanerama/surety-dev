@@ -1330,6 +1330,10 @@
         },
         "finished_at": {
           "required": false
+        },
+        "service_link_log": {
+          "required": false,
+          "references": "records"
         }
       }
     },

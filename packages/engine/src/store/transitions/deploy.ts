@@ -438,8 +438,14 @@ const operationOf = (db: Db, authorization: string): OpRow | undefined =>
 function pending(db: Db, a: AuthRow): boolean {
   if (a.status === 'issued') return true;
   if (a.status !== 'consumed') return false;
+  // Pending while the lease its intent took is held: a later re-verification
+  // round takes a lease of its own and never makes the authorization pending
+  // again (the slice-25 review's m7).
   const op = operationOf(db, a.id);
-  return op !== undefined && op.orchestration_stage !== 'ended';
+  if (op === undefined) return false;
+  const lease = frozenOf(op).lease;
+  const row = db.prepare('SELECT "released_at" FROM "leases" WHERE "id" = ?').get(lease.id) as { released_at: string | null } | undefined;
+  return row !== undefined && row.released_at === null;
 }
 
 // An authorization `proposed` with its binding; `binding_hash` includes its
@@ -1606,6 +1612,23 @@ export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: st
   return { terminated: true };
 }
 
+// The executions of an operation's rounds not yet ended (the review's m1):
+// while any is queued, launching, running or collecting, its link may be
+// open, so completion, which may release the lease, waits (D4 §4.7).
+function liveExecutionIds(db: Db, operation: string): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT "id" FROM "check_executions" WHERE json_extract("deployment", '$.operation') = ? AND "status" IN ('queued', 'materializing', 'running', 'collecting') ORDER BY "execution_seq"`,
+      )
+      .all(operation) as { id: string }[]
+  ).map((r) => r.id);
+}
+
+export function liveRoundExecutions(db: Db, args: { operation: string }): { count: number } {
+  return { count: liveExecutionIds(db, args.operation).length };
+}
+
 // What a post-deploy check's service link may reach, read at each
 // connection (D4 §5.2; J8; SEAM.md §268): the execution's frozen binding,
 // and whether its generation's service may be reached now: the
@@ -1828,10 +1851,13 @@ function registerRound(tx: Tx, args: { operation: string; requiredOf: RequiredOf
 // SEAM.md §267): null, or why not: the effective protected version changed
 // with the same required checks (`protected_change`), or the required set
 // changed (`required_set_changed`).
-function roundRebound(db: Db, r: RoundRow, requiredOf: RequiredOf): 'protected_change' | 'required_set_changed' | null {
+// `unreadable` (the review's m8): what the bindings are now could not be
+// read, so whether they hold is unknown.
+function roundRebound(db: Db, r: RoundRow, requiredOf: RequiredOf): 'protected_change' | 'required_set_changed' | { unreadable: string } | null {
   const effective = effectiveVersion(db, r.project);
   const candidate = getCandidate(db, r.candidate);
-  if (!effective || !candidate) return null;
+  if (!effective) return { unreadable: 'protected_version' };
+  if (!candidate) return { unreadable: 'candidate' };
   const now = requiredOf(db, r.project, candidate, effective.id).filter((c) => POST_DEPLOY_KINDS.includes(c.kind));
   const frozenIds = (JSON.parse(r.required_checks) as string[]).slice().sort();
   const nowIds = now.map((c) => c.id).sort();
@@ -1916,13 +1942,24 @@ export function requestVerification(tx: Tx, args: { project: string; operation: 
   if (!op || op.project !== args.project) throw notFound('operation', args.operation);
   const j = journalOf(tx.db, op.id);
   const latest = attemptsOf(tx.db, op.id).at(-1);
-  if (op.kind !== 'deploy' || !j || j.state !== 'finalized' || !latest || (latest.status !== 'succeeded' && latest.status !== 'reconciled_succeeded')) {
+  const env = getEnv(tx.db, frozenOf(op).environment);
+  // A generation no longer current has nothing of its own running to verify
+  // (the review's m2).
+  if (
+    op.kind !== 'deploy' ||
+    !j ||
+    j.state !== 'finalized' ||
+    !latest ||
+    (latest.status !== 'succeeded' && latest.status !== 'reconciled_succeeded') ||
+    !env ||
+    env.current_generation !== latest.deployment_generation
+  ) {
     throw new Refusal(
       409,
       'operation_not_verifiable',
-      `Operation ${op.id} is not a finalized deploy whose latest attempt succeeded, so it has nothing running to verify.`,
+      `Operation ${op.id} is not a finalized deploy whose latest attempt succeeded and whose generation is the environment's current one, so it has nothing running to verify.`,
       'Verify a deploy operation whose effect was confirmed; deploy again to verify a new attempt.',
-      { operation: op.id, kind: op.kind, journal: j?.state ?? null, attempt: latest?.status ?? null },
+      { operation: op.id, kind: op.kind, journal: j?.state ?? null, attempt: latest?.status ?? null, generation: latest?.deployment_generation ?? null, current_generation: env?.current_generation ?? null },
     );
   }
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, op.project).deploy_orchestration_deadline!);
@@ -1949,6 +1986,10 @@ export function roundStep(
   const r = getRound(tx.db, args.round);
   if (!r || r.status !== 'open') return { state: 'gone' };
   const why = roundRebound(tx.db, r, requiredOf);
+  if (why !== null && typeof why === 'object') {
+    const done = finalizeRound(tx, { round: r.id, reads: null, failure: null }, requiredOf);
+    return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
+  }
   if (why !== null) return { state: 'superseded', next: supersedeRound(tx, r, why, requiredOf).id };
   const a = getAttempt(tx.db, r.attempt)!;
   // A service that survived an engine restart (E110): nothing verifies on
@@ -2199,6 +2240,7 @@ function resultBoundTo(res: ResultRow, r: RoundRow): boolean {
 
 interface ResultRow {
   id: string;
+  finished_at: string | null;
   deployment: string | null;
   candidate: string;
   protected_version: string;
@@ -2228,9 +2270,11 @@ export function finalizeRound(
   if (!r || r.status !== 'open') return null;
   // Bindings that changed since the round's registration supersede it: it
   // is never decided under them (D4 §5.3 item 7; SEAM.md §267).
+  let unboundBy: string | null = null;
   if (requiredOf) {
     const why = roundRebound(tx.db, r, requiredOf);
-    if (why !== null) {
+    if (why !== null && typeof why === 'object') unboundBy = why.unreadable;
+    else if (why !== null) {
       supersedeRound(tx, r, why, requiredOf);
       return null;
     }
@@ -2262,6 +2306,10 @@ export function finalizeRound(
       else if (!sameInstance(x.instance, app)) differs = true;
     }
   }
+  // A result that finished after the service's control channel was lost is
+  // no evidence (the driver's ruling m3 on D4 §5.3 item 6): missing, naming
+  // supervision; one that finished before the loss still counts.
+  const lostAt = (serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null;
   // The deciding results of the round's required checks (item 6).
   const required = (JSON.parse(r.required_checks) as string[]).map((id) => tx.db.prepare('SELECT "id", "key", "kind" FROM "checks" WHERE "id" = ?').get(id) as { id: string; key: string; kind: string });
   const results: { check: string; key: string; kind: string; execution: string | null; result: string | null; state: string }[] = [];
@@ -2271,7 +2319,8 @@ export function finalizeRound(
     const res = reg?.result ? (tx.db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(reg.result) as ResultRow | undefined) : undefined;
     // Only a result bound to this round, of its candidate and protected
     // version, is ever selected for it (D4-V01; E114).
-    const state = res && res.invalidated_at === null && resultBoundTo(res, r) ? resultState(res) : 'missing';
+    const afterLoss = res !== undefined && lostAt !== null && (res.finished_at === null || Date.parse(res.finished_at) >= Date.parse(lostAt));
+    const state = res && res.invalidated_at === null && resultBoundTo(res, r) && !afterLoss ? resultState(res) : 'missing';
     if (state === 'failed') failedCheck = true;
     if (state !== 'passed' && state !== 'failed') missing.push({ kind: reg ? 'check_result' : 'check_execution', id: reg?.id ?? c.key });
     results.push({ check: c.id, key: c.key, kind: c.kind, execution: reg?.id ?? null, result: res?.id ?? null, state });
@@ -2284,6 +2333,8 @@ export function finalizeRound(
   // The service's supervision, attached throughout (item 6; E110): after a
   // restart the round is `unknown`, naming it.
   if (attemptSupervision(tx.db, a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });
+  // Bindings that could not be read (m8): unknown, never decided as held.
+  if (unboundBy !== null) missing.push({ kind: 'binding', id: unboundBy });
   let outcome: 'verified' | 'failed' | 'unknown';
   if (differs || failedCheck) outcome = 'failed';
   else if (missing.length === 0 && behaviour && results.every((x) => x.state === 'passed')) outcome = 'verified';
@@ -2399,6 +2450,11 @@ export function deploymentVerdict(db: Db, args: { operation: string }): DeployVe
   // A deciding result invalidated or lost after the row: the stored label is
   // not trusted (D4 §5.5; SEAM.md §270), the row and the results named.
   if (row.outcome === 'verified' && lost.length > 0) reasons.push({ code: 'DEPLOY_VERIFICATION_MISSING', subjects: [row.id, ...lost] });
+  // Executions of the operation's rounds still live (an older round's, its
+  // link perhaps open): pending, named (D4 §5.5 "the pending executions";
+  // §4.7; the review's m1).
+  const live = liveExecutionIds(db, op.id);
+  if (live.length > 0) reasons.push({ code: 'DEPLOY_VERIFICATION_PENDING', subjects: live });
   return { reasons, results };
 }
 
@@ -2419,6 +2475,9 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
     endOperation(tx, op, 'complete', 'alpha_complete');
     return;
   }
+  // Never while an execution of its rounds is live: its link may be open,
+  // and the lease is released only once ingress is closed (D4 §4.7; m1).
+  if (liveExecutionIds(tx.db, op.id).length > 0) return;
   if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`);
 }
 

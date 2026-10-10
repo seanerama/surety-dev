@@ -334,7 +334,15 @@ export class Supervisor implements DomainHolder {
         .entries()
         .map((e) => `${redactText(JSON.stringify(e))}\n`)
         .join('');
-      await writeWholeRecord(this.rt, { project: this.a.project, run: null, kind: 'service_link_log', content: Buffer.from(text) }).catch((err) => log('service link log', err, { execution: this.a.execution }));
+      // Tied to its execution (the review's m5). A record that cannot be
+      // written is logged, as D2's egress log is; the execution then names
+      // none.
+      try {
+        const record = await writeWholeRecord(this.rt, { project: this.a.project, run: null, kind: 'service_link_log', content: Buffer.from(text) });
+        await this.engine('checks.link_log', { execution: this.a.execution, record });
+      } catch (err) {
+        log('service link log', err, { execution: this.a.execution });
+      }
     }
     const egress = this.egress;
     if (egress === null) return;
@@ -656,6 +664,10 @@ export class Supervisor implements DomainHolder {
       }
       if (!verdict.terminated) {
         this.quarantined = true;
+        // Its service link closes now: no tunnel of a domain whose
+        // termination is unknown stays open to the service (D4 §4.7); its log
+        // is written once the closure is observed.
+        this.link?.close();
         await this.engine('checks.quarantine', { execution: a.execution, why: verdict.unknown ?? 'termination not established' });
         return;
       }

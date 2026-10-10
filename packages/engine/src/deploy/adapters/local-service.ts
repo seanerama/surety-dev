@@ -575,6 +575,7 @@ export class LocalService implements DeploymentAdapter {
   async verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]> {
     // The seam's one-shot faults (SEAM.md §262), taken by this read.
     const faults = { startTimeSkew: seamTakeDeployFault(env.environment, 'identity_start_time'), procUnreadable: seamTakeDeployFault(env.environment, 'identity_proc_unreadable') };
+    const listingFails = seamTakeDeployFault(env.environment, 'identity_listing_failed');
     const out: IdentityRead[] = [];
     for (const x of expect) {
       const read = await readIdentity({
@@ -583,36 +584,49 @@ export class LocalService implements DeploymentAdapter {
         faults,
         readUnit: async () => (x.unit ? unitState((await this.show(env.environment, [x.unit], signal))?.[0]) : null),
       });
-      out.push(await this.otherGeneration(env.environment, x, read, signal));
+      out.push(await this.otherGeneration(env.environment, x, read, signal, listingFails));
     }
     return out;
   }
 
   // Another generation at the target (D4 §3.4: "another generation
-  // `differs`"; the slice-25 design Q11): an active unit of the
-  // environment's prefix other than the expected one is what answers there,
-  // so the read differs, naming that generation. A read-only listing of the
-  // exact prefix; a listing that cannot be made leaves the read as it was.
-  private async otherGeneration(env: string, x: TargetExpectation, read: IdentityRead, signal: AbortSignal): Promise<IdentityRead> {
+  // `differs`"; the slice-25 design Q11): a unit of the environment's prefix
+  // other than the expected one that is active, activating or reloading is
+  // what answers there, so the read differs, naming that generation. A
+  // read-only listing of the exact prefix. A listing that cannot be made
+  // leaves the target's state unknown: a read not already `differs` is
+  // `unread` (the review's S1: unknown is a value).
+  private async otherGeneration(env: string, x: TargetExpectation, read: IdentityRead, signal: AbortSignal, listingFails = false): Promise<IdentityRead> {
     const prefix = unitPrefix(this.rt.home, env);
     if (x.unit === null || !x.unit.startsWith(prefix)) return read;
-    const listed = await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
-    if (!listed.ok || listed.code !== 0) return read;
-    const other = listed.stdout
-      .split('\n')
-      .map((l) => l.trim().split(/\s+/))
-      .filter((f) => (f[0] ?? '').startsWith(prefix) && (f[0] ?? '').endsWith('.service') && f[0] !== x.unit && f[2] === 'active')
-      .map((f) => f[0]!)
-      .find((u) => ownUnit(this.rt.home, env, u) === null);
-    if (other === undefined) return read;
-    const generation = generationOf(other);
-    return { ...read, match: 'differs', generation: generation ?? 'unread', detail: { field: 'generation', expected: x.generation, read: generation ?? other } };
+    const listed = listingFails
+      ? null
+      : await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
+    return judgeOtherGeneration(read, x, prefix, listed === null || !listed.ok || listed.code !== 0 ? null : listed.stdout, (u) => ownUnit(this.rt.home, env, u) === null);
   }
 
   async logs(_env: EnvRef, _target: string, _maxBytes: number, _signal: AbortSignal): Promise<LogTail> {
     // The collection command is slice 27's (D4 §6.1).
     throw new AdapterUnavailable('unavailable');
   }
+}
+
+// The identity read given the listing of the environment's exact prefix
+// (`null`: it could not be made). Pure, for the developer tests.
+export function judgeOtherGeneration(read: IdentityRead, x: TargetExpectation, prefix: string, listing: string | null, derived: (unit: string) => boolean): IdentityRead {
+  if (listing === null) {
+    if (read.match === 'differs') return read;
+    return { ...read, read: 'unread', match: 'unread', instance: 'unread', generation: 'unread', detail: { field: 'generation', failure: 'listing' } };
+  }
+  const other = listing
+    .split('\n')
+    .map((l) => l.trim().split(/\s+/))
+    .filter((f) => (f[0] ?? '').startsWith(prefix) && (f[0] ?? '').endsWith('.service') && f[0] !== x.unit && ['active', 'activating', 'reloading'].includes(f[2] ?? ''))
+    .map((f) => f[0]!)
+    .find((u) => derived(u));
+  if (other === undefined) return read;
+  const generation = generationOf(other);
+  return { ...read, match: 'differs', generation: generation ?? 'unread', detail: { field: 'generation', expected: x.generation, read: generation ?? other } };
 }
 
 export const isServiceCgroup = (path: string): boolean => SERVICE_CGROUP.test(path);

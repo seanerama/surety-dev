@@ -356,6 +356,11 @@ export class ReleaseOperator {
     const open = d.rounds.filter((r) => r.status === 'open');
     if (open.length === 0) {
       if (d.stage !== 'completion') return false;
+      // Completion may release the lease: never while an execution of the
+      // operation's rounds may still hold its service link open (D4 §4.7;
+      // the review's m1).
+      const live = await this.rt.read<{ count: number }>('deploy.live_executions', { operation: d.id });
+      if (live.count > 0) return false;
       await pausePoint('deploy.before_completion');
       const candidate = d.frozen.candidate!;
       const facts = await gateFacts(this.rt, d.project, candidate);
@@ -386,6 +391,9 @@ export class ReleaseOperator {
       await finalize({ reads: null, failure: null, reason: 'deadline' });
       return false;
     }
+    // A channel loss this incarnation saw must be durable before the round
+    // can be decided on (the review's m4).
+    if (this.services !== null && !(await this.services.lossRecorded(rd.attempt))) return false;
     // Its bindings, its service's supervision and its lease, before any read.
     const step = await this.rt.engine<{ state: string; step?: string }>('deploy.round_step', { round: rd.id, incarnation: this.rt.incarnation });
     if (step.state === 'superseded') return true;

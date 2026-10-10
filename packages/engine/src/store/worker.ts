@@ -99,6 +99,7 @@ import {
   finalizeRound,
   admissionWait,
   linkTarget,
+  liveRoundExecutions,
   requestVerification,
   roundStep,
   supervisionLost,
@@ -196,6 +197,7 @@ import {
   setCheckRunner,
   treeInUse,
   treeHeld,
+  recordLinkLog,
 } from './transitions/checks.js';
 
 export interface WorkerData {
@@ -288,6 +290,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.detail': (d, a) => deployDetail(d, a),
   'deploy.round': (d, a) => roundDetail(d, a),
   'deploy.link_target': (d, a) => linkTarget(d, a),
+  'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
   'deploy.configs_with_secrets': (d) => configsWithSecrets(d),
   'deploy.artifact_manifest': (d, a: { project: string; digest: string }) => {
@@ -504,6 +507,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'deploy.round_checks_done': (tx, a) => roundChecksDone(tx, a),
   'deploy.round_finalize': (tx, a) => finalizeRound(tx, a, completionRequired),
   'deploy.round_step': (tx, a) => roundStep(tx, a, completionRequired),
+  'checks.link_log': (tx, a) => recordLinkLog(tx, a),
   'deploy.admission_wait': (tx, a) => admissionWait(tx, a),
   'deploy.supervision_lost': (tx, a) => supervisionLost(tx, a),
 };

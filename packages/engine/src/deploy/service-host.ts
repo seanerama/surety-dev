@@ -222,6 +222,32 @@ export class ServiceHost {
   private server: net.Server | null = null;
   private readonly services = new Map<string, Service>();
   private stopping = false;
+  // Attempts whose control channel this incarnation saw close and whose loss
+  // is not yet durable (the review's m4).
+  private readonly lost = new Set<string>();
+
+  // The loss written to the store, retried a few times now; until it is
+  // written, `lossRecorded` says no and no round of the attempt is decided.
+  private async recordLoss(attempt: string): Promise<boolean> {
+    for (let i = 0; i < 5 && this.lost.has(attempt); i++) {
+      try {
+        await this.rt.engine('deploy.supervision_lost', { attempt, why: 'the control channel closed' });
+        this.lost.delete(attempt);
+        return true;
+      } catch (err) {
+        log('service channel', err, { attempt, try: i + 1 });
+        await new Promise((r) => setTimeout(r, 200 * (i + 1)).unref?.());
+      }
+    }
+    return !this.lost.has(attempt);
+  }
+
+  // Whether every channel loss of the attempt this incarnation saw is
+  // durable now (one still pending is written again here).
+  async lossRecorded(attempt: string): Promise<boolean> {
+    if (!this.lost.has(attempt)) return true;
+    return this.recordLoss(attempt);
+  }
 
   constructor(private readonly rt: Runtime) {}
 
@@ -608,7 +634,8 @@ export class ServiceHost {
       for (const l of [...s.links]) l.dropTunnels();
       for (const c of s.open) c.destroy();
       if (s.disposed || this.stopping) return;
-      void this.rt.engine('deploy.supervision_lost', { attempt: s.attempt, why: 'the control channel closed' }).catch((err) => log('service channel', err, { attempt: s.attempt }));
+      this.lost.add(s.attempt);
+      void this.recordLoss(s.attempt);
     };
     ch.send({ t: 'granted' });
     await this.drive(ch, s, lk, { pid: ipid, start_time: istart }, cgroup);
