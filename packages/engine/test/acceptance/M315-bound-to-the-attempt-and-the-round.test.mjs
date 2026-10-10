@@ -296,7 +296,12 @@ describe('M315 (g) recovery during a round relabels nothing', () => {
     const trig = (x) => `${x.trigger.id}|${x.trigger.generation}`;
     const before = executionsOfRound(ctx.fx.home, ctx.candidate.id, ctx.round1.id);
     assert.ok(before.length >= 1 && before.length <= 3, `round 1's executions are its first and at most check_infra_retries_max retries (${before.length})`);
-    assert.ok(before.every((x) => trig(x) === `${ctx.operation.id}:1|1`), `each keeps round 1's trigger (${before.map(trig)})`);
+    // Round 1's own execution keeps its trigger; a recovery retry of it, if
+    // any, names the same registration with the source `recovery` (SEAM.md §204).
+    assert.ok(
+      before.every((x) => x.trigger.id === `${ctx.operation.id}:1` && ((x.trigger.source === 'deployment_verification' && x.trigger.generation === 1) || x.trigger.source === 'recovery')),
+      `each keeps round 1's registration (${before.map((x) => `${x.trigger.source}|${trig(x)}`)})`,
+    );
     const round2 = await verifyAgain(ctx.fx.engine, ctx.project, ctx.operation.id);
     await tick(ctx.fx.engine, ctx.project, { rounds: 4 });
     const xs2 = executionsOfRound(ctx.fx.home, ctx.candidate.id, round2.id);
