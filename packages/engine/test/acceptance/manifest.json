@@ -293,6 +293,19 @@
       "M319-the-reserved-check-capacity.test.mjs",
       "M314-the-service-link.test.mjs",
       "M316-bracketing-on-a-real-unit.test.mjs"
+    ],
+    "26": [
+      "M320-reconcile-outcomes-on-the-scripted-target.test.mjs",
+      "M321-the-crash-matrix-on-the-scripted-target.test.mjs",
+      "M323-retry-after-reconcile.test.mjs",
+      "M324-a-restored-store-on-the-scripted-target.test.mjs",
+      "M325-the-lease-and-the-orchestration-deadline.test.mjs",
+      "M320-reconcile-on-a-real-unit.test.mjs",
+      "M325-the-lease-held-until-the-links-close.test.mjs",
+      "M323-the-partial-retry-on-a-real-unit.test.mjs",
+      "M324-after-an-engine-restart-on-a-real-unit.test.mjs",
+      "M321-kills-with-a-real-service.test.mjs",
+      "M322-a-late-launcher-and-the-services-life.test.mjs"
     ]
   },
   "sandbox": [
@@ -357,7 +370,13 @@
     "M311-identity-from-the-target.test.mjs",
     "M319-the-reserved-check-capacity.test.mjs",
     "M314-the-service-link.test.mjs",
-    "M316-bracketing-on-a-real-unit.test.mjs"
+    "M316-bracketing-on-a-real-unit.test.mjs",
+    "M320-reconcile-on-a-real-unit.test.mjs",
+    "M325-the-lease-held-until-the-links-close.test.mjs",
+    "M323-the-partial-retry-on-a-real-unit.test.mjs",
+    "M324-after-an-engine-restart-on-a-real-unit.test.mjs",
+    "M321-kills-with-a-real-service.test.mjs",
+    "M322-a-late-launcher-and-the-services-life.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
