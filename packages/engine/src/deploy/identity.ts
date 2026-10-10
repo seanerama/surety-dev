@@ -19,8 +19,8 @@
 // count and bytes.
 
 import { createHash } from 'node:crypto';
-import { constants, lstatSync, readFileSync } from 'node:fs';
-import { lstat, open, readdir, readFile, readlink } from 'node:fs/promises';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
+import { open, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { pausePoint } from '../testing/seam.js';
@@ -158,19 +158,58 @@ type Entry = [path: string, type: 'file', mode: '100644' | '100755', size: numbe
 // The tree at `root`, walked from the host: every regular file with its mode
 // class and hash; a link, a special file or a write bit makes it `differs`;
 // more entries or bytes than the manifest's make it `differs` at once.
-async function walkTree(root: string, limit: { entries: number; bytes: number }, signal: AbortSignal, procRead: (path: string) => void): Promise<{ entries: Entry[]; odd: string | null }> {
+// Synchronous system calls in bounded batches (the slice-24 measurement:
+// one asynchronous call per lstat, open, stat, read and close made 20,000
+// small files take 11 s, past adapter_read_deadline): the event loop gets
+// a turn every `YIELD_ENTRIES` entries or `YIELD_BYTES` bytes, and the
+// deadline is checked there and at every entry.
+const YIELD_ENTRIES = 512;
+const YIELD_BYTES = 16 * 1024 * 1024;
+const CHUNK = 1024 * 1024;
+
+export async function walkTree(root: string, limit: { entries: number; bytes: number }, signal: AbortSignal, procRead: (path: string) => void): Promise<{ entries: Entry[]; odd: string | null }> {
   const entries: Entry[] = [];
   let bytes = 0;
   let odd: string | null = null;
+  let sinceYield = 0;
+  let bytesSinceYield = 0;
+  const buf = Buffer.alloc(CHUNK);
+  const pause = async (): Promise<void> => {
+    sinceYield = 0;
+    bytesSinceYield = 0;
+    await new Promise<void>((r) => setImmediate(r));
+    if (signal.aborted) throw new Unread('tree', 'the read passed adapter_read_deadline');
+  };
+  // One regular file read and hashed, opened following no link and blocking
+  // on no special file; null when it changed under the read.
+  const hashFile = (full: string, ino: number): { size: number; hex: string } | null => {
+    const fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const fst = fstatSync(fd);
+      if (!fst.isFile() || fst.ino !== ino) return null;
+      const h = createHash('sha256');
+      let size = 0;
+      for (;;) {
+        const n = readSync(fd, buf, 0, CHUNK, null);
+        if (n === 0) break;
+        h.update(buf.subarray(0, n));
+        size += n;
+        if (size > limit.bytes) break;
+      }
+      return { size, hex: h.digest('hex') };
+    } finally {
+      closeSync(fd);
+    }
+  };
   const visit = async (dir: string, rel: string): Promise<void> => {
     if (odd !== null) return;
     procRead(dir);
-    const names = (await readdir(dir)).sort();
+    const names = readdirSync(dir).sort();
     for (const name of names) {
       if (signal.aborted) throw new Unread('tree', 'the read passed adapter_read_deadline');
       const full = join(dir, name);
       const relPath = rel === '' ? name : `${rel}/${name}`;
-      const st = await lstat(full);
+      const st = lstatSync(full);
       if (st.isDirectory()) {
         await visit(full, relPath);
         if (odd !== null) return;
@@ -189,19 +228,20 @@ async function walkTree(root: string, limit: { entries: number; bytes: number },
         odd = 'more entries or bytes than the manifest holds';
         return;
       }
-      const fh = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const fst = await fh.stat();
-        if (!fst.isFile() || fst.ino !== st.ino) {
-          odd = `${relPath} changed while it was read`;
-          return;
-        }
-        const content = await fh.readFile();
-        bytes += content.length;
-        entries.push([relPath, 'file', st.mode & 0o111 ? '100755' : '100644', content.length, sha(content)]);
-      } finally {
-        await fh.close();
+      const got = hashFile(full, st.ino);
+      if (got === null) {
+        odd = `${relPath} changed while it was read`;
+        return;
       }
+      bytes += got.size;
+      if (bytes > limit.bytes) {
+        odd = 'more entries or bytes than the manifest holds';
+        return;
+      }
+      entries.push([relPath, 'file', st.mode & 0o111 ? '100755' : '100644', got.size, got.hex]);
+      sinceYield += 1;
+      bytesSinceYield += got.size;
+      if (sinceYield >= YIELD_ENTRIES || bytesSinceYield >= YIELD_BYTES) await pause();
     }
   };
   await visit(root, '');
