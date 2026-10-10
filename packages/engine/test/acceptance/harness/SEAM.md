@@ -5527,6 +5527,10 @@ Precedence as D4 §6.2, per target and then for the environment. In the kernel l
 
 **Deferred:** none beyond those already recorded (M324 (a)'s logs and relay refusals, slice 28; M307 (f), slice 29). `../COVERAGE.md`, "M4 slice 27".
 
+## 299. The first candidate's base by git ancestry (E106; E129 item 10)
+
+(Written on `verify/m4-s27`, at the driver's instruction after slice 26's gate; E129 item 10. Sections 242 and 243 stand with this sharpened.) **"The parent of the project's first recorded revision"** (§242) is read **by git ancestry**: of the project's recorded revisions (`revisions` rows with a `parent_sha`) in the candidate's history, the earliest in that history (`git rev-list --reverse --topo-order <candidate>`); the base is its `parent_sha`. Never the earliest by `recorded_at`: a record made later by the clock (a host clock that stepped back, or a record finalized after another under load) does not narrow the range. **The case:** a second M125 (i) case: the engine started with `--harness-clock-offset 3600` (§274) while the bootstrap and the policy revision are recorded, then started again without it, so that the Builder's commits, their descendants, are recorded earlier by `recorded_at`; the Reviewer's diff still holds `.surety/project.json` and `.surety/policy.json`, and its context names both engine commits as the engine's or the owner's. M125 (i)'s own precondition reads the base the same way (`ancestryBase`).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26" and "M4 slice 27".
