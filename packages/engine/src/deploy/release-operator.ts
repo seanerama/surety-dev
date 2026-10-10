@@ -217,7 +217,7 @@ export class ReleaseOperator {
     let hold: AdmissionHold | null = null;
     if (scripted !== null && scripted !== undefined) {
       admission = scripted;
-      if (admission !== 'granted') hold = { code: 'resource_envelope', reason: "the service's admission is held (the harness's scripted answer, SEAM.md §247)", subject: { limit: 'scripted_admission' } };
+      if (admission !== 'granted') hold = { code: 'resource_envelope', reason: "the service's admission is not granted (SEAM.md §247)", subject: { limit: 'scripted_admission' } };
     } else if (this.real) {
       const a = await this.rt.read<{ admission: 'granted' | 'held'; hold: AdmissionHold | null }>('deploy.admission', { project: d.project });
       admission = a.admission;
