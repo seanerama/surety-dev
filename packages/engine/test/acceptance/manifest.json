@@ -312,6 +312,7 @@
       "M328-three-facts-and-stored-reads.test.mjs",
       "M329-the-observation-job-on-the-scripted-target.test.mjs",
       "M330-identity-observation-every.test.mjs",
+      "M331-out-of-band-dispositions-on-the-scripted-target.test.mjs",
       "M329-observing-a-real-unit.test.mjs",
       "M326-exact-teardown-on-a-real-unit.test.mjs",
       "M327-preempting-teardown-on-a-real-unit.test.mjs",

@@ -32,6 +32,10 @@
 // prior and next: a state between them is observed, never out of band; the
 // same state after the operation has ended is (the control).
 //
+// The review's S2 (slice 27): a unit read active with its application
+// instance unread, while an operation is in flight and after a teardown
+// (nothing expected), is `unknown`, never `down`.
+//
 // SAFETY: no unit, no systemctl, no host process; the only engine stopped
 // is the test's own, in order (`fx.engine.stop()`).
 
@@ -59,6 +63,7 @@ import {
   openOob,
   releaseHeld,
   scriptObservation,
+  statusValue,
 } from './harness/deploy/observe.mjs';
 
 // Generation 1 deployed, its round decided `failed` (the check exits 1).
@@ -321,5 +326,35 @@ describe('M325 (b) an observation during the operation (deferred by slice 26)', 
     await changeTarget(fx.engine, env.id, (target) => ({ ...target, units: [] }));
     await observe(ctx);
     assert.ok(oobRows(fx.home, env.id).some(isOpen), 'with no operation in flight, generation 2 gone is an out-of-band change');
+  });
+});
+
+describe('M329 (c) an application instance unread when nothing, or an operation, is expected (the review\'s S2)', () => {
+  const unreadInstance = async (ctx) => {
+    const { target } = await adapterState(ctx.fx.engine, ctx.env.id);
+    return statusValue({ ...target, units: target.units.map((u) => ({ ...u, state: 'active', instance: 'unread' })) }, new Date().toISOString());
+  };
+
+  test('while an operation is in flight: the unit active, its instance unread: unknown, never down', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    const { operation } = await deployToRound(ctx);
+    assert.notEqual(operationsOf(fx.home, ctx.project, 'deploy').find((o) => o.id === operation.id)?.orchestration_stage, 'ended', 'the fixture is live: the deploy is in flight (its round open)');
+    await scriptObservation(fx.engine, ctx.env.id, 'status', [{ value: await unreadInstance(ctx) }]);
+    const row = await observe(ctx);
+    assert.equal(row.condition, 'unknown', `an unread application instance is unknown (D4 §6.2 rule 1), never down (${row.condition})`);
+  });
+
+  test('after a teardown, nothing expected: the former unit read active with its instance unread: unknown, never down', async (t) => {
+    const ctx = await running(t);
+    const { fx, env, project } = ctx;
+    const before = (await adapterState(fx.engine, env.id)).target;
+    await scriptCall(fx.engine, env.id, 'teardown', [{ result: 'issued', apply: true }]);
+    const asked = await fx.engine.post(`/v1/projects/${project}/environments/${env.name}/teardown`, {});
+    assert.ok(asked.status >= 200 && asked.status < 300, asked.text);
+    await tickUntil(fx.engine, project, () => operationsOf(fx.home, project, 'teardown').find((o) => o.finalized_at), { max: 16, what: 'the teardown to be finalized' });
+    await scriptObservation(fx.engine, env.id, 'status', [{ value: statusValue({ ...before, units: before.units.map((u) => ({ ...u, state: 'active', instance: 'unread' })) }, new Date().toISOString()) }]);
+    const row = await observe(ctx);
+    assert.equal(row.condition, 'unknown', `an unread application instance is unknown, never down (${row.condition})`);
   });
 });
