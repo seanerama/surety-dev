@@ -30,7 +30,7 @@ import { CONTRACT } from './harness/fixtures.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import { addGitProject, addItem } from './harness/gitruns.mjs';
 import { stopRun, waitForRunState } from './harness/runs.mjs';
-import { roleHolding } from './harness/sandbox/lane.mjs';
+import { roleAlive, roleHolding } from './harness/sandbox/lane.mjs';
 import { deploy } from './harness/deploy/kernel.mjs';
 import {
   endEnvironment,
@@ -95,7 +95,7 @@ describe('M319 the reserved check capacity, on real domains', () => {
       const round = await verifyAgain(ctx.fx.engine, ctx.project, d.op.id);
       const held = await ticksUntil(ctx.fx, ctx.project, () => heldCheck(ctx, d.env), { what: 'the new round\'s post-deploy check to be admitted beside the role run' });
       assert.ok(held, 'the service\'s verification check ran in its own check domain while the role held a domain (D4 §4.7; E126)');
-      assert.ok(ctx.fx.scripted.isLive(role.launch), 'the role run was still holding its domain when the check was admitted');
+      assert.ok(roleAlive(role.domain, role.launch), 'the role run was still holding its domain when the check was admitted (read in its domain by its pid inside the namespace; objection 041)');
       releaseCheck(ctx, d.svc, { get: ['/hello'], exit: 0 });
       const { row } = await verificationOf(ctx, d.op);
       assert.equal(row.round, round.id, 'the new round decided');
