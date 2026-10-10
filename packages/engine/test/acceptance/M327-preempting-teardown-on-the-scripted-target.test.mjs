@@ -31,7 +31,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { stepExecution } from './harness/checks/selection.mjs';
-import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { waitFor } from './harness/engine.mjs';
+import { requestTick, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { adapterState, attemptsOf, candidateRow, deploy, deployable, deployToRound, effectCalls, environmentLeases, environmentRecord, operationRow, operationsOf, postDeployExecutions, scriptCall, setTarget, unitName } from './harness/deploy/kernel.mjs';
 import { completion, executionsOfRound, reasonCodesOf, recordExit, roundRow, roundsOf, rowOf, verificationsOf } from './harness/deploy/rounds.mjs';
 import { atReceipt, firstRead, inventoryOf, openDecisionOn, openOn, scriptedUnit } from './harness/deploy/recover.mjs';
@@ -121,7 +122,9 @@ describe('M327 (c) an adapter call in flight', () => {
     const ctx = await deployable(fx);
     await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true, hang: true }]);
     await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
-    await tickUntil(fx.engine, ctx.project, async () => effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length === 1, { what: 'the deploy\'s effect call to be made' });
+    // A tick that makes the hanging call may not end until the call does, so the call is waited for by polling, not by ticks.
+    await requestTick(fx.engine, ctx.project);
+    await waitFor(async () => effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length === 1, { timeoutMs: 60_000, what: 'the deploy\'s effect call to be made' });
     const [op] = operationsOf(fx.home, ctx.project, 'deploy');
     const leaseBefore = heldLease(fx.home, ctx.env.id);
     await scriptCall(fx.engine, ctx.env.id, 'teardown', [{ result: 'issued', apply: true }]);
