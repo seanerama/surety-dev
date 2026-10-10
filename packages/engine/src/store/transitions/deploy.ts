@@ -1895,7 +1895,7 @@ export function closePriorLaunches(tx: Tx, args: { incarnation: string }): { clo
 // The executions of an operation's rounds not yet ended (the review's m1):
 // while any is queued, launching, running or collecting, its link may be
 // open, so completion, which may release the lease, waits (D4 §4.7).
-function liveExecutionIds(db: Db, operation: string): string[] {
+export function liveExecutionIds(db: Db, operation: string): string[] {
   return (
     db
       .prepare(
