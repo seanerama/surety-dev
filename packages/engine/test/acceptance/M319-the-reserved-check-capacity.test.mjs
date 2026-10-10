@@ -50,11 +50,12 @@ import { verifyAgain } from './harness/deploy/rounds.mjs';
 
 // domain_memory_max and service_memory_max at their minimums, so two
 // admitted domains plus the service fit in what the host has (as M220 does).
+// service_memory_max is a project key (SEAM §252), set through the policy.
 const ADMIT = Object.freeze({
   max_concurrent_domains: 2,
   domain_memory_max: CONTRACT.engine.domain_memory_max.min,
-  service_memory_max: CONTRACT.project?.service_memory_max?.min ?? 67108864,
 });
+const POLICY = Object.freeze({ service_memory_max: 67108864 });
 
 describe('M319 the reserved check capacity, on real domains', () => {
   const shared = sharedFixture();
@@ -62,7 +63,7 @@ describe('M319 the reserved check capacity, on real domains', () => {
   let ctx;
   before(async () => {
     guard = operatorGuard();
-    ctx = await hostDeployable(shared.context, guard, { engineConfig: ADMIT });
+    ctx = await hostDeployable(shared.context, guard, { engineConfig: ADMIT, policy: POLICY });
   });
   after(async () => {
     try {
