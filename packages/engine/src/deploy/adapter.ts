@@ -10,9 +10,10 @@
 // `adapter_output_max_bytes`. Main thread only; no transaction is held
 // across a call (D1 §6.1).
 //
-// Slice 23 builds no production adapter: `local_service` is slice 24's. In
-// harness mode the seam answers the scripted adapter (SEAM.md §247);
-// otherwise an adapter with nothing to call answers, whose every effect is
+// In harness mode under `--harness-deploy-adapter scripted` (the default) the
+// seam answers the scripted adapter (SEAM.md §247); otherwise the production
+// adapter the engine built at start (adapters/local-service.ts), or, where
+// none was built, an adapter with nothing to call, whose every effect is
 // `not_issued` and every read `unavailable`, so unknown.
 
 import { seamDeploymentAdapter } from '../testing/seam.js';
@@ -101,6 +102,10 @@ export interface IdentityRead {
   instance: Instance | 'unread';
   generation: number | 'unread';
   at: string;
+  // The read's elapsed time as the engine measured it, and, on anything but
+  // `match`, what did not hold (SEAM.md §259).
+  duration_ms?: number | null;
+  detail?: { field: string; [key: string]: unknown } | null;
 }
 
 export interface Reconciliation {
@@ -127,6 +132,18 @@ export interface TargetExpectation {
   unit: string | null;
   generation: number | null;
   instance: Instance | null;
+  // What the real read checks besides (D4 §3.4): the init recorded at the
+  // grant, the unit's recorded cgroup and invocation, the runtime and the
+  // start command, the sealed copy and its manifest.
+  init?: Instance | null;
+  attempt?: string | null;
+  cgroup?: string | null;
+  invocation_id?: string | null;
+  exe?: string | null;
+  exe_sha256?: string | null;
+  argv?: string[] | null;
+  sealed_path?: string | null;
+  manifest?: unknown[] | null;
 }
 
 // What reconcile is given: the operation's frozen intent and the attempt's.
@@ -149,6 +166,8 @@ export interface AttemptIntent {
   // Every unit a frozen intent of the environment names: what the store
   // recorded for it.
   recorded_units: string[];
+  // What an identity read of g expects (§3.4), for a deploy's reconcile.
+  expect?: TargetExpectation[];
 }
 
 // The engine's launch socket, as a service launcher reaches it (D4 §9.2):
@@ -216,8 +235,14 @@ const none = (id: string): DeploymentAdapter => ({
   },
 });
 
+// The production adapters this engine built at start (deploy/adapters/).
+const production = new Map<string, DeploymentAdapter>();
+export function setProductionAdapter(adapter: DeploymentAdapter): void {
+  production.set(adapter.id, adapter);
+}
+
 export function adapterFor(id: string): DeploymentAdapter {
-  return (seamDeploymentAdapter(id) as DeploymentAdapter | null) ?? none(id);
+  return (seamDeploymentAdapter(id) as DeploymentAdapter | null) ?? production.get(id) ?? none(id);
 }
 
 // A call bounded by its deadline and its output bound. The signal is

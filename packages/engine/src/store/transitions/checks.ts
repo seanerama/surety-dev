@@ -504,7 +504,7 @@ export function readCandidateExecutions(db: Db, args: { project: string; candida
   // A queued `direct` execution the resource envelope does not admit now
   // shows its hold (D3 §2.5, "a hold shows as resource_envelope"; SEAM.md
   // §210): no domain is allocated for it meanwhile.
-  const hold = rows.some((r) => r.status === 'queued' && r.runner_class === 'direct') ? envelopeHold(db) : null;
+  const hold = rows.some((r) => r.status === 'queued' && r.runner_class === 'direct') ? envelopeHold(db, { kind: 'check' }) : null;
   return { ...head, executions: rows.map((r) => ({ ...executionView(r), hold: r.status === 'queued' && r.runner_class === 'direct' ? hold : null })) };
 }
 
@@ -556,6 +556,10 @@ export interface Admission {
   runner_id: string;
   runner_qualification: string;
   execution_seq: number;
+  // An environment-bound execution's service link (D4 §5.2; J8): the
+  // attempt and generation frozen on it, its environment, and the targets
+  // with the port each is reached on inside the check's own namespace.
+  link: { attempt: string; environment: string; generation: number; targets: string[]; port: number } | null;
 }
 
 const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
@@ -577,7 +581,7 @@ export function admitExecution(
   if (args.selfTestRunning === true || q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
   const { n } = tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "status" IN (${LIVE.map(() => '?').join(', ')})`).get(args.project, ...LIVE) as { n: number };
   const max = projectPolicy(tx.db, args.project).max_concurrent_checks ?? 1;
-  if (n >= max || envelopeHold(tx.db) !== null) return null;
+  if (n >= max || envelopeHold(tx.db, { kind: 'check' }) !== null) return null;
   const x = tx.db
     .prepare(`SELECT * FROM "check_executions" WHERE "project" = ? AND "status" = 'queued' AND "runner_class" = 'direct' ORDER BY "execution_seq" LIMIT 1`)
     .get(args.project) as Record<string, unknown> | undefined;
@@ -629,7 +633,27 @@ export function admitExecution(
     runner_id: runner,
     runner_qualification: q.id,
     execution_seq: x.execution_seq as number,
+    link: linkOf(tx.db, x),
   };
+}
+
+// The service link an execution bound to a deployment reaches (D4 §5.2).
+function linkOf(db: Db, x: Record<string, unknown>): Admission['link'] {
+  if (typeof x.deployment !== 'string' || typeof x.environment !== 'string') return null;
+  let dep: { attempt?: string; deployment_generation?: number; operation?: string };
+  try {
+    dep = JSON.parse(x.deployment) as typeof dep;
+  } catch {
+    return null;
+  }
+  if (!dep.attempt || !dep.operation || !Number.isInteger(dep.deployment_generation)) return null;
+  const op = db.prepare('SELECT "finalizer_inputs" FROM "operations" WHERE "id" = ?').get(dep.operation) as { finalizer_inputs: string } | undefined;
+  if (!op) return null;
+  const frozen = JSON.parse(op.finalizer_inputs) as { target_set?: string[]; config_version?: string | null };
+  const config = frozen.config_version ? (db.prepare('SELECT "content" FROM "environment_configs" WHERE "id" = ?').get(frozen.config_version) as { content: string } | undefined) : undefined;
+  const port = config ? (JSON.parse(config.content) as { port?: number }).port : undefined;
+  if (typeof port !== 'number') return null;
+  return { attempt: dep.attempt, environment: x.environment, generation: dep.deployment_generation!, targets: frozen.target_set ?? [], port };
 }
 
 // The reasons the runner knows, before anything is allocated, that a queued

@@ -41,6 +41,8 @@ export interface BackendLaunch {
   } | null;
   // A check execution's own process (D3 §2.6; domain-init.ts).
   check?: boolean;
+  // Further forwarders (a check's service link, D4 §5.2).
+  forwarders?: { port: number; socket: string }[];
 }
 
 export interface ExitReport {

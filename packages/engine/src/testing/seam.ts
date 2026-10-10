@@ -1020,6 +1020,26 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     if (s[3] === 'answers') return route(200, async (body) => addAnswers(init.scripted, env, body));
     if (s[3] === 'admission') return route(200, async (body) => setAdmission(init.scripted, env, body));
   }
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'faults') {
+    return {
+      restricted: false,
+      handler: async () => {
+        const body = await hooks.body();
+        const b = isObject(body) ? body : {};
+        const env = b.environment;
+        const fault = b.fault;
+        if (typeof fault !== 'string' || !(DEPLOY_FAULTS as readonly string[]).includes(fault)) {
+          throw new Refusal(400, 'invalid_value', `"fault" must be one of ${DEPLOY_FAULTS.join(', ')}.`, 'Send {"environment": "env_…", "fault": <a fault of SEAM.md §262>}.', { field: 'fault' });
+        }
+        const known = typeof env === 'string' && (await hooks.store().call('read', { name: 'deploy.environment_known', args: { environment: env } })) === true;
+        if (!known) throw new Refusal(400, 'invalid_value', 'No such environment.', 'Send {"environment": "env_…"}.', { field: 'environment' });
+        const armed = deployFaults.get(env as string) ?? new Set<DeployFault>();
+        armed.add(fault as DeployFault);
+        deployFaults.set(env as string, armed);
+        return { status: 200, body: { environment: env, faults: [...armed] } };
+      },
+    };
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'adapter-qualification') {
     return { restricted: false, handler: async () => (await storeOp(OP.adapterQualification, { body: await hooks.body(), actor: hooks.actor })) as { status: number; body: unknown } };
   }
@@ -1188,6 +1208,20 @@ function resolverReport(): unknown {
 export function seamDeploymentAdapter(id: string): unknown {
   if (!init.harness || id !== 'local_service' || (init.switches?.deployAdapter ?? 'scripted') !== 'scripted') return null;
   return scriptedDeploymentAdapter(init.scripted);
+}
+
+// SEAM.md §262: the real adapter's one-shot faults, armed per environment.
+const DEPLOY_FAULTS = ['init_report_altered', 'identity_start_time', 'identity_proc_unreadable'] as const;
+type DeployFault = (typeof DEPLOY_FAULTS)[number];
+const deployFaults = new Map<string, Set<DeployFault>>();
+
+// Is `fault` armed for `environment`? Taken (disarmed) when it is.
+export function seamTakeDeployFault(environment: string, fault: DeployFault): boolean {
+  if (!init.harness) return false;
+  const armed = deployFaults.get(environment);
+  if (!armed?.has(fault)) return false;
+  armed.delete(fault);
+  return true;
 }
 
 // What admission answers for a service domain where no real boundary

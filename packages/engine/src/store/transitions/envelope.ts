@@ -22,6 +22,7 @@
 import { readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -82,38 +83,78 @@ function memAvailable(): number | null {
   }
 }
 
+// What is being admitted: a role or probe domain (the default), a check
+// domain, or a service domain with its own memory and writable bytes.
+export type Admitting = { kind: 'role' } | { kind: 'check' } | { kind: 'service'; memory: number; writable: number };
+
 // Why a new domain may not be admitted now, or null.
-export function envelopeHold(db: Db): EnvelopeHold | null {
+//
+// Service domains (D4 §§4.7, 9.2; E115): a running service is counted at its
+// own reservation's memory (`service_memory_max`) and its project's
+// `service_writable_bytes`, never at `domain_memory_max`, and takes no slot
+// of `max_concurrent_domains`, which bounds the engine's concurrently
+// launched role and check domains. While any service runs, or one is being
+// admitted, the envelope keeps the capacity of one check domain (one slot,
+// `domain_memory_max`, `domain_writable_bytes`) free for post-deploy checks,
+// which run serially: a check is admitted into that capacity, and any other
+// domain only beside it. So no running service's reservation makes its
+// mandatory verification impossible (CH 6), and one fewer role run fits
+// beside a running service.
+export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): EnvelopeHold | null {
   const s = settings;
   if (s === null) return null;
-  const running = db.prepare(`SELECT "id", "cgroup_path" FROM "execution_domains" WHERE "status" <> 'terminated' AND "cgroup_path" IS NOT NULL`).all() as {
+  const all = db.prepare(`SELECT "id", "cgroup_path", "profile", "reservation", "project" FROM "execution_domains" WHERE "status" <> 'terminated' AND "cgroup_path" IS NOT NULL`).all() as {
     id: string;
     cgroup_path: string;
+    profile: string;
+    reservation: string | null;
+    project: string;
   }[];
+  const services = all.filter((d) => d.profile === 'service');
+  const running = all.filter((d) => d.profile !== 'service');
+  const serviceMemory = services.reduce((n, d) => {
+    let m = 0;
+    try {
+      m = Number((JSON.parse(d.reservation ?? '{}') as { memory?: number }).memory ?? 0);
+    } catch {
+      m = 0;
+    }
+    return n + (Number.isFinite(m) ? m : 0);
+  }, 0);
+  const serviceWritable = services.reduce((n, d) => n + (projectPolicy(db, d.project).service_writable_bytes ?? 0), 0);
+  const newService = admitting.kind === 'service' ? admitting : null;
+  // The check capacity kept free for post-deploy checks: while a service runs
+  // (or is admitted), unless a check domain already holds it or the domain
+  // admitted is the check itself.
+  const reserveCheck = (services.length > 0 || newService !== null) && admitting.kind !== 'check' && !running.some((d) => d.profile === 'check');
+  const newDomains = admitting.kind === 'service' ? 0 : 1;
   const boxes = selfTestBoxes;
   const hold = (reason: string, subject: Record<string, unknown>): EnvelopeHold => ({
     code: 'resource_envelope',
     reason,
-    subject: { running_domains: running.length, ...(boxes.length > 0 ? { self_test_boxes: boxes.length } : {}), ...subject },
+    subject: { running_domains: running.length, ...(services.length > 0 ? { service_domains: services.length } : {}), ...(boxes.length > 0 ? { self_test_boxes: boxes.length } : {}), ...subject },
   });
-  const domains = running.length + boxes.length;
-  if (domains + 1 > s.max_concurrent_domains) {
-    return hold(`${domains} domains are running; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`, { limit: 'max_concurrent_domains', value: s.max_concurrent_domains });
+  const domains = running.length + boxes.length + (reserveCheck ? 1 : 0);
+  if (domains + newDomains > s.max_concurrent_domains) {
+    return hold(
+      `${running.length + boxes.length} domains are running${reserveCheck ? ', and one check domain is kept for post-deploy verification' : ''}; admitting another would exceed max_concurrent_domains (${s.max_concurrent_domains}).`,
+      { limit: 'max_concurrent_domains', value: s.max_concurrent_domains },
+    );
   }
   // Memory (option B, above): every admitted domain at its maximum, the new
   // one included, beyond the reserve, against the room the host has; a
-  // self-test box at its own cap.
-  const admitted = running.length + 1;
-  const needed = s.host_reserve_memory + s.domain_memory_max * admitted + boxes.reduce((n, b) => n + b.memoryMax, 0);
+  // self-test box at its own cap; a service at its own reservation.
+  const admitted = running.length + newDomains + (reserveCheck ? 1 : 0);
+  const needed = s.host_reserve_memory + s.domain_memory_max * admitted + boxes.reduce((n, b) => n + b.memoryMax, 0) + serviceMemory + (newService?.memory ?? 0);
   const available = memAvailable();
-  const held = [...running.map((d) => d.cgroup_path), ...boxes.map((b) => b.cgroup)].map((path) => readNumber(join(path, 'memory.current')));
+  const held = [...all.map((d) => d.cgroup_path), ...boxes.map((b) => b.cgroup)].map((path) => readNumber(join(path, 'memory.current')));
   const unread = held.some((v) => v === null);
   const room = available === null || unread ? null : available + (held as number[]).reduce((a, b) => a + b, 0);
   if (room === null || room < needed) {
     return hold(
       room === null
         ? `the room for another domain cannot be read (${available === null ? 'MemAvailable' : "a running domain's memory.current"} unreadable); admission waits.`
-        : `admitting a domain needs host_reserve_memory (${s.host_reserve_memory}) beyond domain_memory_max (${s.domain_memory_max}) for each of the ${admitted} admitted domains, ${needed} bytes; the host has ${room} (${available} available and ${room - available!} held by the running domains).`,
+        : `admitting a domain needs host_reserve_memory (${s.host_reserve_memory}) beyond domain_memory_max (${s.domain_memory_max}) for each of the ${admitted} admitted domains${services.length > 0 || newService ? ` and ${serviceMemory + (newService?.memory ?? 0)} for the services` : ''}, ${needed} bytes; the host has ${room} (${available} available and ${room - available!} held by the running domains).`,
       { limit: 'host_reserve_memory', value: s.host_reserve_memory, available, held_by_running: room === null ? null : room - available!, needed, domain_memory_max: s.domain_memory_max, admitted },
     );
   }
@@ -124,7 +165,7 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
   } catch {
     free = null;
   }
-  const diskNeed = s.host_reserve_disk + s.domain_writable_bytes * (running.length + 1) + boxes.reduce((n, b) => n + b.writableBytes, 0);
+  const diskNeed = s.host_reserve_disk + s.domain_writable_bytes * admitted + boxes.reduce((n, b) => n + b.writableBytes, 0) + serviceWritable + (newService?.writable ?? 0);
   if (free === null || free < diskNeed) {
     return hold(
       `the engine home's filesystem has ${free ?? 'an unreadable amount of'} bytes free; admitting a domain needs host_reserve_disk (${s.host_reserve_disk}) beyond what the domains may write.`,
@@ -132,4 +173,12 @@ export function envelopeHold(db: Db): EnvelopeHold | null {
     );
   }
   return null;
+}
+
+// Admission of a service domain for a project (D4 §4.7): `granted`, or held
+// with why. Outside an engine with an envelope (the kernel lane), granted.
+export function serviceAdmissionHold(db: Db, args: { project: string }): { admission: 'granted' | 'held'; hold: EnvelopeHold | null } {
+  const p = projectPolicy(db, args.project);
+  const h = envelopeHold(db, { kind: 'service', memory: p.service_memory_max!, writable: p.service_writable_bytes! });
+  return { admission: h === null ? 'granted' : 'held', hold: h };
 }

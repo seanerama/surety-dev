@@ -522,6 +522,8 @@ export class Runtime {
 
   stop(): void {
     if (this.watcher) clearInterval(this.watcher);
+    // The launch socket closed and removed; running services go on (D4 §9.2).
+    this.deploy?.stop();
   }
 }
 

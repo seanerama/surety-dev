@@ -29,10 +29,11 @@
 // sandbox on its own.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
 type Msg = Record<string, unknown>;
@@ -66,32 +67,36 @@ const queue: Msg[] = [];
 let waiter: ((m: Msg | null) => void) | null = null;
 const handlers: ((m: Msg) => void)[] = [];
 
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on('line', (line) => {
-  let msg: Msg;
-  try {
-    msg = JSON.parse(line) as Msg;
-  } catch {
-    return;
-  }
-  if (waiter) {
-    const w = waiter;
-    waiter = null;
-    w(msg);
-    return;
-  }
-  if (handlers.length > 0) for (const h of handlers) h(msg);
-  else queue.push(msg);
-});
-lines.on('close', () => {
-  channelOpen = false;
-  if (waiter) {
-    const w = waiter;
-    waiter = null;
-    w(null);
-  }
-  onChannelLost();
-});
+// The channel to the engine: this process's standard input and output.
+// Opened only when this file runs as the init, never when it is imported.
+function openChannel(): void {
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  lines.on('line', (line) => {
+    let msg: Msg;
+    try {
+      msg = JSON.parse(line) as Msg;
+    } catch {
+      return;
+    }
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w(msg);
+      return;
+    }
+    if (handlers.length > 0) for (const h of handlers) h(msg);
+    else queue.push(msg);
+  });
+  lines.on('close', () => {
+    channelOpen = false;
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w(null);
+    }
+    onChannelLost();
+  });
+}
 
 // The engine is gone. The backend and whatever it started go on: the
 // boundary, not the init, ends them. Once nothing is left, there is nobody to
@@ -256,7 +261,29 @@ function make(root: string, e: Entry): void {
   }
 }
 
+// The `service` profile (D4 §§3.4, 9.2): before anything else, the init
+// asks for the launch authorization on its launcher's connection, presenting
+// its own host pid and start time, read from the host's /proc while it is
+// still mounted here (its private /proc comes with the plan). The engine
+// checks them on the host and grants once; refused, nothing is built.
+async function authorizeService(): Promise<void> {
+  let init: { pid: number; start_time: number } | null = null;
+  try {
+    const stat = readFileSync('/proc/self/stat', 'utf8');
+    const head = Number(stat.slice(0, stat.indexOf(' ')));
+    const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    init = { pid: head, start_time: Number(rest[19]) };
+  } catch {
+    init = null;
+  }
+  if (init === null || !Number.isInteger(init.pid) || !Number.isInteger(init.start_time)) process.exit(0);
+  send({ t: 'authorize', init });
+  const answer = await next();
+  if (!answer || answer.t !== 'granted') process.exit(0);
+}
+
 async function setup(): Promise<void> {
+  if (process.argv[3] === 'service') await authorizeService();
   send({ t: 'hello', stage: 'setup' });
   const msg = await next();
   if (!msg || msg.t !== 'plan') process.exit(0);
@@ -347,6 +374,13 @@ interface BackendSpec {
   // error both relayed, interleaved as they arrive; and, at its exit, before
   // anything is drained, whether any other process remains (`orphans`).
   check?: boolean;
+  // Further forwarders, as `forwarder` (a check's service link, D4 §5.2).
+  forwarders?: { port: number; socket: string }[];
+  // A service's application (D4 §9.2): its output captured in the init's
+  // own memory, at most `logMax` bytes, never relayed; ingress only through
+  // tunnels the engine asks for on this channel, each dialled to the
+  // engine's ingress socket and carried to the application's port.
+  service?: { port: number; ingress: string; logMax: number } | null;
 }
 
 // The containment check the engine gives the init (E86): the probe
@@ -412,6 +446,91 @@ async function runContainment(check: ContainmentSpec): Promise<void> {
 }
 
 let backendEnv: Record<string, string> = {};
+
+// The initial pid namespace's inode (the kernel's PROC_PID_INIT_INO).
+const INITIAL_PID_NS = 'pid:[4026531836]';
+
+// kill(2) with pid -1 signals every process the caller may signal: as
+// process 1 of a pid namespace of its own, every process of that namespace;
+// anywhere else, every process of the uid. So the init sends it only when it
+// is process 1 of a pid namespace that is not the initial one, and reads
+// that before every send; an unreadable namespace refuses.
+export function mayKillAll(pid: number = process.pid, readNs: () => string = () => readlinkSync('/proc/self/ns/pid')): boolean {
+  if (pid !== 1) return false;
+  let ns: string;
+  try {
+    ns = readNs();
+  } catch {
+    return false;
+  }
+  return /^pid:\[\d+\]$/.test(ns) && ns !== INITIAL_PID_NS;
+}
+
+function killAll(signal: NodeJS.Signals): void {
+  if (!mayKillAll()) return;
+  try {
+    process.kill(-1, signal);
+  } catch {
+    // nothing left to signal
+  }
+}
+
+// ---- the service's ingress and output (D4 §§5.2, 9.2) ------------------------------------
+
+let serviceSpec: { port: number; ingress: string; logMax: number } | null = null;
+const tunnels = new Set<net.Socket>();
+// The application's output: the newest `logMax` bytes, in this process's
+// memory only (the init is not dumpable; nothing of it is relayed).
+const captured: Buffer[] = [];
+let capturedBytes = 0;
+function capture(chunk: Buffer): void {
+  if (serviceSpec === null) return;
+  captured.push(chunk);
+  capturedBytes += chunk.length;
+  while (capturedBytes > serviceSpec.logMax && captured.length > 0) {
+    const over = capturedBytes - serviceSpec.logMax;
+    const first = captured[0]!;
+    if (first.length <= over) {
+      captured.shift();
+      capturedBytes -= first.length;
+    } else {
+      captured[0] = first.subarray(over);
+      capturedBytes -= over;
+    }
+  }
+}
+
+// A tunnel the engine asked for: dialled to the engine's ingress socket,
+// named by the engine's nonce, and carried to the application's port. Its
+// bytes pass both ways unchanged; it reads nothing of them.
+function openTunnel(id: string): void {
+  if (serviceSpec === null || exit !== null || !/^[0-9a-f]{32}$/.test(id)) return;
+  const spec = serviceSpec;
+  const up = net.connect(spec.ingress);
+  const app = net.connect({ host: '127.0.0.1', port: spec.port });
+  const drop = () => {
+    up.destroy();
+    app.destroy();
+    tunnels.delete(up);
+    tunnels.delete(app);
+  };
+  tunnels.add(up);
+  tunnels.add(app);
+  up.on('error', drop);
+  app.on('error', drop);
+  up.on('close', drop);
+  app.on('close', drop);
+  up.once('connect', () => {
+    up.write(`${id}\n`);
+    up.pipe(app);
+    app.pipe(up);
+  });
+}
+
+function closeTunnels(): void {
+  for (const t of tunnels) t.destroy();
+  tunnels.clear();
+}
 let containmentSpec: ContainmentSpec | null = null;
 
 let termAt: number | null = null;
@@ -567,14 +686,10 @@ function onMessage(m: Msg): void {
     // Every process of the pid namespace but the init (kill(2), pid -1):
     // only as process 1 of a pid namespace the launcher created, never
     // anywhere else, where -1 would mean every process of the uid.
-    if (process.pid === 1) {
-      try {
-        process.kill(-1, 'SIGTERM');
-      } catch {
-        // nothing left to signal
-      }
-    }
+    killAll('SIGTERM');
     leaveWhenAlone();
+  } else if (m.t === 'tunnel') {
+    openTunnel(String(m.id ?? ''));
   } else if (m.t === 'containment') {
     // The engine's request, on this channel only (E86).
     if (containmentSpec === null) send({ t: 'containment_done', ran: false, backend_running: exit === null, reason: 'this domain has no containment check' });
@@ -607,15 +722,16 @@ async function init(): Promise<void> {
   const msg = await next();
   if (!msg || msg.t !== 'backend') process.exit(0);
   const spec = msg.backend as BackendSpec;
-  if (spec.forwarder) {
+  for (const f of [...(spec.forwarder ? [spec.forwarder] : []), ...(spec.forwarders ?? [])]) {
     try {
-      await startForwarder(spec.forwarder);
+      await startForwarder(f);
     } catch (err) {
-      send({ t: 'setup_failed', detail: `the egress forwarder could not listen: ${(err as Error).message}` });
+      send({ t: 'setup_failed', detail: `the forwarder on port ${f.port} could not listen: ${(err as Error).message}` });
       setTimeout(() => process.exit(70), 50);
       return;
     }
   }
+  serviceSpec = spec.service ?? null;
   backendEnv = spec.env;
   containmentSpec = spec.canary?.containment ?? null;
   send({ t: 'ready' });
@@ -633,12 +749,22 @@ async function init(): Promise<void> {
   // once, so nothing reaches it by name; the write end is the check's fd 1
   // and fd 2. If it cannot be made, two pipes, and the exit report says the
   // output is not interleaved.
-  const output = spec.check === true ? checkOutputPipe() : null;
+  // A service's output is one pipe too (a FIFO, not a socket pair, so no
+  // descriptor of the application is a unix socket), captured here.
+  const piped = spec.check === true || serviceSpec !== null;
+  const output = piped ? checkOutputPipe() : null;
+  if (serviceSpec !== null && output === null) {
+    send({ t: 'start_failed', detail: "the service's output pipe could not be made", errno: null });
+    exit = { code: null, signal: null };
+    send({ t: 'exit', code: null, signal: null, start_failed: true });
+    leaveWhenAlone();
+    return;
+  }
   try {
     child = spawn(spec.argv[0]!, spec.argv.slice(1), {
       cwd: spec.cwd,
       env: spec.env,
-      stdio: spec.check === true ? (output !== null ? ['ignore', output.write, output.write] : ['ignore', 'pipe', 'pipe']) : ['pipe', 'pipe', 'ignore'],
+      stdio: piped ? (output !== null ? ['ignore', output.write, output.write] : ['ignore', 'pipe', 'pipe']) : ['pipe', 'pipe', 'ignore'],
       detached: true,
     });
   } catch (err) {
@@ -662,7 +788,18 @@ async function init(): Promise<void> {
   });
   if (child.pid !== undefined) {
     backendPid = child.pid;
-    send({ t: 'started', pid: child.pid });
+    // A service's report names the application's start time too (field 22
+    // of its stat), which the engine checks against the host's read.
+    let startTime: number | null = null;
+    if (serviceSpec !== null) {
+      try {
+        const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8');
+        startTime = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+      } catch {
+        startTime = null;
+      }
+    }
+    send({ t: 'started', pid: child.pid, ...(serviceSpec !== null ? { start_time: startTime } : {}) });
   }
   if (child.stdin) {
     child.stdin.on('error', () => {});
@@ -674,14 +811,15 @@ async function init(): Promise<void> {
   if (output !== null) {
     closeSync(output.write);
     combined = new net.Socket({ fd: output.read, readable: true, writable: false });
-    combined.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
+    if (serviceSpec !== null) combined.on('data', (chunk: Buffer) => capture(chunk));
+    else combined.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
     combined.on('error', () => {});
   } else {
     child.stdout!.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
     // A check's standard error joins its output (D3 §2.6).
     child.stderr?.on('data', (chunk: Buffer) => send({ t: 'out', d: chunk.toString('base64') }));
   }
-  if (spec.check !== true) child.stdout!.on('end', () => send({ t: 'eof' }));
+  if (!piped) child.stdout!.on('end', () => send({ t: 'eof' }));
   // The init exits once the backend has (SEAM.md §126): its report written,
   // process 1 of the sandbox goes, and the kernel ends every process left in
   // its pid namespace, a daemon the backend started among them.
@@ -706,6 +844,23 @@ async function init(): Promise<void> {
     child.stderr?.on('end', ended);
   }
   if (spec.check === true) interleaved = combined !== null;
+  if (serviceSpec !== null) {
+    // The application's end (D4 §9.2): its exit recorded and reported first,
+    // ingress closed, every other process of the domain ended, and the init
+    // goes; it never restarts the application and never takes another
+    // process for it.
+    child.on('exit', (code, signal) => {
+      exit = { code, signal: signalNumber(signal) };
+      send({ t: 'exit', code, signal: exit.signal, at: new Date().toISOString(), service: true });
+      closeTunnels();
+      killAll('SIGTERM');
+      setTimeout(() => {
+        killAll('SIGKILL');
+        setTimeout(() => process.exit(0), 50);
+      }, 1000);
+    });
+    return;
+  }
   // The cancellation canary's barrier, observed by the init, not the stream.
   if (spec.canary?.barrier) {
     const barrier = spec.canary.barrier;
@@ -740,11 +895,23 @@ async function init(): Promise<void> {
   });
 }
 
-closeInherited();
-const stage = process.argv[2];
-// The init is process 1 of the pid namespace the launcher created, or it is
-// nothing: outside one it would start a backend on the host.
-if (process.pid !== 1) process.exit(65);
-if (stage === 'setup') void setup();
-else if (stage === 'init') void init();
-else process.exit(64);
+// Run as the init program only: imported (a unit test of mayKillAll), it
+// does nothing.
+const runAsInit = (() => {
+  try {
+    return process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+if (runAsInit) {
+  closeInherited();
+  const stage = process.argv[2];
+  // The init is process 1 of the pid namespace the launcher created, or it
+  // is nothing: outside one it would start a backend on the host.
+  if (!mayKillAll()) process.exit(65);
+  openChannel();
+  if (stage === 'setup') void setup();
+  else if (stage === 'init') void init();
+  else process.exit(64);
+}

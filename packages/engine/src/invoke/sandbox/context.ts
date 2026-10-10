@@ -56,7 +56,35 @@ export type ContextFacts = {
   // project's checks (src/checks/guide.ts).
   check_writing?: CheckWritingFacts | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
+  // For a Builder: what each environment's current configuration fixes.
+  environments?: { name: string; adapter: string | null; runtime: string | null; start: string[]; port: number | null; exclude: string[] }[] | null;
 };
+
+// What a Builder of a project with an environment is told (BS4 §3, the role
+// packages; E121 item 2, CD4): what the configuration fixes, and that the
+// service must not change its process title or arguments.
+export function environmentText(envs: NonNullable<ContextFacts['environments']>): string {
+  return [
+    '# Environments',
+    '',
+    'The project is deployed to these environments. Their configuration is the owner\'s and fixes how the service is run; it is not in the repository and you cannot change it.',
+    '',
+    ...envs.flatMap((e) => [
+      `## ${e.name}`,
+      '',
+      `- Target: ${e.adapter ?? 'unknown'}, one service.`,
+      `- Runtime: ${e.runtime ?? 'unknown'} (pinned by path and hash). The service runs on it as it is: no build step runs and no dependency is installed, so the service uses the runtime's own modules only.`,
+      `- Start command: ${JSON.stringify(e.start)}, run from /surety/app, the sealed artifact (read-only). Its entry point${e.start[1] ? ` ${e.start[1]}` : ''} must be a file of the repository.`,
+      `- Port: the service listens on 127.0.0.1 at the port in the environment variable PORT${e.port !== null ? ` (${e.port})` : ''}.`,
+      `- Excluded from the artifact: ${e.exclude.length > 0 ? e.exclude.join(', ') : 'nothing'} (and .surety/ always).`,
+      '',
+    ]),
+    'Writable: /tmp, /surety/home and /surety/state only, all lost when the service is replaced. There is no network beyond loopback.',
+    '',
+    'The service must not change its process title or its arguments: do not set process.title and do not rewrite process.argv. The engine identifies the running service by the arguments it was started with, and a changed title or argument fails its verification.',
+    '',
+  ].join('\n');
+}
 
 export type FindingFacts = {
   id: string;
@@ -587,6 +615,7 @@ export function writeContextPackage(
   }
   for (const a of facts?.adrs ?? []) put(`adrs/${safeName(a.key)}.md`, 'adr', a.id, `# ${a.key}\n\n${a.text}\n`);
   for (const c of facts?.constraints ?? []) put(`constraints/${safeName(c.key)}.md`, 'constraint', c.id, `# ${c.key}\n\n${c.text}\n`);
+  if (role === 'builder' && facts?.environments && facts.environments.length > 0) put('environments.md', 'instructions', null, environmentText(facts.environments));
   if (facts?.phase_plan) put('phase-plan.json', 'phase_plan', String(facts.phase_plan.id ?? '') || null, `${JSON.stringify(facts.phase_plan, null, 2)}\n`);
   for (const m of facts?.modules ?? []) put(`interfaces/${safeName(m.name)}.json`, 'interface', m.id, `${JSON.stringify({ module: m.name, paths: m.paths }, null, 2)}\n`);
   if (facts?.candidate && facts.candidate.acceptance_content_hash) put('acceptance-content-hash.txt', 'acceptance_content_hash', facts.candidate.id, `${facts.candidate.acceptance_content_hash}\n`);

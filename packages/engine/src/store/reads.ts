@@ -273,6 +273,26 @@ export function contextFacts(db: Database, args: { run: string }) {
     criteria,
     check_writing: checkWriting,
     resumed,
+    // What each environment's current configuration fixes, for a Builder
+    // (BS4 §3, the role packages; CD4): never a secret's value.
+    environments:
+      run.role === 'builder'
+        ? (
+            db
+              .prepare(`SELECT e."name", c."content" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name"`)
+              .all(item.project) as { name: string; content: string }[]
+          ).map((r) => {
+            const c = parse<Record<string, unknown>>(r.content, {});
+            return {
+              name: r.name,
+              adapter: typeof c.adapter === 'string' ? c.adapter : null,
+              runtime: (c.runtime as { path?: string } | undefined)?.path ?? null,
+              start: Array.isArray(c.start) ? (c.start as string[]) : [],
+              port: typeof c.port === 'number' ? c.port : null,
+              exclude: ((c.artifact as { exclude?: string[] } | undefined)?.exclude ?? []).slice(),
+            };
+          })
+        : null,
   };
 }
 

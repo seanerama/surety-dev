@@ -45,7 +45,7 @@ import { pausePoint, seamCheckDomainLimits, seamLauncherBarriers, seamLauncherRe
 import { hostIdentity } from '../trust/host.js';
 import { type CheckTree, MaterializationFailed, listTrees, materialize, projectionOf, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
-import { buildCheckPlan, inputMountConflict, inputTargetConflict } from './profile.js';
+import { LINK_SOCKET, buildCheckPlan, inputMountConflict, inputTargetConflict } from './profile.js';
 import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
 
@@ -268,6 +268,8 @@ export class Supervisor implements DomainHolder {
   private cancelCause: 'deadline' | 'lease' | 'egress' | null = null;
   // The domain's egress proxy, only when the definition names hosts.
   private egress: DomainProxy | null = null;
+  // The execution's service link, only when it is bound to a deployment.
+  private link: { path: string; close: () => void } | null = null;
   private fireCancel: () => void = () => {};
   // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
   private leaseLost = false;
@@ -320,6 +322,9 @@ export class Supervisor implements DomainHolder {
   // record, the project's, with no run (SEAM.md §201): once the domain is
   // established terminated, or when nothing was launched.
   async finishEgress(): Promise<void> {
+    // The service link closes with the domain: no tunnel outlives it.
+    this.link?.close();
+    this.link = null;
     const egress = this.egress;
     if (egress === null) return;
     this.egress = null;
@@ -454,7 +459,20 @@ export class Supervisor implements DomainHolder {
         },
       });
     }
+    // The service link (D4 §5.2; J8): an execution bound to a deployment
+    // reaches the frozen generation's service through a socket the engine
+    // relays, forwarded inside the check's namespace to its target's port.
+    if (a.link && rt.deploy?.services) {
+      this.link = await rt.deploy.services.startLink({
+        attempt: a.link.attempt,
+        environment: a.link.environment,
+        generation: a.link.generation,
+        checkDomain: a.domain,
+        connectTimeoutMs: rt.config.values.service_link_connect_timeout * 1000,
+      });
+    }
     const plan = buildCheckPlan({
+      linkSocket: this.link?.path ?? null,
       area,
       source: realpathSync(tree.src),
       projection: realpathSync(projectionOf(tree, a.manifest)),
@@ -481,12 +499,14 @@ export class Supervisor implements DomainHolder {
     await this.engine('domain.plan', { domain: a.domain, fingerprint, mounts: entries, record });
     // The environment, constructed, never inherited (D3 §2.3).
     const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
+    if (this.link && a.link) for (const t of a.link.targets) env[`SURETY_TARGET_${t.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`] = `http://127.0.0.1:${a.link.port}`;
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
       env,
       cwd: checkCwd(def),
       stdin: null,
       forwarder: this.egress ? { port: FORWARDER_PORT, socket: EGRESS_SOCKET } : null,
+      ...(this.link && a.link ? { forwarders: [{ port: a.link.port, socket: LINK_SOCKET }] } : {}),
       check: true,
     };
     let deadline: NodeJS.Timeout | null = null;
