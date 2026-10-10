@@ -33,7 +33,7 @@ import { recordRow } from './harness/records.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { adapterState, attemptsOf, completeRound, configContent, configure, deploy, deployable, deployToRound, environmentRead, operationsOf, scriptCall } from './harness/deploy/kernel.mjs';
 import { changeTarget, recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
-import { collectLogs, logsRead, observe, observedOf, scriptObservation, storeFootprint } from './harness/deploy/observe.mjs';
+import { assertFootprintUnchanged, collectLogs, logsRead, observe, observedOf, quietFootprint, scriptObservation } from './harness/deploy/observe.mjs';
 
 const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o?.[k] ?? null]));
 
@@ -135,7 +135,7 @@ describe('M328 (c) GET environment and GET logs are stored reads', () => {
     assert.equal(asked.status, 202, `the collection is asked (SEAM.md §294) (body: ${asked.text})`);
     await tickUntil(fx.engine, project, async () => (await logsRead(fx.engine, project, env.name)).body?.state === 'collected', { what: 'the log to be collected' });
 
-    const footprint = storeFootprint(fx.home, env.id);
+    const footprint = await quietFootprint(fx.home, env.id, { what: 'the engine in harness mode' });
     const calls = (await adapterState(fx.engine, env.id)).calls.length;
     const answers = [];
     for (let i = 0; i < 3; i++) {
@@ -145,20 +145,21 @@ describe('M328 (c) GET environment and GET logs are stored reads', () => {
       answers.push({ observed: e.body.environment.observed, logs: l.body.logs });
     }
     assert.equal((await adapterState(fx.engine, env.id)).calls.length, calls, 'no adapter call, by an operation or the observation job (D4 §6.1)');
-    assert.deepEqual(storeFootprint(fx.home, env.id), footprint, 'nothing written: no event, record, observation or job changed');
+    assertFootprintUnchanged(fx.home, env.id, footprint, 'the reads in harness mode');
     assert.ok(answers.every((a) => a.observed.observed_at === answers[0].observed.observed_at), 'no read refreshes the observation\'s age');
     assert.ok(answers[0].logs.length >= 1 && answers[0].logs.every((l) => l.record && l.at), `the logs read returns stored records with their source timestamps (${JSON.stringify(answers[0].logs)})`);
 
     await fx.engine.stop();
     await fx.start({ harness: false });
-    const outside = storeFootprint(fx.home, env.id);
+    // The engine's own start-up work settles before the reads (it is not theirs).
+    const outside = await quietFootprint(fx.home, env.id, { what: 'the engine started outside harness mode' });
     for (let i = 0; i < 3; i++) {
       const e = await fx.engine.get(`/v1/projects/${project}/environments/${env.name}`);
       const l = await logsRead(fx.engine, project, env.name);
       assert.deepEqual([e.status, l.status], [200, 200], `outside harness mode the reads answer (${e.text} ${l.text})`);
       assert.equal(e.body.environment.observed?.observed_at, answers[0].observed.observed_at, 'outside harness mode the same stored observation');
     }
-    assert.deepEqual(storeFootprint(fx.home, env.id), outside, 'outside harness mode the reads write nothing');
+    assertFootprintUnchanged(fx.home, env.id, outside, 'the reads outside harness mode');
   });
 });
 
