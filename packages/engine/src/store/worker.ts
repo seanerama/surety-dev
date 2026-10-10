@@ -100,7 +100,6 @@ import {
   admissionWait,
   linkTarget,
   liveRoundExecutions,
-  liveExecutionIds,
   requestVerification,
   roundStep,
   supervisionLost,
@@ -295,7 +294,6 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.round': (d, a) => roundDetail(d, a),
   'deploy.link_target': (d, a) => linkTarget(d, a),
   'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
-  'deploy.live_execution_ids': (d, a) => liveExecutionIds(d, a.operation),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
   'deploy.configs_with_secrets': (d) => configsWithSecrets(d),
   'deploy.artifact_manifest': (d, a: { project: string; digest: string }) => {

@@ -453,14 +453,6 @@ export class ReleaseOperator {
     return more;
   }
 
-  // The deadline reached in verification (D4 §4.7): every execution of the
-  // operation's rounds still running is cancelled, so its service link
-  // closes; the lease is released only once none is live (verify()).
-  private async cancelLive(operation: string): Promise<void> {
-    const ids = await this.rt.read<string[]>('deploy.live_execution_ids', { operation });
-    for (const id of ids) this.rt.checks?.cancel(id);
-  }
-
   // One step of one open round. true: it can go further now.
   private async driveRound(d: DeployDetail, round: string): Promise<boolean> {
     const rd = await this.rt.read<RoundDetail | null>('deploy.round', { round });
@@ -478,7 +470,6 @@ export class ReleaseOperator {
     // was absent.
     if (Date.parse(nowIso()) > Date.parse(rd.deadline)) {
       await finalize({ reads: null, failure: null, reason: 'deadline' });
-      await this.cancelLive(d.id);
       return false;
     }
     // A channel loss this incarnation saw must be durable before the round
@@ -513,7 +504,6 @@ export class ReleaseOperator {
       // the read is never made and the round is `unknown` (SEAM.md §279).
       if (Date.parse(nowIso()) > Date.parse(rd.deadline)) {
         await finalize({ reads: null, failure: null, reason: 'deadline' });
-        await this.cancelLive(d.id);
         return false;
       }
     }

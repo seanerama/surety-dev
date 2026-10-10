@@ -272,18 +272,6 @@ export class Supervisor implements DomainHolder {
   // The execution's service link, only when it is bound to a deployment.
   private link: ServiceLink | null = null;
   private fireCancel: () => void = () => {};
-
-  // The engine's cancellation of a running execution from outside it: its
-  // verification round reached the orchestration deadline (D4 §4.7), so its
-  // service link must close before the lease is released. Ended as a
-  // deadline ends it: signaled, never a result of its own (D3 §2.5).
-  cancel(): void {
-    if (this.cancelAt === null && this.sandbox?.exitReport == null) {
-      this.cancelAt = performance.now();
-      this.cancelCause = 'deadline';
-    }
-    this.fireCancel();
-  }
   // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
   private leaseLost = false;
   private released = false;
@@ -880,15 +868,6 @@ export class CheckRunner {
   selfTestRunning = false;
 
   constructor(private readonly rt: Runtime) {}
-
-  // A running execution this engine supervises, cancelled (see
-  // Supervisor.cancel); false: none here.
-  cancel(execution: string): boolean {
-    const s = this.live.get(execution);
-    if (!s) return false;
-    s.cancel();
-    return true;
-  }
 
   // Quarantined executions no supervisor of this engine holds (left by a
   // prior incarnation, recovery could not establish their closure): each
