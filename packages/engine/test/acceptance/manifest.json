@@ -282,6 +282,17 @@
       "M310-the-service-profile.test.mjs",
       "M311-the-identity-reads-duration.test.mjs",
       "M311-identity-from-the-target.test.mjs"
+    ],
+    "25": [
+      "M305-a-result-invalidated-after-the-row.test.mjs",
+      "M315-bound-to-the-attempt-and-the-round.test.mjs",
+      "M316-bracketing-on-the-scripted-target.test.mjs",
+      "M317-verification-outcomes.test.mjs",
+      "M318-the-generation-guard.test.mjs",
+      "M319-capacity-reserved-at-admission.test.mjs",
+      "M319-the-reserved-check-capacity.test.mjs",
+      "M314-the-service-link.test.mjs",
+      "M316-bracketing-on-a-real-unit.test.mjs"
     ]
   },
   "sandbox": [
@@ -343,7 +354,10 @@
     "M313-nothing-of-the-operators.test.mjs",
     "M310-the-service-profile.test.mjs",
     "M311-the-identity-reads-duration.test.mjs",
-    "M311-identity-from-the-target.test.mjs"
+    "M311-identity-from-the-target.test.mjs",
+    "M319-the-reserved-check-capacity.test.mjs",
+    "M314-the-service-link.test.mjs",
+    "M316-bracketing-on-a-real-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

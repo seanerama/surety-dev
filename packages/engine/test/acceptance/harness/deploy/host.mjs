@@ -484,6 +484,7 @@ export const appRoot = (pid) => `/proc/${pid}/root/surety/app`;
 
 export const FIXTURE_SERVICE = readFileSync(new URL('./fixture-service.cjs', import.meta.url), 'utf8');
 const TARGET_CHECK = readFileSync(new URL('./target-check.mjs', import.meta.url), 'utf8');
+const LINK_CHECK = readFileSync(new URL('./link-check.mjs', import.meta.url), 'utf8');
 export const RELEASE = 'go';
 // The second release of a plan with `then` (section 258): the check ends only once the test writes it.
 export const RELEASE_AGAIN = 'again';
@@ -496,6 +497,35 @@ export function installTargetCheck(prog) {
   writeFileSync(path, `#!${process.execPath}\n${TARGET_CHECK}`);
   chmodSync(path, 0o755);
   return path;
+}
+
+// The link-probing post-deploy check program (row M314; SEAM.md §268),
+// beside the others in the check directory, with the test's node.
+export function installLinkCheck(prog) {
+  const path = join(prog.dir, 'link-check.mjs');
+  writeFileSync(path, `#!${process.execPath}\n${LINK_CHECK}`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+// The link check's report (its one output line), from its result record.
+export function linkReport(ctx, execution) {
+  const result = withStore(ctx.fx.home, (db) => db.prepare('SELECT * FROM "check_results" WHERE "execution" = ? ORDER BY rowid DESC').get(execution.id));
+  assert.ok(result, `the link check ${execution.id} has a result`);
+  const text = outputText(ctx.fx.home, result);
+  const line = text.split('\n').find((l) => l.startsWith('SURETY-LINK-REPORT '));
+  assert.ok(line, `the link check wrote its report (output: ${JSON.stringify(text.slice(0, 400))})`);
+  return { result, report: JSON.parse(line.slice('SURETY-LINK-REPORT '.length)) };
+}
+
+// The service_link_log records of an environment's executions (D4 §5.2;
+// SEAM.md §268): kind service_link_log, with their parsed JSON-line entries.
+export function serviceLinkLogs(home, project) {
+  const rows = withStore(home, (db) => db.prepare(`SELECT * FROM "records" WHERE "kind" = 'service_link_log' AND "project" = ? ORDER BY rowid`).all(project));
+  return rows.map((row) => ({
+    row,
+    entries: row.path === null ? [] : readFileSync(join(home, 'records', row.path), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)),
+  }));
 }
 
 // The host's namespaces in the form the fixture service's guard reads.
@@ -520,17 +550,26 @@ export async function hostConfig(over = {}) {
 // its workspace checks recorded, the runner qualified by §181's fixture and
 // the adapter by §248's (the qualification stand-in). `guard` tracks the
 // engine's home. Returns {fx, prog, project, p, candidate, stage, envs: {}}.
-export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], policy = {}, files = {}, entries, governed = {}, qualify = true } = {}) {
+// `behaves` picks the post-deploy check program: `target` (the default, the
+// target-check program held at RELEASE) or `link` (the link-probing program
+// of row M314, with --host-ns so its instrument steps run only when it reads
+// its own containment). `behavesTimeout` sets the check's `timeout_s`.
+export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], policy = {}, files = {}, entries, governed = {}, qualify = true, behaves = 'target', behavesTimeout = 300 } = {}) {
   const fx = realAdapterStarts(await sandboxEngine(t, { start: false, config: engineConfig }));
   guard.track(fx);
   await fx.start({ args: [...REAL_ADAPTER, ...engineArgs] });
   const prog = installCheckProgram(fx.root);
   const target = installTargetCheck(prog);
+  const link = installLinkCheck(prog);
+  const behavesCommand =
+    behaves === 'link'
+      ? ['link', '--hold', RELEASE, '--release-dir', prog.releaseDir, '--host-ns', hostNsValue()]
+      : ['target', '--hold', RELEASE, '--release-dir', prog.releaseDir];
   const projectFiles = {
-    [GOVERNED_FILE]: governedText({ protected_paths: ['.surety/checks/'], check_commands: { probe: { path: prog.program }, target: { path: target } }, runner_config: { direct: { read_paths: prog.readPaths } }, ...governed }),
+    [GOVERNED_FILE]: governedText({ protected_paths: ['.surety/checks/'], check_commands: { probe: { path: prog.program }, target: { path: target }, link: { path: link } }, runner_config: { direct: { read_paths: prog.readPaths } }, ...governed }),
     [defPath('acc')]: acceptance('acc', ['R1.1'], { command: ['probe', 'exit', '0'], timeout: 120 }),
     [defPath('smoke')]: smoke('smoke', { command: ['probe', 'exit', '0'], timeout: 120 }),
-    [defPath('behaves')]: definitionText('behaves', { kind: 'post_deploy_behavior', command: ['target', '--hold', RELEASE, '--release-dir', prog.releaseDir], timeout_s: 300, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
+    [defPath('behaves')]: definitionText('behaves', { kind: 'post_deploy_behavior', command: behavesCommand, timeout_s: behavesTimeout, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
     'server.js': FIXTURE_SERVICE,
     ...files,
   };
@@ -635,9 +674,11 @@ export function assertServiceContained(ctx, svc, what = 'the service') {
 }
 
 // The held post-deploy check of an environment's newest round: the
-// execution running in its `check` domain with the target-check program
-// holding at RELEASE as a member of the domain's cgroup. {execution, domain, member} or undefined.
-export function heldCheck(ctx, env) {
+// execution running in its `check` domain with the post-deploy check program
+// (`program`, the target-check program by default, or the link check)
+// holding at RELEASE as a member of the domain's cgroup. {execution, domain,
+// member} or undefined.
+export function heldCheck(ctx, env, { program = 'target-check.mjs' } = {}) {
   const x = postDeployOf(ctx, env).at(-1);
   if (!x || x.status !== 'running' || !x.domain) return undefined;
   const domain = domainRowOf(ctx.fx.home, x.domain);
@@ -650,9 +691,32 @@ export function heldCheck(ctx, env) {
   }
   for (const pid of pids) {
     const p = hostProcess(pid);
-    if (p && p.cmdline.some((a) => a.endsWith('/target-check.mjs')) && p.cmdline.includes('--hold')) return { execution: x, domain, member: p };
+    if (p && p.cmdline.some((a) => a.endsWith(`/${program}`)) && p.cmdline.includes('--hold')) return { execution: x, domain, member: p };
   }
   return undefined;
+}
+
+// E64's rule for the link check (SEAM.md §§141, 257, 268): the check's own
+// process is a member of its check domain's cgroup, and in none of the
+// host's pid, network or mount namespaces. The test reads this before it
+// writes the link check's plan (its half of the two-half rule).
+export function assertCheckContained(ctx, held, what = 'the link check') {
+  const pid = held.member?.pid;
+  assert.ok(Number.isInteger(pid) && pid > 1 && pid !== process.pid, `${what}: its host pid (${pid})`);
+  const cg = cgroupOfPid(pid);
+  assert.ok(cg === held.domain.cgroup_path || cg.startsWith(`${held.domain.cgroup_path}/`), `${what}: host-read, pid ${pid} is in the check domain's cgroup (${cg})`);
+  assert.ok(procsOf(held.domain.cgroup_path).includes(pid), `${what}: host-read, pid ${pid} is listed in the domain's cgroup.procs`);
+  const host = hostNamespaces();
+  const own = namespacesOf(pid);
+  for (const kind of ['pid', 'net', 'mnt']) assert.ok(own[kind] !== null && own[kind] !== host[kind], `${what}: host-read, pid ${pid} is not in the host's ${kind} namespace`);
+  return cg;
+}
+
+// Release the link check with its plan ({steps, exit}), after reading the
+// check's containment from the host (the test's half of E64's rule).
+export function releaseLink(ctx, held, plan) {
+  assertCheckContained(ctx, held);
+  writeFileSync(join(ctx.prog.releaseDir, RELEASE), JSON.stringify(plan));
 }
 
 // A request with a longer idle bound than the harness's 15 s (a request
