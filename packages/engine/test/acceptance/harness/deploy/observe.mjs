@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { decision } from '../decisions.mjs';
 import { eventsOfType } from '../journal.mjs';
+import { waitFor } from '../engine.mjs';
 import { advanceClock, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 import { adapterState, artifactsOf, attemptsOf, environmentLeases, environmentRecord, homeHash, operationRow, operationsOf, scriptCall, unitName, unitPrefix } from './kernel.mjs';
@@ -50,20 +51,25 @@ export const observedOf = (home, environment) => environmentRecord(home, environ
 // cadence) and ask for ticks until a new observation of `env` is recorded.
 // The total advanced is kept on the fixture, for a restart's
 // --harness-clock-offset (SEAM.md §274). Kernel lane.
-export async function observe(ctx, env = ctx.env, { seconds = 31, max = 6 } = {}) {
+export async function observe(ctx, env = ctx.env, { seconds = 31, max = 6, timeoutMs = 30_000 } = {}) {
   const { fx, project } = ctx;
   const before = historyOf(fx.home, env.id).length;
   await advanceClock(fx.engine, seconds);
   fx.clockAdvanced = (fx.clockAdvanced ?? 0) + seconds;
-  return tickUntil(
-    fx.engine,
-    project,
-    () => {
-      const h = historyOf(fx.home, env.id);
-      return h.length > before ? h.at(-1) : undefined;
-    },
-    { max, what: `an observation of ${env.name ?? env.id}` },
-  );
+  const recorded = () => {
+    const h = historyOf(fx.home, env.id);
+    return h.length > before ? h.at(-1) : undefined;
+  };
+  // The observer runs off the tick (SEAM.md §291; objection 046): ticks are
+  // asked for so it falls due, and the row is then waited for by time, so a
+  // read that is held until its deadline still lands. `max` 0 asks for none.
+  try {
+    if (max > 0) return await tickUntil(fx.engine, project, recorded, { max, what: `an observation of ${env.name ?? env.id}` });
+  } catch {
+    // not within the ticks: by time below
+  }
+  if (max === 0) return recorded();
+  return waitFor(recorded, { timeoutMs, what: `an observation of ${env.name ?? env.id}` });
 }
 
 // The same on a real unit: the ticks asked for in real time (host.mjs's ticksUntil).

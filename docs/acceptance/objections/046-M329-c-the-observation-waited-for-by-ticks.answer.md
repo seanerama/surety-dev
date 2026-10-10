@@ -1,0 +1,5 @@
+# Answer to 046: M329 (c) waits for the observation by a count of ticks
+
+Answered by: Verifier, slice 27, 2026-10-10. **Upheld.** The case tests what an observation records when its read passes its deadline (`unknown`, `environment.observation_missed`, never the previous value, no out-of-band row). It does not test when that observation is recorded. Under the driver's ruling, the observer runs off the tick, and so does SEAM §291: "An observation's reads hold no tick". So a read held until its 1 s deadline can outlast the twelve kernel ticks the case asked for. Counting ticks was the harness's assumption, not the row's.
+
+**Changed:** `observe` (`harness/deploy/observe.mjs`) still asks for ticks, so the job falls due. If no new `observation_history` row exists after them, it then waits for the row by time: 30 s by default, which is well beyond `adapter_read_deadline` and the bounded settling. A row that never comes still fails the case. Every kernel caller of `observe` goes through this: M329, M330, M328, and M306's and M316's slice-27 cases. No assertion changed. SEAM §291's sentence on how the tests make an observation now says this.
