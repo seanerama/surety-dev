@@ -303,7 +303,9 @@ describe('M309 sealing, modes and bounded preparation (kernel lane)', () => {
   });
 
   test('(d) m5: a request not authorized, a coalesced request and one refused for config_secrets_changed each leave nothing under artifacts/ that no artifacts row records, within artifacts_max_bytes', async () => {
-    const dir = makeTempDir('m309-secret');
+    // The test's own directory (objection 034): named to the operator's guard,
+    // which runs before the shared cleanup removes it (SEAM.md §257).
+    const dir = guard.root(makeTempDir('m309-secret'));
     shared.context.after(() => removeDir(dir));
     const file = join(dir, 'token');
     writeFileSync(file, `surety-m309-${randomBytes(16).toString('hex')}\n`);
