@@ -11,11 +11,19 @@
       "live_authorize",
       "live_complete"
     ],
+    "AdapterQualificationStatus": [
+      "current",
+      "lapsed"
+    ],
     "AssessmentStatus": [
       "proposed",
       "assessed",
       "approved",
       "rejected"
+    ],
+    "ArtifactStatus": [
+      "sealed",
+      "failed"
     ],
     "BaselineTextsKind": [
       "adr",
@@ -128,17 +136,52 @@
       "consumed",
       "invalidated"
     ],
+    "DeployJournalKind": [
+      "deploy_apply",
+      "teardown_apply"
+    ],
+    "JournalEventKind": [
+      "intended",
+      "applied",
+      "confirmed",
+      "failed",
+      "ambiguous",
+      "finalized"
+    ],
+    "JournalState": [
+      "intended",
+      "applied",
+      "confirmed",
+      "failed",
+      "ambiguous",
+      "finalized"
+    ],
     "AuthorizationStatus": [
       "proposed",
       "issued",
       "consumed",
       "superseded"
     ],
+    "VerificationOutcome": [
+      "verified",
+      "failed",
+      "unknown"
+    ],
+    "VerificationInvalidation": [
+      "later_attempt",
+      "generation_superseded",
+      "round_superseded"
+    ],
     "IntentStatus": [
       "pending",
       "executing",
       "done",
       "invalidated"
+    ],
+    "EnvironmentConfigStatus": [
+      "current",
+      "secrets_changed",
+      "superseded"
     ],
     "ActorKind": [
       "engine",
@@ -217,22 +260,6 @@
       "worktree_add",
       "worktree_remove"
     ],
-    "JournalEventKind": [
-      "intended",
-      "applied",
-      "confirmed",
-      "failed",
-      "ambiguous",
-      "finalized"
-    ],
-    "JournalState": [
-      "intended",
-      "applied",
-      "confirmed",
-      "failed",
-      "ambiguous",
-      "finalized"
-    ],
     "HostQualificationStatus": [
       "active",
       "lapsed"
@@ -249,7 +276,8 @@
       "integration",
       "workspace",
       "quarantine",
-      "check"
+      "check",
+      "environment"
     ],
     "Role": [
       "vision",
@@ -307,6 +335,12 @@
       "partial",
       "ambiguous",
       "superseded"
+    ],
+    "OrchestrationStage": [
+      "effect",
+      "verification",
+      "completion",
+      "ended"
     ],
     "IntegritySubject": [
       "ref",
@@ -376,7 +410,10 @@
       "provider_files",
       "egress_log",
       "qualification_evidence",
-      "unaccepted_result"
+      "unaccepted_result",
+      "deployment_logs",
+      "service_link_log",
+      "deploy_precondition_manifest"
     ],
     "PostScan": [
       "pending",
@@ -488,6 +525,17 @@
       "proposed",
       "active",
       "revoked"
+    ],
+    "VerificationRoundStatus": [
+      "open",
+      "decided",
+      "superseded"
+    ],
+    "VerificationRoundStep": [
+      "first_read",
+      "checks",
+      "second_read",
+      "done"
     ],
     "WorkItemKind": [
       "stage_build",
@@ -605,6 +653,7 @@
       "gate.scope_built",
       "gate.evaluated",
       "authorization.issued",
+      "authorization.consumed",
       "authorization.superseded",
       "finding.raised",
       "finding.severity_changed",
@@ -626,6 +675,24 @@
       "notification.failed",
       "notification.unknown",
       "environment.observed",
+      "environment.configured",
+      "environment.config_secrets_changed",
+      "environment.verified",
+      "artifact.sealed",
+      "artifact.failed",
+      "adapter.qualified",
+      "adapter.qualification_lapsed",
+      "candidate.advanced",
+      "deploy.journal_intended",
+      "deploy.journal_applied",
+      "deploy.journal_confirmed",
+      "deploy.journal_ambiguous",
+      "deploy.journal_finalized",
+      "deploy.capability_refused",
+      "deploy.launch_authorized",
+      "deploy.round_registered",
+      "deploy.round_superseded",
+      "deploy.orchestration_deadline",
       "engine.backup",
       "host.qualified",
       "host.qualification_lapsed",
@@ -769,6 +836,55 @@
         }
       }
     },
+    "adapter_qualifications": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "adapter": {
+          "required": true
+        },
+        "adapter_version": {
+          "required": true
+        },
+        "engine_build": {
+          "required": true
+        },
+        "host_qualification": {
+          "required": false,
+          "references": "host_qualifications"
+        },
+        "profile_fingerprint": {
+          "required": true
+        },
+        "cases": {
+          "required": true
+        },
+        "evidence": {
+          "required": false,
+          "references": "records"
+        },
+        "status": {
+          "required": true,
+          "enum": "AdapterQualificationStatus"
+        },
+        "qualified_at": {
+          "required": true
+        },
+        "lapsed_at": {
+          "required": false
+        },
+        "lapsed_reason": {
+          "required": false
+        },
+        "label": {
+          "required": false
+        }
+      }
+    },
     "applicability_assessments": {
       "fields": {
         "id": {
@@ -856,6 +972,126 @@
         },
         "consumed_at": {
           "required": true
+        }
+      }
+    },
+    "artifact_mappings": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "artifact": {
+          "required": true,
+          "references": "artifacts"
+        },
+        "dev_revision": {
+          "required": true
+        },
+        "delivery_commit": {
+          "required": false
+        },
+        "config_version": {
+          "required": true,
+          "references": "environment_configs"
+        },
+        "artifact_spec_fingerprint": {
+          "required": true
+        },
+        "builder": {
+          "required": true
+        }
+      }
+    },
+    "artifacts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "digest": {
+          "required": true
+        },
+        "manifest": {
+          "required": true
+        },
+        "path": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "ArtifactStatus"
+        },
+        "sealed_at": {
+          "required": false
+        },
+        "refusal": {
+          "required": false
+        },
+        "bytes": {
+          "required": true
+        },
+        "entries": {
+          "required": true
+        },
+        "failed_at": {
+          "required": false
+        }
+      }
+    },
+    "attempt_intents": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "attempt": {
+          "required": true,
+          "references": "operation_attempts"
+        },
+        "generation": {
+          "required": true
+        },
+        "create_units": {
+          "required": true
+        },
+        "prior": {
+          "required": true
+        },
+        "cleanup": {
+          "required": true
+        },
+        "resources": {
+          "required": true
+        },
+        "preconditions": {
+          "required": true
+        },
+        "retry_decision": {
+          "required": false,
+          "references": "decisions"
         }
       }
     },
@@ -1172,6 +1408,9 @@
         "runner_qualification": {
           "required": false,
           "references": "host_qualifications"
+        },
+        "deployment": {
+          "required": false
         }
       }
     },
@@ -1324,6 +1563,67 @@
         }
       }
     },
+    "deploy_journal_events": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "seq": {
+          "required": true
+        },
+        "journal_kind": {
+          "required": true,
+          "enum": "DeployJournalKind"
+        },
+        "event_kind": {
+          "required": true,
+          "enum": "JournalEventKind"
+        },
+        "payload": {
+          "required": true
+        }
+      }
+    },
+    "deploy_journal_state": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "journal_kind": {
+          "required": true,
+          "enum": "DeployJournalKind"
+        },
+        "state": {
+          "required": true,
+          "enum": "JournalState"
+        },
+        "last_event_seq": {
+          "required": true
+        }
+      }
+    },
     "deployment_authorizations": {
       "fields": {
         "id": {
@@ -1377,6 +1677,87 @@
         },
         "binding_hash": {
           "required": true
+        }
+      }
+    },
+    "deployment_verifications": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "attempt": {
+          "required": true,
+          "references": "operation_attempts"
+        },
+        "round": {
+          "required": true,
+          "references": "verification_rounds"
+        },
+        "deployment_generation": {
+          "required": true
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "target_set": {
+          "required": true
+        },
+        "artifact_digest": {
+          "required": true
+        },
+        "mapping": {
+          "required": true,
+          "references": "artifact_mappings"
+        },
+        "config_identity": {
+          "required": true
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "identity_reads": {
+          "required": true
+        },
+        "behavioral_results": {
+          "required": true
+        },
+        "adapter_qualification": {
+          "required": false,
+          "references": "adapter_qualifications"
+        },
+        "outcome": {
+          "required": true,
+          "enum": "VerificationOutcome"
+        },
+        "missing": {
+          "required": false
+        },
+        "computed_at": {
+          "required": true
+        },
+        "invalidated_at": {
+          "required": false
+        },
+        "invalidated_reason": {
+          "required": false,
+          "enum": "VerificationInvalidation"
         }
       }
     },
@@ -1447,6 +1828,46 @@
         }
       }
     },
+    "environment_configs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "version": {
+          "required": true
+        },
+        "content": {
+          "required": true
+        },
+        "config_identity": {
+          "required": true
+        },
+        "secret_digests": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "EnvironmentConfigStatus"
+        },
+        "written_by": {
+          "required": true
+        },
+        "written_at": {
+          "required": true
+        }
+      }
+    },
     "environment_records": {
       "fields": {
         "id": {
@@ -1474,6 +1895,9 @@
         },
         "frozen_at": {
           "required": false
+        },
+        "running": {
+          "required": false
         }
       }
     },
@@ -1500,6 +1924,22 @@
         },
         "verify_spec": {
           "required": true
+        },
+        "current_config": {
+          "required": false,
+          "references": "environment_configs"
+        },
+        "deployment_generation": {
+          "required": true
+        },
+        "current_generation": {
+          "required": false
+        },
+        "prefix": {
+          "required": false
+        },
+        "teardown_requested_at": {
+          "required": false
         }
       }
     },
@@ -2300,6 +2740,25 @@
         },
         "incarnation": {
           "required": false
+        },
+        "deployment_generation": {
+          "required": false
+        },
+        "capability": {
+          "required": false
+        },
+        "launch_state": {
+          "required": false,
+          "enum": "LaunchState"
+        },
+        "init_instance": {
+          "required": false
+        },
+        "app_instance": {
+          "required": false
+        },
+        "receipt": {
+          "required": false
         }
       }
     },
@@ -2359,6 +2818,17 @@
         },
         "outcome_detail": {
           "required": false
+        },
+        "orchestration_deadline_at": {
+          "required": false
+        },
+        "orchestration_stage": {
+          "required": false,
+          "enum": "OrchestrationStage"
+        },
+        "authorization": {
+          "required": false,
+          "references": "deployment_authorizations"
         }
       }
     },
@@ -3451,6 +3921,83 @@
         }
       }
     },
+    "verification_rounds": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "operation": {
+          "required": true,
+          "references": "operations"
+        },
+        "attempt": {
+          "required": true,
+          "references": "operation_attempts"
+        },
+        "round": {
+          "required": true
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "mapping": {
+          "required": true,
+          "references": "artifact_mappings"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "deployment_generation": {
+          "required": true
+        },
+        "config_identity": {
+          "required": true
+        },
+        "protected_version": {
+          "required": true,
+          "references": "protected_versions"
+        },
+        "required_checks": {
+          "required": true
+        },
+        "adapter_qualification": {
+          "required": false,
+          "references": "adapter_qualifications"
+        },
+        "status": {
+          "required": true,
+          "enum": "VerificationRoundStatus"
+        },
+        "superseded_reason": {
+          "required": false
+        },
+        "registered_at": {
+          "required": true
+        },
+        "deadline_at": {
+          "required": false
+        },
+        "step": {
+          "required": true,
+          "enum": "VerificationRoundStep"
+        },
+        "reads": {
+          "required": true
+        },
+        "executions": {
+          "required": true
+        }
+      }
+    },
     "work_items": {
       "fields": {
         "id": {
@@ -4395,25 +4942,25 @@
       "owner": "store/transitions/decisions.ts"
     },
     "operation.intended": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.attempt_started": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.succeeded": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.failed": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.partial": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.ambiguous": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "operation.finalized": {
-      "owner": "store/transitions/journal.ts"
+      "owner": "store/transitions/journal.ts, store/transitions/deploy.ts"
     },
     "revision.recorded": {
       "owner": "store/transitions/repo.ts"
@@ -4514,6 +5061,9 @@
     "authorization.issued": {
       "owner": "store/transitions/gates.ts"
     },
+    "authorization.consumed": {
+      "owner": "store/transitions/deploy.ts"
+    },
     "authorization.superseded": {
       "owner": "store/transitions/gates.ts"
     },
@@ -4576,6 +5126,60 @@
     },
     "environment.observed": {
       "owner": "store/transitions/environments.ts"
+    },
+    "environment.configured": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "environment.config_secrets_changed": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "environment.verified": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "artifact.sealed": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "artifact.failed": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "adapter.qualified": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "adapter.qualification_lapsed": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "candidate.advanced": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.journal_intended": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.journal_applied": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.journal_confirmed": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.journal_ambiguous": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.journal_finalized": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.capability_refused": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.launch_authorized": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.round_registered": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.round_superseded": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "deploy.orchestration_deadline": {
+      "owner": "store/transitions/deploy.ts"
     },
     "engine.backup": {
       "owner": "store/transitions/engine.ts"
@@ -4940,6 +5544,73 @@
       "isolation_probe_exhaustion": {
         "default": false,
         "type": "boolean"
+      },
+      "adapter_effect_deadline": {
+        "default": 120,
+        "min": 10,
+        "max": 900,
+        "integer": true
+      },
+      "adapter_read_deadline": {
+        "default": 10,
+        "min": 1,
+        "max": 120,
+        "integer": true
+      },
+      "adapter_output_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
+      },
+      "artifact_max_entries": {
+        "default": 20000,
+        "min": 100,
+        "max": 200000,
+        "integer": true
+      },
+      "artifact_max_bytes": {
+        "default": 268435456,
+        "min": 1048576,
+        "max": 2147483648,
+        "integer": true
+      },
+      "artifacts_max_bytes": {
+        "default": 2147483648,
+        "min": 1048576,
+        "max": 68719476736,
+        "integer": true,
+        "at_least": "artifact_max_bytes"
+      },
+      "artifact_prepare_deadline": {
+        "default": 600,
+        "min": 10,
+        "max": 3600,
+        "integer": true
+      },
+      "service_link_connect_timeout": {
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "integer": true
+      },
+      "service_link_tunnel_max_seconds": {
+        "default": 1800,
+        "min": 60,
+        "max": 10800,
+        "integer": true
+      },
+      "service_link_tunnels_max": {
+        "default": 16,
+        "min": 1,
+        "max": 128,
+        "integer": true
+      },
+      "service_link_buffer_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
+        "integer": true
       }
     },
     "project": {
@@ -5061,6 +5732,54 @@
         "default": 1,
         "min": 1,
         "max": 8,
+        "integer": true
+      },
+      "deploy_orchestration_deadline": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deploy_auto_retries_max": {
+        "default": 1,
+        "min": 0,
+        "max": 3,
+        "integer": true
+      },
+      "identity_observation_every": {
+        "default": 10,
+        "min": 1,
+        "max": 100,
+        "integer": true
+      },
+      "service_memory_max": {
+        "default": 536870912,
+        "min": 67108864,
+        "max": 8589934592,
+        "integer": true
+      },
+      "service_tasks_max": {
+        "default": 128,
+        "min": 16,
+        "max": 4096,
+        "integer": true
+      },
+      "service_writable_bytes": {
+        "default": 67108864,
+        "min": 1048576,
+        "max": 1073741824,
+        "integer": true
+      },
+      "service_writable_inodes": {
+        "default": 4096,
+        "min": 256,
+        "max": 65536,
+        "integer": true
+      },
+      "service_log_max_bytes": {
+        "default": 1048576,
+        "min": 65536,
+        "max": 16777216,
         "integer": true
       },
       "budget_run_boundary": {

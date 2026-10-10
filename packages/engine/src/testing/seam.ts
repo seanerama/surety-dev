@@ -85,6 +85,8 @@ import {
   parseResultBody,
   projectRepo,
 } from './fixtures.js';
+import { addAnswers, adapterReport, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
+import { installAdapterQualification, installFixtureAuthorization } from './deploy-fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
 const WORKER_BARRIERS = ['migration.before_commit', 'checks.registered'] as const;
@@ -140,6 +142,10 @@ const MAIN_BARRIERS: readonly string[] = [
   'checks.exit_recorded',
   // SEAM.md §193: an evaluation's facts read, its transaction not begun.
   'gate.facts_read',
+  // SEAM.md §251: the deployment's boundaries.
+  'deploy.intended',
+  'deploy.receipt_recorded',
+  'verify.row_recorded',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release
@@ -197,6 +203,8 @@ export interface HarnessSwitches {
   checkDomainLimits?: CheckDomainLimits | null;
   // SEAM.md §217: `--harness-classifier-version <n>`.
   classifierVersion?: number | null;
+  // SEAM.md §247: `--harness-deploy-adapter <scripted|real>`.
+  deployAdapter?: 'scripted' | 'real';
 }
 
 export interface CheckDomainLimits {
@@ -710,6 +718,8 @@ const OP = {
   correction: 'harness.ledger_correction',
   executionProject: 'harness.execution_project',
   scriptedStep: 'harness.scripted_step',
+  adapterQualification: 'harness.adapter_qualification',
+  fixtureAuthorization: 'harness.fixture_authorization',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -824,6 +834,10 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         },
       }),
     };
+  }
+  // SEAM.md §247: the scripted deployment adapter's state.
+  if (s.length === 3 && s[0] === 'deploy' && s[1] === 'environments' && get) {
+    return { restricted: false, handler: async () => ({ status: 200, body: adapterReport(init.scripted, decodeSegment(s[2]!)) }) };
   }
   if (!post) return null;
   if (s.length === 2 && s[0] === 'ledger' && s[1] === 'corrections') {
@@ -990,6 +1004,21 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
       return storeOp(OP.scriptedStep, { args: { execution: step.execution, to: step.to, result: step.result, output }, actor: hooks.actor });
     });
   }
+  // SEAM.md §§246 to 248: the scripted deployment adapter's target, answers
+  // and admission; the adapter qualification fixture; caller-supplied
+  // authorization bindings (J3), which no production route accepts.
+  if (s.length === 4 && s[0] === 'deploy' && s[1] === 'environments') {
+    const env = decodeSegment(s[2]!);
+    if (s[3] === 'target') return route(200, async (body) => setTarget(init.scripted, env, body));
+    if (s[3] === 'answers') return route(200, async (body) => addAnswers(init.scripted, env, body));
+    if (s[3] === 'admission') return route(200, async (body) => setAdmission(init.scripted, env, body));
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'adapter-qualification') {
+    return { restricted: false, handler: async () => (await storeOp(OP.adapterQualification, { body: await hooks.body(), actor: hooks.actor })) as { status: number; body: unknown } };
+  }
+  if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'authorization') {
+    return { restricted: false, handler: async () => (await storeOp(OP.fixtureAuthorization, { body: await hooks.body(), actor: hooks.actor })) as { status: number; body: unknown } };
+  }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'runner-qualification') {
     return route(201, async (body) => {
       parseRunnerQualification(body);
@@ -1146,6 +1175,22 @@ function resolverReport(): unknown {
 // real provider by name: the harness map is never filled there, and Sean's
 // second real-agent run found every name refused `resolve_failed` by it. A
 // name the map does not hold does not resolve.
+// The deployment adapter of this id: in harness mode under
+// `--harness-deploy-adapter scripted` (the default), the scripted one of
+// SEAM.md §247; otherwise none from here.
+export function seamDeploymentAdapter(id: string): unknown {
+  if (!init.harness || id !== 'local_service' || (init.switches?.deployAdapter ?? 'scripted') !== 'scripted') return null;
+  return scriptedDeploymentAdapter(init.scripted);
+}
+
+// What admission answers for a service domain where no real boundary
+// admits one (the kernel lane): the scripted adapter's answer for the
+// environment; null outside harness mode.
+export function seamDeployAdmission(environment: string): 'granted' | 'held' | null {
+  if (!init.harness || (init.switches?.deployAdapter ?? 'scripted') !== 'scripted') return null;
+  return scriptedAdmission(init.scripted, environment);
+}
+
 export function seamResolver(): { resolve(name: string): Promise<string[]> } | null {
   if (!init.harness || realLane) return null;
   return {
@@ -1261,6 +1306,10 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return executionProject(store(), a.execution as string);
     case OP.scriptedStep:
       return installScriptedStep(store(), a.actor, a.args as unknown as Omit<ScriptedStep, 'runner_id'>);
+    case OP.adapterQualification:
+      return installAdapterQualification(store(), a.actor, a.body);
+    case OP.fixtureAuthorization:
+      return installFixtureAuthorization(store(), a.actor, a.body);
     case OP.correction:
       return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:
@@ -1521,6 +1570,7 @@ export function setHarnessSwitches(values: {
   checkProfileVariant?: string | null;
   checkDomainLimits?: string | null;
   classifierVersion?: string | null;
+  deployAdapter?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1563,6 +1613,7 @@ export function setHarnessSwitches(values: {
     if (!/^[1-9][0-9]{0,8}$/.test(values.classifierVersion)) return `--harness-classifier-version takes a positive integer, not ${values.classifierVersion}`;
     classifierVersion = Number(values.classifierVersion);
   }
+  if (values.deployAdapter != null && values.deployAdapter !== 'scripted' && values.deployAdapter !== 'real') return `--harness-deploy-adapter takes scripted or real, not ${values.deployAdapter}`;
   if (!init.harness) return null;
   init = {
     ...init,
@@ -1577,6 +1628,7 @@ export function setHarnessSwitches(values: {
       checkProfileVariant: values.checkProfileVariant ?? null,
       checkDomainLimits,
       classifierVersion,
+      deployAdapter: (values.deployAdapter as 'scripted' | 'real' | null | undefined) ?? 'scripted',
     },
   };
   return null;

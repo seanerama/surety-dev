@@ -306,6 +306,8 @@ export class Runtime {
 
   // The check runner (checks/run.ts), set once at startup.
   checks: import('./checks/run.js').CheckRunner | null = null;
+  // The Release Operator (deploy/release-operator.ts), set once at startup.
+  deploy: import('./deploy/release-operator.js').ReleaseOperator | null = null;
 
   // The incarnation scope (D2 §3.1), null when the engine runs without one.
   scope: Scope | null = null;

@@ -11,7 +11,7 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
-import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOperations, readProject, readWork, runTail } from './projections.js';
+import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
@@ -85,7 +85,36 @@ import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js
 import { chainBoundary, resumeWork } from './transitions/work.js';
 import { captureRunProposal, recordRunReport } from './transitions/accept.js';
 import { ancestryPairs, nominationAncestryPairs, nominationPresenceDue, presenceDue, recordAncestry, recordNominationPresence, recordPresence } from './transitions/evidence.js';
-import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs, proposeAuthorization } from './transitions/gates.js';
+import { dueStageGates, evaluateGate, gateFactsRead, gateRefRegistry, observeGateRefs } from './transitions/gates.js';
+import {
+  applicationStarted,
+  artifactFoundCorrupt,
+  attemptOrphaned,
+  capabilityCheck,
+  capabilityRefused,
+  configsWithSecrets,
+  deployDetail,
+  deployWork,
+  finalizeDeploy,
+  finalizeRound,
+  intendDeploy,
+  intendTeardown,
+  launchAuthorize,
+  markSecretsChanged,
+  preconditionFailed,
+  readPreconditions,
+  recordReceipt,
+  recordReconcile,
+  requestDeployment,
+  requestFacts,
+  requestTeardown,
+  roundChecksDone,
+  roundDetail,
+  roundFirstRead,
+  startDeployAttempt,
+  writeConfigVersion,
+} from './transitions/deploy.js';
+import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
 import { applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
@@ -192,10 +221,18 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
   'gate.evaluate': (tx, a) => ok(evaluateGate(tx, a)),
-  'authorization.propose': (tx, a) => proposeAuthorization(tx, a),
   'candidate.request_checks': (tx, a) => ({ ...requestChecks(tx, a), effects: [{ kind: 'tick' }] }),
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
+  // D4 §§3.2, 4.1, 4.6 (M4 slice 23).
+  'environment.configure': (tx, a) => writeConfigVersion(tx, a),
+  'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'environment.teardown': (tx, a) => requestTeardown(tx, a),
 };
+
+// The checks a round requires (D4 §5.3): the `alpha_complete` scope's.
+const completionRequired = (d: Database.Database, project: string, candidate: Parameters<typeof requiredSet>[1]['candidate'], version: string): CheckRow[] =>
+  requiredSet(d, { project, candidate, kind: 'alpha_complete', stage: null, version }).required;
+const checksById = (d: Database.Database, ids: string[]): CheckRow[] => ids.map((id) => d.prepare('SELECT * FROM "checks" WHERE "id" = ?').get(id) as CheckRow).filter((c) => c !== undefined);
 
 const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'projects.list': (d, a) => listProjects(d, a),
@@ -219,6 +256,17 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
+  'environment.read': (d, a) => readOneEnvironment(d, a),
+  'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'deploy.work': (d, a) => deployWork(d, a),
+  'deploy.detail': (d, a) => deployDetail(d, a),
+  'deploy.round': (d, a) => roundDetail(d, a),
+  'deploy.capability_check': (d, a) => capabilityCheck(d, a),
+  'deploy.configs_with_secrets': (d) => configsWithSecrets(d),
+  'deploy.artifact_manifest': (d, a: { project: string; digest: string }) => {
+    const row = d.prepare('SELECT "manifest" FROM "artifacts" WHERE "project" = ? AND "digest" = ?').get(a.project, a.digest) as { manifest: string } | undefined;
+    return row ? (JSON.parse(row.manifest) as unknown) : null;
+  },
   'environments.list': (d, a) => readEnvironments(d, a),
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
@@ -405,6 +453,24 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'qualification.canary_item': (tx, a) => canaryItem(tx, a),
   'qualification.canary': (tx, a) => recordCanary(tx, a),
   'qualification.conclude': (tx, a) => concludeAttempt(tx, a),
+  // The Release Operator's steps (D4 §§4, 5; deploy/release-operator.ts).
+  'deploy.secrets_changed': (tx, a) => markSecretsChanged(tx, a),
+  'deploy.intend': (tx, a) => intendDeploy(tx, a),
+  'deploy.intend_teardown': (tx, a) => intendTeardown(tx, a),
+  'deploy.preconditions': (tx, a) => readPreconditions(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'deploy.precondition_failed': (tx, a) => preconditionFailed(tx, a),
+  'deploy.artifact_corrupt': (tx, a) => artifactFoundCorrupt(tx, a),
+  'deploy.attempt': (tx, a) => startDeployAttempt(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'deploy.launch_authorize': (tx, a) => launchAuthorize(tx, a),
+  'deploy.app_started': (tx, a) => applicationStarted(tx, a),
+  'deploy.capability_refused': (tx, a) => capabilityRefused(tx, a),
+  'deploy.receipt': (tx, a) => recordReceipt(tx, a),
+  'deploy.reconciled': (tx, a) => recordReconcile(tx, a),
+  'deploy.orphaned': (tx, a) => attemptOrphaned(tx, a),
+  'deploy.finalize': (tx, a) => finalizeDeploy(tx, { operation: a.operation, requiredOf: completionRequired }),
+  'deploy.round_first_read': (tx, a) => roundFirstRead(tx, { ...a, checksOf: checksById }),
+  'deploy.round_checks_done': (tx, a) => roundChecksDone(tx, a),
+  'deploy.round_finalize': (tx, a) => finalizeRound(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

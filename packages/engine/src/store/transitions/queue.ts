@@ -35,6 +35,7 @@ import {
 import { contentHash, getCandidate, markStale, predecessors } from './evidence.js';
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
+import { deployBlockerPreview } from './deploy.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
@@ -232,6 +233,24 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     };
   }
   if (d.subject_type === 'operation') {
+    // A deploy or teardown operation's blocker (D4 §2.4): its journal is the
+    // deployment's (deploy.ts), not git's.
+    const deploy = deployBlockerPreview(tx.db, d.subject_id);
+    if (deploy !== null) {
+      return {
+        manifest: deploy.manifest,
+        options: [
+          {
+            key: 'acknowledge',
+            label: 'Acknowledge',
+            consequence: 'Records that you have seen this. It establishes nothing: the operation goes on only once a read can tell what the target holds.',
+            effect: { record: 'acknowledgement' },
+          },
+        ],
+        question: deploy.question,
+        blockedOperation: d.subject_id,
+      };
+    }
     let op;
     try {
       op = opDetail(tx, d.subject_id);

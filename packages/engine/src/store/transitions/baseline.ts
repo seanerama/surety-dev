@@ -223,7 +223,17 @@ export function declareChecks(tx: Tx, args: { project: string; checks: CheckInpu
     out.push({ id, key: c.key });
   }
   tx.db.prepare('UPDATE "protected_versions" SET "check_ids" = ? WHERE "id" = ?').run(JSON.stringify(ids), version.id);
-  markStale(tx, { project: args.project });
+  // Every evaluation is stale, but where only checks of `alpha_complete` were
+  // added (M4 slice 23: a required post-deploy obligation): then that gate's
+  // and `alpha_authorize`'s are, whose obligations read that scope (J4). A
+  // stage evaluation such a check cannot change is left as it was.
+  const before = new Set(JSON.parse(version.check_ids) as string[]);
+  const added = args.checks.filter((c) => !before.has(out.find((o) => o.key === c.key)!.id));
+  // (A check of `alpha_authorize` is in the candidate's acceptance content,
+  // which a stage evaluation's sign-offs are bound to: it stales everything.)
+  if (added.length > 0 && added.every((c) => c.gate_kinds.length > 0 && c.gate_kinds.every((k) => k === 'alpha_complete'))) {
+    for (const k of ['alpha_authorize', 'alpha_complete']) tx.db.prepare('UPDATE "gate_evaluations" SET "stale" = 1 WHERE "project" = ? AND "gate_kind" = ? AND "stale" = 0').run(args.project, k);
+  } else markStale(tx, { project: args.project });
   return { protected_version: version.id, checks: out };
 }
 
@@ -370,6 +380,10 @@ export function insertExecutionResult(
     not_run_reason: string | null;
     output: string | null;
     output_dropped_bytes: number | null;
+    // A deployment verification's binding, from its registration (D4 §5.1).
+    environment?: string | null;
+    artifact_digest?: string | null;
+    deployment?: string | null;
   },
 ): string {
   const id = tx.newId('cr_');
@@ -377,8 +391,8 @@ export function insertExecutionResult(
     .prepare(
       `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
          "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at",
-         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification", "deployment")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -390,6 +404,8 @@ export function insertExecutionResult(
       a.protected_version,
       a.runner_class,
       a.runner_id,
+      a.environment ?? null,
+      a.artifact_digest ?? null,
       a.execution_seq,
       a.established ? 1 : 0,
       a.signaled ? 1 : 0,
@@ -403,6 +419,7 @@ export function insertExecutionResult(
       a.orphans === null ? null : a.orphans ? 1 : 0,
       a.output_dropped_bytes,
       a.runner_qualification,
+      a.deployment ?? null,
     );
   tx.emit(
     'check.result',

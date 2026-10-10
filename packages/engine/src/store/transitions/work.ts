@@ -143,12 +143,14 @@ export interface TriggerInput {
   // for `role`.
   profile?: 'role' | 'probe' | null;
   // Work the engine itself raises of a kind it never dispatches: only
-  // `spec_change`, from D3 §5 X2's `change_spec` answer. It is recorded and
-  // waits; the API still refuses the kind, and the scheduler never runs it.
+  // `spec_change`, from D3 §5 X2's `change_spec` answer, which is recorded
+  // and waits; and `deploy`, from an issued deployment authorization (D4
+  // §4.1), which the Release Operator (engine code, D4 §8.1) takes on. The
+  // API still refuses both kinds, and the scheduler never runs either.
   engineRaised?: boolean;
 }
 
-const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation'];
+const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization'];
 
 // Observe a trigger (D1 §8.2): create-or-return across every status, terminal
 // included. Re-observing an identity creates nothing and raises nothing.
@@ -159,7 +161,7 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   if (!isWorkKind(input.kind)) {
     throw new Refusal(400, 'invalid_value', `"${String(input.kind)}" is not a work-item kind.`, 'Send one of the WorkItemKind values.', { field: 'kind' });
   }
-  if (!DISPATCHABLE.includes(input.kind) && !(input.engineRaised === true && input.kind === 'spec_change')) {
+  if (!DISPATCHABLE.includes(input.kind) && !(input.engineRaised === true && (input.kind === 'spec_change' || input.kind === 'deploy'))) {
     throw new Refusal(
       501,
       'unsupported',

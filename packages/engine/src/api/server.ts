@@ -18,6 +18,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
+import { prepareConfig, prepareDeployment } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes } from '../records/files.js';
@@ -273,6 +274,34 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'environments' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environments.list', args: { project } }) }) };
       }
+      // D4 §§3.2, 4.1, 4.6, 6.1 (M4 slice 23): an environment's stored read;
+      // its configuration, written by the owner; the deployment request;
+      // the ordinary teardown.
+      if (rest.length === 2 && rest[0] === 'environments' && get) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environment.read', args: { project, environment } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'config' && method === 'PUT') {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return { kind: 'prepared', name: 'environment.configure', prepare: async (b) => prepareConfig(runtime(), project, environment, b) };
+      }
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'teardown' && post) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return {
+          kind: 'command',
+          name: 'environment.teardown',
+          args: (b) => {
+            noFields(b);
+            return { project, environment };
+          },
+        };
+      }
+      if (rest.length === 1 && rest[0] === 'deployments' && post) {
+        return { kind: 'prepared', name: 'deployment.request', prepare: async (b) => prepareDeployment(runtime(), project, b) };
+      }
       // D3 A.7; SEAM.md §§178, 180: a protected version as discovery read it,
       // and a candidate's check executions; reads.
       if (rest.length === 2 && rest[0] === 'protected-versions' && get) {
@@ -385,16 +414,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const candidate = decodeSegment(rest[1]!);
         const kind = decodeSegment(rest[3]!);
         if (candidate === null || kind === null) return null;
-        // M1 computes two gate kinds; every other is refused before any
-        // effect, whatever the body (build spec §3; row M08).
-        if (kind !== 'stage' && kind !== 'alpha_authorize') return { kind: 'refuse', refusal: unsupported(`Evaluating the ${kind} gate`) };
+        // The engine computes three gate kinds (`alpha_complete` since M4,
+        // D4 §5.5); every other is refused before any effect, whatever the
+        // body (build spec §3; row M08).
+        if (kind !== 'stage' && kind !== 'alpha_authorize' && kind !== 'alpha_complete') return { kind: 'refuse', refusal: unsupported(`Evaluating the ${kind} gate`) };
         return {
           kind: 'prepared',
           name: 'gate.evaluate',
           prepare: async (b) => {
-            const body = onlyFields(b, kind === 'stage' ? ['stage'] : ['authorization']);
+            const body = onlyFields(b, kind === 'stage' ? ['stage'] : kind === 'alpha_complete' ? ['operation'] : ['authorization']);
             const facts = await gateFacts(runtime(), project, candidate);
-            return { project, candidate, kind, stage: body.stage, authorization: body.authorization, ...facts };
+            return { project, candidate, kind, stage: body.stage, authorization: body.authorization, operation: body.operation, ...facts };
           },
         };
       }
@@ -413,11 +443,9 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
-      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'authorizations' && post) {
-        const candidate = decodeSegment(rest[1]!);
-        if (candidate === null) return null;
-        return { kind: 'command', name: 'authorization.propose', args: (b) => ({ project, candidate, body: b }) };
-      }
+      // J3: no production route takes an authorization's binding from the
+      // caller; `POST …/candidates/:c/authorizations` is gone (404, as any
+      // route this engine does not have). The deployment request derives it.
       if (rest.length === 1 && (rest[0] === 'pause' || rest[0] === 'resume') && post) {
         return {
           kind: 'command',
