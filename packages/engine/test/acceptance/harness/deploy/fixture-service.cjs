@@ -33,11 +33,14 @@
 //   detach           answer, close the listener, start one child of its
 //                    own, detached in a session of its own with every
 //                    standard stream closed, which listens on the same port
-//                    for at most 120 s; then exit 0 (M311 (b))
+//                    for at most 120 s; once the child answers on the port
+//                    (or after 10 s), wait 1 s and exit 0 (M311 (b))
 //   exec-program     answer, then execve /usr/bin/sleep 120 (M311 (c))
 //   exec-args        answer, then execve the runtime with other arguments
-//   reexec-same      answer, then execve the runtime with identical
-//                    arguments (M311 (f))
+//   reexec-same      answer, then execve the runtime with the identical
+//                    argument vector: the one /proc/self/cmdline holds, as
+//                    the init started it (process.argv is not it: Node makes
+//                    argv[1] absolute) (M311 (f))
 //   title            set process.title (M311 (g); CD4)
 //   fill-tmp         write 64 KiB blocks to /tmp until refused or 8 MiB
 //   fill-inodes      create empty files in /tmp until refused or 4,096
@@ -106,7 +109,14 @@ const attempt = (fn) => {
 
 if (process.argv.includes('--detached-child')) {
   const server = http.createServer((q, s) => s.end('child'));
-  server.on('error', () => process.exit(3));
+  // The parent's listener may still be closing: retry a taken port, at most 20 times.
+  let tries = 0;
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && tries < 20) {
+      tries += 1;
+      setTimeout(() => server.listen(PORT, '127.0.0.1'), 100);
+    } else process.exit(3);
+  });
   server.listen(PORT, '127.0.0.1');
   setTimeout(() => process.exit(0), 120_000).unref();
   // Keep the event loop alive while listening; the timer above bounds it.
@@ -153,7 +163,21 @@ function main() {
         server.close();
         const child = spawn(process.execPath, ['server.js', '--detached-child'], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });
         child.unref();
-        setTimeout(() => process.exit(0), 1000);
+        // Exit only once the child holds the port (it answers `child`), or after 10 s; then 1 s more.
+        const until = Date.now() + 10_000;
+        const exitSoon = () => setTimeout(() => process.exit(0), 1000);
+        const ask = () => {
+          if (Date.now() > until) return exitSoon();
+          const q = http.get({ host: '127.0.0.1', port: PORT, path: '/', timeout: 1000 }, (r) => {
+            let body = '';
+            r.on('data', (c) => (body += c));
+            r.on('end', () => (body === 'child' ? exitSoon() : setTimeout(ask, 50)));
+            r.on('error', () => setTimeout(ask, 50));
+          });
+          q.on('timeout', () => q.destroy());
+          q.on('error', () => setTimeout(ask, 50));
+        };
+        ask();
       });
     },
     'exec-program': (res) => {
@@ -171,8 +195,10 @@ function main() {
       json(res, 200, { act: 'reexec-same', argv: process.argv });
       later(() => {
         server.close();
-        // The very argument vector it was started with: argv0 as given, then the rest.
-        process.execve(process.execPath, [process.argv0, ...process.argv.slice(1)], process.env);
+        // The very argument vector it was started with, byte for byte, as the kernel holds it.
+        const raw = fs.readFileSync('/proc/self/cmdline', 'utf8').split('\0');
+        if (raw.at(-1) === '') raw.pop();
+        process.execve(process.execPath, raw, process.env);
       });
     },
     title: (res) => {

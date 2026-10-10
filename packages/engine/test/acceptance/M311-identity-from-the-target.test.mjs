@@ -12,6 +12,8 @@
 //       `init_report_altered`) is `conflicting` and binds nothing;
 //   (b) the application exits while a descendant keeps its port with its
 //       output closed: the domain terminal, no descendant bound in its place;
+//       the check ends, and so the second read is made, only after the host
+//       shows the descendant listening and then the application gone;
 //   (c) the recorded start time no longer matching (the fault
 //       `identity_start_time`); an `exec` into another program; an `exec`
 //       with other arguments; an exited application; a restarted unit (the
@@ -21,8 +23,11 @@
 //   (e) a forged version string changes nothing; a byte changed in the
 //       sealed copy `differs`; an unreadable process (the fault
 //       `identity_proc_unreadable`) `unread`;
-//   (f) a re-exec of the same runtime with identical arguments: `match`, which
-//       D4 §3.4 and §11 class C do not claim to detect (labelled, not evidence);
+//   (f) a re-exec of the same runtime with identical arguments (the vector of
+//       /proc/self/cmdline, byte for byte): `match`, which D4 §3.4 and §11
+//       class C do not claim to detect (labelled, not evidence); the check ends
+//       only after the host shows the re-executed image listening again;
+// (b) and (f) end their environments even when they fail (heldCase).
 //   (g) CD4: the service sets `process.title`: `differs`, the detail naming
 //       `argv`, the verification `failed`; and the Builder's package for a
 //       project with an environment states that the service must not change
@@ -43,7 +48,7 @@
 // guard (row M313). Its first engine start carries the real-adapter switch.
 
 import assert from 'node:assert/strict';
-import { appendFileSync, chmodSync, readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
@@ -54,6 +59,8 @@ import { CGROUP_ROOT } from './harness/sandbox/cgroup.mjs';
 import { hostProcess } from './harness/sandbox/procs.mjs';
 import { armBarrier, artifactsOf, attemptsOf, deploy, releaseBarrier, roundsOf, tickToBarrier } from './harness/deploy/kernel.mjs';
 import {
+  RELEASE,
+  RELEASE_AGAIN,
   RUNTIME,
   armDeployFault,
   cmdlineOf,
@@ -61,10 +68,13 @@ import {
   heldCheck,
   hostDeployable,
   hostEnvironment,
+  hostUntil,
+  listenerOf,
   newestOperation,
   operatorGuard,
   ppidOf,
   procInstance,
+  releaseAgain,
   releaseCheck,
   restartOwnUnit,
   serviceDomainOf,
@@ -82,6 +92,18 @@ const neverMatch = (read, what) => {
   assert.ok(read, `${what}: the read is recorded`);
   assert.ok(['differs', 'unread'].includes(read.match), `${what}: differs or unread, never match (${JSON.stringify(read)})`);
 };
+
+// Whether the recorded instance {pid, start_time} has exited, read from the host (gone, reused, or a zombie).
+function exited(instance) {
+  try {
+    const stat = readFileSync(`/proc/${instance.pid}/stat`, 'utf8');
+    const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return Number(rest[19]) !== instance.start_time || rest[0] === 'Z';
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ESRCH') return true;
+    throw err;
+  }
+}
 
 // Host processes whose command line carries `marker` and whose cgroup lies under the unit's.
 function survivorsOf(unit, marker) {
@@ -125,6 +147,27 @@ describe('M311 identity from the target', () => {
     return { env, op, svc: serviceOf(ctx, env, op), held };
   }
 
+  // A case that deploys `name` held and runs `body(h)`; whatever happens, the
+  // environment is ended through endEnvironment (the engine's teardown, then
+  // the test's stop by exact name), so a failed case leaves no service holding
+  // the check capacity admission keeps free. On a failure a check still held
+  // is let go first (exit 1, no act) and its release files are taken away after.
+  async function heldCase(name, body) {
+    let ok = false;
+    try {
+      await body(await heldDeploy(name));
+      ok = true;
+    } finally {
+      const files = [RELEASE, RELEASE_AGAIN].map((f) => join(ctx.prog.releaseDir, f));
+      if (!ok) for (const f of files) if (!existsSync(f)) writeFileSync(f, JSON.stringify({ get: [], exit: 1 }));
+      try {
+        if (ctx.envs[name]) await endEnvironment(ctx, ctx.envs[name]);
+      } finally {
+        if (!ok) for (const f of files) rmSync(f, { force: true });
+      }
+    }
+  }
+
   // Release the held check with `paths` (acts released after the containment read), then the row.
   async function actThenRow(h, paths, exit = 0) {
     releaseCheck(ctx, h.svc, { get: paths, exit });
@@ -166,11 +209,22 @@ describe('M311 identity from the target', () => {
     await endEnvironment(ctx, env, { engineTeardown: false });
   });
 
-  test('(b) the application exits while a descendant keeps its port with its output closed: never match; the domain terminal; no descendant bound in its place, none left', async () => {
-    const h = await heldDeploy('detach');
+  test('(b) the application exits while a descendant keeps its port with its output closed: never match; the domain terminal; no descendant bound in its place, none left', () => heldCase('detach', async (h) => {
     const before = { ...h.svc.app };
-    const row = await actThenRow(h, ['/act/detach']);
-    neverMatch(readOf(row, 'second'), 'the second read');
+    const port = h.env.content.port;
+    // The check asks for the act, then holds again; it ends only after the host shows the act done.
+    releaseCheck(ctx, h.svc, { get: ['/act/detach'], exit: 0, then: RELEASE_AGAIN });
+    const child = await hostUntil(() => {
+      if (exited(before)) assert.fail('the application exited before a descendant was seen holding its port');
+      return survivorsOf(h.svc.unit, '--detached-child').find((pid) => listenerOf(pid, port) !== null);
+    }, { what: `a descendant in ${h.svc.unit} listening on 127.0.0.1:${port} while the application runs` });
+    assert.equal(listenerOf(before.pid, port), null, 'the application holds the port no more');
+    await hostUntil(() => exited(before), { what: `the application (pid ${before.pid}) to exit` });
+    assert.ok(child !== before.pid, 'the listener is a descendant, not the application');
+    // Only now may the check end, so the round's second read follows the application's exit.
+    releaseAgain(ctx, { get: [], exit: 0 });
+    const { row } = await verificationOf(ctx, h.op);
+    neverMatch(readOf(row, 'second'), 'the second read, after the application exited');
     assert.notEqual(row.outcome, 'verified');
     const domain = await ticksUntil(ctx.fx, ctx.project, () => {
       const d = serviceDomainOf(ctx.fx.home, h.svc.attempt.id);
@@ -185,8 +239,7 @@ describe('M311 identity from the target', () => {
       left = survivorsOf(h.svc.unit, '--detached-child');
     }
     assert.deepEqual(left, [], 'the descendant ended with the domain');
-    await endEnvironment(ctx, h.env);
-  });
+  }));
 
   test('(c) the recorded start time no longer matching the pid (fault identity_start_time on the second read): never match', async () => {
     const h = await heldDeploy('skew');
@@ -266,15 +319,29 @@ describe('M311 identity from the target', () => {
     await endEnvironment(ctx, h.env);
   });
 
-  test('(f) a re-exec of the same runtime with identical arguments: match, the same instance; labelled not claimed (D4 §3.4, §11 class C), never evidence', async () => {
-    const h = await heldDeploy('reexec');
-    const row = await actThenRow(h, ['/act/reexec-same'], 1);
-    await sleep(500);
+  test('(f) a re-exec of the same runtime with identical arguments: match, the same instance; labelled not claimed (D4 §3.4, §11 class C), never evidence', () => heldCase('reexec', async (h) => {
+    const app = { ...h.svc.app };
+    const port = h.env.content.port;
+    const argvBefore = readFileSync(`/proc/${app.pid}/cmdline`);
+    const listening = listenerOf(app.pid, port);
+    assert.ok(listening !== null, `the application listens on 127.0.0.1:${port} before the act (host-read)`);
+    // The check asks for the act, then holds again; it ends only after the host shows the new image serving.
+    releaseCheck(ctx, h.svc, { get: ['/hello', '/act/reexec-same'], exit: 1, then: RELEASE_AGAIN });
+    await hostUntil(() => {
+      if (exited(app)) assert.fail(`the application (pid ${app.pid}) exited in place of re-executing`);
+      const now = listenerOf(app.pid, port);
+      return now !== null && now !== listening;
+    }, { what: `the re-executed application (pid ${app.pid}, the same start time) to listen again on a new socket` });
+    assert.ok(readFileSync(`/proc/${app.pid}/cmdline`).equals(argvBefore), 'the re-exec kept the argument vector byte for byte (host-read)');
+    assert.deepEqual(cmdlineOf(app.pid), h.env.content.start, 'still the start command');
+    releaseAgain(ctx, { get: ['/hello'], exit: 1 });
+    const { row } = await verificationOf(ctx, h.op);
+    const answers = targetReport(ctx, h.held.execution).report.results.filter((r) => r.path === '/hello');
+    assert.deepEqual(answers.map((r) => r.status), [200, 200], `the service answered before the act and after the re-exec (${JSON.stringify(answers)})`);
     const second = readOf(row, 'second');
-    assert.equal(second?.match, 'match', 'the read does not tell a same-runtime, same-argument re-exec apart: not claimed');
-    assert.deepEqual([second.instance?.pid, second.instance?.start_time], [h.svc.app.pid, h.svc.app.start_time], 'the pid and start time are unchanged');
-    await endEnvironment(ctx, h.env);
-  });
+    assert.equal(second?.match, 'match', `the read does not tell a same-runtime, same-argument re-exec apart: not claimed (${JSON.stringify(second)})`);
+    assert.deepEqual([second.instance?.pid, second.instance?.start_time], [app.pid, app.start_time], 'the pid and start time are unchanged');
+  }));
 
   test('(g) CD4: the service sets process.title: the second read differs, its detail naming argv; the verification failed', async () => {
     const h = await heldDeploy('title');
