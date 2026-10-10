@@ -39,7 +39,11 @@
 // commits of its diff's range the engine made on no role run's behalf (its
 // bootstrap, a policy revision), as the engine's or the owner's; the
 // Builder's commits are not so named, one whose message carries the setup
-// commits' trailer included.
+// commits' trailer included. Its precondition reads the range's base by git
+// ancestry (E129 item 10). A second (i) case, added by slice 27 (E129 item
+// 10; SEAM.md §299): the records' recorded_at out of git order (the clock
+// started ahead for the engine's commits, then not), and the range still
+// begins at the root of the recorded revisions by ancestry.
 //
 // SAFETY: the stand-in records and waits; it runs nothing. The parent-only
 // sentinels are test-made strings given to the test's own engine, never a
@@ -115,6 +119,17 @@ async function realBuilderProject(t, { sha256 } = {}) {
 }
 
 const hashOf = (value) => sha256Hex(value);
+
+// The diff base of a first candidate by git ancestry (E106; E129 item 10;
+// SEAM.md §299): the parent of the earliest of the project's recorded
+// revisions in the candidate's history, read from git (rev-list), never
+// from the records' recorded_at.
+function ancestryBase(home, project, repoPath, revision) {
+  const recorded = new Map(withStore(home, (db) => db.prepare('SELECT "sha", "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL').all(project)).map((r) => [r.sha, r.parent_sha]));
+  const root = gitQuiet(repoPath, ['rev-list', '--reverse', '--topo-order', revision]).split('\n').filter(Boolean).find((sha) => recorded.has(sha));
+  assert.ok(root, `the candidate's history holds a recorded revision (${revision})`);
+  return recorded.get(root);
+}
 
 describe('M125 what is handed over', () => {
   test('(a) argv and (b) environment: the executed argv is the template\'s fixed text and /surety paths, the hostile task text only in /surety/context, the parent the init; the environment is the template\'s variables, the markers and the grant\'s secret; the sentinels are in no process of the domain, host-read', async (t) => {
@@ -537,8 +552,9 @@ describe('M125 what is handed over', () => {
     const [candidate] = await waitForCandidates(fx, project);
 
     // The range the Reviewer is shown (SEAM.md §242; src/store/reads.ts), and each commit in it by the engine's records.
-    const first = withStore(fx.home, (db) => db.prepare('SELECT "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "recorded_at", "created_at", "id" LIMIT 1').get(project));
-    const shas = gitQuiet(repo.path, ['rev-list', '--reverse', `${first.parent_sha}..${candidate.revision}`]).split('\n').filter(Boolean);
+    // The base by git ancestry among the recorded revisions, never by record time (E129 item 10; SEAM.md §299).
+    const base = ancestryBase(fx.home, project, repo.path, candidate.revision);
+    const shas = gitQuiet(repo.path, ['rev-list', '--reverse', `${base}..${candidate.revision}`]).split('\n').filter(Boolean);
     const madeBy = (sha) => withStore(fx.home, (db) => db.prepare('SELECT "created_by_run" FROM "revisions" WHERE "project" = ? AND "sha" = ?').get(project, sha));
     const setup = shas.filter((sha) => madeBy(sha) && madeBy(sha).created_by_run === null);
     const byRole = shas.filter((sha) => madeBy(sha)?.created_by_run);
@@ -572,6 +588,52 @@ describe('M125 what is handed over', () => {
       if (named.length > 0) missing.push(`${what} ${sha} is named as the engine's or the owner's: ${JSON.stringify(named)}`);
     }
     assert.deepEqual(missing, [], `E106: the Reviewer's context names the engine's and the owner's commits of its range, and no Builder commit; prompt: ${JSON.stringify((dump.files.find((f) => f.name === 'prompt.md')?.text ?? '').slice(0, 1500))}`);
+  });
+
+  // E129 item 10 (a carried E106 defect; SEAM.md §299): the base of a first candidate's range is chosen by git
+  // ancestry among the recorded revisions, never by the records' recorded_at. The engine's clock is started an
+  // hour ahead (--harness-clock-offset, SEAM.md §274) while the bootstrap and the policy revision are recorded,
+  // then the engine is started again without it, as a host clock that stepped back would leave it: the Builder's
+  // commits, descendants of those two, are recorded earlier by recorded_at. The Reviewer's range must still begin
+  // at the parent of the bootstrap, the root of the recorded revisions by ancestry.
+  test("(i) E106 with the records' times out of order (E129 item 10): the bootstrap and the policy revision recorded later than the Builder's commits by recorded_at; the Reviewer's range still begins at the root of the recorded revisions by git ancestry, so its diff holds the engine's commits and names them as the engine's or the owner's", async (t) => {
+    const fx = await sandboxEngine(t, { start: false });
+    await fx.start({ args: ['--harness-clock-offset', '3600'] });
+    const { id: project, repo } = await addGitProject(fx, { via: 'api', tier: 'T1' });
+    await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
+    await fx.engine.stop();
+    await fx.start();
+    const stage = await addItem(fx, project, 'stage_build', { goal: 'the first stage' });
+    fx.scripted.script(stage, [roleThat([permittedEdit()])]);
+    await runToEnd(fx, project, stage);
+    const fix = await addItem(fx, project, 'fix');
+    fx.scripted.script(fix, [roleThat([step.write('src/second.js', 'export const second = 2;\n')], { nominate: true, summary: 'the second change' })]);
+    await runToEnd(fx, project, fix);
+    const [candidate] = await waitForCandidates(fx, project);
+
+    const revisions = withStore(fx.home, (db) => db.prepare('SELECT "sha", "parent_sha", "created_by_run", "recorded_at" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL').all(project));
+    const setup = revisions.filter((r) => r.created_by_run === null);
+    const byRole = revisions.filter((r) => r.created_by_run !== null);
+    assert.equal(setup.length, 2, `the fixture is live: the bootstrap and the policy revision are recorded with no run (${JSON.stringify(revisions)})`);
+    assert.ok(byRole.length >= 2, 'the fixture is live: the Builder commits are recorded with their runs');
+    assert.ok(Math.min(...setup.map((r) => Date.parse(r.recorded_at))) > Math.max(...byRole.map((r) => Date.parse(r.recorded_at))), `the fixture is live: by recorded_at the engine's commits come after the Builder's, against git ancestry (${JSON.stringify(revisions.map((r) => [r.sha.slice(0, 7), r.created_by_run ? 'run' : 'setup', r.recorded_at]))})`);
+    const base = ancestryBase(fx.home, project, repo.path, candidate.revision);
+    const shas = gitQuiet(repo.path, ['rev-list', '--reverse', `${base}..${candidate.revision}`]).split('\n').filter(Boolean);
+    assert.ok(setup.every((r) => shas.includes(r.sha)), 'by ancestry the range holds both engine commits');
+
+    const review = await addWork(fx.engine, project, 'review', { subject: { candidate: candidate.id } });
+    fx.scripted.script(review, [roleThat([step.probe('context_dump')])]);
+    await tickUntil(fx.engine, project, () => (runsOf(fx.home, review)[0]?.state === 'ended' ? true : undefined), { what: "the Reviewer's run to end" });
+    const [launch] = fx.scripted.launches({ work_item: review });
+    const [dump] = fx.scripted.probes(launch.invocation, 'context_dump');
+    assert.equal(dump?.outcome, 'dumped', `the Reviewer read its package (${dump?.error})`);
+    const manifest = JSON.parse(dump.files.find((f) => f.name === 'manifest.json').text);
+    const diffPaths = manifest.files.filter((f) => f.kind === 'diff').map((f) => f.path);
+    const diff = dump.files.filter((f) => diffPaths.includes(f.name)).map((f) => f.text ?? '').join('\n');
+    assert.ok(diff.includes('.surety/project.json') && diff.includes('.surety/policy.json'), `the Reviewer's diff begins at the root of the recorded revisions by ancestry: it holds the bootstrap's and the policy revision's files (diff head: ${JSON.stringify(diff.slice(0, 600))})`);
+    const told = dump.files.filter((f) => typeof f.text === 'string' && f.name !== 'manifest.json' && !diffPaths.includes(f.name)).map((f) => f.text).join('\n');
+    const sentences = told.split(/\n|(?<=[.;])\s+/).map((x) => x.trim()).filter(Boolean);
+    for (const r of setup) assert.ok(sentences.some((x) => x.includes(r.sha.slice(0, 7)) && /\b(engine|owner)('s)?\b/i.test(x)), `the engine's commit ${r.sha} is named as the engine's or the owner's`);
   });
 });
 

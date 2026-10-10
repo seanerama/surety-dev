@@ -10,9 +10,12 @@
 // under different protected versions or required sets: the round is
 // superseded (D4 §5.3 item 7) and no row of it is verified.
 //
-// Deferred (COVERAGE.md "M4 slice 25"): (f), an out-of-band observation
-// between the reads, to slice 27: nothing records an environment-subject
-// out-of-band observation before slice 27's observation job and J6.
+// (f), added by slice 27 (deferred here by slice 25, COVERAGE.md "M4 slice
+// 25"; SEAM.md §§291, 293): an out-of-band observation between the reads (a
+// failed unit of a generation no intent names, found by the observation job
+// after the first read and gone before the second): the round is `unknown`
+// with a `missing` entry of kind `out_of_band` naming the row, never
+// `verified` (D4 §5.3 item 6; the driver's ruling).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -23,6 +26,8 @@ import { step } from './harness/scripted.mjs';
 import { definitionText, defPath } from './harness/checks/fixtures.mjs';
 import { POST_DEPLOY, deployable, deployToRound, unitName } from './harness/deploy/kernel.mjs';
 import { changeTarget, environmentRecord, progressOf, recordExit, roundRow, roundsOf, rowOf, rowWhen } from './harness/deploy/rounds.mjs';
+import { scriptedUnit } from './harness/deploy/recover.mjs';
+import { oobRows, observe } from './harness/deploy/observe.mjs';
 
 async function atRound1(t) {
   const fx = await scriptedEngine(t);
@@ -70,4 +75,24 @@ describe('M316 (e) two reads under different protected versions or required sets
       assert.equal(progressOf(ctx.fx.home, ctx.candidate.id), 'developing');
     });
   }
+});
+
+describe('M316 (f) an out-of-band observation between the reads (slice 27; deferred by slice 25)', () => {
+  test('a unit of a generation no intent names, found between the first and the second read and gone by the second: both reads match, the check passes, and the round is unknown naming the out-of-band row, never verified', async (t) => {
+    const ctx = await atRound1(t);
+    const stray = scriptedUnit(unitName(ctx.fx.home, ctx.env.id, 7), 7, { state: 'failed', instance: null });
+    await changeTarget(ctx.fx.engine, ctx.env.id, (target) => ({ ...target, units: [...target.units, stray] }));
+    await observe(ctx);
+    const [row] = oobRows(ctx.fx.home, ctx.env.id);
+    assert.ok(row && JSON.stringify(row.found).includes(stray.name), `the fixture is live: the observation records the unit out of band (${JSON.stringify(row)})`);
+    await changeTarget(ctx.fx.engine, ctx.env.id, (target) => ({ ...target, units: target.units.filter((u) => u.name !== stray.name) }));
+    await recordExit(ctx.fx.engine, ctx.x1.id, 0);
+    const v = await rowWhen(ctx, ctx.round1.id);
+    assert.deepEqual((v.identity_reads ?? []).map((r) => r.match), ['match', 'match'], `both reads match (${JSON.stringify(v.identity_reads)})`);
+    assert.notEqual(v.outcome, 'verified', 'an out-of-band observation between t0 and t1: never verified (D4 §5.3 item 6)');
+    assert.equal(v.outcome, 'unknown', `unknown, not failed: nothing read differs (${v.outcome})`);
+    assert.ok((v.missing ?? []).some((m) => m.kind === 'out_of_band' && m.id === row.id), `missing names the out-of-band row (SEAM.md §293) (${JSON.stringify(v.missing)})`);
+    assert.equal(environmentRecord(ctx.fx.home, ctx.env.id).last_verified ?? null, null, 'nothing is recorded as verified');
+    assert.equal(progressOf(ctx.fx.home, ctx.candidate.id), 'developing');
+  });
 });

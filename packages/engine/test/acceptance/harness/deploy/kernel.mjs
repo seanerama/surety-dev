@@ -18,7 +18,7 @@ import { join, relative } from 'node:path';
 
 import { releaseBarrier, waitFor } from '../engine.mjs';
 import { permittedEdit, roleThat } from '../gitruns.mjs';
-import { eventsOfType } from '../journal.mjs';
+import { changePolicy, eventsOfType } from '../journal.mjs';
 import { recordExit } from '../checks/selection.mjs';
 import { buildAndNominate, def } from '../checks/repair.mjs';
 import { protectedSet, scopeProject } from '../checks/scope.mjs';
@@ -251,12 +251,13 @@ export const DEPLOY_DEFS = Object.freeze({ acc: def('acceptance', { criteria: ['
 // A T1 project whose checks are discovered (`defs`), built and nominated,
 // its workspace checks recorded passing through the scripted check boundary;
 // environment `name` configured by the owner with `config`; the adapter
-// qualified by the labelled fixture unless `qualify` is false. `entries`
+// qualified by the labelled fixture unless `qualify` is false; `policy`
+// (slice 27) changes project keys before the environment is configured. `entries`
 // (slice 24, SEAM.md §260) are committed after the first commit with any
 // git type (checks/fixtures.mjs `commitEntries`: an executable file, a
 // symbolic link, a submodule); `governed` adds to the governed file.
 // Returns {fx, p, project, candidate, reg, env: {id, name}, config, qualification}.
-export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed } = {}) {
+export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed, policy = {} } = {}) {
   const index = [{ key: 'R1', criteria: ['R1.1'] }];
   const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
   let p;
@@ -269,6 +270,9 @@ export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', confi
   const workspace = Object.keys(defs).filter((k) => !(defs[k].gate_kinds ?? []).every((g) => g === 'alpha_complete'));
   const built = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true })], keys: workspace });
   for (const key of workspace) await recordExit(fx.engine, built.reg[key].id, 0);
+  // `policy` (slice 27, SEAM.md §290): project keys changed before the
+  // environment is configured, so its observation job starts under them.
+  if (Object.keys(policy).length > 0) await changePolicy(fx.engine, p.id, policy);
   const configured = await configure(fx.engine, p.id, name, configContent(config));
   const qualification = qualify ? await qualifyByFixture(fx.engine, { adapter_version: configContent(config).adapter_version }) : null;
   return { fx, p, project: p.id, candidate: built.candidate, reg: built.reg, env: configured.environment, config: configured.config, qualification };
