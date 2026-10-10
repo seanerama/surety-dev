@@ -13,7 +13,9 @@
 // and, since M2 slice 10 (row M109 (c); D2 §3.1; M2 build spec §5), in the
 // boundary's own helper modules named in D2_HELPERS, each one file that
 // starts one host tool the engine checks for and never a backend. The
-// Builder names a helper; the Verifier adds it here (SEAM.md §121).
+// Builder names a helper; the Verifier adds it here (SEAM.md §121). Since
+// M4 slice 24 (BS4 §5), also in the one deployment adapter file named in
+// D4_ADAPTERS, for `systemd-run` and `systemctl` only.
 // "Naming" is any string or template literal that is such a module's name,
 // wherever it stands: a static import, `import()`, `require()`, a re-export,
 // `process.getBuiltinModule()`. One use is allowed everywhere: a static
@@ -45,11 +47,24 @@ export const D2_HELPERS = [
   { where: 'boundary/scope.ts', why: "the incarnation scope: systemctl --user, the manager's view of a scope at start and in recovery (D2 §3.3)", tool: 'systemctl' },
 ];
 
+// The deployment adapter (M4; BS4 §5, "Process starts", and §7; D4 §2.5;
+// D4-A08): `src/deploy/` joins the permitted places only for the host tools
+// its `local_service` adapter names, `systemd-run --user` and
+// `systemctl --user`, and BS4 §7 puts them in one file. It is listed as that
+// one file, in the helpers' form, and not as `deploy/` or
+// `deploy/adapters/`: any other file there that names a process-starting
+// module is reported (objection 035).
+export const D4_ADAPTERS = [
+  { where: 'deploy/adapters/local-service.ts', why: 'the local_service adapter: systemd-run --user, the transient unit of a service domain (D4 §§9.2, 9.3)', tool: 'systemd-run' },
+  { where: 'deploy/adapters/local-service.ts', why: 'the local_service adapter: systemctl --user, show, list-units and list-jobs, and stop and reset-failed of an exact owned unit (D4 §§2.4, 4.6, 9.3)', tool: 'systemctl' },
+];
+
 export const ALLOWED = [
   { where: 'invoke/', why: 'the choke point' },
   { where: 'git/exec.ts', why: 'the git runner' },
   { where: 'testing/', why: 'the seam folder' },
   ...D2_HELPERS,
+  ...D4_ADAPTERS,
 ];
 
 const allowed = (file) => ALLOWED.some(({ where }) => (where.endsWith('/') ? file.startsWith(where) : file === where));
