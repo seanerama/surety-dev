@@ -5312,6 +5312,14 @@ Another fault name, or an unknown environment, is **400** `invalid_value`. Harne
 
 (D4 §4.7; E115 item 3; E126; the Builder's design.) A service domain takes no `max_concurrent_domains` slot; it holds its `service_memory_max` and `service_writable_bytes` from admission until its closure is observed, and while any service runs one check domain's capacity (`domain_memory_max`, `domain_writable_bytes`, one slot) is kept free and shared by post-deploy checks, which run serially. `execution_domains.reservation` is `{memory, check_capacity}` (§259). Only deployment-bound executions use the reserved capacity, and they are admitted first; other work is admitted beside them. A deploy whose service plus its reserved check does not fit waits for admission within the orchestration deadline, shown on the **deploy work item** as `dispatch_hold` `{"code": "resource_envelope", "subject": {"limit": …}}` (§168's work-read form, D4 A.2's WorkItem hold); reaching the deadline refuses it before the effect, naming `orchestration_deadline` (§250), the prior service untouched. Recovery restores a surviving service's reservation before any dispatch; its own supervision stays `unknown` (E110).
 
+## 272. The slice-25 review's S1: the listing for another generation (2026-10-10)
+
+(The driver's ruling on the slice-25 Reviewer's S1, on `build/m4-s25` at `81df5b9`; D4 §3.4 ("another generation `differs`"), §5.3 item 6; §262's faults. `../COVERAGE.md`, "M4 slice 25: the review's S1".)
+
+**The rule.** The real adapter's identity read also lists the environment's prefix (read-only; §257's listing) to find whether another generation's unit is active, which makes the read `differs` naming `generation` (the slice-25 design). A listing that cannot be made (the call fails, passes its deadline or its output bound, or exits non-zero) leaves that fact unread, and the read is **`unread`**: `match` `unread`, `generation` `unread`, `detail` `{"field": "generation", "why": <naming the listing>}`. It is never left as it was: a `match` read with the listing failed is not a `match`. The round's row is then `unknown` (`missing` naming the `identity_read`), never `verified` (D4 §5.3 item 6: absent evidence is never read as success).
+
+**The fault** †: **`POST /v1/harness/deploy/faults` `{"environment": "env_…", "fault": "identity_listing_failed"}` → 200**: in the environment's next identity read, the listing of the environment's prefix fails as a non-zero exit, without being made. One-shot, harness-only, as §262's other faults. M316 (d) on a real unit (`M316-bracketing-on-a-real-unit`) arms it while the round's check is held between the reads, so it falls on the second read.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24" and "M4 slice 25".

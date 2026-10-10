@@ -16,6 +16,11 @@
 //       read's tree differs, failed.
 // (c) uses an artifact of its own (an exclude), so no other case reads the
 // changed copy; it is M311 (e)'s observation under bracketing.
+//   (d) the slice-25 review's S1 (SEAM.md §272): the second read's listing of
+//       the environment's prefix, which looks for another generation, fails
+//       (the harness fault `identity_listing_failed`): whether another
+//       generation answers is not read, so the read is `unread`, naming the
+//       generation, and the round is `unknown`, never `verified`.
 //
 // SAFETY (BS4 §4.1; E64; SEAM.md §§257, 258). Every unit is the engine's,
 // under this test's home's prefix. The unit is restarted only by its exact
@@ -33,6 +38,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import { artifactsOf } from './harness/deploy/kernel.mjs';
 import {
   RELEASE,
+  armDeployFault,
   RELEASE_AGAIN,
   deployHeld,
   endEnvironment,
@@ -119,6 +125,23 @@ describe('M316 bracketing on a real unit', () => {
       assert.equal(second?.match, 'differs', `the second read's tree differs (${JSON.stringify(second)})`);
       assert.equal(second.detail?.field, 'tree', `the read names the tree (${JSON.stringify(second.detail)})`);
       assert.equal(row.outcome, 'failed');
+    });
+  });
+
+  test('(d) S1: the listing that looks for another generation fails on the second read: the read is unread naming the generation, the round unknown, never verified', async () => {
+    await heldCase('listing', {}, async (h, env) => {
+      await armDeployFault(ctx, env, 'identity_listing_failed');
+      releaseCheck(ctx, h.svc, { get: ['/hello'], exit: 0 });
+      const { row } = await verificationOf(ctx, h.op);
+      const first = readOf(row, 'first');
+      const second = readOf(row, 'second');
+      assert.equal(first?.match, 'match', `the fixture is live: the first read, made before the fault was armed, matches (${JSON.stringify(first)})`);
+      assert.equal(second?.match, 'unread', `whether another generation answers was not read: the read is unread, never match (SEAM.md §272) (${JSON.stringify(second)})`);
+      assert.equal(second.generation, 'unread', `the generation is unread (${JSON.stringify(second)})`);
+      assert.equal(second.detail?.field, 'generation', `the detail names the generation (${JSON.stringify(second.detail)})`);
+      assert.match(JSON.stringify(second.detail?.why ?? ''), /list/i, `and says the listing failed (${JSON.stringify(second.detail)})`);
+      assert.equal(row.outcome, 'unknown', `an unread fact is never clean: unknown, never verified (D4 §5.3 item 6) (${row.outcome})`);
+      assert.ok((row.missing ?? []).some((m) => m.kind === 'identity_read'), `missing names the identity read (${JSON.stringify(row.missing)})`);
     });
   });
 });

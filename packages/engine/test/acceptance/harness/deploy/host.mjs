@@ -790,7 +790,8 @@ export async function settleRound(ctx, env, op, { plan = { get: ['/hello'], exit
 }
 
 // A one-shot fault of the real adapter for an environment (SEAM.md §262):
-// `init_report_altered`, `identity_start_time` or `identity_proc_unreadable`.
+// `init_report_altered`, `identity_start_time`, `identity_proc_unreadable` or
+// `identity_listing_failed` (SEAM.md §272).
 export async function armDeployFault(ctx, env, fault) {
   const res = await ctx.fx.engine.post('/v1/harness/deploy/faults', { environment: env.id, fault });
   assert.equal(res.status, 200, `the fault ${fault} is armed for ${env.name} (SEAM.md §262) (body: ${res.text})`);

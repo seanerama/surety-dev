@@ -2442,6 +2442,16 @@ The running service's `/surety/app` across such a restart is not asserted: the k
 
 Harness defects found and fixed: M315 (i) wrote to the store through the read-only helper (`readonly database`), and (g) waited for a scripted execution that a restart never moves (§190); M319-reserve set the project key `service_memory_max` as an engine key (the engine refused to start); M314's link check used `require` in an ES module, its cases did not end their environments in `finally` (the first run left five units of the test's own home, which the operator's guard stopped by exact name; none remained), and (g) assumed the operator route registers an `alpha_complete`-only check, which M3 refuses (§268 now accepts either). The cases that pass already (M317's conditions, M318 (c), M314 (b), (d), (g), M316 real (a), (c), M319 (c), M315 (i), (a)'s fixture case) read slice-23 and slice-24 behaviour that is built.
 
+
+## M4 slice 25: the review's S1
+
+2026-10-10, by a Verifier on `verify/m4-s25-fix`, cut from `main` at `7edf9c7`, from the driver's ruling on the slice-25 Reviewer's S1 on `build/m4-s25` at `81df5b9`: the real adapter's listing for another generation (`otherGeneration`, `adapters/local-service.ts`) returned the read unchanged when the listing failed, so a `match` stayed `match` and the round could be `verified`. Names in SEAM §272 (the fault `identity_listing_failed`).
+
+| Finding | Row, file | Case | D4 |
+|---|---|---|---|
+| S1 | M316, `M316-bracketing-on-a-real-unit.test.mjs` (sandbox) | "(d) S1: the listing that looks for another generation fails on the second read…": the fault armed while the check is held between the reads; the second read `unread`, `generation` `unread`, `detail.field` `generation` naming the listing; the row `unknown`, `missing` naming the identity read, never `verified` | §3.4, §5.3 item 6 |
+
+The sandbox lane, because the defect is in the real adapter's read; the scripted adapter (§247) has no listing. Run results are in the commit's report to the driver and below.
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
