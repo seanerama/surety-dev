@@ -2275,7 +2275,7 @@ Recorded by the Verifier on `verify/m3-path-two-setup`, from `main` at `8270579`
 | M306, the lease lost | Only a preempting teardown takes the lease from an operation (D4 §4.6) | slice 27, with M327 |
 | M306, a unit of unknown ownership | Recovery and a restored store (D4 §9.2) | slice 26, with M324 (e) |
 
-**Not pinned** (each named in the seam section given): whether equal content writes a row (§245); the canonical form of the identity and the digest's encoding (§245); a backend reference in `secrets` (§245); the hold shown while admission waits (§247); the form of `finalizer_inputs.manifest` (§250); the projection's bounds and refusals (slice 24); where the deploy journal is stored (§250, J1).
+**Not pinned** (each named in the seam section given): whether equal content writes a row (§245); the canonical form of the identity and the digest's encoding (§245); the hold shown while admission waits (§247); the form of `finalizer_inputs.manifest` (§250); the projection's bounds and refusals (slice 24); where the deploy journal is stored (§250, J1).
 
 **The safety rule (BS4 §4.1; E64).** No slice-23 file creates a unit, runs `systemd-run` or `systemctl`, reads or signals a host process, or writes to a cgroup: the scripted deployment adapter is a JSON document in the test's scripted directory. M306's artifact case changes a file of the test's own engine home. Every engine has a disposable `SURETY_HOME` and `HOME`.
 
@@ -2313,6 +2313,29 @@ Recorded by the Verifier on `verify/m3-path-two-setup`, from `main` at `8270579`
 | M08 scheduler (unchanged) | 4 of 4 | — |
 
 Every other row reaching `alphaTarget` fails on `main` the same way, at its first Alpha authorization (the configuration route, 404): the fixtures it needs are the slice-23 seam's. None was run beyond M01 and M24 here; the full `--slice 23` run is the driver's on the Builder's branch.
+
+## M4 slice 23: the review's four cases (S1 to S4)
+
+2026-10-09, by the Verifier on `verify/m4-s23-fix`, cut from `main` at `66f952f`, from the driver's dispositions of the slice-23 Reviewer's serious findings on `build/m4-s23` at `4c45d6f`. One case for each, in the row whose Expected text it falls under; the names it needs pinned in SEAM §255 (and §§245, 247 changed). Kernel lane, the scripted deployment adapter; no unit, no `systemctl`, nothing signalled but the test's own engine.
+
+| Finding | Row, file | Case | D4 |
+|---|---|---|---|
+| S1 | M305, `M305-one-operation-and-completion.test.mjs` | "M305 (c) completion advances only from a verification that could pass…": a kill at `deploy.receipt_recorded`, a restart; the round on the survivor `unknown`, `missing` naming `supervision`; the candidate `developing`, no advance; `last_verified` not written, `attempted.outcome` `verification_unknown`; the environment read's `supervision` `unknown`, `conditions` holding `supervision_unknown`, `observed.condition` never `healthy` | §§2.4, 4.3, 5.3, 6.1, 9.2; E110; E121 CD2 |
+| S2 | M304, `M304-bounded-calls-and-confirmed-effects.test.mjs` | "S2: a launch for g granted … whose unit is gone after a restart is partial, never absent…": the unit removed at `deploy.receipt_recorded`, the engine killed and started; the read `partial`, the attempt `reconciled_partial`, one attempt, no deploy call in the new incarnation | §2.4 |
+| S3 | M304, the same file | Five cases "S3: beyond units / active units / names": a teardown leaving a populated domain cgroup and a socket (`partial`); a required resource unread (`unknown`); a teardown with an extra prefixed unit `failed` (`conflicting`); a deploy's g with no unit and its domain populated (neither `absent` nor `applied`; no retry); a prior unit under another invocation and instance than frozen (neither `absent` nor `applied`) | §2.4; D4-A03 |
+| S4 | M302, `M302-configuration-versions-and-identity.test.mjs` | "(d) only the deployment namespace…": a held backend reference in `secrets` and in `check_secrets`, each 422 `config_invalid` naming the field, nothing written; the control, a held `deploy/<name>`, 201 | §§7.1, 7.4 |
+
+S3's resources need section 247's new `resources` on the scripted target; the case asserts only "neither `absent` nor `applied`" where D4 §2.4 does not choose between `partial`, `conflicting` and `unknown`. S1's `degraded` (CD2) is the observation job's condition, slice 27's (M329 (e)); slice 23 asserts the read's supervision and condition and that it is never `healthy`. The existing M302 (d) case is retitled ("a reference in no namespace"), its assertions unchanged.
+
+**Run** in scratch detached worktrees, each with `verify/m4-s23-fix` merged (uncommitted), `npm install` and `npm run build`, one file at a time with `node --test --test-concurrency=1`, 2026-10-09:
+
+| File | `build/m4-s23` at `bb2971f` (the reviewed code, `4c45d6f`, merged with `main`) | `build/m4-s23` at `0c85fc3` (the Builder's fixes, made meanwhile) |
+|---|---|---|
+| M302 | 4 of 5: S4 fails, `201 !== 422` (the backend reference written as version 1) | 5 of 5 |
+| M304 | 10 of 16: S2 fails, the read `absent` where `partial`; the five S3 cases fail, reads `applied`, `applied`, `absent`, `absent`, `absent` | 13 of 16: S2, the extra failed unit and the prior's instance pass; the three cases that set `resources` fail (`applied`, `applied`, `absent`): the scripted adapter does not yet report section 247's `resources` |
+| M305 | 4 of 5: S1 fails, the row `verified`, `missing` null | 5 of 5 |
+
+Every case that was there before passes on both.
 
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
