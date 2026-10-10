@@ -21,7 +21,8 @@ import { permittedEdit, roleThat } from '../gitruns.mjs';
 import { eventsOfType } from '../journal.mjs';
 import { recordExit } from '../checks/selection.mjs';
 import { buildAndNominate, def } from '../checks/repair.mjs';
-import { scopeProject } from '../checks/scope.mjs';
+import { protectedSet, scopeProject } from '../checks/scope.mjs';
+import { checkProject, installIndexedPlan } from '../checks/fixtures.mjs';
 import { requestTick, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 
@@ -250,10 +251,21 @@ export const DEPLOY_DEFS = Object.freeze({ acc: def('acceptance', { criteria: ['
 // A T1 project whose checks are discovered (`defs`), built and nominated,
 // its workspace checks recorded passing through the scripted check boundary;
 // environment `name` configured by the owner with `config`; the adapter
-// qualified by the labelled fixture unless `qualify` is false.
+// qualified by the labelled fixture unless `qualify` is false. `entries`
+// (slice 24, SEAM.md §260) are committed after the first commit with any
+// git type (checks/fixtures.mjs `commitEntries`: an executable file, a
+// symbolic link, a submodule); `governed` adds to the governed file.
 // Returns {fx, p, project, candidate, reg, env: {id, name}, config, qualification}.
-export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {} } = {}) {
-  const p = await scopeProject(fx, { tier, defs, files: { ...SERVICE_FILES, ...files }, index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
+export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed } = {}) {
+  const index = [{ key: 'R1', criteria: ['R1.1'] }];
+  const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
+  let p;
+  if (entries === undefined && governed === undefined) p = await scopeProject(fx, { tier, defs, files: { ...SERVICE_FILES, ...files }, index, stages });
+  else {
+    const made = await checkProject(fx, { files: { ...protectedSet(defs, governed), ...SERVICE_FILES, ...files }, entries, tier });
+    const plan = await installIndexedPlan(fx.engine, made.id, { index, stages });
+    p = { ...made, plan, stages: plan.stages };
+  }
   const workspace = Object.keys(defs).filter((k) => !(defs[k].gate_kinds ?? []).every((g) => g === 'alpha_complete'));
   const built = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true })], keys: workspace });
   for (const key of workspace) await recordExit(fx.engine, built.reg[key].id, 0);

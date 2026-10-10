@@ -269,6 +269,19 @@
       "M304-bounded-calls-and-confirmed-effects.test.mjs",
       "M305-one-operation-and-completion.test.mjs",
       "M306-preconditions-before-the-effect.test.mjs"
+    ],
+    "24": [
+      "M308-the-projection-and-its-mappings.test.mjs",
+      "M309-sealing-modes-and-bounded-preparation.test.mjs",
+      "M312-unsupported-configurations-refused.test.mjs",
+      "M307-the-deployment-journey-on-a-real-unit.test.mjs",
+      "M308-the-projection-on-the-target.test.mjs",
+      "M309-modes-through-the-target-read.test.mjs",
+      "M312-unsupported-configurations-on-the-host.test.mjs",
+      "M313-nothing-of-the-operators.test.mjs",
+      "M310-the-service-profile.test.mjs",
+      "M311-the-identity-reads-duration.test.mjs",
+      "M311-identity-from-the-target.test.mjs"
     ]
   },
   "sandbox": [
@@ -322,7 +335,15 @@
     "M205-a-foreign-signal-and-forged-reports.test.mjs",
     "M237-check-journey-path-two.test.mjs",
     "M239-the-verifiers-check-writing-package.test.mjs",
-    "M238-the-wrapper-mutants-and-root-hiding.test.mjs"
+    "M238-the-wrapper-mutants-and-root-hiding.test.mjs",
+    "M307-the-deployment-journey-on-a-real-unit.test.mjs",
+    "M308-the-projection-on-the-target.test.mjs",
+    "M309-modes-through-the-target-read.test.mjs",
+    "M312-unsupported-configurations-on-the-host.test.mjs",
+    "M313-nothing-of-the-operators.test.mjs",
+    "M310-the-service-profile.test.mjs",
+    "M311-the-identity-reads-duration.test.mjs",
+    "M311-identity-from-the-target.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
