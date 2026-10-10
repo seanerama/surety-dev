@@ -225,6 +225,14 @@ export async function operationsRead(engine, project) {
   return res.body.operations;
 }
 
+// GET /v1/projects/:p/environments/:e (`:e` the name; SEAM.md §255): the
+// stored read, {environment: {…, supervision, conditions, observed, last_verified, attempted}}.
+export async function environmentRead(engine, project, name) {
+  const res = await engine.get(`/v1/projects/${project}/environments/${name}`);
+  assert.equal(res.status, 200, `the environment read answers (SEAM.md §255) (body: ${res.text})`);
+  return res.body.environment;
+}
+
 // ---- the deployable project (SEAM.md §244) ----------------------------------------------------
 
 // The files the project's revision carries beside its protected set: the

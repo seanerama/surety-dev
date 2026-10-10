@@ -12,6 +12,12 @@
 // at most ten seconds. The deploy journal is `deploy_apply`, its events a
 // path through D1 A.5's table; git's kinds are rows M26 and M29 to M34,
 // unchanged and run as they are.
+//
+// The slice-23 review's S2 and S3 (SEAM.md §§247, 255): the read that settles
+// an effect is D4 §2.4's mapping of the whole inventory (units, domain
+// cgroups, link sockets, runtime directories) and of the launches the engine
+// granted, never of the units alone. Their resources are set on the scripted
+// target at `deploy.receipt_recorded`, after the effect and before its read.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -22,7 +28,9 @@ import {
   adapterState,
   armBarrier,
   attemptsOf,
+  completeRound,
   deploy,
+  deployToRound,
   deployable,
   effectCalls,
   operationsOf,
@@ -31,7 +39,11 @@ import {
   releaseBarrier,
   roundsOf,
   scriptCall,
+  setTarget,
+  teardown,
+  tickSome,
   tickToBarrier,
+  unitName,
   verificationsOf,
 } from './harness/deploy/kernel.mjs';
 
@@ -162,5 +174,178 @@ describe('M304 (c) an adapter result is a claim: only a confirming read makes an
     assert.ok(['succeeded', 'reconciled_succeeded'].includes(attempt.status), `status ${attempt.status}`);
     assert.equal(reads(attempt).at(-1), 'applied', 'by a reconcile read');
     assert.ok(effectCalls(await adapterState(ctx.fx.engine, ctx.env.id), 'reconcile').length >= 1);
+  });
+});
+
+// ---- the slice-23 review: the mapping of the whole inventory (S2, S3; SEAM.md §255) ----
+
+const PARTIAL_OR_WORSE = ['partial', 'conflicting', 'unknown'];
+const resource = (kind, home, env, generation, state) => ({
+  kind,
+  path: kind === 'cgroup' ? `/user.slice/app.slice/${unitName(home, env, generation)}/service` : `${home}/run/deploy/${env}/g${generation}${kind === 'socket' ? '.sock' : ''}`,
+  generation,
+  state,
+});
+
+// The operation `op`'s first attempt, once it has a reconcile read.
+const firstRead = (ctx, op, what) =>
+  tickUntil(
+    ctx.fx.engine,
+    ctx.project,
+    () => {
+      const [a] = attemptsOf(ctx.fx.home, op);
+      return a && a.reconciliation_reads.length > 0 ? a : undefined;
+    },
+    { max: 16, what },
+  );
+
+// Pause at the effect's receipt, set the target with `change(target)`, and
+// let the read be made. Returns the operation's id (`kind`, the newest).
+async function atReceipt(ctx, kind, start, change) {
+  const { fx, project, env } = ctx;
+  await armBarrier(fx.engine, 'deploy.receipt_recorded', 'pause');
+  await start();
+  await tickToBarrier(fx, project, 'deploy.receipt_recorded');
+  const op = operationsOf(fx.home, project, kind).at(-1);
+  const { target } = await adapterState(fx.engine, env.id);
+  await setTarget(fx.engine, env.id, change({ complete: target.complete, units: target.units, resources: target.resources ?? [] }));
+  await releaseBarrier(fx.engine, 'deploy.receipt_recorded');
+  return op.id;
+}
+
+// A deployment of generation 1 verified and complete, so the lease is free
+// for the next operation.
+async function deployedAndComplete(t) {
+  const fx = await scriptedEngine(t);
+  const ctx = await deployable(fx);
+  const { execution } = await deployToRound(ctx);
+  await completeRound(ctx, execution);
+  return ctx;
+}
+
+describe('M304 (c) the read that settles an effect maps the whole inventory and the launches granted (D4 §2.4; the slice-23 review, S2 and S3)', () => {
+  test("S2: a launch for g granted (its init and application recorded) whose unit is gone after a restart is partial, never absent; no new attempt starts without the human's answer", async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    // A second applying answer queued: a retry, were one started, would be made and would succeed.
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }, { result: 'issued', apply: true }]);
+    await armBarrier(fx.engine, 'deploy.receipt_recorded', 'pause');
+    await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
+    await tickToBarrier(fx, ctx.project, 'deploy.receipt_recorded');
+    const [op] = operationsOf(fx.home, ctx.project, 'deploy');
+    const [held] = attemptsOf(fx.home, op.id);
+    assert.ok(held.init_instance && held.app_instance, `the launch for g1 was granted: the init and the application are recorded on the attempt (${JSON.stringify([held.init_instance, held.app_instance])})`);
+    // The unit goes; the engine dies before its read and starts again.
+    await setTarget(fx.engine, ctx.env.id, { complete: true, units: [] });
+    await fx.engine.kill();
+    await fx.start();
+    const attempt = await tickUntil(
+      fx.engine,
+      ctx.project,
+      () => {
+        const [a] = attemptsOf(fx.home, op.id);
+        return a && a.reconciliation_reads.some((r) => r.result !== 'unknown') ? a : undefined;
+      },
+      { max: 16, what: 'the attempt to be read after the restart' },
+    );
+    await tickSome(fx, ctx.project, 4);
+    const settledBy = attempt.reconciliation_reads.find((r) => r.result !== 'unknown').result;
+    assert.equal(settledBy, 'partial', `a launch for g granted and its unit gone is partial (D4 §2.4), never absent: absent requires that no launch for g was granted (reads ${JSON.stringify(reads(attempt))})`);
+    const attempts = attemptsOf(fx.home, op.id);
+    assert.equal(attempts[0].status, 'reconciled_partial', `the attempt is reconciled_partial (status ${attempts[0].status})`);
+    assert.equal(attempts.length, 1, `no new attempt without the rollout_partial decision (attempts ${JSON.stringify(attempts.map((a) => a.status))})`);
+    assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 0, 'no deploy effect call in the new incarnation');
+  });
+
+  test('S3: beyond units: a teardown leaving a populated domain cgroup and a socket is partial, never applied', async (t) => {
+    const ctx = await deployedAndComplete(t);
+    const { fx, project, env } = ctx;
+    await scriptCall(fx.engine, env.id, 'teardown', [{ result: 'issued', apply: true }]);
+    const op = await atReceipt(
+      ctx,
+      'teardown',
+      async () => {
+        const res = await teardown(fx.engine, project, env.name);
+        assert.ok(res.status >= 200 && res.status < 300, `the teardown is accepted (→ ${res.status} ${res.text})`);
+      },
+      (target) => ({ ...target, resources: [resource('cgroup', fx.home, env.id, 1, 'populated'), resource('socket', fx.home, env.id, 1, 'present')] }),
+    );
+    const a = await firstRead(ctx, op, "the teardown's read");
+    assert.deepEqual((await adapterState(fx.engine, env.id)).target.units, [], 'no unit is left');
+    assert.equal(reads(a)[0], 'partial', `owned resources survive: partial, never applied (D4 §2.4, D4-A03) (reads ${JSON.stringify(reads(a))})`);
+    assert.notEqual(a.status, 'succeeded');
+  });
+
+  test('S3: beyond units: a required resource left unread makes the read unknown, never applied', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
+    const op = await atReceipt(
+      ctx,
+      'deploy',
+      () => deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name),
+      (target) => ({ ...target, resources: [resource('cgroup', fx.home, ctx.env.id, 1, 'unread')] }),
+    );
+    const a = await firstRead(ctx, op, "the deploy's read");
+    assert.equal(reads(a)[0], 'unknown', `g1's domain cgroup unread: unknown, which takes precedence over applied (D4 §2.4) (reads ${JSON.stringify(reads(a))})`);
+    assert.notEqual(a.status, 'succeeded');
+  });
+
+  test('S3: beyond active units: a teardown with every recorded unit unchanged and an extra prefixed unit, failed, is conflicting, never absent', async (t) => {
+    const ctx = await deployedAndComplete(t);
+    const { fx, project, env } = ctx;
+    await scriptCall(fx.engine, env.id, 'teardown', [{ result: 'issued' }]);
+    const extra = { name: unitName(fx.home, env.id, 9), state: 'failed', invocation_id: 'e'.repeat(32), pending_job: false, generation: 9, instance: 'unread', init: 'unread', tree: 'unread' };
+    const op = await atReceipt(
+      ctx,
+      'teardown',
+      async () => {
+        const res = await teardown(fx.engine, project, env.name);
+        assert.ok(res.status >= 200 && res.status < 300, `the teardown is accepted (→ ${res.status} ${res.text})`);
+      },
+      (target) => ({ ...target, units: [...target.units, extra] }),
+    );
+    const a = await firstRead(ctx, op, "the teardown's read");
+    assert.ok((await adapterState(fx.engine, env.id)).target.units.some((u) => u.name === unitName(fx.home, env.id, 1) && u.state === 'active'), 'g1 is unchanged');
+    assert.equal(reads(a)[0], 'conflicting', `a prefixed unit no intent names, in any state, is ownership unexpected: conflicting (D4 §2.4) (reads ${JSON.stringify(reads(a))})`);
+  });
+
+  test("S3: beyond units: a deploy whose g has no unit but whose domain cgroup is still populated is not absent, and no retry starts", async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx);
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued' }, { result: 'issued', apply: true }]);
+    const op = await atReceipt(
+      ctx,
+      'deploy',
+      () => deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name),
+      (target) => ({ ...target, units: [], resources: [resource('cgroup', fx.home, ctx.env.id, 1, 'populated')] }),
+    );
+    const a = await firstRead(ctx, op, "the deploy's read");
+    await tickSome(fx, ctx.project, 3);
+    assert.ok(PARTIAL_OR_WORSE.includes(reads(a)[0]), `absent requires g's unit and domain absent in every state (D4 §2.4): not absent, not applied (reads ${JSON.stringify(reads(a))})`);
+    assert.equal(attemptsOf(fx.home, op).length, 1, 'no new attempt');
+    assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 1, 'one deploy effect call');
+  });
+
+  test('S3: beyond names: a prior unit running under another invocation and instance than its frozen ones is not "prior exactly as frozen": the read is not absent', async (t) => {
+    const ctx = await deployedAndComplete(t);
+    const { fx, project, candidate, env } = ctx;
+    const g1 = unitName(fx.home, env.id, 1);
+    // Generation 2 asked for; its effect makes no change, and meanwhile g1 has been restarted by hand.
+    await scriptCall(fx.engine, env.id, 'deploy', [{ result: 'issued' }, { result: 'issued', apply: true }]);
+    const op = await atReceipt(
+      ctx,
+      'deploy',
+      () => deploy(fx.engine, project, candidate.id, env.name),
+      (target) => ({ ...target, units: target.units.map((u) => (u.name === g1 ? { ...u, invocation_id: 'f'.repeat(32), instance: { pid: 999999, start_time: 1 } } : u)) }),
+    );
+    const [attempt] = attemptsOf(fx.home, op);
+    assert.equal(attempt.deployment_generation, 2, 'the attempt is generation 2');
+    const frozen = attempt.capability?.prior ?? [];
+    assert.ok(frozen.some((p) => p.unit === g1), `its frozen prior names g1 (${JSON.stringify(frozen)})`);
+    const a = await firstRead(ctx, op, "the second deploy's read");
+    await tickSome(fx, project, 3);
+    assert.ok(PARTIAL_OR_WORSE.includes(reads(a)[0]), `absent requires prior exactly as frozen (D4 §2.4), its invocation and instance included: not absent (reads ${JSON.stringify(reads(a))})`);
+    assert.equal(attemptsOf(fx.home, op).length, 1, 'no new attempt');
   });
 });
