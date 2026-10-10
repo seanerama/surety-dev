@@ -17,7 +17,10 @@ export type Effect =
   | { kind: 'end_run'; run: string }
   | { kind: 'journal'; project: string }
   | { kind: 'effect'; intent: string }
-  | { kind: 'control_after_exit'; run: string; control: 'stop' | 'abandon' };
+  | { kind: 'control_after_exit'; run: string; control: 'stop' | 'abandon' }
+  // A preempting teardown intended: the environment's running effect calls
+  // are cancelled (D4 §4.6 step 1; release-operator.ts).
+  | { kind: 'preempt'; environment: string };
 
 export interface CommandResult {
   status: number;
