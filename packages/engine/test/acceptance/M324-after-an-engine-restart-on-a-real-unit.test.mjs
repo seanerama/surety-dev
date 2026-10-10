@@ -51,7 +51,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import { addGitProject, addItem } from './harness/gitruns.mjs';
 import { readFileSync } from 'node:fs';
 import { recordFile, recordRow } from './harness/records.mjs';
-import { runsOf, stopRun, tick, waitForRun, waitForRunState } from './harness/runs.mjs';
+import { runsOf, stopRun, tick, waitForRunState } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { domainOf, roleHolding } from './harness/sandbox/lane.mjs';
 import { attemptsOf, deploy, environmentRead, operationsOf } from './harness/deploy/kernel.mjs';
@@ -71,6 +71,7 @@ import {
   serviceLinkLogs,
   serviceOf,
   settleRound,
+  teardownOnHost,
   ticksUntil,
   unitShow,
 } from './harness/deploy/host.mjs';
@@ -215,7 +216,9 @@ describe('M324 after an engine restart, on real units', () => {
 
   test('(d) recovery accounts for a surviving service before any admission: of two role dispatches that would otherwise fit, one is held resource_envelope until the survivor is torn down (M319 (c))', async () => {
     const d = await deployed('account');
+    // Two other projects, one role run each: a project runs one role at a time, so two runs of one project would not show the envelope.
     const other = await newOtherProject();
+    const third = await newOtherProject();
     const runs = [];
     try {
       // SIGKILL to this test's own engine child (killOwnEngine reads its /proc first).
@@ -224,19 +227,22 @@ describe('M324 after an engine restart, on real units', () => {
       assert.ok(serviceDomainOf(ctx.fx.home, d.svc.attempt.id)?.reservation?.check_capacity, 'the survivor\'s reservation is recorded');
       const first = await roleHolding(ctx.fx, other.id, await addItem(ctx.fx, other.id, 'fix'), { name: 'one' });
       runs.push(first.run);
-      const second = await addItem(ctx.fx, other.id, 'fix');
+      const second = await addItem(ctx.fx, third.id, 'fix');
       ctx.fx.scripted.script(second, [script.hold('two')]);
-      await tick(ctx.fx.engine, other.id, { rounds: 2 });
+      await tick(ctx.fx.engine, third.id, { rounds: 2 });
       assert.deepEqual(runsOf(ctx.fx.home, second), [], 'the second role run is not dispatched');
-      const entry = await workEntry(ctx.fx.engine, other.id, second);
+      const entry = await workEntry(ctx.fx.engine, third.id, second);
       assert.equal(entry?.dispatch_hold?.code, 'resource_envelope', `held for the envelope, the survivor's check capacity counted (D4 §9.2; E126) (${JSON.stringify(entry)})`);
-      await endEnvironment(ctx, d.env);
-      await tick(ctx.fx.engine, other.id, { rounds: 2 });
-      const run2 = await waitForRun(ctx.fx.home, second, { state: 'executing', timeoutMs: 120_000 });
+      // The survivor torn down by the engine (an ordinary teardown: the lease is free), its closure observed.
+      const down = await teardownOnHost(ctx, d.env);
+      assert.equal(attemptsOf(ctx.fx.home, down.id).at(-1)?.status, 'succeeded', `the survivor's teardown is applied (${JSON.stringify(attemptsOf(ctx.fx.home, down.id).map((a) => [a.status, a.reconciliation_reads?.map((r) => r.result)]))})`);
+      assert.equal(serviceDomainOf(ctx.fx.home, d.svc.attempt.id)?.state, 'terminated', 'its domain is terminated, its reservation freed');
+      // Ticks of the other project until it dispatches (the harness engine ticks only when asked).
+      const run2 = await ticksUntil(ctx.fx, third.id, () => runsOf(ctx.fx.home, second).find((r) => r.state === 'executing'), { timeoutMs: 180_000, what: 'the second role run to be dispatched once the survivor is torn down' });
       runs.push(run2);
       assert.ok(run2, 'once the survivor\'s closure is observed, the second dispatch is admitted (the control)');
     } finally {
-      for (const r of runs) await stopRun(ctx.fx.engine, other.id, r.id).catch(() => undefined);
+      for (const r of runs) await stopRun(ctx.fx.engine, r.project, r.id).catch(() => undefined);
       for (const r of runs) await waitForRunState(ctx.fx.home, r.id, 'ended', { timeoutMs: 60_000 }).catch(() => undefined);
       await endEnvironment(ctx, d.env);
     }
