@@ -41,7 +41,7 @@
 // checked by its real path and its name.
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
 import net from 'node:net';
 import { join, relative, sep } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -288,6 +288,20 @@ export class ServiceHost {
       if (lstatSync(path).isSocket()) unlinkSync(path);
     } catch {
       // none
+    }
+    // An earlier incarnation's link sockets: a link lives in the engine that
+    // opened it, so after a restart nothing listens on any of them. Each is
+    // removed at its own path in this home's run directory, by its name and
+    // its real path, and only if it is a socket (the inventory would
+    // otherwise list it for ever, D4 §2.4).
+    for (const name of readdirSync(run)) {
+      if (!LINK_NAME.test(name)) continue;
+      const real = this.ownRun(join(run, name), LINK_NAME);
+      try {
+        if (real !== null && lstatSync(real).isSocket()) rmSync(real, { force: true });
+      } catch {
+        // gone meanwhile
+      }
     }
     await new Promise<void>((resolve, reject) => {
       const server = net.createServer((socket) => {
