@@ -79,7 +79,7 @@ import {
   registerStream,
   storedRecords,
 } from './transitions/records.js';
-import { type EngineSettings, setEngineSettings } from './transitions/settings.js';
+import { type EngineSettings, engineSettings, setEngineSettings } from './transitions/settings.js';
 import { setCheckLimits } from '../checks/limits.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
 import { chainBoundary, resumeWork } from './transitions/work.js';
@@ -97,6 +97,12 @@ import {
   deployWork,
   finalizeDeploy,
   finalizeRound,
+  admissionWait,
+  linkTarget,
+  liveRoundExecutions,
+  requestVerification,
+  roundStep,
+  supervisionLost,
   intendDeploy,
   intendTeardown,
   launchAuthorize,
@@ -191,6 +197,7 @@ import {
   setCheckRunner,
   treeInUse,
   treeHeld,
+  recordLinkLog,
 } from './transitions/checks.js';
 
 export interface WorkerData {
@@ -238,6 +245,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
+  // D4 §5.3 item 1, A.8; CD1 (M4 slice 25; SEAM.md §266).
+  'operation.verify': (tx, a: { project: string; operation: string }) => requestVerification(tx, { ...a, incarnation: engineSettings().incarnation! }, completionRequired),
 };
 
 // The checks a round requires (D4 §5.3): the `alpha_complete` scope's.
@@ -280,6 +289,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.work': (d, a) => deployWork(d, a),
   'deploy.detail': (d, a) => deployDetail(d, a),
   'deploy.round': (d, a) => roundDetail(d, a),
+  'deploy.link_target': (d, a) => linkTarget(d, a),
+  'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
   'deploy.configs_with_secrets': (d) => configsWithSecrets(d),
   'deploy.artifact_manifest': (d, a: { project: string; digest: string }) => {
@@ -494,7 +505,11 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'deploy.finalize': (tx, a) => finalizeDeploy(tx, { operation: a.operation, requiredOf: completionRequired }),
   'deploy.round_first_read': (tx, a) => roundFirstRead(tx, { ...a, checksOf: checksById }),
   'deploy.round_checks_done': (tx, a) => roundChecksDone(tx, a),
-  'deploy.round_finalize': (tx, a) => finalizeRound(tx, a),
+  'deploy.round_finalize': (tx, a) => finalizeRound(tx, a, completionRequired),
+  'deploy.round_step': (tx, a) => roundStep(tx, a, completionRequired),
+  'checks.link_log': (tx, a) => recordLinkLog(tx, a),
+  'deploy.admission_wait': (tx, a) => admissionWait(tx, a),
+  'deploy.supervision_lost': (tx, a) => supervisionLost(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

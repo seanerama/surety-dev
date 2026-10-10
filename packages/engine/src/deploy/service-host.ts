@@ -92,6 +92,7 @@ class Channel {
   private waiter: ((m: Msg | null) => void) | null = null;
   closed = false;
   onMessage: ((m: Msg) => void) | null = null;
+  onClose: (() => void) | null = null;
 
   constructor(readonly socket: net.Socket) {
     socket.on('error', () => {});
@@ -112,6 +113,7 @@ class Channel {
     });
     lines.on('close', () => {
       this.closed = true;
+      this.onClose?.();
       if (this.waiter) {
         const w = this.waiter;
         this.waiter = null;
@@ -161,8 +163,49 @@ interface Service {
   ingress: net.Server | null;
   channel: Channel | null;
   pending: Map<string, (s: net.Socket | null) => void>;
-  links: Set<net.Server>;
+  links: Set<ServiceLink>;
   open: Set<net.Socket>;
+  // Ended by the engine itself (closure observed): its channel's close is
+  // not a lost supervision.
+  disposed: boolean;
+}
+
+// The limits of a post-deploy check's service link (D4 §5.2, A.7), and the
+// bound of its log (D2's egress log bound, the slice-25 design Q8).
+export interface LinkLimits {
+  connectTimeoutMs: number;
+  tunnelMaxMs: number;
+  tunnelsMax: number;
+  bufferMaxBytes: number;
+  logMaxBytes: number;
+}
+
+type LinkBinding = { execution: string; round: string; operation: string; attempt: string; generation: number; instance: { pid: number; start_time: number } | null };
+
+// One entry of a link's `service_link_log` record (SEAM.md §268), one per
+// connection the link received, in order.
+interface LinkEntry extends LinkBinding {
+  decision: 'accepted' | 'refused';
+  reason: string | null;
+  limit: { key: string; value: number } | null;
+  opened_at: string;
+  closed_at: string | null;
+  ended: string | null;
+  bytes_up: number;
+  bytes_down: number;
+}
+
+// A post-deploy check's service link (D4 §5.2; J8): the socket it is bound
+// to, every connection's entry, and how it closes.
+export interface ServiceLink {
+  path: string;
+  close(): void;
+  // The JSON lines of its log, redacted by the caller; `truncated` when the
+  // log reached its bound.
+  entries(): LinkEntry[];
+  truncated(): boolean;
+  // Every open tunnel closed; the link keeps refusing new connections.
+  dropTunnels(): void;
 }
 
 const readInt = (path: string): number | 'max' | null => {
@@ -178,6 +221,33 @@ const readInt = (path: string): number | 'max' | null => {
 export class ServiceHost {
   private server: net.Server | null = null;
   private readonly services = new Map<string, Service>();
+  private stopping = false;
+  // Attempts whose control channel this incarnation saw close and whose loss
+  // is not yet durable (the review's m4).
+  private readonly lost = new Set<string>();
+
+  // The loss written to the store, retried a few times now; until it is
+  // written, `lossRecorded` says no and no round of the attempt is decided.
+  private async recordLoss(attempt: string): Promise<boolean> {
+    for (let i = 0; i < 5 && this.lost.has(attempt); i++) {
+      try {
+        await this.rt.engine('deploy.supervision_lost', { attempt, why: 'the control channel closed' });
+        this.lost.delete(attempt);
+        return true;
+      } catch (err) {
+        log('service channel', err, { attempt, try: i + 1 });
+        await new Promise((r) => setTimeout(r, 200 * (i + 1)).unref?.());
+      }
+    }
+    return !this.lost.has(attempt);
+  }
+
+  // Whether every channel loss of the attempt this incarnation saw is
+  // durable now (one still pending is written again here).
+  async lossRecorded(attempt: string): Promise<boolean> {
+    if (!this.lost.has(attempt)) return true;
+    return this.recordLoss(attempt);
+  }
 
   constructor(private readonly rt: Runtime) {}
 
@@ -217,6 +287,7 @@ export class ServiceHost {
   }
 
   stop(): void {
+    this.stopping = true;
     this.server?.close();
     this.server = null;
     for (const s of this.services.values()) {
@@ -238,7 +309,7 @@ export class ServiceHost {
     if (!RUN_NAME.test(name) || args.runtimeDir !== join(this.rt.home, 'run', name)) throw new Error(`refused: ${args.runtimeDir} is not a runtime directory of this engine home`);
     mkdirSync(join(args.runtimeDir, 'root'), { recursive: true, mode: 0o700 });
     mkdirSync(join(args.runtimeDir, 'vol'), { recursive: true, mode: 0o700 });
-    const s: Service = { attempt: args.attempt, domain: args.domain, environment: args.environment, generation: args.generation, runtimeDir: args.runtimeDir, ingress: null, channel: null, pending: new Map(), links: new Set(), open: new Set() };
+    const s: Service = { attempt: args.attempt, domain: args.domain, environment: args.environment, generation: args.generation, runtimeDir: args.runtimeDir, ingress: null, channel: null, pending: new Map(), links: new Set(), open: new Set(), disposed: false };
     const sock = join(args.runtimeDir, 'in.sock');
     try {
       if (lstatSync(sock).isSocket()) unlinkSync(sock);
@@ -269,7 +340,12 @@ export class ServiceHost {
       const id = head.subarray(0, nl).toString('utf8');
       const rest = head.subarray(nl + 1);
       const resolve = s.pending.get(id);
-      if (!resolve) return void c.destroy();
+      if (!resolve) {
+        // No tunnel the engine asked for: whatever connected (the service's
+        // own code can see this socket) reaches nothing (D4 §5.2).
+        log('service ingress', new Error('a connection with no pending tunnel was refused'), { attempt: s.attempt });
+        return void c.destroy();
+      }
       s.pending.delete(id);
       if (rest.length > 0) c.unshift(rest);
       resolve(c);
@@ -298,52 +374,153 @@ export class ServiceHost {
 
   // The service link of a post-deploy check (D4 §5.2; J8): a socket under
   // $SURETY_HOME/run/ named for the environment and the frozen generation,
-  // relaying each connection to that generation's application and to nothing
-  // else. Closed by the returned function, which removes the socket.
-  async startLink(args: { attempt: string; environment: string; generation: number; checkDomain: string; connectTimeoutMs: number }): Promise<{ path: string; close: () => void }> {
+  // relaying each connection to that generation's application and to
+  // nothing else. Each connection is checked in the store first (the
+  // generation still current, its domain launched, its supervision
+  // attached), holds one of `service_link_tunnels_max`, is refused past
+  // `service_link_connect_timeout`, closed past
+  // `service_link_tunnel_max_seconds` or when more than
+  // `service_link_buffer_max_bytes` wait in either direction, and is
+  // written to the link's log; the log's bound refuses every later
+  // connection, unlogged, and calls `onLogBound`. A tunnel is never
+  // retargeted: the attempt is fixed. `close` removes the socket.
+  async startLink(args: { execution: string; attempt: string; environment: string; generation: number; checkDomain: string; limits: LinkLimits; onLogBound?: () => void }): Promise<ServiceLink> {
     const name = `${args.environment}-g${args.generation}-link-${args.checkDomain.slice(-10).toLowerCase()}.sock`;
     const path = join(this.rt.home, 'run', name);
     mkdirSync(join(this.rt.home, 'run'), { recursive: true, mode: 0o700 });
-    const s = this.services.get(args.attempt);
+    const limits = args.limits;
+    const first = await this.rt.read<{ ok: boolean; reason: string | null; binding: LinkBinding | null }>('deploy.link_target', { execution: args.execution });
+    const binding: LinkBinding = first.binding ?? { execution: args.execution, round: '', operation: '', attempt: args.attempt, generation: args.generation, instance: null };
+    const entries: LinkEntry[] = [];
+    let logBytes = 0;
+    let truncated = false;
+    let active = 0;
     const open = new Set<net.Socket>();
+    const closers = new Set<() => void>();
+    const entry = (decision: LinkEntry['decision'], reason: string | null, limit: LinkEntry['limit'] = null): LinkEntry | null => {
+      const e: LinkEntry = { ...binding, decision, reason, limit, opened_at: new Date().toISOString(), closed_at: null, ended: decision === 'refused' ? 'refused' : null, bytes_up: 0, bytes_down: 0 };
+      // Room for the entry as it will be written once closed.
+      const size = Buffer.byteLength(`${JSON.stringify({ ...e, closed_at: e.opened_at, ended: 'tunnel_max_seconds', bytes_up: 1e12, bytes_down: 1e12 })}\n`);
+      if (truncated || logBytes + size > limits.logMaxBytes) {
+        if (!truncated) {
+          truncated = true;
+          log('service link', new Error(`the link's log reached egress_log_max_bytes (${limits.logMaxBytes} bytes): every later connection is refused`), { execution: args.execution });
+          args.onLogBound?.();
+        }
+        return null;
+      }
+      logBytes += size;
+      entries.push(e);
+      return e;
+    };
+    const refuse = (client: net.Socket, reason: string, limit: LinkEntry['limit'] = null) => {
+      entry('refused', reason, limit);
+      client.destroy();
+    };
     const server = await new Promise<net.Server>((resolve, reject) => {
       const srv = net.createServer((client) => {
         client.on('error', () => client.destroy());
-        open.add(client);
-        client.on('close', () => open.delete(client));
         client.pause();
-        void this.openTunnel(args.attempt, args.connectTimeoutMs).then((up) => {
-          if (up === null || client.destroyed) {
-            up?.destroy();
+        if (truncated) return void client.destroy();
+        if (active >= limits.tunnelsMax) return refuse(client, 'tunnels_max', { key: 'service_link_tunnels_max', value: limits.tunnelsMax });
+        // The slot is held from the moment the connection is accepted.
+        active++;
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          active--;
+        };
+        open.add(client);
+        client.on('close', () => {
+          open.delete(client);
+          release();
+        });
+        void (async () => {
+          const now = await this.rt.read<{ ok: boolean; reason: string | null }>('deploy.link_target', { execution: args.execution }).catch(() => ({ ok: false, reason: 'unread' }));
+          if (client.destroyed) return release();
+          if (!now.ok) return refuse(client, now.reason ?? 'refused');
+          const s = this.services.get(args.attempt);
+          if (!s || !s.channel || s.channel.closed) return refuse(client, 'no_service');
+          const up = await this.openTunnel(args.attempt, limits.connectTimeoutMs);
+          if (up === null) return refuse(client, 'connect_timeout', { key: 'service_link_connect_timeout', value: limits.connectTimeoutMs / 1000 });
+          if (client.destroyed) {
+            up.destroy();
+            return;
+          }
+          const e = entry('accepted', null);
+          if (e === null) {
+            up.destroy();
             client.destroy();
             return;
           }
           open.add(up);
-          s?.open.add(up);
-          up.on('error', () => up.destroy());
-          up.on('close', () => {
-            open.delete(up);
-            s?.open.delete(up);
+          s.open.add(up);
+          let closed = false;
+          const close = (ended: string, limit: LinkEntry['limit'] = null) => {
+            if (closed) return;
+            closed = true;
+            clearTimeout(lifetime);
+            closers.delete(stop);
+            e.closed_at = new Date().toISOString();
+            e.ended = ended;
+            if (limit) e.limit = limit;
             client.destroy();
+            up.destroy();
+            open.delete(up);
+            s.open.delete(up);
+          };
+          const stop = () => close('link_closed');
+          closers.add(stop);
+          const lifetime = setTimeout(() => close('tunnel_max_seconds', { key: 'service_link_tunnel_max_seconds', value: limits.tunnelMaxMs / 1000 }), limits.tunnelMaxMs);
+          lifetime.unref?.();
+          const buffer = { key: 'service_link_buffer_max_bytes', value: limits.bufferMaxBytes };
+          client.on('data', (chunk: Buffer) => {
+            e.bytes_up += chunk.length;
+            up.write(chunk);
+            if (up.writableLength > limits.bufferMaxBytes) close('buffer_max', buffer);
           });
-          client.on('close', () => up.destroy());
-          client.pipe(up);
-          up.pipe(client);
+          up.on('data', (chunk: Buffer) => {
+            e.bytes_down += chunk.length;
+            client.write(chunk);
+            if (client.writableLength > limits.bufferMaxBytes) close('buffer_max', buffer);
+          });
+          client.on('end', () => up.end());
+          up.on('end', () => client.end());
+          client.on('close', () => close('closed'));
+          up.on('close', () => close('closed'));
+          up.on('error', () => close('closed'));
+          client.on('error', () => close('closed'));
           client.resume();
+        })().catch((err) => {
+          log('service link', err, { execution: args.execution });
+          client.destroy();
         });
       });
       srv.once('error', reject);
       srv.listen(path, () => resolve(srv));
     });
-    s?.links.add(server);
-    const close = () => {
-      server.close();
-      s?.links.delete(server);
-      for (const c of open) c.destroy();
-      const real = this.ownRun(path, LINK_NAME);
-      if (real !== null) rmSync(real, { force: true });
+    let closed = false;
+    const link: ServiceLink = {
+      path,
+      close: () => {
+        if (closed) return;
+        closed = true;
+        server.close();
+        this.services.get(args.attempt)?.links.delete(link);
+        for (const c of [...closers]) c();
+        for (const c of open) c.destroy();
+        const real = this.ownRun(path, LINK_NAME);
+        if (real !== null) rmSync(real, { force: true });
+      },
+      entries: () => entries,
+      truncated: () => truncated,
+      dropTunnels: () => {
+        for (const c of [...closers]) c();
+      },
     };
-    return { path, close };
+    this.services.get(args.attempt)?.links.add(link);
+    return link;
   }
 
   // The engine's TERM to a service's init (D2 §3.2), when its channel stands.
@@ -364,6 +541,7 @@ export class ServiceHost {
   dispose(args: { attempt: string; runtimeDir: string | null }): void {
     const s = this.services.get(args.attempt);
     if (s) {
+      s.disposed = true;
       s.ingress?.close();
       for (const l of s.links) l.close();
       for (const c of s.open) c.destroy();
@@ -449,6 +627,16 @@ export class ServiceHost {
       return refuse('no runtime directory was prepared for the attempt');
     }
     s.channel = ch;
+    // The control channel is never reopened (D4 §9.2): lost, in this
+    // incarnation, its service's supervision is `unknown` from then on, and
+    // every tunnel to it closes now (E110, E116).
+    ch.onClose = () => {
+      for (const l of [...s.links]) l.dropTunnels();
+      for (const c of s.open) c.destroy();
+      if (s.disposed || this.stopping) return;
+      this.lost.add(s.attempt);
+      void this.recordLoss(s.attempt);
+    };
     ch.send({ t: 'granted' });
     await this.drive(ch, s, lk, { pid: ipid, start_time: istart }, cgroup);
   }

@@ -32,7 +32,8 @@ import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandbo
 import { DOMAIN_MARKER } from '../invoke/processes.js';
 import { type BackendLaunch, INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
 import { writeWholeRecord } from '../records/files.js';
-import { scanBytes } from '../records/redact.js';
+import { redactText, scanBytes } from '../records/redact.js';
+import type { ServiceLink } from '../deploy/service-host.js';
 import { nowIso } from '../clock.js';
 import { finishEgress, startEgress } from '../invoke/proxy/egress.js';
 import type { DomainProxy } from '../invoke/proxy/proxy.js';
@@ -269,7 +270,7 @@ export class Supervisor implements DomainHolder {
   // The domain's egress proxy, only when the definition names hosts.
   private egress: DomainProxy | null = null;
   // The execution's service link, only when it is bound to a deployment.
-  private link: { path: string; close: () => void } | null = null;
+  private link: ServiceLink | null = null;
   private fireCancel: () => void = () => {};
   // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
   private leaseLost = false;
@@ -322,9 +323,27 @@ export class Supervisor implements DomainHolder {
   // record, the project's, with no run (SEAM.md §201): once the domain is
   // established terminated, or when nothing was launched.
   async finishEgress(): Promise<void> {
-    // The service link closes with the domain: no tunnel outlives it.
-    this.link?.close();
+    // The service link closes with the domain: no tunnel outlives it. Its
+    // log is the execution's `service_link_log` record, through the
+    // redactor (D4 §5.2; SEAM.md §268).
+    const link = this.link;
     this.link = null;
+    if (link !== null) {
+      link.close();
+      const text = link
+        .entries()
+        .map((e) => `${redactText(JSON.stringify(e))}\n`)
+        .join('');
+      // Tied to its execution (the review's m5). A record that cannot be
+      // written is logged, as D2's egress log is; the execution then names
+      // none.
+      try {
+        const record = await writeWholeRecord(this.rt, { project: this.a.project, run: null, kind: 'service_link_log', content: Buffer.from(text) });
+        await this.engine('checks.link_log', { execution: this.a.execution, record });
+      } catch (err) {
+        log('service link log', err, { execution: this.a.execution });
+      }
+    }
     const egress = this.egress;
     if (egress === null) return;
     this.egress = null;
@@ -396,11 +415,14 @@ export class Supervisor implements DomainHolder {
     // Every input's target, and each of its ancestors, must be a directory
     // of the source projection or absent there (S1): a link or a file at
     // one refuses the plan before any launcher starts.
-    const conflict = inputTargetConflict(tree.src, a.manifest);
+    // A deployment verification's check sees no candidate source (D4 §5.1;
+    // D3 X3; SEAM.md §265): its source projection is empty, so no input
+    // target can conflict with it.
+    const conflict = a.deployment ? null : inputTargetConflict(tree.src, a.manifest);
     if (conflict !== null) return this.notRun('mount_plan_refused', conflict);
     // The definition's cwd must be a directory of the check tree (D3 §2.7;
     // SEAM.md §209).
-    const badCwd = cwdProblem([tree.src, projectionOf(tree, a.manifest)], def.cwd);
+    const badCwd = cwdProblem(a.deployment ? [projectionOf(tree, a.manifest)] : [tree.src, projectionOf(tree, a.manifest)], def.cwd);
     if (badCwd !== null) return this.notRun('definition_invalid', badCwd);
     // The domain's cgroup, only while its launch is not closed (D2 §3.2),
     // and only at this domain's directory in this engine's own scope.
@@ -464,17 +486,40 @@ export class Supervisor implements DomainHolder {
     // relays, forwarded inside the check's namespace to its target's port.
     if (a.link && rt.deploy?.services) {
       this.link = await rt.deploy.services.startLink({
+        execution: a.execution,
         attempt: a.link.attempt,
         environment: a.link.environment,
         generation: a.link.generation,
         checkDomain: a.domain,
-        connectTimeoutMs: rt.config.values.service_link_connect_timeout * 1000,
+        limits: {
+          connectTimeoutMs: rt.config.values.service_link_connect_timeout * 1000,
+          tunnelMaxMs: rt.config.values.service_link_tunnel_max_seconds * 1000,
+          tunnelsMax: rt.config.values.service_link_tunnels_max,
+          bufferMaxBytes: rt.config.values.service_link_buffer_max_bytes,
+          logMaxBytes: rt.setting('egress_log_max_bytes'),
+        },
+        // The log's bound cancels the check, which then never passes (as
+        // D2's egress log's does; the slice-25 design Q8).
+        onLogBound: () => {
+          if (this.cancelAt === null && this.sandbox?.exitReport == null) {
+            this.cancelAt = performance.now();
+            this.cancelCause = 'egress';
+          }
+          this.fireCancel();
+        },
       });
+    }
+    // The empty source projection of a deployment verification's check (D4
+    // §5.1), in the domain's own area, removed with it.
+    let source = tree.src;
+    if (a.deployment) {
+      source = join(area, 'empty-source');
+      mkdirSync(source, { mode: 0o755 });
     }
     const plan = buildCheckPlan({
       linkSocket: this.link?.path ?? null,
       area,
-      source: realpathSync(tree.src),
+      source: realpathSync(source),
       projection: realpathSync(projectionOf(tree, a.manifest)),
       manifest: a.manifest,
       egressSocket: this.egress?.socketPath ?? null,
@@ -489,7 +534,7 @@ export class Supervisor implements DomainHolder {
     });
     // The validated plan, recorded on the domain before the launcher starts.
     const entries = planEntries(plan);
-    const fingerprint = entriesFingerprint(entries, { area, workspace: tree.src });
+    const fingerprint = entriesFingerprint(entries, { area, workspace: source });
     const record = await writeWholeRecord(rt, {
       project: a.project,
       run: null,
@@ -619,6 +664,10 @@ export class Supervisor implements DomainHolder {
       }
       if (!verdict.terminated) {
         this.quarantined = true;
+        // Its service link closes now: no tunnel of a domain whose
+        // termination is unknown stays open to the service (D4 §4.7); its log
+        // is written once the closure is observed.
+        this.link?.close();
         await this.engine('checks.quarantine', { execution: a.execution, why: verdict.unknown ?? 'termination not established' });
         return;
       }

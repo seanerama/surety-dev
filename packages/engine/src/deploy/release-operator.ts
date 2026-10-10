@@ -18,7 +18,7 @@ import { nowIso } from '../clock.js';
 import { gateFacts } from '../gates/prepare.js';
 import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
-import type { DeployDetail, Fact, RoundDetail, Verdict } from '../store/transitions/deploy.js';
+import type { AdmissionHold, DeployDetail, Fact, RoundDetail, Verdict } from '../store/transitions/deploy.js';
 import { pausePoint, seamDeployAdmission, seamRealDeployAdapter } from '../testing/seam.js';
 import { cgroupInode, readPopulated } from '../boundary/cgroup.js';
 import { existsSync } from 'node:fs';
@@ -39,6 +39,8 @@ export class ReleaseOperator {
   // and is being awaited): no reconcile read and no retry until it has
   // (D4 §2.4, quiescence; review m1).
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  // The admission hold each operation's facts read last (SEAM.md §271).
+  private readonly holds = new Map<string, AdmissionHold | null>();
 
   // The real `local_service` adapter's host side (service-host.ts), built
   // at start when this engine deploys to real units.
@@ -80,6 +82,11 @@ export class ReleaseOperator {
       this.services = new ServiceHost(this.rt);
       await this.services.start();
       setProductionAdapter(new LocalService(this.rt, this.services));
+      // Recovery accounts for every surviving service domain before anything
+      // is dispatched (D4 §§4.7, 9.2; E126): a domain whose closure the host
+      // now shows is terminated, freeing its reservation; every other keeps
+      // it, counted by the envelope from its stored row.
+      await this.observeServiceDomains(null).catch((err) => log('service domains', err));
     }
   }
 
@@ -91,9 +98,12 @@ export class ReleaseOperator {
   // §3.2; D4 §9.2): a recorded cgroup absent, or, for a domain never placed
   // whose attempt has ended, its unit not loaded. Observed, never caused:
   // nothing here stops or kills anything.
-  private async observeServiceDomains(project: string): Promise<void> {
+  private async observeServiceDomains(project: string | null): Promise<void> {
     if (!this.real || this.services === null) return;
-    const open = await this.rt.read<{ id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string }[]>('deploy.service_domains', { project });
+    const open = await this.rt.read<{ id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string }[]>(
+      'deploy.service_domains',
+      project === null ? {} : { project },
+    );
     for (const d of open) {
       let closed = false;
       let observed = '';
@@ -162,7 +172,10 @@ export class ReleaseOperator {
   private async advance(operation: string): Promise<void> {
     for (let guard = 0; guard < 32; guard++) {
       const d = await this.detail(operation);
-      if (!d || d.stage === 'ended' || d.journal === 'failed') return;
+      if (!d || d.journal === 'failed') return;
+      // An ended operation is still driven while a round of it is open: an
+      // older round finishing late is recorded (SEAM.md §267).
+      if (d.stage === 'ended' && !d.rounds.some((r) => r.status === 'open')) return;
       const latest = d.attempts.at(-1);
       if (d.journal === 'confirmed') {
         const fin = await this.rt.engine<{ round: string | null; replay: boolean }>('deploy.finalize', { operation });
@@ -199,11 +212,33 @@ export class ReleaseOperator {
     // capacity it keeps (store/transitions/envelope.ts); with neither, none
     // is granted: the operation waits, and fails at its orchestration
     // deadline with nothing applied (review m3).
-    const admission = seamDeployAdmission(f.environment) ?? (this.real ? (await this.rt.read<{ admission: 'granted' | 'held' }>('deploy.admission', { project: d.project })).admission : 'held');
+    const scripted = seamDeployAdmission(f.environment);
+    let admission: 'granted' | 'held';
+    let hold: AdmissionHold | null = null;
+    if (scripted !== null && scripted !== undefined) {
+      admission = scripted;
+      if (admission !== 'granted') hold = { code: 'resource_envelope', reason: "the service's admission is not granted (SEAM.md §247)", subject: { limit: 'scripted_admission' } };
+    } else if (this.real) {
+      const a = await this.rt.read<{ admission: 'granted' | 'held'; hold: AdmissionHold | null }>('deploy.admission', { project: d.project });
+      admission = a.admission;
+      hold = a.hold;
+    } else {
+      admission = 'held';
+      hold = { code: 'resource_envelope', reason: 'no deployment adapter admits a service domain in this engine', subject: { limit: 'no_adapter' } };
+    }
+    this.holds.set(d.id, hold);
     const gate = d.kind === 'deploy' && f.candidate ? await gateFacts(this.rt, d.project, f.candidate) : {};
     const secretDigests = heldDigests(this.rt.home, f.secret_digests.map((s) => s.ref));
     const rehashed = f.manifest && f.artifact_path ? rehash(f.artifact_path, f.manifest as ManifestEntry[]) : 'none';
     return { rehash: rehashed, secretDigests, admission, gate, now: nowIso() };
+  }
+
+  // A deploy waiting for its service's admission: the hold on its work item
+  // (D4 §4.7, A.2; SEAM.md §271).
+  private async admissionWait(d: DeployDetail): Promise<void> {
+    if (d.kind !== 'deploy') return;
+    const hold = this.holds.get(d.id) ?? { code: 'resource_envelope' as const, reason: "the service's admission is held", subject: { limit: 'admission' } };
+    await this.rt.engine('deploy.admission_wait', { operation: d.id, hold });
   }
 
   // The manifest of a precondition read, as a record (SEAM.md §250).
@@ -218,6 +253,7 @@ export class ReleaseOperator {
     const facts = await this.facts(d);
     if (facts.rehash === 'corrupt' && d.frozen.artifact_digest) await this.rt.engine('deploy.artifact_corrupt', { project: d.project, digest: d.frozen.artifact_digest });
     const v = await this.rt.engine<Verdict>('deploy.preconditions', { operation: d.id, facts });
+    if (v.verdict === 'wait' && facts.admission !== 'granted') await this.admissionWait(d);
     if (v.verdict === 'none' || v.verdict === 'wait') return false;
     const manifest = await this.manifest(d, v.facts);
     if (v.verdict === 'fail') {
@@ -231,7 +267,12 @@ export class ReleaseOperator {
       manifest,
       service: { home: this.rt.home, checkCapacity: this.rt.setting('domain_memory_max') },
     });
-    if (!made.attempt || !made.capability) return true;
+    if (!made.attempt || !made.capability) {
+      // Held at the attempt's own admission (the envelope moved since the
+      // facts were read): shown, and taken up at the next tick.
+      if (made.retry) await this.admissionWait(d);
+      return false;
+    }
     this.issued.add(made.attempt);
     const cap = made.capability;
     // adapterCall's check (D4 §2.2): every field against the store, before
@@ -307,37 +348,69 @@ export class ReleaseOperator {
     return way.way === 'confirmed' || way.way === 'retry';
   }
 
-  // The verification round and completion (D4 §§5.3, 5.5). false: wait.
+  // The verification rounds and completion (D4 §§5.3, 5.5). Every open round
+  // of the operation is driven, in order, whatever order they finish in; the
+  // newest registered decides (E114). Completion is evaluated at the tick
+  // after the deciding row (SEAM.md §270). false: nothing more now.
   private async verify(d: DeployDetail): Promise<boolean> {
-    const open = d.rounds.filter((r) => r.status === 'open').at(-1);
-    if (!open) {
+    const open = d.rounds.filter((r) => r.status === 'open');
+    if (open.length === 0) {
       if (d.stage !== 'completion') return false;
+      // Completion may release the lease: never while an execution of the
+      // operation's rounds may still hold its service link open (D4 §4.7;
+      // the review's m1).
+      const live = await this.rt.read<{ count: number }>('deploy.live_executions', { operation: d.id });
+      if (live.count > 0) return false;
+      await pausePoint('deploy.before_completion');
       const candidate = d.frozen.candidate!;
       const facts = await gateFacts(this.rt, d.project, candidate);
       await this.rt.engine('gate.evaluate', { ...facts, project: d.project, candidate, kind: 'alpha_complete', operation: d.id });
       return false;
     }
-    const rd = await this.rt.read<RoundDetail | null>('deploy.round', { round: open.id });
-    if (!rd) return false;
+    let more = false;
+    for (const r of open) more = (await this.driveRound(d, r.id)) || more;
+    return more;
+  }
+
+  // One step of one open round. true: it can go further now.
+  private async driveRound(d: DeployDetail, round: string): Promise<boolean> {
+    const rd = await this.rt.read<RoundDetail | null>('deploy.round', { round });
+    if (!rd || rd.status !== 'open') return false;
+    const recorded = async () => {
+      await pausePoint('verify.row_recorded');
+      this.rt.services?.requestTick();
+    };
     const finalize = async (args: Record<string, unknown>) => {
       await this.rt.engine('deploy.round_finalize', { round: rd.id, ...args });
-      await pausePoint('verify.row_recorded');
+      await recorded();
     };
-    // The orchestration deadline (§4.7; E115): never renewed; reached, the
-    // round is `unknown`, `missing` naming what was absent.
+    // The deadline (§4.7; E115; CD1): the round's own, or the operation's;
+    // never renewed; reached, the round is `unknown`, `missing` naming what
+    // was absent.
     if (Date.parse(nowIso()) > Date.parse(rd.deadline)) {
       await finalize({ reads: null, failure: null, reason: 'deadline' });
-      return true;
+      return false;
     }
+    // A channel loss this incarnation saw must be durable before the round
+    // can be decided on (the review's m4).
+    if (this.services !== null && !(await this.services.lossRecorded(rd.attempt))) return false;
+    // Its bindings, its service's supervision and its lease, before any read.
+    const step = await this.rt.engine<{ state: string; step?: string }>('deploy.round_step', { round: rd.id, incarnation: this.rt.incarnation });
+    if (step.state === 'superseded') return true;
+    if (step.state === 'decided') {
+      await recorded();
+      return false;
+    }
+    if (step.state !== 'go') return false;
     const read = async (): Promise<{ reads: IdentityRead[] | null; failure: string | null }> => {
       const r = await readCall((signal) => adapterFor(d.frozen.adapter).verify({ environment: rd.environment.id, prefix: rd.environment.prefix }, rd.expect, signal), this.bounds());
       return 'failure' in r ? { reads: null, failure: r.failure } : { reads: Array.isArray(r.ok) ? (r.ok as IdentityRead[]) : null, failure: Array.isArray(r.ok) ? null : 'invalid_response' };
     };
-    if (rd.step === 'first_read') {
+    if (step.step === 'first_read') {
       await this.rt.engine('deploy.round_first_read', { round: rd.id, ...(await read()) });
       return true;
     }
-    if (rd.step === 'checks') {
+    if (step.step === 'checks') {
       const done = await this.rt.engine<{ done: boolean }>('deploy.round_checks_done', { round: rd.id });
       if (!done.done) return false;
     }
@@ -345,6 +418,6 @@ export class ReleaseOperator {
     // read is not made.
     const r = rd.executions.length > 0 ? await read() : { reads: null, failure: null };
     await finalize(r);
-    return true;
+    return false;
   }
 }

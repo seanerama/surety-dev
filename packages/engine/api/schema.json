@@ -62,7 +62,9 @@
       "isolation_unqualified",
       "runner_unqualified",
       "environment_unbound",
-      "exec_failed"
+      "exec_failed",
+      "secret_not_allowed",
+      "redaction_unavailable"
     ],
     "RunnerClass": [
       "direct",
@@ -77,7 +79,9 @@
       "isolation_unqualified",
       "runner_unqualified",
       "environment_unbound",
-      "exec_failed"
+      "exec_failed",
+      "secret_not_allowed",
+      "redaction_unavailable"
     ],
     "CheckKind": [
       "acceptance",
@@ -537,6 +541,11 @@
       "checks",
       "second_read",
       "done"
+    ],
+    "VerificationRoundsOrigin": [
+      "finalizer",
+      "operator",
+      "supersession"
     ],
     "WorkItemKind": [
       "stage_build",
@@ -1321,6 +1330,10 @@
         },
         "finished_at": {
           "required": false
+        },
+        "service_link_log": {
+          "required": false,
+          "references": "records"
         }
       }
     },
@@ -2125,6 +2138,9 @@
           "required": false
         },
         "runtime_dir": {
+          "required": false
+        },
+        "supervision_lost_at": {
           "required": false
         }
       }
@@ -4023,6 +4039,13 @@
         },
         "executions": {
           "required": true
+        },
+        "origin": {
+          "required": true,
+          "enum": "VerificationRoundsOrigin"
+        },
+        "lease": {
+          "required": false
         }
       }
     },

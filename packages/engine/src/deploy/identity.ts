@@ -288,7 +288,16 @@ export async function readIdentity(args: {
     const first = await snapshot();
     const check = (s: typeof first, half: string) => {
       if (s.unit === null) throw new Unread('unit', `the unit could not be read (${half})`);
-      if (!s.unit.loaded || !s.unit.active) throw new Unread('unit', `the unit is not active (${half})`);
+      // Another invocation of the unit (a restart, by the manager or by
+      // hand) is a positive read of a change, whatever state the new
+      // invocation is in: `differs`, naming it (M316 (b); D4 §3.4).
+      if (s.unit.loaded && s.unit.invocationId !== null && s.unit.invocationId !== want.invocation_id) throw new Differs('invocation_id', want.invocation_id, s.unit.invocationId);
+      // The unit read, and not running: gone (a restarted unit whose refused
+      // launcher ended it, collected), or loaded but inactive or failed. The
+      // authorized invocation is positively not what the target runs:
+      // `differs`, naming the unit (M316 (b); D4 §3.4). Only a read that
+      // could not be made is `unread`.
+      if (!s.unit.loaded || !s.unit.active) throw new Differs('unit', 'active', s.unit.loaded ? 'inactive' : 'not loaded');
       if (s.unit.invocationId !== want.invocation_id) throw new Differs('invocation_id', want.invocation_id, s.unit.invocationId);
       if (s.unit.cgroup !== x.cgroup) throw new Differs('cgroup', x.cgroup, s.unit.cgroup);
       if (s.init === null) throw new Unread('init', `the recorded init ${x.init!.pid} is gone (${half})`);

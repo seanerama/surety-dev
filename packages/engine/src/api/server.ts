@@ -299,6 +299,19 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // D4 §5.3 item 1, A.8 (SEAM.md §266): a new verification round.
+      if (rest.length === 3 && rest[0] === 'operations' && rest[2] === 'verify' && post) {
+        const operation = decodeSegment(rest[1]!);
+        if (operation === null) return null;
+        return {
+          kind: 'command',
+          name: 'operation.verify',
+          args: (b) => {
+            noFields(b);
+            return { project, operation };
+          },
+        };
+      }
       if (rest.length === 1 && rest[0] === 'deployments' && post) {
         return { kind: 'prepared', name: 'deployment.request', prepare: async (b) => prepareDeployment(runtime(), project, b), settle: (prepared) => settleDeployment(runtime(), prepared) };
       }

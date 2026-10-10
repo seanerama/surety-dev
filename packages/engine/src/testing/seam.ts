@@ -146,6 +146,8 @@ const MAIN_BARRIERS: readonly string[] = [
   'deploy.intended',
   'deploy.receipt_recorded',
   'verify.row_recorded',
+  // SEAM.md §270: slice 25's, in the tick after the row, before completion.
+  'deploy.before_completion',
   // SEAM.md §262: slice 24's.
   'artifact.staging_written',
   'adapter.before_host_call',
@@ -1211,7 +1213,7 @@ export function seamDeploymentAdapter(id: string): unknown {
 }
 
 // SEAM.md §262: the real adapter's one-shot faults, armed per environment.
-const DEPLOY_FAULTS = ['init_report_altered', 'identity_start_time', 'identity_proc_unreadable'] as const;
+const DEPLOY_FAULTS = ['init_report_altered', 'identity_start_time', 'identity_proc_unreadable', 'identity_listing_failed'] as const;
 type DeployFault = (typeof DEPLOY_FAULTS)[number];
 const deployFaults = new Map<string, Set<DeployFault>>();
 

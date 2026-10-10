@@ -26,7 +26,7 @@ import { effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
-import { registerExecutions } from './checks.js';
+import { cancelExecution, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { engineSettings, projectPolicy } from './settings.js';
 import { hostEligibility } from './trust.js';
@@ -438,8 +438,14 @@ const operationOf = (db: Db, authorization: string): OpRow | undefined =>
 function pending(db: Db, a: AuthRow): boolean {
   if (a.status === 'issued') return true;
   if (a.status !== 'consumed') return false;
+  // Pending while the lease its intent took is held: a later re-verification
+  // round takes a lease of its own and never makes the authorization pending
+  // again (the slice-25 review's m7).
   const op = operationOf(db, a.id);
-  return op !== undefined && op.orchestration_stage !== 'ended';
+  if (op === undefined) return false;
+  const lease = frozenOf(op).lease;
+  const row = db.prepare('SELECT "released_at" FROM "leases" WHERE "id" = ?').get(lease.id) as { released_at: string | null } | undefined;
+  return row !== undefined && row.released_at === null;
 }
 
 // An authorization `proposed` with its binding; `binding_hash` includes its
@@ -669,6 +675,23 @@ const releaseLease = (tx: Tx, frozen: FrozenIntent): void => {
   tx.db.prepare('UPDATE "leases" SET "released_at" = ? WHERE "id" = ? AND "released_at" IS NULL').run(tx.at, frozen.lease.id);
 };
 
+// Every environment lease an operation holds: the one its intent took, and
+// any a later round of it took again (CD1; SEAM.md §§267, 269).
+function operationLeases(db: Db, op: OpRow): LeaseRow[] {
+  const frozen = frozenOf(op);
+  return db
+    .prepare(
+      `SELECT * FROM "leases" WHERE "resource_kind" = 'environment' AND "resource_id" = ? AND "released_at" IS NULL
+         AND ("id" = ? OR "generation" IN (SELECT "lease" FROM "verification_rounds" WHERE "operation" = ? AND "lease" IS NOT NULL))`,
+    )
+    .all(frozen.environment, frozen.lease.id, op.id) as LeaseRow[];
+}
+
+const releaseOperationLeases = (tx: Tx, op: OpRow): void => {
+  releaseLease(tx, frozenOf(op));
+  for (const l of operationLeases(tx.db, op)) tx.db.prepare('UPDATE "leases" SET "released_at" = ? WHERE "id" = ? AND "released_at" IS NULL').run(tx.at, l.id);
+};
+
 // ---- the deploy journal (J1) ------------------------------------------------------------------
 
 type JState = 'intended' | 'applied' | 'confirmed' | 'failed' | 'ambiguous' | 'finalized';
@@ -765,7 +788,7 @@ export function deployBlockerPreview(db: Db, id: string): { manifest: Record<str
 // ended, and the deploy work item settled.
 function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string): void {
   const f = frozenOf(op);
-  releaseLease(tx, f);
+  releaseOperationLeases(tx, op);
   tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'ended' WHERE "id" = ?`).run(op.id);
   if (f.work_item === null || work === 'none') return;
   const item = getWorkItem(tx, f.work_item);
@@ -810,7 +833,8 @@ export function deployWork(db: Db, args: { project: string }): { intend: { work_
     db
       .prepare(
         `SELECT o."id" FROM "operations" o JOIN "deploy_journal_state" s ON s."operation" = o."id"
-         WHERE o."project" = ? AND (o."orchestration_stage" IS NULL OR o."orchestration_stage" <> 'ended') ORDER BY o."seq"`,
+         WHERE o."project" = ? AND (o."orchestration_stage" IS NULL OR o."orchestration_stage" <> 'ended'
+           OR EXISTS (SELECT 1 FROM "verification_rounds" r WHERE r."operation" = o."id" AND r."status" = 'open')) ORDER BY o."seq"`,
       )
       .all(args.project) as { id: string }[]
   ).map((r) => r.id);
@@ -1010,7 +1034,7 @@ export interface DeployDetail {
   }[];
   // Every unit a frozen intent of the environment named (D4 §4.6).
   recorded_units: string[];
-  rounds: { id: string; round: number; status: string; step: string }[];
+  rounds: { id: string; round: number; status: string; step: string; lease: number | null }[];
   blocker: string | null;
 }
 
@@ -1050,7 +1074,7 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
       expect: frozen.target_set.map((t) => expectationOf(db, a, frozen, t, intents.get(a.id)?.create_units[0] ?? null, a.deployment_generation)),
     })),
     recorded_units: recordedUnits(db, frozen.environment),
-    rounds: db.prepare('SELECT "id", "round", "status", "step" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op.id) as DeployDetail['rounds'],
+    rounds: db.prepare('SELECT "id", "round", "status", "step", "lease" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op.id) as DeployDetail['rounds'],
     blocker: openBlocker(db, op.id)?.id ?? null,
   };
 }
@@ -1187,6 +1211,38 @@ export function preconditionFailed(tx: Tx, args: { operation: string; fact: stri
   return { failed: true };
 }
 
+// A deploy waiting for its service's admission (D4 §4.7, A.2: "admission
+// waits show as D2's resource_envelope"; SEAM.md §271): the hold, on the
+// deploy work item, for the work read's `dispatch_hold`. Cleared when the
+// attempt starts or the operation ends.
+export interface AdmissionHold {
+  code: 'resource_envelope';
+  reason: string;
+  subject: Record<string, unknown>;
+}
+
+export function admissionWait(tx: Tx, args: { operation: string; hold: AdmissionHold }): void {
+  const op = getOp(tx.db, args.operation);
+  if (!op || op.kind !== 'deploy') return;
+  const frozen = frozenOf(op);
+  if (frozen.work_item === null) return;
+  const item = getWorkItem(tx, frozen.work_item);
+  if (!item || item.status === 'complete' || item.status === 'cancelled') return;
+  const stored = parseJson<{ reason?: string; raised_at?: string }>(item.blocker);
+  if (stored !== null && stored.reason !== 'resource_envelope') return;
+  const hold = { code: 'resource_envelope' as const, reason: String(args.hold.reason ?? ''), subject: args.hold.subject ?? {} };
+  const value = { reason: 'resource_envelope', raised_at: stored?.raised_at ?? tx.at, decision: null, operation: op.id, hold };
+  if (canonical(stored) === canonical(value)) return;
+  tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify(value), item.id);
+}
+
+function clearAdmissionWait(tx: Tx, frozen: FrozenIntent): void {
+  if (frozen.work_item === null) return;
+  const item = getWorkItem(tx, frozen.work_item);
+  if (!item) return;
+  if (parseJson<{ reason?: string }>(item.blocker)?.reason === 'resource_envelope') tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL WHERE "id" = ?').run(item.id);
+}
+
 // The latest finalized deploy of the environment, if no teardown followed
 // it: what the environment's last confirmed deployment left running.
 function priorOf(db: Db, env: string): { unit: string; instance: Instance | null }[] {
@@ -1268,6 +1324,12 @@ export function startDeployAttempt(
     )
     .run(tx.newId('ati_'), tx.at, op.project, op.id, attempt, g, JSON.stringify(create), JSON.stringify(prior), JSON.stringify(resources), args.manifest);
   tx.emit('operation.attempt_started', { project: op.project, operation: op.id, environment: env.id }, { attempt_number: n, deployment_generation: g });
+  // Any later attempt of O invalidates every earlier row of O (D4 §5.3 item
+  // 8, `later_attempt`). Rows exist only after a confirmed effect, after
+  // which no attempt is made, so this holds by construction; it is written
+  // all the same (the slice-25 design, Q14).
+  tx.db.prepare(`UPDATE "deployment_verifications" SET "invalidated_at" = ?, "invalidated_reason" = 'later_attempt' WHERE "operation" = ? AND "invalidated_at" IS NULL`).run(tx.at, op.id);
+  clearAdmissionWait(tx, frozen);
   // The service domain of a deploy attempt (J2; D4 §§4.7, 9.2): allocated
   // with the attempt, its reservation and its runtime directory recorded
   // before anything of it exists.
@@ -1550,6 +1612,48 @@ export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: st
   return { terminated: true };
 }
 
+// The executions of an operation's rounds not yet ended (the review's m1):
+// while any is queued, launching, running or collecting, its link may be
+// open, so completion, which may release the lease, waits (D4 §4.7).
+function liveExecutionIds(db: Db, operation: string): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT "id" FROM "check_executions" WHERE json_extract("deployment", '$.operation') = ? AND "status" IN ('queued', 'materializing', 'running', 'collecting') ORDER BY "execution_seq"`,
+      )
+      .all(operation) as { id: string }[]
+  ).map((r) => r.id);
+}
+
+export function liveRoundExecutions(db: Db, args: { operation: string }): { count: number } {
+  return { count: liveExecutionIds(db, args.operation).length };
+}
+
+// What a post-deploy check's service link may reach, read at each
+// connection (D4 §5.2; J8; SEAM.md §268): the execution's frozen binding,
+// and whether its generation's service may be reached now: the
+// environment's current generation, its domain launched and not ended, its
+// supervision `attached` (E116: otherwise `redaction_unavailable`).
+export function linkTarget(db: Db, args: { execution: string }): {
+  ok: boolean;
+  reason: string | null;
+  binding: { execution: string; round: string; operation: string; attempt: string; generation: number; instance: { pid: number; start_time: number } | null } | null;
+} {
+  const x = db.prepare('SELECT "id", "deployment", "environment" FROM "check_executions" WHERE "id" = ?').get(args.execution) as { id: string; deployment: string | null; environment: string | null } | undefined;
+  const dep = parseJson<{ operation?: string; attempt?: string; deployment_generation?: number; round?: string }>(x?.deployment ?? null);
+  if (!x || !dep || !dep.attempt || !dep.operation || !dep.round || !Number.isInteger(dep.deployment_generation)) return { ok: false, reason: 'not_bound', binding: null };
+  const a = getAttempt(db, dep.attempt);
+  const app = a ? parseJson<Instance>(a.app_instance) : null;
+  const binding = { execution: x.id, round: dep.round, operation: dep.operation, attempt: dep.attempt, generation: dep.deployment_generation!, instance: app ? { pid: app.pid, start_time: app.start_time } : null };
+  const env = x.environment ? getEnv(db, x.environment) : undefined;
+  if (!a || !env) return { ok: false, reason: 'not_bound', binding };
+  if (env.current_generation !== dep.deployment_generation) return { ok: false, reason: 'generation_not_current', binding };
+  const d = serviceDomainOf(db, a.id);
+  if (!d || d.status !== 'launched') return { ok: false, reason: 'domain_not_running', binding };
+  if (attemptSupervision(db, a) !== 'attached') return { ok: false, reason: 'redaction_unavailable', binding };
+  return { ok: true, reason: null, binding };
+}
+
 // ---- the receipt and the reconcile read (D4 §§2.3, 2.4; J1) ---------------------------------------
 
 // The adapter's receipt, recorded as a claim. `issued` is the journal's
@@ -1659,6 +1763,8 @@ interface RoundRow {
   step: string;
   reads: string;
   executions: string;
+  origin: string;
+  lease: number | null;
 }
 
 const getRound = (db: Db, id: string): RoundRow | undefined => db.prepare('SELECT * FROM "verification_rounds" WHERE "id" = ?').get(id) as RoundRow | undefined;
@@ -1690,7 +1796,10 @@ export type RequiredOf = (db: Db, project: string, candidate: CandidateRow, vers
 
 // A round registered before any read (E114), its bindings frozen, and the
 // dependent `alpha_complete` evaluations stale in this transaction.
-function registerRound(tx: Tx, args: { operation: string; requiredOf: RequiredOf; deadlineAt: string | null }): RoundRow {
+// `origin` (SEAM.md §267): the finalizer's first round, the operator's
+// `POST …/verify`, or the engine's when a round's bindings changed. `lease`:
+// the environment lease generation it runs under, when known now.
+function registerRound(tx: Tx, args: { operation: string; requiredOf: RequiredOf; deadlineAt: string | null; origin: 'finalizer' | 'operator' | 'supersession'; lease: number | null }): RoundRow {
   const op = getOp(tx.db, args.operation)!;
   const frozen = frozenOf(op);
   const a = attemptsOf(tx.db, op.id).at(-1)!;
@@ -1703,8 +1812,8 @@ function registerRound(tx: Tx, args: { operation: string; requiredOf: RequiredOf
   tx.db
     .prepare(
       `INSERT INTO "verification_rounds" ("id", "created_at", "project", "operation", "attempt", "round", "candidate", "mapping", "environment", "deployment_generation", "config_identity",
-         "protected_version", "required_checks", "adapter_qualification", "status", "registered_at", "deadline_at", "step")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 'first_read')`,
+         "protected_version", "required_checks", "adapter_qualification", "status", "registered_at", "deadline_at", "step", "origin", "lease")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 'first_read', ?, ?)`,
     )
     .run(
       id,
@@ -1723,10 +1832,176 @@ function registerRound(tx: Tx, args: { operation: string; requiredOf: RequiredOf
       q?.id ?? null,
       tx.at,
       args.deadlineAt,
+      args.origin,
+      args.lease,
     );
-  tx.emit('deploy.round_registered', { project: op.project, operation: op.id, round: id }, { attempt: a.id, round: k, deployment_generation: a.deployment_generation, required: required.map((c) => c.key) });
+  tx.emit(
+    'deploy.round_registered',
+    { project: op.project, operation: op.id, round: id },
+    { attempt: a.id, round: k, deployment_generation: a.deployment_generation, required: required.map((c) => c.key), origin: args.origin },
+  );
   tx.db.prepare(`UPDATE "gate_evaluations" SET "stale" = 1 WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' AND "stale" = 0`).run(candidate.id);
+  // The newest registered round decides (E114): while it is open the
+  // operation is in verification again, whatever stage it had reached.
+  tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'verification' WHERE "id" = ? AND "orchestration_stage" IS NOT 'verification'`).run(op.id);
   return getRound(tx.db, id)!;
+}
+
+// Whether a round's bindings still hold (D4 §5.3 item 7; E114 item 2;
+// SEAM.md §267): null, or why not: the effective protected version changed
+// with the same required checks (`protected_change`), or the required set
+// changed (`required_set_changed`).
+// `unreadable` (the review's m8): what the bindings are now could not be
+// read, so whether they hold is unknown.
+function roundRebound(db: Db, r: RoundRow, requiredOf: RequiredOf): 'protected_change' | 'required_set_changed' | { unreadable: string } | null {
+  const effective = effectiveVersion(db, r.project);
+  const candidate = getCandidate(db, r.candidate);
+  if (!effective) return { unreadable: 'protected_version' };
+  if (!candidate) return { unreadable: 'candidate' };
+  const now = requiredOf(db, r.project, candidate, effective.id).filter((c) => POST_DEPLOY_KINDS.includes(c.kind));
+  const frozenIds = (JSON.parse(r.required_checks) as string[]).slice().sort();
+  const nowIds = now.map((c) => c.id).sort();
+  if (effective.id === r.protected_version && canonical(frozenIds) === canonical(nowIds)) return null;
+  const keyOf = (id: string) => (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(id) as { key: string } | undefined)?.key ?? id;
+  const frozenKeys = frozenIds.map(keyOf).sort();
+  const nowKeys = now.map((c) => c.key).sort();
+  return canonical(frozenKeys) === canonical(nowKeys) ? 'protected_change' : 'required_set_changed';
+}
+
+// Every execution registered for a round, its retries included.
+function roundExecutionIds(db: Db, r: RoundRow): string[] {
+  return (db.prepare(`SELECT "id" FROM "check_executions" WHERE "project" = ? AND json_extract("deployment", '$.round') = ? ORDER BY "execution_seq"`).all(r.project, r.id) as { id: string }[]).map(
+    (x) => x.id,
+  );
+}
+
+// A round that will decide nothing more: its queued executions cancelled
+// (one already launched is recorded under its own round, deciding nothing).
+function cancelRoundQueue(tx: Tx, r: RoundRow, why: string): void {
+  for (const id of roundExecutionIds(tx.db, r)) cancelExecution(tx, { execution: id, why });
+}
+
+// A round superseded (D4 §5.3 item 7): `superseded` with its reason,
+// `deploy.round_superseded`, its queue cancelled, and in the same
+// transaction a fresh round (`supersession`) with its own bracketing reads
+// and registrations, the superseded round's deadline and lease inherited
+// (never renewed, the slice-25 design Q2). Nothing of it is relabelled.
+function supersedeRound(tx: Tx, r: RoundRow, reason: 'protected_change' | 'required_set_changed', requiredOf: RequiredOf): RoundRow {
+  tx.db.prepare(`UPDATE "verification_rounds" SET "status" = 'superseded', "superseded_reason" = ?, "step" = 'done' WHERE "id" = ? AND "status" = 'open'`).run(reason, r.id);
+  cancelRoundQueue(tx, r, `its verification round was superseded (${reason})`);
+  tx.emit('deploy.round_superseded', { project: r.project, operation: r.operation, round: r.id }, { reason, round: r.round, attempt: r.attempt });
+  return registerRound(tx, { operation: r.operation, requiredOf, deadlineAt: r.deadline_at, origin: 'supersession', lease: r.lease });
+}
+
+// The environment lease a round runs under (CD1; SEAM.md §269): the one its
+// operation holds, or, when it holds none, a new one if the environment's is
+// free. False: another operation holds it (`environment_busy`).
+function roundTakeLease(tx: Tx, r: RoundRow, incarnation: string): boolean {
+  if (r.lease !== null) return true;
+  const op = getOp(tx.db, r.operation)!;
+  const frozen = frozenOf(op);
+  const mine = operationLeases(tx.db, op)[0];
+  let generation: number;
+  if (mine) generation = mine.generation;
+  else {
+    if (environmentLease(tx.db, frozen.environment)) {
+      markBusy(tx, op, frozen);
+      return false;
+    }
+    const until = r.deadline_at ?? op.orchestration_deadline_at ?? addSeconds(tx.at, projectPolicy(tx.db, op.project).deploy_orchestration_deadline!);
+    generation = takeLease(tx, frozen.environment, incarnation, until).generation;
+  }
+  tx.db.prepare('UPDATE "verification_rounds" SET "lease" = ? WHERE "id" = ?').run(generation, r.id);
+  r.lease = generation;
+  clearBusy(tx, frozen);
+  return true;
+}
+
+function markBusy(tx: Tx, op: OpRow, frozen: FrozenIntent): void {
+  if (frozen.work_item === null) return;
+  const item = getWorkItem(tx, frozen.work_item);
+  if (!item || item.status === 'complete' || item.status === 'cancelled') return;
+  const held = environmentLease(tx.db, frozen.environment);
+  if (parseJson<{ reason?: string }>(item.blocker)?.reason === 'environment_busy') return;
+  tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'environment_busy', raised_at: tx.at, decision: null, lease: held?.id ?? null, operation: op.id }), item.id);
+}
+
+function clearBusy(tx: Tx, frozen: FrozenIntent): void {
+  if (frozen.work_item === null) return;
+  const item = getWorkItem(tx, frozen.work_item);
+  if (item && parseJson<{ reason?: string }>(item.blocker)?.reason === 'environment_busy') tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL WHERE "id" = ?').run(item.id);
+}
+
+// POST /v1/projects/:p/operations/:o/verify (D4 §5.3 item 1, A.8; SEAM.md
+// §266): round k+1 of the operation's latest attempt, registered in this
+// transaction before any read, its bindings frozen, the dependent
+// evaluations stale; under CD1 with its own deadline, the environment lease
+// taken again now if free (or when it is, `environment_busy` meanwhile).
+export function requestVerification(tx: Tx, args: { project: string; operation: string; incarnation: string }, requiredOf: RequiredOf): CommandResult {
+  const op = getOp(tx.db, args.operation);
+  if (!op || op.project !== args.project) throw notFound('operation', args.operation);
+  const j = journalOf(tx.db, op.id);
+  const latest = attemptsOf(tx.db, op.id).at(-1);
+  const env = getEnv(tx.db, frozenOf(op).environment);
+  // A generation no longer current has nothing of its own running to verify
+  // (the review's m2).
+  if (
+    op.kind !== 'deploy' ||
+    !j ||
+    j.state !== 'finalized' ||
+    !latest ||
+    (latest.status !== 'succeeded' && latest.status !== 'reconciled_succeeded') ||
+    !env ||
+    env.current_generation !== latest.deployment_generation
+  ) {
+    throw new Refusal(
+      409,
+      'operation_not_verifiable',
+      `Operation ${op.id} is not a finalized deploy whose latest attempt succeeded and whose generation is the environment's current one, so it has nothing running to verify.`,
+      'Verify a deploy operation whose effect was confirmed; deploy again to verify a new attempt.',
+      { operation: op.id, kind: op.kind, journal: j?.state ?? null, attempt: latest?.status ?? null, generation: latest?.deployment_generation ?? null, current_generation: env?.current_generation ?? null },
+    );
+  }
+  const deadline = addSeconds(tx.at, projectPolicy(tx.db, op.project).deploy_orchestration_deadline!);
+  const r = registerRound(tx, { operation: op.id, requiredOf, deadlineAt: deadline, origin: 'operator', lease: null });
+  const frozen = frozenOf(op);
+  if (frozen.work_item !== null) {
+    const item = getWorkItem(tx, frozen.work_item);
+    if (item && item.status === 'awaiting_decision') transitionWork(tx, item, 'executing', { blocker: null }, { cause: 'reverification', operation: op.id, round: r.id });
+  }
+  roundTakeLease(tx, r, args.incarnation);
+  return { status: 202, body: { round: { id: r.id, round: r.round, operation: op.id, attempt: r.attempt } }, effects: [{ kind: 'tick' as const }] };
+}
+
+// One step of the Release Operator's drive of an open round, before its
+// read or registration (D4 §5.3; E110; E114; CD1): a round whose bindings
+// changed is superseded; one on a service whose supervision is `unknown` is
+// decided at once (`unknown`, naming `supervision`: nothing verifies on it,
+// E110); one with no lease waits for it. `go` names the step to take.
+export function roundStep(
+  tx: Tx,
+  args: { round: string; incarnation: string },
+  requiredOf: RequiredOf,
+): { state: 'gone' } | { state: 'superseded'; next: string } | { state: 'decided'; outcome: string } | { state: 'wait'; reason: string } | { state: 'go'; step: string } {
+  const r = getRound(tx.db, args.round);
+  if (!r || r.status !== 'open') return { state: 'gone' };
+  const why = roundRebound(tx.db, r, requiredOf);
+  if (why !== null && typeof why === 'object') {
+    const done = finalizeRound(tx, { round: r.id, reads: null, failure: null }, requiredOf);
+    return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
+  }
+  if (why !== null) return { state: 'superseded', next: supersedeRound(tx, r, why, requiredOf).id };
+  const a = getAttempt(tx.db, r.attempt)!;
+  // A service that survived an engine restart (E110): nothing verifies on
+  // it, so its round is decided now. A channel lost within this incarnation
+  // leaves the round to its reads, which say what changed (M316 (b)); its
+  // row names `supervision` all the same.
+  if (supervisionOf(a) !== 'attached') {
+    const done = finalizeRound(tx, { round: r.id, reads: null, failure: null }, requiredOf);
+    return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
+  }
+  if (!roundTakeLease(tx, r, args.incarnation)) return { state: 'wait', reason: 'environment_busy' };
+  return { state: 'go', step: r.step };
 }
 
 // The finalizer (D4 §4.2), keyed on the operation and idempotent: the
@@ -1746,8 +2021,11 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
   const frozen = frozenOf(op);
   if (op.kind === 'teardown') {
     const intent = tx.db.prepare('SELECT "resources" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { resources: string };
-    writeAttempted(tx, op, a, 'teardown_applied', { cleanup: { removed: JSON.parse(intent.resources) as string[], left: [] } });
-    tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ?').run(frozen.environment);
+    // `running` speaks for the environment: only the current generation's
+    // attempt writes it (J9).
+    if (writeAttempted(tx, op, a, 'teardown_applied', { cleanup: { removed: JSON.parse(intent.resources) as string[], left: [] } })) {
+      tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ?').run(frozen.environment);
+    }
     endOperation(tx, op, 'none', 'teardown_applied');
     return { round: null, replay: false };
   }
@@ -1757,7 +2035,7 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
       .run(JSON.stringify({ config: frozen.config_version, config_version: frozen.config_number, config_identity: frozen.config_identity, secret_digests: frozen.secret_digests, generation: a.deployment_generation }), frozen.environment);
   }
   tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'verification' WHERE "id" = ?`).run(op.id);
-  const round = registerRound(tx, { operation: op.id, requiredOf: args.requiredOf, deadlineAt: null });
+  const round = registerRound(tx, { operation: op.id, requiredOf: args.requiredOf, deadlineAt: null, origin: 'finalizer', lease: frozen.lease.generation });
   return { round: round.id, replay: false };
 }
 
@@ -1839,14 +2117,34 @@ const sameInstance = (x: Instance | 'unread', y: Instance | null): boolean => x 
 // an engine restart it is `unknown` for the rest of the domain's life, and
 // no verification passes on it (§5.3). A launch never granted supervises
 // nothing.
-export function supervisionOf(a: { incarnation: string | null; init_instance: string | null }): 'attached' | 'unknown' {
+// A control channel lost in the granting incarnation (`supervision_lost_at`,
+// the slice-25 design Q15) makes it `unknown` too, for good.
+export function supervisionOf(a: { incarnation: string | null; init_instance: string | null }, lostAt: string | null = null): 'attached' | 'unknown' {
   let current: string | undefined;
   try {
     current = engineSettings().incarnation;
   } catch {
     current = undefined;
   }
-  return a.init_instance !== null && current !== undefined && a.incarnation === current ? 'attached' : 'unknown';
+  return a.init_instance !== null && current !== undefined && a.incarnation === current && lostAt === null ? 'attached' : 'unknown';
+}
+
+// An attempt's supervision, read with its service domain's lost channel.
+export function attemptSupervision(db: Db, a: AttemptRow): 'attached' | 'unknown' {
+  return supervisionOf(a, (serviceDomainOf(db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null);
+}
+
+// The service's control channel closed while this incarnation supervised it
+// (D4 §9.2; E110): its supervision is `unknown` from now on, durably.
+export function supervisionLost(tx: Tx, args: { attempt: string; why: string }): void {
+  const a = getAttempt(tx.db, args.attempt);
+  const d = a ? serviceDomainOf(tx.db, a.id) : undefined;
+  if (!a || !d || (d as { supervision_lost_at?: string | null }).supervision_lost_at) return;
+  // A domain whose application's exit was reported, or whose closure was
+  // observed, has nothing left to supervise.
+  if (d.app_exit !== null || d.status === 'terminated') return;
+  // The record is the column; D4 A.5 names no event for it.
+  tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, d.id);
 }
 
 // The reads a bracket recorded, one per target: what the adapter answered,
@@ -1932,8 +2230,20 @@ export function roundChecksDone(tx: Tx, args: { round: string }): { done: boolea
   return { done };
 }
 
+// A result row bound to round `r`: its deployment binding names the round,
+// its operation and attempt, and it is of the round's candidate and
+// protected version.
+function resultBoundTo(res: ResultRow, r: RoundRow): boolean {
+  const b = parseJson<{ round?: string; operation?: string; attempt?: string; deployment_generation?: number }>(res.deployment);
+  return b !== null && b.round === r.id && b.operation === r.operation && b.attempt === r.attempt && b.deployment_generation === r.deployment_generation && res.candidate === r.candidate && res.protected_version === r.protected_version;
+}
+
 interface ResultRow {
   id: string;
+  finished_at: string | null;
+  deployment: string | null;
+  candidate: string;
+  protected_version: string;
   execution_established: number;
   signaled: number;
   deadline_hit: number;
@@ -1951,9 +2261,24 @@ export const resultState = (r: Pick<ResultRow, 'execution_established' | 'signal
 // The verification row (D4 §5.3 item 6) and its effects (item 8), in one
 // transaction that checks the environment's current generation and that
 // the round decides.
-export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead[] | null; failure: string | null; reason?: 'deadline' }): { outcome: string; decides: boolean } | null {
+export function finalizeRound(
+  tx: Tx,
+  args: { round: string; reads: IdentityRead[] | null; failure: string | null; reason?: 'deadline' },
+  requiredOf?: RequiredOf,
+): { outcome: string; decides: boolean } | null {
   const r = getRound(tx.db, args.round);
   if (!r || r.status !== 'open') return null;
+  // Bindings that changed since the round's registration supersede it: it
+  // is never decided under them (D4 §5.3 item 7; SEAM.md §267).
+  let unboundBy: string | null = null;
+  if (requiredOf) {
+    const why = roundRebound(tx.db, r, requiredOf);
+    if (why !== null && typeof why === 'object') unboundBy = why.unreadable;
+    else if (why !== null) {
+      supersedeRound(tx, r, why, requiredOf);
+      return null;
+    }
+  }
   const op = getOp(tx.db, r.operation)!;
   const frozen = frozenOf(op);
   const a = getAttempt(tx.db, r.attempt)!;
@@ -1973,10 +2298,18 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
       continue;
     }
     for (const x of entry.reads) {
-      if (x.match === 'unread' || x.instance === 'unread') missing.push({ kind: 'identity_read', id: `${bracket}:${x.target}` });
-      else if (x.match === 'differs' || !sameInstance(x.instance, app)) differs = true;
+      // A read that differs is a difference whatever else it could not
+      // read (another generation's unit, M316 (d)); an unread one is absent
+      // evidence; a match on another instance is a difference too.
+      if (x.match === 'differs') differs = true;
+      else if (x.match === 'unread' || x.instance === 'unread') missing.push({ kind: 'identity_read', id: `${bracket}:${x.target}` });
+      else if (!sameInstance(x.instance, app)) differs = true;
     }
   }
+  // A result that finished after the service's control channel was lost is
+  // no evidence (the driver's ruling m3 on D4 §5.3 item 6): missing, naming
+  // supervision; one that finished before the loss still counts.
+  const lostAt = (serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null;
   // The deciding results of the round's required checks (item 6).
   const required = (JSON.parse(r.required_checks) as string[]).map((id) => tx.db.prepare('SELECT "id", "key", "kind" FROM "checks" WHERE "id" = ?').get(id) as { id: string; key: string; kind: string });
   const results: { check: string; key: string; kind: string; execution: string | null; result: string | null; state: string }[] = [];
@@ -1984,7 +2317,10 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
   for (const c of required) {
     const reg = executions.map((id) => latestExecutionFor(tx.db, id)).find((x) => x?.key === c.key);
     const res = reg?.result ? (tx.db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(reg.result) as ResultRow | undefined) : undefined;
-    const state = res && res.invalidated_at === null ? resultState(res) : 'missing';
+    // Only a result bound to this round, of its candidate and protected
+    // version, is ever selected for it (D4-V01; E114).
+    const afterLoss = res !== undefined && lostAt !== null && (res.finished_at === null || Date.parse(res.finished_at) >= Date.parse(lostAt));
+    const state = res && res.invalidated_at === null && resultBoundTo(res, r) && !afterLoss ? resultState(res) : 'missing';
     if (state === 'failed') failedCheck = true;
     if (state !== 'passed' && state !== 'failed') missing.push({ kind: reg ? 'check_result' : 'check_execution', id: reg?.id ?? c.key });
     results.push({ check: c.id, key: c.key, kind: c.kind, execution: reg?.id ?? null, result: res?.id ?? null, state });
@@ -1996,7 +2332,9 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
   if (args.reason === 'deadline') missing.push({ kind: 'deadline', id: detail.deadline });
   // The service's supervision, attached throughout (item 6; E110): after a
   // restart the round is `unknown`, naming it.
-  if (supervisionOf(a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });
+  if (attemptSupervision(tx.db, a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });
+  // Bindings that could not be read (m8): unknown, never decided as held.
+  if (unboundBy !== null) missing.push({ kind: 'binding', id: unboundBy });
   let outcome: 'verified' | 'failed' | 'unknown';
   if (differs || failedCheck) outcome = 'failed';
   else if (missing.length === 0 && behaviour && results.every((x) => x.state === 'passed')) outcome = 'verified';
@@ -2045,6 +2383,7 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
       invalidated,
     );
   tx.db.prepare(`UPDATE "verification_rounds" SET "status" = 'decided', "step" = 'done', "reads" = ? WHERE "id" = ?`).run(JSON.stringify(entries), r.id);
+  cancelRoundQueue(tx, r, 'its verification round was decided');
   if (args.reason === 'deadline') tx.emit('deploy.orchestration_deadline', { project: op.project, operation: op.id }, { stage: 'verification', round: r.id });
   tx.emit('environment.verified', { project: op.project, environment: env.id, operation: op.id }, { verification: id, round: r.id, outcome, deployment_generation: r.deployment_generation, invalidated_reason: invalidated });
   if (invalidated === null) {
@@ -2058,7 +2397,9 @@ export function finalizeRound(tx: Tx, args: { round: string; reads: IdentityRead
         );
     } else writeAttempted(tx, op, a, outcome === 'failed' ? 'verification_failed' : 'verification_unknown');
   }
-  tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'completion' WHERE "id" = ? AND "orchestration_stage" = 'verification'`).run(op.id);
+  // Completion follows the newest round's row, at a later tick (SEAM.md
+  // §270); an older round's late row leaves the stage as it is.
+  if (newest.id === r.id) tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'completion' WHERE "id" = ? AND "orchestration_stage" = 'verification'`).run(op.id);
   tx.db.prepare(`UPDATE "gate_evaluations" SET "stale" = 1 WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' AND "stale" = 0`).run(r.candidate);
   return { outcome, decides: invalidated === null };
 }
@@ -2093,11 +2434,27 @@ export function deploymentVerdict(db: Db, args: { operation: string }): DeployVe
   if (row.outcome === 'failed') reasons.push({ code: 'DEPLOY_VERIFICATION_FAILED', subjects: [row.id] });
   else if (row.outcome === 'unknown') reasons.push({ code: 'DEPLOY_VERIFICATION_UNKNOWN', subjects: [row.id] });
   else if (qualificationOf(db, frozen.adapter, frozen.adapter_version)?.id !== row.adapter_qualification) reasons.push({ code: 'DEPLOY_VERIFICATION_UNKNOWN', subjects: [row.id] });
+  // The round's bindings as they are now (AR B05): a protected version that
+  // is no longer the effective one leaves no verification under the current
+  // one (the slice-25 design Q3: refused, no automatic round).
+  const effective = effectiveVersion(db, op.project);
+  if (effective?.id !== round.protected_version) reasons.push({ code: 'DEPLOY_VERIFICATION_MISSING', subjects: [round.id] });
   const stored = JSON.parse(row.behavioral_results) as { check: string; key: string; result: string | null }[];
+  const lost: string[] = [];
   const results = stored.map((s) => {
     const res = s.result ? (db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(s.result) as ResultRow | undefined) : undefined;
-    return { check: s.check, key: s.key, result: s.result, state: res && res.invalidated_at === null ? resultState(res) : 'missing' };
+    const intact = res !== undefined && res.invalidated_at === null && resultBoundTo(res, round);
+    if (!intact && s.result !== null) lost.push(s.result);
+    return { check: s.check, key: s.key, result: s.result, state: intact ? resultState(res) : 'missing' };
   });
+  // A deciding result invalidated or lost after the row: the stored label is
+  // not trusted (D4 §5.5; SEAM.md §270), the row and the results named.
+  if (row.outcome === 'verified' && lost.length > 0) reasons.push({ code: 'DEPLOY_VERIFICATION_MISSING', subjects: [row.id, ...lost] });
+  // Executions of the operation's rounds still live (an older round's, its
+  // link perhaps open): pending, named (D4 §5.5 "the pending executions";
+  // §4.7; the review's m1).
+  const live = liveExecutionIds(db, op.id);
+  if (live.length > 0) reasons.push({ code: 'DEPLOY_VERIFICATION_PENDING', subjects: live });
   return { reasons, results };
 }
 
@@ -2118,6 +2475,9 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
     endOperation(tx, op, 'complete', 'alpha_complete');
     return;
   }
+  // Never while an execution of its rounds is live: its link may be open,
+  // and the lease is released only once ingress is closed (D4 §4.7; m1).
+  if (liveExecutionIds(tx.db, op.id).length > 0) return;
   if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`);
 }
 
@@ -2141,7 +2501,7 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
   // that launched it, from the environment's `attempted` fact.
   const attempted = parseJson<{ attempt?: string; outcome?: string }>(rec?.attempted ?? null);
   const launched = running && attempted?.attempt ? getAttempt(db, attempted.attempt) : undefined;
-  const supervision = launched ? supervisionOf(launched) : null;
+  const supervision = launched ? attemptSupervision(db, launched) : null;
   if (supervision === 'unknown') conditions.push('supervision_unknown');
   return {
     environment: {
