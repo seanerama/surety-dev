@@ -33,7 +33,7 @@ export interface CheckoutRow {
 export interface OobRow {
   id: string;
   project: string;
-  subject_kind: 'ref' | 'checkout' | 'repository';
+  subject_kind: 'ref' | 'checkout' | 'repository' | 'environment';
   ref: string | null;
   checkout: string | null;
   expected: string;

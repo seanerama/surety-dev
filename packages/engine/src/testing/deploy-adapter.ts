@@ -30,6 +30,7 @@ import type {
   InventoryEntry,
   LaunchChannel,
   OperationIntent,
+  ReadBy,
   Reconciliation,
   TargetExpectation,
   TargetInventory,
@@ -50,7 +51,9 @@ export interface Unit {
   cgroup: string | Unread;
   pending_job: boolean | Unread;
   generation: number | Unread;
-  instance: Instance | Unread;
+  // null (SEAM.md §247, amended by §291): no application process runs in
+  // the unit, which may itself still be active.
+  instance: Instance | Unread | null;
   init: Instance | Unread;
   tree: string | Unread;
 }
@@ -72,6 +75,10 @@ interface Answer {
   output_bytes?: number;
   failure?: AdapterReadFailure;
   value?: unknown;
+  // SEAM.md §247, amended by §291: whose call it is for, and a read held
+  // until the test releases it.
+  by?: ReadBy;
+  hold?: boolean;
 }
 
 // What survives an engine restart, as a real target's state does: the
@@ -82,7 +89,7 @@ interface State {
   answers: Partial<Record<CallName, Answer[]>>;
   admission: 'granted' | 'held';
 }
-type Call = { call: CallName; at: string; capability: unknown; answer: Answer | null };
+type Call = { call: CallName; at: string; capability: unknown; answer: Answer | null; by: ReadBy };
 const calls = new Map<string, Call[]>();
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -134,15 +141,29 @@ const generationOf = (unit: string): number | Unread => {
   return m ? Number(m[1]) : 'unread';
 };
 
-const sameInstance = (a: Instance | Unread, b: Instance | null): boolean => a !== 'unread' && b !== null && a.pid === b.pid && a.start_time === b.start_time;
+const sameInstance = (a: Instance | Unread | null, b: Instance | null): boolean => a !== 'unread' && a !== null && b !== null && a.pid === b.pid && a.start_time === b.start_time;
 
-// Take the next answer queued for a call, recording the call.
-function takeAnswer(dir: string, env: string, call: CallName, capability: unknown): { state: State; answer: Answer | null } {
+// Take the next answer queued for a call by this caller, recording the
+// call: an answer carrying `"by": "observation"` goes only to the
+// observation job's, any other only to an operation's (SEAM.md §247).
+function takeAnswer(dir: string, env: string, call: CallName, capability: unknown, by: ReadBy = 'operation'): { state: State; answer: Answer | null } {
   const state = load(dir, env);
-  const answer = state.answers[call]?.shift() ?? null;
-  calls.set(env, [...(calls.get(env) ?? []), { call, at: now(), capability, answer }]);
+  const queue = state.answers[call] ?? [];
+  const i = queue.findIndex((a) => (a.by ?? 'operation') === by);
+  const answer = i < 0 ? null : queue.splice(i, 1)[0]!;
+  calls.set(env, [...(calls.get(env) ?? []), { call, at: now(), capability, answer, by }]);
   save(dir, env, state);
   return { state, answer };
+}
+
+// Reads held by a `hold` answer, by environment, until the test releases
+// them (POST …/deploy/environments/:e/release).
+const held = new Map<string, (() => void)[]>();
+export function releaseHeld(env: string): { released: number } {
+  const list = held.get(env) ?? [];
+  held.delete(env);
+  for (const r of list) r();
+  return { released: list.length };
 }
 
 // What an answer does once the call's change (if any) is made: hang until
@@ -159,10 +180,21 @@ async function settle<T>(answer: Answer | null, signal: AbortSignal, value: T): 
   return value;
 }
 
-async function readAnswer<T>(dir: string | null, env: string, call: CallName, signal: AbortSignal, fromTarget: (state: State) => T): Promise<T> {
+async function readAnswer<T>(dir: string | null, env: string, call: CallName, signal: AbortSignal, fromTarget: (state: State) => T, by: ReadBy = 'operation'): Promise<T> {
   if (dir === null) throw new ReadFailed('unavailable');
-  const { state, answer } = takeAnswer(dir, env, call, null);
+  const { state, answer } = takeAnswer(dir, env, call, null, by);
   if (answer?.failure) throw new ReadFailed(answer.failure);
+  // Held: answered once released, from the target as it was when the call
+  // was made; aborted (its deadline, or the engine's stop) it fails.
+  if (answer?.hold) {
+    const released = await new Promise<boolean>((resolve) => {
+      if (signal.aborted) return resolve(false);
+      held.set(env, [...(held.get(env) ?? []), () => resolve(true)]);
+      signal.addEventListener('abort', () => resolve(false), { once: true });
+    });
+    if (!released) throw new ReadFailed('deadline');
+    return fromTarget(state);
+  }
   if (answer?.hang) return settle(answer, signal, undefined as T);
   const value = answer && 'value' in answer ? (answer.value as T) : fromTarget(state);
   if (answer?.output_bytes) {
@@ -266,7 +298,7 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
       });
     },
 
-    status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory> {
+    status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal, by: ReadBy = 'operation'): Promise<TargetInventory> {
       return readAnswer(dir, env.environment, 'status', signal, (state) => ({
         complete: state.target.complete,
         inventory: [
@@ -293,10 +325,10 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           supervision: 'attached',
           at: now(),
         })),
-      }));
+      }), by);
     },
 
-    verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]> {
+    verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal, by: ReadBy = 'operation'): Promise<IdentityRead[]> {
       return readAnswer(dir, env.environment, 'verify', signal, (state) =>
         expect.map((e): IdentityRead => {
           const u = state.target.units.find((x) => (e.unit !== null ? x.name === e.unit : x.generation === e.generation));
@@ -308,8 +340,9 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           }
           const unread = u.state === 'unread' || u.instance === 'unread' || u.tree === 'unread';
           const match = unread ? 'unread' : u.state === 'active' && sameInstance(u.instance, e.instance) && u.tree === e.digest ? 'match' : 'differs';
-          return { ...base, read: u.tree, match, instance: u.instance, generation: u.generation };
+          return { ...base, read: u.tree, match, instance: u.instance ?? 'unread', generation: u.generation };
         }),
+        by,
       );
     },
 
@@ -341,6 +374,7 @@ function parseUnit(v: unknown, i: number): Unit {
     if (isObject(x) && Number.isInteger(x.pid) && Number.isInteger(x.start_time)) return { pid: x.pid as number, start_time: x.start_time as number };
     throw invalid(`units[${i}].${f}`, 'must be {pid, start_time} or "unread"');
   };
+  const instance = v.instance === undefined ? 'unread' : v.instance === null ? null : inst(v.instance, 'instance');
   return {
     name: v.name,
     state: state as Unit['state'],
@@ -348,7 +382,7 @@ function parseUnit(v: unknown, i: number): Unit {
     cgroup: (v.cgroup as string | undefined) ?? `/user.slice/app.slice/${v.name}`,
     pending_job: (v.pending_job as boolean | Unread | undefined) ?? false,
     generation: (v.generation as number | Unread | undefined) ?? generationOf(v.name),
-    instance: v.instance === undefined ? 'unread' : inst(v.instance, 'instance'),
+    instance,
     init: v.init === undefined ? 'unread' : inst(v.init, 'init'),
     tree: (v.tree as string | Unread | undefined) ?? 'unread',
   };
@@ -383,11 +417,12 @@ export function addAnswers(dir: string | null, env: string, body: unknown): { qu
   const effect = call === 'deploy' || call === 'teardown';
   const answers = body.answers.map((a, i): Answer => {
     if (!isObject(a)) throw invalid(`answers[${i}]`, 'must be an object');
-    const known = effect ? ['result', 'apply', 'hang', 'output_bytes'] : ['failure', 'hang', 'output_bytes', 'value'];
+    const known = effect ? ['result', 'apply', 'hang', 'output_bytes'] : ['failure', 'hang', 'output_bytes', 'value', 'by', 'hold'];
     for (const k of Object.keys(a)) if (!known.includes(k)) throw new Refusal(400, 'unknown_field', `"${k}" is not a field of a ${call} answer.`, `Send only ${known.join(', ')}.`, { field: `answers[${i}].${k}` });
     if (effect && !(RESULTS as readonly string[]).includes(a.result as string)) throw invalid(`answers[${i}].result`, `must be one of ${RESULTS.join(', ')}`);
     if (a.failure !== undefined && !FAILURES.includes(a.failure as AdapterReadFailure)) throw invalid(`answers[${i}].failure`, `must be one of ${FAILURES.join(', ')}`);
-    for (const b of ['apply', 'hang']) if (a[b] !== undefined && typeof a[b] !== 'boolean') throw invalid(`answers[${i}].${b}`, 'must be a boolean');
+    for (const b of ['apply', 'hang', 'hold']) if (a[b] !== undefined && typeof a[b] !== 'boolean') throw invalid(`answers[${i}].${b}`, 'must be a boolean');
+    if (a.by !== undefined && a.by !== 'operation' && a.by !== 'observation') throw invalid(`answers[${i}].by`, 'must be operation or observation');
     if (a.output_bytes !== undefined && (!Number.isInteger(a.output_bytes) || (a.output_bytes as number) < 0)) throw invalid(`answers[${i}].output_bytes`, 'must be a non-negative integer');
     return a as Answer;
   });

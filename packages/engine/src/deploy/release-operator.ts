@@ -41,6 +41,7 @@ import {
 import { type ManifestEntry, rehash, sweepArtifacts } from './artifact.js';
 import { heldDigests, secretDigestKey } from './config.js';
 import { judgeReconcile } from './reconcile.js';
+import { Observer } from './observe.js';
 
 export class ReleaseOperator {
   private readonly driving = new Map<string, Promise<void>>();
@@ -72,7 +73,13 @@ export class ReleaseOperator {
   // at start when this engine deploys to real units.
   services: ServiceHost | null = null;
 
-  constructor(private readonly rt: Runtime) {}
+  // The observation job's own loop (D4 §6.2; deploy/observe.ts), never
+  // awaited by the tick.
+  readonly observer: Observer;
+
+  constructor(private readonly rt: Runtime) {
+    this.observer = new Observer(rt, () => this.bounds());
+  }
 
   // Is the real adapter in use (outside harness mode, or with
   // `--harness-deploy-adapter real`, SEAM.md §247)?
@@ -121,6 +128,12 @@ export class ReleaseOperator {
 
   stop(): void {
     this.services?.stop();
+  }
+
+  // The observer stopped and its reads awaited (the driver's ruling on the
+  // slice-27 design, answer 7): no observation's child outlives the engine.
+  async stopObserver(): Promise<void> {
+    await this.observer.stop();
   }
 
   // The service domains of a project whose closure the host now shows (D2
@@ -207,6 +220,23 @@ export class ReleaseOperator {
     // it, every adapter call bounded by its deadline.
     for (const op of [...new Set(work.drive)]) await this.drive(op);
     await this.observeServiceDomains(project).catch((err) => log('service domains', err, { project }));
+    await this.collectLogs(project).catch((err) => log('log collection', err, { project }));
+  }
+
+  // The log collection command's read (D4 §§6.1, 9.3; SEAM.md §294): one
+  // bounded `logs` read per environment asked for, recorded as a
+  // `deployment_logs` record through the redactor. A read that fails leaves
+  // the collection pending.
+  private async collectLogs(project: string): Promise<void> {
+    const due = await this.rt.read<{ environment: string; prefix: string; adapter: string; generation: number | null; target: string }[]>('deploy.logs_due', { project });
+    for (const l of due) {
+      const r = await readCall((signal) => adapterFor(l.adapter).logs({ environment: l.environment, prefix: l.prefix }, l.target, this.bounds().outputBytes, signal), this.bounds());
+      if ('failure' in r || !r.ok || typeof (r.ok as { text?: unknown }).text !== 'string') continue;
+      const text = (r.ok as { text: string }).text;
+      const content = Buffer.from(text, 'utf8');
+      const record = await writeWholeRecord(this.rt, { project, run: null, kind: 'deployment_logs', content });
+      await this.rt.engine('deploy.logs_collected', { environment: l.environment, record, generation: l.generation, at: nowIso(), bytes: content.length });
+    }
   }
 
   drive(operation: string): Promise<void> {
@@ -301,7 +331,9 @@ export class ReleaseOperator {
     // 9.2; SEAM.md §278): the adapter's `status`, a read. Not read where no
     // adapter admits a service (nothing is deployed there).
     let inventory: PreconditionFacts['inventory'] = null;
-    if (d.kind === 'deploy' && (admission === 'granted' || scripted !== null || this.real)) {
+    // A teardown's too: its frozen intent names only the units the read
+    // shows positively owned (D4 §4.6; SEAM.md §295).
+    if (d.kind === 'teardown' || admission === 'granted' || scripted !== null || this.real) {
       const r = await readCall((signal) => adapterFor(f.adapter).status({ environment: f.environment, prefix: d.prefix }, [], signal), this.bounds());
       if ('failure' in r) inventory = { failure: r.failure };
       else if (!r.ok || typeof r.ok !== 'object' || !Array.isArray((r.ok as TargetInventory).inventory)) inventory = { failure: 'invalid_response' };

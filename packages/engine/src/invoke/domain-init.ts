@@ -558,6 +558,9 @@ function startForwarder(f: { port: number; socket: string }): Promise<void> {
 let exit: { code: number | null; signal: number | null } | null = null;
 let backendPid: number | null = null;
 let terminating = false;
+// When a termination signal the engine did not order reached a service's
+// init, if one did.
+let externalTerm: string | null = null;
 // The engine has acknowledged the exit report (or is gone). The init sends
 // the report once, after the backend's output has ended (or two seconds
 // after its exit, if a descendant holds the output open), and then exits:
@@ -732,6 +735,17 @@ async function init(): Promise<void> {
     }
   }
   serviceSpec = spec.service ?? null;
+  // A service's init notes a termination signal the engine did not order
+  // (D4 §9.2; the driver's ruling on the slice-27 design, answer 2): as
+  // process 1 of its pid namespace it receives one from outside only with
+  // a handler. It records the fact and reports it; it sends no signal.
+  if (serviceSpec !== null) {
+    process.on('SIGTERM', () => {
+      if (terminating || externalTerm !== null) return;
+      externalTerm = new Date().toISOString();
+      send({ t: 'external_term', at: externalTerm });
+    });
+  }
   backendEnv = spec.env;
   containmentSpec = spec.canary?.containment ?? null;
   send({ t: 'ready' });
@@ -851,7 +865,7 @@ async function init(): Promise<void> {
     // process for it.
     child.on('exit', (code, signal) => {
       exit = { code, signal: signalNumber(signal) };
-      send({ t: 'exit', code, signal: exit.signal, at: new Date().toISOString(), service: true });
+      send({ t: 'exit', code, signal: exit.signal, at: new Date().toISOString(), service: true, external_term: externalTerm !== null });
       closeTunnels();
       killAll('SIGTERM');
       setTimeout(() => {

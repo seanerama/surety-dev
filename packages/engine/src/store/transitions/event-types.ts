@@ -97,7 +97,7 @@ export const EVENT_OWNERS = {
   'notification.delivered': 'store/transitions/notify.ts',
   'notification.failed': 'store/transitions/notify.ts',
   'notification.unknown': 'store/transitions/notify.ts',
-  'environment.observed': 'store/transitions/environments.ts',
+  'environment.observed': 'store/transitions/environments.ts, store/transitions/observe.ts',
   // D4 A.5, the deployment (M4 slice 23).
   'environment.configured': 'store/transitions/deploy.ts',
   'environment.config_secrets_changed': 'store/transitions/deploy.ts',
@@ -118,6 +118,9 @@ export const EVENT_OWNERS = {
   'deploy.round_superseded': 'store/transitions/deploy.ts',
   'deploy.orchestration_deadline': 'store/transitions/deploy.ts',
   'deploy.service_exited': 'store/transitions/deploy.ts',
+  'deploy.preempted': 'store/transitions/deploy.ts',
+  'environment.out_of_band': 'store/transitions/observe.ts',
+  'environment.observation_missed': 'store/transitions/observe.ts',
   'engine.backup': 'store/transitions/engine.ts',
   // D2 A.5, the trust table's part. The egress and secret events join with
   // the sandbox lane's later slices, which emit them.

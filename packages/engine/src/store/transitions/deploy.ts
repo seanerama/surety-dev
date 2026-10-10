@@ -18,6 +18,7 @@
 //   completion      `alpha_complete` (gates.ts) and its effects (§5.5)
 //   teardown        exactly what the engine owns (§4.6)
 
+import { nowIso } from '../../clock.js';
 import { assertEdge } from './lifecycle.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, illegal, nextSeq, notFound, parseJson, sha256 } from './common.js';
@@ -37,6 +38,18 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { engineBuild, profileFingerprint } from '../../deploy/qualification.js';
+import {
+  bumpRevision,
+  changesInInterval,
+  ensureObservationJob,
+  environmentChangesRead,
+  inventoryOfRead,
+  observedRead,
+  openChanges,
+  recordIdentityReads,
+  recordInventoryRead,
+  resolveOnReplacement,
+} from './observe.js';
 
 type Db = Tx['db'];
 
@@ -202,6 +215,8 @@ export function writeConfigVersion(
       )
       .run(id, tx.at, args.project, args.name, args.content.adapter, verifySpec, prefix);
     env = getEnv(tx.db, id)!;
+    // Its observation job, first due one cadence from now (D4 §6.2; SEAM.md §291).
+    ensureObservationJob(tx, { environment: id, project: args.project });
   }
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("version"), 0) + 1 AS n FROM "environment_configs" WHERE "environment" = ?').get(env.id) as { n: number };
   tx.db.prepare(`UPDATE "environment_configs" SET "status" = 'superseded' WHERE "environment" = ? AND "status" <> 'superseded'`).run(env.id);
@@ -725,6 +740,8 @@ function journalAppend(tx: Tx, op: OpRow, to: JState, payload: Record<string, un
 // journal.ts deriveStatus), with an event for a status that is new.
 function refreshOp(tx: Tx, id: string): string {
   const op = getOp(tx.db, id)!;
+  // Superseded by a preempting teardown (D1 A.5; D4 §4.6): final.
+  if (op.status === 'superseded') return op.status;
   const j = journalOf(tx.db, id)!;
   const latest = attemptsOf(tx.db, id).at(-1)?.status ?? null;
   let status: string;
@@ -940,11 +957,11 @@ const attemptGenerations = (attempts: AttemptRow[]): number[] => attempts.map((a
 // Release Operator at its next tick, with the preconditions read again;
 // `teardown` preempts; `abandon` ends the operation `failed`, `abandoned`,
 // the effect being quiescent (a `partial` read is only made after it).
-export function answerRolloutPartial(tx: Tx, args: { operation: string; option: string }): string | null {
+export function answerRolloutPartial(tx: Tx, args: { operation: string; option: string }): { environment: string; executions: string[] } | null {
   const op = getOp(tx.db, args.operation)!;
   if (args.option === 'teardown') {
-    preemptTeardown(tx, { environment: frozenOf(op).environment, cause: `rollout_partial of ${op.id}` });
-    return frozenOf(op).environment;
+    const p = preemptTeardown(tx, { environment: frozenOf(op).environment, cause: `rollout_partial of ${op.id}` });
+    return { environment: frozenOf(op).environment, executions: p.executions };
   }
   if (args.option === 'abandon') {
     const latest = attemptsOf(tx.db, op.id).at(-1);
@@ -953,44 +970,83 @@ export function answerRolloutPartial(tx: Tx, args: { operation: string; option: 
   return null;
 }
 
-// The preempting teardown (D4 §4.6), as a decision's `teardown` option
-// reaches it (slice 26; the route and the preemption's own records are
-// M327's). One transaction, before any host call: the launch of every
-// non-terminal attempt of the environment closed, so no launcher can be
-// authorized again; every operation of the environment whose orchestration
-// has not ended ended, its leases released and its open rounds recorded;
-// the teardown intended under a new lease generation. Its effect starts
-// only once any call of the preempted attempt has settled (release-operator).
-export function preemptTeardown(tx: Tx, args: { environment: string; cause: string }): { operation: string } {
+// The preempting teardown (D4 §4.6; SEAM.md §296), from a decision's
+// `teardown` option or `POST …/teardown {"preempt": true}`. One transaction,
+// before any host call: the launch of every attempt of the environment
+// closed, so no launcher can be authorized again; every queued or running
+// execution of an open round of the environment cancelled and the round
+// recorded `unknown` naming each; every operation of the environment whose
+// orchestration has not ended (or that holds a round open) ended, its
+// leases released: one with an attempt `superseded`, its attempts kept as
+// they were; one with none `failed` naming `environment_lease` (the
+// driver's ruling, answer 6); each `deploy.preempted`; the teardown intended
+// under a new lease generation, its `linked_prior` the operation that held
+// the lease. Its effect starts only once any call of the preempted attempt
+// has settled (release-operator). Returns the executions to cancel on the
+// main thread (the check runner's own supervisors).
+export function preemptTeardown(tx: Tx, args: { environment: string; cause: string }): { operation: string; preempted: string[]; executions: string[] } {
   const env = getEnv(tx.db, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   const incarnation = engineSettings().incarnation;
   if (incarnation === undefined) throw illegal('a preempting teardown with no running incarnation', { environment: env.id });
   const ops = tx.db
     .prepare(
-      `SELECT * FROM "operations" WHERE json_extract("target", '$.environment') = ? AND "kind" IN ('deploy', 'teardown')
-         AND ("orchestration_stage" IS NULL OR "orchestration_stage" <> 'ended') ORDER BY "seq"`,
+      `SELECT * FROM "operations" o WHERE json_extract(o."target", '$.environment') = ? AND o."kind" IN ('deploy', 'teardown')
+         AND (o."orchestration_stage" IS NULL OR o."orchestration_stage" <> 'ended'
+              OR EXISTS (SELECT 1 FROM "verification_rounds" r WHERE r."operation" = o."id" AND r."status" = 'open')) ORDER BY o."seq"`,
     )
     .all(env.id) as OpRow[];
+  // The operation holding the environment lease, the teardown's linked_prior.
+  const held = environmentLease(tx.db, env.id);
+  const holder = ops.find((o) => operationLeases(tx.db, o).some((l) => l.id === held?.id)) ?? ops.at(-1) ?? null;
+  // Every launch of the environment closed (D4 §4.6 step 2).
+  const attempts = tx.db
+    .prepare(
+      `SELECT a.* FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation"
+       WHERE json_extract(o."target", '$.environment') = ? AND a."launch_state" IS NOT NULL AND a."launch_state" <> 'closed'`,
+    )
+    .all(env.id) as AttemptRow[];
+  for (const a of attempts) closeAttemptLaunch(tx, a, 'preempted');
+  const executions: string[] = [];
   for (const op of ops) {
-    for (const a of attemptsOf(tx.db, op.id)) if (a.launch_state !== null && a.launch_state !== 'closed') closeAttemptLaunch(tx, a, 'preempted');
     const open = tx.db.prepare(`SELECT * FROM "verification_rounds" WHERE "operation" = ? AND "status" = 'open'`).all(op.id) as RoundRow[];
     for (const r of open) {
-      cancelRoundQueue(tx, r, 'a preempting teardown');
+      for (const id of roundExecutionIds(tx.db, r)) {
+        const x = tx.db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(id) as { status: string } | undefined;
+        const running = x !== undefined && x.status !== 'queued';
+        if (cancelExecution(tx, { execution: id, why: 'a preempting teardown', live: true }) && running) executions.push(id);
+      }
       finalizeRound(tx, { round: r.id, reads: null, failure: null, reason: 'preempted' });
     }
     closeBlocker(tx, op.id, 'a preempting teardown');
     closeRollout(tx, op.id, 'a preempting teardown');
-    endOperation(tx, op, 'cancelled', 'preempted');
   }
-  const teardown = insertTeardown(tx, env, incarnation);
-  return { operation: teardown.id };
+  // The lease passes to the teardown with a new generation: every lease the
+  // preempted operations hold is released first.
+  for (const op of ops) releaseOperationLeases(tx, op);
+  const teardown = insertTeardown(tx, env, incarnation, holder?.id ?? null);
+  const preempted: string[] = [];
+  for (const op of ops) {
+    if (op.orchestration_stage === 'ended') continue;
+    const tried = attemptsOf(tx.db, op.id).length > 0;
+    if (!tried && op.kind === 'deploy') {
+      failOperation(tx, op, { code: 'EFFECT_PRECONDITION_CHANGED', fact: 'environment_lease', manifest: null, preempted_by: teardown.id });
+    } else {
+      endOperation(tx, op, 'cancelled', 'preempted');
+      tx.db.prepare(`UPDATE "operations" SET "status" = 'superseded' WHERE "id" = ?`).run(op.id);
+    }
+    tx.emit('deploy.preempted', { project: op.project, operation: op.id, environment: env.id }, { teardown: teardown.id, cause: args.cause, attempt: attemptsOf(tx.db, op.id).at(-1)?.id ?? null });
+    preempted.push(op.id);
+  }
+  bumpRevision(tx, env.id);
+  return { operation: teardown.id, preempted, executions };
 }
 
 // The operation's way out (D4 §4.7): the lease released, the orchestration
 // ended, and the deploy work item settled.
 function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string): void {
   const f = frozenOf(op);
+  if (op.orchestration_stage !== 'ended') bumpRevision(tx, f.environment);
   releaseOperationLeases(tx, op);
   tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'ended' WHERE "id" = ?`).run(op.id);
   if (f.work_item === null || work === 'none') return;
@@ -1154,9 +1210,19 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
 // POST /v1/projects/:p/environments/:e/teardown (D4 §4.6; SEAM.md §250): an
 // ordinary teardown, by the operator's command, no gate; intended at a tick,
 // under the environment lease.
-export function requestTeardown(tx: Tx, args: { project: string; environment: string }): CommandResult {
+// With `preempt` (D4 §4.6; SEAM.md §296): the preempting teardown, its
+// transaction committed before the answer.
+export function requestTeardown(tx: Tx, args: { project: string; environment: string; preempt?: boolean }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  if (args.preempt === true) {
+    const p = preemptTeardown(tx, { environment: env.id, cause: 'the operator\'s preempting teardown' });
+    return {
+      status: 202,
+      body: { environment: { id: env.id, name: env.name }, teardown: { operation: p.operation, preempted: p.preempted } },
+      effects: [{ kind: 'tick' as const }, { kind: 'preempt' as const, environment: env.id, executions: p.executions }],
+    };
+  }
   if (env.teardown_requested_at === null) tx.db.prepare('UPDATE "environments" SET "teardown_requested_at" = ? WHERE "id" = ?').run(tx.at, env.id);
   return { status: 202, body: { environment: { id: env.id, name: env.name }, teardown: { requested_at: env.teardown_requested_at ?? tx.at } }, effects: [{ kind: 'tick' as const }] };
 }
@@ -1172,7 +1238,7 @@ export function intendTeardown(tx: Tx, args: { environment: string; incarnation:
 // A teardown operation of the environment, intended under a new environment
 // lease (the ordinary teardown's, and the preempting one's once the lease
 // was taken from the operation it preempts).
-function insertTeardown(tx: Tx, env: EnvRow, incarnation: string): OpRow {
+function insertTeardown(tx: Tx, env: EnvRow, incarnation: string, linkedPrior: string | null = null): OpRow {
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, env.project).deploy_orchestration_deadline!);
   const lease = takeLease(tx, env.id, incarnation, deadline);
   const { n } = tx.db.prepare(`SELECT COUNT(*) + 1 AS n FROM "operations" WHERE "kind" = 'teardown' AND json_extract("target", '$.environment') = ?`).get(env.id) as { n: number };
@@ -1209,8 +1275,9 @@ function insertTeardown(tx: Tx, env: EnvRow, incarnation: string): OpRow {
     deadline,
     authorization: null,
   });
+  if (linkedPrior !== null) tx.db.prepare('UPDATE "operations" SET "linked_prior" = ? WHERE "id" = ?').run(linkedPrior, op.id);
   tx.db.prepare('UPDATE "environments" SET "teardown_requested_at" = NULL WHERE "id" = ?').run(env.id);
-  return op;
+  return getOp(tx.db, op.id)!;
 }
 
 // ---- what the main thread reads of an operation -----------------------------------------------
@@ -1420,6 +1487,11 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
   const f = args.facts;
   const facts: Fact[] = [];
   const fact = (name: string, held: boolean, read: unknown) => facts.push({ fact: name, held, read });
+  // What the inventory read shows beside the operation (D4 §6.3; the
+  // driver's ruling, answer 1): any out-of-band change it finds is recorded.
+  if (f.inventory && !('failure' in f.inventory) && Array.isArray(f.inventory.inventory)) {
+    recordInventoryRead(tx, { environment: env.id, inventory: f.inventory.inventory, complete: f.inventory.complete === true, observation: null });
+  }
   const ownership = op.kind === 'deploy' ? ownershipFact(tx.db, frozen, f.inventory ?? null) : null;
   // The preconditions are read immediately before the effect (§4.1): while
   // admission is held, the operation waits, within its deadline, and reads
@@ -1458,6 +1530,12 @@ export function readPreconditions(tx: Tx, args: { operation: string; facts: Prec
   }
   fact('orchestration_deadline', !deadlinePassed, { deadline: op.orchestration_deadline_at, now: f.now, admission: f.admission });
   if (ownership !== null) fact('unknown_ownership', ownership.held, ownership.read);
+  // No open out-of-band change of the environment (D4 §§4.1, 6.3; J6): an
+  // acknowledged one is a disposition and holds nothing.
+  if (op.kind === 'deploy') {
+    const open = openChanges(tx.db, env.id);
+    fact('out_of_band', open.length === 0, { open: open.map((r) => ({ id: r.id, change: r.change, resource: r.resource })) });
+  }
   const failed = facts.find((x) => !x.held);
   if (failed) return { verdict: 'fail', fact: failed.fact, facts };
   if (op.kind === 'deploy' && f.admission !== 'granted') return { verdict: 'wait', facts };
@@ -1482,6 +1560,23 @@ function ownershipFact(db: Db, frozen: FrozenIntent, inv: PreconditionFacts['inv
   if (units.length > 0) return { held: false, unaccounted: true, read };
   if (inv.complete !== true) return { held: false, unaccounted: false, read: { ...read, inventory: 'incomplete' } };
   return { held: true, unaccounted: false, read };
+}
+
+// The units a teardown's frozen intent may stop (D4 §4.6; SEAM.md §295):
+// those a frozen intent of the environment names that the inventory read
+// reports loaded under the cgroup the engine recorded for them (or with
+// none, inactive or failed). Any other unit of the prefix is never named.
+// With no inventory read, the recorded units whose domains have not ended:
+// the adapter establishes ownership again before it acts on any.
+function ownedUnits(db: Db, env: string, inv: PreconditionFacts['inventory']): string[] {
+  const recorded = recordedUnits(db, env);
+  const cgroups = recordedCgroups(db, env);
+  if (inv && !('failure' in inv) && Array.isArray(inv.inventory)) {
+    const unaccounted = new Set(unaccountedUnits(inv.inventory, recorded, cgroups).map((u) => u.unit));
+    return recorded.filter((u) => inv.inventory.some((e) => e && e.kind === 'unit' && e.resource === u) && !unaccounted.has(u));
+  }
+  const live = new Set(environmentResources(db, { environment: env }).filter((r) => r.status !== 'terminated' && r.unit !== null).map((r) => r.unit!));
+  return recorded.filter((u) => live.has(u));
 }
 
 // A failed precondition (D4 §4.1): the operation ends `failed` with
@@ -1572,6 +1667,7 @@ export function startDeployAttempt(
   const latest = attemptsOf(tx.db, op.id).at(-1);
   const g = env.deployment_generation + 1;
   tx.db.prepare('UPDATE "environments" SET "deployment_generation" = ?, "current_generation" = ? WHERE "id" = ?').run(g, g, env.id);
+  bumpRevision(tx, env.id);
   const n = (latest?.attempt_number ?? 0) + 1;
   const attempt = tx.newId('att_');
   const prefix = frozen.prefix;
@@ -1581,7 +1677,7 @@ export function startDeployAttempt(
   // E112): the earlier attempts' units its preview named, each with its
   // attempt (D4 A.3).
   const cleanup = op.kind === 'deploy' ? (retryApproved(tx.db, op.id, latest)?.cleanup ?? []) : [];
-  const resources = op.kind === 'teardown' ? recordedUnits(tx.db, env.id) : [];
+  const resources = op.kind === 'teardown' ? ownedUnits(tx.db, env.id, args.facts.inventory ?? null) : [];
   const capability: Capability =
     op.kind === 'deploy'
       ? {
@@ -1869,12 +1965,15 @@ export function applicationDisagreement(tx: Tx, args: { attempt: string; detail:
 
 // The application's terminal exit, as the init reported it while attached
 // (D4 §9.2): kept on the domain; `deploy.service_exited`.
-export function applicationExited(tx: Tx, args: { attempt: string; exit: { at: string; code: number | null; signal: number | null } }): void {
+export function applicationExited(tx: Tx, args: { attempt: string; exit: { at: string; code: number | null; signal: number | null; external_term?: boolean } }): void {
   const a = getAttempt(tx.db, args.attempt);
   const d = a ? serviceDomainOf(tx.db, a.id) : undefined;
   if (!a || !d || d.app_exit !== null) return;
-  // D4 A.3, SEAM.md §278: {at, status}, the status as the init reported it.
-  const exit = { at: args.exit.at, status: { code: args.exit.code, signal: args.exit.signal } };
+  // D4 A.3, SEAM.md §278: {at, status}, the status as the init reported it;
+  // `external_term` (engine-owned): the init had received a termination
+  // signal the engine did not order before the exit (an ending by hand, the
+  // driver's ruling on the slice-27 design, answer 2).
+  const exit = { at: args.exit.at, status: { code: args.exit.code, signal: args.exit.signal }, ...(args.exit.external_term === true ? { external_term: true } : {}) };
   tx.db.prepare('UPDATE "execution_domains" SET "app_exit" = ? WHERE "id" = ?').run(JSON.stringify(exit), d.id);
   const op = getOp(tx.db, a.operation)!;
   tx.emit('deploy.service_exited', { project: d.project, operation: op.id, attempt: a.id, domain: d.id }, exit);
@@ -1904,6 +2003,8 @@ export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: st
   else if (d.launch_state !== 'closed') tx.db.prepare(`UPDATE "execution_domains" SET "launch_state" = 'closed', "launch_closed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);
   tx.db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = ?, "observation" = 'terminated', "observed_at" = ? WHERE "id" = ?`).run(tx.at, tx.at, d.id);
   tx.emit('domain.terminated', { project: d.project, domain: d.id, attempt: d.attempt }, { observed: args.observed, profile: 'service' });
+  const owner = a ? getOp(tx.db, a.operation) : undefined;
+  if (owner) bumpRevision(tx, frozenOf(owner).environment);
   return { terminated: true };
 }
 
@@ -2035,6 +2136,12 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
   if (op.orchestration_stage === 'ended') return { way: 'failed' };
   if (attemptsOf(tx.db, op.id).at(-1)?.id !== a.id) return { way: 'blocked' };
   const read = { outcome: args.outcome, read: args.read };
+  // What the read shows beside the operation (D4 §6.3; the driver's ruling,
+  // answer 1): any out-of-band change it finds is recorded.
+  const inv = inventoryOfRead(args.read);
+  if (inv !== null) recordInventoryRead(tx, { environment: frozenOf(op).environment, inventory: inv.inventory, complete: inv.complete, observation: null });
+  // A teardown's cleanup record, beside every outcome (D4 §4.6).
+  const cleanup = op.kind === 'teardown' ? { cleanup: teardownCleanup(tx.db, op, a, args.read) } : {};
   // Nothing of the environment runs, by a complete read (SEAM.md §278): the
   // environment read then shows nothing running.
   if (args.outcome !== 'unknown' && nothingRuns(args.read)) clearRunning(tx, op, a);
@@ -2068,7 +2175,7 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
       // and invalidates it. A teardown's `partial` blocks, as `unknown` does.
       setAttempt(tx, a, 'reconciled_partial', read);
       if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, outcome: args.outcome });
-      writeAttemptedOnce(tx, op, a, 'partial');
+      writeAttemptedOnce(tx, op, a, 'partial', cleanup);
       refreshOp(tx, op.id);
       if (op.kind === 'deploy') {
         closeBlocker(tx, op.id, 'the reconcile read found the effect partial');
@@ -2079,7 +2186,7 @@ export function recordReconcile(tx: Tx, args: { attempt: string; outcome: string
     default: {
       setAttempt(tx, a, 'ambiguous', read);
       if (journalOf(tx.db, op.id)!.state !== 'ambiguous') journalAppend(tx, op, 'ambiguous', { attempt: a.id, outcome: args.outcome });
-      writeAttemptedOnce(tx, op, a, 'ambiguous');
+      writeAttemptedOnce(tx, op, a, 'ambiguous', cleanup);
       closeRollout(tx, op.id, `the reconcile read found the effect ${args.outcome}`);
       refreshOp(tx, op.id);
       block(tx, op, args.outcome);
@@ -2104,16 +2211,41 @@ function nothingRuns(read: unknown): boolean {
 function clearRunning(tx: Tx, op: OpRow, a: AttemptRow): void {
   const env = getEnv(tx.db, frozenOf(op).environment)!;
   if (a.deployment_generation === null || env.current_generation !== a.deployment_generation) return;
-  tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ? AND "running" IS NOT NULL').run(env.id);
+  const cleared = tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ? AND "running" IS NOT NULL').run(env.id);
+  if (cleared.changes > 0) bumpRevision(tx, env.id);
 }
 
 // `attempted` with this attempt's outcome, written once per change (a read
 // made again at every tick rewrites nothing).
-function writeAttemptedOnce(tx: Tx, op: OpRow, a: AttemptRow, outcome: string): void {
+function writeAttemptedOnce(tx: Tx, op: OpRow, a: AttemptRow, outcome: string, extra: Record<string, unknown> = {}): void {
   const rec = tx.db.prepare('SELECT "attempted" FROM "environment_records" WHERE "environment" = ?').get(frozenOf(op).environment) as { attempted: string | null } | undefined;
-  const now = parseJson<{ attempt?: string; outcome?: string }>(rec?.attempted ?? null);
-  if (now?.attempt === a.id && now.outcome === outcome) return;
-  writeAttempted(tx, op, a, outcome);
+  const now = parseJson<{ attempt?: string; outcome?: string; cleanup?: unknown }>(rec?.attempted ?? null);
+  if (now?.attempt === a.id && now.outcome === outcome && canonical(now.cleanup ?? null) === canonical(extra.cleanup ?? null)) return;
+  writeAttempted(tx, op, a, outcome, extra);
+}
+
+// A teardown's cleanup record (D4 §4.6, A.3; SEAM.md §295), from the read
+// and the attempt's frozen intent, never from the receipt: every unit it
+// covered that the read no longer finds, removed; every resource of the
+// environment the read still finds, left, with the reason.
+function teardownCleanup(db: Db, op: OpRow, a: AttemptRow, read: unknown): { removed: string[]; left: { resource: string; reason: string }[] } {
+  const frozen = frozenOf(op);
+  const intent = db.prepare('SELECT "resources" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { resources: string | null } | undefined;
+  const stop = parseJson<string[]>(intent?.resources ?? null) ?? [];
+  const inv = inventoryOfRead((read as { read?: unknown } | null)?.read ?? read);
+  if (inv === null) return { removed: [], left: stop.map((u) => ({ resource: u, reason: 'unread: the read failed' })) };
+  const recorded = recordedUnits(db, frozen.environment);
+  const unaccounted = new Map(unaccountedUnits(inv.inventory, recorded, recordedCgroups(db, frozen.environment)).map((u) => [u.unit, u.why]));
+  const left: { resource: string; reason: string }[] = [];
+  for (const e of inv.inventory) {
+    if (e.state === 'unread') left.push({ resource: e.resource, reason: 'unread: its state could not be read' });
+    else if (unaccounted.get(e.resource) === 'no_intent') left.push({ resource: e.resource, reason: 'not owned: no attempt intent of the environment names it' });
+    else if (unaccounted.get(e.resource) === 'other_cgroup') left.push({ resource: e.resource, reason: 'not owned: the manager reports another cgroup than the one the engine recorded' });
+    else if (e.kind === 'unit' && !stop.includes(e.resource)) left.push({ resource: e.resource, reason: 'not named by the teardown: its ownership was not established when it was intended' });
+    else left.push({ resource: e.resource, reason: `survived: ${e.kind} ${e.state}` });
+  }
+  const present = new Set(inv.inventory.map((e) => e.resource));
+  return { removed: inv.complete ? stop.filter((u) => !present.has(u)) : [], left };
 }
 
 const openRollout = (db: Db, op: string): DecisionRow | undefined =>
@@ -2412,16 +2544,21 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
   tx.emit('operation.finalized', { project: op.project, operation: op.id }, { journal_kind: op.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply' });
   const a = attemptsOf(tx.db, op.id).at(-1)!;
   const frozen = frozenOf(op);
+  bumpRevision(tx, frozen.environment);
   if (op.kind === 'teardown') {
-    const intent = tx.db.prepare('SELECT "resources" FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { resources: string };
+    const reads = JSON.parse(a.reconciliation_reads) as { result?: string; read?: unknown }[];
+    const last = [...reads].reverse().find((r) => r.result === 'applied');
     // `running` speaks for the environment: only the current generation's
     // attempt writes it (J9).
-    if (writeAttempted(tx, op, a, 'teardown_applied', { cleanup: { removed: JSON.parse(intent.resources) as string[], left: [] } })) {
+    if (writeAttempted(tx, op, a, 'teardown_applied', { cleanup: teardownCleanup(tx.db, op, a, last?.read ?? null) })) {
       tx.db.prepare('UPDATE "environment_records" SET "running" = NULL WHERE "environment" = ?').run(frozen.environment);
     }
+    // What runs was replaced by the engine (D4 §6.3): the changes resolved.
+    resolveOnReplacement(tx, { environment: frozen.environment, operation: op.id });
     endOperation(tx, op, 'none', 'teardown_applied');
     return { round: null, replay: false };
   }
+  resolveOnReplacement(tx, { environment: frozen.environment, operation: op.id });
   if (writeAttempted(tx, op, a, 'applied')) {
     tx.db
       .prepare('UPDATE "environment_records" SET "running" = ? WHERE "environment" = ?')
@@ -2503,7 +2640,7 @@ interface ReadEntry {
   at: string;
 }
 
-const sameInstance = (x: Instance | 'unread', y: Instance | null): boolean => x !== 'unread' && y !== null && x.pid === y.pid && x.start_time === y.start_time;
+const sameInstance = (x: Instance | 'unread' | null, y: Instance | null): boolean => x !== 'unread' && x !== null && y !== null && x.pid === y.pid && x.start_time === y.start_time;
 
 // The supervision of an attempt's service (D4 §9.2; E110): `attached` only
 // while the incarnation that granted its launch is the running one; after
@@ -2564,6 +2701,7 @@ export function roundFirstRead(tx: Tx, args: { round: string; reads: IdentityRea
   const reads = readsFor(frozen.target_set, detail.expect, args.reads, tx.at);
   const entries = JSON.parse(r.reads) as ReadEntry[];
   entries.push({ bracket: 'first', reads, failure: args.failure, at: tx.at });
+  roundReadChanges(tx, r, args.reads);
   const app = parseJson<Instance>(a.app_instance);
   const matched = reads.every((x) => x.match === 'match' && sameInstance(x.instance, app));
   if (!matched) {
@@ -2681,6 +2819,7 @@ export function finalizeRound(
   const executions = JSON.parse(r.executions) as string[];
   if (args.reason === undefined && r.step === 'second_read' && executions.length > 0) {
     entries.push({ bracket: 'second', reads: readsFor(frozen.target_set, detail.expect, args.reads, tx.at), failure: args.failure, at: tx.at });
+    roundReadChanges(tx, r, args.reads);
   }
   const missing: { kind: string; id: string }[] = [];
   let differs = false;
@@ -2726,13 +2865,21 @@ export function finalizeRound(
   if (args.reason === 'deadline') missing.push({ kind: 'deadline', id: detail.deadline });
   // Ended by a preempting teardown (D4 §4.6): unknown, never decided on.
   if (args.reason === 'preempted') missing.push({ kind: 'preempted', id: r.operation });
+  // An out-of-band change of the environment between the first read and
+  // now, or open at the first read (D4 §5.3 item 6; the driver's ruling):
+  // never verified; `unknown` unless a read itself differs.
+  const first = entries.find((x) => x.bracket === 'first');
+  if (first) for (const id of changesInInterval(tx.db, { environment: frozen.environment, from: first.at, to: tx.at })) missing.push({ kind: 'out_of_band', id });
   // The service's supervision, attached throughout (item 6; E110): after a
   // restart the round is `unknown`, naming it.
   if (attemptSupervision(tx.db, a) !== 'attached') missing.push({ kind: 'supervision', id: a.id });
   // Bindings that could not be read (m8): unknown, never decided as held.
   if (unboundBy !== null) missing.push({ kind: 'binding', id: unboundBy });
   let outcome: 'verified' | 'failed' | 'unknown';
-  if (differs || failedCheck) outcome = 'failed';
+  // A preempted round is recorded `unknown` naming what it lacked (D4 §4.6
+  // step 2), whatever it had read.
+  if (args.reason === 'preempted') outcome = 'unknown';
+  else if (differs || failedCheck) outcome = 'failed';
   else if (missing.length === 0 && behaviour && results.every((x) => x.state === 'passed')) outcome = 'verified';
   else {
     outcome = 'unknown';
@@ -2800,6 +2947,17 @@ export function finalizeRound(
   return { outcome, decides: invalidated === null };
 }
 
+// What a round's own identity read shows beside the round (D4 §6.3; the
+// driver's ruling, answer 1): a read of the environment's current generation
+// that differs records the change; the round's own unit's states are its
+// operation's, never out of band.
+function roundReadChanges(tx: Tx, r: RoundRow, reads: IdentityRead[] | null): void {
+  if (!Array.isArray(reads)) return;
+  const env = getEnv(tx.db, r.environment);
+  if (!env || env.current_generation !== r.deployment_generation) return;
+  recordIdentityReads(tx, { environment: env.id, reads, observation: null });
+}
+
 // ---- completion (D4 §5.5; J5, J9) ---------------------------------------------------------------
 
 export interface DeployVerdict {
@@ -2851,6 +3009,10 @@ export function deploymentVerdict(db: Db, args: { operation: string }): DeployVe
   // §4.7; the review's m1).
   const live = liveExecutionIds(db, op.id);
   if (live.length > 0) reasons.push({ code: 'DEPLOY_VERIFICATION_PENDING', subjects: live });
+  // An open out-of-band change of the environment (J6; D4 §6.3): an
+  // acknowledged one is a disposition and holds nothing here.
+  const open = openChanges(db, frozen.environment);
+  if (open.length > 0) reasons.push({ code: 'OUT_OF_BAND_CHANGE', subjects: open.map((r) => r.id) });
   return { reasons, results };
 }
 
@@ -2911,7 +3073,11 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       current_generation: env.current_generation,
       last_verified: parseJson<Record<string, unknown>>(rec?.last_verified ?? null),
       attempted: parseJson<Record<string, unknown>>(rec?.attempted ?? null),
-      observed: parseJson<Record<string, unknown>>(rec?.observed ?? null),
+      // The stored observation, its freshness computed at the read (D4 §6.1;
+      // SEAM.md §292): an expired one is never shown as healthy.
+      observed: observedRead(db, { project: env.project, observed: rec?.observed ?? null, now: nowIso() }),
+      // Every out-of-band change not settled, open or acknowledged (§6.3).
+      out_of_band: environmentChangesRead(db, env.id),
       operation_in_flight: inFlight ? { id: inFlight.id, kind: inFlight.kind, status: inFlight.status, stage: inFlight.orchestration_stage } : null,
       supervision,
       teardown_requested_at: env.teardown_requested_at,

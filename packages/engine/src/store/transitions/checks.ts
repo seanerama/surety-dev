@@ -1082,9 +1082,13 @@ export function regrantCheckLease(
 // Cancelled with no row: the execution never ran, so nothing is claimed of
 // the check, and no superseded evidence is restored (L7). Only from
 // `queued` or `materializing` (A.5).
-export function cancelExecution(tx: Tx, args: { execution: string; why: string }): boolean {
+// `live`: a running execution too (a preempting teardown, D4 §4.6 step 2;
+// SEAM.md §296): cancelled in this transaction, recorded with no result; the
+// check runner's supervisor ends its process and closes its domain.
+export function cancelExecution(tx: Tx, args: { execution: string; why: string; live?: boolean }): boolean {
   const x = mustExecution(tx.db, args.execution);
-  if (x.status !== 'queued' && x.status !== 'materializing') return false;
+  // A quarantined one keeps its quarantine: its termination is not known.
+  if (args.live === true ? !['queued', 'materializing', 'running', 'collecting'].includes(x.status) : x.status !== 'queued' && x.status !== 'materializing') return false;
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
   releaseCheckLease(tx, x.id);
   tx.emit('check.cancelled', { project: x.project, candidate: x.candidate, check_execution: x.id }, { from: x.status, why: args.why });

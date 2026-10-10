@@ -36,6 +36,7 @@ import { contentHash, getCandidate, markStale, predecessors } from './evidence.j
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, rolloutPartialPreview } from './deploy.js';
+import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
@@ -336,8 +337,8 @@ const BLOCKER: KindSpec = {
     if (d.subject_type === 'operation' && option === 'teardown') {
       const p = deployBlockerPreview(tx.db, d.subject_id);
       consumeDecision(tx, d, option, note);
-      if (p !== null) preemptTeardown(tx, { environment: p.environment, cause: `blocker ${d.id}` });
-      return consumed(d, [{ kind: 'tick' }, ...(p !== null ? [{ kind: 'preempt' as const, environment: p.environment }] : [])]);
+      const done = p !== null ? preemptTeardown(tx, { environment: p.environment, cause: `blocker ${d.id}` }) : null;
+      return consumed(d, [{ kind: 'tick' }, ...(p !== null ? [{ kind: 'preempt' as const, environment: p.environment, executions: done?.executions ?? [] }] : [])]);
     }
     // A quarantine's or an operation's acknowledgement establishes nothing
     // (build spec §6 correction 2).
@@ -370,8 +371,8 @@ const ROLLOUT_PARTIAL: KindSpec = {
   reraise: true,
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
-    const env = answerRolloutPartial(tx, { operation: d.subject_id, option });
-    return consumed(d, [{ kind: 'tick' }, ...(option === 'teardown' && env !== null ? [{ kind: 'preempt' as const, environment: env }] : [])]);
+    const p = answerRolloutPartial(tx, { operation: d.subject_id, option });
+    return consumed(d, [{ kind: 'tick' }, ...(option === 'teardown' && p !== null ? [{ kind: 'preempt' as const, environment: p.environment, executions: p.executions }] : [])]);
   },
 };
 
@@ -448,6 +449,8 @@ function oobRow(db: Db, id: string): OobRow | undefined {
 
 export function oobOptions(tx: Tx, o: { subject_kind: string; ref: string | null; found: string | null }): OptionSpec[] {
   if (o.subject_kind === 'repository') return [];
+  // An environment's (D4 §6.3; J6): `teardown` and `acknowledge`, never `adopt`.
+  if (o.subject_kind === 'environment') return ENV_OOB_OPTIONS;
   if (o.subject_kind === 'checkout') {
     return [
       { key: 'stash', label: 'Stash', consequence: 'The engine commits the checkout as it is to an oob ref and restores its baseline.', effect: { disposition: 'stash' } },
@@ -470,11 +473,16 @@ const OOB: KindSpec = {
   preview(tx, d, facts) {
     const row = oobRow(tx.db, d.subject_id);
     if (!row || row.disposition !== null || row.closed_at !== null) return null;
+    if (row.subject_kind === 'environment') {
+      const env = changeRow(tx.db, row.id)!;
+      return { manifest: envChangeManifest(env), options: ENV_OOB_OPTIONS, question: 'An out-of-band change of the environment was observed: tear the environment down, or acknowledge the change.' };
+    }
     const found = facts && 'found' in facts ? facts.found : row.found;
     return { manifest: { subject_kind: row.subject_kind, expected: row.expected, found }, options: oobOptions(tx, row), question: 'An out-of-band change was observed.' };
   },
   manifest(tx, d, facts) {
     const row = oobRow(tx.db, d.subject_id)!;
+    if (row.subject_kind === 'environment') return envChangeManifest(changeRow(tx.db, row.id)!);
     return { subject_kind: row.subject_kind, expected: row.expected, found: facts && 'found' in facts ? facts.found : row.found };
   },
   reraise: false,
@@ -498,6 +506,11 @@ const OOB: KindSpec = {
 function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | null): CommandResult {
   const row = oobRow(tx.db, d.subject_id)!;
   if (row.disposition !== null || row.closed_at !== null) throw stale(d);
+  // An environment's change (D4 §6.3): `teardown` or `acknowledge`.
+  if (row.subject_kind === 'environment') {
+    consumeDecision(tx, d, option, note);
+    return consumed(d, answerEnvironmentChange(tx, changeRow(tx.db, row.id)!, option) ?? []);
+  }
   const repo = projectRepoRow(tx, row.project).dev_repo_path;
   if (row.subject_kind === 'checkout') {
     if (option === 'stash') {

@@ -23,6 +23,7 @@ export type AdapterReadFailure = 'unavailable' | 'deadline' | 'output_exceeded' 
 export type ReconcileOutcome = 'applied' | 'absent' | 'partial' | 'conflicting' | 'unknown';
 export type IdentityMatch = 'match' | 'differs' | 'unread';
 export type Supervision = 'attached' | 'unknown';
+export type ReadBy = 'operation' | 'observation';
 
 // A process instance, as /proc names it: a pid and its start time.
 export interface Instance {
@@ -205,8 +206,10 @@ export interface DeploymentAdapter {
   deploy(cap: DeployCapability, signal: AbortSignal, launch: LaunchChannel): Promise<EffectReceipt>;
   teardown(cap: TeardownCapability, signal: AbortSignal): Promise<EffectReceipt>;
   reconcile(op: OperationIntent, attempt: AttemptIntent, signal: AbortSignal): Promise<Reconciliation>;
-  status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory>;
-  verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<IdentityRead[]>;
+  // `by`: who reads (SEAM.md §247, amended by §291): an operation (the
+  // default) or the observation job. The real adapter reads alike for both.
+  status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal, by?: ReadBy): Promise<TargetInventory>;
+  verify(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal, by?: ReadBy): Promise<IdentityRead[]>;
   logs(env: EnvRef, target: string, maxBytes: number, signal: AbortSignal): Promise<LogTail>;
 }
 
@@ -343,6 +346,8 @@ export async function effectCall(
   return { receipt: { result: receipt.result, steps }, bound: null, settled };
 }
 
-export function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
-  return bounded(call, b.readMs, b.outputBytes);
+// `cancel`: the engine's own stop (the observer's, at shutdown) aborts the
+// read as its deadline would.
+export function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds, cancel?: AbortSignal): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
+  return bounded(call, b.readMs, b.outputBytes, undefined, cancel);
 }
