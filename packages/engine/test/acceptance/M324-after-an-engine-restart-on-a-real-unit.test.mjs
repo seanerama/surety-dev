@@ -1,7 +1,7 @@
 // M324, after an engine restart, on real units (slice 26; sandbox lane).
 // M4 plan §3.4 M324 (a), (b), (d), (e), (f), and M319 (c)'s dispatch-blocking
 // form (deferred here by slice 25); D4-T07, D4-T08, D4-T09; D4 §§4.3, 4.7,
-// 5.3, 7.3, 9.2; J2; E110, E116, E126; SEAM.md §§256 to 259, 268, 271 to 277.
+// 5.3, 7.3, 9.2; J2; E110, E116, E126; SEAM.md §§256 to 259, 268, 271 to 278.
 //
 // On the real `local_service` adapter:
 //   (a), (f) the engine killed while a role domain (another project's run), a
@@ -33,7 +33,7 @@
 // of a survivor's logs and relay (their routes are slice 27's and 28's;
 // M334 (d) pins them after a restart).
 //
-// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 273, 277). The engine is killed only
+// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 274, 278). The engine is killed only
 // by `killOwnEngine` (SIGKILL through the ChildProcess handle the harness
 // spawned, after reading from /proc that it is this home's engine), or
 // stopped in order before a store command. Every unit is the engine's,

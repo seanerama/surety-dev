@@ -1,6 +1,6 @@
 // M321, the crash matrix, kernel half (slice 26). M4 plan §3.4 M321 (a),
 // (c), (d), (f), (g); D4-O03; D4 §§4.2, 4.3, 4.4; E110, E112; BS4 §11.1
-// CD3; SEAM.md §§247, 250, 251, 262, 270, 272 to 275.
+// CD3; SEAM.md §§247, 250, 251, 262, 270, 273 to 276.
 //
 // Kernel lane, on the scripted deployment adapter, whose target survives an
 // engine restart as a real one would (SEAM.md §247). A kill at each point of
@@ -17,7 +17,7 @@
 // control (a kill at `deploy.before_completion`: completion recomputed). The
 // real profile's kills are M321-kills-with-a-real-service (sandbox).
 //
-// SAFETY (BS4 §4.1; E64; SEAM.md §273). Every kill is of this test's own
+// SAFETY (BS4 §4.1; E64; SEAM.md §274). Every kill is of this test's own
 // engine child: either the engine kills itself at an armed barrier (its
 // `kill` action), or `killOwnEngine` sends SIGKILL through the ChildProcess
 // handle the harness spawned, after reading from /proc that it is the
@@ -46,7 +46,7 @@ import {
   unitName,
   verificationsOf,
 } from './harness/deploy/kernel.mjs';
-import { recordExit } from './harness/deploy/rounds.mjs';
+import { executionsOfRound, recordExit } from './harness/deploy/rounds.mjs';
 import { answerOn, assertInvariants, atReceipt, attemptWhen, killAt, killOwnEngine, leaseHeld, openDecisionOn, optionKeys, readsOf, scriptedUnit, unitsNamedIn } from './harness/deploy/recover.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -172,7 +172,8 @@ describe('M321 (a), (d), (f) a kill at each point of D4 §4.3, on the scripted t
     }, { max: 24, what: 'the interrupted round\'s row' });
     assert.equal(row.outcome, 'unknown', `the round open at the kill ends unknown (D4 §4.3) (${row.outcome})`);
     assert.ok((row.missing ?? []).some((m) => m.kind === 'supervision'), `missing names supervision (${JSON.stringify(row.missing)})`);
-    const executions = postDeployExecutions(fx.home, ctx.candidate.id);
+    // By the round's binding, whatever the trigger: a recovery retry keeps it (rounds.mjs; objection 039).
+    const executions = roundsOf(fx.home, op.id).flatMap((r) => executionsOfRound(fx.home, ctx.candidate.id, r.id));
     const results = withStore(fx.home, (db) => executions.flatMap((x) => db.prepare('SELECT * FROM "check_results" WHERE "execution" = ? AND "execution_established" = 1').all(x.id)));
     assert.deepEqual(results, [], 'no check result is synthesized for the round (the test recorded none)');
     await tick(fx.engine, ctx.project, { rounds: 2 });

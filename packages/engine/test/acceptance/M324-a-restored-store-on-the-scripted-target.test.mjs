@@ -1,6 +1,6 @@
 // M324 (e), a store restored from a backup that cannot account for a
 // prefixed unit, on the scripted target (slice 26). M4 plan §3.4 M324 (e);
-// D4-T08; D4 §§4.1, 4.6, 9.2; E110 item 1; SEAM.md §§59, 247, 250, 272, 277.
+// D4-T08; D4 §§4.1, 4.6, 9.2; E110 item 1; SEAM.md §§59, 247, 250, 273, 278.
 //
 // Kernel lane. The scripted target outlives the store (its state is under
 // the scripted directory, SEAM.md §247), as a real unit outlives a store

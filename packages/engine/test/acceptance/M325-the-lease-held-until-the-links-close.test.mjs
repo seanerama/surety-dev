@@ -1,6 +1,6 @@
 // M325 (e), (d): the lease held until the operation's links close (slice 26;
 // sandbox lane). M4 plan §3.4 M325; D4-O13, D4-O12; D4 §§4.7, 5.2; E115;
-// SEAM.md §§18, 256 to 259, 268, 272 to 276.
+// SEAM.md §§18, 256 to 259, 268, 273 to 277.
 //
 // On the real `local_service` adapter and the engine's controlled clock. A
 // round's post-deploy check holds in its `check` domain, its service link

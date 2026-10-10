@@ -1,10 +1,10 @@
 // Kills, restarts, reconcile reads, decisions on operations, invariants and
 // a restored store, for the M4 slice-26 rows, "crash and recover" (M320 to
-// M325; SEAM.md §§272 to 279). Used by the kernel-lane files on the
+// M325; SEAM.md §§273 to 280). Used by the kernel-lane files on the
 // scripted deployment adapter (SEAM.md §247) and by the sandbox-lane files
 // beside harness/deploy/host.mjs.
 //
-// SAFETY (BS4 §4.1; E64; SEAM.md §273). The only process anything here
+// SAFETY (BS4 §4.1; E64; SEAM.md §274). The only process anything here
 // signals is the test's own engine child, in one of two ways, each fail-closed:
 //   - `killAt` arms a barrier with the action `kill`: the engine sends
 //     SIGKILL to itself at that point (SEAM.md §18). The test signals nothing.
@@ -30,7 +30,7 @@ import { adapterState, armBarrier, attemptsOf, environmentLeases, operationsOf, 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ---- kills (SEAM.md §273) ---------------------------------------------------------------------
+// ---- kills (SEAM.md §274) ---------------------------------------------------------------------
 
 // The engine killed at a barrier by itself (the barrier's `kill`), ticks
 // asked for until it has exited. Returns the dead engine.
@@ -77,7 +77,7 @@ export async function killOwnEngine(fx) {
   assert.equal(engine.isRunning(), false, 'the engine child has exited');
 }
 
-// ---- barriers (SEAM.md §§18, 125, 273) --------------------------------------------------------
+// ---- barriers (SEAM.md §§18, 125, 274) --------------------------------------------------------
 
 export const barriersOf = async (engine) => (await engine.get('/v1/harness/barriers')).body?.barriers ?? [];
 
@@ -128,7 +128,7 @@ export const scriptedUnit = (name, generation, over = {}) => ({
   ...over,
 });
 
-// ---- reconcile reads (SEAM.md §274) ---------------------------------------------------------
+// ---- reconcile reads (SEAM.md §275) ---------------------------------------------------------
 
 export const readsOf = (attempt) => (attempt?.reconciliation_reads ?? []).map((r) => r.result);
 export const inventoryOf = (read) => (read?.read?.inventory ?? []).map((e) => e.resource);
@@ -151,7 +151,7 @@ export const firstRead = (ctx, op, what = 'the attempt\'s first reconcile read')
 
 export const leaseHeld = (home, environment) => environmentLeases(home, environment).some((l) => l.released_at === null);
 
-// ---- decisions on an operation (SEAM.md §275) -----------------------------------------------
+// ---- decisions on an operation (SEAM.md §276) -----------------------------------------------
 
 export const openOn = (home, kind, operation) => decisionsOn(home, kind, operation).filter((d) => d.status === 'open');
 
@@ -164,7 +164,7 @@ export const optionKeys = (row) => (row?.options ?? []).map((o) => o.key).sort()
 // Answer an open decision with `option`; the decision consumed with it.
 export async function answerOn(ctx, row, option) {
   const res = await answer(ctx.fx.engine, ctx.project, row, option);
-  assert.equal(res.status, 200, `answer ${row.kind} ${row.id} with ${option} (SEAM.md §275) (body: ${res.text})`);
+  assert.equal(res.status, 200, `answer ${row.kind} ${row.id} with ${option} (SEAM.md §276) (body: ${res.text})`);
   const after = decision(ctx.fx.home, row.id);
   assert.deepEqual([after.status, after.answer?.option], ['consumed', option], `the ${row.kind} decision is consumed with ${option}`);
   return after;
@@ -211,11 +211,11 @@ export async function assertInvariants(ctx) {
 // Every exact unit name a JSON value mentions.
 export const unitsNamedIn = (value) => [...new Set(JSON.stringify(value ?? null).match(UNIT) ?? [])].sort();
 
-// ---- the clock across a restart (SEAM.md §273) --------------------------------------------------
+// ---- the clock across a restart (SEAM.md §274) --------------------------------------------------
 
 export const CLOCK_OFFSET = '--harness-clock-offset';
 
-// ---- a store restored from a backup (SEAM.md §277) ---------------------------------------------
+// ---- a store restored from a backup (SEAM.md §278) ---------------------------------------------
 
 // `surety store backup` of a stopped engine's home. Returns its directory.
 export function backupNow(fx) {

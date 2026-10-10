@@ -1,6 +1,6 @@
 // M325, the environment lease and the orchestration deadline (slice 26).
 // M4 plan §3.4 M325 (a), (c) to (f); D4-O07, D4-O12, D4-O13; D4 §§4.5, 4.7;
-// J9; E115; BS4 §11.1 CD1; SEAM.md §§18, 247, 250, 266, 267, 269 to 275.
+// J9; E115; BS4 §11.1 CD1; SEAM.md §§18, 247, 250, 266, 267, 269 to 276.
 //
 // Kernel lane, on the scripted deployment adapter and the engine's
 // controlled clock. (a) A second deploy and an ordinary teardown wait for
@@ -123,7 +123,7 @@ describe('M325 (a) the lease is held from the intent until completion is evaluat
     await tick(fx.engine, ctx.project, { rounds: 3 });
     assert.equal(operationsOf(fx.home, ctx.project, 'deploy').length, 1, 'the second deploy is not intended while the first holds the lease');
     const waiting = await workEntry(fx.engine, ctx.project, request2.work_item.id);
-    assert.ok(JSON.stringify(waiting).includes('environment_busy'), `its work item shows environment_busy (D4 §4.5, A.2) (SEAM.md §276) (${JSON.stringify(waiting)})`);
+    assert.ok(JSON.stringify(waiting).includes('environment_busy'), `its work item shows environment_busy (D4 §4.5, A.2) (SEAM.md §277) (${JSON.stringify(waiting)})`);
     await stepExecution(fx.engine, execution.id, 'collecting');
     await stepExecution(fx.engine, execution.id, 'recorded', { exit_status: 0 });
     const op2 = await tickUntil(fx.engine, ctx.project, () => operationsOf(fx.home, ctx.project, 'deploy').find((o) => o.id !== op1.id), { max: 16, what: 'the second deploy to be intended' });
@@ -146,7 +146,7 @@ describe('M325 (c) the orchestration deadline survives a restart and is never re
     const deadline = op.orchestration_deadline_at;
     assert.equal(ms(deadline) - ms(op.created_at), DEADLINE * 1000, 'the deadline is the intent plus deploy_orchestration_deadline');
     await advanceClock(fx.engine, DEADLINE - 60);
-    // SIGKILL to this test's own engine child, then a start with the clock carried across (SEAM.md §273).
+    // SIGKILL to this test's own engine child, then a start with the clock carried across (SEAM.md §274).
     await killOwnEngine(fx);
     await fx.start({ args: [CLOCK_OFFSET, String(DEADLINE - 60)] });
     assert.equal(opNow(ctx, op.id).orchestration_deadline_at, deadline, 'unchanged across the restart');

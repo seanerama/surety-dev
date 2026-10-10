@@ -1,7 +1,7 @@
 // M322, a late launcher, and the service's life (slice 26; sandbox lane).
 // M4 plan §3.4 M322 (a) to (d), and M325 (e)'s domain of unknown
 // termination; D4-O04, D4-T06, D4-O13; D4 §§2.4, 4.7, 9.2, A.4; E110, E111;
-// SEAM.md §§125, 256 to 259, 262, 272 to 277.
+// SEAM.md §§125, 256 to 259, 262, 273 to 278.
 //
 // On the real `local_service` adapter:
 //   (a) a launcher held before it asks for its grant while the adapter's
@@ -30,7 +30,7 @@
 // deploy_auto_retries_max is 0, so no retry makes a second unit;
 // `adapter_effect_deadline` is 10 s, its minimum, for (a).
 //
-// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 258, 273). Every unit is the
+// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 258, 274). Every unit is the
 // engine's, under this test's home's prefix. The fixture service's `detach`
 // is released only after `assertServiceContained` has read its containment
 // from the host and runs only when the service reads itself contained. The

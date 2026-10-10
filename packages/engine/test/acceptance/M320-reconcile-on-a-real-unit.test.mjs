@@ -1,6 +1,6 @@
 // M320 (c), (a): reconcile on a real unit with the manager unreadable
 // (slice 26; sandbox lane). M4 plan §3.4 M320; D4-A03; D4 §§2.3, 2.4, 2.6
-// (`unreadable`); BS4 §4.1 rule 4; SEAM.md §§256, 257, 262, 272, 276.
+// (`unreadable`); BS4 §4.1 rule 4; SEAM.md §§256, 257, 262, 273, 277.
 //
 // On the real `local_service` adapter. A failed query's empty result is
 // never a success: with the user manager unreadable for one reconcile read

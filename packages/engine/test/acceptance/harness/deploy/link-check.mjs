@@ -135,7 +135,10 @@ function tree() {
   return { cwd: root, entries };
 }
 
-// One GET over the service link (the engine relays it to the frozen generation).
+// One GET over the service link (the engine relays it to the frozen
+// generation), on a connection of its own (`agent: false`): Node's global
+// agent keeps connections alive, and the link logs connections, not requests
+// (SEAM.md §268; objection 040).
 function get(path) {
   return new Promise((resolve) => {
     let url;
@@ -144,7 +147,7 @@ function get(path) {
     } catch (err) {
       return resolve({ status: null, body: null, error: `bad_url:${err.message}` });
     }
-    const req = request(url, { method: 'GET', timeout: 15_000 }, (res) => {
+    const req = request(url, { method: 'GET', timeout: 15_000, agent: false }, (res) => {
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {

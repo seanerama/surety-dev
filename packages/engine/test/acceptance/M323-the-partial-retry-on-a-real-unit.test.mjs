@@ -1,6 +1,6 @@
 // M323 (b), (c): the partial retry on a real unit (slice 26; sandbox lane).
 // M4 plan §3.4 M323; D4-O05; D4 §§2.4, 4.4; E112; SEAM.md §§256 to 259,
-// 272 to 276.
+// 273 to 277.
 //
 // On the real `local_service` adapter. A first attempt whose launch was
 // granted and whose application never started (the fault

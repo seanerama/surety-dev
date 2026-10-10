@@ -1,6 +1,6 @@
 // M323, retry after reconcile; a failure keeps the last verified (slice 26).
 // M4 plan §3.4 M323 (a) to (g); D4-O05, D4-O06; D4 §§2.4, 4.4; Q8, Q9; E112;
-// SEAM.md §§247, 250, 255, 272 to 275.
+// SEAM.md §§247, 250, 255, 273 to 276.
 //
 // Kernel lane, on the scripted deployment adapter. A retry is a new attempt
 // of the same operation, with a new generation and its own frozen intent,
@@ -112,7 +112,7 @@ describe('M323 (b) reconciled_partial and the human\'s answers', () => {
     await answerOn(ctx, ctx.row, 'abandon');
     const op = await ended(ctx, ctx.op.id);
     assert.equal(op.status, 'failed');
-    assert.equal(op.outcome_detail?.code, 'abandoned', `the outcome names the abandonment (SEAM.md §275) (${JSON.stringify(op.outcome_detail)})`);
+    assert.equal(op.outcome_detail?.code, 'abandoned', `the outcome names the abandonment (SEAM.md §276) (${JSON.stringify(op.outcome_detail)})`);
     assert.equal(authorizationRow(ctx.fx.home, ctx.request.authorization.id).status, 'consumed', 'the authorization stays consumed');
     assert.equal(leaseHeld(ctx.fx.home, ctx.env.id), false, 'the lease is released');
     assert.equal(attemptsOf(ctx.fx.home, ctx.op.id).length, 1, 'no further attempt');
@@ -133,7 +133,7 @@ describe('M323 (c) the partial retry\'s preview', () => {
   test('it names the reconciled state and the bounded remaining effects (the cleanup of g1 and the start of g2), and a change to what it binds stales it', async (t) => {
     const ctx = await partialFirst(t);
     assertPreview(ctx.row);
-    assert.ok(DECISIONS.kinds.rollout_partial, 'rollout_partial is in the decision contract (SEAM.md §275)');
+    assert.ok(DECISIONS.kinds.rollout_partial, 'rollout_partial is in the decision contract (SEAM.md §276)');
     assert.ok(JSON.stringify(ctx.row.manifest).includes('partial'), `the manifest names the reconciled state (${JSON.stringify(ctx.row.manifest)})`);
     const retry = ctx.row.options.find((o) => o.key === 'retry');
     assert.deepEqual(unitsNamedIn(retry.effect_plan).sort(), [ctx.g1, unitName(ctx.fx.home, ctx.env.id, 2)].sort(), `the retry's effect plan names the cleanup of g1 and the start of g2, and nothing else (${JSON.stringify(retry.effect_plan)})`);

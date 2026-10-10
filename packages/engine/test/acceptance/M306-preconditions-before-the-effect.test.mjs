@@ -22,7 +22,7 @@
 // Added by slice 26 (deferred here by slice 23, E125 item 8, E127 item 9):
 // a unit of unknown ownership, a unit carrying the environment's prefix
 // that no attempt intent names, present on the target between the intent
-// and the effect (D4 §§4.1, 9.2; SEAM.md §§250, 277). The fact is
+// and the effect (D4 §§4.1, 9.2; SEAM.md §§250, 278). The fact is
 // `unknown_ownership`; the precondition's read lists the unit; nothing
 // adopts or stops it. Its restored-store form is M324 (e).
 

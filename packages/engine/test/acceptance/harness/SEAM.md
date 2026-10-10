@@ -5312,7 +5312,15 @@ Another fault name, or an unknown environment, is **400** `invalid_value`. Harne
 
 (D4 §4.7; E115 item 3; E126; the Builder's design.) A service domain takes no `max_concurrent_domains` slot; it holds its `service_memory_max` and `service_writable_bytes` from admission until its closure is observed, and while any service runs one check domain's capacity (`domain_memory_max`, `domain_writable_bytes`, one slot) is kept free and shared by post-deploy checks, which run serially. `execution_domains.reservation` is `{memory, check_capacity}` (§259). Only deployment-bound executions use the reserved capacity, and they are admitted first; other work is admitted beside them. A deploy whose service plus its reserved check does not fit waits for admission within the orchestration deadline, shown on the **deploy work item** as `dispatch_hold` `{"code": "resource_envelope", "subject": {"limit": …}}` (§168's work-read form, D4 A.2's WorkItem hold); reaching the deadline refuses it before the effect, naming `orchestration_deadline` (§250), the prior service untouched. Recovery restores a surviving service's reservation before any dispatch; its own supervision stays `unknown` (E110).
 
-## 272. What the slice-26 tests assume throughout
+## 272. The slice-25 review's S1: the listing for another generation (2026-10-10)
+
+(The driver's ruling on the slice-25 Reviewer's S1, on `build/m4-s25` at `81df5b9`; D4 §3.4 ("another generation `differs`"), §5.3 item 6; §262's faults. `../COVERAGE.md`, "M4 slice 25: the review's S1".)
+
+**The rule.** The real adapter's identity read also lists the environment's prefix (read-only; §257's listing) to find whether another generation's unit is active, which makes the read `differs` naming `generation` (the slice-25 design). A listing that cannot be made (the call fails, passes its deadline or its output bound, or exits non-zero) leaves that fact unread, and the read is **`unread`**: `match` `unread`, `generation` `unread`, `detail` `{"field": "generation", "why": <naming the listing>}`. It is never left as it was: a `match` read with the listing failed is not a `match`. The round's row is then `unknown` (`missing` naming the `identity_read`), never `verified` (D4 §5.3 item 6: absent evidence is never read as success).
+
+**The fault** †: **`POST /v1/harness/deploy/faults` `{"environment": "env_…", "fault": "identity_listing_failed"}` → 200**: in the environment's next identity read, the listing of the environment's prefix fails as a non-zero exit, without being made. One-shot, harness-only, as §262's other faults. M316 (d) on a real unit (`M316-bracketing-on-a-real-unit`) arms it while the round's check is held between the reads, so it falls on the second read.
+
+## 273. What the slice-26 tests assume throughout
 
 (M4 plan §3.4, §2; BS4 §§4.1, 8, 9; D4 §§2.4, 4.3 to 4.7, 9.2; E110 to E112, E115, E121 CD1 and CD3, E126, E127; written 2026-10-10 on `verify/m4-s26` from `main` at `5b680a9`. Rows M320 to M325; M306's unit of unknown ownership (deferred by slice 23) and M319 (c)'s dispatch-blocking form (deferred by slice 25). Helpers: `deploy/recover.mjs` (new: kills, barriers, reconcile reads, decisions on operations, invariants, the restored store), with `deploy/kernel.mjs`, `deploy/rounds.mjs` and `deploy/host.mjs` unchanged.)
 
@@ -5321,7 +5329,7 @@ Another fault name, or an unknown environment, is **400** `invalid_value`. Harne
 - **A sandbox file's policy.** Each sandbox file sets `deploy_auto_retries_max` 0 (so no automatic retry makes a second unit) and `service_memory_max` 64 MiB through the project's policy (§252), and keeps its candidate `developing` by ending its rounds' checks with exit 1, except where a case needs another outcome (§256).
 - **No result from a fixture**, as §256. A kernel round's executions are moved through §190; a sandbox round's are the engine's own observations.
 
-## 273. Kill points, barriers, the clock across a restart
+## 274. Kill points, barriers, the clock across a restart
 
 (D4 §4.3; BS4 §4.1 rule 8; E64; sections 18, 33, 125, 251, 262.)
 
@@ -5340,11 +5348,11 @@ Another fault name, or an unknown environment, is **400** `invalid_value`. Harne
 - **D2's launcher barriers for a service launch** (§125; plan §2.3). A service launcher (D2's launcher with the `service` profile, started by the unit) reaches `launcher.before_placement`, `launcher.placed`, `launcher.before_authorization` and `launcher.authorized` as a role's launcher does, armed, listed and released through the same routes. Its wait survives the engine's death, and a later incarnation on the same home lists and releases it (§125). While it waits at `launcher.before_authorization` it has asked nothing; released, it sends its launch request to whatever engine now holds the launch socket.
 - **`--harness-clock-offset <seconds>`** †, harness-only (a usage error otherwise, as every harness flag): the engine's controlled clock (§18) starts that many seconds ahead of the host's wall clock; `POST /v1/harness/clock/advance` adds to it. It is how a test restarts an engine near a deadline it moved the clock to (§18 forbids restarting an engine whose clock moved, since an advance does not survive a restart): the test passes the total it advanced. A positive integer; anything else is a usage error.
 
-## 274. The reconcile read as the tests read it
+## 275. The reconcile read as the tests read it
 
 (D4 §2.4, Appendix B `Reconciliation`; D4-A04; §250.) Each entry of `operation_attempts.reconciliation_reads` is `{at, result, read}`: `result` the ReconcileOutcome; **`read.inventory`** † the inventory the outcome was decided from, an array of entries each with at least `resource` (a unit's exact name, or a cgroup, socket or directory path) and `kind` (`unit`, `cgroup`, `socket`, `directory`), so a test can see what was listed; `read.complete` whether the inventory was complete. A read that failed is recorded with `result` `unknown`. **"The receipt deleted"** (M320 (d)) is read as a receipt never recorded: the engine killed at `adapter.after_host_call` †; **"replaced by a false one"** as a receipt that claims `issued` for an effect that changed nothing (§247's `issued` without `apply`), the engine killed at `deploy.receipt_recorded`. Neither writes to the store.
 
-## 275. Decisions on a deploy or teardown operation
+## 276. Decisions on a deploy or teardown operation
 
 (D1 A.8; D4 §§2.4, 4.4, 4.6, 4.7; E112; `../contract/decisions.json`; sections 76 to 82.)
 
@@ -5352,7 +5360,7 @@ Another fault name, or an unknown environment, is **400** `invalid_value`. Harne
 - **`rollout_partial`** † (subject_type `operation`). Raised when an attempt is `reconciled_partial`; no further attempt starts without its answer. Options exactly **`retry`**, **`teardown`**, **`abandon`** (D4 §4.4; no rollback, Q8). Its manifest binds at least `operation_status`, `attempt`, `deployment_generation`, `environment_generation`, `lease_generation`, `config_identity`, `adapter_qualification`, `reconciled` (the read the partial outcome came from), `resources` and `observations` (D1 A.8 with D4 §4.4's list). The `retry` option's `effect_plan` names the bounded remaining effects: the units its cleanup removes and the units it creates, and no other unit. A change to any bound value (the cases change the configuration) stales it: an answer carrying the earlier preview is refused `decision_stale` or `decision_invalidated` (§§76 to 82). Answers: `retry` makes the next attempt (its intent's `cleanup` naming exactly the earlier attempt's units, each `{resource, attempt}` as D4 A.3); `teardown` as the blocker's; **`abandon`** ends the operation `failed` with `outcome_detail` `{"code": "abandoned", …}` †, the authorization still `consumed`, the lease released.
 - **The verification ways out** (D4 §4.7). After a verification `failed` or `unknown`, a candidate superseded or a refused completion, the deploy work item waits on a blocker whose reason names the cause (its work read carries the code: `VERIFICATION_FAILED`, `CANDIDATE_SUPERSEDED`, …); re-verification (`POST …/operations/:o/verify`, §266) and an ordinary teardown are then accepted. Which of them a decision row offers is not pinned here.
 
-## 276. Faults and holds of slice 26
+## 277. Faults and holds of slice 26
 
 Faults of the real adapter, through §262's route (`POST /v1/harness/deploy/faults` `{"environment", "fault"}` → **200**; one-shot; harness-only):
 
@@ -5366,7 +5374,7 @@ Faults of the real adapter, through §262's route (`POST /v1/harness/deploy/faul
 
 **`environment_busy`** (D4 §4.5, A.2): a deploy work item waiting for the environment lease names `environment_busy` in its work read (as its blocker's reason or its `dispatch_hold`'s code); an ordinary teardown asked for while the lease is held is not intended until it is released.
 
-## 277. Recovery, ownership, a restored store and supervision
+## 278. Recovery, ownership, a restored store and supervision
 
 (D4 §§4.1, 4.6, 7.3, 9.2; E110, E116, E126; sections 59, 250, 255, 259, 271.)
 
@@ -5378,28 +5386,28 @@ Faults of the real adapter, through §262's route (`POST /v1/harness/deploy/faul
 - **A service domain's legal endings** (D4 §9.2, A.4). `execution_domains.status` `terminated` with `terminated_at`, from `launched` or, for a refused setup, directly from `allocated` (`launch_authorized_at` null); `quarantined` while its closure is not observed, keeping its reservation and its launch `closed`, then `terminated` once observed. The application's exit is recorded as **`app_exit`** `{at, status}` on the domain and **`deploy.service_exited`** (`subject.attempt`, `subject.domain`) †, `app_exit.at` no later than `terminated_at` (the plan's "the exit recorded before output is drained": the drain itself is inside the init and is not observed).
 - **The environment read** (§255) shows `running` and `supervision` null once the engine's latest read of the environment found nothing of it running (M323 (g): a partial attempt that left nothing), whatever `last_verified` holds.
 
-## 278. CD1's round deadline, and the orchestration deadline's `missing`
+## 279. CD1's round deadline, and the orchestration deadline's `missing`
 
 (D4 §4.7; E115; E121 CD1; sections 250, 267, 269, 271.) `verification_rounds.deadline_at` † for a round of `POST …/verify` is its `registered_at` plus `deploy_orchestration_deadline`, fixed at registration and never renewed; the round takes the environment lease again (a new `leases` row of kind `environment`) and releases it by §4.7; reaching its deadline records the round's row `unknown` with a `missing` entry of kind `deadline`. The operation's `orchestration_deadline_at` never changes. When the operation's own deadline is reached in verification, the row is `unknown`, `deploy.orchestration_deadline` is emitted once (`subject.operation`), and `missing` holds an entry of kind `deadline` and one for each thing absent: kind `check_execution` for a required check never registered (its `id` the check's †), an entry whose `id` is the execution for a registered execution with no result (quarantined or never admitted; its kind `check_execution` or `check_result`, not pinned), kind `identity_read` for a read not made.
 
-## 279. Names the Verifier fixed in this pass, the readings, and what is deferred
+## 280. Names the Verifier fixed in this pass, the readings, and what is deferred
 
-**What this pass changes in earlier sections.** §18's barriers gain §273's; §125's launcher barriers apply to a service launcher; §114's switches gain `--harness-clock-offset`; §247's applying deploy also removes `cleanup` units; §250's attempt reads gain §274's `read.inventory`; §262's fault route gains §276's five faults; §§76 to 82's decision kinds gain `rollout_partial` and `blocker`'s `teardown` (`../contract/decisions.json`; M73 reads the file, so it fails until the engine enables `rollout_partial` with that manifest: the slice-26 straddle).
+**What this pass changes in earlier sections.** §18's barriers gain §274's; §125's launcher barriers apply to a service launcher; §114's switches gain `--harness-clock-offset`; §247's applying deploy also removes `cleanup` units; §250's attempt reads gain §275's `read.inventory`; §262's fault route gains §277's five faults; §§76 to 82's decision kinds gain `rollout_partial` and `blocker`'s `teardown` (`../contract/decisions.json`; M73 reads the file, so it fails until the engine enables `rollout_partial` with that manifest: the slice-26 straddle).
 
 | What | Fixed as | Why |
 |---|---|---|
-| The kill points' barriers † | §273's six | D4 §4.3's table and plan §2.3's names; `init.app_started` is CD3's window |
+| The kill points' barriers † | §274's six | D4 §4.3's table and plan §2.3's names; `init.app_started` is CD3's window |
 | A restart near a deadline † | `--harness-clock-offset` | §18 forbids restarting after a clock advance; D4-O12 asks for a restart near the deadline |
 | The recorded inventory † | `read.inventory[].resource`, `kind` | D4-A04 "the same outcome, inventory included" must be observable |
 | The receipt deleted / false † | a kill before the receipt; `issued` without `apply` | no store write; both are the adapter's claims lost or wrong |
-| `rollout_partial`'s manifest and options † | §275 | D1 A.8 and D4 §4.4 name the bindings and options, not keys |
-| `blocker`'s `teardown` † | §275 | D4 §4.6 "through the blocker's teardown option" |
+| `rollout_partial`'s manifest and options † | §276 | D1 A.8 and D4 §4.4 name the bindings and options, not keys |
+| `blocker`'s `teardown` † | §276 | D4 §4.6 "through the blocker's teardown option" |
 | `abandon`'s outcome † | `outcome_detail.code` `abandoned` | D4 §4.4 names the answer, not the record |
-| The five faults † | §276 | plan §2.3 names a missing bus address, a dropped channel; D4 §9.2 a refused setup, a failed `exec`, an unobserved closure |
-| `deploy.service_exited`'s subject, `app_exit` † | §277 | D4 A.3, A.5 |
+| The five faults † | §277 | plan §2.3 names a missing bus address, a dropped channel; D4 §9.2 a refused setup, a failed `exec`, an unobserved closure |
+| `deploy.service_exited`'s subject, `app_exit` † | §278 | D4 A.3, A.5 |
 | `unknown_ownership`'s read † | names the unit | D4 §9.2 "lists the unit" |
-| `missing` entries at the deadline † | §278 | plan §2.6 leaves the ids to the seam |
-| `running` null when nothing runs † | §277 | D4 §4.4 "nothing shown running when nothing is" |
+| `missing` entries at the deadline † | §279 | plan §2.6 leaves the ids to the seam |
+| `running` null when nothing runs † | §278 | D4 §4.4 "nothing shown running when nothing is" |
 
 **Readings, each resolved by the design.** (1) M321 (b)'s one Expected sentence ("the service surviving with supervision `unknown`; its round `unknown`…") is read per kill point: where no application was started (placement, the grant) nothing survives and the reading that applies is "no verification passing"; where it was (`started`, verification) all of it applies (D4 §4.3's right-hand column). (2) "A unit of unknown ownership" (M306's deferred case) is a failed precondition before the effect, as M306's Expected says (D4 §4.1, "no unit or domain of the environment is of unknown ownership"), and `conflicting` with a blocker when a reconcile read finds it (D4 §2.4; M320 (e)); both are written. (3) "Restarted by the manager" (M322 (d)) is read as the manager's own restart policy, which D4 §9.2 disables (`Restart=no`, and no second grant after a natural exit); a manager-initiated restart other than by policy would be by hand. (4) M322 (a)'s "after the caller cancelled the create" needs the launch closed for the launcher to be "late"; D4 does not say the cancellation itself closes it, so the case closes it with a restart (D4 §9.2), which D4 does say.
 

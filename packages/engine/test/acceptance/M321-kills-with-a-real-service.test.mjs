@@ -1,6 +1,6 @@
 // M321 (b), (e), (g): kills of the engine with the real `service` profile
 // (slice 26; sandbox lane). M4 plan §3.4 M321; D4-O03; D4 §§2.4, 4.3, 9.2;
-// E110, E111; BS4 §11.1 CD3; SEAM.md §§125, 256 to 259, 272 to 277.
+// E110, E111; BS4 §11.1 CD3; SEAM.md §§125, 256 to 259, 273 to 278.
 //
 // On the real `local_service` adapter, the engine killed at three points of
 // a service's launch, then started again on the same home:
@@ -26,7 +26,7 @@
 // naming `supervision`). deploy_auto_retries_max is 0, so no retry makes a
 // second unit.
 //
-// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 273). What is killed is this test's
+// SAFETY (BS4 §4.1; E64; SEAM.md §§257, 274). What is killed is this test's
 // own engine child and nothing else: at the grant and at `started` the
 // engine kills itself at the armed barrier (its `kill`); at placement the
 // test calls `killOwnEngine`, which sends SIGKILL through the ChildProcess

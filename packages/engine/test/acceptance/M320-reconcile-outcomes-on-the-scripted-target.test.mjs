@@ -1,5 +1,5 @@
 // M320, reconcile outcomes from the target (slice 26). M4 plan §3.4 M320;
-// D4-A03, D4-A04; D4 §2.4; E111; SEAM.md §§247, 250, 255, 272 to 275.
+// D4-A03, D4-A04; D4 §2.4; E111; SEAM.md §§247, 250, 255, 273 to 276.
 //
 // Kernel lane, on the scripted deployment adapter. Each target state of
 // D4 §2.4's table, for a deploy and for a teardown, set on the scripted
@@ -22,7 +22,7 @@
 // real unit with the manager unreadable.
 //
 // SAFETY: no unit, no systemctl, no host process. The only process
-// signalled is the test's own engine, by itself at a barrier (SEAM.md §273).
+// signalled is the test's own engine, by itself at a barrier (SEAM.md §274).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -72,7 +72,7 @@ const requestDeploy = (ctx) => () => deploy(ctx.fx.engine, ctx.project, ctx.cand
 async function assertBlocks(ctx, op, outcome) {
   const { fx, project, env } = ctx;
   const blocker = await openDecisionOn(ctx, 'blocker', op);
-  assert.ok(`${JSON.stringify(blocker.manifest)} ${blocker.question}`.includes(outcome), `the blocker names what was read, ${outcome} (SEAM.md §275) (${JSON.stringify(blocker.manifest)})`);
+  assert.ok(`${JSON.stringify(blocker.manifest)} ${blocker.question}`.includes(outcome), `the blocker names what was read, ${outcome} (SEAM.md §276) (${JSON.stringify(blocker.manifest)})`);
   const reconcilesBefore = effectCalls(await adapterState(fx.engine, env.id), 'reconcile').length;
   const deploysBefore = effectCalls(await adapterState(fx.engine, env.id), 'deploy').length;
   await tick(fx.engine, project, { rounds: 3 });
@@ -230,7 +230,7 @@ describe('M320 (d) a restart that loses the adapter\'s memory: the read is the t
     const a = await attemptWhen(ctx, op.id, 1, (x) => readsOf(x).some((r) => r !== 'unknown'), 'the read after the restart');
     const read = a.reconciliation_reads.find((r) => r.result !== 'unknown');
     assert.equal(read.result, 'applied', 'the outcome is the target\'s, not a receipt\'s');
-    assert.ok(inventoryOf(read).includes(unitName(fx.home, ctx.env.id, 1)), `the read records its inventory, naming g1's unit (SEAM.md §274) (${JSON.stringify(read.read)})`);
+    assert.ok(inventoryOf(read).includes(unitName(fx.home, ctx.env.id, 1)), `the read records its inventory, naming g1's unit (SEAM.md §275) (${JSON.stringify(read.read)})`);
   });
 
   test('a false receipt (issued, nothing applied) and a restart: the read is absent, never applied', async (t) => {
