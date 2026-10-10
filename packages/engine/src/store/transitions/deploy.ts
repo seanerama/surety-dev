@@ -2331,15 +2331,11 @@ export function roundStep(
     return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
   }
   if (why !== null) return { state: 'superseded', next: supersedeRound(tx, r, why, requiredOf).id };
-  const a = getAttempt(tx.db, r.attempt)!;
-  // A service that survived an engine restart (E110): nothing verifies on
-  // it, so its round is decided now. A channel lost within this incarnation
-  // leaves the round to its reads, which say what changed (M316 (b)); its
-  // row names `supervision` all the same.
-  if (supervisionOf(a) !== 'attached') {
-    const done = finalizeRound(tx, { round: r.id, reads: null, failure: null }, requiredOf);
-    return { state: 'decided', outcome: done?.outcome ?? 'unknown' };
-  }
+  // A service whose supervision is `unknown` (an engine restart, or its
+  // channel lost) is still read through the manager and /proc, and its
+  // round's required checks are registered and refused, not run,
+  // `redaction_unavailable` (checks.ts; E116; SEAM.md §278); the row names
+  // `supervision`, so nothing verifies on it (E110).
   if (!roundTakeLease(tx, r, args.incarnation)) return { state: 'wait', reason: 'environment_busy' };
   return { state: 'go', step: r.step };
 }

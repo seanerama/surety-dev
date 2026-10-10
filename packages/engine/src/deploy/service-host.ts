@@ -152,6 +152,21 @@ class Channel {
     this.closed = true;
     this.socket.end();
   }
+
+  // The engine's own end closed at once, as a lost connection is: what the
+  // channel's loss does follows now (the harness fault
+  // `control_channel_dropped`, SEAM.md §277).
+  drop(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.socket.destroy();
+    this.onClose?.();
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = null;
+      w(null);
+    }
+  }
 }
 
 interface Service {
@@ -536,7 +551,7 @@ export class ServiceHost {
   // connection; the service goes on, its supervision `unknown`.
   dropChannel(attempt: string): void {
     const s = this.services.get(attempt);
-    if (s?.channel && !s.channel.closed) s.channel.socket.destroy();
+    if (s?.channel && !s.channel.closed) s.channel.drop();
   }
 
   attached(attempt: string): boolean {
