@@ -35,6 +35,7 @@
 //   {do:"sleep", ms}                    wait (<=120 s)
 
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, writeSync } from 'node:fs';
+import { request } from 'node:http';
 import net from 'node:net';
 import { join, relative } from 'node:path';
 
@@ -143,7 +144,7 @@ function get(path) {
     } catch (err) {
       return resolve({ status: null, body: null, error: `bad_url:${err.message}` });
     }
-    const req = require('node:http').request(url, { method: 'GET', timeout: 15_000 }, (res) => {
+    const req = request(url, { method: 'GET', timeout: 15_000 }, (res) => {
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {

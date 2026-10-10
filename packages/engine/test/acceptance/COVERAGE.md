@@ -2426,6 +2426,22 @@ The running service's `/surety/app` across such a restart is not asserted: the k
 
 **What was run:** `node --check` on every new and changed file; a static resolution check that every named import of the new files resolves against its harness module (no engine started, no acceptance file run). **No acceptance file was run**: the driver's gate on slice 24 held the machine (BS4 §4.1 rule 13; E124). The failures will be shown on a scratch worktree once the driver says the machine is free; this file records that they have not been shown yet.
 
+**Run on `main` at `f5403d3`** (slice 24's build `8406639` and these cases), 2026-10-10, in the Verifier's worktree after `npm run build`, each file alone with `node --test --test-timeout=1800000`, no other `node --test` running; `systemctl --user is-system-running` `running` and no `surety-*` unit before and after each file. Three files had harness defects, fixed on `verify/m4-s25` (`ba12d60`, `d337210`, `21d3a8a`) and rerun; the figures are the reruns'.
+
+| File | Result | Why it fails (all a missing slice-25 behaviour) |
+|---|---|---|
+| M305 (d) | 0 of 2 | barrier `deploy.before_completion` unknown (400) |
+| M314 | 3 of 6 | (a) the source projection is not empty (`server.js`, `src/app.js` in the tree); (c), (e) no `service_link_log` record; (f) no limit logged |
+| M315 | 2 of 12 | `POST …/operations/:o/verify` 404; `deploy.before_completion` unknown; no supersession (round 1 `decided`) |
+| M316 scripted | 0 of 3 | (d) another generation reads `unread`, the row `unknown` (not `failed`); (e) no supersession |
+| M316 real | 2 of 3 | (b) the restarted unit reads `unread` (`unit` not active, checked before its new `invocation_id`), the row `unknown`, not `failed` |
+| M317 | 11 of 12 | no supersession (the required-set change opens no round 2) |
+| M318 | 1 of 2 | the verify route 404 |
+| M319 admission | 0 of 1 | the deploy work item's `dispatch_hold` is null while admission waits |
+| M319 reserve | 1 of 2 | (b) the verify route 404 |
+
+Harness defects found and fixed: M315 (i) wrote to the store through the read-only helper (`readonly database`), and (g) waited for a scripted execution that a restart never moves (§190); M319-reserve set the project key `service_memory_max` as an engine key (the engine refused to start); M314's link check used `require` in an ES module, its cases did not end their environments in `finally` (the first run left five units of the test's own home, which the operator's guard stopped by exact name; none remained), and (g) assumed the operator route registers an `alpha_complete`-only check, which M3 refuses (§268 now accepts either). The cases that pass already (M317's conditions, M318 (c), M314 (b), (d), (g), M316 real (a), (c), M319 (c), M315 (i), (a)'s fixture case) read slice-23 and slice-24 behaviour that is built.
+
 ## M3 slice 22: the rehearsal on `main` at `5511bd2` (E104 built)
 
 2026-10-08, by the Verifier, at the coordinator's request, in a scratch worktree at `5511bd2` (built there); `node --test` on one file at a time; the real file only under the rehearsal switch with the fake `claude` (`SURETY_REAL_AUTH_MODE=api_key`, a made-up key, run directories in the session's scratchpad); never `--lane real`; nothing exhaust-lane. Never evidence for M3.
