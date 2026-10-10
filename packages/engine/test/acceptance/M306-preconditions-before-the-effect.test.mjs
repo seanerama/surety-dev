@@ -13,12 +13,18 @@
 //
 // Deferred (COVERAGE.md; each a question for Sean): a lost sign-off (it
 // needs a T2 candidate's Reviewer sign-off and a change of its acceptance
-// content: with the scope rows of slice 25); an open out-of-band
+// content: slice 28, COVERAGE "M4 slice 25"); an open out-of-band
 // observation of the environment (the observation job of slice 27, M331
-// (b)); the lease lost (preempting teardown, slice 27); a unit of unknown
-// ownership (recovery and a restored store, slice 26, M324 (e)). The target
-// here holds no prior service, so "the prior service untouched" is read as
-// the target unchanged; a prior is slice 26's (M323).
+// (b)); the lease lost (preempting teardown, slice 27). The target here
+// holds no prior service, so "the prior service untouched" is read as the
+// target unchanged; a prior is slice 26's (M323).
+//
+// Added by slice 26 (deferred here by slice 23, E125 item 8, E127 item 9):
+// a unit of unknown ownership, a unit carrying the environment's prefix
+// that no attempt intent names, present on the target between the intent
+// and the effect (D4 §§4.1, 9.2; SEAM.md §§250, 277). The fact is
+// `unknown_ownership`; the precondition's read lists the unit; nothing
+// adopts or stops it. Its restored-store form is M324 (e).
 
 import assert from 'node:assert/strict';
 import { appendFileSync, chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -34,6 +40,8 @@ import { withStore } from './harness/store.mjs';
 import {
   adapterState,
   artifactsOf,
+  setTarget,
+  unitName,
   attemptsOf,
   authorizationRow,
   configContent,
@@ -208,5 +216,31 @@ describe('M306 every precondition is read again before the effect', () => {
     const ctx = await waiting(t);
     await advanceClock(ctx.fx.engine, 1801);
     await assertRefusedBeforeEffect(ctx, 'orchestration_deadline');
+  });
+});
+
+describe('M306 a unit of unknown ownership (slice 26; deferred by slice 23)', () => {
+  test('a unit carrying the environment\'s prefix that no intent names appears before the effect: refused naming unknown_ownership, the unit listed in the precondition\'s read, never adopted or stopped', async (t) => {
+    const ctx = await waiting(t);
+    const stray = {
+      name: unitName(ctx.fx.home, ctx.env.id, 5),
+      state: 'active',
+      invocation_id: '5'.repeat(32),
+      cgroup: `/user.slice/app.slice/${unitName(ctx.fx.home, ctx.env.id, 5)}`,
+      pending_job: false,
+      generation: 5,
+      instance: { pid: 905005, start_time: 5005 },
+      init: { pid: 805005, start_time: 5005 },
+      tree: `sha256:${'5'.repeat(64)}`,
+    };
+    await setTarget(ctx.fx.engine, ctx.env.id, { ...ctx.target, units: [...ctx.target.units, stray] });
+    ctx.target = (await adapterState(ctx.fx.engine, ctx.env.id)).target;
+    await grant(ctx);
+    const op = await assertRefusedBeforeEffect(ctx, 'unknown_ownership');
+    const facts = JSON.parse(readFileSync(recordFile(ctx.fx.home, recordRow(ctx.fx.home, op.outcome_detail.manifest))).toString('utf8')).facts ?? [];
+    const read = facts.find((f) => f.fact === 'unknown_ownership')?.read;
+    assert.ok(JSON.stringify(read ?? null).includes(stray.name), `the precondition's read lists the unit (${JSON.stringify(read)})`);
+    assert.deepEqual((await adapterState(ctx.fx.engine, ctx.env.id)).target.units.find((u) => u.name === stray.name), stray, 'the unit is untouched: never adopted, never stopped');
+    assert.deepEqual(attemptsOf(ctx.fx.home, op.id), [], 'no attempt, so no intent or capability names it');
   });
 });
