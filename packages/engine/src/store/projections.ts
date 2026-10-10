@@ -525,6 +525,12 @@ interface DecisionRef {
 // options the holding decision offers, in its stored order and in the
 // decisions read's form; a decision that cannot be found has none to show,
 // which is null, not [].
+function deployAdmissionHold(item: WorkRow): { code: string; reason: string | null; subject: Record<string, unknown> } | null {
+  const stored = parseJson<{ reason?: string; hold?: { code?: string; reason?: string; subject?: Record<string, unknown> } }>(item.blocker);
+  if (stored?.reason !== 'resource_envelope' || !stored.hold) return null;
+  return { code: stored.hold.code ?? 'resource_envelope', reason: stored.hold.reason ?? null, subject: stored.hold.subject ?? {} };
+}
+
 function blockerOf(db: Db, item: WorkRow) {
   const stored = parseJson<{ reason?: string; raised_at?: string; decision?: string | null }>(item.blocker);
   const holding = db
@@ -570,7 +576,9 @@ export function readWork(db: Db, args: { project: string }) {
       blocker: blockerOf(db, w),
       // An eligible item held by the resource envelope (D2 §3.7, A.7): it
       // stays eligible, and this says why it is not dispatched now.
-      dispatch_hold: w.status === 'eligible' ? envelopeHold(db) : null,
+      // A deploy waiting for its service's admission (D4 §4.7, A.2) shows
+      // the hold its operation recorded (SEAM.md §271).
+      dispatch_hold: w.status === 'eligible' ? envelopeHold(db) : w.kind === 'deploy' ? deployAdmissionHold(w) : null,
     })),
   };
 }

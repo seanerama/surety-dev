@@ -504,8 +504,10 @@ export function readCandidateExecutions(db: Db, args: { project: string; candida
   // A queued `direct` execution the resource envelope does not admit now
   // shows its hold (D3 §2.5, "a hold shows as resource_envelope"; SEAM.md
   // §210): no domain is allocated for it meanwhile.
-  const hold = rows.some((r) => r.status === 'queued' && r.runner_class === 'direct') ? envelopeHold(db, { kind: 'check' }) : null;
-  return { ...head, executions: rows.map((r) => ({ ...executionView(r), hold: r.status === 'queued' && r.runner_class === 'direct' ? hold : null })) };
+  const queued = (r: Record<string, unknown>) => r.status === 'queued' && r.runner_class === 'direct';
+  const hold = rows.some((r) => queued(r) && r.deployment === null) ? envelopeHold(db, { kind: 'check' }) : null;
+  const boundHold = rows.some((r) => queued(r) && r.deployment !== null) ? envelopeHold(db, { kind: 'check', bound: true }) : null;
+  return { ...head, executions: rows.map((r) => ({ ...executionView(r), hold: queued(r) ? (r.deployment !== null ? boundHold : hold) : null })) };
 }
 
 // ---- the runner's qualification (D3 §2.8; A.3 host_qualifications.check_runner) --------
@@ -581,11 +583,15 @@ export function admitExecution(
   if (args.selfTestRunning === true || q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
   const { n } = tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "status" IN (${LIVE.map(() => '?').join(', ')})`).get(args.project, ...LIVE) as { n: number };
   const max = projectPolicy(tx.db, args.project).max_concurrent_checks ?? 1;
-  if (n >= max || envelopeHold(tx.db, { kind: 'check' }) !== null) return null;
+  if (n >= max) return null;
+  // A deployment verification's execution is admitted first, into the check
+  // capacity kept for it while a service runs (D4 §4.7; E126; the slice-25
+  // design Q5); any other beside it.
   const x = tx.db
-    .prepare(`SELECT * FROM "check_executions" WHERE "project" = ? AND "status" = 'queued' AND "runner_class" = 'direct' ORDER BY "execution_seq" LIMIT 1`)
+    .prepare(`SELECT * FROM "check_executions" WHERE "project" = ? AND "status" = 'queued' AND "runner_class" = 'direct' ORDER BY ("deployment" IS NULL), "execution_seq" LIMIT 1`)
     .get(args.project) as Record<string, unknown> | undefined;
   if (!x) return null;
+  if (envelopeHold(tx.db, { kind: 'check', bound: typeof x.deployment === 'string' }) !== null) return null;
   const check = tx.db.prepare('SELECT * FROM "checks" WHERE "id" = ?').get(x.check) as { key: string; definition: string; input_manifest: string };
   const version = tx.db.prepare('SELECT "roots", "governed" FROM "protected_versions" WHERE "id" = ?').get(x.protected_version) as { roots: string; governed: string | null };
   const manifests = (tx.db.prepare('SELECT "input_manifest" FROM "checks" WHERE "protected_version" = ?').all(x.protected_version) as { input_manifest: string }[]).map(
@@ -669,10 +675,10 @@ function linkOf(db: Db, x: Record<string, unknown>): Admission['link'] {
 function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): void {
   const rows = tx.db
     .prepare(
-      `SELECT x."id", x."runner_class", x."environment", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
+      `SELECT x."id", x."runner_class", x."environment", x."deployment", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check"
        WHERE x."project" = ? AND x."status" = 'queued' ORDER BY x."execution_seq"`,
     )
-    .all(project) as { id: string; runner_class: string; environment: string | null; definition: string }[];
+    .all(project) as { id: string; runner_class: string; environment: string | null; deployment: string | null; definition: string }[];
   if (rows.length === 0) return;
   const q = runnerQualification(tx.db);
   for (const r of rows) {
@@ -686,6 +692,9 @@ function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean): vo
     // An execution a deployment verification bound to its environment is
     // not unbound (D4 §5.1, X1); every other one that requires one is.
     if (Array.isArray(requires) && requires.includes('environment') && r.environment === null) reason = 'environment_unbound';
+    // A check against a service whose supervision is `unknown` is refused,
+    // not run (D4 §§5.1, 7.3; E116).
+    else if (r.deployment !== null && !deploymentSupervised(tx, r.deployment)) reason = 'redaction_unavailable';
     else if (q === null) reason = 'isolation_unqualified';
     else if (r.runner_class !== 'direct') reason = 'runner_unqualified';
     else if (!selfTestRunning && (q.check_runner === null || q.check_runner.qualified !== true)) reason = 'runner_unqualified';
@@ -815,6 +824,56 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
   reconcileRepairs(tx, x.project);
 }
 
+// Whether the service a deployment-bound execution is bound to is
+// supervised now (D4 §9.2; E110): its launch granted by this incarnation,
+// its control channel not lost.
+function deploymentSupervised(tx: Tx, binding: string): boolean {
+  let b: { attempt?: string };
+  try {
+    b = JSON.parse(binding) as typeof b;
+  } catch {
+    return false;
+  }
+  const row = tx.db
+    .prepare(`SELECT a."incarnation", a."init_instance" AS "init", (SELECT d."supervision_lost_at" FROM "execution_domains" d WHERE d."attempt" = a."id") AS "lost" FROM "operation_attempts" a WHERE a."id" = ?`)
+    .get(b.attempt ?? '') as { incarnation: string | null; init: string | null; lost: string | null } | undefined;
+  let incarnation: string | undefined;
+  try {
+    incarnation = engineSettings().incarnation;
+  } catch {
+    incarnation = undefined;
+  }
+  return row !== undefined && row.init !== null && row.incarnation === incarnation && row.lost === null;
+}
+
+// Whether a deployment-bound execution may be retried (D4 §5.3 item 7;
+// E110): its round open, its generation the environment's current one, its
+// service's launch granted by this incarnation and its channel not lost.
+function deploymentRetryable(tx: Tx, binding: string): boolean {
+  let b: { round?: string; attempt?: string; deployment_generation?: number };
+  try {
+    b = JSON.parse(binding) as typeof b;
+  } catch {
+    return false;
+  }
+  const row = tx.db
+    .prepare(
+      `SELECT r."status" AS "round_status", e."current_generation" AS "current", a."incarnation" AS "incarnation", a."init_instance" AS "init",
+              (SELECT d."supervision_lost_at" FROM "execution_domains" d WHERE d."attempt" = a."id") AS "lost"
+       FROM "verification_rounds" r JOIN "operation_attempts" a ON a."id" = r."attempt" JOIN "environments" e ON e."id" = r."environment"
+       WHERE r."id" = ? AND a."id" = ?`,
+    )
+    .get(b.round ?? '', b.attempt ?? '') as { round_status: string; current: number | null; incarnation: string | null; init: string | null; lost: string | null } | undefined;
+  if (!row) return false;
+  let incarnation: string | undefined;
+  try {
+    incarnation = engineSettings().incarnation;
+  } catch {
+    incarnation = undefined;
+  }
+  return row.round_status === 'open' && row.current === b.deployment_generation && row.init !== null && row.incarnation === incarnation && row.lost === null;
+}
+
 // The recovery registration of an interrupted or `materialization_failed`
 // execution (D3 §§2.5, 2.7; T05; SEAM.md §204), made in the transaction that
 // ends it, after its domain's closure. The n-th retry of an original
@@ -826,7 +885,22 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
 // class. Nothing for a superseded candidate or version. Returns the new
 // registration's id, or null.
 export function registerRecoveryRetry(tx: Tx, execution: string): string | null {
-  type Row = { id: string; project: string; check: string; key: string; candidate: string; source_revision: string; protected_version: string; runner_class: string; trigger: string; retry_of: string | null; infra_retries: number };
+  type Row = {
+    id: string;
+    project: string;
+    check: string;
+    key: string;
+    candidate: string;
+    source_revision: string;
+    protected_version: string;
+    runner_class: string;
+    trigger: string;
+    retry_of: string | null;
+    infra_retries: number;
+    environment: string | null;
+    artifact_digest: string | null;
+    deployment: string | null;
+  };
   const get = (id: string) => tx.db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(id) as Row | undefined;
   const x = get(execution);
   if (!x) return null;
@@ -842,6 +916,11 @@ export function registerRecoveryRetry(tx: Tx, execution: string): string | null 
     .prepare('SELECT (SELECT "superseded_by" FROM "candidates" WHERE "id" = ?) AS c, (SELECT "superseded_by" FROM "protected_versions" WHERE "id" = ?) AS v')
     .get(x.candidate, x.protected_version) as { c: string | null; v: string | null };
   if (superseded.c !== null || superseded.v !== null) return null;
+  // A deployment verification's execution keeps its binding (D4 §5.3 item
+  // 7: recovery preserves the round's retry accounting), and is retried
+  // only while its round is open, its generation the environment's current
+  // one and its service supervised (E110); otherwise nothing is retried.
+  if (x.deployment !== null && !deploymentRetryable(tx, x.deployment)) return null;
   const first = JSON.parse(original.trigger) as Trigger;
   const trigger: Trigger = { source: 'recovery', id: first.id, generation: first.generation + n };
   const tk = triggerKey(trigger, x.key, x.candidate);
@@ -856,6 +935,9 @@ export function registerRecoveryRetry(tx: Tx, execution: string): string | null 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at);
+  if (x.deployment !== null) {
+    tx.db.prepare('UPDATE "check_executions" SET "environment" = ?, "artifact_digest" = ?, "deployment" = ? WHERE "id" = ?').run(x.environment, x.artifact_digest, x.deployment, id);
+  }
   tx.emit('check.registered', { project: x.project, candidate: x.candidate, check_execution: id }, { key: x.key, trigger, execution_seq: seq, check: x.check, retry_of: x.id, infra_retries: n });
   markStale(tx, { candidate: x.candidate });
   return id;

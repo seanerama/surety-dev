@@ -552,7 +552,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const verdict = kind === 'alpha_complete' ? deploymentVerdict(db, { operation: target.operation!.id }) : null;
   if (verdict !== null) {
     for (const c of scope.required) {
-      const v = verdict.results.find((x) => x.check === c.id || x.key === c.key);
+      // By the check row only: a result of another version's definition of
+      // the same key is never selected (D4-V01).
+      const v = verdict.results.find((x) => x.check === c.id);
       const row = v?.result ? (db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(v.result) as ResultRow | undefined) : undefined;
       const state: CheckState = v === undefined ? 'missing' : (v.state as CheckState);
       selected[c.id] = { state, decider: row ? { ...row, reused: false } : null, pending: null, history: null };

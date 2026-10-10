@@ -85,7 +85,10 @@ function memAvailable(): number | null {
 
 // What is being admitted: a role or probe domain (the default), a check
 // domain, or a service domain with its own memory and writable bytes.
-export type Admitting = { kind: 'role' } | { kind: 'check' } | { kind: 'service'; memory: number; writable: number };
+// A check bound to a deployment verification (`bound`) may use the check
+// capacity kept free while a service runs; any other check is admitted only
+// beside it, as a role is (the slice-25 design Q5).
+export type Admitting = { kind: 'role' } | { kind: 'check'; bound?: boolean } | { kind: 'service'; memory: number; writable: number };
 
 // Why a new domain may not be admitted now, or null.
 //
@@ -107,13 +110,18 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   // terminated, placed or not: a service holds its reservation from its
   // admission (the slice-24 review, m4).
   const all = db
-    .prepare(`SELECT "id", "cgroup_path", "profile", "reservation", "project" FROM "execution_domains" WHERE "status" <> 'terminated' AND ("cgroup_path" IS NOT NULL OR "profile" = 'service')`)
+    .prepare(
+      `SELECT d."id", d."cgroup_path", d."profile", d."reservation", d."project", (x."deployment" IS NOT NULL) AS "bound"
+       FROM "execution_domains" d LEFT JOIN "check_executions" x ON x."id" = d."check_execution"
+       WHERE d."status" <> 'terminated' AND (d."cgroup_path" IS NOT NULL OR d."profile" = 'service')`,
+    )
     .all() as {
     id: string;
     cgroup_path: string | null;
     profile: string;
     reservation: string | null;
     project: string;
+    bound: number;
   }[];
   const services = all.filter((d) => d.profile === 'service');
   const running = all.filter((d) => d.profile !== 'service');
@@ -129,9 +137,10 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   const serviceWritable = services.reduce((n, d) => n + (projectPolicy(db, d.project).service_writable_bytes ?? 0), 0);
   const newService = admitting.kind === 'service' ? admitting : null;
   // The check capacity kept free for post-deploy checks: while a service runs
-  // (or is admitted), unless a check domain already holds it or the domain
-  // admitted is the check itself.
-  const reserveCheck = (services.length > 0 || newService !== null) && admitting.kind !== 'check' && !running.some((d) => d.profile === 'check');
+  // (or is admitted), unless a deployment verification's check domain already
+  // holds it or the domain admitted is such a check itself (Q5).
+  const admittingBound = admitting.kind === 'check' && admitting.bound === true;
+  const reserveCheck = (services.length > 0 || newService !== null) && !admittingBound && !running.some((d) => d.profile === 'check' && d.bound === 1);
   const newDomains = admitting.kind === 'service' ? 0 : 1;
   const boxes = selfTestBoxes;
   const hold = (reason: string, subject: Record<string, unknown>): EnvelopeHold => ({
