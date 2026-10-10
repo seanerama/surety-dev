@@ -145,6 +145,10 @@ export class ReleaseOperator {
           if (d.unit === null || s?.LoadState === 'not-found') {
             closed = true;
             observed = `${d.cgroup_path} is gone and ${d.unit ?? 'no unit'} is not loaded`;
+          } else if (s && s.LoadState === 'loaded' && !s.ControlGroup && s.ActiveState !== 'active' && s.ActiveState !== 'activating') {
+            // Loaded but ended (failed or inactive), with no cgroup at all.
+            closed = true;
+            observed = `${d.cgroup_path} is gone and ${d.unit} is ${s.ActiveState} with no cgroup`;
           } else if (s && s.LoadState === 'loaded' && s.ControlGroup && join('/sys/fs/cgroup', s.ControlGroup) !== d.cgroup_path) {
             await this.rt.engine('deploy.domain_observed', { domain: d.id, observation: 'unknown' });
             continue;
