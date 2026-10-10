@@ -45,6 +45,20 @@
 //   fill-tmp         write 64 KiB blocks to /tmp until refused or 8 MiB
 //   fill-inodes      create empty files in /tmp until refused or 4,096
 //   print-marker     write one marker line to its standard output and error
+//   title-secret     (slice 28) set process.title to the value of the variable
+//                    SURETY_TEST_SECRET_VAR names (M334 (d): mutable process
+//                    metadata holding a held secret)
+//   flood            (slice 28) write 256 KiB of filler lines to its standard
+//                    output, then one line `FLOOD-END-<MARK>` (M334 (c))
+//
+// Slice 28 (SEAM.md §314), the held secret the test gave it, unguarded since
+// it writes only to its own output and answers only its own caller:
+//   SURETY_TEST_SECRET_VAR names one variable of its environment. Once
+//   listening it writes `SECRET-OUT-<MARK> <value>` to its standard output
+//   and error; with SURETY_TEST_SECRET_EVERY_MS it writes the same line again
+//   every that many milliseconds (at least 500) for as long as it runs.
+//   GET /secret      200 {"value": <that variable's value>} (a response to a
+//                    check carrying the secret)
 
 'use strict';
 
@@ -55,6 +69,9 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT);
 const MARK = process.env.MARK ?? '';
+const SECRET_VAR = process.env.SURETY_TEST_SECRET_VAR ?? '';
+const secretValue = () => (SECRET_VAR !== '' ? (process.env[SECRET_VAR] ?? '') : '');
+const SECRET_EVERY_MS = Number(process.env.SURETY_TEST_SECRET_EVERY_MS ?? 0);
 const MAX_VISIBLE = 16;
 const SYSTEM_INITS = ['systemd', 'init', 'upstart', 'launchd'];
 
@@ -237,6 +254,16 @@ function main() {
       }
       json(res, 200, { act: 'fill-inodes', count, error });
     },
+    'title-secret': (res) => {
+      process.title = secretValue();
+      json(res, 200, { act: 'title-secret' });
+    },
+    flood: (res) => {
+      const line = `${'f'.repeat(1023)}\n`;
+      for (let i = 0; i < 256; i++) process.stdout.write(line);
+      process.stdout.write(`FLOOD-END-${MARK}\n`);
+      json(res, 200, { act: 'flood', bytes: 256 * 1024 });
+    },
     'print-marker': (res) => {
       process.stdout.write(`APP-OUTPUT-${MARK}-act\n`);
       process.stderr.write(`APP-OUTPUT-${MARK}-act\n`);
@@ -250,6 +277,7 @@ function main() {
     if (url.pathname === '/hello') return json(res, 200, { ok: true, mark: MARK, pid: process.pid, argv: process.argv, cwd: process.cwd(), port: PORT });
     if (url.pathname === '/version') return json(res, 200, { revision: `forged-${'0'.repeat(40)}` });
     if (url.pathname === '/probe') return json(res, 200, probes);
+    if (url.pathname === '/secret') return json(res, 200, { value: secretValue() });
     const act = /^\/act\/([a-z-]+)$/.exec(url.pathname)?.[1];
     if (act !== undefined) {
       if (!Object.hasOwn(acts, act)) return json(res, 404, { error: `no act ${act}` });
@@ -266,5 +294,13 @@ function main() {
   server.listen(PORT, '127.0.0.1', () => {
     process.stdout.write(`APP-OUTPUT-${MARK}-stdout\n`);
     process.stderr.write(`APP-OUTPUT-${MARK}-stderr\n`);
+    if (SECRET_VAR !== '') {
+      const say = () => {
+        process.stdout.write(`SECRET-OUT-${MARK} ${secretValue()}\n`);
+        process.stderr.write(`SECRET-OUT-${MARK} ${secretValue()}\n`);
+      };
+      say();
+      if (SECRET_EVERY_MS > 0) setInterval(say, Math.max(500, SECRET_EVERY_MS));
+    }
   });
 }
