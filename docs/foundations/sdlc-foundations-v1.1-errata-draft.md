@@ -1966,3 +1966,14 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 1. **The host is unchanged:** read by the driver, `uname -r` 6.6.87.2-microsoft-standard-WSL2 and `systemctl --version` systemd 255 (255.4-1ubuntu8.17), the probe's versions; no new probe runs (D4 §9.6).
 2. **Confirmed:** BS4 §10's reading of the probe's log: nothing contradicts D4 §9.2 or §3.4; the transient unit with `Delegate=yes` and its limits, the launcher as `MainPID`, the unit's survival of its creator's SIGKILL, a new `InvocationID` on restart, removal on stop, the exact unit's `ControlGroup` and `InvocationID`, and the application's identification by `NSpid` with its tree read through `/proc` are confirmed for the stand-ins; every claim not established names the M4 row that establishes it (D4 §11 class B). The domain cgroup is the unit's own (E121 item 4).
 3. **Consequence:** slice 24 may start once slice 23 has merged; its first test that creates a real unit on the workstation still waits for Sean's go-ahead (E121 item 4).
+
+---
+
+## E123. One full run per slice, overlapped with the next slice (decided by Sean, 2026-10-10)
+
+**Status: decided by Sean** (amends the per-slice loop of E31, E92 and BS4).
+
+1. **One full run per slice.** The full `node scripts/run-tests.mjs acceptance --slice N` and `npm run test:unit` run once per slice: the driver's run, from a clean scratch copy of the Builder's final commit, before the merge. It remains the gate; nothing merges without it passing.
+2. **The Builder runs less.** From slice 24 the Builder runs its own slice's files, every earlier acceptance file its change or the Verifier's straddle touches, and the unit tests, one at a time, and reports those figures; it no longer runs the full suite. A regression in an untouched earlier file is then found by the driver's run and goes back to the same slice's Builder.
+3. **Overlap.** While the driver's full run of slice N goes, slice N+1's fresh Verifier writes its cases and its Builder sends its design; only slice N's merge waits on the run. Slice N+1's cases merge after slice N.
+4. **Why:** each slice paid for the full run (about 80 minutes at slice 23, growing with M4) twice. A full run per slice stays because it keeps catching breaks in earlier files that a slice's own files miss (slice 23's change to declaring checks broke M01's through-the-API cases; slices 20 and 21 each broke an older file). Considered and not chosen: a full run every two slices (saves about an hour a pair; a break then lands on a moved main and is harder to trace), and running files in parallel (the runner runs files one at a time on purpose; earlier slices had test races even so).
