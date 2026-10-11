@@ -265,6 +265,8 @@ describe('M337 the operator relay', () => {
   });
 
   test('(f) a teardown closes it', async () => {
+    if (hostListeners(port).length === 0) assert.ok((await open()).status < 300, 'the fixture is live: the relay opens before the teardown');
+    assert.equal(hostListeners(port).length, 1, 'the fixture is live: the relay listens before the teardown');
     const down = await teardownOnHost(ctx, env);
     assert.ok(down, 'the teardown is applied');
     assert.deepEqual(hostListeners(port), [], 'nothing listens on the port after the teardown');

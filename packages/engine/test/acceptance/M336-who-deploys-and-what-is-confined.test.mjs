@@ -3,8 +3,10 @@
 // D4 §§2.5, 8; J3, J4; E92 item 2; BS4 §5; SEAM.md §§7, 246, 247, 248, 262,
 // 310, 313, 315, 316.
 //
-//   (a) no role deploys: a role's result carrying a field that requests a
-//       deployment is `invalid_result` and nothing is authorized; no role's
+//   (a) no role deploys: a role's result carrying a field that would request
+//       a deployment requests none (nothing authorized, no operation, no
+//       deploy work item; whether the result is rejected or the field
+//       ignored is not pinned); no role's
 //       capability grant names the deploy operation, its attempt, its units
 //       or a deployment secret; no run of role `release_operator` is
 //       dispatched, and no run serves a `deploy` work item; the deployment
@@ -67,9 +69,14 @@ describe('M336 (a) no role deploys', () => {
     ]) {
       const [name] = Object.keys(field);
       const before = [authorizations(fx.home), operationsOf(fx.home, project, 'deploy').length];
+      const works = deployWork(fx.home, project).length;
       const { run } = await roleRun(fx, project, 'verification', { subject: { candidate: candidate.id }, result: field });
-      assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `a result carrying ${name} is invalid: no role result field requests a deployment (D4-R01) (${run.reason_text})`);
-      assert.deepEqual([authorizations(fx.home), operationsOf(fx.home, project, 'deploy').length], before, `${name}: nothing authorized, no operation`);
+      // No result field requests a deployment (D4-R01; D4 §8.2): the field is
+      // none of the schema's. Whether the engine rejects the result
+      // (`invalid_result`) or ignores the field is not pinned (SEAM §316);
+      // that nothing is requested is.
+      assert.ok(run.state === 'ended', `${name}: the run ended (${run.outcome} ${run.reason_class})`);
+      assert.deepEqual([authorizations(fx.home), operationsOf(fx.home, project, 'deploy').length, deployWork(fx.home, project).length], [...before, works], `${name}: nothing authorized, no operation, no deploy work item`);
     }
 
     // No grant holds a capability or names the deployment's operation, attempt or units.

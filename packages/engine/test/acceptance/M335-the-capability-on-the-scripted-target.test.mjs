@@ -102,7 +102,10 @@ describe('M335 every capability outside its attempt\'s scope is refused before a
     ['environment', 'another environment', () => other.id],
     ['artifact_digest', 'another digest', `sha256:${'b'.repeat(64)}`],
     ['create_units', 'another unit (another environment\'s)', () => [unitName(ctx.fx.home, other.id, 1)]],
-    ['attempt', 'a stale attempt (an earlier, ended one)', () => attempts[0].id],
+    ['attempt', 'a stale attempt (an earlier, ended one)', () => {
+      assert.ok(attempts[0], 'the fixture is live: an earlier case recorded an ended attempt to name as stale');
+      return attempts[0].id;
+    }],
     ['generation', 'another generation', 999],
     ['incarnation', 'another incarnation', 'inc_00000000000000000000000000'],
     ['lease_generation', 'a stale lease generation', 0],
