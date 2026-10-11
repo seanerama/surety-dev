@@ -38,7 +38,7 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
-import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsOf, profileFingerprint } from '../../deploy/qualification.js';
+import { type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, profileFingerprint } from '../../deploy/qualification.js';
 import {
   bumpRevision,
   changesInInterval,
@@ -304,14 +304,8 @@ export type LapseReason = 'engine_build' | 'adapter_version' | 'host_qualificati
 export function qualificationDrift(db: Db, q: QualificationRow): { reason: LapseReason; member: string | null } | null {
   if (q.engine_build !== engineBuild()) return { reason: 'engine_build', member: null };
   if (q.adapter_version !== adapterVersion(q.adapter)) return { reason: 'adapter_version', member: null };
-  const now = hostInForce(db).facts;
-  const then = parseJson<HostFacts>(q.host_facts);
-  if (now === null || then === null) {
-    if (now !== then) return { reason: 'host_qualification', member: 'host_id' };
-  } else {
-    const member = HOST_MEMBERS.find((m) => canonical(now[m] ?? null) !== canonical(then[m] ?? null));
-    if (member !== undefined) return { reason: 'host_qualification', member };
-  }
+  const member = hostFactsDrift(hostInForce(db).facts, parseJson<HostFacts>(q.host_facts));
+  if (member !== null) return { reason: 'host_qualification', member };
   if (q.profile_fingerprint !== profileFingerprint()) return { reason: 'profile_fingerprint', member: null };
   return null;
 }

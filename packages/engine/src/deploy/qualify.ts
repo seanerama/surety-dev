@@ -215,8 +215,15 @@ class Run {
     } catch (err) {
       log('adapter qualification', err, { run: this.run, what: 'evidence' });
     }
-    // Without its evidence a run qualifies nothing (D4 §2.6, A.3).
-    await this.rt.engine('qualify.end', { run: this.run, cases, qualified: qualified && rec !== null, evidence: rec });
+    // Without its evidence a run qualifies nothing (D4 §2.6, A.3). A run
+    // whose end cannot be recorded with its row is recorded unqualified, so
+    // that it never stays `running` in this incarnation.
+    try {
+      await this.rt.engine('qualify.end', { run: this.run, cases, qualified: qualified && rec !== null, evidence: rec });
+    } catch (err) {
+      log('adapter qualification', err, { run: this.run, what: 'end' });
+      await this.rt.engine('qualify.end', { run: this.run, cases, qualified: false, evidence: null });
+    }
     return this.run;
   }
 

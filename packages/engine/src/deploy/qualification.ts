@@ -124,6 +124,18 @@ export function profileFingerprint(): string {
 export const HOST_MEMBERS = ['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'] as const;
 export type HostFacts = Record<(typeof HOST_MEMBERS)[number], unknown>;
 
+// The member of the host's facts that differs, in HOST_MEMBERS' order, or
+// null when none does; null facts (no host qualification in force, `unrun`)
+// match only null, and otherwise differ from the host id on.
+export function hostFactsDrift(now: HostFacts | null, then: HostFacts | null): (typeof HOST_MEMBERS)[number] | null {
+  if (now === null || then === null) return now === then ? null : 'host_id';
+  const same = (a: unknown, b: unknown) => JSON.stringify(sortKeys(a ?? null)) === JSON.stringify(sortKeys(b ?? null));
+  return HOST_MEMBERS.find((m) => !same(now[m], then[m])) ?? null;
+}
+
+const sortKeys = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(sortKeys) : v !== null && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sortKeys((v as Record<string, unknown>)[k])])) : v;
+
 export function hostFactsOf(row: { host_id: string; kernel: string; tool_versions: string; mechanism_fingerprint: string } | undefined | null): HostFacts | null {
   if (!row) return null;
   let tools: unknown = row.tool_versions;
