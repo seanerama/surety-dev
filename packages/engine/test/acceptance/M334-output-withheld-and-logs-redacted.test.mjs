@@ -35,6 +35,11 @@
 //       neither S0 nor S1, raw or JSON-escaped, is in the engine home
 //       (store, records, events), the responses, the unit's properties, its
 //       journal or the engine's output;
+//   (a), the slice-28 review's S1 (i): the service writes `token=` and the
+//       first 20 characters of S0 with no line end (the fixture's
+//       `split-secret`, the rest 90 s later); a collection made in the pause
+//       publishes no prefix of S0 of 8 bytes or more (SEAM §320); once the
+//       line is whole a collection holds it with S0 redacted;
 //   (e) the owner resolves the secrets and redeploys: supervision
 //       `attached`, the collection recorded again (redacted), the relay
 //       opens, the check runs: the refusals end.
@@ -76,11 +81,13 @@ import {
   newestOperation,
   operatorGuard,
   postDeployOf,
+  procInstance,
   releaseCheck,
   secretArgs,
   secretFile,
   serviceLinkLogs,
   serviceOf,
+  targetReport,
   testSecret,
   ticksUntil,
   unitShow,
@@ -137,9 +144,10 @@ describe('M334 output withheld after a restart; logs redacted', () => {
   });
 
   // An environment whose service holds REF as APP_TOKEN and writes it to its output.
-  async function secretEnvironment(name) {
+  // `extra` replaces the periodic secret line (slice 28's review case writes the line itself).
+  async function secretEnvironment(name, extra = null) {
     const base = await hostConfig();
-    const content = { ...base, env: { ...base.env, SURETY_TEST_SECRET_VAR: 'APP_TOKEN', SURETY_TEST_SECRET_EVERY_MS: '2000' }, secrets: { APP_TOKEN: REF } };
+    const content = { ...base, env: { ...base.env, SURETY_TEST_SECRET_VAR: 'APP_TOKEN', ...(extra ?? { SURETY_TEST_SECRET_EVERY_MS: '2000' }) }, secrets: { APP_TOKEN: REF } };
     const done = await configure(ctx.fx.engine, ctx.project, name, content);
     const env = { ...done.environment, name, content };
     ctx.envs[name] = env;
@@ -205,6 +213,32 @@ describe('M334 output withheld after a restart; logs redacted', () => {
       }
       assert.ok(roundsOf(ctx.fx.home, op.id).some((r) => r.id === round.id));
       assert.deepEqual(filesHoldingAny(ctx.fx.home, valueForms(values.s0)), [], 'no file of the engine home holds the value');
+    } finally {
+      await endCase(ctx, env);
+    }
+  });
+
+  test('(a) a line the collection cuts (the slice-28 review, S1 (i)): a collection made while the service has written only part of a line holding the secret publishes no prefix of it of 8 bytes or more; once the line is whole it is collected redacted', async () => {
+    const env = await secretEnvironment('split', { SURETY_TEST_SPLIT_PAUSE_MS: '90000' });
+    try {
+      const mark = env.content.env.MARK;
+      const { op, svc, row } = await deployed(env, { get: ['/act/split-secret'], exit: 1 });
+      const ended = Date.now();
+      const held = postDeployOf(ctx, env).find((x) => x.deployment?.operation === op.id);
+      const report = targetReport(ctx, held);
+      assert.equal(report.report.results[0]?.status, 200, `the fixture is live: the service wrote the first part of the line (the act answered) (${JSON.stringify(report.report.results)})`);
+      assert.ok(row, 'the round is decided');
+      assert.ok(Date.now() - ended < 60_000, 'the fixture is live: the collection is asked well within the act\'s 90 s pause');
+      const { text } = await collected(env);
+      const found = [8, 20].map((n) => valueForms(values.s0).map((f) => f.slice(0, n))).flat().filter((f) => text.includes(f));
+      assert.deepEqual(found.length, 0, `no prefix of the held secret of 8 bytes or more reaches the deployment_logs record (SEAM §320)`);
+      assert.ok(procInstance(svc.app.pid), 'the service still runs');
+      // The control: once the line is whole, a collection holds it, redacted.
+      await new Promise((r) => setTimeout(r, Math.max(0, ended + 92_000 - Date.now())));
+      const whole = await collected(env);
+      assert.ok(whole.text.includes(`SPLIT-${mark} token=`), 'the control: once the rest of the line is written the line is collected');
+      assert.deepEqual(holdsAny(whole.text, { s0: values.s0 }), [], 'and the value in it is redacted');
+      assert.ok(!whole.text.includes(values.s0.slice(0, 8)), 'and no prefix of it remains');
     } finally {
       await endCase(ctx, env);
     }
