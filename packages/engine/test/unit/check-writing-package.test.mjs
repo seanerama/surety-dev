@@ -365,3 +365,75 @@ test('an unreadable stage plan is unknown, never "no stage"; an empty one is sai
   const absent = scopeRuleText({ requirements: [{ key: 'R1' }] }).join('\n');
   assert.match(absent, /could not be read/, 'absent facts are unknown too');
 });
+
+// M4 slice 30 (BS4 §3; D4 §§5.1, 5.2, 7.2; J4; SEAM.md §335): what the
+// Verifier is told about environment-bound checks, and the project's
+// environments with their targets' variables, from the store.
+const { deploymentChecksText, examplePostDeployDefinition, EVALUATED_GATE_KINDS } = await import(join(dist, 'checks', 'guide.js'));
+const { COMPUTED_GATES } = await import(join(dist, 'store', 'transitions', 'gates.js'));
+const { targetVariable, checkSecretVariable: secretVariable } = await import(join(dist, 'checks', 'variables.js'));
+
+function environment(db, { id, name, content }) {
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec) VALUES (?, ?, 'prj_1', ?, 'local_service', 'cfg', '{}')`).run(id, AT, name);
+  if (content === undefined) return;
+  const cfg = `ecf_${id}`;
+  db.prepare(
+    `INSERT INTO environment_configs (id, created_at, project, environment, version, content, config_identity, secret_digests, status, written_by, written_at) VALUES (?, ?, 'prj_1', ?, 1, ?, 'ci', '[]', 'current', 'sean', ?)`,
+  ).run(cfg, AT, id, typeof content === 'string' ? content : JSON.stringify(content), AT);
+  db.prepare('UPDATE environments SET current_config = ? WHERE id = ?').run(cfg, id);
+}
+
+test('the gate kinds the package says the engine evaluates are the gates it computes; alpha_complete is no longer "not evaluated"', (t) => {
+  assert.deepEqual([...EVALUATED_GATE_KINDS], [...COMPUTED_GATES]);
+  const { prompt } = packageOf(t, store(t), 'run_cc');
+  assert.match(prompt, /the engine evaluates `stage`, `alpha_authorize` and `alpha_complete`\./);
+  const notEvaluated = /The others \(([^)]*)\) are accepted but not evaluated/.exec(prompt);
+  assert.ok(notEvaluated && !notEvaluated[1].includes('alpha_complete'), notEvaluated?.[1]);
+});
+
+test('the variables a check is given are named by one rule, the runner\'s', () => {
+  assert.equal(targetVariable('app'), 'SURETY_TARGET_APP');
+  assert.equal(targetVariable('web-1'), 'SURETY_TARGET_WEB_1');
+  assert.equal(secretVariable('deploy/ref_secret'), 'SURETY_SECRET_REF_SECRET');
+});
+
+test("a check_correction Verifier in a project with an environment: the kinds, the one sentence on alpha_complete, the members, how it reaches its target by name, its secrets by reference only, and a post-deploy example that parses", (t) => {
+  const db = store(t);
+  environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, secrets: { REF_SECRET: 'deploy/ref_secret' }, check_secrets: ['deploy/probe_key'] } });
+  const { prompt, facts, told } = packageOf(t, db, 'run_cc');
+  assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'] }]);
+  for (const s of ['`post_deploy_behavior`', '`post_deploy_identity`', '`"requires": ["environment", "artifact_digest"]`', '`"gate_kinds": ["alpha_complete"]`', '`SURETY_TARGET_<NAME>`', 'environment_unbound', '`SURETY_SECRET_<NAME>`']) {
+    assert.ok(prompt.includes(s), s);
+  }
+  assert.ok(prompt.includes('- The `alpha_complete` gate needs at least one required `post_deploy_behavior` check'), 'the one sentence');
+  assert.ok(prompt.includes('- Environment `alpha`: target `app`, reached as `SURETY_TARGET_APP`; its checks may receive `deploy/probe_key` (as `SURETY_SECRET_PROBE_KEY`).'));
+  assert.ok(!told.includes('deploy/ref_secret'), "the service's own secret is not the checks'");
+  assert.ok(!told.includes('4000'), 'nor its port');
+  const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
+  const post = blocks.find((b) => b.kind === 'post_deploy_behavior');
+  assert.deepEqual([post.gate_kinds, post.requires, post.covers], [['alpha_complete'], ['environment', 'artifact_digest'], undefined]);
+  const governed = parseGoverned(JSON.stringify(GOVERNED)).governed;
+  assert.deepEqual(parseDefinition(`.surety/checks/defs/${post.key}.json`, post.key, JSON.stringify(post), governed, [{ path: post.inputs[0], type: 'blob', mode: '100644', oid: '0'.repeat(40) }]).errors, []);
+  assert.equal(examplePostDeployDefinition({ governed: defaultGoverned(), tier: 'T1', modules: [], requirements: [] }), null, 'no program: no example');
+});
+
+test('no environment, an environment with no configuration, an unreadable one, unread facts: the target is unknown and the Verifier writes no post-deploy check, the rules still given', (t) => {
+  const none = packageOf(t, store(t), 'run_cc');
+  assert.deepEqual(none.facts.check_writing.environments, []);
+  assert.match(none.prompt, /No environment is configured for this project yet, so the target's name is unknown: write no environment-bound check, and say so in your summary\./);
+  assert.ok(none.prompt.includes('`alpha_complete` gate needs at least one required `post_deploy_behavior` check'), 'the rules are always given');
+  const db = store(t);
+  environment(db, { id: 'env_u', name: 'unconfigured' });
+  environment(db, { id: 'env_b', name: 'broken', content: 'not json' });
+  environment(db, { id: 'env_s', name: 'odd', content: { targets: ['app'], check_secrets: 'deploy/x' } });
+  const some = packageOf(t, db, 'run_cc');
+  assert.deepEqual(some.facts.check_writing.environments, [
+    { name: 'broken', targets: null, check_secrets: null },
+    { name: 'odd', targets: ['app'], check_secrets: null },
+    { name: 'unconfigured', targets: null, check_secrets: null },
+  ]);
+  assert.match(some.prompt, /- Environment `broken`: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it/);
+  assert.match(some.prompt, /- Environment `unconfigured`: it has no configuration/);
+  assert.match(some.prompt, /- Environment `odd`: target `app`, reached as `SURETY_TARGET_APP`; which secrets its checks may receive could not be read, so name none\./);
+  for (const facts of [undefined, null]) assert.match(deploymentChecksText({ environments: facts }).join('\n'), /could not be read here, so their target names are unknown: write no environment-bound check/);
+});

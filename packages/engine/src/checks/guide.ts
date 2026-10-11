@@ -17,8 +17,9 @@
 // (`read_paths`, `path`) or the governed `env` values. Programs are named by
 // the name a definition uses.
 
-import { DEFINITION_REFERENCE, GATE_KINDS, GOVERNED_FILE, type Governed, KEY_FORM, type TreeEntry, parseDefinition } from './schema.js';
+import { DEFINITION_REFERENCE, GATE_KINDS, GOVERNED_FILE, type Governed, KEY_FORM, POST_DEPLOY, type TreeEntry, parseDefinition } from './schema.js';
 import { KIND_INVENTORY, SCOPE_KINDS, TIER_RANK, type Tier } from './scope.js';
+import { checkSecretVariable, targetVariable } from './variables.js';
 
 export interface CheckWritingFacts {
   // The effective version's governed values as discovery read them; null
@@ -33,10 +34,23 @@ export interface CheckWritingFacts {
   // null: the plan could not be read, so which stage implements what is
   // unknown (never "none").
   stages: { number: number; status: string; implements: string[] }[] | null;
+  // The project's environments (BS4 §3; SEAM.md §335): each by name, with
+  // its current configuration's targets and the secret references its
+  // checks may receive. `targets` or `check_secrets` null: not readable, so
+  // unknown. The whole list null or absent: not read, so unknown, never
+  // "none".
+  environments?: { name: string; targets: string[] | null; check_secrets: string[] | null }[] | null;
 }
+
+// The gate kinds the engine evaluates (store/transitions/gates.ts,
+// COMPUTED_GATES): the scopes of D3 §4.2 and, since M4, `alpha_complete`
+// (D4 §5.5), which reads only the environment-bound checks.
+export const DEPLOYMENT_GATE = 'alpha_complete';
+export const EVALUATED_GATE_KINDS: readonly string[] = Object.freeze([...SCOPE_KINDS, DEPLOYMENT_GATE]);
 
 const code = (s: string): string => `\`${s}\``;
 const list = (xs: readonly string[]): string => xs.map(code).join(', ');
+const andList = (xs: readonly string[]): string => (xs.length <= 1 ? list(xs) : `${list(xs.slice(0, -1))} and ${code(xs[xs.length - 1]!)}`);
 const reqNumber = (key: string): number => Number(key.slice(1)) || 0;
 const critOrder = (a: string, b: string): number => {
   const [ra, ma] = a.slice(1).split('.').map(Number);
@@ -79,6 +93,82 @@ export function exampleDefinition(f: CheckWritingFacts): { file: string; program
   const parsed = parseDefinition(file, key, JSON.stringify(definition), g, entries);
   if (parsed.definition === null || parsed.errors.length > 0) return null;
   return { file, program, definition };
+}
+
+// One example of an environment-bound definition (D4 §5.1's form): a
+// `post_deploy_behavior` check of the project's first program, listing only
+// `alpha_complete` and requiring the environment and the artifact's digest;
+// null when no valid one can be made (the parser refuses it).
+export function examplePostDeployDefinition(f: CheckWritingFacts): { file: string; program: string; definition: Record<string, unknown> } | null {
+  const g = f.governed;
+  if (g === null) return null;
+  const name = Object.keys(g.check_commands).sort()[0];
+  if (name === undefined) return null;
+  const root = g.protected_paths.find((r) => g.check_discovery.definitions.startsWith(r)) ?? g.protected_paths[0];
+  if (root === undefined) return null;
+  const key = 'user-operation';
+  const program = `${root}post-deploy/${key}${name === 'node' ? '.mjs' : ''}`;
+  const definition: Record<string, unknown> = {
+    schema: 1,
+    key,
+    kind: 'post_deploy_behavior',
+    command: [name, program],
+    timeout_s: Math.min(60, g.runner_config.direct.timeout_max_s),
+    gate_kinds: [DEPLOYMENT_GATE],
+    requires: ['environment', 'artifact_digest'],
+    inputs: [program],
+  };
+  const file = `${g.check_discovery.definitions}${key}.json`;
+  const entries: TreeEntry[] = [{ path: program, type: 'blob', mode: '100644', oid: '0'.repeat(40) }];
+  const parsed = parseDefinition(file, key, JSON.stringify(definition), g, entries);
+  if (parsed.definition === null || parsed.errors.length > 0) return null;
+  return { file, program, definition };
+}
+
+// What the Verifier is told about environment-bound checks (D4 §§5.1, 5.2,
+// 5.4, 7.2; J4; BS4 §3; SEAM.md §335): the kinds, that `alpha_complete`
+// needs a required `post_deploy_behavior` check, how a definition of one is
+// written, where it runs, how it reaches its target and its secrets, and the
+// project's environments with their targets' variables.
+export function deploymentChecksText(f: Pick<CheckWritingFacts, 'environments'>): string[] {
+  const [identity, behavior] = [POST_DEPLOY.find((k) => k.endsWith('identity'))!, POST_DEPLOY.find((k) => k.endsWith('behavior'))!];
+  const out: string[] = [
+    '',
+    '### Checks against a deployed environment',
+    '',
+    `- When the owner deploys a candidate to one of the project's environments, the engine verifies the running service with the environment-bound checks: kind ${code(behavior)} (what the service does for its user) and kind ${code(identity)}.`,
+    `- The ${code(DEPLOYMENT_GATE)} gate needs at least one required ${code(behavior)} check, and ${code('alpha_authorize')} is not satisfied without one either, so without it nothing is deployed and no candidate becomes \`alpha_deployed\`.`,
+    `- Write such a check with \`"gate_kinds": ["${DEPLOYMENT_GATE}"]\` and no other gate kind, and with \`"requires": ["environment", "artifact_digest"]\`. Listed under \`stage\` or \`alpha_authorize\`, it would be required at a gate where it can never run, and that gate would never be satisfied. Leave out \`covers\`: such a check shows no criterion met.`,
+    "- It runs only in a deployment's verification, between two reads the engine makes of the running service itself; from any other trigger it is recorded not run (`environment_unbound`). Write it to pass against the service the requirements describe.",
+    '- Its sandbox holds its protected inputs and none of the candidate\'s source: it judges the service from outside, through the target\'s address, and has no other network.',
+    `- How it reaches its target: the engine gives it, for each target of the environment, the variable \`SURETY_TARGET_<NAME>\` set to \`http://127.0.0.1:<port>\`, where \`<NAME>\` is the target's name in upper case with any character but a letter or a digit as \`_\`. The service's answers are untrusted input to the check.`,
+    "- Exercise a user operation the requirements specify (a request and the answer it must give), not only that the service answers: a check that only probes that the service is up passes for a service that does the wrong thing.",
+    `- Secrets: a definition's \`"secrets"\` names deployment secret references (\`deploy/<name>\`) that the environment allows its checks (its \`check_secrets\`); each is given to the check as \`SURETY_SECRET_<NAME>\`. Never write a secret's value into a check.`,
+  ];
+  const envs = f.environments;
+  if (envs === undefined || envs === null) {
+    out.push("- Which environments the project has could not be read here, so their target names are unknown: write no environment-bound check, and say so in your summary.");
+    return out;
+  }
+  if (envs.length === 0) {
+    out.push("- No environment is configured for this project yet, so the target's name is unknown: write no environment-bound check, and say so in your summary.");
+    return out;
+  }
+  for (const e of envs) {
+    if (e.targets === null) {
+      out.push(`- Environment ${code(e.name)}: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it, and say so in your summary.`);
+      continue;
+    }
+    const targets = e.targets.length > 0 ? e.targets.map((t) => `target ${code(t)}, reached as ${code(targetVariable(t))}`).join('; ') : 'no target';
+    const secrets =
+      e.check_secrets === null
+        ? 'which secrets its checks may receive could not be read, so name none'
+        : e.check_secrets.length > 0
+          ? `its checks may receive ${e.check_secrets.map((r) => `${code(r)} (as ${code(checkSecretVariable(r))})`).join(', ')}`
+          : 'its checks may receive no secret';
+    out.push(`- Environment ${code(e.name)}: ${targets}; ${secrets}.`);
+  }
+  return out;
 }
 
 // When a check is required, as the one scope rule decides it (D3 §4.2;
@@ -214,7 +304,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     );
   }
   out.push(
-    `- Gate kinds: the engine evaluates ${list(SCOPE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both for a check that should decide both. The others (${list(GATE_KINDS.filter((k) => !(SCOPE_KINDS as readonly string[]).includes(k)))}) are accepted but not evaluated.`,
+    `- Gate kinds: the engine evaluates ${andList(EVALUATED_GATE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both ${andList(SCOPE_KINDS)} for a check of the workspace that should decide both. ${code(DEPLOYMENT_GATE)} reads only the environment-bound checks (below). The others (${list(GATE_KINDS.filter((k) => !EVALUATED_GATE_KINDS.includes(k)))}) are accepted but not evaluated.`,
     g.required_checks === null
       ? '- Every check discovered is required: the governed file lists no `required_checks`.'
       : `- Only the checks the governed file's \`required_checks\` lists are required: ${g.required_checks.length > 0 ? list(g.required_checks) : 'none'}. A check you add is not required unless the owner lists it.`,
@@ -229,6 +319,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     "- Run the candidate's code as a child process and judge what it observably does (its output and exit status), so that candidate code that ends the process early cannot pass the check.",
     '- The protected inputs are read-only; anything the check writes is discarded when it ends; nothing but its exit status and its output is kept.',
   );
+  out.push(...deploymentChecksText(f));
   out.push('', "### A definition's members (D3 Appendix B)", '', 'A definition is one JSON object with only these members:');
   for (const [name, m] of Object.entries(DEFINITION_REFERENCE)) out.push(`- \`"${name}"\` (${m.required}): ${m.form}`);
   const example = exampleDefinition(f);
@@ -239,6 +330,17 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
       '',
       '```json',
       JSON.stringify(example.definition, null, 2),
+      '```',
+    );
+  }
+  const postDeploy = examplePostDeployDefinition(f);
+  if (postDeploy) {
+    out.push(
+      '',
+      `An environment-bound check, for example ${code(postDeploy.file)}, which runs ${code(postDeploy.program)} against the deployed service through its target's variable:`,
+      '',
+      '```json',
+      JSON.stringify(postDeploy.definition, null, 2),
       '```',
     );
   }
