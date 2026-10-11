@@ -56,6 +56,7 @@ import {
 import { alphaCompleteRows, executionsOfRound, recordExit, requestVerify, roundRow, roundsOf, rowOf, rowWhen, stepExecution, verifyAgain, workEntry } from './harness/deploy/rounds.mjs';
 import { CLOCK_OFFSET, armBarrier, atReceipt, attemptWhen, firstRead, killOwnEngine, leaseHeld, releaseBarrier, scriptedUnit, waitingAt } from './harness/deploy/recover.mjs';
 import { requestTick } from './harness/runs.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 const DEADLINE = 1800;
 const ms = (iso) => Date.parse(iso);
@@ -152,7 +153,7 @@ describe('M325 (c) the orchestration deadline survives a restart and is never re
     assert.equal(opNow(ctx, op.id).orchestration_deadline_at, deadline, 'unchanged across the restart');
     await tick(fx.engine, ctx.project, { rounds: 3 });
     assert.equal(opNow(ctx, op.id).orchestration_deadline_at, deadline, 'unchanged by ticks');
-    await advanceClock(fx.engine, 61);
+    await advanceClock(fx.engine, 60 + STEP_MARGIN);
     const done = await tickUntil(fx.engine, ctx.project, () => (opNow(ctx, op.id).status === 'failed' ? opNow(ctx, op.id) : undefined), { max: 12, what: 'the operation to fail at its deadline' });
     assert.deepEqual([done.outcome_detail?.code, done.outcome_detail?.fact], ['EFFECT_PRECONDITION_CHANGED', 'orchestration_deadline'], `reached before the effect: failed, nothing applied (${JSON.stringify(done.outcome_detail)})`);
     assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 0, 'no effect call');
@@ -187,7 +188,7 @@ describe('M325 (d) the deadline reached in verification', () => {
     const [op] = operationsOf(fx.home, ctx.project, 'deploy');
     const [round] = roundsOf(fx.home, op.id);
     assert.equal(executionsOfRound(fx.home, ctx.candidate.id, round.id).length, 0, 'the fixture is live: nothing registered yet');
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     await releaseBarrier(fx.engine, 'deploy.round_registered');
     const row = await rowWhen(ctx, round.id);
     assertDeadlineRow(ctx, op.id, row, { kinds: ['deadline', 'check_execution'] });
@@ -200,7 +201,7 @@ describe('M325 (d) the deadline reached in verification', () => {
     const { operation: op, execution } = await deployToRound(ctx);
     await stepExecution(fx.engine, execution.id, 'materializing');
     await stepExecution(fx.engine, execution.id, 'quarantined');
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     const row = await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);
     assertDeadlineRow(ctx, op.id, row, { kinds: ['deadline'], ids: [execution.id] });
     assert.equal(withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(execution.id)).status, 'quarantined', 'no termination is claimed');
@@ -211,7 +212,7 @@ describe('M325 (d) the deadline reached in verification', () => {
     const fx = await scriptedEngine(t);
     const ctx = await deployable(fx);
     const { operation: op, execution } = await deployToRound(ctx);
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     const row = await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);
     assertDeadlineRow(ctx, op.id, row, { kinds: ['deadline'], ids: [execution.id] });
     assert.deepEqual(resultsOf(fx.home, execution.id).filter((r) => r.execution_established), [], 'no result synthesized');
@@ -224,7 +225,7 @@ describe('M325 (d) the deadline reached in verification', () => {
     await armBarrier(fx.engine, 'verify.before_second_read', 'pause');
     await recordExit(fx.engine, execution.id, 0);
     await pausedAt(fx, ctx.project, 'verify.before_second_read');
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     await releaseBarrier(fx.engine, 'verify.before_second_read');
     const row = await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);
     assertDeadlineRow(ctx, op.id, row, { kinds: ['deadline', 'identity_read'] });
@@ -304,13 +305,13 @@ describe('M325 (f) CD1: a re-verification requested after the operation\'s deadl
     await tick(fx.engine, ctx.project, { rounds: 2 });
     const opDeadline = opNow(ctx, op.id).orchestration_deadline_at;
     const leasesBefore = environmentLeases(fx.home, ctx.env.id).length;
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     const res = await requestVerify(fx.engine, ctx.project, op.id);
     assert.equal(res.status, 202, `CD1 (b): a re-verification after the operation's deadline is registered (→ ${res.status} ${res.text})`);
     const round = roundRow(fx.home, res.body.round.id);
     assert.equal(ms(round.deadline_at) - ms(round.registered_at), DEADLINE * 1000, `its own deadline_at: its registration plus deploy_orchestration_deadline (${round.registered_at} → ${round.deadline_at})`);
     await tickUntil(fx.engine, ctx.project, () => (environmentLeases(fx.home, ctx.env.id).length > leasesBefore ? true : undefined), { max: 8, what: 'the round to take the lease again' });
-    await advanceClock(fx.engine, DEADLINE + 1);
+    await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     const row = await rowWhen(ctx, round.id);
     assert.equal(row.outcome, 'unknown');
     assert.ok((row.missing ?? []).some((m) => m.kind === 'deadline'), `missing names deadline (${JSON.stringify(row.missing)})`);

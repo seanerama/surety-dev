@@ -81,6 +81,7 @@ import {
   scriptCall,
   setAdmission,
 } from './harness/deploy/kernel.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 // A deploy intended and waiting for admission. `start` makes the engine (with its args).
 async function waiting(t, { deployableOpts = {}, args } = {}) {
@@ -239,7 +240,7 @@ describe('M306 every precondition is read again before the effect', () => {
 
   test('admission not granted by the orchestration deadline: failed with nothing applied, naming the deadline', async (t) => {
     const ctx = await waiting(t);
-    await advanceClock(ctx.fx.engine, 1801);
+    await advanceClock(ctx.fx.engine, 1800 + STEP_MARGIN);
     await assertRefusedBeforeEffect(ctx, 'orchestration_deadline');
   });
 });
