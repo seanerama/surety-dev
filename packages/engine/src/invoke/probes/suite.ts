@@ -28,6 +28,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { type DomainLimits, createDomainCgroup, readPopulated, readProcs, removeCgroup, verifyLimits, writeKill } from '../../boundary/cgroup.js';
+import { assertSocketPath } from '../../socket-path.js';
 import type { Scope } from '../../boundary/scope.js';
 import { gitOk, repoContext } from '../../git/exec.js';
 import { newId } from '../../ids.js';
@@ -584,7 +585,7 @@ export async function runProbeSuite(rt: Runtime, args: { scope: Scope | null; to
   cleanups.push(() => void abstractServer.close());
   const sockDir = probeTmpDir(tag);
   mkdirSync(sockDir, { mode: 0o700 });
-  const sockPath = join(sockDir, 'listening.sock');
+  const sockPath = assertSocketPath(join(sockDir, 'listening.sock'));
   const pathServer = net.createServer((c) => c.destroy());
   const pathUp = await new Promise<boolean>((resolve) => {
     pathServer.once('error', () => resolve(false));

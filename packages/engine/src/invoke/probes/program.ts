@@ -209,6 +209,13 @@ function run(argv: string[], opts: { cwd?: string; timeoutMs?: number; env?: Rec
 function connectOnce(target: Obj, timeoutMs = 1500): Promise<string> {
   return new Promise((resolve) => {
     let sock: net.Socket;
+    // A path past what a unix socket address holds (107 bytes) is never
+    // dialled cut (objection 055); the outcome names it. This file imports
+    // nothing of the engine's, so the limit is written here.
+    if (typeof target.unix === 'string' && Buffer.byteLength(target.unix, 'utf8') > 107) {
+      resolve(`socket_path_too_long (${Buffer.byteLength(target.unix, 'utf8')} bytes)`);
+      return;
+    }
     try {
       sock =
         typeof target.unix === 'string'

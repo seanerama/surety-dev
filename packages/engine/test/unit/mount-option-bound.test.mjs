@@ -99,12 +99,27 @@ test('a sandbox the init could not build names its failure in the interruption, 
   assert.equal(named.why, `the domain's setup failed before the check started: ${stderr}`);
   // A failed exec, or a started check, is never taken for a setup failure.
   assert.equal(decideResult({ ...base, execFailed: true, setupFailed: stderr }).kind, 'record');
-  // Recovery after a restart reads the recorded `setup_failed` report.
-  const recovered = fromReports({ reports: [{ kind: 'setup_failed', detail: { text: stderr } }], authorized: true });
+  // From the recorded `setup_failed` report, what ended the supervision is
+  // said as it happened (objection 055): a restart keeps its text and the
+  // detail; a failure in this engine names the detail and claims no
+  // restart; a cause not recorded is said to be unknown.
+  const reports = [{ kind: 'setup_failed', detail: { text: stderr } }];
+  const recovered = fromReports({ reports, authorized: true });
   assert.equal(recovered.kind, 'interrupt');
-  assert.equal(recovered.why, `the domain's setup failed before the check started: ${stderr}`);
+  assert.equal(recovered.why, `the engine restarted before the check's exit report was recorded; its domain's setup had failed before the check started: ${stderr}`);
+  assert.equal(fromReports({ reports, authorized: true, cause: 'restart' }).why, recovered.why, 'the cause left unsaid is a restart');
+  const failed = fromReports({ reports, authorized: true, cause: 'failure' });
+  assert.equal(failed.why, `the domain's setup failed before the check started: ${stderr} (no engine restarted)`);
+  assert.ok(!failed.why.includes('restarted before'), failed.why);
+  const unknown = fromReports({ reports, authorized: true, cause: 'unknown' });
+  assert.equal(unknown.why, `the domain's setup failed before the check started: ${stderr} (whether an engine restarted meanwhile is not recorded)`);
+  // Without a recorded setup failure, 055's texts, and the unknown cause said.
   const plain = fromReports({ reports: [], authorized: true });
   assert.equal(plain.why, "the engine restarted before the check's exit report was recorded");
+  assert.match(fromReports({ reports: [], authorized: true, cause: 'failure' }).why, /no engine restarted/);
+  assert.match(fromReports({ reports: [], authorized: true, cause: 'unknown' }).why, /whether by an engine restart or by a failure in the engine that admitted it is not recorded/);
+  // A started check whose exit was not recorded is never taken for a setup failure.
+  assert.equal(fromReports({ reports: [...reports, { kind: 'started', detail: null }], authorized: true, cause: 'failure' }).why, "the check's setup or supervision failed in the engine that admitted it, before its exit report was recorded (no engine restarted)");
   // The recorded detail is whole up to its bound, else cut with the cut named.
   assert.equal(boundedSetupFailure(stderr), stderr);
   const long = 'm'.repeat(SETUP_FAILURE_MAX_BYTES + 100);

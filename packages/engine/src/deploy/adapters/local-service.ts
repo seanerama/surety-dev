@@ -49,7 +49,7 @@ import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAda
 import { AdapterUnavailable } from '../adapter.js';
 import { readIdentity, type UnitState, procStat } from '../identity.js';
 import type { ServiceHost } from '../service-host.js';
-import { launchSocketPath } from '../service-host.js';
+import { launchSocketPath, linkNamesOf } from '../service-host.js';
 import { withheldRead } from '../withhold.js';
 import { LAUNCHER_SCRIPT } from '../../invoke/sandboxed.js';
 import { SERVICE_UNIT_SHAPE, adapterVersion } from '../qualification.js';
@@ -663,8 +663,9 @@ export class LocalService implements DeploymentAdapter {
       }
     }
     try {
+      const linkName = linkNamesOf(env);
       for (const name of readdirSync(join(this.rt.home, 'run'))) {
-        const m = new RegExp(`^${env}-g([1-9][0-9]*)-link-[0-9a-z]{10}\\.sock$`).exec(name);
+        const m = linkName.exec(name);
         if (m) inventory.push({ resource: join(this.rt.home, 'run', name), kind: 'socket', recorded: true, state: 'present', pendingJob: false, generation: Number(m[1]) });
       }
     } catch (err) {
