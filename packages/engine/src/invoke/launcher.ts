@@ -254,6 +254,13 @@ function askAgain(path: string, msg: Record<string, unknown>): Promise<void> {
       done = true;
       resolve();
     };
+    // A path past what a unix socket address holds (107 bytes) is never
+    // dialled: Node would dial it cut (objection 055). This file imports
+    // nothing of the engine's, so the limit is written here.
+    if (Buffer.byteLength(path, 'utf8') > 107) {
+      finish();
+      return;
+    }
     try {
       const sock = createConnection(path);
       sock.on('error', finish);

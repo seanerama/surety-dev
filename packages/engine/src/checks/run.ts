@@ -204,14 +204,29 @@ export interface ExitDetail {
 // recorded, else nothing (it ends `interrupted`). The output captured before
 // is not held across a restart: the row names no output record, which every
 // evaluation then reads as EVIDENCE_MISSING (never an empty record claimed).
+//
+// `cause` says what ended the supervision of the execution: a `restart` (or
+// a quarantine's end, observed after one), or a `failure` in the engine that
+// admitted it, before its init reported anything. The reason recorded names
+// the one that happened (objection 055: a link that could not be set up was
+// recorded as an engine restart, though none had).
 export function fromReports(args: {
   reports: { kind: string; detail: Record<string, unknown> | null }[];
   authorized: boolean;
+  cause?: 'restart' | 'failure';
 }): { kind: 'interrupt'; why: string } | { kind: 'record'; fields: Omit<ResultFields, 'execution' | 'output' | 'output_dropped_bytes'> } {
   const started = args.reports.some((r) => r.kind === 'started');
   const execFailed = args.reports.some((r) => r.kind === 'exec_failed');
   const exit = args.reports.filter((r) => r.kind === 'exit').at(-1)?.detail ?? null;
-  if (!execFailed && (!started || exit === null)) return { kind: 'interrupt', why: 'the engine restarted before the check\'s exit report was recorded' };
+  if (!execFailed && (!started || exit === null)) {
+    return {
+      kind: 'interrupt',
+      why:
+        args.cause === 'failure'
+          ? 'the check\'s setup or supervision failed in the engine that admitted it, before its exit report was recorded (no engine restarted)'
+          : 'the engine restarted before the check\'s exit report was recorded',
+    };
+  }
   const o = args.reports.filter((r) => r.kind === 'orphans').at(-1)?.detail ?? null;
   const count = o?.count;
   const e = (exit ?? {}) as Partial<ExitDetail>;
@@ -242,8 +257,9 @@ export function fromReports(args: {
 
 // Record, or end interrupted, an execution whose domain is established
 // terminated with closure and which no supervisor holds (recovery; a
-// quarantine re-observed after a restart).
-export async function settleFromReports(rt: Runtime, execution: string, why: string): Promise<void> {
+// quarantine re-observed after a restart; a supervisor whose setup failed,
+// `cause: 'failure'`).
+export async function settleFromReports(rt: Runtime, execution: string, why: string, cause: 'restart' | 'failure' = 'restart'): Promise<void> {
   const x = await rt.read<{ id: string; domain: string | null; init_reports: string } | null>('checks.execution', { execution });
   if (x === null) return;
   const reports = JSON.parse(x.init_reports) as { kind: string; detail: Record<string, unknown> | null }[];
@@ -253,7 +269,7 @@ export async function settleFromReports(rt: Runtime, execution: string, why: str
     const binding = d?.launch_binding ? (JSON.parse(d.launch_binding) as { check_execution?: string }) : null;
     authorized = d !== null && d.launch_authorized_at !== null && binding?.check_execution === execution;
   }
-  const decided = fromReports({ reports, authorized });
+  const decided = fromReports({ reports, authorized, cause });
   if (decided.kind === 'interrupt') {
     await rt.engine('checks.interrupt', { execution, why: `${why}: ${decided.why}` });
     return;
@@ -977,7 +993,8 @@ export class CheckRunner {
             const d = await this.rt.read<DomainRow>('domain.row', { domain: a.domain });
             const v = d.status === 'terminated' ? { terminated: true as const } : await terminateDomain({ rt: this.rt, d, incarnation: this.rt.incarnation, handle: s });
             if (v.terminated) {
-              await settleFromReports(this.rt, a.execution, (err as Error).message);
+              // The failure is this engine's, not a restart's (objection 055).
+              await settleFromReports(this.rt, a.execution, (err as Error).message, 'failure');
               await s.release();
             }
             else {

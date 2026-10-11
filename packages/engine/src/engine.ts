@@ -25,6 +25,7 @@ import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
 import { recoverAtStartup } from './recovery/startup.js';
 import { Refusal, homeUnusable } from './refusal.js';
 import { Acceptor } from './runs/accept.js';
+import { checkHomeSocketPaths } from './socket-path.js';
 import { RunEnder } from './runs/end.js';
 import { Runtime, log } from './runtime.js';
 import { Scheduler, reconcileProject } from './scheduler/tick.js';
@@ -133,6 +134,16 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // refused before anything is written or locked (D1 §6.1; SEAM.md §88).
   try {
     checkHomeFilesystem(opts.home, opts.homeFsType);
+  } catch (err) {
+    if (err instanceof Refusal) exitRefused(EXIT.notStarted, err);
+    throw err;
+  }
+
+  // A home whose socket paths (the launch, ingress and link sockets under
+  // run/) would pass what a unix socket address holds is refused the same
+  // way, before anything is written or locked (objection 055).
+  try {
+    checkHomeSocketPaths(opts.home);
   } catch (err) {
     if (err instanceof Refusal) exitRefused(EXIT.notStarted, err);
     throw err;

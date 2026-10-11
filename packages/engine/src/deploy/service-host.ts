@@ -31,9 +31,14 @@
 // read-only into the service domain; to open a tunnel it sends the init a
 // nonce on the control channel, the init dials the ingress socket with it
 // and carries the connection to the application's port. A post-deploy
-// check reaches the service through its own link socket, which relays each
-// connection to a tunnel of the generation frozen on the execution, and to
-// nothing else.
+// check reaches the service through its own link socket,
+// `$SURETY_HOME/run/lk-<environment tail>-g<generation>-<check domain
+// tail>.sock`, which relays each connection to a tunnel of the generation
+// frozen on the execution, and to nothing else.
+//
+// Every socket here is bound at a path checked against what a unix socket
+// address holds (socket-path.ts; objection 055): the engine start refuses a
+// home whose paths would pass it, and no path is ever bound cut.
 //
 // Removal sites here: the launch socket at start and at stop (its exact
 // path, only a socket); a service domain's runtime directory and a link
@@ -51,6 +56,7 @@ import { INIT_SCRIPT } from '../invoke/sandboxed.js';
 import { engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from '../invoke/sandbox/tools.js';
 import { heldSecret } from '../records/redact.js';
 import { type Runtime, log } from '../runtime.js';
+import { assertSocketPath } from '../socket-path.js';
 import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamTakeDeployFault } from '../testing/seam.js';
 import { exeSha, innerPid, membersNamed, procStat, cgroupOf, cmdlineOf } from './identity.js';
 import { showUnits } from './adapters/local-service.js';
@@ -82,7 +88,18 @@ type Lookup = {
 };
 
 const RUN_NAME = /^env_[0-9A-HJKMNP-TV-Z]{26}-g[1-9][0-9]*$/;
-const LINK_NAME = /^env_[0-9A-HJKMNP-TV-Z]{26}-g[1-9][0-9]*-link-[0-9a-z]{10}\.sock$/;
+
+// The service link's socket name (objection 055): short, so that it never
+// governs the length of this home's socket paths (socket-path.ts), yet
+// naming the environment (the last 8 characters of its id, the random tail
+// of its ULID), the frozen generation and the check domain (its last 10), so
+// the inventory can attribute it to an environment and a generation without
+// reading the store, and the start sweep can tell it from anything else.
+const LINK_NAME = /^lk-[0-9a-z]{8}-g[1-9][0-9]*-[0-9a-z]{10}\.sock$/;
+export const linkSocketName = (environment: string, generation: number, checkDomain: string): string =>
+  `lk-${environment.slice(-8).toLowerCase()}-g${generation}-${checkDomain.slice(-10).toLowerCase()}.sock`;
+// The link sockets of one environment, with the generation captured.
+export const linkNamesOf = (environment: string): RegExp => new RegExp(`^lk-${environment.slice(-8).toLowerCase()}-g([1-9][0-9]*)-[0-9a-z]{10}\\.sock$`);
 
 export const launchSocketPath = (home: string): string => join(home, 'run', 'launch.sock');
 
@@ -386,7 +403,9 @@ export class ServiceHost {
   async start(): Promise<void> {
     const run = join(this.rt.home, 'run');
     mkdirSync(run, { recursive: true, mode: 0o700 });
-    const path = launchSocketPath(this.rt.home);
+    // Never bound cut (objection 055): the start already refused a home whose
+    // paths pass the limit; this stands behind it.
+    const path = assertSocketPath(launchSocketPath(this.rt.home));
     try {
       if (lstatSync(path).isSocket()) unlinkSync(path);
     } catch {
@@ -445,7 +464,9 @@ export class ServiceHost {
     mkdirSync(join(args.runtimeDir, 'root'), { recursive: true, mode: 0o700 });
     mkdirSync(join(args.runtimeDir, 'vol'), { recursive: true, mode: 0o700 });
     const s: Service = { attempt: args.attempt, domain: args.domain, environment: args.environment, generation: args.generation, runtimeDir: args.runtimeDir, ingress: null, channel: null, pending: new Map(), links: new Set(), open: new Set(), disposed: false };
-    const sock = join(args.runtimeDir, 'in.sock');
+    // Refused by name, never bound cut, when the generation's digits put the
+    // path past what a socket address holds (objection 055).
+    const sock = assertSocketPath(join(args.runtimeDir, 'in.sock'));
     try {
       if (lstatSync(sock).isSocket()) unlinkSync(sock);
     } catch {
@@ -508,7 +529,9 @@ export class ServiceHost {
   }
 
   // The service link of a post-deploy check (D4 §5.2; J8): a socket under
-  // $SURETY_HOME/run/ named for the environment and the frozen generation,
+  // $SURETY_HOME/run/ named `lk-<environment tail>-g<generation>-<check
+  // domain tail>.sock` (`linkSocketName`; objection 055), for the
+  // environment and the frozen generation,
   // relaying each connection to that generation's application and to
   // nothing else. Each connection is checked in the store first (the
   // generation still current, its domain launched, its supervision
@@ -520,8 +543,10 @@ export class ServiceHost {
   // connection, unlogged, and calls `onLogBound`. A tunnel is never
   // retargeted: the attempt is fixed. `close` removes the socket.
   async startLink(args: { execution: string; attempt: string; environment: string; generation: number; checkDomain: string; limits: LinkLimits; onLogBound?: () => void }): Promise<ServiceLink> {
-    const name = `${args.environment}-g${args.generation}-link-${args.checkDomain.slice(-10).toLowerCase()}.sock`;
-    const path = join(this.rt.home, 'run', name);
+    const name = linkSocketName(args.environment, args.generation, args.checkDomain);
+    // Refused by name, never bound cut (objection 055): the check that asked
+    // for the link then ends with this as its reason.
+    const path = assertSocketPath(join(this.rt.home, 'run', name));
     mkdirSync(join(this.rt.home, 'run'), { recursive: true, mode: 0o700 });
     const limits = args.limits;
     const first = await this.rt.read<{ ok: boolean; reason: string | null; binding: LinkBinding | null }>('deploy.link_target', { execution: args.execution });
