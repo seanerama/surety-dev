@@ -96,3 +96,73 @@ export function launchSites(sources) {
     .filter(({ file, text }) => tokenize(text, file).some((token) => (token.kind === 'string' || token.kind === 'template') && PROCESS_MODULES.includes(token.text)))
     .map(({ file }) => file);
 }
+
+// ---- the deployment tools' sites (M4 slice 28; row M336 (d); D4-A08; D4 §2.5; SEAM.md §316) ----
+//
+// The rule, beside the one above. A file under packages/engine/src/ names
+// `systemd-run` or `systemctl` as a program (a string or template literal
+// that is the tool's name, or a path ending in `/<tool>`) only where that
+// tool is started on purpose:
+//   - `deploy/adapters/local-service.ts`, both tools (D4 §§2.5, 9.3);
+//   - for `systemctl`, `boundary/scope.ts`, the incarnation scope's manager
+//     view (D2 §3.3; M2's D2_HELPERS, accepted before D4);
+//   - for `systemd-run`, `invoke/probes/suite.ts`, M2's qualification probe
+//     P17 and its host-side control (D2 §7.2; accepted before D4).
+// D4-A08 says "started only from src/deploy/adapters/"; read with D4 §2.5
+// ("src/deploy/ joins the places permitted to start a process … only for
+// the host tools its adapter names"), it governs deployment code, and the
+// two pre-D4 sites stay as D2 placed them (SEAM.md §316 records the reading).
+// And within `deploy/`, nothing interposes a shell (BS4 §5 "No shell"): no
+// binding of `exec` or `execSync` from a process module (they run a
+// shell), no `shell` option, no string naming a shell program.
+//
+// What a clean result proves: lexically, no other file names either tool as
+// a program, and no deploy file reaches a shell by those names. Not: a name
+// assembled at run time.
+
+export const TOOL_SITES = {
+  'systemd-run': ['deploy/adapters/local-service.ts', 'invoke/probes/suite.ts'],
+  systemctl: ['deploy/adapters/local-service.ts', 'boundary/scope.ts'],
+};
+
+const namesTool = (text, tool) => text === tool || text.endsWith(`/${tool}`);
+
+export function inspectToolSites(sources) {
+  const violations = [];
+  for (const { file, text } of sources) {
+    const tokens = tokenize(text, file);
+    for (const token of tokens) {
+      if (token.kind !== 'string' && token.kind !== 'template') continue;
+      for (const [tool, where] of Object.entries(TOOL_SITES)) {
+        if (namesTool(token.text, tool) && !where.includes(file)) violations.push({ file, line: token.line, what: `names '${tool}' as a program outside ${where.join(', ')}` });
+      }
+    }
+  }
+  return violations;
+}
+
+const SHELLS = ['sh', 'bash', 'dash', 'zsh'];
+
+export function inspectDeployShell(sources) {
+  const violations = [];
+  for (const { file, text } of sources) {
+    if (!file.startsWith('deploy/')) continue;
+    const tokens = tokenize(text, file);
+    const refs = moduleRefs(tokens);
+    for (const ref of refs) {
+      const spec = tokens[ref.spec];
+      if (!spec || !PROCESS_MODULES.includes(spec.text)) continue;
+      // The import's own tokens: a binding of `exec` or `execSync`, renamed or not.
+      for (let j = ref.start; j <= ref.end; j++) {
+        const name = tokens[j]?.text;
+        if (tokens[j]?.kind !== 'string' && ['exec', 'execSync'].includes(name)) violations.push({ file, line: spec.line, what: `binds '${name}' from '${spec.text}', which runs a shell` });
+      }
+    }
+    tokens.forEach((token, i) => {
+      if (token.kind === 'string' || token.kind === 'template') {
+        if (SHELLS.some((sh) => token.text === sh || token.text.endsWith(`/${sh}`))) violations.push({ file, line: token.line, what: `names the shell '${token.text}'` });
+      } else if (token.text === 'shell' && tokens[i + 1]?.text === ':') violations.push({ file, line: token.line, what: 'passes a `shell` option' });
+    });
+  }
+  return violations;
+}

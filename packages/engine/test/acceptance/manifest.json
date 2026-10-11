@@ -317,6 +317,16 @@
       "M326-exact-teardown-on-a-real-unit.test.mjs",
       "M327-preempting-teardown-on-a-real-unit.test.mjs",
       "M331-out-of-band-changes-on-a-real-unit.test.mjs"
+    ],
+    "28": [
+      "M333-rotation-and-the-held-value.test.mjs",
+      "M335-the-capability-on-the-scripted-target.test.mjs",
+      "M336-who-deploys-and-what-is-confined.test.mjs",
+      "M336-the-production-adapter-path.test.mjs",
+      "M335-the-capability-on-a-real-unit.test.mjs",
+      "M332-secret-delivery-on-a-real-unit.test.mjs",
+      "M337-the-operator-relay.test.mjs",
+      "M334-output-withheld-and-logs-redacted.test.mjs"
     ]
   },
   "sandbox": [
@@ -391,7 +401,12 @@
     "M329-observing-a-real-unit.test.mjs",
     "M326-exact-teardown-on-a-real-unit.test.mjs",
     "M327-preempting-teardown-on-a-real-unit.test.mjs",
-    "M331-out-of-band-changes-on-a-real-unit.test.mjs"
+    "M331-out-of-band-changes-on-a-real-unit.test.mjs",
+    "M336-the-production-adapter-path.test.mjs",
+    "M335-the-capability-on-a-real-unit.test.mjs",
+    "M332-secret-delivery-on-a-real-unit.test.mjs",
+    "M337-the-operator-relay.test.mjs",
+    "M334-output-withheld-and-logs-redacted.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
