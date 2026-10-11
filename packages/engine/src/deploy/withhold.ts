@@ -26,3 +26,20 @@ export function withheldRead(r: IdentityRead): IdentityRead {
     detail: r.detail === null || r.detail === undefined ? null : { ...(field !== null ? { field } : {}), withheld: 'redaction_unavailable' },
   } as IdentityRead;
 }
+
+// A collected log within `max` bytes, as published (D4 §§7.3, 9.3; the
+// slice-28 review, S1): its newest whole lines only. Cut at its front, it
+// starts after its first line end; a last line not yet ended is left out.
+// So no fragment of a line, nor of a secret in one, is published. The
+// domain init sends its capture under the same rule (invoke/domain-init.ts,
+// which imports nothing of the engine's).
+export function wholeLinesWithin(content: Buffer, max: number): Buffer {
+  let out = content;
+  if (out.length > max) {
+    out = out.subarray(out.length - max);
+    const nl = out.indexOf(0x0a);
+    out = nl >= 0 ? out.subarray(nl + 1) : Buffer.alloc(0);
+  }
+  const last = out.lastIndexOf(0x0a);
+  return last >= 0 ? out.subarray(0, last + 1) : Buffer.alloc(0);
+}

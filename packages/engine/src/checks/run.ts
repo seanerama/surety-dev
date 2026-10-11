@@ -32,7 +32,7 @@ import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandbo
 import { DOMAIN_MARKER } from '../invoke/processes.js';
 import { type BackendLaunch, INIT_SCRIPT, SandboxLaunch } from '../invoke/sandboxed.js';
 import { writeWholeRecord } from '../records/files.js';
-import { heldSecret, redactText, scanBytes } from '../records/redact.js';
+import { heldSecret, maskLeadingSuffix, maskTrailingPrefix, redactText, scanBytes } from '../records/redact.js';
 import type { ServiceLink } from '../deploy/service-host.js';
 import { nowIso } from '../clock.js';
 import { finishEgress, startEgress } from '../invoke/proxy/egress.js';
@@ -85,8 +85,12 @@ export class OutputCapture {
     } else this.tail = joined;
   }
 
+  // With bytes dropped between the parts, a held secret cut there leaves a
+  // fragment at each edge the redactor cannot recognize: each is masked
+  // (records/redact.ts, the slice-28 review's S1).
   bytes(): Buffer {
-    return Buffer.concat([...this.head, this.tail]);
+    if (this.dropped === 0) return Buffer.concat([...this.head, this.tail]);
+    return Buffer.concat([maskTrailingPrefix(Buffer.concat(this.head)), maskLeadingSuffix(this.tail)]);
   }
 }
 
@@ -278,6 +282,8 @@ export class Supervisor implements DomainHolder {
   // The deployment secrets this execution receives, by variable, in memory
   // only (D4 §7.2): set at its start, placed in its environment at launch.
   private readonly secretEnv: Record<string, string> = {};
+  private secretRefs: string[] = [];
+  private secretRefsRecorded = false;
   private fireCancel: () => void = () => {};
 
   // The engine's cancellation of a running execution from outside it: a
@@ -397,7 +403,7 @@ export class Supervisor implements DomainHolder {
         if (value === null) return this.notRun('secret_not_allowed', `the secret ${ref} is not held by this engine`);
         secretEnv[checkSecretVariable(ref)] = value;
       }
-      await this.engine('checks.secret_refs', { execution: a.execution, refs: granted.refs });
+      this.secretRefs = granted.refs;
     }
     // The program, resolved now and recorded whether pinned or not (Q6).
     const program = resolveProgram(governed, def);
@@ -632,7 +638,15 @@ export class Supervisor implements DomainHolder {
           return r.granted;
         },
         plan: () => plan,
-        backend: () => backend,
+        // The references delivered are recorded as the backend message that
+        // carries them is sent (the slice-28 review, m4), names only.
+        backend: () => {
+          if (this.secretRefs.length > 0 && !this.secretRefsRecorded) {
+            this.secretRefsRecorded = true;
+            void this.engine('checks.secret_refs', { execution: a.execution, refs: this.secretRefs }).catch((err) => log('check secrets', err, { execution: a.execution }));
+          }
+          return backend;
+        },
         started: async (pid) => {
           this.backendStarted = true;
           this.startedAt = performance.now();

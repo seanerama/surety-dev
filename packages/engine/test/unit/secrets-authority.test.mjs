@@ -20,7 +20,9 @@ const { serviceEnvironment } = await import(join(dist, 'deploy', 'service-profil
 const { checkSecretVariable } = await import(join(dist, 'checks', 'run.js'));
 const { parseDefinition, defaultGoverned } = await import(join(dist, 'checks', 'schema.js'));
 const { parseEnv } = await import(join(dist, 'deploy', 'env-command.js'));
-const { withheldRead } = await import(join(dist, 'deploy', 'withhold.js'));
+const { withheldRead, wholeLinesWithin } = await import(join(dist, 'deploy', 'withhold.js'));
+const { OutputCapture } = await import(join(dist, 'checks', 'run.js'));
+const { holdSecret, CUT_FRAGMENT_MIN } = await import(join(dist, 'records', 'redact.js'));
 
 const startTime = (pid) => {
   const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -103,4 +105,42 @@ test('a read of a service of unknown supervision keeps match results, hashes and
   assert.deepEqual(kept, { ...read, detail: { field: 'argv', withheld: 'redaction_unavailable' } });
   assert.ok(!JSON.stringify(kept).includes('secret-in-title'));
   assert.deepEqual(withheldRead({ ...read, read: 'free text', detail: null }).read, 'unread', 'a read that is no digest is withheld as unread');
+});
+
+test('S1 (i): a collected log is published as whole lines only, within its bound', () => {
+  const secret = 'S3CRETvalue-0123456789abcdef';
+  // A write split across reads: the capture ends with a prefix of the secret.
+  const capture = Buffer.from(`first line\ntoken=${secret}\ntoken=${secret.slice(0, 12)}`);
+  const out = wholeLinesWithin(capture, 1024).toString();
+  assert.equal(out, `first line\ntoken=${secret}\n`, 'the line not yet ended is left out');
+  // Cut at its front: the partial first line is dropped too.
+  const cut = wholeLinesWithin(Buffer.from(`token=${secret}\nsecond\nthird\n`), 16).toString();
+  assert.equal(cut, 'second\nthird\n', 'the last 16 bytes begin inside the secret\'s line, which is dropped');
+  assert.equal(wholeLinesWithin(Buffer.from('no line end at all'), 100).length, 0);
+});
+
+test('S1 (ii): a check\'s output cut between its head and tail masks a held secret\'s fragment at each edge', () => {
+  const value = 'm332-chk-secret-7f3a9c1e5b2d4f60';
+  holdSecret('deploy/s1_unit', value);
+  // The head ends with a prefix of the value; the tail starts with a suffix.
+  const max = 64;
+  const c = new OutputCapture(max);
+  c.push(Buffer.from(`${'a'.repeat(20)}KEY=${value.slice(0, 8)}`)); // 32 bytes: the head, ending with a prefix
+  c.push(Buffer.from('x'.repeat(100))); // dropped between
+  c.push(Buffer.from(`${value.slice(-10)}${'z'.repeat(22)}`)); // 32 bytes: the tail, starting with a suffix
+  assert.ok(c.dropped > 0, 'the fixture is live: bytes were dropped between head and tail');
+  const out = c.bytes().toString();
+  assert.ok(!out.includes(value.slice(0, 8)), `the head's trailing prefix is masked (${out})`);
+  assert.ok(!out.includes(value.slice(-10)), `the tail's leading suffix is masked (${out})`);
+  assert.ok(out.includes('[REDACTED]') && out.startsWith('a'.repeat(20)) && out.endsWith('z'.repeat(22)), 'the rest is kept');
+  // Nothing dropped: the parts are contiguous, nothing is masked here (the redactor sees the whole).
+  const whole = new OutputCapture(max);
+  whole.push(Buffer.from(`KEY=${value.slice(0, 8)}`));
+  assert.equal(whole.bytes().toString(), `KEY=${value.slice(0, 8)}`);
+  // The stated minimum: a fragment shorter than CUT_FRAGMENT_MIN bytes is left.
+  const short = new OutputCapture(max);
+  short.push(Buffer.from(`${'a'.repeat(32 - (CUT_FRAGMENT_MIN - 1))}${value.slice(0, CUT_FRAGMENT_MIN - 1)}`));
+  short.push(Buffer.from('x'.repeat(100)));
+  short.push(Buffer.from('z'.repeat(32)));
+  assert.ok(short.bytes().toString().startsWith('a'.repeat(32 - (CUT_FRAGMENT_MIN - 1)) + value.slice(0, CUT_FRAGMENT_MIN - 1)), 'a fragment under the minimum is left');
 });

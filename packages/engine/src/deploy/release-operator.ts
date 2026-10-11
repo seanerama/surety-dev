@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import { LocalService, showUnits } from './adapters/local-service.js';
 import { ServiceHost } from './service-host.js';
 import { serviceEnvironment } from './service-profile.js';
+import { wholeLinesWithin } from './withhold.js';
 import { heldSecret, redactText } from '../records/redact.js';
 import {
   type Capability,
@@ -247,12 +248,9 @@ export class ReleaseOperator {
       if ('failure' in r || !r.ok || typeof (r.ok as { text?: unknown }).text !== 'string') continue;
       // Redacted before disk (writeWholeRecord), then within the bound: a
       // record cut at its front starts after its first line end.
-      let content = Buffer.from(redactText((r.ok as { text: string }).text), 'utf8');
-      if (content.length > max) {
-        content = content.subarray(content.length - max);
-        const nl = content.indexOf(0x0a);
-        content = nl >= 0 ? content.subarray(nl + 1) : Buffer.alloc(0);
-      }
+      // Redacted before disk (writeWholeRecord again), and published as whole
+      // lines within the bound only (the slice-28 review, S1).
+      const content = wholeLinesWithin(Buffer.from(redactText((r.ok as { text: string }).text), 'utf8'), max);
       const record = await writeWholeRecord(this.rt, { project, run: null, kind: 'deployment_logs', content });
       await this.rt.engine('deploy.logs_collected', { environment: l.environment, record, generation: l.generation, at: nowIso(), bytes: content.length });
     }
@@ -410,13 +408,8 @@ export class ReleaseOperator {
     }
     this.issued.add(made.attempt);
     const cap = made.capability;
-    // adapterCall's check (D4 §2.2): every field against the store, before
-    // any host call.
-    const refused = await this.rt.read<{ field: string } | null>('deploy.capability_check', { capability: cap, incarnation: this.rt.incarnation });
-    if (refused !== null) {
-      await this.rt.engine('deploy.capability_refused', { attempt: made.attempt, field: refused.field });
-      return false;
-    }
+    // adapterCall's check (D4 §2.2) is made in effectCall, the one entry
+    // point, and nowhere else (the slice-28 review, m7).
     const attempt = made.attempt;
     // The kernel lane's launch stand-in (SEAM.md §247) speaks through this
     // channel; the real launcher through the launch socket (service-host.ts).
@@ -427,6 +420,17 @@ export class ReleaseOperator {
         await this.rt.engine('deploy.launcher_placed', { attempt, domain: lk.domain.id, incarnation: this.rt.incarnation, lease_generation: cap.lease_generation, pid: p.pid, cgroup: p.cgroup, inode: null, invocation_id: p.invocation_id, unit: p.unit });
       },
       authorize: async (init: Instance) => {
+        // The reply's environment, built here on the main thread where the
+        // values are held, as the real init's `backend` is (SEAM.md §313),
+        // before the grant: a secret not held, or a launch that cannot be
+        // looked up, refuses it, as the real launcher's hello is refused
+        // (the slice-28 review, m1).
+        const lk = await this.rt.read<{ env: Record<string, string>; secrets: Record<string, string>; port: number | null } | null>('deploy.launch_lookup', { attempt });
+        const built = lk ? serviceEnvironment(lk, heldSecret) : null;
+        if (built === null || !('env' in built)) {
+          log('service launch', new Error(built === null ? 'refused: the launch could not be looked up' : `refused: the secret ${built.unheld} is not held`), { attempt });
+          return { granted: false as const };
+        }
         const grant = await this.rt.engine<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] }>('deploy.launch_authorize', {
           attempt,
           incarnation: this.rt.incarnation,
@@ -435,11 +439,7 @@ export class ReleaseOperator {
         });
         if (!grant.granted) return grant;
         await pausePoint('deploy.launch_granted');
-        // The reply's environment, built here on the main thread where the
-        // values are held, as the real init's `backend` is (SEAM.md §313).
-        const lk = await this.rt.read<{ env: Record<string, string>; secrets: Record<string, string>; port: number | null } | null>('deploy.launch_lookup', { attempt });
-        const built = lk ? serviceEnvironment(lk, heldSecret) : null;
-        return { ...grant, env: built !== null && 'env' in built ? built.env : {} };
+        return { ...grant, env: built.env };
       },
       started: async (app) => {
         await pausePoint('init.app_started');
@@ -451,7 +451,7 @@ export class ReleaseOperator {
     // that cannot be read, leaves the attempt ambiguous with no host call.
     if (d.kind === 'teardown') {
       // A teardown closes the environment's relay before its effect (D4 §5.2).
-      this.services?.closeRelays({ environment: d.frozen.environment }, 'teardown');
+      await this.services?.closeRelays({ environment: d.frozen.environment }, 'teardown');
       const jobs = await this.pendingJobs(d);
       if (jobs !== null) {
         await this.rt.engine('deploy.receipt', { attempt, receipt: { result: 'uncertain', steps: [{ at: nowIso(), step: 'jobs', detail: jobs }] }, bound: 'pending_job' });

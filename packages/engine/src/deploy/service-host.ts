@@ -658,7 +658,10 @@ export class ServiceHost {
   async openRelay(args: { environment: string; attempt: string; generation: number | null; port: number; limits: Omit<LinkLimits, 'logMaxBytes'> }): Promise<'opened' | 'in_use'> {
     const existing = this.relays.get(args.environment);
     if (existing && existing.attempt === args.attempt && existing.port === args.port) return 'opened';
-    if (existing) this.dropRelay(args.environment);
+    // Another relay of the environment stays open until the new one is bound
+    // (the slice-28 review, m2), unless it holds the very port: then it is
+    // closed, and recorded, first.
+    if (existing && existing.port === args.port) await this.closeRelays({ environment: args.environment }, 'replaced');
     const limits = args.limits;
     const relay: Relay = { environment: args.environment, attempt: args.attempt, port: args.port, server: null as unknown as net.Server, open: new Set(), closers: new Set() };
     let active = 0;
@@ -733,6 +736,8 @@ export class ServiceHost {
     if (bound === 'in_use') return 'in_use';
     server.on('error', (err) => log('operator relay', err, { environment: args.environment }));
     relay.server = server;
+    // Bound: the one it replaces is closed and recorded now.
+    if (this.relays.has(args.environment)) await this.closeRelays({ environment: args.environment }, 'replaced');
     this.relays.set(args.environment, relay);
     return 'opened';
   }
@@ -750,11 +755,11 @@ export class ServiceHost {
 
   // Closed by the engine itself (a teardown, its generation's end, a lost
   // supervision), and recorded with the reason.
-  closeRelays(match: { environment?: string; attempt?: string }, reason: string): void {
+  async closeRelays(match: { environment?: string; attempt?: string }, reason: string): Promise<void> {
     for (const r of [...this.relays.values()]) {
       if ((match.environment !== undefined && r.environment !== match.environment) || (match.attempt !== undefined && r.attempt !== match.attempt)) continue;
       this.dropRelay(r.environment);
-      void this.rt.engine('deploy.relay_closed', { environment: r.environment, attempt: r.attempt, reason }).catch((err) => log('operator relay', err, { environment: r.environment }));
+      await this.rt.engine('deploy.relay_closed', { environment: r.environment, attempt: r.attempt, reason }).catch((err) => log('operator relay', err, { environment: r.environment }));
     }
   }
 
@@ -783,7 +788,9 @@ export class ServiceHost {
   // runtime directory removed at the path the store recorded.
   dispose(args: { attempt: string; runtimeDir: string | null }): void {
     // Its generation's end closes its relay (D4 §5.2: never retargeted).
-    this.closeRelays({ attempt: args.attempt }, 'generation_ended');
+    void this.closeRelays({ attempt: args.attempt }, 'generation_ended');
+    // Its launch is over for good: nothing of it is proven any more (m6).
+    this.proven.delete(args.attempt);
     const s = this.services.get(args.attempt);
     if (s) {
       s.disposed = true;
@@ -840,6 +847,9 @@ export class ServiceHost {
     // The peer (E127 m3): the connection must be the named launcher's, before
     // anything is recorded or sent.
     if (!(await this.prove(ch, pid)) || cgroupOf(pid) !== cgroup) return refuse('the connection is not the named launcher\'s: it did not answer the challenge');
+    // And it is still the unit's MainPID (ruling 1; the slice-28 review, m5).
+    const [again] = (await showUnits([lk.unit], { home: this.rt.home, env: lk.environment, timeoutMs: this.rt.config.values.adapter_read_deadline * 1000 })) ?? [];
+    if (!again || Number(again.MainPID) !== pid || again.InvocationID !== unit.InvocationID) return refuse("after the challenge the launcher is no longer the unit's MainPID");
     if (this.proven.has(attempt)) return refuse('a launch connection of this attempt has already proved its peer');
     this.proven.add(attempt);
     const placed = await this.rt.engine<{ placed: boolean; reason: string | null }>('deploy.launcher_placed', {
@@ -905,7 +915,7 @@ export class ServiceHost {
     ch.onClose = () => {
       for (const l of [...s.links]) l.dropTunnels();
       // Its relay answers nothing more (D4 §§5.2, 7.3; E116).
-      if (!s.disposed && !this.stopping) this.closeRelays({ attempt: s.attempt }, 'supervision_lost');
+      if (!s.disposed && !this.stopping) void this.closeRelays({ attempt: s.attempt }, 'supervision_lost');
       for (const c of s.open) c.destroy();
       if (s.disposed || this.stopping) return;
       this.lost.add(s.attempt);

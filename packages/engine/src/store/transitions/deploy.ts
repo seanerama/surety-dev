@@ -1223,16 +1223,21 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
 export function requestTeardown(tx: Tx, args: { project: string; environment: string; preempt?: boolean }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  // The relay closes when a teardown is asked for, ordinary or preempting
+  // (D4 §5.2; the slice-28 review, m3): its row here, its listener after the
+  // commit.
+  relayClosed(tx, { environment: env.id, reason: 'teardown' });
+  const closeRelay = { kind: 'relay_closed' as const, environment: env.id };
   if (args.preempt === true) {
     const p = preemptTeardown(tx, { environment: env.id, cause: 'the operator\'s preempting teardown' });
     return {
       status: 202,
       body: { environment: { id: env.id, name: env.name }, teardown: { operation: p.operation, preempted: p.preempted } },
-      effects: [{ kind: 'tick' as const }, { kind: 'preempt' as const, environment: env.id, executions: p.executions }],
+      effects: [closeRelay, { kind: 'tick' as const }, { kind: 'preempt' as const, environment: env.id, executions: p.executions }],
     };
   }
   if (env.teardown_requested_at === null) tx.db.prepare('UPDATE "environments" SET "teardown_requested_at" = ? WHERE "id" = ?').run(tx.at, env.id);
-  return { status: 202, body: { environment: { id: env.id, name: env.name }, teardown: { requested_at: env.teardown_requested_at ?? tx.at } }, effects: [{ kind: 'tick' as const }] };
+  return { status: 202, body: { environment: { id: env.id, name: env.name }, teardown: { requested_at: env.teardown_requested_at ?? tx.at } }, effects: [closeRelay, { kind: 'tick' as const }] };
 }
 
 export function intendTeardown(tx: Tx, args: { environment: string; incarnation: string }): { operation: string } | { busy: string } | { skipped: string } {
@@ -3086,6 +3091,13 @@ const relayOf = (db: Db, environment: string): RelayRow | null =>
 export function relayTarget(db: Db, args: { project: string; environment: string }): { environment: string; name: string; attempt: string; generation: number | null; port: number; relay: RelayRow | null } {
   const env = environmentByName(db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  // Not while a teardown is asked for or under way (the slice-28 review, m3).
+  const tearing = db
+    .prepare(`SELECT o."id" FROM "operations" o WHERE o."kind" = 'teardown' AND json_extract(o."target", '$.environment') = ? AND o."orchestration_stage" IS NOT NULL AND o."orchestration_stage" <> 'ended' LIMIT 1`)
+    .get(env.id) as { id: string } | undefined;
+  if (env.teardown_requested_at !== null || tearing) {
+    throw new Refusal(409, 'environment_busy', `A teardown of ${env.name} is asked for or under way: no relay opens.`, 'Wait for the teardown to finish, deploy again, then open the relay.', { environment: env.id, ...(tearing ? { operation: tearing.id } : {}) });
+  }
   const svc = runningService(db, env.id);
   if (svc === null) throw new Refusal(409, 'no_running_service', `No service of ${env.name} runs: there is nothing to relay to.`, 'Deploy the environment, then open its relay.', { environment: env.id });
   if (svc.supervision !== 'attached') {

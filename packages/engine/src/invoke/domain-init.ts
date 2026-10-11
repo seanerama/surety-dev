@@ -526,9 +526,10 @@ function capture(chunk: Buffer): void {
 
 // The engine's collection read (D4 §§7.3, 9.3; SEAM.md §314): the newest
 // output of the capture, at most `max` bytes, sent only on this channel, in
-// memory, never anywhere else. A capture cut at its front starts after its
-// first line end, so no fragment of a line (of a secret in it) the
-// redactor could not recognize whole is sent.
+// memory, never anywhere else. Only whole lines are sent: a capture cut at
+// its front starts after its first line end, and a line not yet ended is
+// left for a later collection, so no fragment of a line (of a secret in it)
+// the redactor could not recognize whole is sent.
 function sendCapture(id: string, max: number): void {
   if (serviceSpec === null || !/^[0-9a-f]{32}$/.test(id) || !Number.isInteger(max) || max <= 0) return;
   const all = Buffer.concat(captured);
@@ -538,6 +539,11 @@ function sendCapture(id: string, max: number): void {
     const nl = tail.indexOf(0x0a);
     tail = nl >= 0 ? tail.subarray(nl + 1) : Buffer.alloc(0);
   }
+  // Nor a line not yet ended: a write split across reads would leave a
+  // prefix of whatever it carries (the slice-28 review, S1). Only whole lines
+  // are sent.
+  const last = tail.lastIndexOf(0x0a);
+  tail = last >= 0 ? tail.subarray(0, last + 1) : Buffer.alloc(0);
   send({ t: 'logs', id, d: tail.toString('base64'), bytes: tail.length, cut });
 }
 
