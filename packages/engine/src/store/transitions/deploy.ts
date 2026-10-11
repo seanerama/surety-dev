@@ -3734,6 +3734,11 @@ export function endQualification(
     }
   }
   const status = args.interrupted === true ? 'interrupted' : qualification !== null ? 'qualified' : 'unqualified';
+  // Whatever path ended it, no operation of the run stays open or holds its
+  // environment's lease, so the operator's ordinary teardown can take the
+  // environment (the slice-29 review, S3).
+  const ended = endRunOperations(tx, r);
+  if (ended.length > 0) why.push(`ended its open operations ${ended.join(', ')}`);
   // A run that ends unqualified lapses the adapter's current row, in this
   // transaction, naming itself (D4-A06 as Sean decided it); an interrupted
   // run lapses nothing.
