@@ -1805,7 +1805,9 @@ export function capabilityRefused(tx: Tx, args: { attempt: string; field: string
   tx.emit('deploy.capability_refused', { project: op.project, operation: op.id, attempt: a.id }, { field: args.field });
   if (a.status === 'started') setAttempt(tx, a, 'failed');
   writeAttemptedOnce(tx, op, a, 'failed');
-  failOperation(tx, op, { code: 'deploy_capability_refused', field: args.field });
+  // The operation's outcome names the refusal; the error code itself is
+  // internal, never a route's answer (D4 A.6).
+  failOperation(tx, op, { code: 'CAPABILITY_REFUSED', field: args.field });
 }
 
 // ---- the launch (D4 §§3.4, 9.2; SEAM.md §§247, 259) -------------------------------------------------

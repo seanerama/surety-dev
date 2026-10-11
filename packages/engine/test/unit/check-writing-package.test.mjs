@@ -130,12 +130,14 @@ const exampleIn = (prompt) => {
   return m ? JSON.parse(m[1]) : null;
 };
 
-test("the reference names exactly the members parseDefinition accepts: D3 A.4's sixteen, no more", () => {
-  assert.deepEqual(Object.keys(DEFINITION_REFERENCE), ['schema', 'key', 'kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'covers', 'gate_kinds', 'tier_floor', 'phase', 'runner_class', 'requires', 'inputs', 'egress']);
+test("the reference names exactly the members parseDefinition accepts: D3 A.4's sixteen and D4 A.3's secrets, no more", () => {
+  assert.deepEqual(Object.keys(DEFINITION_REFERENCE), ['schema', 'key', 'kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'covers', 'gate_kinds', 'tier_floor', 'phase', 'runner_class', 'requires', 'inputs', 'egress', 'secrets']);
   const governed = parseGoverned(JSON.stringify(GOVERNED)).governed;
   const entries = [{ path: '.surety/checks/run/x.mjs', type: 'blob', mode: '100644', oid: '0'.repeat(40) }];
   const valid = { schema: 1, key: 'x', kind: 'acceptance', origin: 'acceptance', command: ['node', '.surety/checks/run/x.mjs'], cwd: '.', env: {}, timeout_s: 10, covers: { criteria: ['R1.1'] }, gate_kinds: ['stage'], tier_floor: 'T1', phase: 1, runner_class: 'direct', requires: [], inputs: ['.surety/checks/run/x.mjs'], egress: [] };
-  assert.deepEqual(Object.keys(valid), Object.keys(DEFINITION_REFERENCE), 'the case uses every member');
+  // `secrets` only on a definition that requires an environment (D4 A.3): the
+  // developer tests of slice 28 (secrets-authority.test.mjs) take it.
+  assert.deepEqual(Object.keys(valid), Object.keys(DEFINITION_REFERENCE).filter((k) => k !== 'secrets'), 'the case uses every member but secrets');
   const ok = parseDefinition('.surety/checks/defs/x.json', 'x', JSON.stringify(valid), governed, entries);
   assert.deepEqual(ok.errors, [], 'every member of the reference is accepted');
   const extra = parseDefinition('.surety/checks/defs/x.json', 'x', JSON.stringify({ ...valid, artifacts: [] }), governed, entries);
