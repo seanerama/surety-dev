@@ -188,9 +188,6 @@ if (canary?.kind === 'positive') {
 } else if (canary) {
   fail();
 }
-// A canary is played above: the cancellation canary waits on its timer
-// and TERM, and must not fall through into a journey role.
-if (!canary) playRole();
 
 // A journey role.
 function playRole() {
@@ -530,3 +527,11 @@ function providerUnreachable() {
   sock.on('error', () => done('an error'));
   setTimeout(() => done('nothing within 15 s'), 15_000);
 }
+
+// A canary is played above: the cancellation canary waits on its timer
+// and TERM, and must not fall through into a journey role. A journey role
+// is played last, after every constant of this file is initialised: the
+// first M4 rehearsal (2026-10-11, on ae302a8) called it before the DEPLOY_*
+// texts' declarations, and M342's Verifier died on "Cannot access
+// 'DEPLOY_SERVES' before initialization" with no result.
+if (!canary) playRole();
