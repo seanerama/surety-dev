@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import { CLI } from '../engine.mjs';
 import { eventsOfType } from '../journal.mjs';
@@ -183,7 +184,8 @@ export function untilQualificationServiceStarted(fx, { timeoutMs = 300_000 } = {
 }
 
 async function waitForStore(probe, { timeoutMs, what, intervalMs = 50 }) {
-  const until = Date.now() + timeoutMs;
+  // A monotonic deadline (objection 052: this host's wall clock steps).
+  const until = performance.now() + timeoutMs;
   for (;;) {
     let v;
     try {
@@ -192,7 +194,7 @@ async function waitForStore(probe, { timeoutMs, what, intervalMs = 50 }) {
       v = undefined;
     }
     if (v !== undefined) return v;
-    if (Date.now() > until) throw new Error(`${what} was not reached within ${timeoutMs} ms`);
+    if (performance.now() > until) throw new Error(`${what} was not reached within ${timeoutMs} ms`);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
