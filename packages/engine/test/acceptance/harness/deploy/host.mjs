@@ -45,7 +45,7 @@ import { withStore } from '../store.mjs';
 import { realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
-import { changePolicy } from '../journal.mjs';
+import { changePolicy, eventsOfType } from '../journal.mjs';
 import {
   GOVERNED_FILE,
   acceptance,
@@ -632,7 +632,26 @@ export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs =
   await ticksUntil(fx, p.id, () => {
     const latest = {};
     for (const x of executionsOf(fx.home, candidate.id)) if (['acc', 'smoke'].includes(x.key)) latest[x.key] = x;
-    return ['acc', 'smoke'].every((k) => latest[k]?.status === 'recorded' && latest[k]?.result) ? latest : undefined;
+    if (['acc', 'smoke'].every((k) => latest[k]?.status === 'recorded' && latest[k]?.result)) return latest;
+    // An execution the engine ended with no row registers its recovery retry
+    // in the same transaction (D3 §2.7), so a newest execution still
+    // `interrupted` (or `cancelled`) has no retry to come: the checks will
+    // never be recorded, and ticking on would only run out the file's
+    // timeout (M341 on mini-hp01, 2026-10-11; objection 056). The fixture
+    // fails at once with what the engine said of each ending; the sandbox's
+    // own setup failure reaches only the engine's stderr, so its tail is
+    // quoted too.
+    const ended = Object.values(latest).filter((x) => ['interrupted', 'cancelled'].includes(x.status));
+    if (ended.length > 0) {
+      const why = eventsOfType(fx.home, 'check.interrupted')
+        .filter((e) => ended.some((x) => x.id === e.subject?.check_execution))
+        .map((e) => `${e.subject.check_execution}: ${e.payload?.why ?? '(no reason recorded)'}`);
+      const stderr = fx.engine?.proc?.out?.stderr ?? '';
+      throw new Error(
+        `the candidate's workspace checks ended with no result and no retry to come: ${ended.map((x) => `${x.key} ${x.status} (retries ${x.infra_retries})`).join(', ')}\n--- check.interrupted ---\n${why.join('\n')}\n--- engine stderr (tail) ---\n${stderr.slice(-6000)}`,
+      );
+    }
+    return undefined;
   }, { timeoutMs: 600_000, what: "the candidate's workspace checks to be recorded" });
   const qualification = qualify ? await qualifyByFixture(fx.engine) : null;
   return { fx, prog, project: p.id, p, candidate, stage, qualification, envs: {} };
