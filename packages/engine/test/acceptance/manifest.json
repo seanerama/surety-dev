@@ -335,6 +335,8 @@
       "M338-a-case-that-does-not-pass.test.mjs",
       "M338-lapse-on-a-changed-host.test.mjs",
       "M307-the-journey-qualified-by-command.test.mjs",
+      "M338-unread-host-facts.test.mjs",
+      "M338-a-qualification-stopped-or-killed.test.mjs",
       "M340-the-switchboard-mutant.test.mjs",
       "M340-a-check-that-only-probes-health.test.mjs",
       "M339-the-reference-projects-journey.test.mjs"
@@ -423,6 +425,8 @@
     "M338-a-case-that-does-not-pass.test.mjs",
     "M338-lapse-on-a-changed-host.test.mjs",
     "M307-the-journey-qualified-by-command.test.mjs",
+    "M338-unread-host-facts.test.mjs",
+    "M338-a-qualification-stopped-or-killed.test.mjs",
     "M340-the-switchboard-mutant.test.mjs",
     "M340-a-check-that-only-probes-health.test.mjs",
     "M339-the-reference-projects-journey.test.mjs"
