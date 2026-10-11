@@ -694,8 +694,11 @@ function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean, uns
   const q = runnerQualification(tx.db);
   for (const r of rows) {
     let requires: unknown = [];
+    let named: unknown = [];
     try {
-      requires = (JSON.parse(r.definition) as { requires?: unknown }).requires ?? [];
+      const def = JSON.parse(r.definition) as { requires?: unknown; secrets?: unknown };
+      requires = def.requires ?? [];
+      named = def.secrets ?? [];
     } catch {
       requires = [];
     }
@@ -706,6 +709,9 @@ function recordUnrunnable(tx: Tx, project: string, selfTestRunning: boolean, uns
     // A check against a service whose supervision is `unknown` is refused,
     // not run (D4 §§5.1, 7.3; E116).
     else if (r.deployment !== null && !deploymentSupervised(tx, r.deployment)) reason = 'redaction_unavailable';
+    // A reference the definition names that the environment does not allow
+    // checks refuses the launch (D4 §7.2): not run, nothing delivered.
+    else if (r.deployment !== null && Array.isArray(named) && named.length > 0 && !checkSecretsAllowed(tx.db, r.deployment, named as string[])) reason = 'secret_not_allowed';
     else if (unsupervisedOnly) reason = null;
     else if (q === null) reason = 'isolation_unqualified';
     else if (r.runner_class !== 'direct') reason = 'runner_unqualified';
@@ -860,6 +866,53 @@ function cancelledThenSettled(tx: Tx, x: { id: string; status: string; finished_
 // Whether the service a deployment-bound execution is bound to is
 // supervised now (D4 §9.2; E110): its launch granted by this incarnation,
 // its control channel not lost.
+// Whether every reference `named` is one the deployment's configuration
+// (the version frozen on its operation) allows environment-bound checks,
+// `check_secrets` (D4 §§7.1, 7.2). Anything unread allows nothing.
+export function checkSecretsAllowed(db: Tx['db'], binding: string, named: string[]): boolean {
+  let b: { operation?: string };
+  try {
+    b = JSON.parse(binding) as typeof b;
+  } catch {
+    return false;
+  }
+  const row = db
+    .prepare(`SELECT c."content" FROM "operations" o JOIN "environment_configs" c ON c."id" = json_extract(o."finalizer_inputs", '$.config_version') WHERE o."id" = ?`)
+    .get(b.operation ?? '') as { content: string } | undefined;
+  if (!row) return false;
+  let allowed: unknown;
+  try {
+    allowed = (JSON.parse(row.content) as { check_secrets?: unknown }).check_secrets ?? [];
+  } catch {
+    return false;
+  }
+  return Array.isArray(allowed) && named.every((ref) => (allowed as unknown[]).includes(ref));
+}
+
+// The references an execution bound to a deployment is to receive (D4 §7.2):
+// its definition's `secrets`, when the frozen configuration allows every
+// one; `allowed` false otherwise.
+export function executionSecrets(db: Tx['db'], args: { execution: string }): { allowed: boolean; refs: string[] } {
+  const r = db.prepare(`SELECT x."deployment", c."definition" FROM "check_executions" x JOIN "checks" c ON c."id" = x."check" WHERE x."id" = ?`).get(args.execution) as { deployment: string | null; definition: string } | undefined;
+  if (!r) return { allowed: false, refs: [] };
+  let refs: unknown = [];
+  try {
+    refs = (JSON.parse(r.definition) as { secrets?: unknown }).secrets ?? [];
+  } catch {
+    return { allowed: false, refs: [] };
+  }
+  if (!Array.isArray(refs) || refs.some((x) => typeof x !== 'string')) return { allowed: false, refs: [] };
+  if (refs.length === 0) return { allowed: true, refs: [] };
+  if (r.deployment === null) return { allowed: false, refs: refs as string[] };
+  return { allowed: checkSecretsAllowed(db, r.deployment, refs as string[]), refs: refs as string[] };
+}
+
+// The references delivered to an execution, by name only (D4 §7.2;
+// SEAM.md §311).
+export function recordSecretRefs(tx: Tx, args: { execution: string; refs: string[] }): void {
+  tx.db.prepare('UPDATE "check_executions" SET "secret_refs" = ? WHERE "id" = ?').run(JSON.stringify(args.refs), args.execution);
+}
+
 function deploymentSupervised(tx: Tx, binding: string): boolean {
   let b: { attempt?: string };
   try {

@@ -25,6 +25,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LocalService, showUnits } from './adapters/local-service.js';
 import { ServiceHost } from './service-host.js';
+import { serviceEnvironment } from './service-profile.js';
+import { heldSecret, redactText } from '../records/redact.js';
 import {
   type Capability,
   type DeployBounds,
@@ -105,6 +107,9 @@ export class ReleaseOperator {
     // Before any launch request is accepted (D4 §9.2; SEAM.md §278): every
     // launch an earlier incarnation granted or left authorizable is closed.
     await this.rt.engine('deploy.close_prior_launches', { incarnation: this.rt.incarnation });
+    // A relay lives in the engine that opened it: every one recorded open by
+    // an earlier incarnation is recorded closed (D4 §5.2).
+    await this.rt.engine('deploy.relays_reset', {});
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
       const now = heldDigests(this.rt.home, c.refs);
@@ -228,12 +233,26 @@ export class ReleaseOperator {
   // `deployment_logs` record through the redactor. A read that fails leaves
   // the collection pending.
   private async collectLogs(project: string): Promise<void> {
-    const due = await this.rt.read<{ environment: string; prefix: string; adapter: string; generation: number | null; target: string }[]>('deploy.logs_due', { project });
+    const due = await this.rt.read<{ environment: string; prefix: string; adapter: string; generation: number | null; target: string; attempt: string | null; withheld: boolean }[]>('deploy.logs_due', { project });
     for (const l of due) {
-      const r = await readCall((signal) => adapterFor(l.adapter).logs({ environment: l.environment, prefix: l.prefix }, l.target, this.bounds().outputBytes, signal), this.bounds());
+      // A service of unknown supervision: refused, never read (D4 §7.3; E116).
+      if (l.withheld) {
+        await this.rt.engine('deploy.logs_refused', { environment: l.environment, reason: 'redaction_unavailable' });
+        continue;
+      }
+      const max = this.bounds().outputBytes;
+      // The text is bounded by `max` bytes; its JSON form may be larger, so
+      // the read's own bound leaves room for escapes.
+      const r = await readCall((signal) => adapterFor(l.adapter).logs({ environment: l.environment, prefix: l.prefix, attempt: l.attempt }, l.target, max, signal), { ...this.bounds(), outputBytes: max * 8 + 1024 });
       if ('failure' in r || !r.ok || typeof (r.ok as { text?: unknown }).text !== 'string') continue;
-      const text = (r.ok as { text: string }).text;
-      const content = Buffer.from(text, 'utf8');
+      // Redacted before disk (writeWholeRecord), then within the bound: a
+      // record cut at its front starts after its first line end.
+      let content = Buffer.from(redactText((r.ok as { text: string }).text), 'utf8');
+      if (content.length > max) {
+        content = content.subarray(content.length - max);
+        const nl = content.indexOf(0x0a);
+        content = nl >= 0 ? content.subarray(nl + 1) : Buffer.alloc(0);
+      }
       const record = await writeWholeRecord(this.rt, { project, run: null, kind: 'deployment_logs', content });
       await this.rt.engine('deploy.logs_collected', { environment: l.environment, record, generation: l.generation, at: nowIso(), bytes: content.length });
     }
@@ -414,8 +433,13 @@ export class ReleaseOperator {
           lease_generation: cap.lease_generation,
           init,
         });
-        if (grant.granted) await pausePoint('deploy.launch_granted');
-        return grant;
+        if (!grant.granted) return grant;
+        await pausePoint('deploy.launch_granted');
+        // The reply's environment, built here on the main thread where the
+        // values are held, as the real init's `backend` is (SEAM.md §313).
+        const lk = await this.rt.read<{ env: Record<string, string>; secrets: Record<string, string>; port: number | null } | null>('deploy.launch_lookup', { attempt });
+        const built = lk ? serviceEnvironment(lk, heldSecret) : null;
+        return { ...grant, env: built !== null && 'env' in built ? built.env : {} };
       },
       started: async (app) => {
         await pausePoint('init.app_started');
@@ -426,6 +450,8 @@ export class ReleaseOperator {
     // (D4 §§2.4, 4.6; the slice-26 review, S1): a job pending, or a listing
     // that cannot be read, leaves the attempt ambiguous with no host call.
     if (d.kind === 'teardown') {
+      // A teardown closes the environment's relay before its effect (D4 §5.2).
+      this.services?.closeRelays({ environment: d.frozen.environment }, 'teardown');
       const jobs = await this.pendingJobs(d);
       if (jobs !== null) {
         await this.rt.engine('deploy.receipt', { attempt, receipt: { result: 'uncertain', steps: [{ at: nowIso(), step: 'jobs', detail: jobs }] }, bound: 'pending_job' });
@@ -436,13 +462,26 @@ export class ReleaseOperator {
     const ac = new AbortController();
     const call = { env: d.frozen.environment, ac, settled: null as Promise<unknown> | null };
     this.calls.set(attempt, call);
-    const { receipt, bound, settled } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds(), ac.signal, (s) => {
-      call.settled = s;
-      void s.finally(() => {
-        if (this.calls.get(attempt) === call) this.calls.delete(attempt);
-        this.rt.services?.requestTick();
-      });
+    const guard = async (presented: Capability): Promise<string | null> =>
+      (await this.rt.read<{ field: string } | null>('deploy.capability_check', { capability: presented, incarnation: this.rt.incarnation }))?.field ?? null;
+    const { receipt, bound, settled, refused: refusedAt } = await effectCall(adapterFor(d.frozen.adapter), cap, launch, this.bounds(), {
+      guard,
+      cancel: ac.signal,
+      onStart: (s) => {
+        call.settled = s;
+        void s.finally(() => {
+          if (this.calls.get(attempt) === call) this.calls.delete(attempt);
+          this.rt.services?.requestTick();
+        });
+      },
     });
+    if (refusedAt !== null) {
+      // Refused at adapterCall: nothing issued, the attempt failed with
+      // nothing applied (D4 §2.2).
+      if (this.calls.get(attempt) === call) this.calls.delete(attempt);
+      await this.rt.engine('deploy.capability_refused', { attempt, field: refusedAt });
+      return false;
+    }
     if (bound !== null) {
       this.inFlight.set(attempt, settled);
       this.inFlightEnv.set(attempt, d.frozen.environment);

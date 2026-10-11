@@ -278,7 +278,28 @@ async function authorizeService(): Promise<void> {
   }
   if (init === null || !Number.isInteger(init.pid) || !Number.isInteger(init.start_time)) process.exit(0);
   send({ t: 'authorize', init });
-  const answer = await next();
+  let answer = await next();
+  // The launch channel's challenge (E127 m3; deploy/service-host.ts): the
+  // expected init proves it holds this connection by setting its own name
+  // to the engine's nonce, which no other process can; restored after.
+  if (answer && answer.t === 'prove' && typeof answer.nonce === 'string' && /^[a-z0-9]{1,15}$/.test(answer.nonce)) {
+    let name: string | null = null;
+    try {
+      name = readFileSync('/proc/self/comm', 'utf8').replace(/\n$/, '');
+      writeFileSync('/proc/self/comm', answer.nonce);
+    } catch {
+      // unanswered: the engine refuses
+    }
+    send({ t: 'proved' });
+    answer = await next();
+    if (name !== null) {
+      try {
+        writeFileSync('/proc/self/comm', name);
+      } catch {
+        // the name stays the nonce
+      }
+    }
+  }
   if (!answer || answer.t !== 'granted') process.exit(0);
 }
 
@@ -483,11 +504,14 @@ const tunnels = new Set<net.Socket>();
 // memory only (the init is not dumpable; nothing of it is relayed).
 const captured: Buffer[] = [];
 let capturedBytes = 0;
+// The capture lost its oldest bytes to its bound.
+let captureTrimmed = false;
 function capture(chunk: Buffer): void {
   if (serviceSpec === null) return;
   captured.push(chunk);
   capturedBytes += chunk.length;
   while (capturedBytes > serviceSpec.logMax && captured.length > 0) {
+    captureTrimmed = true;
     const over = capturedBytes - serviceSpec.logMax;
     const first = captured[0]!;
     if (first.length <= over) {
@@ -498,6 +522,23 @@ function capture(chunk: Buffer): void {
       capturedBytes -= over;
     }
   }
+}
+
+// The engine's collection read (D4 §§7.3, 9.3; SEAM.md §314): the newest
+// output of the capture, at most `max` bytes, sent only on this channel, in
+// memory, never anywhere else. A capture cut at its front starts after its
+// first line end, so no fragment of a line (of a secret in it) the
+// redactor could not recognize whole is sent.
+function sendCapture(id: string, max: number): void {
+  if (serviceSpec === null || !/^[0-9a-f]{32}$/.test(id) || !Number.isInteger(max) || max <= 0) return;
+  const all = Buffer.concat(captured);
+  let tail = all.length > max ? all.subarray(all.length - max) : all;
+  const cut = all.length > max || captureTrimmed;
+  if (cut) {
+    const nl = tail.indexOf(0x0a);
+    tail = nl >= 0 ? tail.subarray(nl + 1) : Buffer.alloc(0);
+  }
+  send({ t: 'logs', id, d: tail.toString('base64'), bytes: tail.length, cut });
 }
 
 // A tunnel the engine asked for: dialled to the engine's ingress socket,
@@ -693,6 +734,8 @@ function onMessage(m: Msg): void {
     leaveWhenAlone();
   } else if (m.t === 'tunnel') {
     openTunnel(String(m.id ?? ''));
+  } else if (m.t === 'logs') {
+    sendCapture(String(m.id ?? ''), Number(m.max));
   } else if (m.t === 'containment') {
     // The engine's request, on this channel only (E86).
     if (containmentSpec === null) send({ t: 'containment_done', ran: false, backend_running: exit === null, reason: 'this domain has no containment check' });

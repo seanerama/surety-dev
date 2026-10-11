@@ -93,6 +93,12 @@ import {
   capabilityCheck,
   capabilityRefused,
   configsWithSecrets,
+  currentConfigContent,
+  relayCheck,
+  relayClosed,
+  relayOpened,
+  relaysReset,
+  relayTarget,
   deployDetail,
   deployWork,
   finalizeDeploy,
@@ -134,7 +140,7 @@ import {
   startDeployAttempt,
   writeConfigVersion,
 } from './transitions/deploy.js';
-import { logsDue, observationLapsed, observationPlan, observationsDue, recordLogs, recordObservation as recordEnvironmentObservation, requestLogs } from './transitions/observe.js';
+import { logsDue, observationLapsed, observationPlan, observationsDue, recordLogs, recordObservation as recordEnvironmentObservation, refuseLogs, requestLogs } from './transitions/observe.js';
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
@@ -193,6 +199,8 @@ import {
   recordExecutionResult,
   recordInitReport,
   recordToolchain,
+  executionSecrets,
+  recordSecretRefs,
   recordCandidateFingerprint,
   registerDue,
   renewCheckLease,
@@ -249,6 +257,10 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
+  // D4 §5.2 (M4 slice 28; SEAM.md §317): the operator relay, its listener
+  // bound or closed on the main thread first.
+  'environment.relay_open': (tx, a) => relayOpened(tx, a),
+  'environment.relay_close': (tx, a) => relayClosed(tx, a),
   // D4 §6.1, A.8 (M4 slice 27; SEAM.md §294): a log collection asked for.
   'environment.collect_logs': (tx, a) => requestLogs(tx, a),
   // D4 §5.3 item 1, A.8; CD1 (M4 slice 25; SEAM.md §266).
@@ -278,12 +290,16 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'checks.domain_owner': (d, a: { domain: string }) => d.prepare('SELECT "incarnation" FROM "process_ownership" WHERE "domain" = ?').get(a.domain) ?? null,
   'checks.qualification': (d) => runnerQualification(d),
   'checks.regrant_facts': (d, a: { execution: string; incarnation: string; generation: number }) => checkRegrantFacts(d, a),
+  'checks.execution_secrets': (d, a) => executionSecrets(d, a),
   'checks.execution': (d, a: { execution: string }) => d.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(a.execution) ?? null,
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
   'environment.read': (d, a) => readOneEnvironment(d, a),
   'environment.logs': (d, a) => readEnvironmentLogs(d, a),
+  'environment.config_content': (d, a) => currentConfigContent(d, a),
+  'environment.relay_target': (d, a) => relayTarget(d, a),
+  'deploy.relay_check': (d, a) => relayCheck(d, a),
   'deploy.observations_due': (d, a) => observationsDue(d, a),
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
@@ -440,6 +456,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),
   'checks.init_report': (tx, a) => recordInitReport(tx, a),
   'checks.toolchain': (tx, a) => recordToolchain(tx, a),
+  'checks.secret_refs': (tx, a) => recordSecretRefs(tx, a),
   'checks.candidate_fingerprint': (tx, a) => recordCandidateFingerprint(tx, a),
   'checks.renew': (tx, a) => renewCheckLease(tx, a),
   'checks.collecting': (tx, a) => markCollecting(tx, a),
@@ -527,6 +544,9 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'deploy.observe': (tx, a) => recordEnvironmentObservation(tx, a),
   'deploy.observation_lapsed': (tx, a) => observationLapsed(tx, a),
   'deploy.logs_collected': (tx, a) => recordLogs(tx, a),
+  'deploy.logs_refused': (tx, a) => refuseLogs(tx, a),
+  'deploy.relay_closed': (tx, a) => relayClosed(tx, a),
+  'deploy.relays_reset': (tx) => relaysReset(tx),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

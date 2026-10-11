@@ -85,7 +85,7 @@ import {
   parseResultBody,
   projectRepo,
 } from './fixtures.js';
-import { addAnswers, adapterReport, releaseHeld, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
+import { addAnswers, adapterReport, launchReplyHolds, releaseHeld, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
 import { installAdapterQualification, installFixtureAuthorization } from './deploy-fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
@@ -1031,6 +1031,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     // SEAM.md §247, amended by §291: every held read of the environment released.
     if (s[3] === 'release') return route(200, async () => releaseHeld(env));
   }
+  // SEAM.md §313: whether the scripted stand-in's launch reply carried a value.
+  if (s.length === 2 && s[0] === 'deploy' && s[1] === 'launch-reply' && post) return route(200, async (body) => launchReplyHolds(body));
   if (s.length === 2 && s[0] === 'deploy' && s[1] === 'faults') {
     return {
       restricted: false,
@@ -1039,6 +1041,16 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         const b = isObject(body) ? body : {};
         const env = b.environment;
         const fault = b.fault;
+        // SEAM.md §315: a forged capability, one-shot, above the adapter.
+        if (fault === 'capability_forged') {
+          if (typeof b.field !== 'string' || !(FORGEABLE as readonly string[]).includes(b.field) || !('value' in b)) {
+            throw new Refusal(400, 'invalid_value', `"field" must be one of ${FORGEABLE.join(', ')}, with a "value".`, 'Send {"environment", "fault": "capability_forged", "field", "value"}.', { field: 'field' });
+          }
+          const known = typeof env === 'string' && (await hooks.store().call('read', { name: 'deploy.environment_known', args: { environment: env } })) === true;
+          if (!known) throw new Refusal(400, 'invalid_value', 'No such environment.', 'Send {"environment": "env_…"}.', { field: 'environment' });
+          forgeries.set(env as string, { field: b.field, value: b.value });
+          return { status: 200, body: { environment: env, faults: ['capability_forged'], field: b.field } };
+        }
         if (typeof fault !== 'string' || !(DEPLOY_FAULTS as readonly string[]).includes(fault)) {
           throw new Refusal(400, 'invalid_value', `"fault" must be one of ${DEPLOY_FAULTS.join(', ')}.`, 'Send {"environment": "env_…", "fault": <a fault of SEAM.md §262>}.', { field: 'fault' });
         }
@@ -1255,6 +1267,22 @@ export function seamBusAddressMissing(environment: string, take = false): boolea
   if (!init.harness) return false;
   if (busMissing.has(environment)) return true;
   return take ? seamTakeDeployFault(environment, 'bus_address_missing') : false;
+}
+
+// SEAM.md §315: the members of a capability a test may forge, and the
+// forgeries armed per environment (one-shot).
+const FORGEABLE = ['environment', 'artifact_digest', 'create_units', 'stop_units', 'attempt', 'generation', 'incarnation', 'lease_generation', 'operation', 'config_identity', 'prior', 'cleanup'] as const;
+const forgeries = new Map<string, { field: string; value: unknown }>();
+
+// The capability an effect call presents: as minted, or, with SEAM.md §315's
+// fault armed for its environment, with one member replaced (taken once).
+// Outside harness mode, always as minted.
+export function seamForgeCapability<T extends { environment: string }>(cap: T): T {
+  if (!init.harness) return cap;
+  const f = forgeries.get(cap.environment);
+  if (!f) return cap;
+  forgeries.delete(cap.environment);
+  return { ...cap, [f.field]: f.value } as T;
 }
 
 // Is `fault` armed for `environment`? Taken (disarmed) when it is.

@@ -16,7 +16,8 @@
 // none was built, an adapter with nothing to call, whose every effect is
 // `not_issued` and every read `unavailable`, so unknown.
 
-import { seamDeploymentAdapter } from '../testing/seam.js';
+import { redactValue } from '../records/redact.js';
+import { seamDeploymentAdapter, seamForgeCapability } from '../testing/seam.js';
 
 export type AdapterEffectResult = 'issued' | 'refused' | 'not_issued' | 'uncertain';
 export type AdapterReadFailure = 'unavailable' | 'deadline' | 'output_exceeded' | 'invalid_response';
@@ -139,6 +140,9 @@ export interface LogTail {
 export interface EnvRef {
   environment: string;
   prefix: string;
+  // The attempt whose service a `logs` read collects from (the current
+  // generation's, as the store recorded it).
+  attempt?: string | null;
 }
 
 export interface TargetExpectation {
@@ -194,7 +198,10 @@ export interface LaunchChannel {
   // unit's cgroup and invocation recorded on the domain, as the real
   // launcher's placement records the unit's ControlGroup (SEAM.md §278).
   placed?(p: { unit: string; cgroup: string; invocation_id: string; pid: number }): Promise<void>;
-  authorize(init: Instance): Promise<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[] }>;
+  // Granted, the reply carries the service's environment, its secret
+  // values included (D4 §7.2; SEAM.md §313): held in memory by whoever
+  // stands in for the init, never written.
+  authorize(init: Instance): Promise<{ granted: false } | { granted: true; exe: string; exe_sha256: string | null; argv: string[]; env: Record<string, string> }>;
   started(app: Instance & { exe: string; exe_sha256: string | null; argv: string[] }): Promise<void>;
 }
 
@@ -314,17 +321,26 @@ async function bounded<T>(
   }
 }
 
-// An effect. Past its deadline or its output bound, or answered in a way
-// that cannot be interpreted, it is `uncertain`: ambiguous until a read
-// settles it (§2.1).
+// An effect: `adapterCall`, the adapter's one entry point for effects (D4
+// §2.2). The capability it presents (as minted, or as SEAM.md §315's fault
+// forged it, harness only) is checked by `guard` against the store before
+// anything else: a member that fails refuses the call with nothing issued,
+// and the adapter is never reached. Past its deadline or its output bound,
+// or answered in a way that cannot be interpreted, it is `uncertain`:
+// ambiguous until a read settles it (§2.1).
 export async function effectCall(
   adapter: DeploymentAdapter,
-  cap: Capability,
+  minted: Capability,
   launch: LaunchChannel,
   b: DeployBounds,
-  cancel?: AbortSignal,
-  onStart?: (settled: Promise<unknown>) => void,
-): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null; settled: Promise<unknown> }> {
+  opts: { guard: (cap: Capability) => Promise<string | null>; cancel?: AbortSignal; onStart?: (settled: Promise<unknown>) => void },
+): Promise<{ receipt: EffectReceipt; bound: AdapterReadFailure | null; settled: Promise<unknown>; refused: string | null }> {
+  const cap = seamForgeCapability(minted);
+  const failed = await opts.guard(cap);
+  if (failed !== null) {
+    return { receipt: { result: 'refused', steps: [{ at: new Date().toISOString(), step: 'capability', detail: `refused: ${failed}` }] }, bound: null, settled: Promise.resolve(), refused: failed };
+  }
+  const { cancel, onStart } = opts;
   let settled: Promise<unknown> = Promise.resolve();
   const r = await bounded(
     (signal) => (cap.kind === 'deploy' ? adapter.deploy(cap, signal, launch) : adapter.teardown(cap, signal)),
@@ -337,17 +353,21 @@ export async function effectCall(
     cancel,
   );
   const at = new Date().toISOString();
-  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure, settled };
+  if ('failure' in r) return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: r.failure }] }, bound: r.failure, settled, refused: null };
   const receipt = r.ok;
   if (!receipt || !['issued', 'refused', 'not_issued', 'uncertain'].includes(receipt.result)) {
-    return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response', settled };
+    return { receipt: { result: 'uncertain', steps: [{ at, step: 'bound', detail: 'invalid_response' }] }, bound: 'invalid_response', settled, refused: null };
   }
   const steps = Array.isArray(receipt.steps) ? receipt.steps.map((s) => ({ at: String(s.at), step: String(s.step), detail: String(s.detail).slice(0, 2000) })) : [];
-  return { receipt: { result: receipt.result, steps }, bound: null, settled };
+  return { receipt: { result: receipt.result, steps }, bound: null, settled, refused: null };
 }
 
 // `cancel`: the engine's own stop (the observer's, at shutdown) aborts the
 // read as its deadline would.
-export function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds, cancel?: AbortSignal): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
-  return bounded(call, b.readMs, b.outputBytes, undefined, cancel);
+// Every value a read returns passes the redactor before the engine keeps or
+// answers with any of it: what the host says about a service's processes
+// (arguments, error details) is untrusted output for publication (D4 §7.3).
+export async function readCall<T>(call: (signal: AbortSignal) => Promise<T>, b: DeployBounds, cancel?: AbortSignal): Promise<{ ok: T } | { failure: AdapterReadFailure }> {
+  const r = await bounded(call, b.readMs, b.outputBytes, undefined, cancel);
+  return 'failure' in r ? r : { ok: redactValue(r.ok) };
 }

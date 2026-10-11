@@ -110,8 +110,8 @@ const TIER_RANK: Record<string, number> = { T1: 1, T2: 2, T3: 3 };
 
 // The fields of a definition that say how a check executes (D3 §3.1,
 // "unclassifiable"): any change is `execution_field_changed`.
-const EXECUTION_FIELDS = ['kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'runner_class', 'requires', 'inputs', 'egress'] as const;
-const SET_FIELDS = new Set(['requires', 'inputs', 'egress']);
+const EXECUTION_FIELDS = ['kind', 'origin', 'command', 'cwd', 'env', 'timeout_s', 'runner_class', 'requires', 'inputs', 'egress', 'secrets'] as const;
+const SET_FIELDS = new Set(['requires', 'inputs', 'egress', 'secrets']);
 const GOVERNED_FIELDS = ['check_discovery', 'check_commands', 'runner_config', 'result_collection'] as const;
 
 const isDefinitionFile = (path: string, dirs: readonly string[]): boolean =>

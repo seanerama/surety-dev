@@ -121,6 +121,9 @@ export const EVENT_OWNERS = {
   'deploy.preempted': 'store/transitions/deploy.ts',
   'environment.out_of_band': 'store/transitions/observe.ts',
   'environment.observation_missed': 'store/transitions/observe.ts',
+  // D4 §5.2 (Q7), the operator relay (M4 slice 28; the driver's ruling).
+  'environment.relay_opened': 'store/transitions/deploy.ts',
+  'environment.relay_closed': 'store/transitions/deploy.ts',
   'engine.backup': 'store/transitions/engine.ts',
   // D2 A.5, the trust table's part. The egress and secret events join with
   // the sandbox lane's later slices, which emit them.

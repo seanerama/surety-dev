@@ -64,6 +64,8 @@ const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const VARIABLE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const HEX64 = /^[0-9a-f]{64}$/;
+// A deployment secret reference (D4 §§3.2, 7.1; deploy/config.ts).
+const DEPLOY_SECRET_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
 const HOST = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]{1,5})?$/;
 
 export interface Governed {
@@ -101,6 +103,9 @@ export interface Definition {
   requires: string[];
   inputs?: string[];
   egress: string[];
+  // D4 §7.2, A.3: deployment secret references the check may receive, only
+  // on a definition that requires an environment.
+  secrets?: string[];
 }
 
 // ---- JSON with repeated members found ------------------------------------------------
@@ -470,6 +475,10 @@ export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = O
     form: 'the protected paths the check reads: files, or directories ending `/`, under a protected root, regular files only, never the governed file. Only these protected files are present when the check runs, so list every protected file the command needs, its own program included.',
   },
   egress: { required: 'default `[]`', form: 'hosts the check may reach, a subset of the governed `runner_config.direct.egress_allow`; none by default, and then the check has no network.' },
+  secrets: {
+    required: 'optional',
+    form: 'deployment secret references (`deploy/<name>`), no repeats, only on a definition whose `requires` names `environment`. At a deployment verification the check receives each one the environment\'s `check_secrets` also allows, as `SURETY_SECRET_<NAME>`; one it does not allow refuses the run (`secret_not_allowed`).',
+  },
 });
 const DEFINITION_FIELDS: readonly string[] = Object.keys(DEFINITION_REFERENCE);
 
@@ -654,6 +663,17 @@ export function parseDefinition(file: string, stem: string, text: string, govern
         else egress.push(x);
       });
   }
+  // secrets (D4 §7.2, A.3): references only, on a check bound to an environment.
+  const secrets: string[] = [];
+  if (v.secrets !== undefined) {
+    if (!Array.isArray(v.secrets) || !requires.includes('environment')) e.at('/secrets', 'invalid_value');
+    else
+      v.secrets.forEach((x, n) => {
+        if (typeof x !== 'string' || !DEPLOY_SECRET_REFERENCE.test(x)) e.at(`/secrets/${n}`, 'invalid_value');
+        else if (secrets.includes(x)) e.at(`/secrets/${n}`, 'duplicate_entry');
+        else secrets.push(x);
+      });
+  }
   // A link or a submodule among the inputs (B01) is an error of the version,
   // which then satisfies no gate; the definition is still discovered, so
   // nothing is dropped silently.
@@ -675,6 +695,7 @@ export function parseDefinition(file: string, stem: string, text: string, govern
     requires,
     ...(inputs !== undefined ? { inputs } : {}),
     egress,
+    ...(v.secrets !== undefined ? { secrets } : {}),
   };
   return { definition, manifest, errors: e.list };
 }

@@ -204,6 +204,24 @@ async function readAnswer<T>(dir: string | null, env: string, call: CallName, si
   return value;
 }
 
+// The launch grant's reply each attempt's stand-in received (SEAM.md §313),
+// in this process's memory only: never written, never answered with.
+const launchReplies = new Map<string, Record<string, string>>();
+
+// POST /v1/harness/deploy/launch-reply (SEAM.md §313): for each variable the
+// test names, whether the reply to that attempt's grant carried exactly that
+// value; no value is in the answer.
+export function launchReplyHolds(body: unknown): Record<string, boolean> {
+  const b = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+  const expect = b?.expect;
+  if (!b || typeof b.attempt !== 'string' || typeof expect !== 'object' || expect === null || Array.isArray(expect) || Object.values(expect).some((v) => typeof v !== 'string')) {
+    throw new Refusal(400, 'invalid_value', 'The body must be {"attempt": "att_…", "expect": {"<VAR>": "<value>"}}.', 'Send the attempt and the values to compare.', { field: null });
+  }
+  const reply = launchReplies.get(b.attempt);
+  if (reply === undefined) throw new Refusal(404, 'not_found', `No launch reply was received for attempt "${b.attempt}".`, 'Name an attempt whose launch the stand-in was granted.', { attempt: b.attempt });
+  return Object.fromEntries(Object.entries(expect as Record<string, string>).map(([k, v]) => [k, Object.prototype.hasOwnProperty.call(reply, k) && reply[k] === v]));
+}
+
 export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter {
   return {
     id: 'local_service',
@@ -247,6 +265,8 @@ export function scriptedDeploymentAdapter(dir: string | null): DeploymentAdapter
           }
           const grant = await launch.authorize(m.init);
           if (!grant.granted) continue;
+          // The reply as the init would hold it: in memory only (SEAM.md §313).
+          launchReplies.set(cap.attempt, { ...grant.env });
           const app = nextInstance(dir);
           const s = load(dir, cap.environment);
           const u = s.target.units.find((x) => x.name === m.unit.name);
