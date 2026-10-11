@@ -9,9 +9,10 @@
 import type { IdentityRead, Instance, InventoryEntry, TargetExpectation, TargetInventory, TargetStatus } from '../../deploy/adapter.js';
 import { type Change, type ExpectedService, changesFromIdentity, changesFromInventory, judgeCondition, sameChange } from '../../deploy/environment.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
+import { Refusal } from '../../refusal.js';
 import { notFound, parseJson } from './common.js';
 import { type DecisionRow, invalidateDecision, raiseDecision } from './decisions.js';
-import { attemptSupervision, environmentByName, expectationOf, getEnv, recordedCgroups, recordedUnits, requestTeardown, unitName } from './deploy.js';
+import { attemptSupervision, environmentByName, runningService, expectationOf, getEnv, recordedCgroups, recordedUnits, requestTeardown, unitName } from './deploy.js';
 import { projectPolicy } from './settings.js';
 import type { CommandResult } from './control.js';
 import type { Tx } from './tx.js';
@@ -654,21 +655,45 @@ export function observedRead(db: Db, args: { project: string; observed: string |
 
 // ---- logs (D4 §6.1, A.8; SEAM.md §294) ---------------------------------------------------------
 
-// POST …/logs: a collection asked for; the engine reads once at a later tick.
+// POST …/logs: a collection asked for; the engine reads once at a later
+// tick. For a service whose supervision is unknown it is refused (D4 §7.3;
+// E116): nothing of its output is published under a redactor that may not
+// know its secrets.
 export function requestLogs(tx: Tx, args: { project: string; environment: string }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  const svc = runningService(tx.db, env.id);
+  if (svc !== null && svc.supervision === 'unknown') {
+    throw new Refusal(409, 'redaction_unavailable', `The service of ${env.name} survived an engine restart or lost its control channel: the engine cannot screen its output, so no log is collected.`, 'Redeploy or tear down the environment; its logs are collected again from the new service.', { environment: env.id, attempt: svc.attempt });
+  }
   const row = tx.db.prepare('SELECT "logs_requested_at" FROM "environments" WHERE "id" = ?').get(env.id) as { logs_requested_at: string | null };
   const at = row.logs_requested_at ?? tx.at;
-  if (row.logs_requested_at === null) tx.db.prepare('UPDATE "environments" SET "logs_requested_at" = ? WHERE "id" = ?').run(at, env.id);
+  if (row.logs_requested_at === null) tx.db.prepare('UPDATE "environments" SET "logs_requested_at" = ?, "logs_refused" = NULL WHERE "id" = ?').run(at, env.id);
   // Taken up at the next tick the scheduler makes (SEAM.md §294: "at a later
   // tick"); the request asks for none itself.
   return { status: 202, body: { environment: { id: env.id, name: env.name }, collection: { requested_at: at } } };
 }
 
-export function logsDue(db: Db, args: { project: string }): { environment: string; prefix: string; adapter: string; generation: number | null; target: string }[] {
+// The collections asked for, each with the service it reads and whether that
+// service's supervision is unknown now (then it is refused, never made).
+export function logsDue(db: Db, args: { project: string }): { environment: string; prefix: string; adapter: string; generation: number | null; target: string; attempt: string | null; withheld: boolean }[] {
   const rows = db.prepare('SELECT * FROM "environments" WHERE "project" = ? AND "logs_requested_at" IS NOT NULL AND "prefix" IS NOT NULL').all(args.project) as (ReturnType<typeof getEnv> & {})[];
-  return rows.map((e) => ({ environment: e.id, prefix: e.prefix!, adapter: e.adapter, generation: e.current_generation, target: expectedService(db, e.id)?.expected.target ?? 'app' }));
+  return rows.map((e) => {
+    const svc = runningService(db, e.id);
+    return { environment: e.id, prefix: e.prefix!, adapter: e.adapter, generation: e.current_generation, target: expectedService(db, e.id)?.expected.target ?? 'app', attempt: svc?.attempt ?? null, withheld: svc?.supervision === 'unknown' };
+  });
+}
+
+// A collection asked for and not made: its service's supervision became
+// unknown first (D4 §7.3; E116). Recorded, never dropped (unknown is a value).
+export function refuseLogs(tx: Tx, args: { environment: string; reason: string }): void {
+  const env = getEnv(tx.db, args.environment);
+  if (!env) return;
+  const row = tx.db.prepare('SELECT "logs_requested_at" FROM "environments" WHERE "id" = ?').get(env.id) as { logs_requested_at: string | null };
+  if (row.logs_requested_at === null) return;
+  tx.db
+    .prepare('UPDATE "environments" SET "logs_requested_at" = NULL, "logs_refused" = ? WHERE "id" = ?')
+    .run(JSON.stringify({ reason: args.reason, requested_at: row.logs_requested_at, refused_at: tx.at, generation: env.current_generation }), env.id);
 }
 
 // The collection's read, recorded: a stored `deployment_logs` record.
@@ -679,7 +704,7 @@ export function recordLogs(tx: Tx, args: { environment: string; record: string |
   tx.db
     .prepare('INSERT INTO "environment_logs" ("id", "created_at", "project", "environment", "record", "generation", "at", "collected_at", "bytes") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(tx.newId('envl_'), tx.at, env.project, env.id, args.record, args.generation, args.at, tx.at, args.bytes);
-  tx.db.prepare('UPDATE "environments" SET "logs_requested_at" = NULL WHERE "id" = ?').run(env.id);
+  tx.db.prepare('UPDATE "environments" SET "logs_requested_at" = NULL, "logs_refused" = NULL WHERE "id" = ?').run(env.id);
 }
 
 // GET …/logs: stored records only (N02).
@@ -694,6 +719,9 @@ export function readLogs(db: Db, args: { project: string; environment: string })
     collected_at: string;
     bytes: number;
   }[];
-  const state = requested !== null ? 'pending' : logs.some((l) => l.generation === env.current_generation) ? 'collected' : 'missing';
-  return { environment: { id: env.id, name: env.name }, logs, state, requested_at: requested };
+  // A collection refused for the current generation's service (D4 §7.3).
+  const refusedRow = json<{ reason: string; requested_at: string; refused_at: string; generation: number | null }>((db.prepare('SELECT "logs_refused" FROM "environments" WHERE "id" = ?').get(env.id) as { logs_refused: string | null }).logs_refused);
+  const refused = refusedRow !== null && refusedRow.generation === env.current_generation ? refusedRow : null;
+  const state = requested !== null ? 'pending' : refused !== null ? 'refused' : logs.some((l) => l.generation === env.current_generation) ? 'collected' : 'missing';
+  return { environment: { id: env.id, name: env.name }, logs, state, requested_at: requested, ...(state === 'refused' ? { reason: refused!.reason, refused: { reason: refused!.reason, requested_at: refused!.requested_at, refused_at: refused!.refused_at } } : {}) };
 }

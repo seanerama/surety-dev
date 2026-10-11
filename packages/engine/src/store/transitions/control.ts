@@ -20,7 +20,10 @@ export type Effect =
   | { kind: 'control_after_exit'; run: string; control: 'stop' | 'abandon' }
   // A preempting teardown intended: the environment's running effect calls
   // are cancelled (D4 §4.6 step 1; release-operator.ts).
-  | { kind: 'preempt'; environment: string; executions?: string[] };
+  | { kind: 'preempt'; environment: string; executions?: string[] }
+  // A teardown requested: the environment's relay listener closed (D4 §5.2;
+  // its row was closed in the same transaction).
+  | { kind: 'relay_closed'; environment: string };
 
 export interface CommandResult {
   status: number;

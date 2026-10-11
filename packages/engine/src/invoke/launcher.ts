@@ -131,6 +131,30 @@ async function ask(msg: Record<string, unknown>): Promise<Record<string, unknown
   return next();
 }
 
+// The launch channel's challenge (E127 m3; deploy/service-host.ts): the
+// engine sends a nonce, and only this process can set its own name to it.
+// The name is restored once the engine has answered.
+async function askProving(msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  let answer = await ask(msg);
+  if (answer?.t !== 'prove' || typeof answer.nonce !== 'string' || !/^[a-z0-9]{1,15}$/.test(answer.nonce)) return answer;
+  let name: string | null = null;
+  try {
+    name = readFileSync('/proc/self/comm', 'utf8').replace(/\n$/, '');
+    writeFileSync('/proc/self/comm', answer.nonce);
+  } catch {
+    // unanswered: the engine refuses
+  }
+  answer = await ask({ t: 'proved' });
+  if (name !== null) {
+    try {
+      writeFileSync('/proc/self/comm', name);
+    } catch {
+      // the name stays the nonce; nothing depends on it
+    }
+  }
+  return answer;
+}
+
 function stop(): never {
   process.exit(0);
 }
@@ -187,7 +211,7 @@ async function service(argv: string[]): Promise<void> {
     }
   })();
   const hello = { t: 'hello', profile: 'service', attempt, domain, incarnation, lease_generation: Number(generation), pid: process.pid, cgroup: ownCgroup };
-  const answer = await ask(hello);
+  const answer = await askProving(hello);
   if (answer?.t !== 'spec' || ended) stop();
   const spec = answer as unknown as { unshare: string; node: string; init: string; waits?: Record<string, string>; releaseDir?: string | null; refuse_setup?: boolean };
   // The test mode's refused setup (the harness fault service_setup_refused):

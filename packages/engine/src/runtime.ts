@@ -438,6 +438,7 @@ export class Runtime {
         this.deploy?.cancelCalls(effect.environment);
         for (const x of effect.executions ?? []) this.checks?.cancel(x);
       }
+      if (effect.kind === 'relay_closed' && effect.environment) this.deploy?.services?.dropRelay(effect.environment);
       if (effect.kind === 'end_run' && effect.run) void this.services?.completeEnd(effect.run).catch((err) => log('run end', err, { run: effect.run }));
       // A Stop or an Abandon confirmed after the backend's own exit (S2).
       if (effect.kind === 'control_after_exit' && effect.run && (effect.control === 'stop' || effect.control === 'abandon')) {

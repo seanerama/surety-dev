@@ -194,22 +194,35 @@ test('artifact: .surety/ and the excludes are outside the projection; the digest
 // ---- bounded calls (D4 §2.1) -----------------------------------------------------------------------
 
 const bounds = { effectMs: 100, readMs: 100, outputBytes: 1000 };
+const OPEN = { guard: async () => null };
+
+test('adapterCall: a capability its guard refuses never reaches the adapter, and the member that failed is named', async () => {
+  let reached = 0;
+  const adapter = { deploy: async () => { reached++; return { result: 'issued', steps: [] }; }, teardown: async () => { reached++; return { result: 'issued', steps: [] }; } };
+  const seen = [];
+  const r = await effectCall(adapter, { kind: 'deploy', environment: 'env_x', create_units: ['u'] }, null, bounds, { guard: async (cap) => { seen.push(cap); return 'create_units'; } });
+  assert.equal(reached, 0, 'no call reached the adapter');
+  assert.deepEqual([r.refused, r.receipt.result, r.bound], ['create_units', 'refused', null]);
+  assert.equal(seen.length, 1, 'the guard saw the capability once');
+  const ok = await effectCall(adapter, { kind: 'teardown', environment: 'env_x', stop_units: [] }, null, bounds, OPEN);
+  assert.deepEqual([reached, ok.refused, ok.receipt.result], [1, null, 'issued'], 'a capability the guard holds is called');
+});
 
 test('bounded calls: an effect past its deadline or bound is uncertain; a read past its deadline or bound, or failing, is a failure class', async () => {
   const cap = { kind: 'deploy' };
   const hang = { deploy: (_c, signal) => new Promise((r) => signal.addEventListener('abort', () => r({ result: 'issued', steps: [] }))) };
-  assert.deepEqual((await effectCall(hang, cap, null, bounds)).bound, 'deadline');
-  assert.equal((await effectCall(hang, cap, null, bounds)).receipt.result, 'uncertain');
+  assert.deepEqual((await effectCall(hang, cap, null, bounds, OPEN)).bound, 'deadline');
+  assert.equal((await effectCall(hang, cap, null, bounds, OPEN)).receipt.result, 'uncertain');
   const big = { deploy: async () => ({ result: 'issued', steps: [{ at: '', step: '', detail: 'x'.repeat(2000) }] }) };
-  assert.deepEqual([(await effectCall(big, cap, null, bounds)).bound, (await effectCall(big, cap, null, bounds)).receipt.result], ['output_exceeded', 'uncertain']);
+  assert.deepEqual([(await effectCall(big, cap, null, bounds, OPEN)).bound, (await effectCall(big, cap, null, bounds, OPEN)).receipt.result], ['output_exceeded', 'uncertain']);
   const odd = { deploy: async () => ({ result: 'done' }) };
-  assert.equal((await effectCall(odd, cap, null, bounds)).receipt.result, 'uncertain', 'an answer that is no result');
+  assert.equal((await effectCall(odd, cap, null, bounds, OPEN)).receipt.result, 'uncertain', 'an answer that is no result');
   const fine = { deploy: async () => ({ result: 'refused', steps: [] }) };
-  const settled = await effectCall(fine, cap, null, bounds);
+  const settled = await effectCall(fine, cap, null, bounds, OPEN);
   assert.deepEqual([settled.receipt, settled.bound], [{ result: 'refused', steps: [] }, null]);
   // Review m1: the call's own promise, which the operator awaits before any
   // reconcile read, settles even after a deadline.
-  const late = await effectCall(hang, cap, null, bounds);
+  const late = await effectCall(hang, cap, null, bounds, OPEN);
   assert.equal(late.bound, 'deadline');
   await late.settled;
   assert.deepEqual(await readCall(() => new Promise(() => {}), bounds), { failure: 'deadline' });

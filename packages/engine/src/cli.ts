@@ -12,6 +12,7 @@ import { ENGINE_VERSION } from './index.js';
 import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
+import { parseEnv, sendEnv } from './deploy/env-command.js';
 import { configureHarness, setHarnessSwitches, setProbeOverrides, setRealLane } from './testing/seam.js';
 
 function usage(message: string): never {
@@ -37,6 +38,9 @@ if (command === 'contract') {
 }
 if (command === 'qualify') {
   await qualifyCommand(args);
+}
+if (command === 'env') {
+  await envCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -331,6 +335,35 @@ async function contractCommand(argv: string[]): Promise<never> {
 // a refusal on stderr in its form, exit status 1; no engine running, exit
 // status 1). Nothing runs until a person answers
 // the attempt's qualification_approval.
+// `surety env …` (deploy/env-command.ts; SEAM.md §§313, 317): one request
+// to the running engine's environment routes, its answer printed.
+async function envCommand(argv: string[]): Promise<never> {
+  const parsed = parseEnv(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendEnv(home, parsed);
+    let shown: string;
+    try {
+      shown = JSON.stringify(JSON.parse(text));
+    } catch {
+      shown = text.trim().replace(/\n/g, ' ');
+    }
+    if (status >= 200 && status < 300) {
+      process.stdout.write(`${shown}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${status} ${shown}\n`);
+    process.exit(1);
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
+}
+
 async function qualifyCommand(argv: string[]): Promise<never> {
   const parsed = parseQualify(argv);
   if (typeof parsed === 'string') usage(parsed);

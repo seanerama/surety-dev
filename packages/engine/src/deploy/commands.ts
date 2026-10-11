@@ -28,6 +28,68 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
   return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home) };
 }
 
+// POST /v1/projects/:p/environments/:e/config/resolve-secrets (D4 §3.2;
+// SEAM.md §313; `surety env config <env> --resolve-secrets`): the current
+// version's content written again with the digests of the values the engine
+// holds now. Unchanged, the same version answers (200); otherwise a new one.
+export async function prepareResolveSecrets(rt: Runtime, project: string, name: string, body: unknown): Promise<Record<string, unknown>> {
+  if (body !== undefined && (!isObject(body) || Object.keys(body).length > 0)) {
+    const [extra] = isObject(body) ? Object.keys(body) : [];
+    throw new Refusal(400, extra === undefined ? 'invalid_value' : 'unknown_field', 'This command takes no fields.', 'Send {} or no body.', { field: extra ?? null });
+  }
+  const content = await rt.read<ConfigContent | null>('environment.config_content', { project, name });
+  if (content === null) throw new Refusal(404, 'not_found', `No configured environment "${name}".`, 'Write its configuration first (PUT …/config).', { environment: name });
+  return prepareConfig(rt, project, name, content);
+}
+
+// POST /v1/projects/:p/environments/:e/relay (`surety env open`; D4 §5.2;
+// Q7; SEAM.md §317): the relay bound on the main thread, on 127.0.0.1 and the
+// running generation's configured port, before its transaction records it;
+// a port another listener holds is refused, that listener untouched.
+export async function prepareRelayOpen(rt: Runtime, project: string, name: string, body: unknown): Promise<Record<string, unknown>> {
+  noBody(body);
+  const t = await rt.read<{ environment: string; attempt: string; generation: number | null; port: number }>('environment.relay_target', { project, environment: name });
+  const services = rt.deploy?.services ?? null;
+  if (services === null) throw new Refusal(409, 'relay_unavailable', 'This engine runs no service host (no real deployment adapter), so it has no relay to open.', 'Open the relay on an engine that deploys with local_service.', { environment: t.environment });
+  const v = rt.config.values;
+  const bound = await services.openRelay({
+    environment: t.environment,
+    attempt: t.attempt,
+    generation: t.generation,
+    port: t.port,
+    limits: { connectTimeoutMs: v.service_link_connect_timeout * 1000, tunnelMaxMs: v.service_link_tunnel_max_seconds * 1000, tunnelsMax: v.service_link_tunnels_max, bufferMaxBytes: v.service_link_buffer_max_bytes },
+  });
+  if (bound === 'in_use') {
+    throw new Refusal(409, 'relay_port_in_use', `Port ${t.port} on 127.0.0.1 has another listener; the relay was not opened and that listener was not touched.`, 'Free the port (or configure another), then open the relay again.', { environment: t.environment, port: t.port });
+  }
+  return { environment: t.environment, attempt: t.attempt, generation: t.generation, port: t.port };
+}
+
+// Whatever the transaction did, a listener the store does not record open
+// is closed (a failed transaction leaves no relay behind).
+export async function settleRelayOpen(rt: Runtime, prepared: unknown): Promise<void> {
+  const p = prepared as { environment?: string; attempt?: string } | undefined;
+  if (!p?.environment || !p.attempt) return;
+  const open = await rt.read<boolean>('deploy.relay_check', { environment: p.environment, attempt: p.attempt }).catch(() => false);
+  if (!open) rt.deploy?.services?.dropRelay(p.environment);
+}
+
+// DELETE …/relay (`surety env close`): the listener and its tunnels closed
+// on the main thread, then recorded.
+export async function prepareRelayClose(rt: Runtime, project: string, name: string, body: unknown): Promise<Record<string, unknown>> {
+  noBody(body);
+  const read = await rt.read<{ environment: { id: string } }>('environment.read', { project, environment: name });
+  rt.deploy?.services?.dropRelay(read.environment.id);
+  return { environment: read.environment.id, reason: 'command' };
+}
+
+function noBody(body: unknown): void {
+  if (body === undefined || body === null) return;
+  if (!isObject(body)) throw new Refusal(400, 'invalid_value', 'The request body must be a JSON object.', 'Send {} or no body.', { field: null });
+  const [extra] = Object.keys(body);
+  if (extra !== undefined) throw new Refusal(400, 'unknown_field', `"${extra}" is not a field of this command.`, 'Send {} or no body.', { field: extra });
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const invalid = (field: string, why: string): Refusal =>

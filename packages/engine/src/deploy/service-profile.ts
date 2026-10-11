@@ -88,3 +88,23 @@ export function buildServicePlan(input: ServicePlanInput): Plan {
     initScript: '/.init/init.js',
   };
 }
+
+// The environment the init gives the service's application (D4 §§7.1, 7.2;
+// SEAM.md §§259, 311): the fixed variables, the configuration's `env`, each
+// `secrets` variable with the value the engine holds for its reference, and
+// PORT. Built on the main thread only, where the values are held, and sent
+// only on the launch grant's continuation (the real init's `backend`; the
+// kernel lane's stand-in's grant). A reference not held: nothing, naming it.
+export function serviceEnvironment(
+  lk: { env: Record<string, string>; secrets: Record<string, string>; port: number | null },
+  held: (ref: string) => string | null,
+): { env: Record<string, string> } | { unheld: string } {
+  const env: Record<string, string> = { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', TMPDIR: '/tmp', ...lk.env };
+  for (const [name, ref] of Object.entries(lk.secrets)) {
+    const value = held(ref);
+    if (value === null) return { unheld: ref };
+    env[name] = value;
+  }
+  if (lk.port !== null) env.PORT = String(lk.port);
+  return { env };
+}

@@ -722,6 +722,8 @@
       "deploy.preempted",
       "environment.out_of_band",
       "environment.observation_missed",
+      "environment.relay_opened",
+      "environment.relay_closed",
       "engine.backup",
       "host.qualified",
       "host.qualification_lapsed",
@@ -1352,6 +1354,9 @@
         "service_link_log": {
           "required": false,
           "references": "records"
+        },
+        "secret_refs": {
+          "required": false
         }
       }
     },
@@ -2012,6 +2017,12 @@
           "required": true
         },
         "logs_requested_at": {
+          "required": false
+        },
+        "relay": {
+          "required": false
+        },
+        "logs_refused": {
           "required": false
         }
       }
@@ -5419,6 +5430,12 @@
     },
     "environment.observation_missed": {
       "owner": "store/transitions/observe.ts"
+    },
+    "environment.relay_opened": {
+      "owner": "store/transitions/deploy.ts"
+    },
+    "environment.relay_closed": {
+      "owner": "store/transitions/deploy.ts"
     },
     "engine.backup": {
       "owner": "store/transitions/engine.ts"

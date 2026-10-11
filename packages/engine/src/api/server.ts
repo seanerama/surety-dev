@@ -18,7 +18,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
-import { prepareConfig, prepareDeployment, settleDeployment } from '../deploy/commands.js';
+import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes } from '../records/files.js';
@@ -286,6 +286,18 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const environment = decodeSegment(rest[1]!);
         if (environment === null) return null;
         return { kind: 'prepared', name: 'environment.configure', prepare: async (b) => prepareConfig(runtime(), project, environment, b) };
+      }
+      if (rest.length === 4 && rest[0] === 'environments' && rest[2] === 'config' && rest[3] === 'resolve-secrets' && post) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return { kind: 'prepared', name: 'environment.configure', prepare: async (b) => prepareResolveSecrets(runtime(), project, environment, b) };
+      }
+      // D4 §5.2, A.8 (Q7; SEAM.md §317): the operator relay.
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'relay' && (post || method === 'DELETE')) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        if (post) return { kind: 'prepared', name: 'environment.relay_open', prepare: async (b) => prepareRelayOpen(runtime(), project, environment, b), settle: (p) => settleRelayOpen(runtime(), p) };
+        return { kind: 'prepared', name: 'environment.relay_close', prepare: async (b) => prepareRelayClose(runtime(), project, environment, b) };
       }
       if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'teardown' && post) {
         const environment = decodeSegment(rest[1]!);
