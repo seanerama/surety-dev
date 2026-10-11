@@ -308,6 +308,9 @@ export class Runtime {
   checks: import('./checks/run.js').CheckRunner | null = null;
   // The Release Operator (deploy/release-operator.ts), set once at startup.
   deploy: import('./deploy/release-operator.js').ReleaseOperator | null = null;
+  // The adapter qualification by command (deploy/qualify.ts), set once at
+  // startup.
+  qualifier: import('./deploy/qualify.js').AdapterQualifier | null = null;
 
   // The incarnation scope (D2 §3.1), null when the engine runs without one.
   scope: Scope | null = null;
@@ -371,6 +374,9 @@ export class Runtime {
   rerunHostChecks(): void {
     if (!this.hostChecks || this.recheck) return;
     this.recheck = this.hostChecks()
+      // A host qualification recorded again: every adapter qualification
+      // whose facts it changed lapses (D4-A07; SEAM.md §324).
+      .then(() => this.engine('adapter.sweep', {}))
       .catch((err) => log('host checks', err, { cause: 'sandbox build failed' }))
       .finally(() => {
         this.recheck = null;

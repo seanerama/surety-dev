@@ -218,6 +218,22 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         },
       };
     }
+    // D4 §2.6, A.8 (SEAM.md §322): the adapter qualification by the
+    // operator's command, answered once its run has ended.
+    if (s.length === 4 && s[1] === 'adapters' && s[3] === 'qualify' && post) {
+      const adapter = decodeSegment(s[2]!);
+      if (adapter === null) return null;
+      return {
+        kind: 'prepared',
+        name: 'adapter.qualify_answer',
+        prepare: async (b) => {
+          onlyFields(b ?? {}, []);
+          const qualifier = runtime().qualifier;
+          if (!qualifier) throw new Refusal(503, 'engine_starting', 'The adapter qualification is not available yet.', 'Wait for startup to finish.', { step: state.step });
+          return { run: await qualifier.run(adapter) };
+        },
+      };
+    }
     if (s.length === 2 && s[1] === 'projects' && post) {
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }

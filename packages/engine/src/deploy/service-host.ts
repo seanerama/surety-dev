@@ -276,6 +276,9 @@ export function commAnswers(pid: number, startTime: number, nonce: string): bool
 
 const PROOF_TIMEOUT_MS = 10_000;
 
+// How long the adapter qualification may hold a refusal (holdRefusal).
+const REFUSAL_HOLD_MS = 60_000;
+
 export class ServiceHost {
   private server: net.Server | null = null;
   private readonly services = new Map<string, Service>();
@@ -290,6 +293,37 @@ export class ServiceHost {
   private readonly captures = new Map<string, (b: Buffer | null) => void>();
   // The operator relays open, by environment (D4 §5.2).
   private readonly relays = new Map<string, Relay>();
+  // The adapter qualification's hold on a refusal (D4 §2.6 `late_launcher`
+  // and `out_of_band`; deploy/qualify.ts): a launcher of the attempt that is
+  // to be refused waits for its answer until the qualification has read the
+  // unit while it is still loaded, then is refused as ever. Bounded: a hold
+  // nobody releases lets the refusal go after REFUSAL_HOLD_MS.
+  private readonly refusalHolds = new Map<string, { reached: (why: string) => void; released: Promise<void> }>();
+  // The refusals sent, newest last (bounded): what a qualification case
+  // reads of a launcher it expected refused.
+  private readonly refusalLog: { attempt: string; reason: string; at: string }[] = [];
+
+  // Hold the next refusal of a launcher of `attempt` (deploy/qualify.ts):
+  // `reached` resolves with the refusal's reason once a launcher of it is
+  // waiting to be refused; `release` lets the refusal go.
+  holdRefusal(attempt: string): { reached: Promise<string>; release: () => void } {
+    let reached!: (why: string) => void;
+    let release!: () => void;
+    const r = new Promise<string>((res) => (reached = res));
+    const released = new Promise<void>((res) => (release = res));
+    this.refusalHolds.set(attempt, { reached, released });
+    return {
+      reached: r,
+      release: () => {
+        this.refusalHolds.delete(attempt);
+        release();
+      },
+    };
+  }
+
+  refusalsOf(attempt: string): { reason: string; at: string }[] {
+    return this.refusalLog.filter((r) => r.attempt === attempt).map(({ reason, at }) => ({ reason, at }));
+  }
 
   // One challenge on `ch` to the process `pid` named (see launchNonce):
   // true only when that process, unchanged, shows the nonce as its name.
@@ -809,14 +843,25 @@ export class ServiceHost {
   // ---- one connection to the launch socket ------------------------------------------------
 
   private async serve(ch: Channel): Promise<void> {
-    const refuse = (why: string) => {
+    let named: string | null = null;
+    const refuse = async (why: string): Promise<void> => {
       log('service launch', new Error(`refused: ${why}`));
+      const hold = named === null ? undefined : this.refusalHolds.get(named);
+      if (hold) {
+        hold.reached(why);
+        await Promise.race([hold.released, new Promise<void>((r) => setTimeout(r, REFUSAL_HOLD_MS).unref?.())]);
+      }
+      if (named !== null) {
+        this.refusalLog.push({ attempt: named, reason: why, at: new Date().toISOString() });
+        if (this.refusalLog.length > 256) this.refusalLog.splice(0, this.refusalLog.length - 256);
+      }
       ch.send({ t: 'refused', reason: why });
       ch.end();
     };
     const hello = await ch.next(30_000);
     if (!hello || hello.t !== 'hello' || hello.profile !== 'service') return refuse('no hello');
     const attempt = String(hello.attempt ?? '');
+    named = attempt;
     const lk = await this.rt.read<Lookup | null>('deploy.launch_lookup', { attempt });
     if (!lk || !lk.domain || !lk.unit) return refuse('no such attempt');
     // Checked first in the store (cheaply), then on the host.

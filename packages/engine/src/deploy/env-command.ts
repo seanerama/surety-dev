@@ -77,7 +77,7 @@ export function parseEnv(argv: string[]): EnvRequest | string {
 }
 
 // The request, made once; resolves with the status and the body's text.
-export function sendEnv(home: string, r: EnvRequest): Promise<{ status: number; text: string }> {
+export function sendEnv(home: string, r: EnvRequest, timeoutMs = 120_000): Promise<{ status: number; text: string }> {
   const paths = homePaths(home);
   const config = loadEngineConfig(paths.config);
   const token = readToken(paths.token);
@@ -91,7 +91,7 @@ export function sendEnv(home: string, r: EnvRequest): Promise<{ status: number; 
         method: r.method,
         path: r.path,
         headers: { host: config.values.api_authority, 'x-surety-token': token, ...(data !== null ? { 'content-type': 'application/json', 'content-length': data.length } : {}) },
-        timeout: 120_000,
+        timeout: timeoutMs,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -100,7 +100,7 @@ export function sendEnv(home: string, r: EnvRequest): Promise<{ status: number; 
         res.on('error', reject);
       },
     );
-    req.on('timeout', () => req.destroy(new Error('the engine did not answer within 120 s')));
+    req.on('timeout', () => req.destroy(new Error(`the engine did not answer within ${Math.round(timeoutMs / 1000)} s`)));
     req.on('error', reject);
     if (data !== null) req.end(data);
     else req.end();

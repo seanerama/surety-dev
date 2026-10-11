@@ -139,6 +139,17 @@ import {
   roundFirstRead,
   startDeployAttempt,
   writeConfigVersion,
+  beginQualification,
+  qualificationArtifact,
+  intendQualificationOp,
+  closeQualificationLaunch,
+  qualificationReconciled,
+  endQualificationOp,
+  qualificationFacts,
+  endQualification,
+  interruptQualifications,
+  qualificationAnswer,
+  sweepAdapterQualifications,
 } from './transitions/deploy.js';
 import { logsDue, observationLapsed, observationPlan, observationsDue, recordLogs, recordObservation as recordEnvironmentObservation, refuseLogs, requestLogs } from './transitions/observe.js';
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
@@ -257,6 +268,9 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
+  // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run
+  // has ended (deploy/qualify.ts).
+  'adapter.qualify_answer': (tx, a: { run: string }) => qualificationAnswer(tx.db, a),
   // D4 §5.2 (M4 slice 28; SEAM.md §317): the operator relay, its listener
   // bound or closed on the main thread first.
   'environment.relay_open': (tx, a) => relayOpened(tx, a),
@@ -318,6 +332,21 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.link_target': (d, a) => linkTarget(d, a),
   'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
+  // The adapter qualification's reads (D4 §2.6; deploy/qualify.ts).
+  'qualify.facts': (d, a) => qualificationFacts(d, a),
+  'qualify.grants': (d, a: { attempt: string }) =>
+    (d.prepare(`SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'deploy.launch_authorized' AND json_extract("subject", '$.attempt') = ?`).get(a.attempt) as { n: number }).n,
+  'qualify.receipt': (d, a: { attempt: string }) => (d.prepare('SELECT "receipt" FROM "operation_attempts" WHERE "id" = ?').get(a.attempt) as { receipt: string | null } | undefined)?.receipt ?? null,
+  'qualify.environment': (d, a: { environment: string }) => d.prepare('SELECT "current_generation" FROM "environments" WHERE "id" = ?').get(a.environment) ?? { current_generation: null },
+  'qualify.ended_attempt': (d, a: { environment: string }) =>
+    (
+      d
+        .prepare(
+          `SELECT a."id" FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation"
+           WHERE json_extract(o."target", '$.environment') = ? AND a."status" <> 'started' ORDER BY a.rowid DESC LIMIT 1`,
+        )
+        .get(a.environment) as { id: string } | undefined
+    )?.id ?? null,
   'deploy.configs_with_secrets': (d) => configsWithSecrets(d),
   'deploy.artifact_manifest': (d, a: { project: string; digest: string }) => {
     const row = d.prepare('SELECT "manifest" FROM "artifacts" WHERE "project" = ? AND "digest" = ?').get(a.project, a.digest) as { manifest: string } | undefined;
@@ -547,6 +576,16 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'deploy.logs_refused': (tx, a) => refuseLogs(tx, a),
   'deploy.relay_closed': (tx, a) => relayClosed(tx, a),
   'deploy.relays_reset': (tx) => relaysReset(tx),
+  // The adapter qualification and its lapse (D4 §2.6; deploy/qualify.ts).
+  'adapter.sweep': (tx) => sweepAdapterQualifications(tx),
+  'qualify.begin': (tx, a) => beginQualification(tx, a),
+  'qualify.artifact': (tx, a) => qualificationArtifact(tx, a),
+  'qualify.intend': (tx, a) => intendQualificationOp(tx, a),
+  'qualify.close_launch': (tx, a) => closeQualificationLaunch(tx, a),
+  'qualify.reconciled': (tx, a) => qualificationReconciled(tx, a),
+  'qualify.end_op': (tx, a) => endQualificationOp(tx, a),
+  'qualify.end': (tx, a) => endQualification(tx, a),
+  'qualify.interrupt': (tx, a) => interruptQualifications(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
