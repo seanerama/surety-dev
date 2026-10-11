@@ -306,7 +306,10 @@ export class ServiceHost {
   // Hold the next refusal of a launcher of `attempt` (deploy/qualify.ts):
   // `reached` resolves with the refusal's reason once a launcher of it is
   // waiting to be refused; `release` lets the refusal go.
-  holdRefusal(attempt: string): { reached: Promise<string>; release: () => void } {
+  // Only an attempt of a running qualification's own operation (the
+  // slice-29 review, m6); null otherwise, and nothing is held.
+  async holdRefusal(attempt: string): Promise<{ reached: Promise<string>; release: () => void } | null> {
+    if (!(await this.rt.read<boolean>('qualify.attempt_running', { attempt }))) return null;
     let reached!: (why: string) => void;
     let release!: () => void;
     const r = new Promise<string>((res) => (reached = res));
@@ -320,6 +323,10 @@ export class ServiceHost {
       },
     };
   }
+
+  // The refusals that mean a launch already spent or closed: a launch is
+  // single-use (D4 §9.2).
+  static readonly SPENT = ['a launch connection of this attempt has already proved its peer', 'the launch is authorized', 'the launch is closed'];
 
   refusalsOf(attempt: string): { reason: string; at: string }[] {
     return this.refusalLog.filter((r) => r.attempt === attempt).map(({ reason, at }) => ({ reason, at }));

@@ -89,3 +89,83 @@ test('a second run is refused while one runs; an earlier run\'s unit left refuse
   db.prepare(`UPDATE "execution_domains" SET "status" = 'terminated', "terminated_at" = 'x' WHERE "id" = 'dom_9'`).run();
   assert.ok(begin(db).run, 'once its domain is observed terminated, the next run begins');
 });
+
+// ---- the slice-29 review's S1, S3, m4 -------------------------------------------------------------
+
+const { unknownHostMember } = await import(join(dist, 'deploy', 'qualification.js'));
+const { setHostObserved } = await import(join(dist, 'store', 'transitions', 'trust.js'));
+const { interruptQualifications } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+
+test('S1: a host fact not known is never a match: null, "unknown", or a value holding one, on either side, names its member', () => {
+  const known = hostFactsOf(host());
+  assert.equal(hostFactsDrift(hostFactsOf(host({ host_id: 'unknown' })), hostFactsOf(host({ host_id: 'unknown' }))), 'host_id', '"unknown" on both sides is not the same host');
+  assert.equal(hostFactsDrift(hostFactsOf(host({ tool_versions: JSON.stringify({ systemd: null, ip: 'x' }) })), hostFactsOf(host({ tool_versions: JSON.stringify({ systemd: null, ip: 'x' }) }))), 'tool_versions', 'an unread tool version on both sides');
+  assert.equal(hostFactsDrift(known, hostFactsOf(host({ tool_versions: JSON.stringify({ systemd: 'unknown', ip: 'x' }) }))), 'tool_versions', 'on one side');
+  assert.equal(hostFactsDrift({ ...known, kernel: null }, { ...known, kernel: null }), 'kernel');
+  assert.equal(hostFactsDrift(null, null), 'host_id', 'no facts on either side is no match outside unrun');
+  assert.equal(hostFactsDrift(null, null, true), null, 'under unrun, null matches null');
+  assert.equal(unknownHostMember(known), null);
+  assert.equal(unknownHostMember(hostFactsOf(host({ host_id: 'unknown' }))), 'host_id');
+  assert.equal(unknownHostMember(hostFactsOf(host({ tool_versions: JSON.stringify({ systemd: null }) }))), 'tool_versions');
+});
+
+const passed = ADAPTER_QUALIFICATION_CASES.map((c) => ({ case: c, result: 'passed', control: 'passed', detail: { x: 1 } }));
+const evidenceRow = (db, id) =>
+  db.prepare(`INSERT INTO "records" ("id", "created_at", "project", "kind", "redaction_version", "published", "post_scan") VALUES (?, 'x', 'proj_q', 'qualification_evidence', 'v1', 0, 'clean')`).run(id);
+
+test('S1 and m4: a run reported qualified records no row on host facts not known, nor without nine passed cases and its evidence; the run says why', (t) => {
+  const db = store(t);
+  setHostObserved({ checks: [], probes: [], duration_ms: null, scope_cgroup: null, wsl2: false, facts: { host_id: 'unknown', kernel: '6.6', tool_versions: { systemd: '255' }, mechanism_fingerprint: 'm1' } });
+  t.after(() => setHostObserved({ checks: [], probes: [], duration_ms: null, scope_cgroup: null, wsl2: false, facts: null }));
+  evidenceRow(db, 'rec_e1');
+  const a = begin(db);
+  const out = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: a.run, cases: passed, qualified: true, evidence: 'rec_e1' }));
+  assert.equal(out.qualification, null, 'no row on an unknown host id');
+  assert.equal(out.status, 'unqualified');
+  assert.match(JSON.stringify(out.detail), /host_id/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM "adapter_qualifications"').get().n, 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'adapter.qualified'`).get().n, 0, 'and no adapter.qualified');
+
+  setHostObserved({ checks: [], probes: [], duration_ms: null, scope_cgroup: null, wsl2: false, facts: { host_id: 'h1', kernel: '6.6', tool_versions: { systemd: '255' }, mechanism_fingerprint: 'm1' } });
+  const b = begin(db);
+  const short = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: b.run, cases: passed.map((c, i) => (i === 3 ? { ...c, control: 'failed' } : c)), qualified: true, evidence: 'rec_e1' }));
+  assert.deepEqual([short.qualification, short.status], [null, 'unqualified'], 'a control not passed: the run checks for itself');
+  const c = begin(db);
+  const noEvidence = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: c.run, cases: passed, qualified: true, evidence: null }));
+  assert.deepEqual([noEvidence.qualification, noEvidence.status], [null, 'unqualified'], 'no evidence');
+  const d = begin(db);
+  const stopped = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: d.run, cases: passed, qualified: true, evidence: 'rec_e1', interrupted: true }));
+  assert.deepEqual([stopped.qualification, stopped.status], [null, 'interrupted'], 'S2: a stopped run is interrupted, never unqualified');
+  const e = begin(db);
+  const ok = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: e.run, cases: passed, qualified: true, evidence: 'rec_e1' }));
+  assert.equal(ok.status, 'qualified', 'the control: nine passed cases, the evidence and known facts qualify');
+  assert.equal(JSON.parse(db.prepare('SELECT "host_facts" FROM "adapter_qualifications" WHERE "id" = ?').get(ok.qualification).host_facts).host_id, 'h1');
+});
+
+test("S3: an interrupted run's open operation is ended in the store and its lease released, so the ordinary teardown can take the environment", (t) => {
+  const db = store(t);
+  const run = begin(db, 'inc_old');
+  db.prepare(
+    `INSERT INTO "leases" ("id", "created_at", "resource_kind", "resource_id", "owner_incarnation", "generation", "acquired_at", "renewed_at", "expires_at", "released_at", "closing", "cleanup_authority")
+     VALUES ('lease_q', 'x', 'environment', ?, 'inc_old', 1, 'x', 'x', '2999-01-01T00:00:00.000Z', NULL, 0, 0)`,
+  ).run(run.environment);
+  const frozen = { purpose: 'deploy', qualification: run.run, environment: run.environment, environment_name: run.name, prefix: run.prefix, work_item: null, lease: { id: 'lease_q', generation: 1 }, secret_digests: [], target_set: ['app'] };
+  db.prepare(
+    `INSERT INTO "operations" ("id", "created_at", "project", "seq", "kind", "target", "subject", "idempotency_key", "semantic_generation", "status", "deadline_at", "finalizer_inputs", "orchestration_stage")
+     VALUES ('op_q', 'x', 'proj_q', 1, 'deploy', ?, '{}', 'kq', 1, 'in_progress', 'x', ?, 'effect')`,
+  ).run(JSON.stringify({ environment: run.environment }), JSON.stringify(frozen));
+  db.prepare(`INSERT INTO "deploy_journal_state" ("id", "created_at", "project", "operation", "journal_kind", "state", "last_event_seq") VALUES ('djs_q', 'x', 'proj_q', 'op_q', 'deploy_apply', 'applied', 2)`).run();
+  db.prepare(
+    `INSERT INTO "operation_attempts" ("id", "created_at", "project", "operation", "attempt_number", "status", "started_at", "timeline", "reconciliation_reads", "incarnation", "launch_state") VALUES ('att_q', 'x', 'proj_q', 'op_q', 1, 'started', 'x', '[]', '[]', 'inc_old', 'authorized')`,
+  ).run();
+  const out = transact(db, ENGINE_ACTOR, (tx) => interruptQualifications(tx, { incarnation: 'inc_new', rehashed: [{ run: run.run, digest: 'sha256:a', rehash: 'unread' }] }));
+  assert.deepEqual(out.interrupted, [run.run]);
+  const r = db.prepare('SELECT * FROM "adapter_qualification_runs" WHERE "id" = ?').get(run.run);
+  assert.equal(r.status, 'interrupted');
+  assert.deepEqual(JSON.parse(r.outcome_detail).interrupted.operations_ended, ['op_q']);
+  assert.equal(db.prepare('SELECT "orchestration_stage" FROM "operations" WHERE "id" = ?').get('op_q').orchestration_stage, 'ended');
+  assert.notEqual(db.prepare('SELECT "released_at" FROM "leases" WHERE "id" = ?').get('lease_q').released_at, null, 'its lease released');
+  const a = db.prepare('SELECT "status", "launch_state" FROM "operation_attempts" WHERE "id" = ?').get('att_q');
+  assert.deepEqual([a.status, a.launch_state], ['ambiguous', 'closed'], 'its launch closed, its effect unknown');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "leases" WHERE "resource_id" = ? AND "released_at" IS NULL`).get(run.environment).n, 0, 'nothing holds the environment');
+});

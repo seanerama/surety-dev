@@ -31,14 +31,15 @@ import { cancelExecution, refuseUnsupervised, registerExecutions } from './check
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
 import { engineSettings, projectPolicy } from './settings.js';
-import { hostEligibility, type HostQualificationRow } from './trust.js';
+import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
+import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
 import type { Tx } from './tx.js';
 import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
-import { type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, profileFingerprint } from '../../deploy/qualification.js';
+import { type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
 import {
   bumpRevision,
   changesInInterval,
@@ -287,13 +288,26 @@ const markStaleDeploy = (tx: Tx): void => {
   tx.db.prepare(`UPDATE "gate_evaluations" SET "stale" = 1 WHERE "stale" = 0 AND "gate_kind" IN ('alpha_authorize', 'alpha_complete')`).run();
 };
 
-// The host qualification in force and its facts (E129 item 8): the row
-// hostEligibility names, null under `unrun` or with none active.
-function hostInForce(db: Db): { id: string | null; facts: HostFacts | null } {
+// The host qualification in force and the host's facts (E129 item 8; the
+// slice-29 review, m8): the facts this start's host checks read, whatever
+// they found (a start whose checks failed, or under the bootstrap
+// exception, writes no active row but read the facts all the same); before
+// they are read, the active row's. `unrun`: the harness runs no host checks.
+function hostInForce(db: Db): { id: string | null; facts: HostFacts | null; unrun: boolean } {
   const id = hostEligibility(db).host_qualification ?? null;
-  if (id === null) return { id: null, facts: null };
+  const unrun = seamHostChecks()?.mode === 'unrun';
+  const read = observedHostFacts();
+  if (read) return { id, facts: hostFactsOf({ ...read, tool_versions: JSON.stringify(read.tool_versions) }), unrun };
+  if (id === null) return { id: null, facts: null, unrun };
   const row = db.prepare('SELECT * FROM "host_qualifications" WHERE "id" = ?').get(id) as HostQualificationRow | undefined;
-  return { id, facts: hostFactsOf(row) };
+  return { id, facts: hostFactsOf(row), unrun };
+}
+
+// The host's facts a run would be recorded against, and the first member
+// not known (the slice-29 review, S1), for the run's evidence.
+export function qualificationHostFacts(db: Db): { facts: HostFacts | null; unknown: string | null; unrun: boolean } {
+  const host = hostInForce(db);
+  return { facts: host.facts, unknown: host.facts === null && host.unrun ? null : unknownHostMember(host.facts), unrun: host.unrun };
 }
 
 export type LapseReason = 'engine_build' | 'adapter_version' | 'host_qualification' | 'profile_fingerprint';
@@ -304,7 +318,8 @@ export type LapseReason = 'engine_build' | 'adapter_version' | 'host_qualificati
 export function qualificationDrift(db: Db, q: QualificationRow): { reason: LapseReason; member: string | null } | null {
   if (q.engine_build !== engineBuild()) return { reason: 'engine_build', member: null };
   if (q.adapter_version !== adapterVersion(q.adapter)) return { reason: 'adapter_version', member: null };
-  const member = hostFactsDrift(hostInForce(db).facts, parseJson<HostFacts>(q.host_facts));
+  const host = hostInForce(db);
+  const member = hostFactsDrift(host.facts, parseJson<HostFacts>(q.host_facts), host.unrun);
   if (member !== null) return { reason: 'host_qualification', member };
   if (q.profile_fingerprint !== profileFingerprint()) return { reason: 'profile_fingerprint', member: null };
   return null;
@@ -341,6 +356,13 @@ export function recordAdapterQualification(
   if (args.run === undefined) {
     const existing = qualificationOf(tx.db, args.adapter, args.adapterVersion);
     if (existing) return { id: existing.id, created: false };
+  }
+  // No row on host facts not known (the slice-29 review, S1): it could
+  // never be matched, and a fact not known is never taken as unchanged.
+  // Under `unrun` (the kernel lane) no host facts exist and none are needed.
+  const unknown = host.facts === null && host.unrun ? null : unknownHostMember(host.facts);
+  if (unknown !== null) {
+    throw new Refusal(409, 'host_facts_unknown', `The host's ${unknown} is not known, so no adapter qualification can be recorded against it.`, 'Start the engine where the host checks read every host fact, then qualify again.', { member: unknown });
   }
   const stale = tx.db.prepare(`SELECT "id" FROM "adapter_qualifications" WHERE "adapter" = ? AND "adapter_version" = ? AND "status" = 'current'`).get(args.adapter, args.adapterVersion) as { id: string } | undefined;
   if (stale) lapseQualification(tx, { id: stale.id, reason: 'superseded' });
@@ -3373,8 +3395,10 @@ const getRun = (db: Db, id: string): RunRow | undefined => db.prepare('SELECT * 
 
 // What an earlier run left of its environment (the driver's ruling: no
 // automatic cleanup): every service domain of it not observed terminated,
-// by its unit's exact name.
-function leftovers(db: Db): { environment: string; name: string; units: string[] }[] {
+// by its unit's exact name; and, from `paths` (read on the main thread:
+// qualificationPaths), every runtime directory or socket of it still
+// present or unread, by its exact path (the slice-29 review, m10).
+function leftovers(db: Db, paths: { environment: string; path: string; state: string }[] = []): { environment: string; name: string; units: string[]; paths: string[] }[] {
   const rows = db
     .prepare(
       `SELECT e."id" AS environment, e."name" AS name, d."unit" AS unit FROM "environments" e
@@ -3386,13 +3410,77 @@ function leftovers(db: Db): { environment: string; name: string; units: string[]
        ORDER BY e."id", d."unit"`,
     )
     .all() as { environment: string; name: string; unit: string }[];
-  const out = new Map<string, { environment: string; name: string; units: string[] }>();
+  const out = new Map<string, { environment: string; name: string; units: string[]; paths: string[] }>();
+  const of = (environment: string) => {
+    let e = out.get(environment);
+    if (!e) {
+      const env = getEnv(db, environment);
+      e = { environment, name: env?.name ?? environment, units: [], paths: [] };
+      out.set(environment, e);
+    }
+    return e;
+  };
   for (const r of rows) {
-    const e = out.get(r.environment) ?? { environment: r.environment, name: r.name, units: [] };
+    const e = of(r.environment);
     if (!e.units.includes(r.unit)) e.units.push(r.unit);
-    out.set(r.environment, e);
+  }
+  const ours = new Set(qualificationPaths(db).map((p) => `${p.environment}\0${p.path}`));
+  for (const p of paths) {
+    if (p.state === 'absent' || !ours.has(`${p.environment}\0${p.path}`)) continue;
+    const e = of(p.environment);
+    if (!e.paths.includes(p.path)) e.paths.push(p.path);
   }
   return [...out.values()];
+}
+
+// The runtime directories (with their ingress sockets) the service domains
+// of every ended run's environment recorded: the main thread reads whether
+// each is still there (deploy/qualify.ts) before a run begins.
+export function qualificationPaths(db: Db): { environment: string; path: string }[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT e."id" AS environment, d."runtime_dir" AS dir FROM "environments" e
+         JOIN "operation_attempts" a ON a."project" = e."project"
+         JOIN "operations" o ON o."id" = a."operation" AND json_extract(o."target", '$.environment') = e."id"
+         JOIN "execution_domains" d ON d."attempt" = a."id" AND d."profile" = 'service'
+       WHERE e."qualification_run" IS NOT NULL AND d."runtime_dir" IS NOT NULL
+         AND e."qualification_run" NOT IN (SELECT "id" FROM "adapter_qualification_runs" WHERE "status" = 'running')
+       ORDER BY e."id", d."runtime_dir"`,
+    )
+    .all() as { environment: string; dir: string }[];
+  return rows.flatMap((r) => [
+    { environment: r.environment, path: r.dir },
+    { environment: r.environment, path: `${r.dir}/in.sock` },
+  ]);
+}
+
+// Whether a unit of `environment` may be acted on by its running
+// qualification's hand acts, and the units its attempt intents name (the
+// slice-29 review, m6; BS4 §4.1 rule 5): only a qualification environment
+// whose run is running, only units the store's intents of its operations
+// name.
+export function qualificationPermits(db: Db, args: { environment: string }): { running: boolean; units: string[] } {
+  const env = getEnv(db, args.environment) as (EnvRow & { qualification_run?: string | null }) | undefined;
+  const run = env?.qualification_run ? getRun(db, env.qualification_run) : undefined;
+  if (!env || !run || run.status !== 'running') return { running: false, units: [] };
+  const rows = db
+    .prepare(
+      `SELECT i."create_units" FROM "attempt_intents" i JOIN "operations" o ON o."id" = i."operation"
+       WHERE json_extract(o."target", '$.environment') = ? AND json_extract(o."finalizer_inputs", '$.qualification') = ?`,
+    )
+    .all(env.id, run.id) as { create_units: string }[];
+  return { running: true, units: [...new Set(rows.flatMap((r) => parseJson<string[]>(r.create_units) ?? []))] };
+}
+
+// Whether `attempt` is an attempt of a running qualification's own
+// operation (the slice-29 review, m6).
+export function qualificationAttemptRunning(db: Db, args: { attempt: string }): boolean {
+  const a = getAttempt(db, args.attempt);
+  if (!a) return false;
+  const op = getOp(db, a.operation);
+  const run = op ? frozenOf(op).qualification : null;
+  if (!run) return false;
+  return getRun(db, run)?.status === 'running';
 }
 
 // A run begun (SEAM.md §322): refused while another runs, and while an
@@ -3401,22 +3489,23 @@ function leftovers(db: Db): { environment: string; name: string; units: string[]
 // this home's) and its configuration, written by the engine.
 export function beginQualification(
   tx: Tx,
-  args: { adapter: string; adapterVersion: string; project: string; incarnation: string; homeHash: string; content: ConfigContent; identity: string },
+  args: { adapter: string; adapterVersion: string; project: string; incarnation: string; homeHash: string; content: ConfigContent; identity: string; paths?: { environment: string; path: string; state: string }[] },
 ): { run: string; environment: string; name: string; prefix: string; config: string } {
   const running = tx.db.prepare(`SELECT * FROM "adapter_qualification_runs" WHERE "adapter" = ? AND "status" = 'running'`).get(args.adapter) as RunRow | undefined;
   if (running && running.incarnation !== args.incarnation) interruptRun(tx, running);
   else if (running) {
     throw new Refusal(409, 'qualification_running', `A qualification of ${args.adapter} is running (${running.id}).`, 'Wait for it to end, then ask again.', { qualification_run: running.id });
   }
-  const left = leftovers(tx.db);
+  const left = leftovers(tx.db, args.paths ?? []);
   if (left.length > 0) {
     const units = left.flatMap((l) => l.units);
+    const paths = left.flatMap((l) => l.paths);
     throw new Refusal(
       409,
       'qualification_left_units',
-      `An earlier qualification of ${args.adapter} left units of its environment: ${units.join(', ')}.`,
-      'Nothing was cleaned. Tear each of these environments down (surety env teardown <name> --project <the engine fixture project>), then ask again.',
-      { project: args.project, environments: left.map((l) => ({ id: l.environment, name: l.name, units: l.units })), units },
+      `An earlier qualification of ${args.adapter} left resources of its environment: ${[...units, ...paths].join(', ')}.`,
+      `Nothing was cleaned. Tear each of these environments down (surety env teardown <name> --project ${args.project}), then ask again.`,
+      { project: args.project, environments: left.map((l) => ({ id: l.environment, name: l.name, units: l.units, paths: l.paths })), units, paths },
     );
   }
   if (!/^[0-9a-f]{12}$/.test(args.homeHash)) throw new Error('the home hash is not 12 hex characters');
@@ -3604,34 +3693,113 @@ export function qualificationFacts(db: Db, args: { environment: string }) {
   return { observation: history ? { condition: history.condition, detail: parseJson(history.detail), observed_at: history.observed_at } : null, changes };
 }
 
-// A run ended (SEAM.md §§322, 323): its cases recorded; qualified, its row
-// recorded current with its evidence (D4 §2.6, A.3), in this transaction.
-export function endQualification(tx: Tx, args: { run: string; cases: unknown[]; qualified: boolean; evidence: string | null }): { qualification: string | null } {
+// A run ended (SEAM.md §§322, 323): its cases recorded. It qualifies only
+// when it checks for itself that every one of D4 §2.6's nine cases, in
+// order, passed beside a passed control, that its evidence is recorded and
+// that the host's facts are known (the slice-29 review, S1, m4); then its
+// row is recorded current with its evidence (D4 §2.6, A.3), in this
+// transaction. A run the engine's stop cut short ends `interrupted`, never
+// `unqualified` (S2).
+export function endQualification(
+  tx: Tx,
+  args: { run: string; cases: unknown[]; qualified: boolean; evidence: string | null; interrupted?: boolean },
+): { qualification: string | null; status: string; detail: Record<string, unknown> | null } {
   const r = getRun(tx.db, args.run);
   if (!r || r.status !== 'running') throw notFound('running qualification', args.run);
+  const cases = (Array.isArray(args.cases) ? args.cases : []) as { case?: unknown; result?: unknown; control?: unknown }[];
+  const why: string[] = [];
+  if (args.interrupted === true) why.push('the engine stopped during the qualification');
+  if (cases.length !== ADAPTER_QUALIFICATION_CASES.length || cases.some((c, i) => c.case !== ADAPTER_QUALIFICATION_CASES[i])) why.push("the cases are not D4 §2.6's nine, in order");
+  const short = cases.filter((c) => c.result !== 'passed' || c.control !== 'passed').map((c) => String(c.case));
+  if (short.length > 0) why.push(`not passed beside a passed control: ${short.join(', ')}`);
+  if (args.evidence === null) why.push('no qualification_evidence record');
+  else if (!tx.db.prepare(`SELECT 1 FROM "records" WHERE "id" = ? AND "kind" = 'qualification_evidence'`).get(args.evidence)) why.push(`the evidence ${args.evidence} is not a qualification_evidence record`);
+  if (args.qualified !== true && why.length === 0) why.push('the run did not report itself qualified');
   let qualification: string | null = null;
-  if (args.qualified) {
-    qualification = recordAdapterQualification(tx, { adapter: r.adapter, adapterVersion: r.adapter_version, cases: args.cases, label: null, run: r.id, ...(args.evidence !== null ? { evidence: args.evidence } : {}) }).id;
+  if (why.length === 0) {
+    tx.db.exec('SAVEPOINT qualification_row');
+    const events = tx.events.length;
+    try {
+      qualification = recordAdapterQualification(tx, { adapter: r.adapter, adapterVersion: r.adapter_version, cases: args.cases, label: null, run: r.id, evidence: args.evidence! }).id;
+      tx.db.exec('RELEASE qualification_row');
+    } catch (err) {
+      tx.db.exec('ROLLBACK TO qualification_row');
+      tx.db.exec('RELEASE qualification_row');
+      tx.events.length = events;
+      if (!(err instanceof Refusal)) throw err;
+      why.push(err.message);
+    }
   }
+  const status = args.interrupted === true ? 'interrupted' : qualification !== null ? 'qualified' : 'unqualified';
+  const detail = why.length > 0 ? { not_qualified: why } : null;
   tx.db
-    .prepare(`UPDATE "adapter_qualification_runs" SET "status" = ?, "cases" = ?, "evidence" = ?, "qualification" = ?, "ended_at" = ? WHERE "id" = ?`)
-    .run(args.qualified ? 'qualified' : 'unqualified', JSON.stringify(args.cases), args.evidence, qualification, tx.at, r.id);
-  return { qualification };
+    .prepare(`UPDATE "adapter_qualification_runs" SET "status" = ?, "cases" = ?, "evidence" = ?, "qualification" = ?, "ended_at" = ?, "outcome_detail" = ? WHERE "id" = ?`)
+    .run(status, JSON.stringify(args.cases), args.evidence, qualification, tx.at, detail === null ? null : JSON.stringify(detail), r.id);
+  return { qualification, status, detail };
 }
 
-function interruptRun(tx: Tx, r: RunRow): void {
+// The run's open operations ended in the store, with no host act (the
+// slice-29 review, S3; the driver's ruling 5): every launch of them closed,
+// an attempt left `started` ambiguous (its effect is unknown), a confirmed
+// operation finalized, any other failed as interrupted; their leases
+// released. What runs is left for the operator's ordinary exact teardown.
+function endRunOperations(tx: Tx, r: RunRow): string[] {
+  const ops = tx.db
+    .prepare(`SELECT * FROM "operations" WHERE json_extract("finalizer_inputs", '$.qualification') = ? AND ("orchestration_stage" IS NULL OR "orchestration_stage" <> 'ended') ORDER BY "seq"`)
+    .all(r.id) as OpRow[];
+  for (const op of ops) {
+    for (const a of attemptsOf(tx.db, op.id)) {
+      closeAttemptLaunch(tx, a, 'qualification_interrupted');
+      if (a.status === 'started') setAttempt(tx, a, 'ambiguous');
+    }
+    const j = journalOf(tx.db, op.id)!;
+    if (j.state === 'confirmed') endQualificationOp(tx, { operation: op.id, detail: { code: 'qualification_interrupted' } });
+    else if (j.state === 'failed' || j.state === 'finalized') endOperation(tx, op, 'none', 'qualification_interrupted');
+    else failOperation(tx, op, { code: 'qualification_interrupted' });
+    releaseOperationLeases(tx, getOp(tx.db, op.id)!);
+  }
+  return ops.map((o) => o.id);
+}
+
+// The sealed fixture copies of each run an earlier incarnation left
+// running, for its interruption's rehash on the main thread.
+export function runArtifacts(db: Db, args: { incarnation: string }): { run: string; project: string; digest: string; path: string; manifest: unknown[] }[] {
+  const runs = db.prepare(`SELECT * FROM "adapter_qualification_runs" WHERE "status" = 'running' AND "incarnation" <> ?`).all(args.incarnation) as RunRow[];
+  const out: { run: string; project: string; digest: string; path: string; manifest: unknown[] }[] = [];
+  for (const r of runs) {
+    const seen = new Set<string>();
+    const ops = db.prepare(`SELECT "finalizer_inputs" FROM "operations" WHERE json_extract("finalizer_inputs", '$.qualification') = ?`).all(r.id) as { finalizer_inputs: string }[];
+    for (const o of ops) {
+      const f = JSON.parse(o.finalizer_inputs) as FrozenIntent;
+      if (!f.artifact_digest || !f.artifact_path || seen.has(f.artifact_digest)) continue;
+      seen.add(f.artifact_digest);
+      out.push({ run: r.id, project: r.project, digest: f.artifact_digest, path: f.artifact_path, manifest: (f.manifest as unknown[]) ?? [] });
+    }
+  }
+  return out;
+}
+
+function interruptRun(tx: Tx, r: RunRow, rehashed: { digest: string; rehash: string }[] = []): void {
+  const operations = endRunOperations(tx, r);
+  // A fixture copy that no longer rehashes (the out_of_band case's byte,
+  // never restored): the artifact `failed`, named in the run's record (the
+  // slice-29 review, m7). One not read is named as unread.
+  for (const a of rehashed) if (a.rehash === 'corrupt') artifactFoundCorrupt(tx, { project: r.project, digest: a.digest, where: 'precondition' });
   const cases = ADAPTER_QUALIFICATION_CASES.map((c) => ({ case: c, result: 'not_exercised', control: 'not_exercised', detail: { reason: 'the engine stopped during the qualification' } }));
+  const detail = { not_qualified: ['the engine stopped during the qualification'], interrupted: { operations_ended: operations, artifacts: rehashed } };
   tx.db
-    .prepare(`UPDATE "adapter_qualification_runs" SET "status" = 'interrupted', "cases" = ?, "ended_at" = ? WHERE "id" = ?`)
-    .run(JSON.stringify(cases), tx.at, r.id);
+    .prepare(`UPDATE "adapter_qualification_runs" SET "status" = 'interrupted', "cases" = ?, "ended_at" = ?, "outcome_detail" = ? WHERE "id" = ?`)
+    .run(JSON.stringify(cases), tx.at, JSON.stringify(detail), r.id);
 }
 
 // At start: a run an earlier incarnation left running ended `interrupted`
-// (its cases not exercised); what its environment holds stays, for the
-// operator's exact teardown (the driver's ruling).
-export function interruptQualifications(tx: Tx, args: { incarnation: string }): { interrupted: string[] } {
+// (its cases not exercised), its open operations ended in the store and its
+// sealed copies' rehash (read on the main thread) recorded; what its
+// environment holds stays, for the operator's exact teardown (the driver's
+// ruling 8).
+export function interruptQualifications(tx: Tx, args: { incarnation: string; rehashed?: { run: string; digest: string; rehash: string }[] }): { interrupted: string[] } {
   const rows = tx.db.prepare(`SELECT * FROM "adapter_qualification_runs" WHERE "status" = 'running' AND "incarnation" <> ?`).all(args.incarnation) as RunRow[];
-  for (const r of rows) interruptRun(tx, r);
+  for (const r of rows) interruptRun(tx, r, (args.rehashed ?? []).filter((x) => x.run === r.id).map(({ digest, rehash }) => ({ digest, rehash })));
   return { interrupted: rows.map((r) => r.id) };
 }
 

@@ -465,6 +465,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     scope_cgroup: scope?.path ?? null,
     wsl2,
     profile_fingerprint: profileFingerprint,
+    facts: { host_id: host, kernel: release(), tool_versions: versions, mechanism_fingerprint: fingerprint },
   });
   let row: string | null = null;
   if (qualifies) {

@@ -124,13 +124,33 @@ export function profileFingerprint(): string {
 export const HOST_MEMBERS = ['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'] as const;
 export type HostFacts = Record<(typeof HOST_MEMBERS)[number], unknown>;
 
+// A fact not known: null, missing, the text `unknown`, or a value holding
+// one (the slice-29 review, S1: `trust/checks.ts` records `unknown` for an
+// unread host id and null for an unread tool version).
+export function isUnknownFact(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === 'string') return v.trim() === '' || v.trim().toLowerCase() === 'unknown';
+  if (Array.isArray(v)) return v.some(isUnknownFact);
+  if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some(isUnknownFact);
+  return false;
+}
+
+// The first member of the facts that is not known, or null.
+export function unknownHostMember(facts: HostFacts | null): (typeof HOST_MEMBERS)[number] | null {
+  if (facts === null) return 'host_id';
+  return HOST_MEMBERS.find((m) => isUnknownFact(facts[m])) ?? null;
+}
+
 // The member of the host's facts that differs, in HOST_MEMBERS' order, or
-// null when none does; null facts (no host qualification in force, `unrun`)
-// match only null, and otherwise differ from the host id on.
-export function hostFactsDrift(now: HostFacts | null, then: HostFacts | null): (typeof HOST_MEMBERS)[number] | null {
-  if (now === null || then === null) return now === then ? null : 'host_id';
-  const same = (a: unknown, b: unknown) => JSON.stringify(sortKeys(a ?? null)) === JSON.stringify(sortKeys(b ?? null));
-  return HOST_MEMBERS.find((m) => !same(now[m], then[m])) ?? null;
+// null when none does. A member not known on either side differs, never
+// matches (the slice-29 review, S1). Whole facts null on both sides match
+// only where the harness runs no host checks (`unrun`, the kernel lane;
+// SEAM.md §324); otherwise no facts are a change from the host id on.
+export function hostFactsDrift(now: HostFacts | null, then: HostFacts | null, unrun = false): (typeof HOST_MEMBERS)[number] | null {
+  if (now === null && then === null) return unrun ? null : 'host_id';
+  if (now === null || then === null) return 'host_id';
+  const same = (a: unknown, b: unknown) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
+  return HOST_MEMBERS.find((m) => isUnknownFact(now[m]) || isUnknownFact(then[m]) || !same(now[m], then[m])) ?? null;
 }
 
 const sortKeys = (v: unknown): unknown =>

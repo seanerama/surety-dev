@@ -204,11 +204,13 @@ export async function serve(opts: ServeOptions): Promise<void> {
     // The self-test's box in progress is killed and removed first: nothing
     // of it outlives the engine.
     selfTest?.abort();
-    // An adapter qualification in progress: its calls aborted through the
-    // adapter's own children; its run is `interrupted` at the next start and
-    // what its environment holds is left for the operator's teardown.
-    state.runtime?.qualifier?.stop();
     scheduler?.stop();
+    // An adapter qualification in progress (the slice-29 review, S2): its
+    // cases' calls aborted through the adapter's own children, its teardown
+    // still made if it can and the run recorded `interrupted`, awaited for
+    // at most 60 s before the store closes; anything its environment still
+    // holds then is refused by name at the next qualify-adapter.
+    await state.runtime?.qualifier?.stop(60_000).catch((err) => log('adapter qualification', err, { what: 'stop' }));
     // The observer's reads aborted and awaited: none outlives the engine.
     await Promise.race([state.runtime?.deploy?.stopObserver() ?? Promise.resolve(), new Promise((r) => setTimeout(r, 3000))]);
     state.runtime?.stop();

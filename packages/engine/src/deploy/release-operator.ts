@@ -113,7 +113,12 @@ export class ReleaseOperator {
     await this.rt.engine('deploy.relays_reset', {});
     // An adapter qualification an earlier incarnation left running ended
     // `interrupted` (D4 §2.6; deploy/qualify.ts); its environment is left.
-    await this.rt.engine('qualify.interrupt', { incarnation: this.rt.incarnation });
+    // Its sealed fixture copies are rehashed first (the slice-29 review,
+    // m7): one its out_of_band case changed and never restored is recorded
+    // corrupt and named in the run's record.
+    const copies = await this.rt.read<{ run: string; digest: string; path: string; manifest: ManifestEntry[] }[]>('qualify.run_artifacts', { incarnation: this.rt.incarnation });
+    const rehashed = copies.map((c) => ({ run: c.run, digest: c.digest, path: c.path, rehash: rehash(c.path, c.manifest) }));
+    await this.rt.engine('qualify.interrupt', { incarnation: this.rt.incarnation, rehashed });
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
       const now = heldDigests(this.rt.home, c.refs);

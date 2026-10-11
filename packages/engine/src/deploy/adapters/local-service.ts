@@ -297,14 +297,18 @@ export class LocalService implements DeploymentAdapter {
 
   // The adapter qualification's hand acts (D4 §2.6 `out_of_band`; the
   // driver's ruling on the slice-29 design): a stop or a restart by exact
-  // name of a unit of `env` that `permitted` (its attempt's frozen intent)
-  // names, only when the manager reports, read immediately before, the
+  // name of a unit of `env` that the store's attempt intents of its running
+  // qualification name, only when the manager reports, read immediately before, the
   // invocation and the cgroup the engine recorded for that unit's domain
   // and its MainPID in that cgroup. Otherwise nothing is done and the
-  // reason is returned. The caller (deploy/qualify.ts) passes only its own
-  // running qualification's environment.
-  async handAct(act: 'stop' | 'restart', env: string, unit: string, permitted: string[]): Promise<{ done: boolean; detail: string }> {
-    const why = ownUnit(this.rt.home, env, unit, permitted);
+  // reason is returned.
+  async handAct(act: 'stop' | 'restart', env: string, unit: string): Promise<{ done: boolean; detail: string }> {
+    // Only a running qualification's own environment, and only a unit its
+    // operations' attempt intents in the store name (the slice-29 review,
+    // m6; BS4 §4.1 rule 5).
+    const permits = await this.rt.read<{ running: boolean; units: string[] }>('qualify.permits', { environment: env });
+    if (!permits.running) return { done: false, detail: `${env} is not the environment of a running adapter qualification` };
+    const why = ownUnit(this.rt.home, env, unit, permits.units);
     if (why !== null) return { done: false, detail: why };
     const r = (await this.resources(env)).find((x) => x.unit === unit);
     const s = (await this.show(env, [unit]))?.[0];

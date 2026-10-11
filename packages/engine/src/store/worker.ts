@@ -150,6 +150,11 @@ import {
   interruptQualifications,
   qualificationAnswer,
   sweepAdapterQualifications,
+  qualificationPaths,
+  qualificationPermits,
+  qualificationAttemptRunning,
+  runArtifacts,
+  qualificationHostFacts,
 } from './transitions/deploy.js';
 import { logsDue, observationLapsed, observationPlan, observationsDue, recordLogs, recordObservation as recordEnvironmentObservation, refuseLogs, requestLogs } from './transitions/observe.js';
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
@@ -334,6 +339,11 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
   // The adapter qualification's reads (D4 §2.6; deploy/qualify.ts).
   'qualify.facts': (d, a) => qualificationFacts(d, a),
+  'qualify.paths': (d) => qualificationPaths(d),
+  'qualify.permits': (d, a) => qualificationPermits(d, a),
+  'qualify.attempt_running': (d, a) => qualificationAttemptRunning(d, a),
+  'qualify.run_artifacts': (d, a) => runArtifacts(d, a),
+  'qualify.host_facts': (d) => qualificationHostFacts(d),
   'qualify.grants': (d, a: { attempt: string }) =>
     (d.prepare(`SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'deploy.launch_authorized' AND json_extract("subject", '$.attempt') = ?`).get(a.attempt) as { n: number }).n,
   'qualify.receipt': (d, a: { attempt: string }) => (d.prepare('SELECT "receipt" FROM "operation_attempts" WHERE "id" = ?').get(a.attempt) as { receipt: string | null } | undefined)?.receipt ?? null,

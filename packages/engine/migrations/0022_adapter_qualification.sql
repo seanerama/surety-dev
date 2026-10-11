@@ -23,6 +23,12 @@ CREATE TABLE adapter_qualification_runs (
   qualification TEXT REFERENCES adapter_qualifications(id),
   started_at TEXT NOT NULL,
   ended_at TEXT,
+  -- Why a run that ended did not qualify, beyond its cases (engine-owned):
+  -- the facts its end found not to hold (nine cases, each passed with its
+  -- control; its evidence; the host's facts known), or, for an interrupted
+  -- run, what the next start found: the operations it ended, the sealed
+  -- fixture copies it rehashed. Null for a qualified run.
+  outcome_detail TEXT,
   CHECK ((status = 'running') = (ended_at IS NULL))
 );
 CREATE UNIQUE INDEX adapter_qualification_runs_one_running ON adapter_qualification_runs(adapter) WHERE status = 'running';
