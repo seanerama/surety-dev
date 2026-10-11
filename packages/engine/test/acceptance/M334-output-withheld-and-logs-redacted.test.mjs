@@ -188,7 +188,12 @@ describe('M334 output withheld after a restart; logs redacted', () => {
     try {
       const { op, svc } = await deployed(env, { get: ['/act/flood'], exit: 1 });
       const mark = env.content.env.MARK;
-      // (a), (c)
+      // (a), (c). The flood (256 KiB) ended before the check's result, so every
+      // secret line written before it lies outside the 64 KiB window. Wait one
+      // period of the fixture's secret line (2,000 ms) and a margin, on Node's
+      // monotonic timer, so that a line is written after the flood before the
+      // collection is asked (objection 053).
+      await new Promise((r) => setTimeout(r, Number(env.content.env.SURETY_TEST_SECRET_EVERY_MS) + 1000));
       const { log, text } = await collected(env);
       assert.ok(log.bytes <= OUTPUT_MAX && statSync(recordFile(ctx.fx.home, recordRow(ctx.fx.home, log.record))).size <= OUTPUT_MAX, `(c) within adapter_output_max_bytes (${log.bytes} bytes)`);
       assert.ok(text.includes(`FLOOD-END-${mark}`), '(a) the record holds the service\'s newest output (the flood\'s end)');

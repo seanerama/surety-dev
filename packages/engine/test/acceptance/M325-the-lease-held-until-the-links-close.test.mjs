@@ -31,6 +31,7 @@ import { advanceClock, tick } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 import { environmentLeases, roundsOf, verificationsOf } from './harness/deploy/kernel.mjs';
 import { RELEASE, deployHeld, domainRowOf, endEnvironment, hostDeployable, hostEnvironment, hostUntil, operatorGuard, procInstance, releaseCheck, ticksUntil } from './harness/deploy/host.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
 const ms = (iso) => Date.parse(iso);
@@ -57,7 +58,7 @@ describe('M325 (e) the lease is not released before the operation\'s links close
       const { op, held, svc } = await deployHeld(ctx, env);
       const member = procInstance(held.member.pid);
       assert.ok(member, 'the fixture is live: the check holds in its domain, its link open');
-      await advanceClock(ctx.fx.engine, 1801);
+      await advanceClock(ctx.fx.engine, 1800 + STEP_MARGIN);
       const row = await ticksUntil(ctx.fx, ctx.project, () => verificationsOf(ctx.fx.home, roundsOf(ctx.fx.home, op.id).at(-1).id)[0], { what: 'the round to be recorded at the deadline' });
       assert.equal(row.outcome, 'unknown');
       assert.ok((row.missing ?? []).some((m) => m.kind === 'deadline'), `missing names the deadline (${JSON.stringify(row.missing)})`);

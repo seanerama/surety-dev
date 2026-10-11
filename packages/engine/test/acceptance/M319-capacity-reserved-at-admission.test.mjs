@@ -19,6 +19,7 @@ import { recordFile, recordRow } from './harness/records.mjs';
 import { advanceClock, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { adapterState, deploy, deployable, deployToRound, effectCalls, environmentLeases, operationsOf, scriptCall, setAdmission } from './harness/deploy/kernel.mjs';
 import { recordExit, roundsOf, rowWhen, workEntry } from './harness/deploy/rounds.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 describe('M319 (a) an envelope that holds the service but not the service and one check', () => {
   test('the replacement waits for admission (resource_envelope on its work item) within the deadline, then fails before its effect: generation 1 still running, no effect call', async (t) => {
@@ -41,7 +42,7 @@ describe('M319 (a) an envelope that holds the service but not the service and on
     assert.equal(waiting?.dispatch_hold?.code, 'resource_envelope', `while admission waits, the deploy work item shows resource_envelope (D4 §4.7, A.2) (SEAM.md §271) (${JSON.stringify(waiting)})`);
     assert.equal(operationsOf(fx.home, ctx.project, 'deploy').find((o) => o.id === op2.id).status, 'intended', 'it waits before its effect');
 
-    await advanceClock(fx.engine, 1801);
+    await advanceClock(fx.engine, 1800 + STEP_MARGIN);
     const failed = await tickUntil(fx.engine, ctx.project, () => {
       const o = operationsOf(fx.home, ctx.project, 'deploy').find((x) => x.id === op2.id);
       return o.status === 'failed' ? o : undefined;

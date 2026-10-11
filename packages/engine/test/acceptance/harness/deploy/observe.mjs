@@ -24,13 +24,20 @@ import { join } from 'node:path';
 
 import { decision } from '../decisions.mjs';
 import { eventsOfType } from '../journal.mjs';
-import { waitFor } from '../engine.mjs';
-import { advanceClock, tickUntil } from '../runs.mjs';
+import { performance } from 'node:perf_hooks';
+
+import { advanceClock, requestTick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 import { adapterState, artifactsOf, attemptsOf, environmentLeases, environmentRecord, homeHash, operationRow, operationsOf, scriptCall, unitName, unitPrefix } from './kernel.mjs';
 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 const rows = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
+
+// The seconds a test moves the engine's clock past a due time or a deadline
+// (objection 054): the engine's clock follows the host's wall clock, which
+// on this host steps back by up to about 5 s, so a 1 s margin can leave the
+// moment not yet reached. 10 s is beyond every step measured.
+export const STEP_MARGIN = 10;
 
 // ---- the observation job (SEAM.md §291) ---------------------------------------------------------
 
@@ -69,7 +76,18 @@ export async function observe(ctx, env = ctx.env, { seconds = 31, max = 6, timeo
     // not within the ticks: by time below
   }
   if (max === 0) return recorded();
-  return waitFor(recorded, { timeoutMs, what: `an observation of ${env.name ?? env.id}` });
+  // Waited for by time, still asking for a tick each second (objection 054):
+  // a job's due time is on the engine's clock, which follows the host's wall
+  // clock, and this host's wall clock steps back by seconds; a job not yet due
+  // at the ticks above falls due later, and only a tick wakes the observer.
+  const until = performance.now() + timeoutMs;
+  for (;;) {
+    const row = recorded();
+    if (row) return row;
+    if (performance.now() > until) throw new Error(`timed out after ${timeoutMs} ms waiting for an observation of ${env.name ?? env.id}`);
+    await requestTick(fx.engine, project).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 }
 
 // The same on a real unit: the ticks asked for in real time (host.mjs's ticksUntil).

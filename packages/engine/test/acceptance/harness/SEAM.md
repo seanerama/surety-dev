@@ -5745,6 +5745,10 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 
 (BS4 §11.3; §322; `docs/acceptance/objections/052-…answer.md`.) The engine measures a qualification's `host_time_ms` and every `identity_reads[].duration_ms` on a monotonic clock (as built from `53d01d5`), because this host's wall clock steps back by seconds. A test that compares a recorded duration with one of its own measures its own with `performance.now()`, never `Date.now()`: M338 (g)'s `host_time_ms <= elapsed + 1000`.
 
+## 334. Timing against this host's clock (objections 053 and 054; 2026-10-11)
+
+(§§274, 291, 314; objection 046.) **The engine's clock steps.** The engine keeps due times and deadlines on its clock, the host's wall clock plus the harness offset (§18), and on this host the wall clock steps back by up to about 5 s. A test that moves the clock to reach a due time or a deadline moves it past by **`STEP_MARGIN`** (10 s, `deploy/observe.mjs`), never by 1 s. `observe()` keeps asking for a tick each second while it waits by time for the observation's row. **A collection after a flood** (M334 (a)) is asked one period of the fixture's secret line (`SURETY_TEST_SECRET_EVERY_MS`) plus 1,000 ms after the round's row, so a secret line lies within the newest output.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27", "M4 slice 28" and "M4 slice 29".
