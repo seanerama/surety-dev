@@ -95,6 +95,9 @@ const fixtureServer = (variant: 'A' | 'B'): string =>
 const IDENTITY = { GIT_AUTHOR_NAME: 'Surety Engine', GIT_AUTHOR_EMAIL: 'engine@surety.invalid', GIT_COMMITTER_NAME: 'Surety Engine', GIT_COMMITTER_EMAIL: 'engine@surety.invalid' };
 const PORT = 8080;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Elapsed time, on a monotonic clock: the wall clock of this host can step
+// back (seen on WSL2), and a duration or a bound is never read from it.
+const mono = (): number => performance.now();
 const noLaunch: LaunchChannel = {
   authorize: async () => ({ granted: false as const }),
   started: async () => undefined,
@@ -154,7 +157,7 @@ class Run {
   private readonly waits: { operation: string; ms: number; hold: unknown }[] = [];
   private artifacts: { A: { digest: string; path: string; manifest: unknown[] }; B: { digest: string; path: string; manifest: unknown[] } } | null = null;
   private lastApplied: { operation: string; attempt: string; unit: string } | null = null;
-  private readonly started = nowMs();
+  private readonly started = mono();
   // What every call of the run is cancelled by: the engine's stop during the
   // cases, the teardown's own bound after it (the slice-29 review, S2).
   private cancel: AbortSignal;
@@ -252,7 +255,7 @@ class Run {
       environment: this.env,
       incarnation: this.rt.incarnation,
       tools,
-      host_time_ms: Math.max(1, Math.round(nowMs() - this.started)),
+      host_time_ms: Math.max(1, Math.round(mono() - this.started)),
       identity_reads: this.identityReads,
       admission_waits: this.waits,
       host_facts: { facts: host.facts, unknown: host.unknown, ...(host.unknown !== null ? { why: `the host's ${host.unknown} is not known: no qualification is recorded against it` } : {}) },
@@ -343,7 +346,7 @@ class Run {
   // Operator does, admission waited for within a bound.
   private async attempt(operation: string): Promise<{ attempt: string; capability: Capability }> {
     await this.ro.observeServiceDomains(this.project).catch((err) => log('adapter qualification', err));
-    const t0 = nowMs();
+    const t0 = mono();
     const until = t0 + 120_000;
     let held: unknown = null;
     for (;;) {
@@ -364,7 +367,7 @@ class Run {
           service: { home: this.rt.home, checkCapacity: this.rt.setting('domain_memory_max') },
         });
         if (made.attempt && made.capability) {
-          if (held !== null) this.waits.push({ operation, ms: Math.round(nowMs() - t0), hold: held });
+          if (held !== null) this.waits.push({ operation, ms: Math.round(mono() - t0), hold: held });
           const c = made.capability;
           return { attempt: made.attempt, capability: c };
         }
@@ -373,7 +376,7 @@ class Run {
         held = (await this.rt.read<{ hold: unknown }>('deploy.admission', { project: this.project }).catch(() => null))?.hold ?? 'unread';
         await this.ro.observeServiceDomains(this.project).catch((err) => log('adapter qualification', err));
       }
-      if (nowMs() > until) throw new NotExercised(`the service's admission was not granted within 120 s (${JSON.stringify(held)})`);
+      if (mono() > until) throw new NotExercised(`the service's admission was not granted within 120 s (${JSON.stringify(held)})`);
       await sleep(500);
     }
   }
@@ -431,9 +434,9 @@ class Run {
   // An identity read of the target (`verify`), timed and kept for the
   // evidence (BS4 §11.3).
   private async verify(caseName: string, expect: TargetExpectation[]): Promise<IdentityRead[] | { failure: string }> {
-    const t0 = nowMs();
+    const t0 = mono();
     const v = await readCall((s) => adapterFor(this.adapter).verify({ environment: this.env, prefix: this.prefix }, expect, s), this.bounds, this.cancel);
-    const ms = Math.round(nowMs() - t0);
+    const ms = Math.round(mono() - t0);
     if ('failure' in v) {
       this.identityReads.push({ case: caseName, duration_ms: ms, match: 'unread', generation: null, target: 'app' });
       return { failure: v.failure };
@@ -462,11 +465,11 @@ class Run {
   }
 
   private async unitGone(unit: string, ms = 30_000): Promise<boolean> {
-    const until = nowMs() + ms;
+    const until = mono() + ms;
     for (;;) {
       const s = await this.show(unit);
       if (s?.LoadState === 'not-found') return true;
-      if (nowMs() > until || this.cancel.aborted) return false;
+      if (mono() > until || this.cancel.aborted) return false;
       await sleep(250);
     }
   }
@@ -475,7 +478,15 @@ class Run {
     return this.rt.read<number>('qualify.grants', { attempt });
   }
 
-  private facts(): Promise<{ observation: { condition: string; detail: unknown } | null; changes: { id: string; change: string; resource: string; closed_at: string | null; detected_at: string }[] }> {
+  // The newest out-of-band row of the environment, by its order of
+  // recording: a row recorded after an act is newer than its mark (the
+  // slice-29 review, m1; never by the wall clock).
+  private async changesMark(): Promise<number> {
+    const f = await this.facts();
+    return f.changes.reduce((n, c) => Math.max(n, c.seq), 0);
+  }
+
+  private facts(): Promise<{ observation: { condition: string; detail: unknown } | null; changes: { id: string; change: string; resource: string; closed_at: string | null; detected_at: string; seq: number }[] }> {
     return this.rt.read('qualify.facts', { environment: this.env });
   }
 
@@ -830,13 +841,13 @@ class Run {
     const one = await this.deploy('A');
     if (one.outcome !== 'applied') throw new Error(`the deployment to stop was ${one.outcome}`);
     await healthy('before the stop');
-    const stopAt = nowIso();
+    const stopMark = await this.changesMark();
     const stop = await local.handAct('stop', this.env, one.unit);
     const afterStop = await observe();
     assertions.push({ what: 'the stop by hand was made on the owned unit', held: stop.done, read: stop.detail });
     assertions.push({
       what: `detected: the environment down, ${one.unit} recorded stopped out of band after the stop`,
-      held: afterStop.observation?.condition === 'down' && afterStop.changes.some((c) => c.change === 'stopped' && c.resource === one.unit && c.detected_at >= stopAt),
+      held: afterStop.observation?.condition === 'down' && afterStop.changes.some((c) => c.change === 'stopped' && c.resource === one.unit && c.seq > stopMark),
       read: afterStop,
     });
     // 2. restarted by hand.
@@ -846,7 +857,7 @@ class Run {
     const before = await this.show(two.unit);
     const hold = await this.ro.services!.holdRefusal(two.attempt);
     if (hold === null) throw new Error(`the refusal of ${two.attempt} could not be held: it is not a running qualification's attempt`);
-    const restartAt = nowIso();
+    const restartMark = await this.changesMark();
     let restart: { done: boolean; detail: string } = { done: false, detail: 'not made' };
     let reason: string | null = null;
     let during: Awaited<ReturnType<typeof this.facts>> | null = null;
@@ -870,12 +881,12 @@ class Run {
     assertions.push({ what: 'a new invocation of the unit', held: show !== null && before !== null && show.InvocationID !== '' && show.InvocationID !== before.InvocationID, read: { before: before?.InvocationID ?? null, after: show?.InvocationID ?? null } });
     assertions.push({ what: 'its launcher refused because the launch is single-use and spent, and no second grant', held: reason !== null && ServiceHost.SPENT.includes(reason) && grants === 1, read: { reason, grants } });
     assertions.push({ what: 'nothing of the application runs again: the original instance is gone', held: appGone === true, read: { app, gone: appGone } });
-    assertions.push({ what: `detected: ${two.unit} recorded restarted out of band after the restart`, held: (during?.changes ?? []).some((c) => c.change === 'restarted' && c.resource === two.unit && c.detected_at >= restartAt), read: during });
+    assertions.push({ what: `detected: ${two.unit} recorded restarted out of band after the restart`, held: (during?.changes ?? []).some((c) => c.change === 'restarted' && c.resource === two.unit && c.seq > restartMark), read: during });
     // 3. one byte of the sealed copy changed.
     const three = await this.deploy('A');
     if (three.outcome !== 'applied') throw new Error(`the deployment to change was ${three.outcome}`);
     await healthy('before the byte is changed');
-    const changedAt = nowIso();
+    const changedMark = await this.changesMark();
     const changed = this.changeOneByte(this.artifacts!.A.path);
     let afterByte: Awaited<ReturnType<typeof this.facts>> | null = null;
     let reads: IdentityRead[] | { failure: string } = { failure: 'not read' };
@@ -889,7 +900,7 @@ class Run {
     }
     assertions.push({ what: 'one byte of the sealed copy changed', held: changed.done, read: changed.detail });
     assertions.push({ what: 'an identity read differs', held: Array.isArray(reads) && reads.some((r) => r.match === 'differs'), read: reads });
-    assertions.push({ what: `detected: ${three.unit} recorded with an identity that differs, after the change`, held: (afterByte?.changes ?? []).some((c) => c.change === 'identity_differs' && c.resource === three.unit && c.detected_at >= changedAt), read: afterByte });
+    assertions.push({ what: `detected: ${three.unit} recorded with an identity that differs, after the change`, held: (afterByte?.changes ?? []).some((c) => c.change === 'identity_differs' && c.resource === three.unit && c.seq > changedMark), read: afterByte });
     assertions.push({ what: 'the byte restored', held: changed.restored(), read: null });
     return this.judged('out_of_band', assertions, control, { stopped: one.unit, restarted: two.unit, changed: three.unit });
   }

@@ -3686,7 +3686,8 @@ export function qualificationFacts(db: Db, args: { environment: string }) {
   const history = db.prepare('SELECT "condition", "detail", "facts", "observed_at" FROM "observation_history" WHERE "environment" = ? ORDER BY rowid DESC LIMIT 1').get(args.environment) as
     | { condition: string; detail: string | null; facts: string | null; observed_at: string }
     | undefined;
-  const changes = db.prepare('SELECT "id", "change", "resource", "closed_at", "detected_at" FROM "out_of_band_changes" WHERE "environment" = ? ORDER BY rowid').all(args.environment) as {
+  const changes = db.prepare('SELECT rowid AS "seq", "id", "change", "resource", "closed_at", "detected_at" FROM "out_of_band_changes" WHERE "environment" = ? ORDER BY rowid').all(args.environment) as {
+    seq: number;
     id: string;
     change: string;
     resource: string;
