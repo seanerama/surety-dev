@@ -169,3 +169,29 @@ test("S3: an interrupted run's open operation is ended in the store and its leas
   assert.deepEqual([a.status, a.launch_state], ['ambiguous', 'closed'], 'its launch closed, its effect unknown');
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "leases" WHERE "resource_id" = ? AND "released_at" IS NULL`).get(run.environment).n, 0, 'nothing holds the environment');
 });
+
+test('D4-A06 as Sean decided it: a later run that ends unqualified lapses the current row, naming itself, in the same transaction; an interrupted run lapses nothing', (t) => {
+  const db = store(t);
+  setHostObserved({ checks: [], probes: [], duration_ms: null, scope_cgroup: null, wsl2: false, facts: { host_id: 'h1', kernel: '6.6', tool_versions: { systemd: '255' }, mechanism_fingerprint: 'm1' } });
+  t.after(() => setHostObserved({ checks: [], probes: [], duration_ms: null, scope_cgroup: null, wsl2: false, facts: null }));
+  evidenceRow(db, 'rec_a6');
+  const first = begin(db);
+  const ok = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: first.run, cases: passed, qualified: true, evidence: 'rec_a6' }));
+  assert.equal(ok.status, 'qualified');
+  const lapsedEvents = () => db.prepare(`SELECT "payload" FROM "events" WHERE "type" = 'adapter.qualification_lapsed'`).all().map((e) => JSON.parse(e.payload));
+
+  const stopped = begin(db);
+  transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: stopped.run, cases: passed.map((c) => ({ ...c, result: 'not_exercised', control: 'not_exercised' })), qualified: false, evidence: 'rec_a6', interrupted: true }));
+  assert.equal(db.prepare('SELECT "status" FROM "adapter_qualifications" WHERE "id" = ?').get(ok.qualification).status, 'current', 'an interrupted run lapses nothing');
+  assert.deepEqual(lapsedEvents(), []);
+
+  const failed = begin(db);
+  const out = transact(db, ENGINE_ACTOR, (tx) => endQualification(tx, { run: failed.run, cases: passed.map((c, i) => (i === 1 ? { ...c, result: 'failed' } : c)), qualified: false, evidence: 'rec_a6' }));
+  assert.equal(out.status, 'unqualified');
+  const row = db.prepare('SELECT * FROM "adapter_qualifications" WHERE "id" = ?').get(ok.qualification);
+  assert.deepEqual([row.status, row.lapsed_reason], ['lapsed', 'qualification_failed']);
+  const events = lapsedEvents();
+  assert.equal(events.length, 1, 'adapter.qualification_lapsed once');
+  assert.deepEqual([events[0].reason, events[0].qualification_run], ['qualification_failed', failed.run], 'naming the failing run');
+  assert.equal(db.prepare('SELECT "ended_at" FROM "adapter_qualification_runs" WHERE "id" = ?').get(failed.run).ended_at, row.lapsed_at, 'in the transaction that ended the run');
+});

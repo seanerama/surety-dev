@@ -233,10 +233,17 @@ class Run {
       else if (!entries.has('teardown')) record(this.forcedEntry(teardown));
     }
     const interrupted = this.signal.aborted;
-    const cases = ADAPTER_QUALIFICATION_CASES.map((c) => entries.get(c) ?? { case: c, result: 'not_exercised' as const, control: 'not_exercised' as const, detail: { reason: interrupted ? 'the engine stopped during the qualification' : 'not reached' } });
+    // A run the engine's stop cut short fails no case (SEAM.md §329): every
+    // entry not passed beside a passed control is not exercised, what it
+    // had observed kept in its detail.
+    const cases = ADAPTER_QUALIFICATION_CASES.map((c): Entry => {
+      const e = entries.get(c) ?? { case: c, result: 'not_exercised' as const, control: 'not_exercised' as const, detail: { reason: interrupted ? 'the engine stopped during the qualification' : 'not reached' } };
+      if (!interrupted || (e.result === 'passed' && e.control === 'passed')) return e;
+      return { case: c, result: 'not_exercised', control: 'not_exercised', detail: { reason: 'the engine stopped during the qualification', observed: { result: e.result, control: e.control } } };
+    });
     // The host's facts the row would be recorded against (the slice-29
     // review, S1): one not known qualifies nothing, and the evidence says so.
-    const host = await this.rt.read<{ facts: unknown; unknown: string | null; unrun: boolean }>('qualify.host_facts').catch(() => ({ facts: null, unknown: 'host_id', unrun: false }));
+    const host = await this.rt.read<{ facts: unknown; unknown: string | null; unread: string[]; unrun: boolean }>('qualify.host_facts').catch(() => ({ facts: null, unknown: 'host_id', unread: ['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'], unrun: false }));
     const qualified = !interrupted && host.unknown === null && cases.every((c) => c.result === 'passed' && c.control === 'passed');
     const evidence = {
       run: this.run,
@@ -249,6 +256,8 @@ class Run {
       identity_reads: this.identityReads,
       admission_waits: this.waits,
       host_facts: { facts: host.facts, unknown: host.unknown, ...(host.unknown !== null ? { why: `the host's ${host.unknown} is not known: no qualification is recorded against it` } : {}) },
+      // SEAM.md §328: every host fact not read, by member name.
+      unread_host_facts: host.unread,
       interrupted,
       cases,
       qualified,

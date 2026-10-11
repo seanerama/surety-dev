@@ -229,6 +229,8 @@ export interface HarnessSwitches {
   engineBuildVariant?: string | null;
   adapterVersions?: Record<string, string>;
   serviceProfileVariant?: string | null;
+  // SEAM.md §328: `--harness-host-fact-unread <member>`.
+  hostFactsUnread?: string[];
 }
 
 export interface CheckDomainLimits {
@@ -1696,6 +1698,7 @@ export function setHarnessSwitches(values: {
   engineBuildVariant?: string | null;
   adapterVersions?: string[];
   serviceProfileVariant?: string | null;
+  hostFactsUnread?: string[];
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1759,6 +1762,11 @@ export function setHarnessSwitches(values: {
     if (!m || adapterVersions[m[1]!] !== undefined) return `--harness-adapter-version takes local_service=<version>, once, not ${v}`;
     adapterVersions[m[1]!] = m[2]!;
   }
+  const hostFactsUnread: string[] = [];
+  for (const v of values.hostFactsUnread ?? []) {
+    if (!['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'].includes(v) || hostFactsUnread.includes(v)) return `--harness-host-fact-unread takes host_id, kernel, tool_versions or mechanism_fingerprint, each once, not ${v}`;
+    hostFactsUnread.push(v);
+  }
   // SEAM.md §274: a restart near a deadline the test moved the clock to.
   if (values.clockOffset != null && !/^[1-9][0-9]{0,9}$/.test(values.clockOffset)) return `--harness-clock-offset takes a positive number of seconds, not ${values.clockOffset}`;
   if (!init.harness) return null;
@@ -1782,6 +1790,7 @@ export function setHarnessSwitches(values: {
       engineBuildVariant: values.engineBuildVariant ?? null,
       adapterVersions,
       serviceProfileVariant: values.serviceProfileVariant ?? null,
+      hostFactsUnread,
     },
   };
   return null;
@@ -1811,6 +1820,8 @@ export const seamRealDeployAdapter = (): boolean => !init.harness || init.switch
 export const seamAdapterQualificationForced = (): Record<string, 'failed' | 'not_exercised' | 'control_failed'> => (init.harness ? (init.switches?.adapterQualificationForced ?? {}) : {});
 export const seamEngineBuildVariant = (): string | null => (init.harness ? (init.switches?.engineBuildVariant ?? null) : null);
 export const seamServiceProfileVariant = (): string | null => (init.harness ? (init.switches?.serviceProfileVariant ?? null) : null);
+// SEAM.md §328: the host facts this start records as unread.
+export const seamHostFactsUnread = (): string[] => (init.harness ? (init.switches?.hostFactsUnread ?? []) : []);
 export const seamAdapterVersion = (adapter: string): string | null => (init.harness ? (init.switches?.adapterVersions?.[adapter] ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 

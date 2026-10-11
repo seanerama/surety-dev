@@ -39,7 +39,7 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
-import { type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
+import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
 import {
   bumpRevision,
   changesInInterval,
@@ -305,9 +305,12 @@ function hostInForce(db: Db): { id: string | null; facts: HostFacts | null; unru
 
 // The host's facts a run would be recorded against, and the first member
 // not known (the slice-29 review, S1), for the run's evidence.
-export function qualificationHostFacts(db: Db): { facts: HostFacts | null; unknown: string | null; unrun: boolean } {
+export function qualificationHostFacts(db: Db): { facts: HostFacts | null; unknown: string | null; unread: string[]; unrun: boolean } {
   const host = hostInForce(db);
-  return { facts: host.facts, unknown: host.facts === null && host.unrun ? null : unknownHostMember(host.facts), unrun: host.unrun };
+  const unknown = host.facts === null && host.unrun ? null : unknownHostMember(host.facts);
+  // Every member not read (SEAM.md §328 `unread_host_facts`).
+  const unread = host.facts === null ? (host.unrun ? [] : [...HOST_MEMBERS]) : HOST_MEMBERS.filter((m) => isUnknownFact(host.facts![m]));
+  return { facts: host.facts, unknown, unread, unrun: host.unrun };
 }
 
 export type LapseReason = 'engine_build' | 'adapter_version' | 'host_qualification' | 'profile_fingerprint';
@@ -392,13 +395,13 @@ export function recordAdapterQualification(
   return { id, created: true };
 }
 
-export function lapseQualification(tx: Tx, args: { id: string; reason: string; member?: string | null }): { lapsed: string | null } {
+export function lapseQualification(tx: Tx, args: { id: string; reason: string; member?: string | null; run?: string | null }): { lapsed: string | null } {
   const q = tx.db.prepare('SELECT * FROM "adapter_qualifications" WHERE "id" = ?').get(args.id) as QualificationRow | undefined;
   if (!q) throw notFound('adapter qualification', args.id);
   if (q.status !== 'current') return { lapsed: null };
   const member = args.member ?? null;
   tx.db.prepare(`UPDATE "adapter_qualifications" SET "status" = 'lapsed', "lapsed_at" = ?, "lapsed_reason" = ?, "lapsed_member" = ? WHERE "id" = ?`).run(tx.at, args.reason, member, q.id);
-  tx.emit('adapter.qualification_lapsed', { adapter_qualification: q.id }, { adapter: q.adapter, reason: args.reason, ...(member !== null ? { member } : {}) });
+  tx.emit('adapter.qualification_lapsed', { adapter_qualification: q.id }, { adapter: q.adapter, reason: args.reason, ...(member !== null ? { member } : {}), ...(args.run ? { qualification_run: args.run } : {}) });
   markStaleDeploy(tx);
   return { lapsed: q.id };
 }
@@ -3731,7 +3734,16 @@ export function endQualification(
     }
   }
   const status = args.interrupted === true ? 'interrupted' : qualification !== null ? 'qualified' : 'unqualified';
-  const detail = why.length > 0 ? { not_qualified: why } : null;
+  // A run that ends unqualified lapses the adapter's current row, in this
+  // transaction, naming itself (D4-A06 as Sean decided it); an interrupted
+  // run lapses nothing.
+  const lapsed: string[] = [];
+  if (status === 'unqualified') {
+    const current = tx.db.prepare(`SELECT "id" FROM "adapter_qualifications" WHERE "adapter" = ? AND "status" = 'current' ORDER BY rowid`).all(r.adapter) as { id: string }[];
+    for (const q of current) if (lapseQualification(tx, { id: q.id, reason: 'qualification_failed', run: r.id }).lapsed !== null) lapsed.push(q.id);
+  }
+  if (lapsed.length > 0) why.push(`lapsed the current qualification ${lapsed.join(', ')}`);
+  const detail = why.length > 0 ? { not_qualified: why, ...(lapsed.length > 0 ? { lapsed } : {}) } : null;
   tx.db
     .prepare(`UPDATE "adapter_qualification_runs" SET "status" = ?, "cases" = ?, "evidence" = ?, "qualification" = ?, "ended_at" = ?, "outcome_detail" = ? WHERE "id" = ?`)
     .run(status, JSON.stringify(args.cases), args.evidence, qualification, tx.at, detail === null ? null : JSON.stringify(detail), r.id);
