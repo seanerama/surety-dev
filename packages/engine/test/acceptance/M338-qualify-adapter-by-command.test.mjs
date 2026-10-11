@@ -43,6 +43,7 @@
 
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { basename, isAbsolute, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
@@ -83,9 +84,10 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
     Q.seq = maxSeq(fx.home);
     Q.incarnations = incarnationsOf(fx.home);
     Q.pid = fx.engine.pid;
-    Q.started = Date.now();
+    // Monotonic, as the engine's host_time_ms is (objection 052: this host's wall clock steps back by seconds).
+    Q.started = performance.now();
     Q.cli = qualifyByCommand(fx);
-    Q.elapsedMs = Date.now() - Q.started;
+    Q.elapsedMs = Math.round(performance.now() - Q.started);
     Q.incarnationsAfter = incarnationsOf(fx.home);
     Q.running = fx.engine.isRunning();
     Q.pidAfter = fx.engine.pid;
@@ -198,7 +200,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
     answered();
     const { content } = evidenceOf(Q.fx.home, Q.body.evidence);
     assert.ok(Number.isInteger(content.host_time_ms) && content.host_time_ms > 0, `the qualification's host time is recorded (${content.host_time_ms})`);
-    assert.ok(content.host_time_ms <= Q.elapsedMs + 1000, 'within the command\'s own elapsed time');
+    assert.ok(content.host_time_ms <= Q.elapsedMs + 1000, 'within the command\'s own elapsed time, both measured on a monotonic clock (objection 052)');
     const reads = content.identity_reads ?? [];
     assert.ok(reads.length >= 2, `its identity reads are recorded (${reads.length})`);
     assert.ok(reads.some((r) => r.case === 'deploy_read_back'), 'deploy_read_back\'s among them');
