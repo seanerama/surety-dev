@@ -16,14 +16,15 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { CLI } from '../engine.mjs';
 import { eventsOfType } from '../journal.mjs';
 import { recordFile, recordRow } from '../records.mjs';
 import { withStore } from '../store.mjs';
 import { configContent, configure, requestDeployment } from './kernel.mjs';
-import { requestLong } from './host.mjs';
+import { cgroupsNamed, listUnits, requestLong } from './host.mjs';
 
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 const rows = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
@@ -146,4 +147,116 @@ export async function probeReasons(engine, project, candidate, name = 'probe') {
   const codes = [...new Set((res.body?.subject?.reasons ?? []).map((r) => r.code ?? r))].sort();
   assert.ok(codes.includes('IDENTITY_METHOD_MISSING'), `the fixture is live: the probe is refused for its missing identity method (${codes.join(', ')})`);
   return { codes, unqualified: codes.includes('ADAPTER_UNQUALIFIED') || res.body?.code === 'adapter_unqualified' };
+}
+
+// ---- runs, their environments, a stop and a kill mid-run (SEAM.md §§328 to 330) ----------------
+
+// The engine's record of each `qualify-adapter` run (the Builder's table, the
+// driver's ruling that a run which does not qualify is recorded only here).
+export const qualificationRuns = (home) =>
+  rows(home, 'SELECT * FROM "adapter_qualification_runs" ORDER BY "started_at", rowid').map((r) => ({ ...r, cases: json(r.cases) }));
+
+// The environment a run made for itself: {id, name, project, prefix, qualification_run}.
+export const qualificationEnvironment = (home, run) =>
+  rows(home, 'SELECT "id", "name", "project", "prefix", "qualification_run" FROM "environments" WHERE "qualification_run" = ?', run)[0] ?? null;
+
+// Wait, reading the store only, until a running qualification has deployed
+// a service whose application started (an attempt of its environment with
+// `app_instance` recorded): a point inside the run, with a qualification
+// operation open and a unit of its prefix live. Returns {run, environment, attempt}.
+export function untilQualificationServiceStarted(fx, { timeoutMs = 300_000 } = {}) {
+  return waitForStore(
+    () => {
+      const running = qualificationRuns(fx.home).find((r) => r.status === 'running');
+      if (!running) return undefined;
+      const env = qualificationEnvironment(fx.home, running.id);
+      if (!env) return undefined;
+      const attempt = rows(
+        fx.home,
+        `SELECT a."id", a."app_instance" FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation" WHERE json_extract(o."target", '$.environment') = ? AND a."app_instance" IS NOT NULL ORDER BY a.rowid`,
+        env.id,
+      )[0];
+      return attempt ? { run: running, environment: env, attempt } : undefined;
+    },
+    { timeoutMs, what: 'a running qualification to have started a service' },
+  );
+}
+
+async function waitForStore(probe, { timeoutMs, what, intervalMs = 50 }) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    let v;
+    try {
+      v = probe();
+    } catch {
+      v = undefined;
+    }
+    if (v !== undefined) return v;
+    if (Date.now() > until) throw new Error(`${what} was not reached within ${timeoutMs} ms`);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+// SIGTERM to the test's own engine child (an orderly stop), by the handle
+// the harness spawned, after reading from /proc that it is the engine of
+// this test's home (as recover.mjs's killOwnEngine reads it for SIGKILL);
+// any read that fails or disagrees refuses, and nothing is signalled. Waits
+// up to `graceMs` for it to exit by itself; returns {status, inTime}, and
+// never sends anything more (the caller decides).
+export async function terminateOwnEngine(fx, { graceMs = 60_000 } = {}) {
+  const engine = fx.engine;
+  assert.ok(engine && engine.isRunning(), 'the engine to stop is running');
+  const pid = engine.pid;
+  assert.ok(Number.isInteger(pid) && pid > 1 && pid !== process.pid, `the engine child's pid is a host pid of its own (${pid})`);
+  assert.equal(engine.proc.child.pid, pid, 'the pid is the ChildProcess handle the harness spawned');
+  let cmdline;
+  let environ;
+  try {
+    cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
+    environ = readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0');
+  } catch (err) {
+    assert.fail(`the engine child's /proc/${pid} cannot be read (${err.code}): nothing is signalled`);
+  }
+  assert.ok(cmdline.includes('serve'), `pid ${pid} is a surety engine (${cmdline.join(' ')})`);
+  assert.ok(environ.includes(`SURETY_HOME=${fx.home}`), `pid ${pid} is this test's engine; nothing is signalled otherwise`);
+  engine.proc.child.kill('SIGTERM');
+  const status = await Promise.race([engine.exited, new Promise((r) => setTimeout(() => r(null), graceMs))]);
+  return { status, inTime: status !== null };
+}
+
+// What is left of a prefix on the host, read only: loaded units (by a
+// listing filtered here), cgroups, and files under $SURETY_HOME/run/ naming the environment.
+export function leftOnHost(home, env) {
+  const units = (listUnits() ?? null)?.filter((u) => u.unit.startsWith(env.prefix)).map((u) => u.unit) ?? null;
+  let runFiles = [];
+  try {
+    runFiles = readdirSync(join(home, 'run'), { recursive: true }).filter((n) => String(n).includes(env.id) || String(n).includes(env.prefix));
+  } catch {
+    runFiles = [];
+  }
+  return { units, cgroups: cgroupsNamed(env.prefix), runFiles };
+}
+
+// The operator's exact teardown of a qualification environment:
+// `surety env teardown <name> --project <its project>` (no --preempt), then
+// ticks of that project until a teardown operation of the environment made
+// after the command is finalized with its latest attempt applied. Returns
+// {cli, op, attempt}.
+export async function exactTeardown(fx, env, ticksUntil, { timeoutMs = 240_000 } = {}) {
+  const ofEnv = () => rows(fx.home, `SELECT "id", "finalized_at" FROM "operations" WHERE "kind" = 'teardown' AND json_extract("target", '$.environment') = ? ORDER BY "seq"`, env.id);
+  const earlier = new Set(ofEnv().map((o) => o.id));
+  const done = spawnSync(process.execPath, [CLI, 'env', 'teardown', env.name, '--project', env.project], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, SURETY_HOME: fx.home } });
+  const cli = { status: done.status, stdout: done.stdout ?? '', stderr: done.stderr ?? '' };
+  assert.equal(cli.status, 0, `surety env teardown ${env.name} --project ${env.project} is accepted (stdout ${cli.stdout.slice(0, 300)}; stderr ${cli.stderr.slice(0, 300)})`);
+  return ticksUntil(
+    fx,
+    env.project,
+    () => {
+      const op = ofEnv().find((o) => !earlier.has(o.id) && o.finalized_at);
+      if (!op) return undefined;
+      const latest = rows(fx.home, 'SELECT * FROM "operation_attempts" WHERE "operation" = ? ORDER BY "attempt_number"', op.id).map((a) => ({ ...a, reconciliation_reads: json(a.reconciliation_reads) })).at(-1);
+      return latest && ['succeeded', 'reconciled_succeeded'].includes(latest.status) ? { cli, op, attempt: latest } : undefined;
+    },
+    { timeoutMs, what: `the exact teardown of ${env.name} to be applied` },
+  );
 }
