@@ -5602,6 +5602,16 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 
 **Deferred:** M336 (c)'s refused capability outside harness mode, to slice 29 (M338's `refused` case). Carried, unchanged: M307 (f) (slice 29).
 
+## 319. The answers to objections 047 to 051 (2026-10-11)
+
+(The slice-28 Builder's objections on `build/m4-s28` at `d95af61`, all upheld; the answers are in `docs/acceptance/objections/`; `../COVERAGE.md`, "M4 slice 28: objections 047 to 051".)
+
+- **047:** an ordinary teardown waits for the environment lease (D4 §§4.1, 4.6). M335's teardown case lets the deploy's round end first (its check exit 1, its row, the leases released), then asks for the ordinary teardown with `stop_units` forged.
+- **048:** §310's `filesHoldingAny` accounts for a file it cannot read only when it is verified as the engine's execute-only node copy: mode 0111, the size of the node the harness started the engine with, and the device and inode of `sandbox/node-<dev>-<ino>-<size>-<mtime>` of that node (itself so verified), as objection 012's answer settled for M132. Any other unreadable file is still `unread:<path>`.
+- **049:** M332's engine runs with `domain_memory_max` 1 GiB, so a workspace check is admitted beside the running service and its kept-free check capacity (E126).
+- **050:** M337 decodes a chunked answer before parsing its body (the fixture service answers HTTP/1.1 chunked; the relay carries the bytes unchanged).
+- **051:** (1) a survivor whose title carries its secret has arguments that differ (D4 §3.4 step 4), so its round's first read `differs` and registers no check (D4 §5.3, as built). M334 (d) accepts either no execution with that first read `differs` on `argv`, or every execution refused `redaction_unavailable`; the register-then-refuse form is M324 (a)'s. (2) A check printing a held secret is screened and raises the critical finding (D4 §7.3; M218), so M334's pre-kill plan no longer asks for `/secret`. §314's `GET /secret` stays in the fixture; after a restart no check reaches it, since the link is refused.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27" and "M4 slice 28".

@@ -90,9 +90,30 @@ function exchange(port, data, { timeoutMs = 8000 } = {}) {
   });
 }
 const get = (port, path, headers = '') => exchange(port, `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n${headers}\r\n`);
+// The body of an HTTP/1.1 answer, its chunked transfer coding decoded when
+// the head names it (RFC 9112 §7.1; the fixture service answers chunked, and
+// the relay carries its bytes unchanged: objection 050). null if unparsable.
 const bodyOf = (text) => {
+  const at = text.indexOf('\r\n\r\n');
+  if (at < 0) return null;
+  const head = text.slice(0, at).toLowerCase();
+  let body = text.slice(at + 4);
+  if (/\r\ntransfer-encoding:\s*chunked/.test(head)) {
+    let out = '';
+    let rest = body;
+    for (;;) {
+      const nl = rest.indexOf('\r\n');
+      if (nl < 0) return null;
+      const size = parseInt(rest.slice(0, nl).split(';')[0], 16);
+      if (!Number.isInteger(size)) return null;
+      if (size === 0) break;
+      out += rest.slice(nl + 2, nl + 2 + size);
+      rest = rest.slice(nl + 2 + size + 2);
+    }
+    body = out;
+  }
   try {
-    return JSON.parse(text.slice(text.indexOf('\r\n\r\n') + 4));
+    return JSON.parse(body);
   } catch {
     return null;
   }

@@ -16,15 +16,22 @@
 //       verification row names a log record;
 //   (d) S0 rotated to S1 (the file rewritten) and the engine killed and
 //       started again with the S0 service surviving, which has written S0 to
-//       its output (retained capture and new lines every two seconds), into
-//       a response to a check and into its process title (`title-secret`,
-//       released before the kill): a collection asked before the kill is
-//       recorded `refused`, `redaction_unavailable`, and none is made; a new
-//       collection is 409 `redaction_unavailable`; the relay is 409
-//       `redaction_unavailable` and nothing listens on its port; a
-//       re-verification's check is not run, `redaction_unavailable`,
-//       reaching nothing through the link; reads of the survivor (the
+//       its output (retained capture and new lines every two seconds) and
+//       into its process title (`title-secret`, released before the kill),
+//       and would write it into a response to a check (`GET /secret`): a
+//       collection asked before the kill is recorded `refused`,
+//       `redaction_unavailable`, and none is made; a new collection is 409
+//       `redaction_unavailable`; the relay is 409 `redaction_unavailable`
+//       and nothing listens on its port; a re-verification runs no check
+//       against it and nothing reaches it through the link: its first
+//       identity read `differs` on `argv` (the title, D4 §3.4 step 4) with
+//       no value recorded, so the round registers none, or any check it
+//       registers is not run, `redaction_unavailable` (objection 051; the
+//       register-then-refuse form is M324 (a)'s); reads of the survivor (the
 //       round's identity reads and an observation's) are made and recorded;
+//       the check's response is never made, the link being refused (before
+//       the kill a check printing S0 is screened and raises the critical
+//       finding, D4 §7.3, as M218 pins for check output: not this case's);
 //       neither S0 nor S1, raw or JSON-escaped, is in the engine home
 //       (store, records, events), the responses, the unit's properties, its
 //       journal or the engine's output;
@@ -206,8 +213,9 @@ describe('M334 output withheld after a restart; logs redacted', () => {
   test('(d), (e) S0 rotated to S1 and the engine restarted with the S0 service surviving: logs, relay and checks refused redaction_unavailable; no value in records, events, responses, unit properties or the journal; a redeploy ends the refusals', async () => {
     const env = await secretEnvironment('withheld');
     try {
-      // The survivor writes S0 into a response to a check and into its process title, then into its output for ever.
-      const { op, svc } = await deployed(env, { get: ['/secret', '/act/title-secret'], exit: 1 });
+      // The survivor writes S0 into its process title, then into its output for ever (objection 051: no /secret
+      // before the kill, whose screen hit would raise the critical finding D4 §7.3 requires and block (e)).
+      const { op, svc } = await deployed(env, { get: ['/act/title-secret'], exit: 1 });
       await ticksUntil(ctx.fx, ctx.project, () => (cmdlineOf(svc.app.pid).join(' ').includes(values.s0) ? true : undefined), { what: 'the title to carry the value (host-read, compared in memory)' });
       // A collection asked, not yet made (no tick), when the engine dies.
       const pending = await collectLogs(ctx.fx.engine, ctx.project, env.name);
@@ -245,7 +253,13 @@ describe('M334 output withheld after a restart; logs redacted', () => {
       const round = await verifyAgain(ctx.fx.engine, ctx.project, op.id);
       const row = await ticksUntil(ctx.fx, ctx.project, () => verificationsOf(ctx.fx.home, round.id)[0], { what: 'the re-verification\'s row' });
       const executions = postDeployOf(ctx, env).filter((x) => x.deployment?.round === round.id);
-      assert.ok(executions.length > 0, 'the round registers its check, then refuses it');
+      const firstRead = (row.identity_reads ?? []).find((r) => r.bracket === 'first');
+      console.log(`# note: M334 (d)'s re-verification registered ${executions.length} check(s); its first read ${firstRead?.match} (${firstRead?.detail?.field ?? 'no field'})`);
+      if (executions.length === 0) {
+        // The title changed the survivor's arguments: the first read differs and no check is registered (objection 051).
+        assert.equal(firstRead?.match, 'differs', `no check registered: the round's first identity read differs (D4 §3.4 step 4) (${JSON.stringify(firstRead)})`);
+        assert.equal(firstRead?.detail?.field, 'argv', `on the arguments the title rewrote (${JSON.stringify(firstRead?.detail)})`);
+      }
       for (const x of executions) {
         const r = resultOf(ctx.fx.home, x.id);
         assert.deepEqual([r?.execution_established, r?.not_run_reason], [0, 'redaction_unavailable'], `the check is not run (${JSON.stringify(r)})`);
