@@ -325,6 +325,7 @@
       "M336-the-production-adapter-path.test.mjs",
       "M335-the-capability-on-a-real-unit.test.mjs",
       "M332-secret-delivery-on-a-real-unit.test.mjs",
+      "M332-a-secret-cut-at-the-check-output-bounds.test.mjs",
       "M337-the-operator-relay.test.mjs",
       "M334-output-withheld-and-logs-redacted.test.mjs"
     ]
@@ -405,6 +406,7 @@
     "M336-the-production-adapter-path.test.mjs",
     "M335-the-capability-on-a-real-unit.test.mjs",
     "M332-secret-delivery-on-a-real-unit.test.mjs",
+    "M332-a-secret-cut-at-the-check-output-bounds.test.mjs",
     "M337-the-operator-relay.test.mjs",
     "M334-output-withheld-and-logs-redacted.test.mjs"
   ],

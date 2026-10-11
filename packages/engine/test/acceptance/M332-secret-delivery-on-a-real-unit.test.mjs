@@ -87,6 +87,7 @@ import {
 
 const REF = Object.freeze({ a: 'deploy/m332_svc_a', b: 'deploy/m332_svc_b', chk: 'deploy/m332_chk', other: 'deploy/m332_other' });
 const CHECK_VAR = 'SURETY_SECRET_M332_CHK';
+const ENGINE = Object.freeze({ domain_memory_max: 1073741824 });
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
 const EXIT_1 = Object.freeze({ get: ['/hello'], exit: 1 });
 const WS_HOLD = 'ws';
@@ -171,6 +172,10 @@ describe('M332 secret delivery to the service and to checks', () => {
     const files = Object.fromEntries(Object.entries(REF).map(([k, ref]) => [ref, secretFile(dir, k, values[k])]));
     ctx = await hostDeployable(shared.context, guard, {
       everyStart: secretArgs(files),
+      // A workspace check beside the running service is admitted only beside
+      // the check capacity a service keeps free (E126); at the default
+      // domain_memory_max (8 GiB) this host holds neither (objection 049).
+      engineConfig: ENGINE,
       policy: POLICY,
       behavesFields: { secrets: [REF.chk] },
       extraChecks: { nosecret: { hold: 'nosecret', secrets: [REF.a] } },

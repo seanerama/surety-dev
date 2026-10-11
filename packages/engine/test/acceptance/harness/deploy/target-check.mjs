@@ -50,6 +50,24 @@ const out = (line) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// A plan's raw output (the slice-28 review, S1; SEAM.md §320): each item
+// written to standard output as is, with no line end: {"pad": n} n bytes of
+// `p`; {"env": NAME} the value of that variable of its own environment (a
+// secret the engine delivered); {"text": s}. `first` is written as soon as
+// the plan is read, before anything else; `last` after the report, just
+// before the exit. It writes only to its own output.
+const raw = (items) => {
+  for (const item of Array.isArray(items) ? items : []) {
+    let text = '';
+    if (Number.isInteger(item?.pad) && item.pad > 0 && item.pad <= 1_048_576) text = 'p'.repeat(item.pad);
+    else if (typeof item?.env === 'string') text = process.env[item.env] ?? '';
+    else if (typeof item?.text === 'string') text = item.text;
+    const buf = Buffer.from(text);
+    let off = 0;
+    while (off < buf.length) off += writeSync(1, buf, off, buf.length - off);
+  }
+};
+
 function get(base, path) {
   return new Promise((resolve) => {
     let done = false;
@@ -110,6 +128,7 @@ async function main() {
       process.exit(98);
     }
   }
+  raw(plan?.first);
   if (target === null) {
     out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results: [], plan, error: 'no_target' })}`);
     process.exit(3);
@@ -128,6 +147,7 @@ async function main() {
     process.exit(Number.isInteger(plan2.exit) ? plan2.exit : 0);
   }
   out(`SURETY-TARGET-REPORT ${JSON.stringify({ target, results, plan })}`);
+  raw(plan?.last);
   if (plan !== null) process.exit(Number.isInteger(plan.exit) ? plan.exit : 0);
   process.exit(results.every((r) => r.status === 200) ? 0 : 1);
 }

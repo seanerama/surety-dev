@@ -50,6 +50,10 @@
 //                    metadata holding a held secret)
 //   flood            (slice 28) write 256 KiB of filler lines to its standard
 //                    output, then one line `FLOOD-END-<MARK>` (M334 (c))
+//   split-secret     (the slice-28 review, S1) write `SPLIT-<MARK> token=` and
+//                    the first 20 characters of the held secret, with no line
+//                    end; after SURETY_TEST_SPLIT_PAUSE_MS milliseconds
+//                    (default 90,000) write the rest of the value and `\n`
 //
 // Slice 28 (SEAM.md §314), the held secret the test gave it, unguarded since
 // it writes only to its own output and answers only its own caller:
@@ -263,6 +267,12 @@ function main() {
       for (let i = 0; i < 256; i++) process.stdout.write(line);
       process.stdout.write(`FLOOD-END-${MARK}\n`);
       json(res, 200, { act: 'flood', bytes: 256 * 1024 });
+    },
+    'split-secret': (res) => {
+      const v = secretValue();
+      process.stdout.write(`SPLIT-${MARK} token=${v.slice(0, 20)}`);
+      setTimeout(() => process.stdout.write(`${v.slice(20)}\n`), Number(process.env.SURETY_TEST_SPLIT_PAUSE_MS ?? 90_000));
+      json(res, 200, { act: 'split-secret' });
     },
     'print-marker': (res) => {
       process.stdout.write(`APP-OUTPUT-${MARK}-act\n`);

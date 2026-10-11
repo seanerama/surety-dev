@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
+import { recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import {
@@ -33,7 +34,9 @@ import {
   configure,
   deploy,
   deployable,
+  environmentLeases,
   forgeCapability,
+  postDeployExecutions,
   homeHash,
   operationRow,
   operationsOf,
@@ -125,10 +128,17 @@ describe('M335 every capability outside its attempt\'s scope is refused before a
     const known = new Set(operationsOf(fx.home, project, 'deploy').map((o) => o.id));
     await scriptCall(fx.engine, env.id, 'deploy', [{ result: 'issued', apply: true }]);
     await deploy(fx.engine, project, candidate.id, env.name);
-    await tickUntil(fx.engine, project, () => {
+    const applied = await tickUntil(fx.engine, project, () => {
       const op = operationsOf(fx.home, project, 'deploy').find((o) => !known.has(o.id));
       return op && attemptsOf(fx.home, op.id)[0]?.status === 'succeeded' ? op : undefined;
     }, { max: 12, what: 'the deploy to apply' });
+    // The deploy's round ended (its check exit 1), so the operation releases
+    // the environment lease and an ordinary teardown can take it (D4 §§4.1,
+    // 4.6; objection 047).
+    const execution = await tickUntil(fx.engine, project, () => postDeployExecutions(fx.home, candidate.id).find((x) => x.deployment?.operation === applied.id), { max: 16, what: 'the deploy\'s round to register its check' });
+    await recordExit(fx.engine, execution.id, 1);
+    await rowWhen({ fx, project }, roundsOf(fx.home, applied.id).at(-1).id);
+    await tickUntil(fx.engine, project, () => (environmentLeases(fx.home, env.id).every((l) => l.released_at !== null) ? true : undefined), { max: 12, what: 'the deploy to release the environment lease' });
     const before = await adapterState(fx.engine, env.id);
     assert.ok(before.target.units.some((u) => u.state === 'active'), 'the fixture is live: a unit of the environment is active');
 
