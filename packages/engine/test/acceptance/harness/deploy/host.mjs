@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { freePort, httpRequest } from '../engine.mjs';
@@ -1027,9 +1027,34 @@ export function transientUnitText(name) {
 // The files under `dir` whose bytes hold any of `forms` (a value's forms),
 // as relative paths; a directory or file that cannot be read is listed as
 // `unread:<path>`, never taken for clean (unknown is a value).
+// One exception (objection 048, as objection 012's answer settled it for
+// M132): the engine's execute-only copy of its own node (D2 §2.3; a domain
+// init runs from it and is then not dumpable) cannot be read by the uid. A
+// file that cannot be read is accounted for, not reported, only when it is
+// verified as that copy: `sandbox/node-<dev>-<ino>-<size>-<mtime>` of the
+// node the harness started the engine with (process.execPath, real path),
+// mode 0111, its size, or a hard link of it (same device and inode). Every
+// other unreadable file is `unread:<path>`.
 export function filesHoldingAny(dir, forms) {
   const needles = forms.map((f) => Buffer.from(f));
   const found = [];
+  const node = statSync(realpathSync(process.execPath));
+  const expected = `node-${node.dev}-${node.ino}-${node.size}-${Math.floor(node.mtimeMs)}`;
+  const verified = new Set();
+  try {
+    const st = lstatSync(join(dir, 'sandbox', expected));
+    if (st.isFile() && (st.mode & 0o777) === 0o111 && st.size === node.size) verified.add(`${st.dev}:${st.ino}`);
+  } catch {
+    // no copy: nothing is accounted for
+  }
+  const executeOnly = (full) => {
+    try {
+      const st = lstatSync(full);
+      return st.isFile() && (st.mode & 0o777) === 0o111 && st.size === node.size && verified.has(`${st.dev}:${st.ino}`);
+    } catch {
+      return false;
+    }
+  };
   const walk = (d) => {
     let names;
     try {
@@ -1046,7 +1071,7 @@ export function filesHoldingAny(dir, forms) {
         try {
           bytes = readFileSync(full);
         } catch {
-          found.push(`unread:${relative(dir, full)}`);
+          if (!executeOnly(full)) found.push(`unread:${relative(dir, full)}`);
           continue;
         }
         if (needles.some((n) => bytes.includes(n))) found.push(relative(dir, full));

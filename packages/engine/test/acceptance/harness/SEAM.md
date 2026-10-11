@@ -5602,6 +5602,25 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 
 **Deferred:** M336 (c)'s refused capability outside harness mode, to slice 29 (M338's `refused` case). Carried, unchanged: M307 (f) (slice 29).
 
+## 319. The answers to objections 047 to 051 (2026-10-11)
+
+(The slice-28 Builder's objections on `build/m4-s28` at `d95af61`, all upheld; the answers are in `docs/acceptance/objections/`; `../COVERAGE.md`, "M4 slice 28: objections 047 to 051".)
+
+- **047:** an ordinary teardown waits for the environment lease (D4 §§4.1, 4.6). M335's teardown case lets the deploy's round end first (its check exit 1, its row, the leases released), then asks for the ordinary teardown with `stop_units` forged.
+- **048:** §310's `filesHoldingAny` accounts for a file it cannot read only when it is verified as the engine's execute-only node copy: mode 0111, the size of the node the harness started the engine with, and the device and inode of `sandbox/node-<dev>-<ino>-<size>-<mtime>` of that node (itself so verified), as objection 012's answer settled for M132. Any other unreadable file is still `unread:<path>`.
+- **049:** M332's engine runs with `domain_memory_max` 1 GiB, so a workspace check is admitted beside the running service and its kept-free check capacity (E126).
+- **050:** M337 decodes a chunked answer before parsing its body (the fixture service answers HTTP/1.1 chunked; the relay carries the bytes unchanged).
+- **051:** (1) a survivor whose title carries its secret has arguments that differ (D4 §3.4 step 4), so its round's first read `differs` and registers no check (D4 §5.3, as built). M334 (d) accepts either no execution with that first read `differs` on `argv`, or every execution refused `redaction_unavailable`; the register-then-refuse form is M324 (a)'s. (2) A check printing a held secret is screened and raises the critical finding (D4 §7.3; M218), so M334's pre-kill plan no longer asks for `/secret`. §314's `GET /secret` stays in the fixture; after a restart no check reaches it, since the link is refused.
+
+## 320. A secret cut at an output bound (the slice-28 review, S1; 2026-10-11)
+
+(The driver's relay of the slice-28 Reviewer's S1 on `build/m4-s28` at `d95af61`; D4 §§7.2, 7.3, 9.3; D3 §2.6; D1 §14.2. `../COVERAGE.md`, "M4 slice 28: the review's S1".)
+
+**The rule.** The redactor removes a whole held value or its JSON-escaped form (§310's `valueForms`). Wherever the engine publishes a bounded part of output (a `deployment_logs` record from the init's capture; a check's `check_output`, its head and tail), a cut that falls inside a held value would publish a fragment no whole-value match removes. **No prefix and no suffix of a held secret's value or of a registered escaped form, of 8 bytes or more, is published** in either. Eight bytes is the stated minimum: the cases' values are random beyond that, so a shorter fragment cannot be told from chance, and a fix that withholds the partial line or masks a fragment at a cut meets it. How a fragment is withheld (dropping the partial line, masking, a marker) is not pinned; that the output outside the cut fragment is still published is, as each case's fixture-live reads.
+
+- **The service's log** (M334 (a)'s second case). The fixture's act **`split-secret`** (§314) writes `SPLIT-<MARK> token=` and the first 20 characters of the held value with no line end, and the rest and `\n` after `SURETY_TEST_SPLIT_PAUSE_MS` (90 s in the case). A collection asked in the pause records no prefix of 8 bytes or more; one after the pause holds the line `SPLIT-<MARK> token=` with the value redacted.
+- **A check's output** (`M332-a-secret-cut-at-the-check-output-bounds`). The project's governed `result_collection.output_max_bytes` is 1,024 (head and tail 512 bytes each, as built). The target-check program's plan gains **`first`** and **`last`** †: arrays of items written to its standard output with no line end, `{"pad": n}` (n bytes of `p`), `{"env": NAME}` (that variable's value), `{"text": s}`; `first` as soon as the plan is read, `last` after the report. The plan `first: [{pad: 492}, {env: SURETY_SECRET_M332_CUT}]`, `last: [{env: …}, {pad: 492}]` puts the head's cut 20 bytes into the value and the tail's start 20 bytes before its end; the published output begins and ends with the padding (the fixture-live read) and holds no fragment of 8 bytes or more.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27" and "M4 slice 28".
