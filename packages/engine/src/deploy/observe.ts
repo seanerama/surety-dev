@@ -77,9 +77,18 @@ export class Observer {
     }
   }
 
-  private async observe(environment: string, missed: boolean): Promise<void> {
-    const plan = await this.rt.read<Plan | null>('deploy.observation_plan', { environment });
-    if (plan === null) return;
+  // One observation made now, with its identity read (the adapter
+  // qualification's `out_of_band` case, deploy/qualify.ts, for its own
+  // environment, which has no observation job): as the job's, recorded by
+  // the same transition.
+  async observeNow(environment: string): Promise<void> {
+    await this.observe(environment, false, true);
+  }
+
+  private async observe(environment: string, missed: boolean, identityNow = false): Promise<void> {
+    const found = await this.rt.read<Plan | null>('deploy.observation_plan', { environment });
+    if (found === null) return;
+    const plan = identityNow ? { ...found, identity: found.expect.length > 0 } : found;
     const adapter = adapterFor(plan.adapter);
     const ref = { environment: plan.environment, prefix: plan.prefix };
     const from = nowIso();

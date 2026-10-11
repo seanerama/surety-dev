@@ -71,12 +71,12 @@ Each names the case that establishes it; until the acceptance run, the last gate
 
 | Entry | Record |
 |---|---|
-| **The real journey's fixtures**, labelled: the approved plan with its texts and index (spec approval is not built) and the first `check_correction`'s trigger; its engine runs in the real lane's test mode for them (`--harness-real-lane`, with `--harness-deploy-adapter real`). No check result and no qualification is a fixture's. | SEAM §335 |
+| **The real journey's fixtures**, labelled: the approved plan with its texts and index (spec approval is not built) and the first `check_correction`'s trigger; its engine runs in the real lane's test mode for them (`--harness-real-lane`, with `--harness-deploy-adapter real`). No check result and no qualification is a fixture's. | SEAM §336 |
 | **M140, M2's real journey, is rewritten by J3 and J4 and not rerun** (C.2): its new authorization prerequisites are not claimed as run. | BS4 §9.2; E118 item 1 |
-| **The token's absence from unit properties and journals** is searched while the service runs (its properties, its transient unit file where it can be read) and after the teardown (the journals of the units the store's intents name); an unread source is recorded as unread, never as clean, and the report says which were read. | SEAM §335 |
-| **A real agent's behaviour cannot be scripted**: a miss by the real Verifier or Builder ends a step "not established", never a verdict on the engine. | E59 item 3; SEAM §335 |
+| **The token's absence from unit properties and journals** is searched while the service runs (its properties, its transient unit file where it can be read) and after the teardown (the journals of the units the store's intents name); an unread source is recorded as unread, never as clean, and the report says which were read. | SEAM §336 |
+| **A real agent's behaviour cannot be scripted**: a miss by the real Verifier or Builder ends a step "not established", never a verdict on the engine. | E59 item 3; SEAM §336 |
 | **The dress rehearsal** (the fake `claude`) is never evidence: it cannot show the subscription mode, the real activation, what a real model does with its package, or how long anything takes. | SEAM §171 |
-| **The hands-on run** is Sean's observation, not a test: the script's form and guards are M344's case; what he saw is the report's section 21. | E45; SEAM §336 |
+| **The hands-on run** is Sean's observation, not a test: the script's form and guards are M344's case; what he saw is the report's section 21. | E45; SEAM §337 |
 
 ## 7. Carried from earlier milestones, not re-planned
 

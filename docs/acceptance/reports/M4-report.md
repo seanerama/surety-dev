@@ -4,7 +4,7 @@
 
 **Written by:** the Verifier of M4 slice 30, 2026-10-11, on branch `verify/m4-s30` from `main` at `f83c2b1` (slice 29's cases merged; slice 29's Builder, `build/m4-s29` at `fdee5c9`, not yet merged; its gate running). **For:** Sean, the owner, before and after the acceptance run, the exhaustion-lane run, his real run (M342) and his hands-on run (M344); and Astra. **Form:** the M3 report's (`M3-report.md`), with BS4 §13's contents; what M4 does not claim follows `M1-not-claimed.md`, starts from D4 §11 and is kept in `M4-not-claimed.md`. It decides nothing.
 
-The sources it cites: the **build specification** (`docs/spec/M4-build-spec.md`, cited BS4); the **acceptance plan** (`docs/acceptance/sdlc-M4-acceptance-plan.md`, rows M301 to M344); **D4** (`docs/design/sdlc-design-D4-deployment.md`, draft 2, approved E120); the **errata** (E-numbers, `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, cited "SEAM §n"). The real lane's records, once it has run, are copied to `docs/acceptance/reports/M4-real-lane/<date>/` (BS4 §12; SEAM §335).
+The sources it cites: the **build specification** (`docs/spec/M4-build-spec.md`, cited BS4); the **acceptance plan** (`docs/acceptance/sdlc-M4-acceptance-plan.md`, rows M301 to M344); **D4** (`docs/design/sdlc-design-D4-deployment.md`, draft 2, approved E120); the **errata** (E-numbers, `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, cited "SEAM §n"). The real lane's records, once it has run, are copied to `docs/acceptance/reports/M4-real-lane/<date>/` (BS4 §12; SEAM §336).
 
 ## 1. What M4 claims and does not claim
 
@@ -14,7 +14,7 @@ BS4 §1's conditions, and where each stands at the time of writing:
 
 | Condition | State |
 |---|---|
-| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every M4 row (M301 to M344) with executable tests and none skipped, the M1 to M3 rows passing, the C.2 migrations recorded | [[PENDING cond-npm-test: not yet run; from the driver's full `npm test` on main after slice 30]]. M343 (b), this report's own case, fails by design while this report is a skeleton (SEAM §337) |
+| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every M4 row (M301 to M344) with executable tests and none skipped, the M1 to M3 rows passing, the C.2 migrations recorded | [[PENDING cond-npm-test: not yet run; from the driver's full `npm test` on main after slice 30]]. M343 (b), this report's own case, fails by design while this report is a skeleton (SEAM §338) |
 | `surety qualify-adapter local_service` passed on this host by Sean's command: an `adapter_qualifications` row `current` with every case and its control `passed`, with its evidence (M338) | [[PENDING cond-qualify: not yet run; from Sean's `qualify-adapter` in the real run's home, `observed/M342.json` (`qualification`)]] |
 | Row M341's exhaustion-lane file passed on the designated host (E69) | [[PENDING cond-exhaust: not yet run; from the driver's `--lane exhaust` on mini-hp01]] |
 | The real-lane row M342 passed under Sean's command (E95 Q10), its records retained | [[PENDING cond-real: not yet run; from Sean's real run, `docs/acceptance/reports/M4-real-lane/<date>/`]] |
@@ -261,7 +261,7 @@ The dress rehearsal (SEAM §171, the fake `claude`; never evidence): [[PENDING r
 | (c) Sean's two commands; the unit read from the host; the round, both identity reads, the check through the link; `verified`; `alpha_deployed` | [[PENDING journey-c: not yet run; from `observed/M342.json`, `qualification` and `deploy`]] |
 | (d) The teardown; what was left; no result from a fixture; the token's absence (files, git objects, unit properties, journal output) | [[PENDING journey-d: not yet run; from `observed/M342.json`, `teardown` and `key_search`]] |
 
-What stays a fixture in the real journey, labelled (SEAM §335): the approved plan with its texts and index (spec approval is not built) and the first `check_correction`'s trigger. No check result and no qualification.
+What stays a fixture in the real journey, labelled (SEAM §336): the approved plan with its texts and index (spec approval is not built) and the first `check_correction`'s trigger. No check result and no qualification.
 
 ## 17. Cases reported `not_exercised`
 
@@ -295,9 +295,9 @@ In the form of `M1-not-claimed.md`, from D4 §11; every entry is listed with its
 - The sandbox and project lanes prove the mechanisms on this host, kernel (WSL2 6.6.87.2) and systemd (255.4), not another (BS4 §8).
 - The adapter qualification qualifies the adapter, never a project's service or checks; the probe and the qualification are kept apart (AR N03; BS4 §8).
 - A project-lane check proves the reference project's construction only (BS4 §8); a health-only check passes the Switchboard mutant (M340 (c)).
-- The real journey's engine runs in the test mode for the real lane (`--harness-real-lane`), because the plan and its index and the first `check_correction`'s trigger are fixtures, with the real adapter (`--harness-deploy-adapter real`); its check results and its qualification are the engine's own (SEAM §335).
+- The real journey's engine runs in the test mode for the real lane (`--harness-real-lane`), because the plan and its index and the first `check_correction`'s trigger are fixtures, with the real adapter (`--harness-deploy-adapter real`); its check results and its qualification are the engine's own (SEAM §336).
 - The token's absence from unit properties is read while the service ran (`systemctl --user show` of its exact name, and its transient unit file where it could be read); from journal output, of every unit the store's intents name, after the teardown. An unread source is recorded as unread, never as clean: [[PENDING limits-reads: not yet run; from `observed/M342.json`, `deploy.host` and `teardown.journal_search`]].
-- Every destructive instrument of the sandbox, project and exhaust lanes is released only after the host has read it contained (E64; BS4 §4.1 rule 8); the hands-on script acts on no unit itself and prints Sean's restart (SEAM §336).
+- Every destructive instrument of the sandbox, project and exhaust lanes is released only after the host has read it contained (E64; BS4 §4.1 rule 8); the hands-on script acts on no unit itself and prints Sean's restart (SEAM §337).
 
 ## 20. Open decisions and provisional readings (E122 to E131)
 
@@ -324,10 +324,10 @@ Sean runs `docs/acceptance/reports/M4-hands-on.sh` (row M344; question 9): scrip
 
 ## 22. Questions for Sean
 
-1. **`surety deploy`** (D4 §1 item 4, A.8; E121 item 4). The real row has Sean type it; as built (`build/m4-s29`) the CLI has `qualify-adapter` and `env`, not `deploy`. *Pinned* (SEAM §334, †): `surety deploy <candidate> --env <environment> --project <project>`, the client of `POST …/deployments` in §313's convention (exit 0 with the answer's JSON; a refusal's status and body on standard error, exit 1; a usage error exit 2). `M342-the-deploy-command` holds it in the kernel lane; the Builder builds it in slice 30.
+1. **`surety deploy`** (D4 §1 item 4, A.8; E121 item 4). The real row has Sean type it; as built (`build/m4-s29`) the CLI has `qualify-adapter` and `env`, not `deploy`. *Pinned* (SEAM §335, †): `surety deploy <candidate> --env <environment> --project <project>`, the client of `POST …/deployments` in §313's convention (exit 0 with the answer's JSON; a refusal's status and body on standard error, exit 1; a usage error exit 2). `M342-the-deploy-command` holds it in the kernel lane; the Builder builds it in slice 30.
 2. **The Verifier's package for environment-bound checks** (BS4 §3, "the role packages"). As built it names the workspace kinds and the gate kinds `stage` and `alpha_authorize` only, so a real Verifier would not know to write a `post_deploy_behavior` check. *Pinned*: `M342-the-verifiers-deployment-check-package`, by meaning (the kinds, `alpha_complete`, `requires`, `secrets`, `SURETY_TARGET_<NAME>`, and that `alpha_complete` needs a required `post_deploy_behavior` check).
 3. **M343 fails until final**, as M141 and M240 did (E88): this report's own case fails `npm test` while it is a skeleton, which is the honest state.
 
 ## 23. How to read the suite
 
-As the M3 report's section 22, with the lanes of the M4 plan §2.1: `node scripts/run-tests.mjs acceptance --slice 30` runs every kernel-, sandbox- and project-lane file of slices 1 to 30; `--lane exhaust` runs the exhaustion files on a host named by `SURETY_EXHAUSTION_HOST`; the real row runs by Sean's command only, alone with `node --test` (question 5). The coverage record lists every named case, its file and its lane; the seam (§§244 to 337) is the contract.
+As the M3 report's section 22, with the lanes of the M4 plan §2.1: `node scripts/run-tests.mjs acceptance --slice 30` runs every kernel-, sandbox- and project-lane file of slices 1 to 30; `--lane exhaust` runs the exhaustion files on a host named by `SURETY_EXHAUSTION_HOST`; the real row runs by Sean's command only, alone with `node --test` (question 5). The coverage record lists every named case, its file and its lane; the seam (§§244 to 338) is the contract.

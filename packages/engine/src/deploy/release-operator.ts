@@ -90,7 +90,7 @@ export class ReleaseOperator {
     return seamRealDeployAdapter();
   }
 
-  private bounds(): DeployBounds {
+  bounds(): DeployBounds {
     const v = this.rt.config.values as unknown as Record<string, number>;
     return { effectMs: v.adapter_effect_deadline! * 1000, readMs: v.adapter_read_deadline! * 1000, outputBytes: v.adapter_output_max_bytes! };
   }
@@ -111,6 +111,14 @@ export class ReleaseOperator {
     // A relay lives in the engine that opened it: every one recorded open by
     // an earlier incarnation is recorded closed (D4 §5.2).
     await this.rt.engine('deploy.relays_reset', {});
+    // An adapter qualification an earlier incarnation left running ended
+    // `interrupted` (D4 §2.6; deploy/qualify.ts); its environment is left.
+    // Its sealed fixture copies are rehashed first (the slice-29 review,
+    // m7): one its out_of_band case changed and never restored is recorded
+    // corrupt and named in the run's record.
+    const copies = await this.rt.read<{ run: string; digest: string; path: string; manifest: ManifestEntry[] }[]>('qualify.run_artifacts', { incarnation: this.rt.incarnation });
+    const rehashed = copies.map((c) => ({ run: c.run, digest: c.digest, path: c.path, rehash: rehash(c.path, c.manifest) }));
+    await this.rt.engine('qualify.interrupt', { incarnation: this.rt.incarnation, rehashed });
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
       const now = heldDigests(this.rt.home, c.refs);
@@ -151,7 +159,7 @@ export class ReleaseOperator {
   // observation is `unknown` and its reservation unaccounted (the driver's
   // ruling on slice 26, item A). A quarantined domain is observed again
   // once kill_grace has passed since its quarantine.
-  private async observeServiceDomains(project: string | null): Promise<void> {
+  async observeServiceDomains(project: string | null): Promise<void> {
     if (!this.real || this.services === null) return;
     const open = await this.rt.read<
       { id: string; attempt: string; status: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; environment: string; observed_at: string | null }[]
@@ -320,7 +328,7 @@ export class ReleaseOperator {
   // The preconditions' facts, read with no transaction held (D4 §4.1).
   // Admission is read first: it alone may wait, and the facts read after a
   // grant are read after it, nearest the effect (the sealed copy last).
-  private async facts(d: DeployDetail): Promise<Record<string, unknown>> {
+  async facts(d: DeployDetail): Promise<Record<string, unknown>> {
     const f = d.frozen;
     // Admission (D4 §4.7): the kernel lane's scripted answer; with the real
     // adapter, the resource envelope's for a service domain and the check
@@ -369,7 +377,7 @@ export class ReleaseOperator {
   }
 
   // The manifest of a precondition read, as a record (SEAM.md §250).
-  private manifest(d: DeployDetail, facts: Fact[]): Promise<string> {
+  manifest(d: DeployDetail, facts: Fact[]): Promise<string> {
     const content = Buffer.from(JSON.stringify({ operation: d.id, attempt: null, facts }));
     return writeWholeRecord(this.rt, { project: d.project, run: null, kind: 'deploy_precondition_manifest', content });
   }
@@ -502,7 +510,7 @@ export class ReleaseOperator {
   // Whether a manager job of the environment is pending, by the inventory's
   // listing of its exact prefix (the adapter's `status`): null when none is;
   // otherwise what was read (a failed or incomplete listing included).
-  private async pendingJobs(d: DeployDetail): Promise<string | null> {
+  async pendingJobs(d: DeployDetail): Promise<string | null> {
     const r = await readCall((signal) => adapterFor(d.frozen.adapter).status({ environment: d.frozen.environment, prefix: d.prefix }, [], signal), this.bounds());
     if ('failure' in r) return `the listing of the environment's jobs failed (${r.failure})`;
     const inv = r.ok as TargetInventory | null;
@@ -516,8 +524,18 @@ export class ReleaseOperator {
     // An effect whose call is still out is not quiescent: nothing is read
     // as its outcome yet; the attempt stays ambiguous.
     if (this.inFlight.has(attempt)) return false;
+    const judged = await this.judge(d, attempt);
+    if (judged === null) return false;
+    const way = await this.rt.engine<{ way: string }>('deploy.reconciled', { attempt, outcome: judged.outcome, read: judged.read });
+    return way.way === 'confirmed' || way.way === 'retry';
+  }
+
+  // The reconcile read of an attempt and its outcome by D4 §2.4, recorded by
+  // the caller (the Release Operator above; the adapter qualification's
+  // reads, deploy/qualify.ts). null: no such attempt or generation.
+  async judge(d: DeployDetail, attempt: string): Promise<{ outcome: string; read: unknown } | null> {
     const a = d.attempts.find((x) => x.id === attempt);
-    if (!a || a.generation === null) return false;
+    if (!a || a.generation === null) return null;
     const f = d.frozen;
     const result = await readCall(
       (signal) =>
@@ -552,8 +570,7 @@ export class ReleaseOperator {
       app_instance: a.app_instance,
       binding_conflict: a.app_disagreement !== null,
     });
-    const way = await this.rt.engine<{ way: string }>('deploy.reconciled', { attempt: a.id, outcome: judged.outcome, read: judged.read });
-    return way.way === 'confirmed' || way.way === 'retry';
+    return { outcome: judged.outcome, read: judged.read };
   }
 
   // The verification rounds and completion (D4 §§5.3, 5.5). Every open round

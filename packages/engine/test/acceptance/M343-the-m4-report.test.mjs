@@ -1,6 +1,6 @@
 // M343, the M4 acceptance report (M4 slice 30, manifest slice 30; no
 // engine, nothing paid). M4 plan §3.8 M343; BS4 §13; D4 §11, Appendix C,
-// C.2; E40; SEAM.md §337. M3's form: M240 (M2's: M141).
+// C.2; E40; SEAM.md §338. M3's form: M240 (M2's: M141).
 //
 // The report (`docs/acceptance/reports/M4-report.md`) is the Verifier's,
 // written after the lanes pass on `main`. Until then it is a skeleton: what

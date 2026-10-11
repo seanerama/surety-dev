@@ -24,7 +24,7 @@
 # (packages/engine/test/acceptance/harness/project/service.mjs; SEAM §325),
 # with one disposable random secret this script makes and never prints.
 #
-# SAFETY (BS4 §4.1 rules 1, 2, 7, 8; E64; SEAM §336). Read before changing
+# SAFETY (BS4 §4.1 rules 1, 2, 7, 8; E64; SEAM §337). Read before changing
 # anything here.
 #   - This script never acts on a unit itself. Every unit is the engine's,
 #     created, stopped and removed through its adapter, under a name derived

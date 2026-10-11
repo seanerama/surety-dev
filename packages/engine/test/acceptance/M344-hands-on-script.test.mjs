@@ -1,7 +1,7 @@
 // M344, the hands-on run Sean makes (M4 slice 30, manifest slice 30; no
 // engine, no model, nothing paid). M4 plan §3.8 M344 and BS4 §16 question 9
 // (E121 item 4: a script in M3's form); BS4 §13; E45, E109 (the form);
-// SEAM.md §336. M3's form: M241.
+// SEAM.md §337. M3's form: M241.
 //
 // The row itself is Sean's: he runs `docs/acceptance/reports/M4-hands-on.sh`
 // and checks (1) to (6) for himself. What a test can hold without running it

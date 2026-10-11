@@ -11,6 +11,12 @@
       "live_authorize",
       "live_complete"
     ],
+    "AdapterQualificationRunStatus": [
+      "running",
+      "qualified",
+      "unqualified",
+      "interrupted"
+    ],
     "AdapterQualificationStatus": [
       "current",
       "lapsed"
@@ -867,6 +873,58 @@
         }
       }
     },
+    "adapter_qualification_runs": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "adapter": {
+          "required": true
+        },
+        "adapter_version": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "incarnation": {
+          "required": true,
+          "references": "engine_incarnations"
+        },
+        "status": {
+          "required": true,
+          "enum": "AdapterQualificationRunStatus"
+        },
+        "cases": {
+          "required": false
+        },
+        "evidence": {
+          "required": false,
+          "references": "records"
+        },
+        "qualification": {
+          "required": false,
+          "references": "adapter_qualifications"
+        },
+        "started_at": {
+          "required": true
+        },
+        "ended_at": {
+          "required": false
+        },
+        "outcome_detail": {
+          "required": false
+        }
+      }
+    },
     "adapter_qualifications": {
       "fields": {
         "id": {
@@ -912,6 +970,16 @@
           "required": false
         },
         "label": {
+          "required": false
+        },
+        "host_facts": {
+          "required": false
+        },
+        "run": {
+          "required": false,
+          "references": "adapter_qualification_runs"
+        },
+        "lapsed_member": {
           "required": false
         }
       }
@@ -2024,6 +2092,10 @@
         },
         "logs_refused": {
           "required": false
+        },
+        "qualification_run": {
+          "required": false,
+          "references": "adapter_qualification_runs"
         }
       }
     },

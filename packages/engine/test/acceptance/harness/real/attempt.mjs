@@ -243,7 +243,7 @@ async function runAttempt(ctx, { homeName, keyFile, label, row }) {
 
 // The attempt with the dedicated key (M136 to M138). A failed attempt is
 // recorded and halts the run directory: no paid step follows it.
-// `step` (M342; SEAM.md §335): M4's run names its attempt `m4_attempt`
+// `step` (M342; SEAM.md §336): M4's run names its attempt `m4_attempt`
 // (BS4 §12); M2's and M3's keep `attempt`.
 export async function qualificationAttempt(ctx, { step = 'attempt' } = {}) {
   return realStep(ctx, step, async () => {
@@ -305,7 +305,7 @@ export async function wrongKeyAttempt(ctx) {
 // `journey`: what the activation lets run, as Sean is told it: M140's two
 // projects by default; M239 names its one project and its limit (SEAM.md §237).
 const M140_JOURNEY = Object.freeze({ name: 'the journey (M140)', limits: `the journey's projects have day limits of ${REAL.dayVerifiedUsd.pathOne} and ${REAL.dayVerifiedUsd.pathTwo} USD verified` });
-// `step` and `attemptStep` (M342; SEAM.md §335): M4's run names them
+// `step` and `attemptStep` (M342; SEAM.md §336): M4's run names them
 // `m4_activation` and `m4_attempt` (BS4 §12); M2's and M3's keep theirs.
 export async function activation(ctx, { journey = M140_JOURNEY, step = 'activation', attemptStep: attemptName = 'attempt' } = {}) {
   return realStep(ctx, step, async () => {

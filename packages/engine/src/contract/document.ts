@@ -202,6 +202,7 @@ const COLUMN_ENUMS: Record<string, string> = {
   'environment_configs.status': 'EnvironmentConfigStatus',
   'artifacts.status': 'ArtifactStatus',
   'adapter_qualifications.status': 'AdapterQualificationStatus',
+  'adapter_qualification_runs.status': 'AdapterQualificationRunStatus',
   'operations.orchestration_stage': 'OrchestrationStage',
   'operation_attempts.launch_state': 'LaunchState',
   'verification_rounds.status': 'VerificationRoundStatus',

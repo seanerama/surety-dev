@@ -26,6 +26,12 @@
 //   systemctl --user show --property=… -- <exact names>    read
 //   systemctl --user list-units --all … -- '<prefix>*'     read (inventory)
 //   systemctl --user list-jobs … -- '<prefix>*'            read (pending jobs)
+//   systemctl --user stop --no-ask-password -- <exact>     the qualification's
+//   systemctl --user restart --no-ask-password -- <exact>  out_of_band instrument
+//                                                          (deploy/qualify.ts): an owned
+//                                                          unit of a running qualification's
+//                                                          environment only, re-read first
+//   systemd-run --version, systemctl --version             read (the tools' versions)
 // Signals: only to this adapter's own spawned children, by their handles,
 // at their deadline or output bound (the `signal` option of spawn).
 
@@ -36,6 +42,7 @@ import { join } from 'node:path';
 
 import { nowMs } from '../../clock.js';
 import { readPopulated } from '../../boundary/cgroup.js';
+import { counters } from '../../boundary/terminate.js';
 import { type Runtime, log } from '../../runtime.js';
 import { seamBusAddressMissing, seamTakeDeployFault } from '../../testing/seam.js';
 import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAdapter, EffectReceipt, EnvRef, IdentityRead, InventoryEntry, LogTail, OperationIntent, Reconciliation, TargetExpectation, TargetInventory, TargetStatus, TeardownCapability } from '../adapter.js';
@@ -45,6 +52,7 @@ import type { ServiceHost } from '../service-host.js';
 import { launchSocketPath } from '../service-host.js';
 import { withheldRead } from '../withhold.js';
 import { LAUNCHER_SCRIPT } from '../../invoke/sandboxed.js';
+import { SERVICE_UNIT_SHAPE, adapterVersion } from '../qualification.js';
 
 const SYSTEM_DIRS = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'];
 const ULID = '[0-9A-HJKMNP-TV-Z]{26}';
@@ -237,7 +245,10 @@ export function closureRead(environment: string, path: string): ReturnType<typeo
 
 export class LocalService implements DeploymentAdapter {
   readonly id = 'local_service';
-  readonly version = '1';
+  // The version this engine builds (SEAM.md §322), or the harness's.
+  get version(): string {
+    return adapterVersion('local_service')!;
+  }
   readonly reach = 'service_link' as const;
   readonly identityMethod = 'tree_digest';
 
@@ -265,7 +276,59 @@ export class LocalService implements DeploymentAdapter {
   // every host call for the environment names a bus address that does not
   // exist; the manager itself is untouched. null outside it.
   private bus(env: string, take = false): string | null {
+    const pointed = this.missingBus.get(env);
+    if (pointed !== undefined) return pointed;
     return seamBusAddressMissing(env, take) ? join(this.rt.home, 'run', 'no-such-bus') : null;
+  }
+
+  // The adapter qualification's `unreadable` case (D4 §2.6; BS4 §4.1 rule
+  // 4): every host call for its own environment names a bus address at
+  // `path`, which must not exist; the manager itself is untouched. null
+  // ends it.
+  private readonly missingBus = new Map<string, string>();
+  pointBusAt(env: string, path: string | null): void {
+    if (path === null) {
+      this.missingBus.delete(env);
+      return;
+    }
+    if (!ENV_ID.test(env) || existsSync(path) || !path.startsWith(join(this.rt.home, 'run') + '/')) throw new Error(`refused to point the bus of ${env} at ${path}: it must be a path under this home's run/ that does not exist`);
+    this.missingBus.set(env, path);
+  }
+
+  // The adapter qualification's hand acts (D4 §2.6 `out_of_band`; the
+  // driver's ruling on the slice-29 design): a stop or a restart by exact
+  // name of a unit of `env` that the store's attempt intents of its running
+  // qualification name, only when the manager reports, read immediately before, the
+  // invocation and the cgroup the engine recorded for that unit's domain
+  // and its MainPID in that cgroup. Otherwise nothing is done and the
+  // reason is returned.
+  async handAct(act: 'stop' | 'restart', env: string, unit: string): Promise<{ done: boolean; detail: string }> {
+    // Only a running qualification's own environment, and only a unit its
+    // operations' attempt intents in the store name (the slice-29 review,
+    // m6; BS4 §4.1 rule 5).
+    const permits = await this.rt.read<{ running: boolean; units: string[] }>('qualify.permits', { environment: env });
+    if (!permits.running) return { done: false, detail: `${env} is not the environment of a running adapter qualification` };
+    const why = ownUnit(this.rt.home, env, unit, permits.units);
+    if (why !== null) return { done: false, detail: why };
+    const r = (await this.resources(env)).find((x) => x.unit === unit);
+    const s = (await this.show(env, [unit]))?.[0];
+    if (!s || !r) return { done: false, detail: `${unit}: not read, or no domain is recorded for it` };
+    if (r.cgroup_path === null || r.invocation_id === null || s.InvocationID !== r.invocation_id || !s.ControlGroup || join('/sys/fs/cgroup', s.ControlGroup) !== r.cgroup_path) {
+      return { done: false, detail: `${unit}: its invocation or cgroup is not the recorded one (${s.InvocationID || 'none'}, ${s.ControlGroup || 'none'})` };
+    }
+    const main = Number(s.MainPID);
+    let inCgroup = false;
+    try {
+      const line = readFileSync(`/proc/${main}/cgroup`, 'utf8')
+        .split('\n')
+        .find((l) => l.startsWith('0::'));
+      inCgroup = main > 1 && line !== undefined && join('/sys/fs/cgroup', line.slice(3)) === r.cgroup_path;
+    } catch {
+      inCgroup = false;
+    }
+    if (!inCgroup) return { done: false, detail: `${unit}: its MainPID ${main} is not read in its recorded cgroup` };
+    const done = await host('systemctl', ['--user', act, '--no-ask-password', '--', unit], { timeoutMs: this.rt.config.values.adapter_effect_deadline * 1000, outputBytes: this.outputBytes, missingBus: null });
+    return done.ok && done.code === 0 ? { done: true, detail: `systemctl ${act} ${unit}: exit 0` } : { done: false, detail: `systemctl ${act} ${unit}: ${done.ok ? `exit ${done.code}` : done.failure}` };
   }
 
   // A unit's domain is positively owned when its recorded cgroup and
@@ -287,6 +350,9 @@ export class LocalService implements DeploymentAdapter {
   // its failed state reset, then its closure recorded and its runtime
   // directory removed. `steps` records what was done; false: uncertain.
   private async stopOwned(env: string, unit: string, r: Resource, deadline: number, step: (s: string, d: string) => void, signal: AbortSignal): Promise<boolean> {
+    // The domain's resource counters, read while its cgroup exists, kept
+    // with the domain at its closure (D4-T05; D2 A.3 `resource_events`).
+    const events = r.cgroup_path !== null ? counters(r.cgroup_path) : null;
     if (this.services.term(r.attempt)) step('term', `TERM through the init of ${unit}`);
     const left = () => Math.max(1000, deadline - nowMs());
     const stop = await host('systemctl', ['--user', 'stop', '--no-ask-password', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
@@ -319,7 +385,7 @@ export class LocalService implements DeploymentAdapter {
       step('reset-failed', reset.ok ? `exit ${reset.code}` : reset.failure);
     }
     if (done === true) {
-      await this.rt.engine('deploy.domain_closed', { domain: r.domain, observed: `the cgroup of ${unit} is gone or empty after its stop` });
+      await this.rt.engine('deploy.domain_closed', { domain: r.domain, observed: `the cgroup of ${unit} is gone or empty after its stop`, resource_events: events });
       this.services.dispose({ attempt: r.attempt, runtimeDir: r.runtime_dir });
       step('closed', `${unit}: closure observed`);
       return true;
@@ -427,25 +493,20 @@ export class LocalService implements DeploymentAdapter {
     const sock = launchSocketPath(this.rt.home);
     const node = realpathSync(process.execPath);
     const launcher = realpathSync(LAUNCHER_SCRIPT);
+    // The unit's properties are the `service` profile's shape (the
+    // qualification's fingerprint covers them), its limits filled in.
+    const fill = (a: string): string =>
+      a
+        .replace('MemoryMax=<limit>', `MemoryMax=${lk.limits.memory_max}`)
+        .replace('TasksMax=<limit>', `TasksMax=${lk.limits.pids_max}`)
+        .replace('<kill_grace>', `${this.rt.setting('kill_grace')}s`)
+        .replace('<launch socket>', sock);
     const args = [
-      '--user',
-      '--no-ask-password',
+      ...SERVICE_UNIT_SHAPE.slice(0, 2),
       '--quiet',
       `--unit=${unit}`,
       `--description=surety deployment ${cap.environment} g${cap.generation}`,
-      '--service-type=exec',
-      '--working-directory=/',
-      '--setenv=NODE_OPTIONS=',
-      '--property=Delegate=yes',
-      '--property=Restart=no',
-      `--property=MemoryMax=${lk.limits.memory_max}`,
-      '--property=MemorySwapMax=0',
-      `--property=TasksMax=${lk.limits.pids_max}`,
-      '--property=KillMode=control-group',
-      `--property=TimeoutStopSec=${this.rt.setting('kill_grace')}s`,
-      `--property=StandardInput=file:${sock}`,
-      `--property=StandardOutput=file:${sock}`,
-      '--property=StandardError=null',
+      ...SERVICE_UNIT_SHAPE.slice(2).map(fill),
       '--',
       node,
       '--no-warnings',
@@ -745,6 +806,25 @@ export function judgeOtherGeneration(read: IdentityRead, x: TargetExpectation, p
 }
 
 export const isServiceCgroup = (path: string): boolean => SERVICE_CGROUP.test(path);
+
+// The adapter's host tools as it runs them (D4 §2.6; BS4 §5; SEAM.md §322):
+// the absolute path and the first line `<tool> --version` prints, or null
+// where either cannot be read. A read: it names no manager.
+export async function hostTools(timeoutMs = 10_000): Promise<Record<'systemd-run' | 'systemctl', { path: string | null; version: string | null }>> {
+  const one = (tool: 'systemd-run' | 'systemctl') =>
+    new Promise<{ path: string | null; version: string | null }>((resolve) => {
+      const path = hostTool(tool);
+      if (path === null) return resolve({ path: null, version: null });
+      let out = '';
+      const child = spawn(path, ['--version'], { env: { PATH: SYSTEM_DIRS.join(':'), LANG: 'C.UTF-8', SYSTEMD_PAGER: '', SYSTEMD_COLORS: '0' }, stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, killSignal: 'SIGKILL' });
+      child.stdout.on('data', (c: Buffer) => {
+        if (out.length < 65536) out += c.toString('utf8');
+      });
+      child.on('error', () => resolve({ path, version: null }));
+      child.on('close', (code) => resolve({ path, version: code === 0 ? out.split('\n')[0]!.trim() || null : null }));
+    });
+  return { 'systemd-run': await one('systemd-run'), systemctl: await one('systemctl') };
+}
 
 // The start time of the process at `pid` (field 22 of /proc/<pid>/stat), a
 // read only: null when no such process exists (ENOENT, ESRCH), `unread` on

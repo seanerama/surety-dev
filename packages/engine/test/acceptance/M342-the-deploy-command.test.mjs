@@ -3,7 +3,7 @@
 // 30). M4 plan §3.8 M342 (c) ("Sean's `surety qualify-adapter
 // local_service` and `surety deploy`"); D4 §1 item 4 ("`surety deploy c-12
 // --env alpha`", Q3), A.8 (CLI: `surety deploy`); E121 item 4 (question 6:
-// Sean runs both himself); SEAM.md §334.
+// Sean runs both himself); SEAM.md §335.
 //
 // The real row asks Sean to request the deployment with the command; as
 // built the CLI has `qualify-adapter` and `env`, and no `deploy`. What the

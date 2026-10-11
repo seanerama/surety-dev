@@ -43,7 +43,7 @@
 // seeded defect of src/session.mjs naming the criterion R2.1 and the check
 // its package lists as covering it; a fix corrects src/session.mjs.
 //
-// M4 (row M342; SEAM.md §335), for M342's project (its requirement texts
+// M4 (row M342; SEAM.md §336), for M342's project (its requirement texts
 // name server.mjs): a Verifier on `check_correction` work writes the
 // workspace checks (`sum`, acceptance R1.1; `serves`, acceptance R2.1, which
 // starts server.mjs as a child on the check domain's own loopback; `smoke`,
@@ -208,7 +208,7 @@ const write = (p, text) => {
 assistant(usageOf(U));
 // M239's project names its modules src/<name>.mjs; M2's, src/<name>.js.
 const sessionFile = existsSync(ws('src/session.mjs')) ? 'src/session.mjs' : 'src/session.js';
-// M342's project: its requirement texts name server.mjs (M4; SEAM.md §335).
+// M342's project: its requirement texts name server.mjs (M4; SEAM.md §336).
 let requirementTexts = '';
 try {
   for (const f of require('node:fs').readdirSync('/surety/context/requirements')) requirementTexts += `\n${readFileSync(`/surety/context/requirements/${f}`, 'utf8')}`;
@@ -226,7 +226,7 @@ try {
 }
 const nominated = (value) => (asksNomination ? { ...value, nominate: true } : value);
 if (role === 'builder' && deployJourney) {
-  // M342's Builder: the library and the service (M4; SEAM.md §335).
+  // M342's Builder: the library and the service (M4; SEAM.md §336).
   write('src/sum.mjs', DEPLOY_SUM);
   write('server.mjs', DEPLOY_SERVER);
   finish(nominated({ status: 'completed', summary: 'rehearsal: wrote src/sum.mjs and server.mjs' }));
@@ -357,7 +357,7 @@ process.exit(failed === 0 ? 0 : 1);
   finish({ status: 'completed', summary: 'rehearsal: wrote the checks of R1.1, R2.1 and R3.1 and a smoke check', proposal: { rationale: 'rehearsal: the checks of R1.1, R2.1, R3.1 and a smoke check, as the approved spec states them', requested_change_kind: 'tightening' } });
 }
 
-// M342's project (M4; SEAM.md §335): what the rehearsal's Builder writes and
+// M342's project (M4; SEAM.md §336): what the rehearsal's Builder writes and
 // the programs of the checks its Verifier writes. String.raw keeps every
 // backslash as written; none of these texts holds a template substitution.
 const DEPLOY_SUM = 'export const sum = (a, b) => a + b;\n';

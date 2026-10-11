@@ -56,6 +56,7 @@ import {
   rowWhen,
   stepExecution,
 } from './harness/deploy/rounds.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 const IDENT = def('post_deploy_identity', { gates: ['alpha_complete'], requires: ['environment', 'artifact_digest'] });
 
@@ -94,7 +95,7 @@ describe('M317 (a) each condition of the verification row', () => {
       await recordExit(ctx.fx.engine, ctx.x1.id, 0);
     }, 'unknown', 'qualification'],
     ['the orchestration deadline reached with the check not run', async (ctx) => {
-      await advanceClock(ctx.fx.engine, 1801);
+      await advanceClock(ctx.fx.engine, 1800 + STEP_MARGIN);
     }, 'unknown', 'deadline'],
   ];
   for (const [what, act, outcome, missing] of cases) {

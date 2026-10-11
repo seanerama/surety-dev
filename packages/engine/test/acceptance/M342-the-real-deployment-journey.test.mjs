@@ -1,6 +1,6 @@
 // M342, the real deployment journey (M4 slice 30, REAL LANE, manifest
 // `real`). M4 plan §3.8 M342; D4-T04; D4 §9.4; E95 Q10; BS4 §12; E121
-// item 4 (questions 5 and 6 as recommended); SEAM.md §335. PAID, ONLY BY
+// item 4 (questions 5 and 6 as recommended); SEAM.md §336. PAID, ONLY BY
 // SEAN'S COMMAND (docs/acceptance/reports/M4-real-lane/README.md), on his
 // subscription token, never in `npm test` or a slice, and run alone with
 // `node --test` (question 5), never with `run-tests.mjs --lane real`, which

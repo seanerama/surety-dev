@@ -34,6 +34,7 @@ import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { adapterState, attemptsOf, completeRound, configContent, configure, deploy, deployable, deployToRound, environmentRead, operationsOf, scriptCall } from './harness/deploy/kernel.mjs';
 import { changeTarget, recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
 import { assertFootprintUnchanged, collectLogs, logsRead, observe, observedOf, quietFootprint, scriptObservation } from './harness/deploy/observe.mjs';
+import { STEP_MARGIN } from './harness/deploy/observe.mjs';
 
 const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o?.[k] ?? null]));
 
@@ -117,7 +118,7 @@ describe('M328 (b) unknown and expired observations', () => {
     const row = await observe(ctx, ctx.env, { seconds: 3601 });
     assert.equal(row.condition, 'healthy', 'the control: fresh and healthy');
     const stored = JSON.stringify(observedOf(ctx.fx.home, ctx.env.id));
-    await ctx.fx.engine.post('/v1/harness/clock/advance', { seconds: 31 });
+    await ctx.fx.engine.post('/v1/harness/clock/advance', { seconds: 30 + STEP_MARGIN });
     const read = (await environmentRead(ctx.fx.engine, ctx.project, ctx.env.name)).observed;
     assert.equal(read?.freshness, 'expired', `past the bound the read shows expired (${JSON.stringify(read)})`);
     assert.notEqual(read?.condition, 'healthy', 'an expired observation is never shown as healthy (D1-28)');

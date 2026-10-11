@@ -123,7 +123,7 @@ const notEstablished = (path, what, detail) => {
 export const SELF_TEST = selfTestArgs();
 
 // ---- what an earlier attempt left (the slice-22 review, S1) -----------------------------
-// (M342's journey, harness/real/deploy-journey.mjs, reuses these: SEAM.md §335.)
+// (M342's journey, harness/real/deploy-journey.mjs, reuses these: SEAM.md §336.)
 //
 // A path that ends "not established" leaves its project paused (each path's
 // `finally`), so a later engine on the same home dispatches nothing of it. A

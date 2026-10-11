@@ -221,6 +221,10 @@ export interface HostObserved {
   // The role profile's fingerprint this start qualified (its mount plan and
   // volatile bounds without the domain's own paths; D2 §§2.3, 4.1).
   profile_fingerprint?: string | null;
+  // The host's facts this start read (host id, kernel, tool versions,
+  // mechanism fingerprint), whatever its checks found: what an adapter
+  // qualification is matched on (E129 item 8; the slice-29 review, m8).
+  facts?: { host_id: string; kernel: string; tool_versions: Record<string, unknown>; mechanism_fingerprint: string } | null;
 }
 
 let observed: HostObserved | null = null;
@@ -232,6 +236,8 @@ export function setHostObserved(value: HostObserved): void {
 // The role profile's fingerprint this start's checks observed, or null when
 // they did not run (the kernel lane) or could not build it.
 export const currentProfileFingerprint = (): string | null => observed?.profile_fingerprint ?? null;
+// The host's facts this start's checks read, or null when they did not run.
+export const observedHostFacts = (): HostObserved['facts'] => observed?.facts ?? null;
 
 // The checks that decide eligibility: H1 to H12, H10 only on WSL2 (D2 §6).
 export const isRequired = (id: string, wsl2: boolean): boolean => id !== 'H13' && (id !== 'H10' || wsl2);

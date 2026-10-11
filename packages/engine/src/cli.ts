@@ -42,6 +42,9 @@ if (command === 'qualify') {
 if (command === 'env') {
   await envCommand(args);
 }
+if (command === 'qualify-adapter') {
+  await qualifyAdapterCommand(args);
+}
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
 }
@@ -72,6 +75,11 @@ let classifierVersionValue: string | null = null;
 let deployAdapterValue: string | null = null;
 let artifactFreeBytesValue: string | null = null;
 let clockOffsetValue: string | null = null;
+const adapterQualificationCaseValues: string[] = [];
+let engineBuildVariantValue: string | null = null;
+const adapterVersionValues: string[] = [];
+let serviceProfileVariantValue: string | null = null;
+const hostFactUnreadValues: string[] = [];
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -123,7 +131,12 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-classifier-version' ||
     flag === '--harness-deploy-adapter' ||
     flag === '--harness-artifact-free-bytes' ||
-    flag === '--harness-clock-offset'
+    flag === '--harness-clock-offset' ||
+    flag === '--harness-adapter-qualification-case' ||
+    flag === '--harness-engine-build-variant' ||
+    flag === '--harness-adapter-version' ||
+    flag === '--harness-service-profile-variant' ||
+    flag === '--harness-host-fact-unread'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -180,6 +193,21 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-clock-offset') {
       // SEAM.md §274: the controlled clock starts this many seconds ahead.
       clockOffsetValue = value;
+    } else if (flag === '--harness-adapter-qualification-case') {
+      // SEAM.md §323: a case of this start's adapter qualifications forced.
+      adapterQualificationCaseValues.push(value);
+    } else if (flag === '--harness-engine-build-variant') {
+      // SEAM.md §324: the engine build this start records and compares.
+      engineBuildVariantValue = value;
+    } else if (flag === '--harness-adapter-version') {
+      // SEAM.md §324: the engine's local_service version for this start.
+      adapterVersionValues.push(value);
+    } else if (flag === '--harness-service-profile-variant') {
+      // SEAM.md §324: the service profile's fingerprint for this start.
+      serviceProfileVariantValue = value;
+    } else if (flag === '--harness-host-fact-unread') {
+      // SEAM.md §328: this start records that host fact as unread.
+      hostFactUnreadValues.push(value);
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -213,6 +241,11 @@ const switchProblem = setHarnessSwitches({
   deployAdapter: deployAdapterValue,
   artifactFreeBytes: artifactFreeBytesValue,
   clockOffset: clockOffsetValue,
+  adapterQualificationCases: adapterQualificationCaseValues,
+  engineBuildVariant: engineBuildVariantValue,
+  adapterVersions: adapterVersionValues,
+  serviceProfileVariant: serviceProfileVariantValue,
+  hostFactsUnread: hostFactUnreadValues,
 });
 if (switchProblem !== null) usage(switchProblem);
 
@@ -353,6 +386,40 @@ async function envCommand(argv: string[]): Promise<never> {
     if (status >= 200 && status < 300) {
       process.stdout.write(`${shown}\n`);
       process.exit(0);
+    }
+    process.stderr.write(`${status} ${shown}\n`);
+    process.exit(1);
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
+}
+
+// `surety qualify-adapter <adapter>` (D4 §2.6, A.8; SEAM.md §322): the
+// client of POST /v1/adapters/:a/qualify on the engine of $SURETY_HOME. It
+// waits for the run to end, prints the answer's JSON, and exits 0 only when
+// the adapter is qualified; 1 otherwise, or on any other answer.
+async function qualifyAdapterCommand(argv: string[]): Promise<never> {
+  const [adapter, ...rest] = argv;
+  if (adapter === undefined || adapter.startsWith('-')) usage('qualify-adapter needs an adapter: surety qualify-adapter local_service');
+  if (rest.length > 0) usage(`unknown argument ${rest[0]} for qualify-adapter`);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendEnv(home, { method: 'POST', path: `/v1/adapters/${encodeURIComponent(adapter)}/qualify`, body: {} }, 1_800_000);
+    let body: unknown = null;
+    let shown: string;
+    try {
+      body = JSON.parse(text);
+      shown = JSON.stringify(body);
+    } catch {
+      shown = text.trim().replace(/\n/g, ' ');
+    }
+    if (status === 200) {
+      process.stdout.write(`${shown}\n`);
+      process.exit((body as { qualified?: unknown } | null)?.qualified === true ? 0 : 1);
     }
     process.stderr.write(`${status} ${shown}\n`);
     process.exit(1);

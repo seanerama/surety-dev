@@ -1,6 +1,6 @@
 // The real deployment journey (M4 slice 30; row M342; M4 plan §3.8 M342;
 // D4-T04; D4 §9.4; E95 Q10; BS4 §12; E121 item 4, questions 5 and 6;
-// SEAM.md §335). PAID, by Sean's command only, on his subscription token,
+// SEAM.md §336). PAID, by Sean's command only, on his subscription token,
 // through M2's and M3's real-lane harness (lane.mjs, attempt.mjs,
 // checks-journey.mjs): the same run directory, preflight, steps, halts,
 // reruns and waits. The command and Sean's steps are

@@ -92,7 +92,7 @@ export const CONFIRM_PHRASE = 'I accept the M2 real lane on my Claude subscripti
 // M3's real row (M239; SEAM.md §237) asks for its own confirmation, so that
 // Sean's consent to the M2 lane is never read as consent to M3's run.
 export const CONFIRM_PHRASE_M3 = 'I accept the M3 real lane on my Claude subscription, up to 25 USD a day as estimated';
-// M4's real row (M342; SEAM.md §335) asks for its own, so that consent to
+// M4's real row (M342; SEAM.md §336) asks for its own, so that consent to
 // the M2 or M3 lane is never read as consent to M4's run (BS4 §12).
 export const CONFIRM_PHRASE_M4 = 'I accept the M4 real lane on my Claude subscription, up to 25 USD a day as estimated';
 
@@ -128,7 +128,7 @@ const fail = (message) => {
 // starts, unless Sean has set the run directory, the key reference, the
 // pinned binary and the spend confirmation, each well formed. Returns the
 // lane's context. The key's value is held in memory only, for the searches.
-// `order` (M342; SEAM.md §335): the run's steps in the order they run; a
+// `order` (M342; SEAM.md §336): the run's steps in the order they run; a
 // step Sean names in SURETY_REAL_RERUN clears that step and every step after
 // it in this order (BS4 §12: "only the named step and those after it run").
 // M2's and M3's files give none, and a rerun clears exactly the names given.

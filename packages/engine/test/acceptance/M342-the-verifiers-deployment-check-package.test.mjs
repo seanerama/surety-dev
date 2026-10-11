@@ -8,7 +8,7 @@
 // `SURETY_TARGET_<NAME>` and the `secrets` field, and states that
 // `alpha_complete` reads at least one required `post_deploy_behavior`
 // check"; E87 item 10's principle (each role's package says what its gate
-// reads); D4 §§5.1, 5.2, 7.2; SEAM.md §334. M239's form
+// reads); D4 §§5.1, 5.2, 7.2; SEAM.md §335. M239's form
 // (`M239-the-verifiers-check-writing-package`).
 //
 // The real row asks a real Verifier to write a `post_deploy_behavior` check
