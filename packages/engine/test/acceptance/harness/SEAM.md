@@ -5700,6 +5700,47 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 
 **Deferred:** none. Carried: M315 (b) `later_attempt` and M329 (b)'s "some running" (M343's not-claimed list); M341 runs only on mini-hp01 (the driver, at Sean's request, E69). Slice 30: M342 (the real run, where Sean runs `surety qualify-adapter` himself), M343 (the report, which records §322's host time and read durations from the qualification runs), M344.
 
+## 328. An unread host fact (the slice-29 review, S1; 2026-10-11)
+
+(The coordinator's relay of the slice-29 Reviewer's S1 on `build/m4-s29` at `ed2b154`; D4-A07; D4 §2.6; E129 item 8 as Sean decided it; CLAUDE.md "unknown is a value"; §§322, 324. `../COVERAGE.md`, "M4 slice 29: the review's three cases".)
+
+**The rule.** A host fact the engine could not read (`host_id` with `/etc/machine-id` unreadable, a tool version it could not read, a kernel or a mechanism fingerprint unread) is **unread**, and an unread fact equals nothing, another unread one included. (1) **A run under an unread fact qualifies nothing**: `qualify-adapter` answers `qualified` false, `adapter_qualification` null, no row is `current`, no `adapter.qualified`; its `qualification_evidence` record names each unread member in **`unread_host_facts`** †, an array of member names (`host_id`, `kernel`, `tool_versions`, `mechanism_fingerprint`). (2) **A row qualified under read facts lapses** at a start where a member becomes unread, as for any change (§324): `lapsed_reason` `host_qualification`, `adapter.qualification_lapsed` once with `payload.member` that member.
+
+**The switch** †: **`--harness-host-fact-unread <member>`** (harness mode only, repeatable; a usage error otherwise): this start's host qualification records that member as unread, in whatever form the engine records an unread fact (as an unreadable `/etc/machine-id` records `host_id`), whatever was read. The case uses `host_id`.
+
+**The case** (`M338-unread-host-facts`, sandbox): qualified under read facts; a restart with `host_id` unread: the row lapsed naming `host_id`; on that start a run: no current row, the evidence naming `host_id`.
+
+## 329. A run stopped in order (the slice-29 review, S2)
+
+(D4 §2.6 "an unexercised [case is] `not_exercised`"; §322; the Builder's run record, `adapter_qualification_runs` (migration 0022), which the tests now read: `status` `running`, `qualified`, `unqualified` or `interrupted`; `cases`; `environment`; `incarnation`.)
+
+**The rule.** A run cut short by the engine's own end is **`interrupted`**, never `unqualified` and never a failed case: after the next start its status is `interrupted`; no entry of its `cases` is `failed` (result or control); every entry not `passed` is `not_exercised` (whether a case completed before the stop keeps its result is not pinned); no row was written `current` by it and no `adapter.qualified` was emitted.
+
+**The point inside the run** (`untilQualificationServiceStarted`, `deploy/qualify.mjs`; store reads only): the run `running`, and an attempt of its qualification environment with `app_instance` recorded, so a qualification operation is open and a unit of its prefix is live. No barrier is used: none of the run's own steps is a harness barrier, and a paused barrier during an orderly stop would test the harness, not the engine.
+
+**The stop** (`terminateOwnEngine`): SIGTERM to the test's own engine child through the `ChildProcess` handle the harness spawned, after `/proc/<pid>/cmdline` names `serve` and `/proc/<pid>/environ` holds the test's `SURETY_HOME` (any failed or disagreeing read refuses); the engine must exit by itself within 60 s, with no signal of its own, and nothing more is sent.
+
+## 330. A run killed, and the remedy (the slice-29 review, S3)
+
+(D4 §§2.6, 4.6; the coordinator's ruling that an interrupted run's leftovers are refused by exact name and never cleaned automatically; §§250, 257, 295, 322.)
+
+**The rule.** After a run's engine is killed (SIGKILL by `killOwnEngine`, §274) at §329's point and started again: the run is **`interrupted`** by the time the start has completed; the next `POST /v1/adapters/local_service/qualify` is **409 `qualification_left_units`**, its `subject` naming each unit of the run's prefix still loaded (by exact name); **the operator's exact teardown** of the qualification environment, `surety env teardown <name> --project <its project>` with no `--preempt` (the environment's `name` and `project` as the store records them; the project is the engine's fixture project), is accepted and, at ticks of that project, its teardown operation is finalized with its latest attempt `succeeded` or `reconciled_succeeded` and its last reconcile read `applied` (D4 §4.6, positive ownership); afterwards no unit, cgroup or runtime file of the prefix is left on the host; a following run qualifies.
+
+## 331. Names the Verifier fixed in this pass
+
+| What | Fixed as | Why |
+|---|---|---|
+| An unread host fact † | equal to nothing; a run under one qualifies nothing; `unread_host_facts` in the evidence | S1; "unknown is a value" |
+| `--harness-host-fact-unread <member>` † | §328 | S1 must be reachable on a host whose facts all read |
+| The run record read by the tests | `adapter_qualification_runs`, as built | the driver's ruling: a run that does not qualify is recorded only there |
+| An interrupted run's cases † | none `failed`; every one not `passed` `not_exercised` | S2; D4 §2.6 |
+| The point inside a run † | a qualification attempt's `app_instance` recorded, the run `running` | S2, S3: deterministic from the store, no barrier |
+| The remedy after a crash | 409 `qualification_left_units` by exact name, then the operator's exact teardown `applied` | S3; the coordinator's ruling |
+
+## 332. A later run that does not qualify, and one interrupted (Sean's decision on D4-A06, 2026-10-11)
+
+(D4-A06; D4 §2.6; §§322, 324, 329.) **A run that ends not qualified lapses the row `current` before it** (for the same adapter and version): the row `lapsed`, with a `lapsed_reason` the Builder names (not pinned), and `adapter.qualification_lapsed` once; afterwards no row is current. **An interrupted run (§329) lapses nothing**: the row current before it stays current, with no `adapter.qualification_lapsed`. Cases: the second describe of `M338-a-case-that-does-not-pass` (a row, then a run with `replace=failed` at a start that changes no fact); `M338-a-qualification-stopped-or-killed` S2 (a row, then a run stopped in order).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27", "M4 slice 28" and "M4 slice 29".

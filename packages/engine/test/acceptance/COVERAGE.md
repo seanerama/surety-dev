@@ -2577,6 +2577,33 @@ The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 
 **Changes made while showing them**, in this pass's second commit: (1) `referenceDeployable` made its secret's directory with `makeTempDir`, which nothing removed: three `/tmp/surety-acc-ref-secret-*` directories (this pass's own, one 0600 file each) were left by the first M339 and M340 runs and were removed by their exact names; the directory is now `ref-secret` inside the fixture's own root (outside the engine home, section 160's rule), removed with it, and the rerun left nothing. (2) `M338-qualify-adapter-by-command`'s cases after (a) failed on a `TypeError` when the command gave no answer; each now fails first at the named assertion "the command answered with JSON". No assertion was weakened.
 
+**M4 slice 29: the review's three cases** (2026-10-11; the coordinator's relay of the slice-29 Reviewer's serious findings on `build/m4-s29` at `ed2b154`; SEAM §§328 to 331; main merged at `bff8c7c`). One case for each, in two new files listed under slice `29` and the `sandbox` list, before the project files.
+
+| Finding | Lane | File | Case | Status |
+|---|---|---|---|---|
+| S1, unknown host facts compare equal | sandbox | `M338-unread-host-facts.test.mjs` (2) | (ii) a row qualified under read facts; a restart with `--harness-host-fact-unread host_id`: the row `lapsed`, `host_qualification`, the event naming `host_id`; (i) on that start `qualify-adapter`: `qualified` false, no row, no current row, no `adapter.qualified`, the evidence's `unread_host_facts` `["host_id"]` (one seam serves both) | written |
+| S2, a stop recorded as the adapter's failure | sandbox | `M338-a-qualification-stopped-or-killed.test.mjs` (1 of 2) | at a qualification service's start (store-read), SIGTERM to the test's own verified engine child, an orderly exit within 60 s; after the restart the run `interrupted`; no case `failed`; every case not `passed` `not_exercised`; no current row, no `adapter.qualified` | written |
+| S3, the remedy after a crash | sandbox | `M338-a-qualification-stopped-or-killed.test.mjs` (2 of 2) | at the same point SIGKILL by `killOwnEngine`; after the restart the run `interrupted`, a unit of its prefix still loaded; the next `qualify-adapter` 409 `qualification_left_units` naming each; `surety env teardown <name> --project <p>` (no `--preempt`) accepted, its teardown `applied`; no unit, cgroup or runtime file of the prefix; a following run qualifies | written |
+
+**Sean's decision on D4-A06** (2026-10-11; SEAM §332): a later run that does not qualify lapses the current row; an interrupted one does not. Two additions: a second describe in `M338-a-case-that-does-not-pass.test.mjs` (sandbox, 1 case: a row current, a restart changing no fact, a run with `replace=failed`: the earlier row `lapsed` with some `lapsed_reason`, `adapter.qualification_lapsed` once, no row current); and S2 above now qualifies first, and pins that the stopped run leaves that row the one current, with no `adapter.qualification_lapsed`.
+
+**The seam asked of the Builder:** `--harness-host-fact-unread <member>` (§328).
+
+**Shown on `ed2b154`** (2026-10-11; a scratch checkout of it with this branch's tests copied over, built; one file at a time, after a check that no other `node --test` process ran; rule 7's reads before and after each: the manager `running`, no `surety-*` unit before or after any file, no new `/tmp/surety-*`):
+
+| File | Result | How each case ends |
+|---|---|---|
+| `M338-unread-host-facts` | 0/2 | the `before` hook: the first qualification ran, then the restart exits 2, `unknown flag --harness-host-fact-unread` (§328's seam missing); neither case reached |
+| `M338-a-qualification-stopped-or-killed` | 1/2, and the file's guard failed | **S2 passes on `ed2b154`**: at the stop point (a service of the run started, the run `running`, a unit live), SIGTERM, an orderly exit, then the run `interrupted`, no case `failed`, every case `not_exercised`, the earlier row still the one current, no lapse. Its `finally` remedy then failed: the exact teardown of the run's environment was not applied within 240 s, leaving its g2 unit; **S3 fails for its reason**: the run `interrupted` and the next run 409 `qualification_left_units` naming the unit both held; it stops at "the exact teardown of qualify-… to be applied was not reached within 240000 ms". The guard then reported both homes' g2 units and runtime directories by exact name and stopped each unit by its exact name (each named in its home's attempt intents); none was left after the file |
+| `M338-a-case-that-does-not-pass` | 3/4 | the three forced runs pass; **the D4-A06 case fails for its reason**: after the adapter was qualified and a later run with `replace=failed` did not qualify, the earlier row is still `current` |
+
+**S2 does not fail on `ed2b154`** at this stop point: an orderly stop with a service of the run started ends the process before the run's own end is recorded, and the next start marks it `interrupted` with every case `not_exercised`. Whether the Reviewer's S2 is reached at another point (a stop while the run's end can still be recorded) is for the coordinator; the case stands as a guard on the rule.
+ S2 and S3 need none: the point inside the run is read from the store (§329).
+
+**Safety.** The only process signalled is the test's own engine child, by the handle the harness spawned, after its `/proc/<pid>/cmdline` and `environ` were read as this test's engine (SIGTERM in S2, SIGKILL in S3). Units are acted on only by the engine (the run's own, and the operator's exact teardown through the engine's route). Each case ends in `finally` with the engine's exact teardown of anything its run left; the file ends with `operatorGuard`.
+
+**What was run:** `npm run build`, `node --check` and the import-resolution check. No acceptance file was run: the coordinator's gate holds the machine.
+
 ## M4 slice 28: secrets and authority (BS4 §9; E110, E116, E127 item 7)
 
 2026-10-10, by the Verifier of slice 28 on `verify/m4-s28`, cut from `main` at `6d03b7b`. Rows M332 to M337 of `docs/acceptance/sdlc-M4-acceptance-plan.md` §3.6, and two cases earlier slices deferred here. The seam's §§310 to 318 fix what the plan's §2.6, D4 and the driver's rulings on the Builder's design leave to the tests: the check secret's variable and `secret_refs` (§311), the launch channel's peer case (§312), the resolve route, the CLI and the launch reply at the seam (§313), the logs' refusal and the fixture's secret acts (§314), the forged capability (§315), the confinement and the tool sites (§316), the relay (§317).
