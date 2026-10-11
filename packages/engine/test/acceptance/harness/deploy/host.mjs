@@ -122,6 +122,9 @@ export function realAdapterStarts(fx) {
   if (fx.realAdapter) return fx;
   const plainStart = fx.start;
   fx.start = async (opts = {}) => {
+    // Outside harness mode (M336 (c), slice 28) there is no switch: the
+    // production adapter is the only one (SEAM.md §247). Nothing is added.
+    if (opts.harness === false) return plainStart(opts);
     const args = [...(opts.args ?? [])];
     const named = args.flatMap((a, i) => (a === '--harness-deploy-adapter' ? [args[i + 1]] : []));
     assert.ok(named.every((v) => v === 'real'), `a sandbox-lane engine is started with --harness-deploy-adapter real only (asked for ${JSON.stringify(named)}; SEAM.md §265)`);
@@ -575,8 +578,22 @@ export async function hostConfig(over = {}) {
 // target-check program held at RELEASE) or `link` (the link-probing program
 // of row M314, with --host-ns so its instrument steps run only when it reads
 // its own containment). `behavesTimeout` sets the check's `timeout_s`.
-export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], policy = {}, files = {}, entries, governed = {}, qualify = true, behaves = 'target', behavesTimeout = 300 } = {}) {
+//
+// Slice 28 (SEAM.md §§310, 311): `everyStart` are arguments every start of
+// the engine carries, the first and every restart (the `--secret-file`
+// flags: the engine reads secret files only at start); `behavesFields` adds
+// fields to `behaves`'s definition (its `secrets`); `extraChecks` adds
+// required post-deploy checks of the alpha_complete scope, `{key: {hold,
+// secrets?}}`, each the target-check program held at its own release name;
+// `workspaceHold` makes `smoke` the M3 program held at that release name,
+// released before the build (so the nomination's run passes) and held again
+// when the test takes the release file away.
+export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs = [], everyStart = [], policy = {}, files = {}, entries, governed = {}, qualify = true, behaves = 'target', behavesTimeout = 300, behavesFields = {}, extraChecks = {}, workspaceHold = null } = {}) {
   const fx = realAdapterStarts(await sandboxEngine(t, { start: false, config: engineConfig }));
+  if (everyStart.length > 0) {
+    const inner = fx.start;
+    fx.start = (opts = {}) => (opts.harness === false ? inner(opts) : inner({ ...opts, args: [...(opts.args ?? []), ...everyStart] }));
+  }
   guard.track(fx);
   await fx.start({ args: [...REAL_ADAPTER, ...engineArgs] });
   const prog = installCheckProgram(fx.root);
@@ -586,11 +603,20 @@ export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs =
     behaves === 'link'
       ? ['link', '--hold', RELEASE, '--release-dir', prog.releaseDir, '--host-ns', hostNsValue()]
       : ['target', '--hold', RELEASE, '--release-dir', prog.releaseDir];
+  if (workspaceHold !== null) writeFileSync(join(prog.releaseDir, workspaceHold), '');
+  const smokeCommand = workspaceHold !== null ? ['probe', '--hold', workspaceHold, '--release-dir', prog.releaseDir, 'exit', '0'] : ['probe', 'exit', '0'];
+  const extra = Object.fromEntries(
+    Object.entries(extraChecks).map(([key, c]) => [
+      defPath(key),
+      definitionText(key, { kind: 'post_deploy_behavior', command: ['target', '--hold', c.hold, '--release-dir', prog.releaseDir], timeout_s: behavesTimeout, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'], ...(c.secrets ? { secrets: c.secrets } : {}) }),
+    ]),
+  );
   const projectFiles = {
     [GOVERNED_FILE]: governedText({ protected_paths: ['.surety/checks/'], check_commands: { probe: { path: prog.program }, target: { path: target }, link: { path: link } }, runner_config: { direct: { read_paths: prog.readPaths } }, ...governed }),
     [defPath('acc')]: acceptance('acc', ['R1.1'], { command: ['probe', 'exit', '0'], timeout: 120 }),
-    [defPath('smoke')]: smoke('smoke', { command: ['probe', 'exit', '0'], timeout: 120 }),
-    [defPath('behaves')]: definitionText('behaves', { kind: 'post_deploy_behavior', command: behavesCommand, timeout_s: behavesTimeout, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
+    [defPath('smoke')]: smoke('smoke', { command: smokeCommand, timeout: 120 }),
+    [defPath('behaves')]: definitionText('behaves', { kind: 'post_deploy_behavior', command: behavesCommand, timeout_s: behavesTimeout, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'], ...behavesFields }),
+    ...extra,
     'server.js': FIXTURE_SERVICE,
     ...files,
   };
@@ -699,8 +725,10 @@ export function assertServiceContained(ctx, svc, what = 'the service') {
 // (`program`, the target-check program by default, or the link check)
 // holding at RELEASE as a member of the domain's cgroup. {execution, domain,
 // member} or undefined.
-export function heldCheck(ctx, env, { program = 'target-check.mjs' } = {}) {
-  const x = postDeployOf(ctx, env).at(-1);
+// `key` (slice 28) takes the newest execution of that check only, for a
+// round with more than one required post-deploy check.
+export function heldCheck(ctx, env, { program = 'target-check.mjs', key } = {}) {
+  const x = postDeployOf(ctx, env).filter((e) => key === undefined || e.key === key).at(-1);
   if (!x || x.status !== 'running' || !x.domain) return undefined;
   const domain = domainRowOf(ctx.fx.home, x.domain);
   if (!domain?.cgroup_path) return undefined;
@@ -927,6 +955,106 @@ export function unrecordedUnderArtifacts(home) {
   };
   visit(root);
   return out;
+}
+
+// ---- slice 28: held secrets, environments, and where a value may be (SEAM.md §§310, 311) ----
+
+// A disposable random secret the test makes (never a real credential).
+// `quote` puts a JSON-escaped character in it, so its registered escaped form
+// differs from its raw bytes (src/records/redact.ts registers both).
+export const testSecret = (label, { quote = true } = {}) => `surety-${label}-${randomBytes(18).toString('hex')}${quote ? '"q' : ''}`;
+
+// A 0600 file holding `value`, in a directory of the test's own.
+export function secretFile(dir, name, value) {
+  const path = join(dir, name);
+  writeFileSync(path, `${value}\n`);
+  chmodSync(path, 0o600);
+  return path;
+}
+
+// The `--secret-file` flags for {ref: path}.
+export const secretArgs = (files) => Object.entries(files).flatMap(([ref, path]) => ['--secret-file', `${ref}=${path}`]);
+
+// The forms of a value a search looks for: its raw bytes, its JSON-escaped
+// form (the redactor's registered forms, D1 §14.2; src/records/redact.ts),
+// and that escaped once more (JSON inside a JSON string, as a check's report
+// of a response body writes it).
+const escapeOnce = (v) => JSON.stringify(v).slice(1, -1);
+export const valueForms = (value) => [...new Set([value, escapeOnce(value), escapeOnce(escapeOnce(value))])];
+
+// A host process's environment (`/proc/<pid>/environ`, read only), as
+// {NAME: value}, or null when it cannot be read. The test compares values in
+// memory and never prints one.
+export function environOf(pid) {
+  try {
+    const out = {};
+    for (const entry of readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0')) {
+      const at = entry.indexOf('=');
+      if (at > 0) out[entry.slice(0, at)] = entry.slice(at + 1);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+// Whether any of `values` (in any form of valueForms) is in `text`; returns
+// the labels of the values found, never a value.
+export function holdsAny(text, values) {
+  return Object.entries(values).filter(([, v]) => valueForms(v).some((f) => text.includes(f))).map(([label]) => label);
+}
+
+// `systemctl --user show` of one exact unit, every property, as text (read only).
+export function unitShowAll(name) {
+  assert.ok(typeof name === 'string' && name.endsWith('.service') && !GLOB.test(name), `an exact unit name, no pattern (${JSON.stringify(name)})`);
+  const done = systemctl(['show', '--', name]);
+  return `${done.stdout ?? ''}${done.stderr ?? ''}`;
+}
+
+// The transient unit file the user manager wrote for an exact unit name, if
+// any (read only): $XDG_RUNTIME_DIR/systemd/transient/<name>.
+export function transientUnitText(name) {
+  assert.ok(typeof name === 'string' && name.endsWith('.service') && !GLOB.test(name), `an exact unit name (${JSON.stringify(name)})`);
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  if (!runtime) return null;
+  try {
+    return readFileSync(join(runtime, 'systemd', 'transient', name), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// The files under `dir` whose bytes hold any of `forms` (a value's forms),
+// as relative paths; a directory or file that cannot be read is listed as
+// `unread:<path>`, never taken for clean (unknown is a value).
+export function filesHoldingAny(dir, forms) {
+  const needles = forms.map((f) => Buffer.from(f));
+  const found = [];
+  const walk = (d) => {
+    let names;
+    try {
+      names = readdirSync(d, { withFileTypes: true });
+    } catch {
+      found.push(`unread:${relative(dir, d)}`);
+      return;
+    }
+    for (const e of names) {
+      const full = join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile()) {
+        let bytes;
+        try {
+          bytes = readFileSync(full);
+        } catch {
+          found.push(`unread:${relative(dir, full)}`);
+          continue;
+        }
+        if (needles.some((n) => bytes.includes(n))) found.push(relative(dir, full));
+      }
+    }
+  };
+  walk(dir);
+  return found;
 }
 
 export { RUNTIME };

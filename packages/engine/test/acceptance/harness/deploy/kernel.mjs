@@ -319,3 +319,28 @@ export const isWritable = (path) => (statSync(path).mode & 0o222) !== 0;
 export const homeHash = (home) => createHash('sha256').update(home).digest('hex').slice(0, 12);
 export const unitPrefix = (home, environment) => `surety-${homeHash(home)}-${environment}-`;
 export const unitName = (home, environment, generation) => `${unitPrefix(home, environment)}g${generation}.service`;
+
+// ---- slice 28: secrets, the launch reply at the seam, a forged capability (SEAM.md §§313, 315) ----
+
+// POST …/environments/:e/config/resolve-secrets (`surety env config <env>
+// --resolve-secrets`): the current content written again with the digests
+// of the values the engine now holds (SEAM.md §313).
+export const resolveSecrets = (engine, project, name) => engine.post(`/v1/projects/${project}/environments/${name}/config/resolve-secrets`, {});
+
+// Whether the grant's reply to an attempt's launch carried, for each
+// variable, exactly the value the test names (SEAM.md §313): the scripted
+// stand-in keeps the reply in memory and answers {NAME: true|false}; no
+// value is in the answer.
+export async function launchReplyHolds(engine, attempt, expect) {
+  const res = await engine.post('/v1/harness/deploy/launch-reply', { attempt, expect });
+  assert.equal(res.status, 200, `the scripted launch stand-in answers for attempt ${attempt} (SEAM.md §313) (body: ${res.text})`);
+  return res.body;
+}
+
+// The environment's next effect call's capability, as minted, with `field`
+// replaced by `value` before adapterCall checks it (SEAM.md §315; harness
+// only, one-shot, either adapter).
+export async function forgeCapability(engine, environment, field, value) {
+  const res = await engine.post('/v1/harness/deploy/faults', { environment, fault: 'capability_forged', field, value });
+  assert.equal(res.status, 200, `the capability fault is armed for ${field} (SEAM.md §315) (body: ${res.text})`);
+}

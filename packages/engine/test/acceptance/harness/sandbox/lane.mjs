@@ -51,7 +51,9 @@ export async function sandboxEngine(t, { config = {}, barriers = [], until = 'fu
     endScopeLeftovers(prefix);
   });
   const plainStart = fx.start;
-  fx.start = (opts = {}) => plainStart({ ...opts, args: [...HOST_CHECKS_RUN, ...(opts.args ?? [])] });
+  // A start outside harness mode (`harness: false`; M336 (c), slice 28) takes
+  // no harness flag: the host checks run there by default.
+  fx.start = (opts = {}) => plainStart(opts.harness === false ? opts : { ...opts, args: [...HOST_CHECKS_RUN, ...(opts.args ?? [])] });
   if (start) await fx.start({ barriers, until });
   return fx;
 }

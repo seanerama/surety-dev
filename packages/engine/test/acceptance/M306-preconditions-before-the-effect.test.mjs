@@ -33,6 +33,16 @@
 // teardown's `linked_prior`, `deploy.preempted` (the driver's ruling: a
 // deploy preempted before any attempt fails; one with an attempt is
 // `superseded`, M327).
+//
+// Added by slice 28 (deferred by slice 23, E125 item 8; carried by E127 item
+// 9, E128 item 6, E129 item 9; SEAM.md §318): a required sign-off lost
+// between the authorization and the effect. A T2 candidate, signed off by
+// its Reviewer at candidate scope, is authorized; while its deploy waits for
+// admission the spec revision makes R1 sensitive, so the acceptance content
+// hash changes and the earlier sign-off no longer counts (SEAM §§84, 225; the
+// stage gate shows `SIGNOFF_MISSING`). The issuing gate's eligibility,
+// revalidated before the effect (J4; E113), no longer holds: fact
+// `gate_eligibility`, no effect call.
 
 import assert from 'node:assert/strict';
 import { appendFileSync, chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -40,7 +50,9 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { makeTempDir, removeDir } from './harness/engine.mjs';
-import { capturedProposal, evaluate, humanApplies, raiseFindings, successor } from './harness/gates.mjs';
+import { capturedProposal, evaluate, humanApplies, raiseFindings, reasonCodes, review, successor } from './harness/gates.mjs';
+import { reviseSpec } from './harness/checks/classifier.mjs';
+import { inventoryDefs } from './harness/checks/scope.mjs';
 import { operatorRequest } from './harness/checks/selection.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { recordExit, roundsOf, rowWhen } from './harness/deploy/rounds.mjs';
@@ -59,6 +71,7 @@ import {
   deployable,
   deployToRound,
   operationRow,
+  POST_DEPLOY,
   effectCalls,
   environmentLeases,
   fixtureAuthorization,
@@ -306,5 +319,29 @@ describe('M306 an open out-of-band observation, and the lease lost (slice 27; de
     assert.equal(effectCalls(await adapterState(fx.engine, ctx.env.id), 'deploy').length, 0, 'no deploy effect call, before or after admission');
     assert.deepEqual(attemptsOf(fx.home, ctx.op.id), [], 'no attempt');
     assert.equal(authorizationRow(fx.home, ctx.request.authorization.id).status, 'consumed', 'the authorization stays consumed');
+  });
+});
+
+describe('M306 a required sign-off lost before the effect (slice 28; deferred by slice 23)', () => {
+  test('a T2 candidate\'s Reviewer sign-off no longer counts once the acceptance content changes while its deploy waits for admission: failed naming gate_eligibility, no effect call', async (t) => {
+    const fx = await scriptedEngine(t);
+    const ctx = await deployable(fx, { tier: 'T2', defs: { ...inventoryDefs('T2', ['R1.1']), behaves: POST_DEPLOY } });
+    await review(fx, ctx.project, ctx.candidate.id, { signoffs: [{ scope: 'candidate' }] });
+    const stage = ctx.p.stages[0].id;
+    assert.ok(!reasonCodes(await evaluate(fx.engine, ctx.project, ctx.candidate.id, 'stage', { stage }, { inventory: false })).includes('SIGNOFF_MISSING'), 'the fixture is live: the Reviewer\'s sign-off counts');
+    await setAdmission(fx.engine, ctx.env.id, 'held');
+    await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
+    const request = await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
+    const op = await tickUntil(fx.engine, ctx.project, () => operationsOf(fx.home, ctx.project, 'deploy')[0], { max: 8, what: 'the deploy to be intended' });
+    await tick(fx.engine, ctx.project, { rounds: 2 });
+    assert.equal(operationsOf(fx.home, ctx.project, 'deploy')[0].status, 'intended', 'the fixture is live: the operation waits for admission before its effect');
+    const target = (await adapterState(fx.engine, ctx.env.id)).target;
+
+    // The sign-off lost: R1 made sensitive, so the acceptance content hash moves.
+    await reviseSpec(fx, ctx.project, [{ key: 'R1', criteria: ['R1.1'], areas: ['personal_data'] }]);
+    assert.ok(reasonCodes(await evaluate(fx.engine, ctx.project, ctx.candidate.id, 'stage', { stage }, { inventory: false })).includes('SIGNOFF_MISSING'), 'the fixture is live: the earlier sign-off no longer counts');
+
+    await setAdmission(fx.engine, ctx.env.id, 'granted');
+    await assertRefusedBeforeEffect({ ...ctx, fx, request, op, target }, 'gate_eligibility');
   });
 });
