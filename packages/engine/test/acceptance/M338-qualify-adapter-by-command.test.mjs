@@ -128,7 +128,10 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
     }
   });
 
+  const answered = () => assert.ok(Q.body && typeof Q.body === 'object', `the command answered with JSON (exit ${Q.cli.status}; stderr ${Q.cli.stderr.slice(0, 300)})`);
+
   test('(a) the row current, unlabelled, with the engine build, the host qualification in force and the profile fingerprint; its evidence with the host tools\' paths and versions; adapter.qualified with no fixture label', () => {
+    answered();
     const row = qualificationRow(Q.fx.home, Q.body.adapter_qualification);
     assert.ok(row, 'the row exists');
     assert.equal(row.status, 'current');
@@ -151,6 +154,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
   });
 
   test('(a) corroborated: the qualification environment\'s units were named in attempt intents of this home\'s prefix, and launches were granted to its attempts (A and B at least)', () => {
+    answered();
     const named = intendedUnder(Q.fx.home, Q.prefix);
     assert.ok(named.length >= 2, `the qualification created units only through recorded intents, under ${Q.prefix} (BS4 §4.1 rule 5) (${named.join(', ')})`);
     const granted = eventsSince(Q.fx.home, 'deploy.launch_authorized', Q.seq).filter((e) => e.subject?.environment === Q.body.environment);
@@ -158,6 +162,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
   });
 
   test('M336 (c), deferred from slice 28: the refused case on the production path, each forged member refused before any host call, deploy.capability_refused naming each', () => {
+    answered();
     assert.equal(caseEntry(Q.body, 'refused')?.result, 'passed', 'the refused case passed outside harness mode');
     // Nothing else runs in this home (no project, no deployment): every refusal since the command began is the qualification's.
     const fields = eventsSince(Q.fx.home, 'deploy.capability_refused', Q.seq).map((e) => e.payload?.field);
@@ -168,6 +173,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
   });
 
   test('(c) afterwards no unit, cgroup, socket or directory of the qualification environment, read from the host', () => {
+    answered();
     assert.ok(Q.after, 'the qualification environment is named');
     assert.notEqual(Q.after.units, null, 'the user units can be listed');
     assert.deepEqual(Q.after.units, [], `no unit of ${Q.prefix} is loaded`);
@@ -177,6 +183,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
   });
 
   test('(e) receipt_lost is in-process, never an engine-crash result: no incarnation began during the run, and the case names the one it ran in', () => {
+    answered();
     assert.equal(Q.running, true, 'the engine ran throughout');
     assert.equal(Q.pidAfter, Q.pid, 'the same engine process');
     assert.deepEqual(Q.incarnationsAfter.map((i) => i.id), Q.incarnations.map((i) => i.id), 'no engine incarnation began during the qualification');
@@ -188,6 +195,7 @@ describe('M338 qualify-adapter local_service by command, outside harness mode', 
   });
 
   test('(g) the host time and each identity read\'s duration are recorded (for the M4 report; BS4 §11.3)', () => {
+    answered();
     const { content } = evidenceOf(Q.fx.home, Q.body.evidence);
     assert.ok(Number.isInteger(content.host_time_ms) && content.host_time_ms > 0, `the qualification's host time is recorded (${content.host_time_ms})`);
     assert.ok(content.host_time_ms <= Q.elapsedMs + 1000, 'within the command\'s own elapsed time');

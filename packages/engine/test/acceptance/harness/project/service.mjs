@@ -35,9 +35,9 @@
 // SURETY_TARGET_APP names and exit; they start, signal and write nothing.
 
 import assert from 'node:assert/strict';
-import { dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-import { makeTempDir } from '../engine.mjs';
 import { roleThat, runToEnd, step, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy } from '../journal.mjs';
 import { sandboxEngine } from '../sandbox/lane.mjs';
@@ -163,7 +163,9 @@ export const builderSteps = ({ service = SERVER } = {}) => [step.write(SUM_PATH,
 export async function referenceDeployable(t, guard, { service = SERVER, behaviour = 'operation', runnerSelfTest = false, qualify = 'route', policy = POLICY, engineConfig = {} } = {}) {
   const fx = realAdapterStarts(await sandboxEngine(t, { start: false, config: engineConfig }));
   guard.track(fx);
-  const dir = guard.root(makeTempDir('ref-secret'));
+  // The secret's directory lies in the fixture's own root (removed with it), outside the engine home (section 160's rule).
+  const dir = join(fx.root, 'ref-secret');
+  mkdirSync(dir, { mode: 0o700 });
   const secret = { ref: SECRET_REF, value: testSecret('ref') };
   secret.file = secretFile(dir, 'ref_secret', secret.value);
   const flags = secretArgs({ [SECRET_REF]: secret.file });

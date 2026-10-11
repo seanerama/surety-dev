@@ -2562,6 +2562,21 @@ The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 
 **What was run, 2026-10-11, on this branch:** `npm run build` in the worktree (clean); `node --check` of every new file; an import-resolution check of every named import against the modules' exports. No acceptance, sandbox or project file was run: slice 28's gate held the machine (the driver's instruction). M341 is never run here.
 
+**The failures on main, shown 2026-10-11** (main at `cc9da84`, slice 28 merged, merged into this branch and built; each file alone with `node --test --test-concurrency=1`, after a check that no other `node --test` process ran; rule 7's reads before and after each: the manager `running`, no `surety-*` unit before or after any file). M341 was not run (exhaust lane).
+
+| File | Result on main | Where each case stops, and why |
+|---|---|---|
+| `M338-unqualified-and-lapsed-on-the-scripted-target` (kernel) | 2/7 | (d) the request with no current row **passes on main** (409 `authorization_not_issued`, `ADAPTER_UNQUALIFIED`), as does (f)'s plain-restart control; (d) a request holding the issued authorization after the lapse is 200 with the authorization (coalesced; §324's 409 `adapter_unqualified` missing); (d) the accepted item is intended at the next tick (no hold; missing); (f) each of the three restarts exits 2 at start (the switches of §324 missing) |
+| `M338-qualify-adapter-by-command` (sandbox) | 0/7 | (a) after its fixture-live reads (outside harness mode; nothing qualified at start) at the CLI: `"qualify-adapter" is not implemented in this revision`, exit 2; every other case at "the command answered with JSON" |
+| `M338-a-case-that-does-not-pass` (sandbox) | 0/3 | the `before` hook: the engine exits 2 at a start carrying `--harness-adapter-qualification-case` (missing: §323) |
+| `M338-lapse-on-a-changed-host` (sandbox) | 0/3 | the `before` hook, after the project was built: `POST /v1/adapters/local_service/qualify` 404 (missing: §322) |
+| `M307-the-journey-qualified-by-command` (sandbox) | 0/6 | the `before` hook, after the project was built: the route 404 |
+| `M340-the-switchboard-mutant` (project) | 0/3 | the `before` hook: the route 404, before the project is built |
+| `M340-a-check-that-only-probes-health` (project) | 0/1 | the same |
+| `M339-the-reference-projects-journey` (project) | 0/7 | the `before` hook: the CLI `"qualify-adapter" is not implemented`, exit 2, after the runner's self-test |
+
+**Changes made while showing them**, in this pass's second commit: (1) `referenceDeployable` made its secret's directory with `makeTempDir`, which nothing removed: three `/tmp/surety-acc-ref-secret-*` directories (this pass's own, one 0600 file each) were left by the first M339 and M340 runs and were removed by their exact names; the directory is now `ref-secret` inside the fixture's own root (outside the engine home, section 160's rule), removed with it, and the rerun left nothing. (2) `M338-qualify-adapter-by-command`'s cases after (a) failed on a `TypeError` when the command gave no answer; each now fails first at the named assertion "the command answered with JSON". No assertion was weakened.
+
 ## M4 slice 28: secrets and authority (BS4 §9; E110, E116, E127 item 7)
 
 2026-10-10, by the Verifier of slice 28 on `verify/m4-s28`, cut from `main` at `6d03b7b`. Rows M332 to M337 of `docs/acceptance/sdlc-M4-acceptance-plan.md` §3.6, and two cases earlier slices deferred here. The seam's §§310 to 318 fix what the plan's §2.6, D4 and the driver's rulings on the Builder's design leave to the tests: the check secret's variable and `secret_refs` (§311), the launch channel's peer case (§312), the resolve route, the CLI and the launch reply at the seam (§313), the logs' refusal and the fixture's secret acts (§314), the forged capability (§315), the confinement and the tool sites (§316), the relay (§317).
