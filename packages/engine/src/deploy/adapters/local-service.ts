@@ -31,13 +31,13 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { nowMs } from '../../clock.js';
 import { readPopulated } from '../../boundary/cgroup.js';
 import { type Runtime, log } from '../../runtime.js';
-import { seamTakeDeployFault } from '../../testing/seam.js';
+import { seamBusAddressMissing, seamTakeDeployFault } from '../../testing/seam.js';
 import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAdapter, EffectReceipt, EnvRef, IdentityRead, InventoryEntry, LogTail, OperationIntent, Reconciliation, TargetExpectation, TargetInventory, TargetStatus, TeardownCapability } from '../adapter.js';
 import { AdapterUnavailable } from '../adapter.js';
 import { readIdentity, type UnitState, procStat } from '../identity.js';
@@ -257,7 +257,14 @@ export class LocalService implements DeploymentAdapter {
   }
 
   private show(env: string, names: string[], signal?: AbortSignal): Promise<Record<string, string>[] | null> {
-    return showUnits(names, { home: this.rt.home, env, timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
+    return showUnits(names, { home: this.rt.home, env, timeoutMs: this.readMs, outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
+  }
+
+  // The harness's persistent bus fault (SEAM.md §297; BS4 §4.1 rule 4):
+  // every host call for the environment names a bus address that does not
+  // exist; the manager itself is untouched. null outside it.
+  private bus(env: string, take = false): string | null {
+    return seamBusAddressMissing(env, take) ? join(this.rt.home, 'run', 'no-such-bus') : null;
   }
 
   // A unit's domain is positively owned when its recorded cgroup and
@@ -281,7 +288,7 @@ export class LocalService implements DeploymentAdapter {
   private async stopOwned(env: string, unit: string, r: Resource, deadline: number, step: (s: string, d: string) => void, signal: AbortSignal): Promise<boolean> {
     if (this.services.term(r.attempt)) step('term', `TERM through the init of ${unit}`);
     const left = () => Math.max(1000, deadline - nowMs());
-    const stop = await host('systemctl', ['--user', 'stop', '--no-ask-password', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal });
+    const stop = await host('systemctl', ['--user', 'stop', '--no-ask-password', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
     step('stop', stop.ok ? `systemctl stop ${unit}: exit ${stop.code}` : `systemctl stop ${unit}: ${stop.failure}`);
     const grace = this.rt.setting('kill_grace') * 1000;
     const closed = async (): Promise<boolean | null> => {
@@ -307,7 +314,7 @@ export class LocalService implements DeploymentAdapter {
     if (s && s.LoadState === 'loaded' && s.ActiveState === 'failed' && s.InvocationID !== r.invocation_id) {
       step('reset-failed', `${unit}: its invocation ${s.InvocationID || 'unread'} is not the recorded ${r.invocation_id ?? 'none'}; left alone`);
     } else if (s && s.LoadState === 'loaded' && s.ActiveState === 'failed') {
-      const reset = await host('systemctl', ['--user', 'reset-failed', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal });
+      const reset = await host('systemctl', ['--user', 'reset-failed', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
       step('reset-failed', reset.ok ? `exit ${reset.code}` : reset.failure);
     }
     if (done === true) {
@@ -451,7 +458,7 @@ export class LocalService implements DeploymentAdapter {
       // again (SEAM.md §274): it is refused there.
       sock,
     ];
-    const made = await host('systemd-run', args, { timeoutMs: Math.max(1000, deadline - nowMs()), outputBytes: this.outputBytes, signal });
+    const made = await host('systemd-run', args, { timeoutMs: Math.max(1000, deadline - nowMs()), outputBytes: this.outputBytes, signal, missingBus: this.bus(cap.environment) });
     step('systemd-run', made.ok ? `exit ${made.code}${made.stderr ? `: ${made.stderr.trim().slice(0, 300)}` : ''}` : made.failure);
     if (!made.ok || made.code !== 0) return { result: 'uncertain', steps };
     // Wait, within the deadline, for the launch granted and the application
@@ -610,7 +617,7 @@ export class LocalService implements DeploymentAdapter {
     if (unitPrefix(this.rt.home, env) !== op.prefix) return incomplete();
     // The harness fault `bus_address_missing` (SEAM.md §277): this reconcile
     // read's host calls cannot reach the manager.
-    const missingBus = seamTakeDeployFault(env, 'bus_address_missing') ? join(this.rt.home, 'run', 'no-such-bus') : null;
+    const missingBus = this.bus(env, true);
     const taken = await this.takeInventory(env, [...attempt.recorded_units, ...attempt.create_units, ...attempt.prior.map((p) => p.unit), ...attempt.cleanup, ...attempt.stop_units], signal, missingBus);
     if (taken === null) return incomplete();
     const identity: IdentityRead[] = [];
@@ -647,16 +654,20 @@ export class LocalService implements DeploymentAdapter {
   async status(env: EnvRef, expect: TargetExpectation[], signal: AbortSignal): Promise<TargetInventory> {
     const recorded = (await this.resources(env.environment)).map((r) => r.unit).filter((u): u is string => typeof u === 'string');
     const names = expect.map((e) => e.unit).filter((u): u is string => typeof u === 'string');
-    const taken = await this.takeInventory(env.environment, [...recorded, ...names], signal);
+    const taken = await this.takeInventory(env.environment, [...recorded, ...names], signal, this.bus(env.environment));
     if (taken === null) throw new AdapterUnavailable('unavailable');
     const targets = expect.map((e): TargetStatus => {
       const s = e.unit ? taken.shows.get(e.unit) : undefined;
-      const alive = e.instance ? procStat(e.instance.pid)?.start_time === e.instance.start_time : false;
+      // The recorded application instance read from /proc (D4 §6.2): gone or
+      // another process at its pid, `null` (not running); /proc unreadable,
+      // `unread`, never `exited` (the driver's ruling on the slice-27 design).
+      const now = e.instance ? applicationAt(e.instance.pid) : 'unread';
+      const instance = !e.instance ? 'unread' : now === 'unread' ? 'unread' : now !== null && now === e.instance.start_time ? e.instance : null;
       return {
         target: e.target,
         unit: e.unit,
         active: e.unit ? (s ? s.ActiveState === 'active' : false) : 'unread',
-        instance: e.instance && alive ? e.instance : 'unread',
+        instance,
         generation: e.generation ?? 'unread',
         supervision: e.attempt && this.services.attached(e.attempt) ? 'attached' : 'unknown',
         at: new Date().toISOString(),
@@ -694,7 +705,7 @@ export class LocalService implements DeploymentAdapter {
     if (x.unit === null || !x.unit.startsWith(prefix)) return read;
     const listed = listingFails
       ? null
-      : await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal });
+      : await host('systemctl', ['--user', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full', '--', `${prefix}*`], { timeoutMs: this.readMs, outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
     return judgeOtherGeneration(read, x, prefix, listed === null || !listed.ok || listed.code !== 0 ? null : listed.stdout, (u) => ownUnit(this.rt.home, env, u) === null);
   }
 
@@ -723,6 +734,21 @@ export function judgeOtherGeneration(read: IdentityRead, x: TargetExpectation, p
 }
 
 export const isServiceCgroup = (path: string): boolean => SERVICE_CGROUP.test(path);
+
+// The start time of the process at `pid` (field 22 of /proc/<pid>/stat), a
+// read only: null when no such process exists (ENOENT, ESRCH), `unread` on
+// any other failure.
+export function applicationAt(pid: number): number | null | 'unread' {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const t = Number(rest[19]);
+    return Number.isFinite(t) ? t : 'unread';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ESRCH' ? null : 'unread';
+  }
+}
 export const lstatOrNull = (p: string) => {
   try {
     return lstatSync(p);

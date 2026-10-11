@@ -18,6 +18,7 @@ import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker } from './transitions/runs.js';
 import { envelopeHold } from './transitions/envelope.js';
 import { deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
+import { readLogs } from './transitions/observe.js';
 import { projectPolicy } from './transitions/settings.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -466,6 +467,13 @@ export function readOperations(db: Db, args: { project: string }) {
 export function readOneEnvironment(db: Db, args: { project: string; environment: string }) {
   mustProject(db, args.project);
   return { ...envelope(db), ...readEnvironment(db, args) };
+}
+
+// GET /v1/projects/:p/environments/:e/logs (D4 §6.1, A.8; SEAM.md §294):
+// stored records only.
+export function readEnvironmentLogs(db: Db, args: { project: string; environment: string }) {
+  mustProject(db, args.project);
+  return { ...envelope(db), ...readLogs(db, args) };
 }
 
 export function readEnvironments(db: Db, args: { project: string }) {

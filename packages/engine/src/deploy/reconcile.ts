@@ -122,11 +122,15 @@ export function judgeReconcile(result: { ok: Reconciliation } | { failure: Adapt
     // Conflicting: a resource of the environment whose ownership is
     // unexpected (a prefixed unit no intent names, in any state, or a
     // resource of one); unread state was answered above.
-    if (inventory.some((e) => owner.get(e) === null || !x.stop_units.includes(owner.get(e)!))) return answer('conflicting');
+    // A resource of a unit the engine owns but the teardown does not name
+    // (its ownership was not established when it was intended, or a
+    // directory left by a unit stopped by hand) is an owned survivor:
+    // `partial`, never stopped by this attempt.
+    if (inventory.some((e) => owner.get(e) === null)) return answer('conflicting');
     if (inventory.length === 0) return answer('applied');
     // The entire frozen pre-state unchanged: every unit it stops still there
     // and active.
-    if (x.stop_units.every((u) => units.some((e) => e.resource === u && e.state === 'active'))) return answer('absent');
+    if (x.stop_units.length > 0 && x.stop_units.every((u) => units.some((e) => e.resource === u && e.state === 'active'))) return answer('absent');
     // Owned resources that survive: a unit, a populated cgroup, a socket or
     // a directory the teardown covers.
     return answer('partial');

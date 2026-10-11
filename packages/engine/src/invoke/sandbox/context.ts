@@ -40,7 +40,7 @@ export type ContextFacts = {
     findings: FindingFacts[];
     assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
     signoffs: { role: string; scope: string; module?: string }[];
-    diff_base: { revision: string | null; from: string | null };
+    diff_base: { revision: string | null; from: string | null; recorded?: Record<string, string> };
     revision_records?: Record<string, { by_run: boolean; kinds: string[]; purpose: string | null }> | null;
   } | null;
   finding?: FindingFacts | null;

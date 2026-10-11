@@ -158,13 +158,26 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
           apiPort: rt.config.values.api_port,
         })
       : null;
-  const diff =
-    facts?.run.role === 'reviewer' && facts.candidate && facts.review
-      ? {
-          ...(await candidateDiff(repo, facts.review.diff_base, facts.candidate.revision)),
-          engine_commits: await engineCommitsInRange(repo, facts.review.diff_base.revision, facts.candidate.revision, facts.review.revision_records),
-        }
-      : null;
+  let diff: (CandidateDiff & { engine_commits: EngineCommitsInRange }) | null = null;
+  if (facts?.run.role === 'reviewer' && facts.candidate && facts.review) {
+    // The base by git ancestry (E106; E129 item 10): unknown is said, never guessed.
+    const base = await resolveDiffBase(repo, facts.review.diff_base, facts.candidate.revision);
+    diff =
+      base.unknown !== undefined
+        ? {
+            base: null,
+            base_from: base.from,
+            revision: facts.candidate.revision,
+            state: 'unavailable',
+            text: '',
+            detail: base.unknown,
+            engine_commits: { state: 'unknown', detail: base.unknown },
+          }
+        : {
+            ...(await candidateDiff(repo, base, facts.candidate.revision)),
+            engine_commits: await engineCommitsInRange(repo, base.revision, facts.candidate.revision, facts.review.revision_records),
+          };
+  }
   writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
     diff,
@@ -326,6 +339,30 @@ export const DIFF_CAP_BYTES = 2 * 1024 * 1024;
 // unknown, never "none". At most RANGE_MAX commits are classified; beyond
 // them the range is said to be unknown.
 export const RANGE_MAX = 500;
+
+// The first candidate's base (E106; E129 item 10; SEAM.md §299): of the
+// project's recorded revisions, the one earliest in the candidate's own
+// history (`git rev-list --reverse --topo-order`), and its parent; never the
+// earliest by record time. A history that cannot be listed leaves the base
+// unknown, said as such. Another base (the previous candidate's) is given
+// as it is.
+export async function resolveDiffBase(
+  repo: string,
+  base: { revision: string | null; from: string | null; recorded?: Record<string, string> },
+  revision: string,
+): Promise<{ revision: string | null; from: string | null; unknown?: string }> {
+  if (base.from !== 'first_recorded_parent' || base.recorded === undefined) return { revision: base.revision, from: base.from };
+  const unknown = (why: string) => ({ revision: null, from: base.from, unknown: why });
+  if (!SHA.test(revision)) return unknown("the candidate's revision is not an object id, so the diff's base is unknown");
+  const listed = await git(repoContext(repo), ['rev-list', '--reverse', '--topo-order', revision, '--']);
+  if (listed.code !== 0) return unknown("the candidate's history could not be listed, so the diff's base is unknown");
+  const root = listed.stdout.split('\n').find((sha) => sha.length > 0 && Object.prototype.hasOwnProperty.call(base.recorded, sha));
+  // Recorded revisions, none of them in the candidate's history: the base is
+  // unknown, never the empty tree (the slice-27 review, m7).
+  if (root === undefined) return unknown("none of the project's recorded revisions is in the candidate's history, so the diff's base is unknown");
+  const parent = base.recorded[root]!;
+  return SHA.test(parent) ? { revision: parent, from: base.from } : unknown("the recorded parent of the first revision is not an object id, so the diff's base is unknown");
+}
 export async function engineCommitsInRange(
   repo: string,
   base: string | null,
