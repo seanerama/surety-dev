@@ -2565,6 +2565,26 @@ The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 | `M343-the-m4-report` (report) | 1/2 | (a) passes; (b) fails by design: "the M4 report is a skeleton (139 pending facts)", after its honesty checks pass |
 | `M344-hands-on-script` (hands-on) | 7/7 | the script's form and guards hold; the script itself was not run (it creates units; it is Sean's) |
 
+**M4 slice 30: objection 055, the service link's socket path past `sun_path`** (2026-10-11, on `verify/m4-055` from `main` at `b9c835b`; the objection is the slice-30 Verifier's, from the M342 rehearsal; **upheld, an engine defect**; the driver's ruling: a short link name, every socket path length-checked before bind and connect and refused with a named code, never truncated, and a start refusal when the home is too long; SEAM §340; the answer in `docs/acceptance/objections/055-….answer.md`). One new sandbox-lane file, `M314-the-service-link-under-a-long-home.test.mjs`, under manifest slice `30` and the `sandbox` list; no earlier file changed.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M314 | sandbox | `M314-the-service-link-under-a-long-home.test.mjs` (3) | (a) a home of 52 bytes (the old link path would be 111): the link check holds, the source its recorded mount plan binds at `/.init/link.sock` lies under the home, fits 107 bytes and exists as a socket; released with one `GET /hello`: 200 through the link, an `accepted` link-log entry, the round `verified`; (c) after (a): one incarnation, no `check.interrupted` event citing an engine restart, no execution of the candidate `interrupted`; (b) a home of 120 bytes: refused at start in §1's form (exit 6, one refusal line, no stack trace), the refusal about a socket path and naming a byte limit; no socket under the home; no unit of the home's prefix (service or scope) | written; 0/3 on `b9c835b` |
+
+**The home's length.** The fixture's home is `<tmpdir>/surety-acc-s2-XXXXXX/home`; the file points `TMPDIR` at a directory of its own temporary root while `hostDeployable` builds the fixture, and restores it after, so the home is exactly 52 bytes; the engine's environment is the harness's and never carries `TMPDIR`. The exact refusal code is left to the Builder (SEAM §340); the limit is the engine's to compute, and 52 bytes must start (the real run's home is 43, the rehearsal's was 56).
+
+**The safety rule (BS4 §4.1; E64).** Every unit is the engine's under the test home's prefix; the link check's only step is a GET of its target, released after the containment read; (b)'s engine is the test's own spawned child, expected to exit by itself, and sent TERM (then KILL) only when it did not, which is the case's failure; then `endScopeLeftovers` of that home's scope prefix. The operator's guard brackets the file, its temporary root registered as the test's own.
+
+**Run on `b9c835b`, 2026-10-11** (this worktree, `npm ci` from the lockfile, `npm run build`; the file alone with `node --test --test-concurrency=1`, twice (the first run's (b) did not stop its engine itself: `within` resolves null on a timeout rather than throwing, fixed before the second); before each: no `node … --test` process, the manager `running`, no `surety-*` unit, no `/tmp/surety-*`, no `/dev/shm/surety*`; after each: the manager `running`, no `surety-*` unit, no engine process, nothing of the test under `/tmp` or `/dev/shm`). **0/3 both times**, each case at the defect:
+
+| Case | Where it stops on main |
+|---|---|
+| (a) | the fixture's home is 52 bytes; after the deploy, the first post-deploy execution ends `interrupted` from `materializing` without running, its event's `why` being `ENOENT: no such file or directory, lstat '<home>/run/env_<ULID>-g1-link-<10>.sock': the engine restarted before the check's exit report was recorded` (the 111-byte path); 23 s |
+| (c) | one incarnation, and three `check.interrupted` events (the execution and its two infrastructure retries) each citing "the engine restarted" |
+| (b) | the engine starts on the 120-byte home (host checks and all) and runs until the test's TERM 30 s later, which it answers with exit 0; nothing refused |
+
+**Seen once, not the file's:** between the first run's after-read and a read 80 s later, `/tmp/surety-unit-w2BRYB` appeared and was gone: the Builder's unit tests' temporary name (`packages/engine/test/unit/*`), another session's `test:unit` run on this machine. No source of this branch or its harness writes that name.
+
 ## M4 slice 29: qualification and the reference project (BS4 §9; E69, E120 item 2, E121 item 4, E129 item 8)
 
 2026-10-11, by the Verifier of slice 29 on `verify/m4-s29`, cut from `main` at `7e9b7cf`. Rows M338 to M341 of `docs/acceptance/sdlc-M4-acceptance-plan.md` §3.7, and two cases earlier slices carried here. The seam's §§321 to 327 fix what D4, the plan's §2.6 and the rulings leave to the tests: the qualification route, the CLI, the qualification environment and the evidence (§322); the cases' entries, `receipt_lost`'s incarnation and the forcing switch (§323); the lapse at start, its reasons, the variant switches, the 409s and the hold, and the probe of J4's rule (§324); the reference service project (§325); M341's service and reads (§326).
