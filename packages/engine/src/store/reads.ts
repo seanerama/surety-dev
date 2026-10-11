@@ -140,6 +140,7 @@ export function contextFacts(db: Database, args: { run: string }) {
       })),
       requirements: all.map((r) => ({ key: r.key, text: r.text, text_ref: r.text_ref, criteria: r.criteria === null ? null : parse<string[] | null>(r.criteria, null), sensitive_areas: parse<string[]>(r.sensitive_areas, []) })),
       stages: stagePlan(db, item.project, all),
+      environments: checkEnvironments(db, item.project),
     };
   }
   const candidate = db.prepare('SELECT * FROM "candidates" WHERE "id" = ? AND "project" = ?').get(subjectId('candidate'), item.project) as CandidateRow | undefined;
@@ -302,6 +303,32 @@ export function contextFacts(db: Database, args: { run: string }) {
           })
         : null,
   };
+}
+
+// The project's environments as the Verifier of check_correction work is
+// told them (BS4 §3, the role packages; SEAM.md §335): each by name, with
+// its current configuration's targets and the secret references its checks
+// may receive, never a value. An environment with no configuration, or one
+// whose content cannot be read, has its targets and references unknown
+// (null), never none.
+function checkEnvironments(db: Database, project: string): NonNullable<CheckWritingFacts['environments']> {
+  const parse = (text: string): unknown => {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
+  };
+  const rows = db
+    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name"`)
+    .all(project) as { name: string; content: string | null }[];
+  return rows.map((r) => {
+    const c = r.content === null ? null : parse(r.content);
+    const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]).slice() : null);
+    if (c === null || typeof c !== 'object' || Array.isArray(c)) return { name: r.name, targets: null, check_secrets: null };
+    const content = c as Record<string, unknown>;
+    return { name: r.name, targets: strings(content.targets), check_secrets: content.check_secrets === undefined ? [] : strings(content.check_secrets) };
+  });
 }
 
 // The project's stages as the scope rule reads them (deliveryOf, D3 §4.2):

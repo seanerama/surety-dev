@@ -53,7 +53,7 @@ export const SENSITIVE_AREAS = [
 ];
 // Kinds an acceptance-origin check covers criteria with (D3 §1.3).
 export const COVERING_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
-const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];
+export const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];
 export const SYSTEM_DIRS = ['/usr', '/bin', '/lib', '/lib64'];
 // The variables the engine sets in a check's environment (D3 §2.3); a
 // definition or the governed env may name none of them, nor any SURETY_ one.

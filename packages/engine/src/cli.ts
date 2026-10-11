@@ -13,6 +13,7 @@ import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
+import { deployTimeoutMs, parseDeploy } from './deploy/deploy-command.js';
 import { configureHarness, setHarnessSwitches, setProbeOverrides, setRealLane } from './testing/seam.js';
 
 function usage(message: string): never {
@@ -44,6 +45,9 @@ if (command === 'env') {
 }
 if (command === 'qualify-adapter') {
   await qualifyAdapterCommand(args);
+}
+if (command === 'deploy') {
+  await deployCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -390,6 +394,47 @@ async function envCommand(argv: string[]): Promise<never> {
     process.stderr.write(`${status} ${shown}\n`);
     process.exit(1);
   } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
+}
+
+// `surety deploy <candidate> --env <environment> --project <project>` (D4 §1
+// item 4, Q3, A.8; SEAM.md §335; deploy/deploy-command.ts): the operator's
+// deployment request, one POST to the running engine. A 2xx answer (issued
+// 201, coalesced 200) is printed as one line of JSON, exit 0; any other
+// answer as `<status> <body>` on standard error, exit 1; a usage problem
+// exits 2 before anything is asked.
+async function deployCommand(argv: string[]): Promise<never> {
+  const parsed = parseDeploy(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendEnv(home, parsed, deployTimeoutMs(home));
+    let shown: string;
+    try {
+      shown = JSON.stringify(JSON.parse(text));
+    } catch {
+      shown = text.trim().replace(/\n/g, ' ');
+    }
+    if (status >= 200 && status < 300) {
+      process.stdout.write(`${shown}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${status} ${shown}\n`);
+    process.exit(1);
+  } catch (err) {
+    // No answer in time: the engine may still be preparing the request, and
+    // the same request again is answered by it (J3), never doubled.
+    if ((err as { timedOut?: unknown })?.timedOut === true) {
+      process.stderr.write(
+        `${JSON.stringify({ code: 'engine_no_answer', reason: `The engine did not answer the deployment request in time: ${(err as Error).message}. The request may still be in progress.`, what_to_do: 'Run the same surety deploy again: while that deployment is pending the engine answers with it and creates nothing more.', subject: {} })}\n`,
+      );
+      process.exit(1);
+    }
     process.stderr.write(
       `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
     );

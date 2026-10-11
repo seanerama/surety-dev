@@ -100,7 +100,7 @@ export function sendEnv(home: string, r: EnvRequest, timeoutMs = 120_000): Promi
         res.on('error', reject);
       },
     );
-    req.on('timeout', () => req.destroy(new Error(`the engine did not answer within ${Math.round(timeoutMs / 1000)} s`)));
+    req.on('timeout', () => req.destroy(Object.assign(new Error(`the engine did not answer within ${Math.round(timeoutMs / 1000)} s`), { timedOut: true })));
     req.on('error', reject);
     if (data !== null) req.end(data);
     else req.end();

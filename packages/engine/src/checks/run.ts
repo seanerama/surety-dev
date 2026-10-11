@@ -49,16 +49,16 @@ import { checkLimits } from './limits.js';
 import { LINK_SOCKET, buildCheckPlan, inputMountConflict, inputTargetConflict } from './profile.js';
 import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
+import { checkSecretVariable, targetVariable } from './variables.js';
 
 let tools: ResolvedTools | null = null;
+
+// A deployment secret's variable in a check's environment (checks/variables.ts).
+export { checkSecretVariable };
 
 // Standard output and error, interleaved as they arrived, keeping the first
 // and the last halves of the bound and counting what was dropped between
 // them (D3 §2.6). Output volume never cancels a check.
-// A deployment secret's variable in a check's environment (SEAM.md §311):
-// `deploy/<name>` → SURETY_SECRET_<NAME>.
-export const checkSecretVariable = (ref: string): string => `SURETY_SECRET_${ref.slice(ref.indexOf('/') + 1).toUpperCase()}`;
-
 export class OutputCapture {
   private readonly head: Buffer[] = [];
   private headBytes = 0;
@@ -584,7 +584,7 @@ export class Supervisor implements DomainHolder {
     await this.engine('domain.plan', { domain: a.domain, fingerprint, mounts: entries, record });
     // The environment, constructed, never inherited (D3 §2.3).
     const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
-    if (this.link && a.link) for (const t of a.link.targets) env[`SURETY_TARGET_${t.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`] = `http://127.0.0.1:${a.link.port}`;
+    if (this.link && a.link) for (const t of a.link.targets) env[targetVariable(t)] = `http://127.0.0.1:${a.link.port}`;
     Object.assign(env, this.secretEnv);
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
