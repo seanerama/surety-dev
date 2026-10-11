@@ -18,5 +18,7 @@ The search should account for them instead of failing. For example: a regular fi
 
 ## Sources
 
+- Objection 012's answer (M132, M2 slice 13): the same case for `filesHolding`, upheld in part. A file the scan cannot read is accepted only when it is verified as the `sandbox/node-*` copy of the node the harness started the engine with, or a hard link of it (same device and inode, mode 0111). `homeFilesHolding` in M132 does exactly this, and `filesHoldingAny` could take the same rule.
+
 - D2 §2.3, and the code's statement of it in `src/invoke/sandbox/tools.ts`: "An execute-only copy of the engine's node under the engine home … a process that execs it without the capability to read it is not dumpable".
 - SEAM.md §310: "a directory or file it cannot read is reported as `unread:<path>`, never taken for clean". The rule stands; these files are known not to be secret-bearing by construction, and the search can establish that without reading them.
