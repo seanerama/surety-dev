@@ -5741,6 +5741,10 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 
 (D4-A06; D4 §2.6; §§322, 324, 329.) **A run that ends not qualified lapses the row `current` before it** (for the same adapter and version): the row `lapsed`, with a `lapsed_reason` the Builder names (not pinned), and `adapter.qualification_lapsed` once; afterwards no row is current. **An interrupted run (§329) lapses nothing**: the row current before it stays current, with no `adapter.qualification_lapsed`. Cases: the second describe of `M338-a-case-that-does-not-pass` (a row, then a run with `replace=failed` at a start that changes no fact); `M338-a-qualification-stopped-or-killed` S2 (a row, then a run stopped in order).
 
+## 333. Durations on a monotonic clock (objection 052; 2026-10-11)
+
+(BS4 §11.3; §322; `docs/acceptance/objections/052-…answer.md`.) The engine measures a qualification's `host_time_ms` and every `identity_reads[].duration_ms` on a monotonic clock (as built from `53d01d5`), because this host's wall clock steps back by seconds. A test that compares a recorded duration with one of its own measures its own with `performance.now()`, never `Date.now()`: M338 (g)'s `host_time_ms <= elapsed + 1000`.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27", "M4 slice 28" and "M4 slice 29".
