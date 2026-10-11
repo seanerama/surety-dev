@@ -5737,6 +5737,10 @@ Readings (1) to (6) and M337 (d)'s limit were accepted by the driver, 2026-10-10
 | The point inside a run † | a qualification attempt's `app_instance` recorded, the run `running` | S2, S3: deterministic from the store, no barrier |
 | The remedy after a crash | 409 `qualification_left_units` by exact name, then the operator's exact teardown `applied` | S3; the coordinator's ruling |
 
+## 332. A later run that does not qualify, and one interrupted (Sean's decision on D4-A06, 2026-10-11)
+
+(D4-A06; D4 §2.6; §§322, 324, 329.) **A run that ends not qualified lapses the row `current` before it** (for the same adapter and version): the row `lapsed`, with a `lapsed_reason` the Builder names (not pinned), and `adapter.qualification_lapsed` once; afterwards no row is current. **An interrupted run (§329) lapses nothing**: the row current before it stays current, with no `adapter.qualification_lapsed`. Cases: the second describe of `M338-a-case-that-does-not-pass` (a row, then a run with `replace=failed` at a start that changes no fact); `M338-a-qualification-stopped-or-killed` S2 (a row, then a run stopped in order).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23", "M4 slice 24", "M4 slice 25", "M4 slice 26", "M4 slice 27", "M4 slice 28" and "M4 slice 29".

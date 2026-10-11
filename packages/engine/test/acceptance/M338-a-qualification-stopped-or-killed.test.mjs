@@ -15,7 +15,9 @@
 //      exits by itself. After the restart the run is `interrupted`, never
 //      `unqualified`; no case is `failed`, and every case not `passed` is
 //      `not_exercised` (a case not completed before the stop is never the
-//      adapter's failure); no row was written `current` by it.
+//      adapter's failure); no row was written `current` by it, and the row
+//      current before it is still current (Sean's decision on D4-A06, 2026-10-11:
+//      an interrupted run lapses no row).
 //   S3 the test's own engine child is killed (SIGKILL). After the restart the
 //      run is `interrupted`; the next `qualify-adapter` is 409
 //      `qualification_left_units` naming each unit of the prefix still
@@ -49,6 +51,7 @@ import {
   maxSeq,
   qualificationEnvironment,
   qualificationRuns,
+  qualifyAdapter,
   qualifyRoute,
   terminateOwnEngine,
   untilQualificationServiceStarted,
@@ -84,12 +87,15 @@ describe('M338 a qualification run cut short (the slice-29 review, S2 and S3)', 
     }
   });
 
-  test('S2 an orderly stop during the run: interrupted, never unqualified; no case failed, every case not passed not_exercised; no current row', async () => {
+  test('S2 an orderly stop during the run: interrupted, never unqualified; no case failed, every case not passed not_exercised; it writes no row and lapses the row current before it', async () => {
     const fx = realAdapterStarts(await sandboxEngine(shared.context, { start: false }));
     guard.track(fx);
     await fx.start();
     let env = null;
     try {
+      // A row current before the run (Sean, D4-A06: an interrupted run lapses no row).
+      const earlier = await qualifyAdapter(fx.engine);
+      assert.equal(earlier.qualified, true, 'the fixture is live: a row is current before the run that is stopped');
       const seq = maxSeq(fx.home);
       const pending = begin(fx);
       const at = await untilQualificationServiceStarted(fx);
@@ -108,8 +114,9 @@ describe('M338 a qualification run cut short (the slice-29 review, S2 and S3)', 
       assert.equal(cases.length, 9, 'its nine cases are recorded');
       assert.deepEqual(cases.filter((c) => c.result === 'failed' || c.control === 'failed').map((c) => c.case), [], 'no case is failed: the stop is not the adapter\'s failure');
       for (const c of cases.filter((e) => e.result !== 'passed')) assert.equal(c.result, 'not_exercised', `${c.case}: not completed before the stop, not_exercised (${JSON.stringify(c).slice(0, 200)})`);
-      assert.deepEqual(currentRows(fx.home), [], 'no adapter_qualifications row is current');
+      assert.deepEqual(currentRows(fx.home).map((r) => r.id), [earlier.adapter_qualification], 'the interrupted run wrote no current row, and the earlier row is still the one current: an interrupted run lapses nothing (Sean, D4-A06)');
       assert.deepEqual(eventsSince(fx.home, 'adapter.qualified', seq), [], 'no adapter.qualified');
+      assert.deepEqual(eventsSince(fx.home, 'adapter.qualification_lapsed', seq), [], 'no adapter.qualification_lapsed');
     } finally {
       await remedy(fx, env);
     }
