@@ -92,6 +92,9 @@ export const CONFIRM_PHRASE = 'I accept the M2 real lane on my Claude subscripti
 // M3's real row (M239; SEAM.md §237) asks for its own confirmation, so that
 // Sean's consent to the M2 lane is never read as consent to M3's run.
 export const CONFIRM_PHRASE_M3 = 'I accept the M3 real lane on my Claude subscription, up to 25 USD a day as estimated';
+// M4's real row (M342; SEAM.md §335) asks for its own, so that consent to
+// the M2 or M3 lane is never read as consent to M4's run (BS4 §12).
+export const CONFIRM_PHRASE_M4 = 'I accept the M4 real lane on my Claude subscription, up to 25 USD a day as estimated';
 
 const ENV = Object.freeze({
   runDir: 'SURETY_REAL_RUN_DIR',
@@ -125,7 +128,11 @@ const fail = (message) => {
 // starts, unless Sean has set the run directory, the key reference, the
 // pinned binary and the spend confirmation, each well formed. Returns the
 // lane's context. The key's value is held in memory only, for the searches.
-export function realPreflight({ confirm = CONFIRM_PHRASE } = {}) {
+// `order` (M342; SEAM.md §335): the run's steps in the order they run; a
+// step Sean names in SURETY_REAL_RERUN clears that step and every step after
+// it in this order (BS4 §12: "only the named step and those after it run").
+// M2's and M3's files give none, and a rerun clears exactly the names given.
+export function realPreflight({ confirm = CONFIRM_PHRASE, order = null } = {}) {
   const env = process.env;
   for (const name of [ENV.runDir, ENV.keyRef, ENV.binary, ENV.confirm]) {
     if (!env[name]) fail(`the real lane needs ${name} (SEAM.md §§160, 161)`);
@@ -195,7 +202,7 @@ export function realPreflight({ confirm = CONFIRM_PHRASE } = {}) {
   const candidateEgress = rehearsal ? [...REHEARSAL_EGRESS] : [...REAL.candidateEgress];
   const ctx = { runDir, keyRef, keyValue, authMode, credentialRef: REAL.authModes[authMode].ref, binary, binarySha256, binDir, waitMinutes: waitMinutes, pathTwo, rehearsal, candidateEgress, providerHost: candidateEgress[0] };
   Object.defineProperty(ctx, 'keyValue', { enumerable: false }); // never serialized
-  applyRerun(ctx);
+  applyRerun(ctx, order);
   return ctx;
 }
 
@@ -261,7 +268,7 @@ function saveState(ctx, state) {
 // process, so the runner's pid and the names are the key. Applied again by
 // a later file of the same run, they would clear a step that file's
 // predecessor had just run, and a later case could run it a second time.
-function applyRerun(ctx) {
+function applyRerun(ctx, order = null) {
   const names = (process.env[ENV.rerun] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (names.length === 0) return;
   const state = loadState(ctx);
@@ -269,8 +276,16 @@ function applyRerun(ctx) {
   state.reruns_applied ??= [];
   if (state.reruns_applied.includes(key)) return;
   state.reruns_applied.push(key);
-  for (const name of names) delete state.steps[name];
-  if (state.halted && names.includes(state.halted.step)) state.halted = null;
+  // With an order, a named step clears the steps after it too.
+  const cleared = new Set(names);
+  if (Array.isArray(order)) {
+    for (const name of names) {
+      const at = order.indexOf(name);
+      if (at >= 0) for (const later of order.slice(at)) cleared.add(later);
+    }
+  }
+  for (const name of cleared) delete state.steps[name];
+  if (state.halted && cleared.has(state.halted.step)) state.halted = null;
   saveState(ctx, state);
 }
 

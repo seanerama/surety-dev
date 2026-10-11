@@ -340,6 +340,12 @@
       "M340-the-switchboard-mutant.test.mjs",
       "M340-a-check-that-only-probes-health.test.mjs",
       "M339-the-reference-projects-journey.test.mjs"
+    ],
+    "30": [
+      "M342-the-deploy-command.test.mjs",
+      "M343-the-m4-report.test.mjs",
+      "M344-hands-on-script.test.mjs",
+      "M342-the-verifiers-deployment-check-package.test.mjs"
     ]
   },
   "sandbox": [
@@ -429,7 +435,8 @@
     "M338-a-qualification-stopped-or-killed.test.mjs",
     "M340-the-switchboard-mutant.test.mjs",
     "M340-a-check-that-only-probes-health.test.mjs",
-    "M339-the-reference-projects-journey.test.mjs"
+    "M339-the-reference-projects-journey.test.mjs",
+    "M342-the-verifiers-deployment-check-package.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
@@ -443,6 +450,7 @@
     "M137-cancellation-canary.test.mjs",
     "M138-containment-canary.test.mjs",
     "M140-real-backend-journey.test.mjs",
-    "M239-the-real-check-journey.test.mjs"
+    "M239-the-real-check-journey.test.mjs",
+    "M342-the-real-deployment-journey.test.mjs"
   ]
 }
