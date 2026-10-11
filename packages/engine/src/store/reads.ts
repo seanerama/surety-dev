@@ -170,7 +170,11 @@ export function contextFacts(db: Database, args: { run: string }) {
     findings: ReturnType<typeof findingFacts>[];
     assessments: { id: string; finding: string; candidate: string; reason: string; status: string }[];
     signoffs: { role: string; scope: string; module?: string }[];
-    diff_base: { revision: string | null; from: 'previous_candidate' | 'first_recorded_parent' | null };
+    // `recorded` (first_recorded_parent only): every recorded revision with
+    // its parent; which of them is the first is decided by git ancestry on
+    // the main thread (invoke/sandbox/prepare.ts resolveDiffBase; E106,
+    // E129 item 10), never by record time.
+    diff_base: { revision: string | null; from: 'previous_candidate' | 'first_recorded_parent' | null; recorded?: Record<string, string> };
     revision_records?: RevisionRecords | null;
   } | null = null;
   if (candidate && (role === 'reviewer' || role === 'verifier')) {
@@ -181,14 +185,18 @@ export function contextFacts(db: Database, args: { run: string }) {
       .prepare(`SELECT "id", "finding", "candidate", "reason", "status" FROM "applicability_assessments" WHERE "project" = ? AND "candidate" = ? AND "status" = 'proposed' ORDER BY "created_at", "id"`)
       .all(item.project, candidate.id) as { id: string; finding: string; candidate: string; reason: string; status: string }[];
     const previous = db.prepare('SELECT "revision" FROM "candidates" WHERE "project" = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1').get(item.project, candidate.seq) as { revision: string } | undefined;
-    const first = previous
-      ? undefined
-      : (db.prepare('SELECT "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "recorded_at", "created_at", "id" LIMIT 1').get(item.project) as { parent_sha: string } | undefined);
+    const recorded = previous
+      ? []
+      : (db.prepare('SELECT "sha", "parent_sha" FROM "revisions" WHERE "project" = ? AND "parent_sha" IS NOT NULL ORDER BY "id"').all(item.project) as { sha: string; parent_sha: string }[]);
     review = {
       findings,
       assessments,
       signoffs: role === 'reviewer' ? candidateSignoffs(db, item.project, candidate) : [],
-      diff_base: previous ? { revision: previous.revision, from: 'previous_candidate' } : first ? { revision: first.parent_sha, from: 'first_recorded_parent' } : { revision: null, from: null },
+      diff_base: previous
+        ? { revision: previous.revision, from: 'previous_candidate' }
+        : recorded.length > 0
+          ? { revision: null, from: 'first_recorded_parent', recorded: Object.fromEntries(recorded.map((r) => [r.sha, r.parent_sha])) }
+          : { revision: null, from: null },
       // A Reviewer is told which commits of its diff's range are the
       // engine's or the owner's (E106): the range is read from git when the
       // package is written, each commit classified by these records.

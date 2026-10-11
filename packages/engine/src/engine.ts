@@ -204,6 +204,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
     // of it outlives the engine.
     selfTest?.abort();
     scheduler?.stop();
+    // The observer's reads aborted and awaited: none outlives the engine.
+    await Promise.race([state.runtime?.deploy?.stopObserver() ?? Promise.resolve(), new Promise((r) => setTimeout(r, 3000))]);
     state.runtime?.stop();
     server?.close();
     if (state.store) await Promise.race([state.store.close(), new Promise((r) => setTimeout(r, 3000))]);

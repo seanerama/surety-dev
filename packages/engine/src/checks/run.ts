@@ -186,7 +186,7 @@ export interface ExitDetail {
   code: number | null;
   signal: number | null;
   cancelled: boolean;
-  cause: 'deadline' | 'lease' | 'egress' | null;
+  cause: 'deadline' | 'lease' | 'egress' | 'preempted' | null;
   interleaved?: boolean;
 }
 
@@ -266,12 +266,24 @@ export class Supervisor implements DomainHolder {
   // null while unreported or unreadable, which is never a pass.
   private orphans: boolean | null = null;
   private cancelAt: number | null = null;
-  private cancelCause: 'deadline' | 'lease' | 'egress' | null = null;
+  private cancelCause: 'deadline' | 'lease' | 'egress' | 'preempted' | null = null;
   // The domain's egress proxy, only when the definition names hosts.
   private egress: DomainProxy | null = null;
   // The execution's service link, only when it is bound to a deployment.
   private link: ServiceLink | null = null;
   private fireCancel: () => void = () => {};
+
+  // The engine's cancellation of a running execution from outside it: a
+  // preempting teardown cancelled it in its transaction (D4 §4.6 step 2;
+  // SEAM.md §296), so its process is ended and its domain closed as a
+  // deadline ends it; nothing of it is recorded as a result.
+  cancel(): void {
+    if (this.cancelAt === null && this.sandbox?.exitReport == null) {
+      this.cancelAt = performance.now();
+      this.cancelCause = 'preempted';
+    }
+    this.fireCancel();
+  }
   // The check lease lapsed (D2 §3.5's case for checks): ended with no row.
   private leaseLost = false;
   private released = false;
@@ -558,6 +570,8 @@ export class Supervisor implements DomainHolder {
     let fireDeadline: () => void = () => {};
     const deadlineHit = new Promise<void>((resolve) => (fireDeadline = resolve));
     this.fireCancel = () => fireDeadline();
+    // Cancelled before its launch (a preempting teardown): ended at once.
+    if (this.cancelCause === 'preempted') fireDeadline();
     const w = seamLauncherBarriers(rt.home);
     const launch = new SandboxLaunch(
       {
@@ -814,7 +828,7 @@ export interface Observed {
   execFailed: boolean;
   report: { code: number | null; signal: number | null; startFailed?: boolean } | null;
   cancelAt: number | null;
-  cancelCause: 'deadline' | 'lease' | 'egress' | null;
+  cancelCause: 'deadline' | 'lease' | 'egress' | 'preempted' | null;
   reportAt: number | null;
   orphans: boolean | null;
 }
@@ -868,6 +882,15 @@ export class CheckRunner {
   selfTestRunning = false;
 
   constructor(private readonly rt: Runtime) {}
+
+  // A running execution this engine supervises, cancelled (Supervisor.cancel);
+  // false: none here.
+  cancel(execution: string): boolean {
+    const s = this.live.get(execution);
+    if (!s) return false;
+    s.cancel();
+    return true;
+  }
 
   // Quarantined executions no supervisor of this engine holds (left by a
   // prior incarnation, recovery could not establish their closure): each

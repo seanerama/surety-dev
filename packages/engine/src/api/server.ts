@@ -294,6 +294,26 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           kind: 'command',
           name: 'environment.teardown',
           args: (b) => {
+            // `preempt` (D4 §4.6, A.8; SEAM.md §296): the preempting teardown.
+            const body = onlyFields(b, ['preempt']);
+            if (body.preempt !== undefined && typeof body.preempt !== 'boolean') throw new Refusal(400, 'invalid_value', '"preempt" must be a boolean.', 'Send {"preempt": true} or {}.', { field: 'preempt' });
+            return { project, environment, preempt: body.preempt === true };
+          },
+        };
+      }
+      // D4 §6.1, A.8 (SEAM.md §294): the stored logs, and their collection.
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'logs' && get) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environment.logs', args: { project, environment } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'logs' && post) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return {
+          kind: 'command',
+          name: 'environment.collect_logs',
+          args: (b) => {
             noFields(b);
             return { project, environment };
           },

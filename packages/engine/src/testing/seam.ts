@@ -85,7 +85,7 @@ import {
   parseResultBody,
   projectRepo,
 } from './fixtures.js';
-import { addAnswers, adapterReport, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
+import { addAnswers, adapterReport, releaseHeld, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
 import { installAdapterQualification, installFixtureAuthorization } from './deploy-fixtures.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
@@ -1028,6 +1028,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     if (s[3] === 'target') return route(200, async (body) => setTarget(init.scripted, env, body));
     if (s[3] === 'answers') return route(200, async (body) => addAnswers(init.scripted, env, body));
     if (s[3] === 'admission') return route(200, async (body) => setAdmission(init.scripted, env, body));
+    // SEAM.md §247, amended by §291: every held read of the environment released.
+    if (s[3] === 'release') return route(200, async () => releaseHeld(env));
   }
   if (s.length === 2 && s[0] === 'deploy' && s[1] === 'faults') {
     return {
@@ -1043,9 +1045,15 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         const known = typeof env === 'string' && (await hooks.store().call('read', { name: 'deploy.environment_known', args: { environment: env } })) === true;
         if (!known) throw new Refusal(400, 'invalid_value', 'No such environment.', 'Send {"environment": "env_…"}.', { field: 'environment' });
         const armed = deployFaults.get(env as string) ?? new Set<DeployFault>();
-        armed.add(fault as DeployFault);
+        // SEAM.md §297: the persistent bus fault, until cleared.
+        if (fault === 'bus_address_cleared') {
+          busMissing.delete(env as string);
+          armed.delete('bus_address_missing_until_cleared');
+        } else if (fault === 'bus_address_missing_until_cleared') {
+          busMissing.add(env as string);
+        } else armed.add(fault as DeployFault);
         deployFaults.set(env as string, armed);
-        return { status: 200, body: { environment: env, faults: [...armed] } };
+        return { status: 200, body: { environment: env, faults: [...armed, ...(busMissing.has(env as string) ? ['bus_address_missing_until_cleared'] : [])] } };
       },
     };
   }
@@ -1231,9 +1239,23 @@ const DEPLOY_FAULTS = [
   'service_exec_failed',
   'service_closure_unread',
   'control_channel_dropped',
+  // SEAM.md §297: slice 27's persistent bus fault and its clearing.
+  'bus_address_missing_until_cleared',
+  'bus_address_cleared',
 ] as const;
 type DeployFault = (typeof DEPLOY_FAULTS)[number];
 const deployFaults = new Map<string, Set<DeployFault>>();
+const busMissing = new Set<string>();
+
+// Does every host call of the environment's adapter name a bus address that
+// does not exist (SEAM.md §§277, 297; BS4 §4.1 rule 4)? The persistent fault
+// holds until cleared; the one-shot `bus_address_missing` is taken by the
+// call that asks with `take`.
+export function seamBusAddressMissing(environment: string, take = false): boolean {
+  if (!init.harness) return false;
+  if (busMissing.has(environment)) return true;
+  return take ? seamTakeDeployFault(environment, 'bus_address_missing') : false;
+}
 
 // Is `fault` armed for `environment`? Taken (disarmed) when it is.
 export function seamTakeDeployFault(environment: string, fault: DeployFault): boolean {

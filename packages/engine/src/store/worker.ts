@@ -11,7 +11,7 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
-import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
+import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
@@ -134,6 +134,7 @@ import {
   startDeployAttempt,
   writeConfigVersion,
 } from './transitions/deploy.js';
+import { logsDue, observationLapsed, observationPlan, observationsDue, recordLogs, recordObservation as recordEnvironmentObservation, requestLogs } from './transitions/observe.js';
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
@@ -248,6 +249,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
+  // D4 §6.1, A.8 (M4 slice 27; SEAM.md §294): a log collection asked for.
+  'environment.collect_logs': (tx, a) => requestLogs(tx, a),
   // D4 §5.3 item 1, A.8; CD1 (M4 slice 25; SEAM.md §266).
   'operation.verify': (tx, a: { project: string; operation: string }) => requestVerification(tx, { ...a, incarnation: engineSettings().incarnation! }, completionRequired),
 };
@@ -280,6 +283,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'decision.read': (d, a) => readDecision(d, a),
   'operations.list': (d, a) => readOperations(d, a),
   'environment.read': (d, a) => readOneEnvironment(d, a),
+  'environment.logs': (d, a) => readEnvironmentLogs(d, a),
+  'deploy.observations_due': (d, a) => observationsDue(d, a),
+  'deploy.observation_plan': (d, a) => observationPlan(d, a),
+  'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
@@ -516,6 +523,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'checks.link_log': (tx, a) => recordLinkLog(tx, a),
   'deploy.admission_wait': (tx, a) => admissionWait(tx, a),
   'deploy.supervision_lost': (tx, a) => supervisionLost(tx, a),
+  // The observation job and the log collection (D4 §§6.1, 6.2; deploy/observe.ts).
+  'deploy.observe': (tx, a) => recordEnvironmentObservation(tx, a),
+  'deploy.observation_lapsed': (tx, a) => observationLapsed(tx, a),
+  'deploy.logs_collected': (tx, a) => recordLogs(tx, a),
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

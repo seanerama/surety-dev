@@ -772,7 +772,10 @@ export class ServiceHost {
         return;
       }
       case 'exit':
-        await this.rt.engine('deploy.app_exited', { attempt: s.attempt, exit: { at: typeof m.at === 'string' ? m.at : new Date().toISOString(), code: typeof m.code === 'number' ? m.code : null, signal: typeof m.signal === 'number' ? m.signal : null } });
+        await this.rt.engine('deploy.app_exited', {
+          attempt: s.attempt,
+          exit: { at: typeof m.at === 'string' ? m.at : new Date().toISOString(), code: typeof m.code === 'number' ? m.code : null, signal: typeof m.signal === 'number' ? m.signal : null, external_term: m.external_term === true },
+        });
         return;
       default:
         return;

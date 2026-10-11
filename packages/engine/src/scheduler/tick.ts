@@ -89,6 +89,10 @@ export class Scheduler {
   }
 
   request(): void {
+    // The observation job runs off the tick (D4 §6.2; deploy/observe.ts):
+    // woken here, never awaited, so a tick held by an effect holds no
+    // observation.
+    this.rt.deploy?.observer.wake();
     this.flag = true;
     if (!this.running && !this.stopped) void this.loop();
   }

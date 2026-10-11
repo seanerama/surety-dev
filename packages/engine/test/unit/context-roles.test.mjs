@@ -145,7 +145,9 @@ test("a Reviewer's facts: the candidate its work item names, the findings that a
 
 test("the first candidate's diff is taken from the parent of the first revision the engine recorded", (t) => {
   const db = store(t);
-  assert.deepEqual(contextFacts(db, { run: 'run_rev1' }).review.diff_base, { revision: R0, from: 'first_recorded_parent' });
+  // Which recorded revision is the first is decided by git ancestry on the
+  // main thread (E106; E129 item 10): the store hands every one with its parent.
+  assert.deepEqual(contextFacts(db, { run: 'run_rev1' }).review.diff_base, { revision: null, from: 'first_recorded_parent', recorded: { [R1]: R0 } });
   db.prepare('DELETE FROM revisions').run();
   assert.deepEqual(contextFacts(db, { run: 'run_rev1' }).review.diff_base, { revision: null, from: null }, 'none is known: null, not a guess');
 });

@@ -738,6 +738,7 @@ interface ExecutionRow {
   domain: string | null;
   lease: string | null;
   init_reports: string;
+  finished_at: string | null;
 }
 
 const mustExecution = (db: Db, id: string): ExecutionRow => {
@@ -811,7 +812,10 @@ export function markCollecting(tx: Tx, args: { execution: string }): void {
 // missing meanwhile and the gate read names the execution (D3 §2.6).
 export function quarantineExecution(tx: Tx, args: { execution: string; why: string }): void {
   const x = mustExecution(tx.db, args.execution);
-  if (x.status === 'quarantined' || !LIVE.includes(x.status)) return;
+  // One a preempting teardown cancelled while it ran is quarantined as well
+  // when its termination is not observed (the slice-27 review, m4).
+  const cancelledLive = x.status === 'cancelled' && x.finished_at !== null && x.domain !== null;
+  if (x.status === 'quarantined' || (!LIVE.includes(x.status) && !cancelledLive)) return;
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'quarantined' WHERE "id" = ?`).run(x.id);
   tx.emit('check.quarantined', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
   // Its domain stays nonterminal, quarantined, as a role's does (L1; SEAM.md
@@ -831,6 +835,7 @@ export function recordLinkLog(tx: Tx, args: { execution: string; record: string 
 export function interruptExecution(tx: Tx, args: { execution: string; why: string }): void {
   const x = mustExecution(tx.db, args.execution);
   if (!LIVE.includes(x.status)) return;
+  if (cancelledThenSettled(tx, x)) return;
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'interrupted', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
   releaseCheckLease(tx, x.id);
   tx.emit('check.interrupted', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
@@ -840,6 +845,16 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
   // An execution ended: reconciled as D3 §2.10 asks (it never makes a check
   // failed by itself, so it never takes a repair; it may leave one owed).
   reconcileRepairs(tx, x.project);
+}
+
+// An execution cancelled while live and quarantined meanwhile (its
+// `finished_at` is the cancellation's): once its closure is observed it is
+// `cancelled` again, with no result (the slice-27 review, m4).
+function cancelledThenSettled(tx: Tx, x: { id: string; status: string; finished_at: string | null }): boolean {
+  if (x.finished_at === null || (x.status !== 'quarantined' && x.status !== 'collecting')) return false;
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled' WHERE "id" = ?`).run(x.id);
+  releaseCheckLease(tx, x.id);
+  return true;
 }
 
 // Whether the service a deployment-bound execution is bound to is
@@ -982,6 +997,7 @@ export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runne
   if (!x) throw notFound('check execution', args.execution);
   if (x.status === 'recorded' && typeof x.result === 'string') return { check_result: x.result };
   if (!LIVE.includes(x.status as string)) return null;
+  if (cancelledThenSettled(tx, x as { id: string; status: string; finished_at: string | null })) return null;
   const id = insertExecutionResult(tx, {
     project: x.project as string,
     check: x.check as string,
@@ -1082,9 +1098,13 @@ export function regrantCheckLease(
 // Cancelled with no row: the execution never ran, so nothing is claimed of
 // the check, and no superseded evidence is restored (L7). Only from
 // `queued` or `materializing` (A.5).
-export function cancelExecution(tx: Tx, args: { execution: string; why: string }): boolean {
+// `live`: a running execution too (a preempting teardown, D4 §4.6 step 2;
+// SEAM.md §296): cancelled in this transaction, recorded with no result; the
+// check runner's supervisor ends its process and closes its domain.
+export function cancelExecution(tx: Tx, args: { execution: string; why: string; live?: boolean }): boolean {
   const x = mustExecution(tx.db, args.execution);
-  if (x.status !== 'queued' && x.status !== 'materializing') return false;
+  // A quarantined one keeps its quarantine: its termination is not known.
+  if (args.live === true ? !['queued', 'materializing', 'running', 'collecting'].includes(x.status) : x.status !== 'queued' && x.status !== 'materializing') return false;
   tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
   releaseCheckLease(tx, x.id);
   tx.emit('check.cancelled', { project: x.project, candidate: x.candidate, check_execution: x.id }, { from: x.status, why: args.why });
