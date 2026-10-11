@@ -191,8 +191,21 @@ function overlayTrial(plan: Plan): { ok: boolean; detail: string } {
   }
 }
 
+// The environment of every util-linux tool the setup stage runs, constructed,
+// never inherited. `LIBMOUNT_FORCE_MOUNT2=always` makes libmount perform each
+// mount through the legacy `mount(2)`, whose options are bounded at one page
+// (4096 bytes), and never through the fd-based mount API (`fsconfig`), which
+// bounds a single option at 256 bytes: the check profile's input overlay
+// names two projection paths in one `lowerdir=` option, which passes 256
+// bytes under any realistic engine home (objection 056; util-linux 2.39 and
+// later choose the fd-based API on a kernel that offers it). The plan text
+// is unchanged; the init's mount is told which call to use.
+export function mountEnvironment(): Record<string, string> {
+  return { PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C.UTF-8', LIBMOUNT_FORCE_MOUNT2: 'always' };
+}
+
 function run(cmd: string, args: string[]): void {
-  const r = spawnSync(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+  const r = spawnSync(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', env: mountEnvironment() });
   if (r.error || r.status !== 0) {
     let where = '';
     try {

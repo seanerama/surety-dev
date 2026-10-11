@@ -785,8 +785,10 @@ export function markLaunched(tx: Tx, args: { execution: string; domain: string }
 }
 
 // One of the init's reports (A.2 InitReport), as the engine received it on
-// the init's channel, never from anything check code wrote.
-export function recordInitReport(tx: Tx, args: { execution: string; kind: 'started' | 'exec_failed' | 'exit' | 'orphans'; detail: Record<string, unknown> | null }): void {
+// the init's channel, never from anything check code wrote. `setup_failed`
+// carries the init's detail of a sandbox it could not build (objection
+// 056): the failed mount's command line and stderr.
+export function recordInitReport(tx: Tx, args: { execution: string; kind: 'started' | 'exec_failed' | 'exit' | 'orphans' | 'setup_failed'; detail: Record<string, unknown> | null }): void {
   const x = mustExecution(tx.db, args.execution);
   const reports = JSON.parse(x.init_reports) as { kind: string; at: string; detail: unknown }[];
   reports.push({ kind: args.kind, at: tx.at, detail: args.detail });
