@@ -406,6 +406,16 @@ test("a check_correction Verifier in a project with an environment: the kinds, t
     assert.ok(prompt.includes(s), s);
   }
   assert.ok(prompt.includes('- The `alpha_complete` gate needs at least one required `post_deploy_behavior` check'), 'the one sentence');
+  // The slice-30 review, minors 1 to 3: why no `covers`, no `egress`, and how the check is required.
+  assert.match(prompt, /Give it no `covers`: on these kinds discovery refuses it \(`covers_not_allowed`\)/);
+  assert.match(prompt, /Name no `egress` on it, so that it reaches its environment's targets and nothing else\./);
+  assert.match(prompt, /The `post_deploy_behavior` check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them/);
+  const governedDef = parseGoverned(JSON.stringify(GOVERNED)).governed;
+  for (const extra of [{ covers: { criteria: ['R1.1'] } }]) {
+    const def = { schema: 1, key: 'op', kind: 'post_deploy_behavior', command: ['node', '.surety/checks/op.mjs'], timeout_s: 5, gate_kinds: ['alpha_complete'], requires: ['environment'], inputs: ['.surety/checks/op.mjs'], ...extra };
+    const parsed = parseDefinition('.surety/checks/defs/op.json', 'op', JSON.stringify(def), governedDef, [{ path: '.surety/checks/op.mjs', type: 'blob', mode: '100644', oid: '0'.repeat(40) }]);
+    assert.ok(parsed.errors.some((e) => e.code === 'covers_not_allowed'), 'as the package says, covers is refused on a post-deploy kind');
+  }
   assert.ok(prompt.includes('- Environment `alpha`: target `app`, reached as `SURETY_TARGET_APP`; its checks may receive `deploy/probe_key` (as `SURETY_SECRET_PROBE_KEY`).'));
   assert.ok(!told.includes('deploy/ref_secret'), "the service's own secret is not the checks'");
   assert.ok(!told.includes('4000'), 'nor its port');

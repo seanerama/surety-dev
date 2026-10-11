@@ -53,12 +53,12 @@ import { checkSecretVariable, targetVariable } from './variables.js';
 
 let tools: ResolvedTools | null = null;
 
-// Standard output and error, interleaved as they arrived, keeping the first
-// and the last halves of the bound and counting what was dropped between
-// them (D3 §2.6). Output volume never cancels a check.
 // A deployment secret's variable in a check's environment (checks/variables.ts).
 export { checkSecretVariable };
 
+// Standard output and error, interleaved as they arrived, keeping the first
+// and the last halves of the bound and counting what was dropped between
+// them (D3 §2.6). Output volume never cancels a check.
 export class OutputCapture {
   private readonly head: Buffer[] = [];
   private headBytes = 0;
