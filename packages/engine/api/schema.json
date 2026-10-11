@@ -919,6 +919,9 @@
         },
         "ended_at": {
           "required": false
+        },
+        "outcome_detail": {
+          "required": false
         }
       }
     },
