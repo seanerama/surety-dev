@@ -44,10 +44,13 @@ export interface ServicePlanInput {
   initScript: string;
 }
 
-export function buildServicePlan(input: ServicePlanInput): Plan {
+// `mountPoints`: the host's mount points the builder accounts for (the
+// host's own by default); the profile's fingerprint passes none, so that it
+// is a shape and not a reading of this moment's mounts (qualification.ts).
+export function buildServicePlan(input: ServicePlanInput, mountPoints: string[] = hostMountPoints()): Plan {
   const stage = join(input.area, 'root');
   const vol = join(input.area, 'vol');
-  const b = new Builder(stage, hostMountPoints());
+  const b = new Builder(stage, mountPoints);
   systemRoot(b, { shmBytes: Math.min(input.volBytes, 64 * 1024 * 1024), node: input.node, initNodeCopy: input.initNodeCopy, initScript: input.initScript, probeProgram: null, egressSocket: null });
   // The configured runtime at its configured path (its real file), unless a
   // system tree or the engine's node already holds it there.

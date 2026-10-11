@@ -40,6 +40,7 @@ import { CHECK_LIMIT_KEYS, setCheckLimits } from './checks/limits.js';
 import { migrateFingerprints } from './protected/migrate.js';
 import { CheckRunner } from './checks/run.js';
 import { ReleaseOperator } from './deploy/release-operator.js';
+import { AdapterQualifier } from './deploy/qualify.js';
 import { RunnerSelfTest, sweepPriorSelfTestBoxes, sweepSelfTestLeftovers } from './checks/selftest.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
@@ -204,6 +205,13 @@ export async function serve(opts: ServeOptions): Promise<void> {
     // of it outlives the engine.
     selfTest?.abort();
     scheduler?.stop();
+    // An adapter qualification in progress (the slice-29 review, S2): its
+    // cases' calls aborted through the adapter's own children, its teardown
+    // still made if it can and the run recorded `interrupted`, awaited for
+    // at most 40 s before the store closes; anything its environment still
+    // holds then is refused by name at the next qualify-adapter. Bounded so
+    // that the engine still ends within a minute of the signal.
+    await state.runtime?.qualifier?.stop(40_000).catch((err) => log('adapter qualification', err, { what: 'stop' }));
     // The observer's reads aborted and awaited: none outlives the engine.
     await Promise.race([state.runtime?.deploy?.stopObserver() ?? Promise.resolve(), new Promise((r) => setTimeout(r, 3000))]);
     state.runtime?.stop();
@@ -294,6 +302,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const runtime = new Runtime(store, config, lock.incarnation_id, opts.home);
   runtime.checks = new CheckRunner(runtime);
   runtime.deploy = new ReleaseOperator(runtime);
+  runtime.qualifier = new AdapterQualifier(runtime);
   runtime.scope = scope.scope;
   const journal = new Journal(runtime);
   runtime.journal = journal;
@@ -390,6 +399,17 @@ export async function serve(opts: ServeOptions): Promise<void> {
       log('host checks', err);
     }
     state.completed.push('host_qualification');
+  }
+
+  // 5a'. The adapter qualifications' lapse (D4-A07; E129 item 8; SEAM.md
+  // §324): once this start's host qualification is recorded (or none is),
+  // before the start answers its first request, every current row whose
+  // engine build, adapter version, host facts or profile fingerprint is no
+  // longer the engine's lapses, naming the fact.
+  try {
+    await runtime.engine('adapter.sweep', {});
+  } catch (err) {
+    log('adapter qualification', err, { what: 'lapse' });
   }
 
   // 5b. Revocation on change (D2 §7.3): every entry whose binary's bytes,

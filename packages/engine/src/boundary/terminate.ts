@@ -43,7 +43,9 @@ export interface ExitFacts {
   exit_evidence: Record<string, unknown>;
 }
 
-function counters(path: string): { oom_kill: number | null; pids_max: number | null } {
+// A domain cgroup's resource counters (D2 A.3 `resource_events`); a counter
+// not read is null, never zero.
+export function counters(path: string): { oom_kill: number | null; pids_max: number | null } {
   const read = (file: string, key: string): number | null => {
     try {
       const m = new RegExp(`^${key} (\\d+)$`, 'm').exec(readFileSync(join(path, file), 'utf8'));

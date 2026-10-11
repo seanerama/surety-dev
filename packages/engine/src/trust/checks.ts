@@ -34,7 +34,7 @@ import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import { canonical } from '../store/transitions/common.js';
 import { type CheckResult, isRequired, isWsl2 } from '../store/transitions/trust.js';
-import { seamHostChecks, seamMechanismVariant } from '../testing/seam.js';
+import { seamHostChecks, seamHostFactsUnread, seamMechanismVariant } from '../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 
 export { PROBES };
@@ -432,19 +432,30 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
       }),
     )
     .digest('hex');
-  const host = hostIdentity() ?? 'unknown';
+  // The harness's `--harness-host-fact-unread <member>` (SEAM.md §328):
+  // this start records that member as unread, in the form an unread fact
+  // takes here (`unknown`, or every tool version null).
+  const unread = seamHostFactsUnread();
+  const host = unread.includes('host_id') ? 'unknown' : (hostIdentity() ?? 'unknown');
+  const kernel = unread.includes('kernel') ? 'unknown' : release();
+  const facts = {
+    host_id: host,
+    kernel,
+    tool_versions: unread.includes('tool_versions') ? Object.fromEntries(Object.keys(versions).map((k) => [k, null])) : versions,
+    mechanism_fingerprint: unread.includes('mechanism_fingerprint') ? 'unknown' : fingerprint,
+  };
   const evidence = {
     host_id: host,
-    kernel: release(),
+    kernel,
     // A host fact, recorded and never a refusal (E127 m3; the driver's
     // ruling): Yama's ptrace scope bounds who could forge the launch
     // channel's challenge (deploy/service-host.ts); at 0, any process of the
     // uid may ptrace another (D2 §8 class C). null when unread.
     ptrace_scope: yamaPtraceScope(),
-    tool_versions: versions,
+    tool_versions: facts.tool_versions,
     tool_paths: tools.paths,
     checks: ordered,
-    mechanism_fingerprint: fingerprint,
+    mechanism_fingerprint: facts.mechanism_fingerprint,
     scope: scope ? { unit: scope.unit, path: scope.path } : null,
     trial,
     // The validated plan the probe sandbox was built from, entry by entry,
@@ -465,6 +476,7 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
     scope_cgroup: scope?.path ?? null,
     wsl2,
     profile_fingerprint: profileFingerprint,
+    facts,
   });
   let row: string | null = null;
   if (qualifies) {
@@ -472,10 +484,10 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
       const record = await writeWholeRecord(rt, { project: null, run: null, kind: 'qualification_evidence', content: Buffer.from(JSON.stringify(evidence, null, 2)) });
       const written = await rt.engine<{ id: string }>('host.qualification', {
         incarnation: rt.incarnation,
-        host_id: host,
-        kernel: release(),
-        tool_versions: versions,
-        mechanism_fingerprint: fingerprint,
+        host_id: facts.host_id,
+        kernel: facts.kernel,
+        tool_versions: facts.tool_versions,
+        mechanism_fingerprint: facts.mechanism_fingerprint,
         checks: ordered,
         probes,
         evidence: record,

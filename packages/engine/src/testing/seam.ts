@@ -19,6 +19,7 @@
 // offset, so both threads take the same time.
 
 import { SELF_TEST_CASES } from '../checks/selftest-cases.js';
+import { ADAPTER_QUALIFICATION_CASES } from '../deploy/qualify-cases.js';
 import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -221,6 +222,15 @@ export interface HarnessSwitches {
   deployAdapter?: 'scripted' | 'real';
   // SEAM.md §260: `--harness-artifact-free-bytes <n>`.
   artifactFreeBytes?: number | null;
+  // SEAM.md §§323, 324: `--harness-adapter-qualification-case`,
+  // `--harness-engine-build-variant`, `--harness-adapter-version`,
+  // `--harness-service-profile-variant`.
+  adapterQualificationForced?: Record<string, 'failed' | 'not_exercised' | 'control_failed'>;
+  engineBuildVariant?: string | null;
+  adapterVersions?: Record<string, string>;
+  serviceProfileVariant?: string | null;
+  // SEAM.md §328: `--harness-host-fact-unread <member>`.
+  hostFactsUnread?: string[];
 }
 
 export interface CheckDomainLimits {
@@ -1684,6 +1694,11 @@ export function setHarnessSwitches(values: {
   deployAdapter?: string | null;
   artifactFreeBytes?: string | null;
   clockOffset?: string | null;
+  adapterQualificationCases?: string[];
+  engineBuildVariant?: string | null;
+  adapterVersions?: string[];
+  serviceProfileVariant?: string | null;
+  hostFactsUnread?: string[];
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1732,6 +1747,26 @@ export function setHarnessSwitches(values: {
     if (!/^\d{1,15}$/.test(values.artifactFreeBytes)) return `--harness-artifact-free-bytes takes a number of bytes, not ${values.artifactFreeBytes}`;
     artifactFreeBytes = Number(values.artifactFreeBytes);
   }
+  // SEAM.md §§323, 324: the adapter qualification's switches.
+  const adapterQualificationForced: Record<string, 'failed' | 'not_exercised' | 'control_failed'> = {};
+  for (const v of values.adapterQualificationCases ?? []) {
+    const m = /^([a-z_]+)=(failed|not_exercised|control_failed)$/.exec(v);
+    if (!m || !(ADAPTER_QUALIFICATION_CASES as readonly string[]).includes(m[1]!)) return `--harness-adapter-qualification-case takes <case>=<failed|not_exercised|control_failed>, not ${v}`;
+    adapterQualificationForced[m[1]!] = m[2] as 'failed' | 'not_exercised' | 'control_failed';
+  }
+  if (values.engineBuildVariant != null && !/^[A-Za-z0-9._-]{1,64}$/.test(values.engineBuildVariant)) return `--harness-engine-build-variant takes a label, not ${values.engineBuildVariant}`;
+  if (values.serviceProfileVariant != null && !/^[A-Za-z0-9._-]{1,64}$/.test(values.serviceProfileVariant)) return `--harness-service-profile-variant takes a label, not ${values.serviceProfileVariant}`;
+  const adapterVersions: Record<string, string> = {};
+  for (const v of values.adapterVersions ?? []) {
+    const m = /^(local_service)=([A-Za-z0-9._-]{1,64})$/.exec(v);
+    if (!m || adapterVersions[m[1]!] !== undefined) return `--harness-adapter-version takes local_service=<version>, once, not ${v}`;
+    adapterVersions[m[1]!] = m[2]!;
+  }
+  const hostFactsUnread: string[] = [];
+  for (const v of values.hostFactsUnread ?? []) {
+    if (!['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'].includes(v) || hostFactsUnread.includes(v)) return `--harness-host-fact-unread takes host_id, kernel, tool_versions or mechanism_fingerprint, each once, not ${v}`;
+    hostFactsUnread.push(v);
+  }
   // SEAM.md §274: a restart near a deadline the test moved the clock to.
   if (values.clockOffset != null && !/^[1-9][0-9]{0,9}$/.test(values.clockOffset)) return `--harness-clock-offset takes a positive number of seconds, not ${values.clockOffset}`;
   if (!init.harness) return null;
@@ -1751,6 +1786,11 @@ export function setHarnessSwitches(values: {
       classifierVersion,
       deployAdapter: (values.deployAdapter as 'scripted' | 'real' | null | undefined) ?? 'scripted',
       artifactFreeBytes,
+      adapterQualificationForced,
+      engineBuildVariant: values.engineBuildVariant ?? null,
+      adapterVersions,
+      serviceProfileVariant: values.serviceProfileVariant ?? null,
+      hostFactsUnread,
     },
   };
   return null;
@@ -1776,6 +1816,13 @@ export const seamCheckDomainLimits = (): CheckDomainLimits | null => (init.harne
 export const seamArtifactFreeBytes = (): number | null => (init.harness ? (init.switches?.artifactFreeBytes ?? null) : null);
 // SEAM.md §247: whether this harness start uses the real deployment adapter.
 export const seamRealDeployAdapter = (): boolean => !init.harness || init.switches?.deployAdapter === 'real';
+// SEAM.md §§323, 324: the adapter qualification's switches, harness only.
+export const seamAdapterQualificationForced = (): Record<string, 'failed' | 'not_exercised' | 'control_failed'> => (init.harness ? (init.switches?.adapterQualificationForced ?? {}) : {});
+export const seamEngineBuildVariant = (): string | null => (init.harness ? (init.switches?.engineBuildVariant ?? null) : null);
+export const seamServiceProfileVariant = (): string | null => (init.harness ? (init.switches?.serviceProfileVariant ?? null) : null);
+// SEAM.md §328: the host facts this start records as unread.
+export const seamHostFactsUnread = (): string[] => (init.harness ? (init.switches?.hostFactsUnread ?? []) : []);
+export const seamAdapterVersion = (adapter: string): string | null => (init.harness ? (init.switches?.adapterVersions?.[adapter] ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
 // The fault `collect_slow` (SEAM.md §152): standing until lifted, it delays
