@@ -436,6 +436,11 @@ export async function runHostChecks(rt: Runtime, args: { scope: ScopeOutcome; bu
   const evidence = {
     host_id: host,
     kernel: release(),
+    // A host fact, recorded and never a refusal (E127 m3; the driver's
+    // ruling): Yama's ptrace scope bounds who could forge the launch
+    // channel's challenge (deploy/service-host.ts); at 0, any process of the
+    // uid may ptrace another (D2 §8 class C). null when unread.
+    ptrace_scope: yamaPtraceScope(),
     tool_versions: versions,
     tool_paths: tools.paths,
     checks: ordered,
@@ -508,3 +513,14 @@ function planShape(rt: Runtime, tools: ResolvedTools, initCopy: string): string 
 }
 
 export const allHostChecks = HOST_CHECKS;
+
+// /proc/sys/kernel/yama/ptrace_scope as read now: 0 to 3, or null when it
+// cannot be read (no Yama, or unreadable; unknown, never taken for 0 or 1).
+export function yamaPtraceScope(): number | null {
+  try {
+    const t = readFileSync('/proc/sys/kernel/yama/ptrace_scope', 'utf8').trim();
+    return /^[0-3]$/.test(t) ? Number(t) : null;
+  } catch {
+    return null;
+  }
+}

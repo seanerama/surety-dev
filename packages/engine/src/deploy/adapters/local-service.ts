@@ -43,6 +43,7 @@ import { AdapterUnavailable } from '../adapter.js';
 import { readIdentity, type UnitState, procStat } from '../identity.js';
 import type { ServiceHost } from '../service-host.js';
 import { launchSocketPath } from '../service-host.js';
+import { withheldRead } from '../withhold.js';
 import { LAUNCHER_SCRIPT } from '../../invoke/sandboxed.js';
 
 const SYSTEM_DIRS = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'];
@@ -688,7 +689,11 @@ export class LocalService implements DeploymentAdapter {
         faults,
         readUnit: async () => (x.unit ? unitState((await this.show(env.environment, [x.unit], signal))?.[0]) : null),
       });
-      out.push(await this.otherGeneration(env.environment, x, read, signal, listingFails));
+      const judged = await this.otherGeneration(env.environment, x, read, signal, listingFails);
+      // A service whose supervision is unknown (its control channel not held
+      // by this incarnation): what the host returned about it is withheld but
+      // for match results, digests and numeric ids (D4 §7.3; E116).
+      out.push(x.attempt && this.services.attached(x.attempt) ? judged : withheldRead(judged));
     }
     return out;
   }
@@ -709,9 +714,15 @@ export class LocalService implements DeploymentAdapter {
     return judgeOtherGeneration(read, x, prefix, listed === null || !listed.ok || listed.code !== 0 ? null : listed.stdout, (u) => ownUnit(this.rt.home, env, u) === null);
   }
 
-  async logs(_env: EnvRef, _target: string, _maxBytes: number, _signal: AbortSignal): Promise<LogTail> {
-    // The collection command is slice 27's (D4 §6.1).
-    throw new AdapterUnavailable('unavailable');
+  // The init's rolling capture, read only by the collection command (D4
+  // §§6.1, 9.3): asked of the init on the service's control channel, which
+  // this incarnation must hold; otherwise nothing is read (the caller has
+  // already refused a service of unknown supervision, D4 §7.3).
+  async logs(env: EnvRef, _target: string, maxBytes: number, _signal: AbortSignal): Promise<LogTail> {
+    if (!env.attempt || !this.services.attached(env.attempt)) throw new AdapterUnavailable('unavailable');
+    const bytes = await this.services.readCapture(env.attempt, maxBytes, this.readMs);
+    if (bytes === null) throw new AdapterUnavailable('unavailable');
+    return { bytes: bytes.length, text: bytes.toString('utf8') };
   }
 }
 

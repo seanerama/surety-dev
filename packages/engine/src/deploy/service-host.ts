@@ -54,7 +54,7 @@ import { type Runtime, log } from '../runtime.js';
 import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamTakeDeployFault } from '../testing/seam.js';
 import { exeSha, innerPid, membersNamed, procStat, cgroupOf, cmdlineOf } from './identity.js';
 import { showUnits } from './adapters/local-service.js';
-import { APP_DIR, INGRESS_SOCKET, buildServicePlan } from './service-profile.js';
+import { APP_DIR, INGRESS_SOCKET, buildServicePlan, serviceEnvironment } from './service-profile.js';
 
 type Msg = Record<string, unknown>;
 type Lookup = {
@@ -169,6 +169,15 @@ class Channel {
   }
 }
 
+interface Relay {
+  environment: string;
+  attempt: string;
+  port: number;
+  server: net.Server;
+  open: Set<net.Socket>;
+  closers: Set<() => void>;
+}
+
 interface Service {
   attempt: string;
   domain: string;
@@ -233,6 +242,40 @@ const readInt = (path: string): number | 'max' | null => {
   }
 };
 
+// ---- the launch channel's peer (E127 item 7, m3; the driver's ruling) ----------------------
+//
+// Node offers no SO_PEERCRED, so a connection proves which process holds it
+// by a challenge the kernel arbitrates: the engine sends a single-use random
+// nonce on this connection, and the process the client named must write it
+// to its own `/proc/self/comm`. Linux lets only a process's own threads set
+// its name (a write to another's `comm` is EINVAL), and under Yama
+// `ptrace_scope` >= 1 only its ancestors may ptrace it, so a client naming a
+// pid it is not cannot answer. The named process's start time is read
+// before and after the name, so a pid reused meanwhile proves nothing. The
+// limit: a same-uid process allowed to ptrace the named one could forge the
+// answer; it could read the engine's memory too (D2 §8 class C).
+
+const NONCE_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+// 15 characters: the most a task's name holds (TASK_COMM_LEN 16 with its NUL).
+export function launchNonce(): string {
+  const bytes = randomBytes(15);
+  return [...bytes].map((b) => NONCE_ALPHABET[b % NONCE_ALPHABET.length]).join('');
+}
+
+// Whether the process at `pid`, with the start time read before the
+// challenge, shows `nonce` as its own name now and is still that process.
+export function commAnswers(pid: number, startTime: number, nonce: string): boolean {
+  let name: string;
+  try {
+    name = readFileSync(`/proc/${pid}/comm`, 'utf8').replace(/\n$/, '');
+  } catch {
+    return false;
+  }
+  return name === nonce && procStat(pid)?.start_time === startTime;
+}
+
+const PROOF_TIMEOUT_MS = 10_000;
+
 export class ServiceHost {
   private server: net.Server | null = null;
   private readonly services = new Map<string, Service>();
@@ -240,6 +283,25 @@ export class ServiceHost {
   // Attempts whose control channel this incarnation saw close and whose loss
   // is not yet durable (the review's m4).
   private readonly lost = new Set<string>();
+  // Attempts whose launch connection proved its peer (one per attempt: a
+  // second connection is refused once one has, E127 m3).
+  private readonly proven = new Set<string>();
+  // Collection reads asked of an init, by their id, until it answers.
+  private readonly captures = new Map<string, (b: Buffer | null) => void>();
+  // The operator relays open, by environment (D4 §5.2).
+  private readonly relays = new Map<string, Relay>();
+
+  // One challenge on `ch` to the process `pid` named (see launchNonce):
+  // true only when that process, unchanged, shows the nonce as its name.
+  private async prove(ch: Channel, pid: number): Promise<boolean> {
+    const before = procStat(pid)?.start_time;
+    if (before === undefined) return false;
+    const nonce = launchNonce();
+    ch.send({ t: 'prove', nonce });
+    const answer = await ch.next(PROOF_TIMEOUT_MS);
+    if (!answer || answer.t !== 'proved') return false;
+    return commAnswers(pid, before, nonce);
+  }
 
   // The loss written to the store, retried a few times now; until it is
   // written, `lossRecorded` says no and no round of the attempt is decided.
@@ -323,6 +385,9 @@ export class ServiceHost {
       s.ingress?.close();
       for (const l of s.links) l.close();
     }
+    // A relay lives in the engine that opened it (recorded closed at the
+    // next start).
+    for (const env of [...this.relays.keys()]) this.dropRelay(env);
     try {
       const path = launchSocketPath(this.rt.home);
       if (lstatSync(path).isSocket()) unlinkSync(path);
@@ -552,6 +617,152 @@ export class ServiceHost {
     return link;
   }
 
+  // The newest output of a service's capture, at most `max` bytes (D4 §§7.3,
+  // 9.3): asked of its init on the control channel, in memory only. null
+  // when the channel does not stand (supervision `unknown`: refused by the
+  // caller before this) or no answer came within `timeoutMs`.
+  readCapture(attempt: string, max: number, timeoutMs: number): Promise<Buffer | null> {
+    const s = this.services.get(attempt);
+    if (!s || !s.channel || s.channel.closed) return Promise.resolve(null);
+    const id = randomBytes(16).toString('hex');
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.captures.delete(id);
+        resolve(null);
+      }, timeoutMs);
+      timer.unref?.();
+      this.captures.set(id, (b) => {
+        clearTimeout(timer);
+        resolve(b !== null && b.length <= max ? b : null);
+      });
+      s.channel!.send({ t: 'logs', id, max });
+    });
+  }
+
+  // ---- the operator relay (D4 §5.2; Q7; SEAM.md §317) ----------------------------------------
+  //
+  // Opened only by the owner's command, on 127.0.0.1 and the running
+  // generation's configured port, to that generation's service and to
+  // nothing else: every connection is checked in the store first (the relay
+  // still open to that attempt, its service still the environment's running
+  // one, supervised), takes one of `service_link_tunnels_max`, waits at most
+  // `service_link_connect_timeout` for its tunnel, is closed past
+  // `service_link_tunnel_max_seconds` or when more than
+  // `service_link_buffer_max_bytes` wait in either direction. Its bytes are
+  // the application's: it adds nothing, answers nothing itself, and reaches
+  // no engine route, token or control channel. It is never retargeted: it
+  // closes with its generation's domain, at a teardown, on command, when its
+  // supervision is lost, and with the engine.
+
+  // Bind the relay; 'in_use' when the port has another listener (untouched).
+  async openRelay(args: { environment: string; attempt: string; generation: number | null; port: number; limits: Omit<LinkLimits, 'logMaxBytes'> }): Promise<'opened' | 'in_use'> {
+    const existing = this.relays.get(args.environment);
+    if (existing && existing.attempt === args.attempt && existing.port === args.port) return 'opened';
+    // Another relay of the environment stays open until the new one is bound
+    // (the slice-28 review, m2), unless it holds the very port: then it is
+    // closed, and recorded, first.
+    if (existing && existing.port === args.port) await this.closeRelays({ environment: args.environment }, 'replaced');
+    const limits = args.limits;
+    const relay: Relay = { environment: args.environment, attempt: args.attempt, port: args.port, server: null as unknown as net.Server, open: new Set(), closers: new Set() };
+    let active = 0;
+    const server = net.createServer((client) => {
+      client.on('error', () => client.destroy());
+      client.pause();
+      if (active >= limits.tunnelsMax) return void client.destroy();
+      active++;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        active--;
+      };
+      relay.open.add(client);
+      client.on('close', () => {
+        relay.open.delete(client);
+        release();
+      });
+      void (async () => {
+        const ok = await this.rt.read<boolean>('deploy.relay_check', { environment: args.environment, attempt: args.attempt }).catch(() => false);
+        if (client.destroyed) return release();
+        const s = this.services.get(args.attempt);
+        if (!ok || !s || !s.channel || s.channel.closed || this.relays.get(args.environment) !== relay) return void client.destroy();
+        const up = await this.openTunnel(args.attempt, limits.connectTimeoutMs);
+        if (up === null) return void client.destroy();
+        if (client.destroyed || this.relays.get(args.environment) !== relay) {
+          up.destroy();
+          client.destroy();
+          return;
+        }
+        relay.open.add(up);
+        s.open.add(up);
+        let closed = false;
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          clearTimeout(lifetime);
+          relay.closers.delete(close);
+          client.destroy();
+          up.destroy();
+          relay.open.delete(up);
+          s.open.delete(up);
+        };
+        relay.closers.add(close);
+        const lifetime = setTimeout(close, limits.tunnelMaxMs);
+        lifetime.unref?.();
+        client.on('data', (chunk: Buffer) => {
+          up.write(chunk);
+          if (up.writableLength > limits.bufferMaxBytes) close();
+        });
+        up.on('data', (chunk: Buffer) => {
+          client.write(chunk);
+          if (client.writableLength > limits.bufferMaxBytes) close();
+        });
+        client.on('end', () => up.end());
+        up.on('end', () => client.end());
+        client.on('close', close);
+        up.on('close', close);
+        up.on('error', close);
+        client.on('error', close);
+        client.resume();
+      })().catch((err) => {
+        log('operator relay', err, { environment: args.environment });
+        client.destroy();
+      });
+    });
+    const bound = await new Promise<'opened' | 'in_use'>((resolve, reject) => {
+      server.once('error', (err: NodeJS.ErrnoException) => (err.code === 'EADDRINUSE' ? resolve('in_use') : reject(err)));
+      server.listen({ host: '127.0.0.1', port: args.port, exclusive: true }, () => resolve('opened'));
+    });
+    if (bound === 'in_use') return 'in_use';
+    server.on('error', (err) => log('operator relay', err, { environment: args.environment }));
+    relay.server = server;
+    // Bound: the one it replaces is closed and recorded now.
+    if (this.relays.has(args.environment)) await this.closeRelays({ environment: args.environment }, 'replaced');
+    this.relays.set(args.environment, relay);
+    return 'opened';
+  }
+
+  // The relay's listener and every tunnel of it closed; nothing recorded.
+  dropRelay(environment: string): { attempt: string } | null {
+    const r = this.relays.get(environment);
+    if (!r) return null;
+    this.relays.delete(environment);
+    r.server.close();
+    for (const c of [...r.closers]) c();
+    for (const c of r.open) c.destroy();
+    return { attempt: r.attempt };
+  }
+
+  // Closed by the engine itself (a teardown, its generation's end, a lost
+  // supervision), and recorded with the reason.
+  async closeRelays(match: { environment?: string; attempt?: string }, reason: string): Promise<void> {
+    for (const r of [...this.relays.values()]) {
+      if ((match.environment !== undefined && r.environment !== match.environment) || (match.attempt !== undefined && r.attempt !== match.attempt)) continue;
+      this.dropRelay(r.environment);
+      await this.rt.engine('deploy.relay_closed', { environment: r.environment, attempt: r.attempt, reason }).catch((err) => log('operator relay', err, { environment: r.environment }));
+    }
+  }
+
   // The engine's TERM to a service's init (D2 §3.2), when its channel stands.
   term(attempt: string): boolean {
     const s = this.services.get(attempt);
@@ -576,6 +787,10 @@ export class ServiceHost {
   // A service domain whose closure was observed: its ingress closed, and its
   // runtime directory removed at the path the store recorded.
   dispose(args: { attempt: string; runtimeDir: string | null }): void {
+    // Its generation's end closes its relay (D4 §5.2: never retargeted).
+    void this.closeRelays({ attempt: args.attempt }, 'generation_ended');
+    // Its launch is over for good: nothing of it is proven any more (m6).
+    this.proven.delete(args.attempt);
     const s = this.services.get(args.attempt);
     if (s) {
       s.disposed = true;
@@ -606,6 +821,9 @@ export class ServiceHost {
     if (!lk || !lk.domain || !lk.unit) return refuse('no such attempt');
     // Checked first in the store (cheaply), then on the host.
     if (hello.incarnation !== this.rt.incarnation || lk.incarnation !== this.rt.incarnation) return refuse('not this incarnation');
+    // Single-use (D4 §9.2; E127 m3): once a connection of this attempt has
+    // proved its peer, any other is refused at once, with nothing sent.
+    if (this.proven.has(attempt)) return refuse('a launch connection of this attempt has already proved its peer');
     if (lk.status !== 'started' || lk.launch_state !== 'authorizable' || lk.domain.launch_state !== 'authorizable') return refuse(`the launch is ${lk.launch_state}`);
     if (lk.domain.id !== hello.domain) return refuse("not the attempt's domain");
     if (!lk.lease || lk.lease.generation !== hello.lease_generation) return refuse('the lease generation is not current');
@@ -626,6 +844,14 @@ export class ServiceHost {
     // The limits read back before anything is authorized (D4 §9.2).
     const limits = { memory_max: readInt(join(cgroup, 'memory.max')), memory_swap_max: readInt(join(cgroup, 'memory.swap.max')), pids_max: readInt(join(cgroup, 'pids.max')) };
     if (limits.memory_max !== lk.limits.memory_max || limits.memory_swap_max !== 0 || limits.pids_max !== lk.limits.pids_max) return refuse(`the unit's limits read back as ${JSON.stringify(limits)}`);
+    // The peer (E127 m3): the connection must be the named launcher's, before
+    // anything is recorded or sent.
+    if (!(await this.prove(ch, pid)) || cgroupOf(pid) !== cgroup) return refuse('the connection is not the named launcher\'s: it did not answer the challenge');
+    // And it is still the unit's MainPID (ruling 1; the slice-28 review, m5).
+    const [again] = (await showUnits([lk.unit], { home: this.rt.home, env: lk.environment, timeoutMs: this.rt.config.values.adapter_read_deadline * 1000 })) ?? [];
+    if (!again || Number(again.MainPID) !== pid || again.InvocationID !== unit.InvocationID) return refuse("after the challenge the launcher is no longer the unit's MainPID");
+    if (this.proven.has(attempt)) return refuse('a launch connection of this attempt has already proved its peer');
+    this.proven.add(attempt);
     const placed = await this.rt.engine<{ placed: boolean; reason: string | null }>('deploy.launcher_placed', {
       attempt,
       domain: lk.domain.id,
@@ -666,6 +892,9 @@ export class ServiceHost {
     const istart = Number(init?.start_time);
     const st = Number.isInteger(ipid) && ipid > 1 ? procStat(ipid) : null;
     if (!st || st.ppid !== pid || innerPid(ipid) !== 1 || st.start_time !== istart || cgroupOf(ipid) !== cgroup) return refuse('the init is not the launcher\'s child with innermost NSpid 1 in the unit\'s cgroup, at that start time');
+    // The expected init holds this connection (E127 m3): it answers its own
+    // challenge, before the grant and anything it carries.
+    if (!(await this.prove(ch, ipid))) return refuse('the init did not answer the challenge');
     const grant = await this.rt.engine<{ granted: boolean; reason?: string }>('deploy.launch_authorize', {
       attempt,
       incarnation: this.rt.incarnation,
@@ -685,6 +914,8 @@ export class ServiceHost {
     // every tunnel to it closes now (E110, E116).
     ch.onClose = () => {
       for (const l of [...s.links]) l.dropTunnels();
+      // Its relay answers nothing more (D4 §§5.2, 7.3; E116).
+      if (!s.disposed && !this.stopping) void this.closeRelays({ attempt: s.attempt }, 'supervision_lost');
       for (const c of s.open) c.destroy();
       if (s.disposed || this.stopping) return;
       this.lost.add(s.attempt);
@@ -729,19 +960,15 @@ export class ServiceHost {
           });
           ch.send({ t: 'plan', plan });
         } else if (m.stage === 'init') {
-          const env: Record<string, string> = { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', TMPDIR: '/tmp', ...lk.env };
-          for (const [name, ref] of Object.entries(lk.secrets)) {
-            const value = heldSecret(ref);
-            if (value === null) {
-              // Checked at the launcher's hello; gone since: nothing starts.
-              log('service launch', new Error(`refused: the secret ${ref} is not held`), { attempt: s.attempt });
-              ch.send({ t: 'term' });
-              ch.end();
-              return;
-            }
-            env[name] = value;
+          const built = serviceEnvironment(lk, heldSecret);
+          if ('unheld' in built) {
+            // Checked at the launcher's hello; gone since: nothing starts.
+            log('service launch', new Error(`refused: the secret ${built.unheld} is not held`), { attempt: s.attempt });
+            ch.send({ t: 'term' });
+            ch.end();
+            return;
           }
-          if (lk.port !== null) env.PORT = String(lk.port);
+          const env = built.env;
           // The harness fault `service_exec_failed` (SEAM.md §277): the start
           // command names a program that does not exist, so its exec fails.
           const argv = seamTakeDeployFault(lk.environment, 'service_exec_failed') ? [`${APP_DIR}/.surety-exec-failed`, ...(lk.start ?? []).slice(1)] : lk.start;
@@ -751,6 +978,19 @@ export class ServiceHost {
       case 'ready':
         ch.send({ t: 'start' });
         return;
+      case 'logs': {
+        const done = this.captures.get(String(m.id ?? ''));
+        if (!done) return;
+        this.captures.delete(String(m.id));
+        let bytes: Buffer | null = null;
+        try {
+          bytes = typeof m.d === 'string' ? Buffer.from(m.d, 'base64') : null;
+        } catch {
+          bytes = null;
+        }
+        done(bytes);
+        return;
+      }
       case 'setup_failed':
       case 'start_failed':
         log('service launch', new Error(`${String(m.t)}: ${String(m.detail ?? '').slice(0, 300)}`), { attempt: s.attempt });

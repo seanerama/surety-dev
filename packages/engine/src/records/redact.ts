@@ -244,6 +244,45 @@ function possibleStart(buf: Buffer, forms: Form[]): number {
   return buf.length;
 }
 
+// ---- the edges of a cut (the slice-28 review, S1) ---------------------------------------
+//
+// Output kept in two parts with bytes dropped between them (a check's head
+// and tail, D3 §2.6) may hold, at each edge of the cut, a fragment of a held
+// secret the redactor cannot recognize because the rest was dropped: a
+// proper prefix of a form at the end of the head, a proper suffix at the
+// start of the tail. Each such fragment of at least CUT_FRAGMENT_MIN bytes is
+// replaced by the mark, as possibleStart finds a form's possible start.
+// Shorter fragments (at most CUT_FRAGMENT_MIN - 1 bytes of a value) are left:
+// matched at one byte, almost every cut would be masked. The bound is stated
+// as what may survive a cut.
+export const CUT_FRAGMENT_MIN = 4;
+
+// `buf` with its longest end that is a proper prefix of a held form (in any
+// form the redactor removes) replaced by the mark.
+export function maskTrailingPrefix(buf: Buffer): Buffer {
+  const forms = secretForms().filter((f) => f.bytes.length > 1);
+  if (forms.length === 0) return buf;
+  const longest = Math.max(...forms.map((f) => f.bytes.length));
+  for (let p = Math.max(0, buf.length - (longest - 1)); p <= buf.length - CUT_FRAGMENT_MIN; p++) {
+    const rest = buf.subarray(p);
+    if (forms.some((f) => rest.length < f.bytes.length && f.bytes.subarray(0, rest.length).equals(rest))) return Buffer.concat([buf.subarray(0, p), MARK]);
+  }
+  return buf;
+}
+
+// `buf` with its longest beginning that is a proper suffix of a held form
+// replaced by the mark.
+export function maskLeadingSuffix(buf: Buffer): Buffer {
+  const forms = secretForms().filter((f) => f.bytes.length > 1);
+  if (forms.length === 0) return buf;
+  const longest = Math.max(...forms.map((f) => f.bytes.length));
+  for (let q = Math.min(buf.length, longest - 1); q >= CUT_FRAGMENT_MIN; q--) {
+    const head = buf.subarray(0, q);
+    if (forms.some((f) => q < f.bytes.length && f.bytes.subarray(f.bytes.length - q).equals(head))) return Buffer.concat([MARK, buf.subarray(q)]);
+  }
+  return buf;
+}
+
 // A stream through the redactor. What `push` returns is safe to store: it
 // holds back the bytes that could be the start of a secret, in any form,
 // until it is known whether they are, and `end` gives what is held back.

@@ -174,6 +174,14 @@ export function environmentByName(db: Db, project: string, name: string): EnvRow
 
 export const currentConfig = (db: Db, env: EnvRow): ConfigRow | undefined => getConfig(db, env.current_config);
 const configContent = (c: ConfigRow): ConfigContent => JSON.parse(c.content) as ConfigContent;
+
+// The current version's content of an environment, by its name (for
+// `resolve-secrets`, SEAM.md §313); null when it has none.
+export function currentConfigContent(db: Db, args: { project: string; name: string }): ConfigContent | null {
+  const env = db.prepare('SELECT * FROM "environments" WHERE "project" = ? AND "name" = ? AND "prefix" IS NOT NULL').get(args.project, args.name) as EnvRow | undefined;
+  const c = env ? currentConfig(db, env) : undefined;
+  return c ? configContent(c) : null;
+}
 const targetsOf = (c: ConfigRow): string[] => [...configContent(c).targets].sort();
 
 // The identity method an environment declares (J4): its configuration's.
@@ -1215,16 +1223,21 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
 export function requestTeardown(tx: Tx, args: { project: string; environment: string; preempt?: boolean }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  // The relay closes when a teardown is asked for, ordinary or preempting
+  // (D4 §5.2; the slice-28 review, m3): its row here, its listener after the
+  // commit.
+  relayClosed(tx, { environment: env.id, reason: 'teardown' });
+  const closeRelay = { kind: 'relay_closed' as const, environment: env.id };
   if (args.preempt === true) {
     const p = preemptTeardown(tx, { environment: env.id, cause: 'the operator\'s preempting teardown' });
     return {
       status: 202,
       body: { environment: { id: env.id, name: env.name }, teardown: { operation: p.operation, preempted: p.preempted } },
-      effects: [{ kind: 'tick' as const }, { kind: 'preempt' as const, environment: env.id, executions: p.executions }],
+      effects: [closeRelay, { kind: 'tick' as const }, { kind: 'preempt' as const, environment: env.id, executions: p.executions }],
     };
   }
   if (env.teardown_requested_at === null) tx.db.prepare('UPDATE "environments" SET "teardown_requested_at" = ? WHERE "id" = ?').run(tx.at, env.id);
-  return { status: 202, body: { environment: { id: env.id, name: env.name }, teardown: { requested_at: env.teardown_requested_at ?? tx.at } }, effects: [{ kind: 'tick' as const }] };
+  return { status: 202, body: { environment: { id: env.id, name: env.name }, teardown: { requested_at: env.teardown_requested_at ?? tx.at } }, effects: [closeRelay, { kind: 'tick' as const }] };
 }
 
 export function intendTeardown(tx: Tx, args: { environment: string; incarnation: string }): { operation: string } | { busy: string } | { skipped: string } {
@@ -1763,7 +1776,8 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
   const intent = db.prepare('SELECT * FROM "attempt_intents" WHERE "attempt" = ?').get(a.id) as { create_units: string; prior: string; cleanup: string; resources: string } | undefined;
   if (!intent) return { field: 'attempt' };
   const prefix = frozen.prefix;
-  if (prefix === '' || env.prefix !== prefix) return { field: 'units' };
+  // The member that failed is named (D4 §2.2; SEAM.md §315).
+  if (prefix === '' || env.prefix !== prefix) return { field: c.kind === 'deploy' ? 'create_units' : 'stop_units' };
   const derived = (u: string) => prefix !== '' && UNIT_CHARS.test(u) && u.startsWith(prefix) && /^g\d+\.service$/.test(u.slice(prefix.length));
   if (c.kind === 'deploy') {
     if (frozen.artifact_digest === null || c.artifact_digest !== frozen.artifact_digest) return { field: 'artifact_digest' };
@@ -1773,13 +1787,13 @@ export function capabilityCheck(db: Db, args: { capability: Capability; incarnat
     if (!Array.isArray(c.targets) || canonical([...c.targets].sort()) !== canonical([...frozen.target_set].sort())) return { field: 'targets' };
     const create = JSON.parse(intent.create_units) as string[];
     const prior = (JSON.parse(intent.prior) as { unit: string }[]).map((p) => p.unit);
-    if (!c.create_units.every((u) => derived(u) && create.includes(u))) return { field: 'units' };
-    if (!c.prior.every((p) => derived(p.unit) && prior.includes(p.unit))) return { field: 'units' };
+    if (!Array.isArray(c.create_units) || !c.create_units.every((u) => derived(u) && create.includes(u))) return { field: 'create_units' };
+    if (!Array.isArray(c.prior) || !c.prior.every((p) => derived(p.unit) && prior.includes(p.unit))) return { field: 'prior' };
     const cleanup = (JSON.parse(intent.cleanup) as { resource: string }[]).map((x) => x.resource);
-    if (!Array.isArray(c.cleanup) || !c.cleanup.every((u) => derived(u) && cleanup.includes(u))) return { field: 'units' };
+    if (!Array.isArray(c.cleanup) || !c.cleanup.every((u) => derived(u) && cleanup.includes(u))) return { field: 'cleanup' };
   } else {
     const resources = JSON.parse(intent.resources) as string[];
-    if (!c.stop_units.every((u) => derived(u) && resources.includes(u))) return { field: 'units' };
+    if (!Array.isArray(c.stop_units) || !c.stop_units.every((u) => derived(u) && resources.includes(u))) return { field: 'stop_units' };
   }
   // And it is the capability the attempt's transaction minted, whole: no
   // field a check above does not name differs from it (review m7).
@@ -1796,7 +1810,9 @@ export function capabilityRefused(tx: Tx, args: { attempt: string; field: string
   tx.emit('deploy.capability_refused', { project: op.project, operation: op.id, attempt: a.id }, { field: args.field });
   if (a.status === 'started') setAttempt(tx, a, 'failed');
   writeAttemptedOnce(tx, op, a, 'failed');
-  failOperation(tx, op, { code: 'deploy_capability_refused', field: args.field });
+  // The operation's outcome names the refusal; the error code itself is
+  // internal, never a route's answer (D4 A.6).
+  failOperation(tx, op, { code: 'CAPABILITY_REFUSED', field: args.field });
 }
 
 // ---- the launch (D4 §§3.4, 9.2; SEAM.md §§247, 259) -------------------------------------------------
@@ -3045,6 +3061,97 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
 
 // ---- reads (D4 §6.1; N02: stored reads only) --------------------------------------------------------
 
+// The service an environment runs now, as the store recorded it: the attempt
+// that launched it (the `attempted` fact, while `running` is set) and its
+// supervision (D4 §§6.1, 9.2; E110); null when none runs.
+export function runningService(db: Db, environment: string): { attempt: string; generation: number | null; supervision: 'attached' | 'unknown' } | null {
+  const rec = db.prepare('SELECT "attempted", "running" FROM "environment_records" WHERE "environment" = ?').get(environment) as { attempted: string | null; running: string | null } | undefined;
+  if (!rec?.running) return null;
+  const attempted = parseJson<{ attempt?: string }>(rec.attempted ?? null);
+  const a = attempted?.attempt ? getAttempt(db, attempted.attempt) : undefined;
+  if (!a) return null;
+  return { attempt: a.id, generation: a.deployment_generation ?? null, supervision: attemptSupervision(db, a) };
+}
+
+// ---- the operator relay (D4 §5.2; Q7; SEAM.md §317) ---------------------------------------------
+
+export interface RelayRow {
+  attempt: string;
+  generation: number | null;
+  port: number;
+  opened_at: string;
+}
+
+const relayOf = (db: Db, environment: string): RelayRow | null =>
+  parseJson<RelayRow>((db.prepare('SELECT "relay" FROM "environments" WHERE "id" = ?').get(environment) as { relay: string | null } | undefined)?.relay ?? null);
+
+// What `POST …/relay` opens a relay to: the running generation's service and
+// its configured port. Refused when none runs, or when its supervision is
+// unknown (`redaction_unavailable`, D4 §§5.2, 7.3).
+export function relayTarget(db: Db, args: { project: string; environment: string }): { environment: string; name: string; attempt: string; generation: number | null; port: number; relay: RelayRow | null } {
+  const env = environmentByName(db, args.project, args.environment);
+  if (!env || env.prefix === null) throw notFound('environment', args.environment);
+  // Not while a teardown is asked for or under way (the slice-28 review, m3).
+  const tearing = db
+    .prepare(`SELECT o."id" FROM "operations" o WHERE o."kind" = 'teardown' AND json_extract(o."target", '$.environment') = ? AND o."orchestration_stage" IS NOT NULL AND o."orchestration_stage" <> 'ended' LIMIT 1`)
+    .get(env.id) as { id: string } | undefined;
+  if (env.teardown_requested_at !== null || tearing) {
+    throw new Refusal(409, 'environment_busy', `A teardown of ${env.name} is asked for or under way: no relay opens.`, 'Wait for the teardown to finish, deploy again, then open the relay.', { environment: env.id, ...(tearing ? { operation: tearing.id } : {}) });
+  }
+  const svc = runningService(db, env.id);
+  if (svc === null) throw new Refusal(409, 'no_running_service', `No service of ${env.name} runs: there is nothing to relay to.`, 'Deploy the environment, then open its relay.', { environment: env.id });
+  if (svc.supervision !== 'attached') {
+    throw new Refusal(409, 'redaction_unavailable', `The service of ${env.name} survived an engine restart or lost its control channel: the engine cannot screen it, so no relay opens.`, 'Redeploy or tear down the environment; then open the relay to the new service.', { environment: env.id, attempt: svc.attempt });
+  }
+  const rec = db.prepare('SELECT "running" FROM "environment_records" WHERE "environment" = ?').get(env.id) as { running: string | null } | undefined;
+  const running = parseJson<{ config?: string }>(rec?.running ?? null);
+  const config = running?.config ? getConfig(db, running.config) : undefined;
+  const port = config ? configContent(config).port : undefined;
+  if (!Number.isInteger(port)) throw new Refusal(409, 'no_running_service', `The configuration ${env.name}'s service was launched with could not be read.`, 'Redeploy the environment.', { environment: env.id });
+  return { environment: env.id, name: env.name, attempt: svc.attempt, generation: svc.generation, port: port as number, relay: relayOf(db, env.id) };
+}
+
+// Whether a relay connection may reach the service now: the relay is still
+// open to that attempt, which is still the environment's running service,
+// supervised.
+export function relayCheck(db: Db, args: { environment: string; attempt: string }): boolean {
+  const r = relayOf(db, args.environment);
+  const svc = runningService(db, args.environment);
+  return r !== null && r.attempt === args.attempt && svc !== null && svc.attempt === args.attempt && svc.supervision === 'attached';
+}
+
+// The relay opened (the main thread bound its listener first).
+export function relayOpened(tx: Tx, args: { environment: string; attempt: string; generation: number | null; port: number }): CommandResult {
+  const env = getEnv(tx.db, args.environment);
+  if (!env) throw notFound('environment', args.environment);
+  const row: RelayRow = { attempt: args.attempt, generation: args.generation, port: args.port, opened_at: tx.at };
+  const before = relayOf(tx.db, env.id);
+  if (before !== null && before.attempt === args.attempt && before.port === args.port) return { status: 200, body: { environment: { id: env.id, name: env.name }, relay: { ...before, host: '127.0.0.1' } } };
+  tx.db.prepare('UPDATE "environments" SET "relay" = ? WHERE "id" = ?').run(JSON.stringify(row), env.id);
+  tx.emit('environment.relay_opened', { project: env.project, environment: env.id }, { attempt: args.attempt, generation: args.generation, host: '127.0.0.1', port: args.port });
+  return { status: 201, body: { environment: { id: env.id, name: env.name }, relay: { ...row, host: '127.0.0.1' } } };
+}
+
+// The relay closed: by command, at a teardown, at its generation's end, at
+// a lost supervision, or because the engine that held it restarted. With
+// `attempt`, only a relay of that attempt.
+export function relayClosed(tx: Tx, args: { environment: string; reason: string; attempt?: string | null; project?: string; name?: string }): CommandResult {
+  const env = args.project !== undefined && args.name !== undefined ? environmentByName(tx.db, args.project, args.name) : getEnv(tx.db, args.environment);
+  if (!env || env.prefix === null) throw notFound('environment', args.name ?? args.environment);
+  const r = relayOf(tx.db, env.id);
+  if (r === null || (args.attempt && r.attempt !== args.attempt)) return { status: 200, body: { environment: { id: env.id, name: env.name }, relay: null, closed: false } };
+  tx.db.prepare('UPDATE "environments" SET "relay" = NULL WHERE "id" = ?').run(env.id);
+  tx.emit('environment.relay_closed', { project: env.project, environment: env.id }, { reason: args.reason, attempt: r.attempt, generation: r.generation, port: r.port });
+  return { status: 200, body: { environment: { id: env.id, name: env.name }, relay: null, closed: true } };
+}
+
+// At start: a relay lives in the engine that opened it, so every one
+// recorded is closed now.
+export function relaysReset(tx: Tx): void {
+  const rows = tx.db.prepare('SELECT "id" FROM "environments" WHERE "relay" IS NOT NULL').all() as { id: string }[];
+  for (const r of rows) relayClosed(tx, { environment: r.id, reason: 'engine_restart' });
+}
+
 export function readEnvironment(db: Db, args: { project: string; environment: string }) {
   const env = environmentByName(db, args.project, args.environment);
   if (!env) throw notFound('environment', args.environment);
@@ -3058,13 +3165,16 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
     )
     .get(env.id) as { id: string; kind: string; status: string; orchestration_stage: string } | undefined;
   const conditions: string[] = [];
-  if (running && config && (running.config !== config.id || canonical(running.secret_digests) !== canonical(JSON.parse(config.secret_digests)))) conditions.push('rotation_pending_replacement');
+  // A held value no longer the one the running service was given (a version
+  // `secrets_changed`) is pending replacement too (D4 §§3.2, 7.4; E116).
+  if (running && config && (running.config !== config.id || canonical(running.secret_digests) !== canonical(JSON.parse(config.secret_digests)) || config.status === 'secrets_changed')) conditions.push('rotation_pending_replacement');
   // The running service's supervision (§§6.1, 9.2; E110; CD2): the attempt
   // that launched it, from the environment's `attempted` fact.
   const attempted = parseJson<{ attempt?: string; outcome?: string }>(rec?.attempted ?? null);
   const launched = running && attempted?.attempt ? getAttempt(db, attempted.attempt) : undefined;
   const supervision = launched ? attemptSupervision(db, launched) : null;
-  if (supervision === 'unknown') conditions.push('supervision_unknown');
+  // Its output, link, relay and checks withheld (D4 §§6.1, 7.3, A.1; E116).
+  if (supervision === 'unknown') conditions.push('supervision_unknown', 'redaction_unavailable');
   return {
     environment: {
       id: env.id,
@@ -3073,6 +3183,7 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       prefix: env.prefix,
       config: config ? { id: config.id, version: config.version, config_identity: config.config_identity, status: config.status } : null,
       running,
+      relay: relayOf(db, env.id),
       deployment_generation: env.deployment_generation,
       current_generation: env.current_generation,
       last_verified: parseJson<Record<string, unknown>>(rec?.last_verified ?? null),
