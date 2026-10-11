@@ -29,7 +29,7 @@ test("a new host qualification row with the same facts keeps the match; each cha
   assert.equal(hostFactsDrift(hostFactsOf(host({ tool_versions: JSON.stringify({ systemd: '256', ip: 'x' }), mechanism_fingerprint: 'm2' })), then), 'tool_versions', 'the first member that differs');
   assert.equal(hostFactsDrift(hostFactsOf(host({ kernel: '6.7' })), then), 'kernel');
   assert.equal(hostFactsDrift(hostFactsOf(host({ host_id: 'h2' })), then), 'host_id');
-  assert.equal(hostFactsDrift(null, null), null, 'null matches null (unrun)');
+  assert.equal(hostFactsDrift(null, null, true), null, 'null matches null under unrun only (S1)');
   assert.equal(hostFactsDrift(null, then), 'host_id', 'no host qualification in force is a change');
   assert.equal(hostFactsDrift(then, null), 'host_id');
 });
