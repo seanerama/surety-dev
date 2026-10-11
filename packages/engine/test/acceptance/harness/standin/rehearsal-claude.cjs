@@ -43,6 +43,16 @@
 // seeded defect of src/session.mjs naming the criterion R2.1 and the check
 // its package lists as covering it; a fix corrects src/session.mjs.
 //
+// M4 (row M342; SEAM.md §336), for M342's project (its requirement texts
+// name server.mjs): a Verifier on `check_correction` work writes the
+// workspace checks (`sum`, acceptance R1.1; `serves`, acceptance R2.1, which
+// starts server.mjs as a child on the check domain's own loopback; `smoke`,
+// `node --check server.mjs`) and the required `post_deploy_behavior` check
+// `operation` (gate kind alpha_complete, requiring the environment), which
+// asks the deployed service GET /sum?a=2&b=3 through SURETY_TARGET_APP; a
+// Builder writes src/sum.mjs and server.mjs (Node's own http; REF_SECRET
+// required, never printed), and asks for the nomination.
+//
 // Built-ins only. It acts only inside a sandbox: without /surety/context it
 // prints a failure result and exits 1.
 
@@ -198,7 +208,15 @@ const write = (p, text) => {
 assistant(usageOf(U));
 // M239's project names its modules src/<name>.mjs; M2's, src/<name>.js.
 const sessionFile = existsSync(ws('src/session.mjs')) ? 'src/session.mjs' : 'src/session.js';
-if (role === 'verifier' && /\(check_correction\)/.test(prompt)) return writeChecks(write);
+// M342's project: its requirement texts name server.mjs (M4; SEAM.md §336).
+let requirementTexts = '';
+try {
+  for (const f of require('node:fs').readdirSync('/surety/context/requirements')) requirementTexts += `\n${readFileSync(`/surety/context/requirements/${f}`, 'utf8')}`;
+} catch {
+  // no requirement texts
+}
+const deployJourney = /server\.mjs/.test(`${prompt}\n${requirementTexts}`);
+if (role === 'verifier' && /\(check_correction\)/.test(prompt)) return deployJourney ? writeDeployChecks(write) : writeChecks(write);
 // M239's constraint C2: a Builder asks for the nomination (T1).
 let asksNomination = false;
 try {
@@ -207,7 +225,12 @@ try {
   asksNomination = false;
 }
 const nominated = (value) => (asksNomination ? { ...value, nominate: true } : value);
-if (role === 'builder') {
+if (role === 'builder' && deployJourney) {
+  // M342's Builder: the library and the service (M4; SEAM.md §336).
+  write('src/sum.mjs', DEPLOY_SUM);
+  write('server.mjs', DEPLOY_SERVER);
+  finish(nominated({ status: 'completed', summary: 'rehearsal: wrote src/sum.mjs and server.mjs' }));
+} else if (role === 'builder') {
   const isFix = /\(fix\)/.test(prompt);
   if (isFix && existsSync(ws(sessionFile))) {
     write(sessionFile, readFileSync(ws(sessionFile), 'utf8').replace('SESSION_LIFETIME * 1000 * 1000', 'SESSION_LIFETIME * 1000'));
@@ -332,6 +355,140 @@ process.exit(failed === 0 ? 0 : 1);
   write('.surety/checks/run/smoke.mjs', smoke);
   write('.surety/checks/defs/smoke.json', `${JSON.stringify({ schema: 1, key: 'smoke', kind: 'smoke', command: ['node', '.surety/checks/run/smoke.mjs'], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], inputs: ['.surety/checks/run/smoke.mjs'] }, null, 2)}\n`);
   finish({ status: 'completed', summary: 'rehearsal: wrote the checks of R1.1, R2.1 and R3.1 and a smoke check', proposal: { rationale: 'rehearsal: the checks of R1.1, R2.1, R3.1 and a smoke check, as the approved spec states them', requested_change_kind: 'tightening' } });
+}
+
+// M342's project (M4; SEAM.md §336): what the rehearsal's Builder writes and
+// the programs of the checks its Verifier writes. String.raw keeps every
+// backslash as written; none of these texts holds a template substitution.
+const DEPLOY_SUM = 'export const sum = (a, b) => a + b;\n';
+const DEPLOY_SERVER = String.raw`// server.mjs (the rehearsal's Builder, M342): Node's own http, nothing from npm.
+import { createServer } from 'node:http';
+import { sum } from './src/sum.mjs';
+
+// REF_SECRET is required and never printed.
+if (typeof process.env.REF_SECRET !== 'string' || process.env.REF_SECRET === '') {
+  process.stderr.write('server: REF_SECRET is not set\n');
+  process.exit(1);
+}
+
+const send = (res, status, body) => {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+};
+
+createServer((req, res) => {
+  const url = new URL(req.url ?? '/', 'http://service');
+  if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true });
+  if (req.method === 'GET' && url.pathname === '/sum') {
+    const a = Number(url.searchParams.get('a'));
+    const b = Number(url.searchParams.get('b'));
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return send(res, 400, { error: 'a and b must be numbers' });
+    return send(res, 200, { sum: sum(a, b) });
+  }
+  return send(res, 404, { error: 'not found' });
+}).listen(Number(process.env.PORT), '127.0.0.1');
+`;
+const DEPLOY_SERVES = String.raw`// The rehearsal's check of R2 (M342): server.mjs started as a child on this
+// domain's own loopback, asked GET /health and GET /sum?a=2&b=3, then ended.
+import { spawn } from 'node:child_process';
+import { createServer, get } from 'node:http';
+
+const port = await new Promise((resolve) => {
+  const s = createServer();
+  s.listen(0, '127.0.0.1', () => {
+    const p = s.address().port;
+    s.close(() => resolve(p));
+  });
+});
+const child = spawn(process.execPath, ['server.mjs'], { env: { PATH: process.env.PATH ?? '/usr/bin:/bin', PORT: String(port), REF_SECRET: 'rehearsal-check-only' }, stdio: ['ignore', 'inherit', 'inherit'] });
+const ask = (path) =>
+  new Promise((resolve) => {
+    const req = get({ host: '127.0.0.1', port, path, timeout: 5000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (body += c));
+      res.on('end', () => resolve({ path, status: res.statusCode, body }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (err) => resolve({ path, status: null, error: err.code ?? err.message }));
+  });
+let health = { status: null };
+for (let i = 0; i < 50 && health.status === null; i++) {
+  health = await ask('/health');
+  if (health.status === null) await new Promise((r) => setTimeout(r, 100));
+}
+const sum = await ask('/sum?a=2&b=3');
+if (child.exitCode === null && child.signalCode === null) {
+  const ended = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  await ended;
+}
+console.log('serves: ' + JSON.stringify([health, sum]));
+let ok = false;
+try {
+  ok = health.status === 200 && sum.status === 200 && JSON.parse(sum.body).sum === 5;
+} catch {
+  ok = false;
+}
+process.exit(ok ? 0 : 1);
+`;
+const DEPLOY_OPERATION = String.raw`// The rehearsal's post_deploy_behavior check (M342): the user operation,
+// GET /sum?a=2&b=3 on the deployed service, through SURETY_TARGET_APP.
+import { get } from 'node:http';
+
+const base = process.env.SURETY_TARGET_APP;
+if (!base) {
+  console.log('operation: SURETY_TARGET_APP is not set');
+  process.exit(2);
+}
+const ask = (path) =>
+  new Promise((resolve) => {
+    const req = get(new URL(path, base), { timeout: 15000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (body += c));
+      res.on('end', () => resolve({ path, status: res.statusCode, body }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (err) => resolve({ path, status: null, error: err.code ?? err.message }));
+  });
+const health = await ask('/health');
+const sum = await ask('/sum?a=2&b=3');
+console.log('operation: ' + JSON.stringify([health, sum]));
+let ok = false;
+try {
+  ok = sum.status === 200 && JSON.parse(sum.body).sum === 5;
+} catch {
+  ok = false;
+}
+process.exit(ok ? 0 : 1);
+`;
+
+// M342's check_correction Verifier: the workspace checks and the
+// post_deploy_behavior check, as D3 Appendix B and D4 §5.1 give a definition.
+function writeDeployChecks(write) {
+  const expect = `// Rehearsal's check program (M342): import the candidate's module in a child and
+// compare what one expression of it prints; exit 1 on any difference or failure.
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [mod, expr, want] = process.argv.slice(2);
+const url = pathToFileURL(resolve(mod)).href;
+const code = 'const m = await import(' + JSON.stringify(url) + '); process.stdout.write(JSON.stringify(' + expr + ') + "\\\\n");';
+const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 20000 });
+const got = (child.stdout ?? '').trim();
+console.log('check: ' + expr + ' printed ' + got + ', want ' + want + '; child status ' + child.status + ', signal ' + child.signal);
+process.exit(child.status === 0 && child.signal === null && got === want ? 0 : 1);
+`;
+  write('.surety/checks/run/expect.mjs', expect);
+  write('.surety/checks/run/serves.mjs', DEPLOY_SERVES);
+  write('.surety/checks/post-deploy/operation.mjs', DEPLOY_OPERATION);
+  const def = (key, d) => write(`.surety/checks/defs/${key}.json`, `${JSON.stringify({ schema: 1, key, ...d }, null, 2)}\n`);
+  def('sum', { kind: 'acceptance', command: ['node', '.surety/checks/run/expect.mjs', 'src/sum.mjs', 'm.sum(2, 3)', '5'], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], covers: { criteria: ['R1.1'] }, inputs: ['.surety/checks/run/expect.mjs'] });
+  def('serves', { kind: 'acceptance', command: ['node', '.surety/checks/run/serves.mjs'], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], covers: { criteria: ['R2.1'] }, inputs: ['.surety/checks/run/serves.mjs'] });
+  def('smoke', { kind: 'smoke', command: ['node', '--check', 'server.mjs'], timeout_s: 60, gate_kinds: ['stage', 'alpha_authorize'], inputs: [] });
+  def('operation', { kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 60, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'], inputs: ['.surety/checks/post-deploy/operation.mjs'] });
+  finish({ status: 'completed', summary: 'rehearsal: wrote the checks of R1.1 and R2.1, a smoke check and the post_deploy_behavior check of the user operation', proposal: { rationale: 'rehearsal: the workspace checks of R1.1 and R2.1, a smoke check, and the post_deploy_behavior check of GET /sum, as the approved spec states them', requested_change_kind: 'tightening' } });
 }
 
 // One CONNECT to the rehearsal's provider name through the proxy (inside a

@@ -120,9 +120,10 @@ const notEstablished = (path, what, detail) => {
   throw new Error(`${path} not established: ${what}${detail === undefined ? '' : ` (${JSON.stringify(detail).slice(0, 900)})`}`);
 };
 
-const SELF_TEST = selfTestArgs();
+export const SELF_TEST = selfTestArgs();
 
 // ---- what an earlier attempt left (the slice-22 review, S1) -----------------------------
+// (M342's journey, harness/real/deploy-journey.mjs, reuses these: SEAM.md §336.)
 //
 // A path that ends "not established" leaves its project paused (each path's
 // `finally`), so a later engine on the same home dispatches nothing of it. A
@@ -167,7 +168,7 @@ export function leftovers(home, ids = null) {
   });
 }
 
-function refuseLeftovers(path, found, { evenIfPaused }) {
+export function refuseLeftovers(path, found, { evenIfPaused }) {
   const bad = found.filter((f) => f.live.length > 0 || (f.dispatchable.length > 0 && (evenIfPaused || !f.paused)));
   if (bad.length === 0) return;
   throw new Error(
@@ -224,7 +225,7 @@ function reviewRangeOf(home, project, repo, revision) {
 }
 
 // Pause the project before the engine stops, whatever happened (S1).
-async function pauseQuietly(fx, project) {
+export async function pauseQuietly(fx, project) {
   if (!project) return;
   await pauseProject(fx.engine, project).catch(() => null);
 }
@@ -256,7 +257,7 @@ const json = (text) => (text === null || text === undefined ? text : JSON.parse(
 
 // This start's runner self-test, read from the store: check_runner qualified
 // with every mandatory case passed and no fixture label, or not established.
-async function selfTested(fx, path) {
+export async function selfTested(fx, path) {
   const q = await tickWhile(
     fx,
     null,
@@ -282,13 +283,13 @@ function settledExecutions(home, candidate) {
   for (const x of all) latest.set(x.key, x);
   return [...latest.values()].every((x) => TERMINAL.has(x.status)) ? [...latest.values()] : undefined;
 }
-const waitSettled = (fx, project, candidate, what) => tickWhile(fx, project, () => settledExecutions(fx.home, candidate), { timeoutMs: 900_000, everyMs: 5_000, what });
+export const waitSettled = (fx, project, candidate, what) => tickWhile(fx, project, () => settledExecutions(fx.home, candidate), { timeoutMs: 900_000, everyMs: 5_000, what });
 
 const candidates = (home, project) => withStore(home, (db) => db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(project));
-const nthCandidate = (fx, project, n) => tickWhile(fx, project, () => candidates(fx.home, project)[n - 1], { timeoutMs: 300_000, everyMs: 5_000, what: `candidate ${n} of ${project}` });
+export const nthCandidate = (fx, project, n) => tickWhile(fx, project, () => candidates(fx.home, project)[n - 1], { timeoutMs: 300_000, everyMs: 5_000, what: `candidate ${n} of ${project}` });
 
 // What the engine recorded of each execution: the result, the domain, the qualification.
-function executionFacts(home, x) {
+export function executionFacts(home, x) {
   const r = x.result ? resultRow(home, x.result) : null;
   const d = domainOfExecution(home, x);
   return {
@@ -313,11 +314,11 @@ async function gatesOn(fx, project, candidate, stage) {
 }
 
 // A check of a version read (SEAM.md §178): its definition with A.4's defaults.
-const checkFacts = (c) => ({ key: c.key, required: c.required, kind: c.definition?.kind ?? null, origin: c.definition?.origin ?? null, criteria: c.definition?.covers?.criteria ?? [], gate_kinds: c.definition?.gate_kinds ?? [], command: c.definition?.command ?? null });
+export const checkFacts = (c) => ({ key: c.key, required: c.required, kind: c.definition?.kind ?? null, origin: c.definition?.origin ?? null, criteria: c.definition?.covers?.criteria ?? [], gate_kinds: c.definition?.gate_kinds ?? [], command: c.definition?.command ?? null });
 
-const summary = (e) => ({ id: e.id, outcome: e.outcome, reasons: e.reasons, check_states: e.check_states, checks: e.checks ?? null, missing_verifications: e.missing_verifications ?? null });
+export const summary = (e) => ({ id: e.id, outcome: e.outcome, reasons: e.reasons, check_states: e.check_states, checks: e.checks ?? null, missing_verifications: e.missing_verifications ?? null });
 
-const runSummary = (home, run) => ({ id: run.id, role: run.role, work_item: run.work_item, state: run.state, outcome: run.outcome, reason_class: run.reason_class, reason_text: run.reason_text, ledger: ledgerOriginal(home, run.id) });
+export const runSummary = (home, run) => ({ id: run.id, role: run.role, work_item: run.work_item, state: run.state, outcome: run.outcome, reason_class: run.reason_class, reason_text: run.reason_text, ledger: ledgerOriginal(home, run.id) });
 
 // ---- path one: the checks written by a real Verifier; a real Builder; the engine runs them ----
 
