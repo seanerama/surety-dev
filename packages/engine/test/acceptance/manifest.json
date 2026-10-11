@@ -328,6 +328,16 @@
       "M332-a-secret-cut-at-the-check-output-bounds.test.mjs",
       "M337-the-operator-relay.test.mjs",
       "M334-output-withheld-and-logs-redacted.test.mjs"
+    ],
+    "29": [
+      "M338-unqualified-and-lapsed-on-the-scripted-target.test.mjs",
+      "M338-qualify-adapter-by-command.test.mjs",
+      "M338-a-case-that-does-not-pass.test.mjs",
+      "M338-lapse-on-a-changed-host.test.mjs",
+      "M307-the-journey-qualified-by-command.test.mjs",
+      "M340-the-switchboard-mutant.test.mjs",
+      "M340-a-check-that-only-probes-health.test.mjs",
+      "M339-the-reference-projects-journey.test.mjs"
     ]
   },
   "sandbox": [
@@ -408,12 +418,20 @@
     "M332-secret-delivery-on-a-real-unit.test.mjs",
     "M332-a-secret-cut-at-the-check-output-bounds.test.mjs",
     "M337-the-operator-relay.test.mjs",
-    "M334-output-withheld-and-logs-redacted.test.mjs"
+    "M334-output-withheld-and-logs-redacted.test.mjs",
+    "M338-qualify-adapter-by-command.test.mjs",
+    "M338-a-case-that-does-not-pass.test.mjs",
+    "M338-lapse-on-a-changed-host.test.mjs",
+    "M307-the-journey-qualified-by-command.test.mjs",
+    "M340-the-switchboard-mutant.test.mjs",
+    "M340-a-check-that-only-probes-health.test.mjs",
+    "M339-the-reference-projects-journey.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
     "M130-exit-classes-limits.test.mjs",
-    "M205-an-oom-kill-on-the-exhaustion-host.test.mjs"
+    "M205-an-oom-kill-on-the-exhaustion-host.test.mjs",
+    "M341-a-service-at-its-limits.test.mjs"
   ],
   "real": [
     "M139-unauthenticated-canary.test.mjs",
