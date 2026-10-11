@@ -166,6 +166,22 @@ export function overlayPath(p: string): string {
   return p;
 }
 
+// The bound on one mount's option string: the legacy `mount(2)` carries its
+// options in one page, 4096 bytes with the terminator, and the domain init
+// makes util-linux use that call (`LIBMOUNT_FORCE_MOUNT2`, domain-init.ts
+// `mountEnvironment`), not the fd-based API whose single option is bounded
+// at 256 bytes (objection 056). A plan whose option string reaches the page
+// is refused before any domain starts, with the reason named, rather than
+// mounted and ended `interrupted`.
+export const MOUNT_OPTIONS_MAX = 4096;
+
+// Why an option string cannot be carried, or null.
+export function overlongMountOptions(options: string): string | null {
+  const bytes = Buffer.byteLength(options);
+  if (bytes < MOUNT_OPTIONS_MAX) return null;
+  return `its mount options are ${bytes} bytes, which with the terminator passes the ${MOUNT_OPTIONS_MAX}-byte page mount(2) carries them in`;
+}
+
 export class Builder {
   skeleton: Entry[] = [];
   fstab: string[] = [];

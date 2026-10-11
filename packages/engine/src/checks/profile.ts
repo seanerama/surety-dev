@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Builder, DEV_NODES, ETC_FILES, type Plan, SYSTEM_TREES, type Tools, WORKSPACE, esc, hostMountPoints, overlayPath, parents, systemRoot } from '../invoke/sandbox/mounts.js';
+import { Builder, DEV_NODES, ETC_FILES, type Plan, SYSTEM_TREES, type Tools, WORKSPACE, esc, hostMountPoints, overlayPath, overlongMountOptions, parents, systemRoot } from '../invoke/sandbox/mounts.js';
 import { INIT_SCRIPT } from '../invoke/sandboxed.js';
 import { seamCheckProfileVariant } from '../testing/seam.js';
 import type { ManifestEntry } from './schema.js';
@@ -104,7 +104,7 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
     }
     b.dir(target);
     if (existsSync(join(input.source, top))) {
-      b.line('surety-inputs', target, 'overlay', `lowerdir=${esc(overlayPath(projected))}:${esc(overlayPath(join(input.source, top)))},userxattr,ro,nosuid,nodev`);
+      b.line('surety-inputs', target, 'overlay', inputsOverlayOptions(projected, join(input.source, top)));
     } else b.bind(projected, { target, noTarget: true });
   }
   // The targets, made under the overlay before the root is pivoted to,
@@ -134,6 +134,41 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
     initScript: '/.init/init.js',
     workspaceMount: 'surety/workspace',
   };
+}
+
+// The options of one input top's read-only overlay: the manifest projection
+// over the candidate source's directory of the same name, no upper layer.
+export const inputsOverlayOptions = (projected: string, sourceTop: string): string => `lowerdir=${esc(overlayPath(projected))}:${esc(overlayPath(sourceTop))},userxattr,ro,nosuid,nodev`;
+
+// Why an input top's overlay cannot be mounted, or null: its option string,
+// the two projection paths joined, reaches the page the legacy `mount(2)`
+// carries options in (`MOUNT_OPTIONS_MAX`; objection 056). Checked from the
+// real paths the plan will name, before any domain starts, so the plan is
+// refused with the reason (`mount_plan_refused`) rather than mounted and
+// ended `interrupted`. `source` and `projection` are the real paths
+// `buildCheckPlan` is given.
+export function inputOverlayOverlong(source: string, projection: string, manifest: readonly ManifestEntry[]): string | null {
+  for (const top of inputTops(manifest)) {
+    const projected = join(projection, top);
+    let st;
+    try {
+      st = lstatSync(projected);
+    } catch {
+      continue;
+    }
+    if (st.isFile() || !existsSync(join(source, top))) continue;
+    let options: string;
+    try {
+      options = inputsOverlayOptions(projected, join(source, top));
+    } catch {
+      // A path an overlay's options cannot name: `inputMountConflict` and
+      // the plan's own build refuse it.
+      continue;
+    }
+    const overlong = overlongMountOptions(options);
+    if (overlong !== null) return `the top-level directory ${JSON.stringify(top)} holds a protected input beside the candidate's own, and the overlay presenting the input namespace there cannot be mounted: ${overlong}`;
+  }
+  return null;
 }
 
 // Why the input namespace cannot be mounted, or null: a top-level component

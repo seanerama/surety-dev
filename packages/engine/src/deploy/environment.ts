@@ -188,9 +188,18 @@ export function judgeCondition(args: {
   // (the slice-27 review, S2).
   const unreadTarget = r.targets.find((s) => s.active === 'unread' || (s.active === true && s.instance === 'unread'));
   if (unreadTarget) return { condition: 'unknown', detail: { code: 'state_unread', unit: unreadTarget.unit } };
-  if (args.identityUnread) return { condition: 'unknown', detail: { code: 'identity_unread' } };
-  if (args.appUnread === true) return { condition: 'unknown', detail: { code: 'state_unread' } };
+  // Whether an expected application runs is read above: each target's
+  // recorded instance read from /proc, `null` when it is positively gone.
   const running = r.targets.some((s) => s.active === true && isInstance(s.instance));
+  // An identity is a state of a running application. With one running, an
+  // identity read that could not be made leaves a required state unread
+  // (rule 1). With every expected application positively read as not
+  // running (its init still active after an OOM kill, M341 (a)), there is
+  // none whose identity could be read: the unread identity is not a required
+  // state, and the condition is what the status read established, `down`
+  // (rule 2) or `degraded` beside an unexpected active unit (rule 3).
+  if (running && args.identityUnread) return { condition: 'unknown', detail: { code: 'identity_unread' } };
+  if (args.appUnread === true) return { condition: 'unknown', detail: { code: 'state_unread' } };
   if (!running && !args.unexpectedActive) return { condition: 'down', detail: args.drift > 0 ? { code: 'out_of_band' } : null };
   if (args.unexpectedActive || args.drift > 0) return { condition: 'degraded', detail: { code: args.drift > 0 ? 'out_of_band' : 'unexpected_unit' } };
   const e = x ? entries.find((u) => u.kind === 'unit' && u.resource === x.unit) : undefined;

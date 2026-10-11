@@ -87,6 +87,25 @@ test("a teardown's read: an owned survivor it does not name is partial; a unit i
   assert.equal(judgeReconcile(read([]), teardown({ stop_units: [G1] })).outcome, 'applied');
 });
 
+// M341 (a) on mini-hp01: the application OOM-killed, its init still active,
+// the status read positively finding its recorded instance gone, and the
+// identity read of the same observation `unread` because there is no
+// application to read. The identity is a state of a running application:
+// unread beside a running one, rule 1 (`identity_unread`); beside none,
+// not a required state, and the condition is what the status read
+// established (rules 2 and 3), never `unknown`.
+test('an unread identity is a required state only while an expected application runs', () => {
+  const gone = { complete: true, inventory: [unit(G1)], targets: [target({ instance: null })] };
+  const j = (read, over = {}) => judgeCondition({ read, identityUnread: true, expected: expected(), supervision: 'attached', newestIdentity: { match: 'unread' }, unexpectedActive: false, drift: 0, ...over });
+  assert.deepEqual(j(gone), { condition: 'down', detail: null }, 'the unit active, its application positively gone, the identity unread: down (rule 2)');
+  assert.deepEqual(j(gone, { drift: 1 }), { condition: 'down', detail: { code: 'out_of_band' } }, 'the drift beside it');
+  assert.deepEqual(j({ ...gone, inventory: [unit(G1, { state: 'inactive' })], targets: [target({ active: false, instance: null })] }), { condition: 'down', detail: null }, 'the unit inactive too: down');
+  assert.deepEqual(j(gone, { unexpectedActive: true }), { condition: 'degraded', detail: { code: 'unexpected_unit' } }, 'an unexpected active unit beside it: degraded (rule 3)');
+  assert.deepEqual(j({ ...gone, targets: [target()] }), { condition: 'unknown', detail: { code: 'identity_unread' } }, 'the control: the application running and its identity unread is a required state unread (rule 1)');
+  assert.deepEqual(j({ ...gone, targets: [target({ instance: 'unread' })] }), { condition: 'unknown', detail: { code: 'state_unread', unit: G1 } }, 'whether it runs unread: unknown, never down');
+  assert.deepEqual(j(gone, { appUnread: true }), { condition: 'unknown', detail: { code: 'state_unread' } }, "another owned active unit's application unread: unknown, never down");
+});
+
 // The slice-27 review, S2: a target read active whose application was not
 // read is unread, whatever is expected.
 test('an active target whose application was not read is unknown, expected or not', () => {
