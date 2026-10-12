@@ -356,7 +356,8 @@
       "M406-phase-completions-effects-once-per-binding.test.mjs",
       "M407-alpha-under-policy-enters-at-the-request.test.mjs",
       "M401-the-t1-variant-on-the-scripted-backend.test.mjs",
-      "M401-the-journey-from-an-idea-to-alpha.test.mjs"
+      "M401-the-journey-from-an-idea-to-phase-two.test.mjs",
+      "M401-the-journey-from-phase-two-to-alpha.test.mjs"
     ]
   },
   "sandbox": [
@@ -449,7 +450,8 @@
     "M339-the-reference-projects-journey.test.mjs",
     "M342-the-verifiers-deployment-check-package.test.mjs",
     "M314-the-service-link-under-a-long-home.test.mjs",
-    "M401-the-journey-from-an-idea-to-alpha.test.mjs"
+    "M401-the-journey-from-an-idea-to-phase-two.test.mjs",
+    "M401-the-journey-from-phase-two-to-alpha.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
