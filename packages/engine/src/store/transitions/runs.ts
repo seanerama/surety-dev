@@ -4,6 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import { requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
@@ -1065,7 +1066,7 @@ const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'ass
 // A limit was reached, or a person must act: the item parks with a visible
 // blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;
 // SEAM.md §§15, 30).
-function parkWork(
+export function parkWork(
   tx: Tx,
   item: WorkRow,
   reason: string,
@@ -1078,6 +1079,9 @@ function parkWork(
   const blocker = JSON.stringify({ reason, raised_at: tx.at, decision: null, ...(worktree ? { worktree } : {}) });
   transitionWork(tx, item, 'parked', { blocker, ...extra }, { ...cause, reason });
   raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
+  // A spec change whose Spec Writer could not propose fails visibly (D6
+  // §4.2): the request names why (the coordinator's ruling on the 31b review).
+  if (item.kind === 'spec_change') requestFailed(tx, { workItem: item.id, reason });
 }
 
 // ---- reads for the run-end protocol and recovery -----------------------------------

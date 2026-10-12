@@ -176,6 +176,7 @@ export const EVENT_OWNERS = {
   'spec.change_requested': 'spec/change.ts',
   'spec.change_proposed': 'spec/change.ts',
   'spec.change_approved': 'spec/change.ts',
+  'spec.change_failed': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
 } as const;
 

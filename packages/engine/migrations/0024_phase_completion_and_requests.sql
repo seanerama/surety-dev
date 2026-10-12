@@ -51,6 +51,11 @@ CREATE TABLE spec_change_requests (
   impact TEXT REFERENCES records(id),
   impact_value TEXT,
   approved_revision TEXT REFERENCES spec_revisions(id),
+  -- Why the request failed (its work parked after its repairs).
+  failure TEXT,
+  -- Why the last approval could not be applied (D1 §10.5), shown to the
+  -- owner with the question raised again.
+  last_refusal TEXT,
   UNIQUE (project, seq)
 );
 

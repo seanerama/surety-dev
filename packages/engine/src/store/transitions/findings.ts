@@ -10,7 +10,7 @@ import { type CandidateRow, contentHash, getCandidate, markStale } from './evide
 import { type FindingRow, findingApplies } from './gates.js';
 import { reviewerApprove } from './classification.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
-import { getRun } from './runs.js';
+import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
@@ -175,6 +175,10 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       tx.emit('signoff.recorded', { project, candidate: candidate.id, signoff: id, run: run.id }, { scope: 'phase', module: null, binding });
       void s;
     }
+    // No phase sign-off: the work parks behind a blocker the owner sees (the
+    // coordinator's ruling on the 31b review), never re-asked by the engine.
+    const signed = plan !== undefined && (report.signoffs ?? []).some((x) => x.scope === 'phase');
+    if (!signed && item.status === 'executing') parkWork(tx, item, 'phase_signoff_missing', { run: run.id });
   }
 
   if (role === 'reviewer' && candidate) {

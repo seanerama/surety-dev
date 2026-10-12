@@ -300,6 +300,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
 
 export const PARK_TEXT: Record<string, string> = {
   repair_attempts_max: 'every permitted repair attempt failed',
+  phase_signoff_missing: "its Verifier's run reported no phase sign-off, so the phase cannot complete; retry to ask again",
   preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
   deadline: 'its run passed its deadline',
   no_progress_max: 'its repairs left the same rejected result as often as policy allows',

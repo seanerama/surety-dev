@@ -828,6 +828,7 @@
       "spec.change_requested",
       "spec.change_proposed",
       "spec.change_approved",
+      "spec.change_failed",
       "deploy.requested_by_policy"
     ],
     "EngineMode": [
@@ -4567,6 +4568,12 @@
         "approved_revision": {
           "required": false,
           "references": "spec_revisions"
+        },
+        "failure": {
+          "required": false
+        },
+        "last_refusal": {
+          "required": false
         }
       }
     },
@@ -6427,6 +6434,9 @@
       "owner": "spec/change.ts"
     },
     "spec.change_approved": {
+      "owner": "spec/change.ts"
+    },
+    "spec.change_failed": {
       "owner": "spec/change.ts"
     },
     "deploy.requested_by_policy": {

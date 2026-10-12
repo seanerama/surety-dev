@@ -26,36 +26,65 @@ const mustProject = (db: Database, project: string) => {
 export function specView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
   // A requirement's delivery status (D6-D02; SEAM.md §354; the 31b
-  // review's S9): `verified` only while a completed phase's stage delivered
-  // it and nothing since has taken that away: no specification change
-  // approved after that completion changed it, and no obligation on a check
-  // of its criteria is open. Otherwise `pending` (neither failed nor
-  // passed); `withdrawn` when withdrawn.
+  // review's S9 and the ruling on it): `verified` only while a completed
+  // phase's stage delivered it and nothing since has taken that away: no
+  // specification change approved after that completion changed it, and no
+  // obligation on a check of its criteria is open. `pending` only when it is
+  // known to be pending; `{unknown: reason}` when a record it rests on
+  // cannot be read; `withdrawn` when withdrawn.
+  const strict = <T>(text: unknown): T | undefined => {
+    if (typeof text !== 'string') return undefined;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return undefined;
+    }
+  };
+  let stagesUnread = false;
   const deliveredAt = new Map<string, string>();
   for (const s of db
     .prepare(`SELECT s."implements", p."completed_at" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."active" = 1 AND p."completed_at" IS NOT NULL AND s."cancelled_at" IS NULL`)
     .all(args.project) as { implements: string | null; completed_at: string }[]) {
-    for (const r of json<string[]>(s.implements, [])) if (!deliveredAt.has(r) || deliveredAt.get(r)! < s.completed_at) deliveredAt.set(r, s.completed_at);
+    const list = strict<unknown>(s.implements);
+    if (!Array.isArray(list)) {
+      stagesUnread = true;
+      continue;
+    }
+    for (const r of list as string[]) if (!deliveredAt.has(r) || deliveredAt.get(r)! < s.completed_at) deliveredAt.set(r, s.completed_at);
   }
   // Changed since: the keys an approved change's impact names, by when.
+  let changesUnread = false;
   const changedAt = new Map<string, string>();
   for (const c of db
     .prepare(`SELECT c."impact_value", r."approved_at" FROM "spec_change_requests" c JOIN "spec_revisions" r ON r."id" = c."approved_revision" WHERE c."project" = ? AND c."status" = 'approved'`)
     .all(args.project) as { impact_value: string | null; approved_at: string }[]) {
-    for (const q of json<{ requirements?: { key: string }[] }>(c.impact_value, {}).requirements ?? []) if (!changedAt.has(q.key) || changedAt.get(q.key)! < c.approved_at) changedAt.set(q.key, c.approved_at);
+    const impact = strict<{ requirements?: { key: string }[] }>(c.impact_value);
+    if (!impact || !Array.isArray(impact.requirements)) {
+      changesUnread = true;
+      continue;
+    }
+    for (const q of impact.requirements) if (!changedAt.has(q.key) || changedAt.get(q.key)! < c.approved_at) changedAt.set(q.key, c.approved_at);
   }
-  const owedCriteria = new Set(
-    (db.prepare(`SELECT "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { criteria: string }[]).flatMap((o) => json<string[]>(o.criteria, [])),
-  );
+  let obligationsUnread = false;
+  const owedCriteria = new Set<string>();
+  for (const o of db.prepare(`SELECT "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { criteria: string }[]) {
+    const list = strict<unknown>(o.criteria);
+    if (!Array.isArray(list)) obligationsUnread = true;
+    else for (const c of list as string[]) owedCriteria.add(c);
+  }
   const ids = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
-  const statusOf = (r: Record<string, unknown>): string => {
+  const statusOf = (r: Record<string, unknown>): string | { unknown: string } => {
     if (r.withdrawn_at !== null) return 'withdrawn';
     const key = r.key as string;
     const at = deliveredAt.get(ids.get(key) ?? '') ?? deliveredAt.get(key);
-    if (at === undefined) return 'pending';
+    if (at === undefined) return stagesUnread ? { unknown: "a completed phase's stage could not be read, so whether it delivered this requirement is not known" } : 'pending';
     const changed = changedAt.get(key);
     if (changed !== undefined && changed >= at) return 'pending';
-    if (json<string[]>(r.criteria, []).some((c) => owedCriteria.has(c))) return 'pending';
+    const criteria = r.criteria === null ? [] : strict<unknown>(r.criteria);
+    if (!Array.isArray(criteria)) return { unknown: "the requirement's criteria could not be read" };
+    if ((criteria as string[]).some((c) => owedCriteria.has(c))) return 'pending';
+    if (changesUnread) return { unknown: "an approved specification change's impact could not be read, so whether it changed this requirement is not known" };
+    if (obligationsUnread) return { unknown: "an open obligation's criteria could not be read" };
     return 'verified';
   };
   const versions = db.prepare('SELECT "version", "git_blob", "semantic_digest", "approved_by", "approved_at" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version"').all(args.project);

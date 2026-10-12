@@ -58,6 +58,19 @@ export interface RequestRow {
   impact: string | null;
   impact_value: string | null;
   approved_revision: string | null;
+  failure: string | null;
+  last_refusal: string | null;
+}
+
+// The request's work parked after its repairs (store/transitions/runs.ts
+// parkWork): the request `failed`, with the park's reason and its last run's.
+export function requestFailed(tx: Tx, args: { workItem: string; reason: string }): void {
+  const r = tx.db.prepare(`SELECT * FROM "spec_change_requests" WHERE "work_item" = ? AND "status" = 'requested'`).get(args.workItem) as RequestRow | undefined;
+  if (!r) return;
+  const last = tx.db.prepare('SELECT "reason_text" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(args.workItem) as { reason_text: string | null } | undefined;
+  const failure = last?.reason_text ? `${args.reason}: ${last.reason_text}` : args.reason;
+  tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ?`).run(failure, r.id);
+  tx.emit('spec.change_failed', { project: r.project, spec_change_request: r.id }, { work_item: args.workItem, reason: args.reason, failure });
 }
 
 export const getRequest = (db: Db, id: string): RequestRow | undefined => db.prepare('SELECT * FROM "spec_change_requests" WHERE "id" = ?').get(id) as RequestRow | undefined;
@@ -337,6 +350,20 @@ export function currentImpact(db: Db, r: RequestRow): Impact | null {
 
 // ---- the decision (D6 §4.5; floor) ---------------------------------------------------------
 
+// Why an approval could not be applied, as the question raised again says it.
+const REFUSAL_TEXT: Record<string, string> = {
+  proposal: 'the proposal could not be read',
+  integration_revision_unread: 'the integration branch could not be read',
+  merge_base_unread: "the proposal's base could not be read",
+  spec_files_unread: 'the specification files could not be read',
+  spec_files_moved: "the specification files changed on the integration branch since the proposal's base, so its rebase would not be the approved specification",
+  rebase_unread: 'the rebase onto the integration branch could not be read',
+  rebase_conflict: 'the proposal does not rebase onto the integration branch',
+  commit_unprepared: 'the commit could not be prepared',
+  spec_semantics_invalid: 'the proposed specification has a finding that blocks its approval',
+  impact: 'its impact could not be computed',
+};
+
 export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'];
 
 function changeManifest(db: Db, id: string): Record<string, unknown> {
@@ -372,7 +399,7 @@ export function specChangeKind(): KindSpec {
       const listed = impact.checks.obligations.map((c) => c.key);
       return {
         manifest,
-        question: `Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.`,
+        question: `${r.last_refusal ? `The last approval of specification change ${r.seq} could not be applied (${REFUSAL_TEXT[r.last_refusal.split(':')[0]!] ?? r.last_refusal}). ` : ''}Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.`,
         options: [
           {
             key: 'approve',
@@ -466,6 +493,11 @@ export interface AppliedInputs {
 export function refuseApplication(tx: Tx, args: { intent: string; reason: string }): boolean {
   const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
   if (!row || row.status !== 'pending') return false;
+  // The reason goes with the question raised again (the coordinator's ruling
+  // on the 31b review): recorded before the invalidation raises it.
+  const plan = tx.db.prepare('SELECT "plan" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { plan: string };
+  const request = parseJson<{ request?: string }>(plan.plan)?.request;
+  if (request) tx.db.prepare('UPDATE "spec_change_requests" SET "last_refusal" = ? WHERE "id" = ?').run(args.reason, request);
   invalidateIntent(tx, args.intent, [args.reason]);
   return true;
 }
