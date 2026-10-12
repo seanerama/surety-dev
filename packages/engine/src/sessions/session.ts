@@ -179,12 +179,13 @@ export function openSession(tx: Tx, args: { project: string; role: unknown; mode
     });
   }
   const role = args.role as SessionRole;
-  // The Architect works from an approved specification (D6 §3.3, §3.5).
+  // The backend first (D6 §2.6), then the Architect's approved
+  // specification (D6 §3.3, §3.5).
+  const resolved = sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
+  if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   if (role === 'architect' && !tx.db.prepare('SELECT 1 FROM "spec_revisions" WHERE "project" = ?').get(p.id)) {
     throw illegal('an Architect session on a project with no approved specification', { project: p.id, role });
   }
-  const resolved = sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
-  if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   const repo = projectRepoRow(tx, p.id);
   const head = registryRow(tx, p.id, integrationRef(repo.integration_branch));
   if (!head) throw illegal('a session on a project whose integration branch is not registered', { project: p.id });

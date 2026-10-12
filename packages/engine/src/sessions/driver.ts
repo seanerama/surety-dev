@@ -23,6 +23,7 @@ import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE } from '../plan/schemas.js';
 import { writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
+import { pausePoint } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
@@ -243,6 +244,7 @@ export class SessionDriver {
   async close(project: string, run: string, opts: { refuse: boolean; expectedGeneration?: number | null }): Promise<Record<string, unknown>> {
     const answer = await this.save(project, run, { expectedGeneration: opts.expectedGeneration ?? null });
     const saved = answer.saved ? { revision: answer.revision } : null;
+    await pausePoint('session.close_saved');
     // The close holds the generation its own save left (B01): a turn
     // admitted since wins it, and the close is refused
     // `session_generation_stale` rather than losing that turn.
