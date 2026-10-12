@@ -54,6 +54,10 @@ export async function sandboxEngine(t, { config = {}, barriers = [], until = 'fu
   // A start outside harness mode (`harness: false`; M336 (c), slice 28) takes
   // no harness flag: the host checks run there by default.
   fx.start = (opts = {}) => plainStart(opts.harness === false ? opts : { ...opts, args: [...HOST_CHECKS_RUN, ...(opts.args ?? [])] });
+  // M5 slice 31b (SEAM.md §357): a kernel-lane start of this same home (no
+  // host checks, the scripted adapter and check boundary), for a seed that a
+  // later sandbox-lane start carries on from.
+  fx.startKernel = (opts = {}) => plainStart(opts);
   if (start) await fx.start({ barriers, until });
   return fx;
 }
