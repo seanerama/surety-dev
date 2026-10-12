@@ -828,6 +828,9 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   const { evaluation } = evaluate(tx, { ...args.facts, project: args.project, candidate: candidate.id, kind: 'alpha_authorize', authorization: auth.id });
   const now = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(auth.id) as AuthRow;
   if (now.status !== 'issued') {
+    // The refused request keeps its evaluation on the proposed row (A.3:
+    // the outcome and its reasons retained, SEAM.md §354).
+    tx.db.prepare(`UPDATE "deployment_authorizations" SET "evaluation" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(evaluation.id, auth.id);
     record(auth.id, 'not_issued');
     return {
       status: 409,

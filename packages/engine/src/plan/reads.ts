@@ -35,6 +35,8 @@ export function specView(db: Database, args: { project: string }) {
         .all(args.project) as { implements: string | null }[]
     ).flatMap((s) => json<string[]>(s.implements, [])),
   );
+  // A stage names its requirements by id (SEAM.md §70).
+  const ids = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
   const versions = db.prepare('SELECT "version", "git_blob", "semantic_digest", "approved_by", "approved_at" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version"').all(args.project);
   const requirements = (
     db
@@ -47,7 +49,7 @@ export function specView(db: Database, args: { project: string }) {
     criteria: r.criteria_text !== null ? json<{ id: string; text: string }[]>(r.criteria_text, []) : json<string[]>(r.criteria, []).map((id) => ({ id, text: null })),
     sensitive_areas: json<string[]>(r.sensitive_areas, []),
     assigned_phase: r.assigned_phase,
-    status: r.withdrawn_at !== null ? 'withdrawn' : delivered.has(r.key as string) ? 'verified' : 'pending',
+    status: r.withdrawn_at !== null ? 'withdrawn' : delivered.has(ids.get(r.key as string) ?? '') || delivered.has(r.key as string) ? 'verified' : 'pending',
     human_test: r.human_test === 1,
     withdrawn: r.withdrawn_at !== null,
   }));
