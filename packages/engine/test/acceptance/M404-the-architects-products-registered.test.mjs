@@ -41,7 +41,8 @@ import {
   visionSession,
   workOf,
 } from './harness/journey/drive.mjs';
-import { ADR_001, ADR_001_REVISED, ADR_KEY, BAD_ARCHITECTURE, MODULES_JSON, MODULES_JSON_SERVICE_SECRETS, REQUIREMENTS, SPEC_SERVICE_SECRETS, adrText, specText } from './harness/journey/reference.mjs';
+import { ADR_001, ADR_001_REVISED, ADR_KEY, BAD_ARCHITECTURE, MODULES_JSON, MODULES_JSON_SERVICE_SECRETS, REQUIREMENTS, SPEC_SERVICE_SECRETS, adrText, phasePlan, specText } from './harness/journey/reference.mjs';
+import { refOid } from './harness/repos.mjs';
 import { addWork, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { closeSession, openSession, packageOf, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from './harness/sessions.mjs';
@@ -99,7 +100,9 @@ describe('M404 the Architect\'s products registered; packages read approved bind
     assert.deepEqual(modulesOf(fx.home, p.id).find((m) => m.name === 'service')?.sensitive_areas, ['secrets_credentials'], 'the fixture is live: TPL §6 gives service an area');
     const dropped = await refusedProducts(fx, p, BAD_ARCHITECTURE.area_dropped.files);
     assert.ok(names(dropped.saved.findings, 'architecture_area_dropped', 'secrets_credentials'), `the save names the dropped area (${JSON.stringify(dropped.saved.findings)})`);
-    const moved = await architectSession(fx, p.id, p.repo, { over: BAD_ARCHITECTURE.area_moved.files });
+    // The moved map with a plan that validates the area on lib's stage (objection 059).
+    const head = refOid(p.repo.path, p.repo.ref);
+    const moved = await architectSession(fx, p.id, p.repo, { over: BAD_ARCHITECTURE.area_moved.files, plan: phasePlan(1, { revision: head, stages: BAD_ARCHITECTURE.area_moved.stages }) });
     assert.ok(moved.published, 'the move is accepted and published');
     assert.deepEqual(modulesOf(fx.home, p.id).find((m) => m.name === 'lib')?.sensitive_areas, ['secrets_credentials'], 'the area now sits on lib');
     assert.equal(modulesOf(fx.home, p.id).some((m) => m.name === 'service' && m.sensitive_areas.includes('secrets_credentials')), false);
