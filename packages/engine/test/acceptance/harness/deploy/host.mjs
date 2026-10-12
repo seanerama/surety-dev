@@ -46,6 +46,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy, eventsOfType } from '../journal.mjs';
+import { TEARDOWN_LOG } from '../teardown.mjs';
 import { refOid } from '../repos.mjs';
 import {
   GOVERNED_FILE,
@@ -350,6 +351,12 @@ export function operatorGuard() {
       if (now === null) problems.push('after the file the user units could not be listed: whether a unit was left is unknown');
       for (const home of homes) {
         const prefix = `surety-${homeHash(home)}-env_`;
+        // What the fixture's fail-closed teardown found of this home and ended (or could
+        // not), before this guard ran: still the file's leftovers (SEAM.md §367).
+        for (const e of TEARDOWN_LOG.filter((x) => x.home === home && (x.unit || x.engine))) {
+          problems.push(`${e.unit ? `unit ${e.unit}` : `engine pid ${e.engine}`} left by the test; the teardown: ${e.action} (${e.why})`);
+          if (e.unit && e.action === 'stopped') stopped.push(e.unit);
+        }
         const left = (now ?? []).filter((u) => u.unit.startsWith(prefix));
         for (const u of left) {
           problems.push(`unit left: ${u.unit} (${u.load} ${u.active} ${u.sub})`);
