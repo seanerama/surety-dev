@@ -56,7 +56,7 @@ const CASES = ['plain', 'reused', 'runner', 'environment', 'unassessed', 'record
 
 async function reuseHistory(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const alpha1 = await alphaTarget(fx, ctx);
   const elsewhere = await addEnvironment(fx.engine, project, { name: 'elsewhere', targets: ['other-1'] });
@@ -140,7 +140,7 @@ describe('M41 a result of an earlier candidate counts only under a typed, assess
 describe('M41 a result is not reused across a change of the protected checks', () => {
   test('a pass recorded for an earlier candidate under the version before an approved tightening landed, offered to a later candidate nominated under the new version by an assessed reuse entry, does not pass: the check is stale, and only a new execution under the new version satisfies it', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx, { files: PROTECTED_FILES });
+    const ctx = await nominated(fx, { files: PROTECTED_FILES, autonomy: 'step' });
     const project = ctx.project.id;
     const c1 = ctx.candidate;
     const first = effectiveVersion(fx.home, project);

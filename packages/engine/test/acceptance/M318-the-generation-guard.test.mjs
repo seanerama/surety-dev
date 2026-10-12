@@ -51,7 +51,7 @@ import {
 describe('M318 (a), (b) an older operation\'s round arriving after a newer generation', () => {
   test('operation 1\'s operator round waits for the lease while operation 2 takes generation 2; recorded after it with generation_superseded, it writes neither last_verified nor attempted, and a late completion evaluation of operation 1 is refused DEPLOY_GENERATION_SUPERSEDED', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     // Operation 1: generation 1, its first round failed (so the candidate stays developing and the lease is released).
     const { operation: op1, execution: x11 } = await deployToRound(ctx);
     const [r11] = roundsOf(fx.home, op1.id);
@@ -111,7 +111,7 @@ describe('M318 (a), (b) an older operation\'s round arriving after a newer gener
 describe('M318 (c) a candidate superseded after its attempt\'s effect', () => {
   test('the round\'s check running when a successor is nominated: verified as the environment\'s fact (last_verified names the superseded candidate), alpha_complete refused CANDIDATE_SUPERSEDED, the candidate developing, the successor not deployed', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation, execution } = await deployToRound(ctx);
     const [round] = roundsOf(fx.home, operation.id);
     await stepExecution(fx.engine, execution.id, 'materializing');

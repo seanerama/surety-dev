@@ -32,7 +32,7 @@ import { describe, test } from 'node:test';
 import { openDecision } from './harness/decisions.mjs';
 import { changePolicy, workItemsOf } from './harness/journal.mjs';
 import { check, installChecks, nominated, postResult, raiseFindings, review, stageGate, successor } from './harness/gates.mjs';
-import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
+import { permittedEdit, pinStep, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { gitQuiet } from './harness/repos.mjs';
 import { pauseProject, resumeProject, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
@@ -72,7 +72,7 @@ const runEnded = (fx, project, item, n) =>
 // `.surety/policy.json` is already in candidate 1 (objection 031).
 async function builtStage(t, { config, second = REPAIR_WRITE, first, policy } = {}) {
   const fx = await scriptedEngine(t, config === undefined ? {} : { config });
-  const p = await repairProject(fx);
+  const p = await pinStep(fx, await repairProject(fx));
   if (policy !== undefined) await changePolicy(fx.engine, p.id, policy);
   const scripts = [first ?? roleThat([permittedEdit()], { nominate: true }), second];
   const b = await buildAndNominate(fx, p, { scripts });
@@ -233,7 +233,7 @@ describe('M234 the repair loop', () => {
 
   test("(f) skipped, missing, stale, and a superseded candidate's failure consume no repair", async (t) => {
     const fx = await scriptedEngine(t, { config: { check_infra_retries_max: 0 } });
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const item = ctx.items[0];
     const c1 = ctx.candidate;

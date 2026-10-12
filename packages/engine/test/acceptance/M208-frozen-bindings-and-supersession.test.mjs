@@ -37,6 +37,7 @@ import {
   stageGate,
   successor,
 } from './harness/gates.mjs';
+import { pinStep } from './harness/gitruns.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
@@ -73,7 +74,7 @@ async function assertRecordedFrozen(fx, project, x, candidate, version, what) {
 describe('M208 frozen bindings and supersession', () => {
   test('(b), (c), (a) the protected version superseded: the queued execution is cancelled with no row; the running one is recorded under its frozen bindings and decides nothing at the new version', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await discoveredProject(fx, KEYS);
+    const p = await pinStep(fx, await discoveredProject(fx, KEYS));
     const c = await nominateStage(fx, p, KEYS);
     const v1 = effectiveVersion(fx.home, p.id).id;
     const [a, b] = KEYS.map((key) => executionsOf(fx.home, c.id).find((x) => x.key === key));
@@ -95,7 +96,7 @@ describe('M208 frozen bindings and supersession', () => {
 
   test('(b), (c) the candidate superseded: the queued execution is cancelled with no row; the running one is recorded under its frozen bindings; the candidate names its successor', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await discoveredProject(fx, KEYS);
+    const p = await pinStep(fx, await discoveredProject(fx, KEYS));
     const c1 = await nominateStage(fx, p, KEYS);
     const v1 = effectiveVersion(fx.home, p.id).id;
     const [a, b] = KEYS.map((key) => executionsOf(fx.home, c1.id).find((x) => x.key === key));
@@ -112,7 +113,7 @@ describe('M208 frozen bindings and supersession', () => {
 
   test("(d) only the candidate superseded, with old-source bindings and an assessed reuse: its evaluation is refused, naming its successor; it issues nothing, completes nothing and resolves no finding", async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const c0 = ctx.candidate;
     const c1 = await successor(fx, ctx);
