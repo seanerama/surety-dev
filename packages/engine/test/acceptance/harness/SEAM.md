@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 374 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -6092,6 +6092,13 @@ Sections 350 to 374 were written with the slice-31b acceptance tests (2026-10-12
 | S7 | `M401-a-spec-change-that-no-longer-rebases` | an approved change whose side revision no longer rebases (a Spec Writer session's checkpoint rewrote the same lines while the effect was held at `intent.recorded`): the intent `invalidated`, never begun, the next generation of `spec_change` open for the owner, nothing looping |
 | S8 | `M401-a-spec-change-application-is-done-once` | after CR-1 is applied, its `spec_change_application` intent is `done`, `intent.done` once, `intent.executing` once after further ticks |
 | S9 | `M407-the-spec-read-after-a-criterion-changes` | after phase 1 completes, a change rewording R1.1, its correction not landed: `GET …/spec` reports R1 `pending` or `{unknown}`, never `verified` |
+
+## 375. CR-1's correction names every check it lists (objection 070); the project lane's waits bounded by time (objection 071)
+
+(The driver's relay of 2026-10-12, both objections upheld as fixture faults; D6 §§4.4, 4.5, B05; the 31b review's S2; Sean's ruling of §370; D2 §2.3; D6 §6.4.)
+
+- **070.** CR-1 keeps R4's sharpened statement (`text_changed`), so (h) still has replan work and D6 §4.4 lists R4.1's checks (`accept-r4`, `integration-stats`, `phase-regression`) beside `accept-r2`. The scripted correction (`correctionScript`) is one `check_correction` proposal that rewrites a declared input of each listed check: `service.test.mjs` as before (`CORRECTED_SERVICE_TEST`), and `stats.test.mjs`, `integration-stats.test.mjs` and `phase-regression.test.mjs` (`CORRECTED_R4_TESTS`), each now asking for a refused `/sum` among the sums and a `/stats` count of the successful ones alone, which is the sharpened statement. It stays one unclassifiable proposal and one human act (§370). `phase-regression` already sent one refusal; its correction adds a second and names the statement in its title, so its input changes for a reason of the change, not for the sake of a byte. Definitions and `covers` are unchanged, so each check still covers R4.1. M401 (h) also reads an obligation for R4.1. The 31b review's S2 case keeps the narrow correction (`serviceCorrectionScript`, `accept-r2` alone), which is what it is about.
+- **071.** On the project lane `pump` is bounded by time, not by ticks: a wait fails after `projectMs` (`PROJECT_WAIT_MS`, 1,200 s by default), or as soon as the store's `events` have not grown for `PROJECT_STALL_MS` (180 s), so a stuck engine fails rather than hangs. `max` still bounds the kernel lane, including part 2's seed. The basis is the Builder's measurement on the workstation: about 9 s a check execution (about 8.5 s of host qualification before the domain), and one domain at a time. **The estimate of §357 is superseded**: at about 10 s a check execution or a role launch, part 1 (about 16 executions, about 16 one-shot runs, five session turns, two self-tested starts) is some 6 to 8 minutes, and part 2 (the seed, then about 30 executions and about 13 one-shots and the deploy) some 8 to 11 minutes. Both are above the runner's default 600 s per file. Whether to raise `SURETY_TEST_TIMEOUT_MS` for these two files or to split them further is the driver's (§357's rule).
 
 ## What was run
 

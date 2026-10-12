@@ -103,6 +103,8 @@ export async function toPhaseTwoPublished(fx, { lane }) {
   for (const kind of ['architecture_approval', 'plan_approval']) await consume(fx, p.id, decision(fx.home, arch.decisions[kind].id), 'approve');
   J.plan = await waitPublished(fx, p.id);
   // 5 to 8: phase 1 under `phase`, the toolchain proposal the one routed act.
+  // `max` bounds the kernel-lane seed's ticks; on the project lane the pump is
+  // bounded by time and by the engine's events (objection 071; SEAM §375).
   J.authoring = { ready: await authoringReady(fx, ctx, 1, { max: 60 }) };
   J.phase1 = await phaseCompleted(fx, ctx, 1, { max: 240 });
   J.afterPhase1 = { candidates: candidatesOfProject(fx.home, p.id), requests: deploymentRequests(fx.home, p.id) };

@@ -233,7 +233,7 @@ import { executionRow, executionsOf } from '../checks/fixtures.mjs';
 import { configContent, configure, qualifyByFixture, scriptCall } from '../deploy/kernel.mjs';
 import { roleThat } from '../gitruns.mjs';
 import { script, step } from '../scripted.mjs';
-import { BUILDER_FILES, CHANGE_REQUEST, CORRECTED_SERVICE_TEST, SPEC_V2, STAGES, authoringFiles, phasePlanMd } from './reference.mjs';
+import { BUILDER_FILES, CHANGE_REQUEST, CORRECTED_R4_TESTS, CORRECTED_SERVICE_TEST, SPEC_V2, STAGES, authoringFiles, phasePlanMd } from './reference.mjs';
 
 export const JOURNEY_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete' });
 // The decisions D6 §1 routes to the owner within the journey; the harness
@@ -255,7 +255,16 @@ export const replanScript = ({ spec_version = 1, architecture_version = 1, roadm
 export const authoringScript = (phase) => roleThat(writes(authoringFiles(phase)), { proposal: { rationale: `The Verifier authors phase ${phase}'s checks before any stage builds.`, requested_change_kind: phase === 1 ? 'unclassifiable' : 'tightening' } });
 export const builderScript = (stage, extra = {}) => roleThat(writes(BUILDER_FILES[stage]), extra);
 export const specChangeScript = () => roleThat(writes({ '.surety/spec/spec.md': SPEC_V2 }), { changes: [{ key: 'R2', kind: 'criteria_changed', reason: 'CR-1: R2.1 names the content type' }, { key: 'R4', kind: 'text_changed', reason: 'CR-1: only successful sums are counted' }] });
-export const correctionScript = () => roleThat(writes({ '.surety/checks/tests/service.test.mjs': CORRECTED_SERVICE_TEST }), { proposal: { rationale: 'CR-1 changed R2.1\'s text; the check now reads the content type.', requested_change_kind: 'tightening' } });
+// CR-1's correction (objection 070): one proposal touching a declared input
+// of every check the change lists (accept-r2 for R2.1; accept-r4,
+// integration-stats and phase-regression for the sharpened R4), so it names
+// them all; unclassifiable, one human act (SEAM §370).
+export const correctionScript = () =>
+  roleThat(writes({ '.surety/checks/tests/service.test.mjs': CORRECTED_SERVICE_TEST, ...CORRECTED_R4_TESTS }), {
+    proposal: { rationale: 'CR-1 changed R2.1\'s text and sharpened R4: accept-r2 reads the content type; the R4.1 checks count only successful sums.', requested_change_kind: 'tightening' },
+  });
+// accept-r2's correction alone (the 31b review's S2: a correction resolves only the checks it names).
+export const serviceCorrectionScript = () => roleThat(writes({ '.surety/checks/tests/service.test.mjs': CORRECTED_SERVICE_TEST }), { proposal: { rationale: 'R2.1\'s text changed; the check now reads the content type.', requested_change_kind: 'tightening' } });
 
 // The journey's scripts by work kind (§350). `omit` drops files from a
 // phase's authoring (M407 (c): no post-deploy check); `tier` T1 Builders ask
@@ -286,17 +295,41 @@ export const queuedExecutions = (home, project) =>
 export const openDecisions = (home, project) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY "id"`, project).map((r) => ({ ...r, options: json2(r.options) }));
 const json2 = (t) => (t === null || t === undefined ? t : JSON.parse(t));
 
+// The project lane's bounds (objection 071; SEAM §375): a check execution
+// there takes about 10 s (the host qualification before its domain, then the
+// check) and one domain is admitted at a time, so a tick count says nothing
+// about time. A project-lane wait is bounded by time instead: it fails when
+// `projectMs` has passed, or when the engine has recorded no event for
+// `PROJECT_STALL_MS` (a stuck engine fails, it does not hang).
+export const PROJECT_WAIT_MS = 1_200_000;
+export const PROJECT_STALL_MS = 180_000;
+const lastEventSeq = (home) => withStore(home, (db) => db.prepare('SELECT MAX("seq") AS "seq" FROM "events"').get().seq ?? 0);
+
 // Tick the project until `done` answers, doing on the way what the journey's
 // harness does: in the kernel lane, record every queued check execution's
 // exit (`exits(x)`, 0 by default); answer the routed decisions as the owner
-// (recorded in `ctx.humanActs`); never answer any other kind. `max` ticks.
-export async function pump(fx, ctx, done, { max = 80, what = 'the journey to advance', exits = () => 0, answer = 'approve' } = {}) {
+// (recorded in `ctx.humanActs`); never answer any other kind. `max` ticks on
+// the kernel lane; on the project lane, `projectMs` and the stall bound.
+export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_MS, what = 'the journey to advance', exits = () => 0, answer = 'approve' } = {}) {
   const { project } = ctx;
   ctx.humanActs ??= [];
   ctx.ticks ??= 0;
-  for (let i = 0; i < max; i++) {
+  const started = Date.now();
+  let seen = { seq: -1, at: started };
+  let rounds = 0;
+  for (;;) {
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return value;
+    if (ctx.lane === 'project') {
+      const now = Date.now();
+      const seq = lastEventSeq(fx.home);
+      if (seq !== seen.seq) seen = { seq, at: now };
+      if (now - started > projectMs) throw new Error(`${what}: not reached within ${Math.round(projectMs / 1000)} s on the project lane (${rounds} ticks; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+      if (now - seen.at > PROJECT_STALL_MS) throw new Error(`${what}: not reached, and the engine recorded no event for ${Math.round(PROJECT_STALL_MS / 1000)} s (event seq ${seq}, ${rounds} ticks; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+    } else if (rounds >= max) {
+      throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+    }
+    rounds++;
     if (ctx.lane !== 'project') {
       // The queue is read with no run under way (objection 067; SEAM.md §371):
       // a run that integrates while the queue is being worked can nominate,
@@ -328,7 +361,6 @@ export async function pump(fx, ctx, done, { max = 80, what = 'the journey to adv
     ctx.ticks++;
     if (ctx.lane === 'project') await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)})`);
 }
 
 // ---- readers for the build ---------------------------------------------------------------------
