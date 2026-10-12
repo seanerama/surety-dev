@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 360 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 361 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -5996,6 +5996,14 @@ Sections 350 to 360 were written with the slice-31b acceptance tests (2026-10-12
 ## 360. A moved sensitive area is validated where it sits (objection 059)
 
 (D6 §5.3 item 4, §3.4; SEAM §344; D3 §4.4.) M404 (b)'s accepted "moved" bundle carries a phase-1 plan whose stage touching `lib`, where the map now puts `secrets_credentials`, lists that area in `validation.sensitive_areas` and `sensitivity_floor` in its kinds (`BAD_ARCHITECTURE.area_moved.stages`); a plan that leaves a module's area unvalidated is refused at close, 422 `plan_refused` with `PLAN_AREA_UNVALIDATED`, as the engine answered. No assertion changed.
+
+## 361. The C.2 straddle's base, the contract at 31a, and M74's chained case (objections 060 and 061)
+
+(D6 C.2, K3, K7; D1 A.5, A.8; BS5 slice 31's line; SEAM §§348, 346.)
+
+- **The base after the pin** (061). `changePolicy` commits `.surety/policy.json` on the integration branch, so a case that pins `autonomy: step` and then compares a commit's parent with the project's base reads the base **after** the policy commit: `addStagedProject` and `nominated` re-read `project.base` (`refOid` of the integration ref) after their policy change; M09-after-integrated re-reads it after its two direct `stepAutonomy` calls. `harness/journey.mjs` already took the base after its pin. The other migrated sites (M12's direct pin, M13, M42 to M44, M70, M71, M125, M235, M237, the real journey) compare no commit with a base taken before the pin. No assertion changed.
+- **The contract at 31a** (060). `contract/work-items.json` gains **`check_authoring`** (K7; D6 A.5 "as check_correction for the work item": a Verifier's one-shot, `eligible → claimed → executing → complete`, dispatched), which also generates its M09-work-transitions cases through the harness work route. `contract/decisions.json` no longer lists **`spec_change`**: 31a raises the four product decisions (§346) and no spec change. **Straddle for 31b**: M401 (h) and its T1 variant raise `spec_change` and run `spec_change` and `phase_verification` work (BS5's slice-31 line: "applies one specification change mid-build"), so 31b's build returns `spec_change` to `decisions.json` with the manifest §346 names, and makes the `spec_change` and `phase_verification` work kinds dispatched (`m1` true; D6 A.5's `spec_change` path `eligible → claimed → executing → awaiting_decision → complete`), in the same change that enables them.
+- **M74's applied-correction case** (fixture semantics, case 4) pins `autonomy: step` through `nominated`: it was accepted with chained work waiting at its boundary, and under the default `phase` the chained run dispatches unscripted and holds.
 
 ## What was run
 
