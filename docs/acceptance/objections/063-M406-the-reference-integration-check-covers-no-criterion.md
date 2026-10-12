@@ -14,7 +14,13 @@ The `check_correction_unclassifiable` decision's `approve` then carries the bloc
 {"reason":"discovery_error","path":".surety/checks/defs/integration.json#/covers"}
 ```
 
-What I believe the fixture should hold: give `integration` a criterion it checks, for example `covers: { criteria: ['R2.1'] }` (its program asks `/sum?a=1&b=1` through the service). A developer-origin check would not do: only an acceptance-origin check supplies a kind of T2's inventory (D3 §4.3), and `integration` is one. With that one change on a scratch copy, the journey's authoring is approved and phase 1 goes on. I am checking the rest of 31b on that copy until the fixture changes.
+What the fixture needs is the Verifier's choice, but it is constrained:
+
+- A developer-origin check would not do: only an acceptance-origin check supplies a kind of T2's inventory (D3 §4.3).
+- Covering only `R2.1` makes the authoring approvable, but stage 1's `stage` gate (it implements R1 alone) then misses the kind. I saw `ACCEPTANCE_SCOPE_INCOMPLETE` `kind:integration` on a scratch copy, because a criterion-covering check is in a stage's required set only for the requirements that stage implements (D3 §4.2 (b)).
+- Covering `R1.1` and `R2.1` puts it in both stages' scopes. Its program then runs at stage 1, where `server.mjs` does not exist yet, so on the project lane (real checks) stage 1's gate would fail. On the kernel lane the scripted boundary records exit 0.
+
+One way that holds on both lanes is an integration check per stage: one covering R1.1 that exercises the library as a whole, and one covering R2.1 through the service. I am checking the rest of 31b's kernel-lane files on a scratch copy whose `integration` covers `['R1.1', 'R2.1']`, until the fixture changes.
 
 ## Sources
 
