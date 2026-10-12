@@ -639,25 +639,29 @@ const GATES = ['stage', 'alpha_authorize'];
 // R2.2 with the T2 kinds (an integration check per stage) and the post-deploy
 // behaviour check; phase 2 adds R3.1, R4.1, their integration checks and the
 // phase-only check. Every acceptance-origin check of a covering kind names a
-// criterion (D3 §1.3; objection 063).
+// criterion (D3 §1.3; objection 063). Every check declares its `inputs`, the
+// protected files it reads (its program, the wrapper it runs under), so a
+// later phase's new files lie outside them and its authoring is a tightening
+// (D3 §3.1: "declared inputs are what make the remaining tightenings
+// provable"; D6 §1 step 10; objection 064). smoke reads no protected file.
 export const CHECK_DEFS = Object.freeze({
   1: {
-    [defs('accept-r1')]: definitionText('accept-r1', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/sum.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
-    [defs('accept-r2')]: definitionText('accept-r2', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/service.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.1', 'R2.2'] } }),
+    [defs('accept-r1')]: definitionText('accept-r1', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/sum.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/sum.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
+    [defs('accept-r2')]: definitionText('accept-r2', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/service.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/service.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.1', 'R2.2'] } }),
     // smoke covers nothing, so every stage's scope requires it (D3 §4.2 (a)): it reads the one file stage 1 already has.
-    [defs('smoke')]: definitionText('smoke', { kind: 'smoke', command: ['node', '--check', 'src/sum.mjs'], timeout_s: 60, gate_kinds: GATES }),
-    [defs('integration-lib')]: definitionText('integration-lib', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-lib.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
-    [defs('integration')]: definitionText('integration', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.2'] } }),
-    [defs('lint')]: definitionText('lint', { kind: 'security_lint', command: ['node', '.surety/checks/lint.mjs'], timeout_s: 60, gate_kinds: GATES }),
-    [defs('operation')]: definitionText('operation', { kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
+    [defs('smoke')]: definitionText('smoke', { inputs: [], kind: 'smoke', command: ['node', '--check', 'src/sum.mjs'], timeout_s: 60, gate_kinds: GATES }),
+    [defs('integration-lib')]: definitionText('integration-lib', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/integration-lib.test.mjs'], kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-lib.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
+    [defs('integration')]: definitionText('integration', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/integration.test.mjs'], kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.2'] } }),
+    [defs('lint')]: definitionText('lint', { inputs: ['.surety/checks/lint.mjs'], kind: 'security_lint', command: ['node', '.surety/checks/lint.mjs'], timeout_s: 60, gate_kinds: GATES }),
+    [defs('operation')]: definitionText('operation', { inputs: ['.surety/checks/post-deploy/operation.mjs'], kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
   },
   2: {
-    [defs('accept-r3')]: definitionText('accept-r3', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
-    [defs('accept-r4')]: definitionText('accept-r4', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
-    [defs('integration-tally')]: definitionText('integration-tally', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
-    [defs('integration-stats')]: definitionText('integration-stats', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
+    [defs('accept-r3')]: definitionText('accept-r3', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/tally.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
+    [defs('accept-r4')]: definitionText('accept-r4', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/stats.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
+    [defs('integration-tally')]: definitionText('integration-tally', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/integration-tally.test.mjs'], kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
+    [defs('integration-stats')]: definitionText('integration-stats', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/integration-stats.test.mjs'], kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
     // The phase-only check (gate_kinds phase alone): acceptance-origin, so it names a criterion of the phase's own requirements (D3 §1.3, §4.2 (b)).
-    [defs('phase-regression')]: definitionText('phase-regression', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/phase-regression.test.mjs'], timeout_s: 120, gate_kinds: ['phase'], covers: { criteria: ['R4.1'] } }),
+    [defs('phase-regression')]: definitionText('phase-regression', { inputs: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/phase-regression.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/phase-regression.test.mjs'], timeout_s: 120, gate_kinds: ['phase'], covers: { criteria: ['R4.1'] } }),
   },
 });
 
