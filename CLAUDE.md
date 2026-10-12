@@ -1,8 +1,8 @@
 # Surety
 
-Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. M1 (the engine kernel on a scripted adapter), M2 (Claude Code as a real backend under D2's isolation) and M3 (the check runner of D3) are accepted; M4, deployment to a real Alpha environment under D4, is being built now.
+Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. M1 (the engine kernel on a scripted adapter), M2 (Claude Code as a real backend under D2's isolation), M3 (the check runner of D3) and M4 (deployment to a real Alpha environment under D4) are accepted; M5, idea to Alpha under D6 (the Vision, Spec Writer and Architect sessions, the governed specification, phased planning, the engine driving a whole build, and retrofit), is being built now.
 
-**Read `docs/spec/M4-build-spec.md` before changing anything** (M1 to M3 are accepted; their specs, `docs/spec/M1-build-spec.md`, `docs/spec/M2-build-spec.md` and `docs/spec/M3-build-spec.md`, still govern what they built). It says what is being built, which design documents govern, and who may write what.
+**Read `docs/spec/M5-build-spec.md` before changing anything** (M1 to M4 are accepted; their specs, `docs/spec/M1-build-spec.md` to `docs/spec/M4-build-spec.md`, still govern what they built). It says what is being built, which design documents govern, and who may write what.
 
 ## Your role
 
@@ -24,14 +24,14 @@ If your prompt names no role, you are assisting Sean, the owner. Do not edit `pa
 npm install                                        # once
 npm run build                                      # tsc only
 npm run test:unit                                  # Builder's developer tests
-node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N (22 = all of M1 to M3; M4 is slices 23 to 30)
+node scripts/run-tests.mjs acceptance --slice N    # acceptance files for slices 1..N (30 = all of M1 to M4; M5 is slices 31 to 38)
 node scripts/run-tests.mjs acceptance --lane real  # the paid real-backend lane, only by Sean's command (M2 plan §2.1)
-node scripts/run-tests.mjs acceptance --lane exhaust  # fork/memory/storage exhaustion and M4's service limits, only on mini-hp01 with SURETY_EXHAUSTION_HOST set (E69); never here
+node scripts/run-tests.mjs acceptance --lane exhaust  # fork/memory/storage exhaustion, M4's service limits and M5's role-domain limit, only on mini-hp01 with SURETY_EXHAUSTION_HOST set (E69); never here
 npm test                                           # unit, then the full kernel and sandbox suite
 node scripts/check-role-boundary.mjs <builder|verifier> main <branch>
 ```
 
-The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until every row of the four plans (M01 to M74, M101 to M142, M201 to M241, M301 to M344) has a file and passes; use `--slice N` meanwhile. Real-lane files (manifest `real`) and exhaustion-lane files (manifest `exhaust`) never run in `npm test`.
+The test runner builds first. It fails on a skipped test, a file with no passing test, a misnamed or unlisted file, or a row with no test. That is deliberate: a skip is not a pass. `npm test` fails until every row of the five plans (M01 to M74, M101 to M142, M201 to M241, M301 to M344, M401 to M453) has a file and passes; use `--slice N` meanwhile. Real-lane files (manifest `real`) and exhaustion-lane files (manifest `exhaust`) never run in `npm test`.
 
 The boundary check sees commits only. Commit your work before running it.
 
@@ -40,7 +40,8 @@ The boundary check sees commits only. Commit your work before running it.
 - Report what you observed. If a test fails, say so and show the output. Never describe work as passing that you did not run.
 - Unknown is a value. Do not turn an unknown into zero, clean, empty or success, in code or in a report.
 - Do not write a new draft of the design. A new finding is either a design decision for Sean or a failing acceptance test; say which.
-- Service units only under a name derived from your own disposable `SURETY_HOME`, stopped only by that exact name; never stop, restart, reload, `daemon-reexec` or `daemon-reload` the user's service manager (M4 build spec §4.1 rules 1 and 2).
+- Service units only under a name derived from your own disposable `SURETY_HOME`, stopped only by that exact name; never stop, restart, reload, `daemon-reexec` or `daemon-reload` the user's service manager (M4 build spec §4.1 rules 1 and 2, carried in M5's §4.1).
+- No conversational session on a real model outside the real lane, and every disposable engine home at most 56 bytes (E134; M5 build spec §4.1).
 - Do not add a dependency. `better-sqlite3` is the engine's only runtime dependency, and every version is pinned exactly.
 - Build what a row or a source requires and stop.
 - Sean merges to `main`. Work on the branch your prompt names.

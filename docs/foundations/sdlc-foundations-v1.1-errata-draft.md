@@ -2242,3 +2242,13 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 2. **BS5 question 1:** the project lane's reference project is purpose-written for M5's shape; fixture C gets its own specification for the benchmark after M5.
 3. **BS5 question 3:** the retrofit real run copies the M4 real-run repository from `~/surety-m4-real-20261012/repos/` and checks its recorded head; reconstruction from the M4 records is the stated fallback.
 4. **BS5 questions 2, 4, 5 and 6, as recommended:** D6-X06's over-limit case in the exhaust lane on `mini-hp01`; D6-S08 read under K2; a short hands-on script (M446); the adopted fixture carries one deliberately false README claim.
+
+## E142. D6 draft 3 approved to build; BS5 and the M5 plan adopted (decided by Sean, 2026-10-12)
+
+**Status: decided by Sean.**
+
+1. **D6 draft 3** (`1e7267b`: Astra's B01 to B14 and N01 to N04 applied, all accepted as written; dispositions in `docs/design/sdlc-design-D6-astra-dispositions.md`) **approved to build.**
+2. **The M5 build spec (BS5) and acceptance plan adopted**, draft 2: rows M401 to M453, slices 31 to 38, every one of D6's 67 statements mapped.
+3. **Astra's question 1, as recommended:** no repair-before-conformance route in M5; an adopted project whose unchanged code fails its confirmed baseline is visibly blocked, its ways out a protected correction or a specification change (D6 draft 3); decided, if ever, on `D6-J04`'s evidence. E6 unchanged.
+4. **Owner-file changes made by the driver (BS5 §15):** `scripts/run-tests.mjs` `ROWS` gains M401 to M453; `CLAUDE.md` names M5 and its spec, the slice note, the five plans, the exhaust line and the one new rule. The template changes of BS5 §15 follow before slice 32 needs them.
+5. **Slice 31 starts** (the new-project journey on scripted roles), its agents on Fable (Sean, 2026-10-11).
