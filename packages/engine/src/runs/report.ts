@@ -72,8 +72,15 @@ const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer
 // records a result (D3 §2.5; SEAM.md §180).
 const REFUSED_FIELDS = ['check_results', 'check_executions', 'check_result', 'check_execution'];
 
+// The one-shot result's fields (SEAM.md §§13, 26, 68): anything else is not
+// a field of its schema (result-schema.json says additionalProperties
+// false), and the result is refused (SEAM.md §343: a session turn's fields,
+// or an attempt to answer a decision, are not a one-shot's).
+const BASE_FIELDS = ['status', 'summary', 'checkpoint', 'nominate'];
+
 export function fieldAllowed(result: Record<string, unknown>, role: string): boolean {
   if (REFUSED_FIELDS.some((f) => result[f] !== undefined)) return false;
+  if (Object.keys(result).some((k) => !BASE_FIELDS.includes(k) && !(k in FORMS))) return false;
   return Object.entries(ROLE_ONLY).every(([field, only]) => result[field] === undefined || role === only);
 }
 

@@ -12,7 +12,7 @@ import { reviewerApprove } from './classification.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
-import { getWorkItem } from './work.js';
+import { getWorkItem, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
@@ -119,7 +119,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   if (flag.report_recorded === 1) return;
   tx.db.prepare('UPDATE "runs" SET "report_recorded" = 1 WHERE "id" = ?').run(run.id);
   const report = (parseJson<{ report?: Report }>(flag.result_value)?.report ?? {}) as Report;
-  const item = getWorkItem(tx, run.work_item)!;
+  const item = workItemOfRun(tx, run);
   const subject = parseJson<{ candidate?: string }>(item.subject) ?? {};
   const candidate = subject.candidate ? getCandidate(tx.db, subject.candidate) : undefined;
   const role = run.role;

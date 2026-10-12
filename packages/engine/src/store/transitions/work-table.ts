@@ -35,6 +35,8 @@ export const WORK_KINDS = [
   'assessment',
   'spec_change',
   'check_correction',
+  // D6 K7 (M5 slice 31): the phase's check authoring, as check_correction.
+  'check_authoring',
   'triage_accept',
   'export',
   'publish',
@@ -57,6 +59,7 @@ export const KIND_PATHS: Record<WorkKind, readonly WorkStatus[]> = {
   review: RUN_ONLY,
   phase_verification: RUN_ONLY,
   check_correction: RUN_ONLY,
+  check_authoring: RUN_ONLY,
   replan: INTEGRATE,
   assessment: INTEGRATE,
   adoption_baseline: INTEGRATE,
@@ -71,7 +74,7 @@ export const KIND_PATHS: Record<WorkKind, readonly WorkStatus[]> = {
 
 // The kinds M1 dispatches (build spec §3). Every other kind is refused before
 // it becomes work and is never launched.
-export const DISPATCHABLE: readonly WorkKind[] = ['stage_build', 'fix', 'verification', 'review', 'check_correction', 'replan', 'assessment'];
+export const DISPATCHABLE: readonly WorkKind[] = ['stage_build', 'fix', 'verification', 'review', 'check_correction', 'check_authoring', 'replan', 'assessment'];
 
 export const CONTINUATIONS: readonly WorkStatus[] = ['executing', 'integrating', 'verifying'];
 

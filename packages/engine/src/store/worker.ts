@@ -167,6 +167,25 @@ import { alphaCheck } from './transitions/findings.js';
 import { contextFacts, mountContext, recordPaths, runCheckKeys } from './reads.js';
 import { reconcileRepairs } from './transitions/repair.js';
 import {
+  admitTurn,
+  attachOwnerText,
+  beginSave,
+  closeFacts,
+  closeSession,
+  finishSave,
+  intendCheckpointIntegration,
+  openSession,
+  pendingTurns,
+  sessionContextFacts,
+  sessionExists,
+  sessionView,
+  sessionWorkspace,
+  settleTurn,
+  turnClaim,
+} from '../sessions/session.js';
+import { bundleBaselineFacts, recordBundle } from '../plan/bundle.js';
+import { planView, specView } from '../plan/reads.js';
+import {
   attemptTarget,
   attemptUsage,
   attemptsDue,
@@ -284,6 +303,11 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.collect_logs': (tx, a) => requestLogs(tx, a),
   // D4 §5.3 item 1, A.8; CD1 (M4 slice 25; SEAM.md §266).
   'operation.verify': (tx, a: { project: string; operation: string }) => requestVerification(tx, { ...a, incarnation: engineSettings().incarnation! }, completionRequired),
+  // D6 §2 (M5 slice 31; SEAM.md §344): a session opened, a turn admitted
+  // (dispatched by the scheduler's tick, never here), and the answer of a
+  // save or a close the main thread made (sessions/driver.ts), audited here.
+  'session.open': (tx, a) => ({ status: 201, body: openSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
+  'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
 };
 
 // The checks a round requires (D4 §5.3): the `alpha_complete` scope's.
@@ -388,6 +412,15 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
+  // D6 §2 (M5 slice 31): the sessions' reads.
+  'session.pending_turns': (d) => pendingTurns(d, null),
+  'session.workspace': (d, a: { run: string }) => sessionWorkspace(d, a.run),
+  'session.context': (d, a: { run: string }) => sessionContextFacts(d, a.run),
+  'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
+  'session.view': (d, a: { project: string; run: string }) => sessionView(d, a.project, a.run),
+  'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
+  'spec.view': (d, a) => specView(d, a),
+  'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
     return row ? { repo: row.dev_repo_path } : null;
@@ -596,6 +629,25 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'qualify.end_op': (tx, a) => endQualificationOp(tx, a),
   'qualify.end': (tx, a) => endQualification(tx, a),
   'qualify.interrupt': (tx, a) => interruptQualifications(tx, a),
+  // D6 §2 (M5 slice 31; sessions/driver.ts): a turn's claim and settlement,
+  // the save's swap, checkpoint and finish, the close.
+  'session.turn_claim': (tx, a) => turnClaim(tx, a),
+  'session.settle': (tx, a) => settleTurn(tx, a),
+  // A turn's admission (D6 §2.2): the owner's entry and the session
+  // `turn_running`, in one transaction; its record is attached after.
+  'session.admit_turn': (tx, a) => admitTurn(tx, { ...a, incarnation: engineSettings().incarnation! }),
+  'session.attach_text': (tx, a) => attachOwnerText(tx, a),
+  'session.begin_save': (tx, a) => beginSave(tx, a),
+  'session.intend_checkpoint': (tx, a) => intendCheckpointIntegration(tx, a),
+  'session.finish_save': (tx, a) => finishSave(tx, a),
+  'session.close_facts': (tx, a) => closeFacts(tx, a),
+  'session.record_bundle': (tx, a) => recordBundle(tx, a),
+  'session.bundle_stale': (tx, a: { bundle: string; reason: string }) =>
+    tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'stale', "stale_reason" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(a.reason, a.bundle).changes,
+  'session.close': (tx, a) => {
+    const made = closeSession(tx, a);
+    return { decisions: made.decisions };
+  },
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

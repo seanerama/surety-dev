@@ -68,6 +68,8 @@ export interface ProjectOptions {
   backend_verifier: string;
   backend_reviewer: string;
   backend_architect: string;
+  autonomy: 'step' | 'stage' | 'phase';
+  alpha_deploy: 'manual' | 'on_phase_complete';
   backend_mode: string;
 }
 

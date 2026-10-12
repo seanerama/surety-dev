@@ -103,6 +103,9 @@ const MAIN_BARRIERS: readonly string[] = [
   'launch.before_ownership',
   'run.result_received',
   'run_end.before_ended',
+  // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
+  // save and before it enters `closing` and raises its decision.
+  'session.close_saved',
   // SEAM.md §56: a streamed record's four crash points.
   'stream.before_registration',
   'stream.chunk_durable',

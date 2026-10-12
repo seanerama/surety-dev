@@ -51,6 +51,6 @@ test('terminal statuses have no exit, and held and parked leave only by their ca
   assert.equal(legal('fix', 'parked', 'claimed'), false);
 });
 
-test('M1 dispatches exactly the kinds build spec §3 lists', () => {
-  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_correction', 'fix', 'replan', 'review', 'stage_build', 'verification']);
+test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring', () => {
+  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_authoring', 'check_correction', 'fix', 'replan', 'review', 'stage_build', 'verification']);
 });

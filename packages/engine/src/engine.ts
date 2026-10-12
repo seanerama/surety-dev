@@ -6,6 +6,7 @@
 // starts restricted; a failure in store, recovery or integrity leaves it
 // restricted with the failure readable and the scheduler not started.
 
+import { SessionDriver } from './sessions/driver.js';
 import type { Server } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -322,6 +323,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const launcher = new Launcher(runtime);
   const qualification = new QualificationDriver(runtime, launcher);
   const effects = new Effects(runtime, journal);
+  const sessions = new SessionDriver(runtime, journal, launcher, ender);
+  runtime.sessions = sessions;
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
   runtime.services = {
@@ -337,6 +340,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
     terminateDomains: (run) => ender.terminateDomains(run),
     collectAtEnd: (handle, quarantined) => launcher.collectAtEnd(handle, quarantined),
     qualificationStep: () => qualification.step(),
+    settleTurn: (handle) => sessions.settle(handle),
   };
 
   // 3a. The protected fingerprints recorded under the mode-free scheme, or

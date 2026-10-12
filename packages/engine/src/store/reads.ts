@@ -81,7 +81,8 @@ export function quarantinedRuns(db: Database): { id: string; project: string }[]
 // Never a raw user report (E5): the trigger's report is not read here.
 export function contextFacts(db: Database, args: { run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
-  if (!run) return null;
+  // A session's turn has its own package (sessions/package.ts).
+  if (!run || run.work_item === null) return null;
   const item = db.prepare('SELECT "id", "kind", "subject", "project" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { id: string; kind: string; subject: string; project: string };
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
@@ -115,6 +116,16 @@ export function contextFacts(db: Database, args: { run: string }) {
       .map((m) => ({ id: m.id, name: m.name, paths: parse<unknown>(m.paths, []) }));
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
+  }
+  // Work that builds no stage of a plan (a fix naming no stage, a replan, an
+  // assessment): every approved requirement and every ADR, by the approved
+  // bindings the baseline texts carry, never a checkpoint's file in the
+  // checkout (D6 §3.5; B02; D6-A01).
+  if (!stage && ['fix', 'replan', 'assessment'].includes(item.kind)) {
+    requirements = db
+      .prepare(`SELECT "id", "key", "text_ref", "assigned_phase", "text" FROM "requirements" WHERE "project" = ? AND "text" IS NOT NULL AND "withdrawn_at" IS NULL ORDER BY "key"`)
+      .all(item.project) as Req[];
+    adrs = db.prepare(`SELECT "id", "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' ORDER BY "key"`).all(item.project) as { id: string; key: string; text: string }[];
   }
   // The Verifier of check_correction work writes checks for every
   // requirement of the project (BS3 §3): each registered requirement, with

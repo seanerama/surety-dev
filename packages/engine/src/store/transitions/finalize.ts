@@ -64,6 +64,9 @@ export interface RefInputs {
   work_item?: string;
   stage?: string | null;
   plans?: PlanInput[];
+  // D6 §5.5 (B02): a session's checkpoint, whose integration registers
+  // nothing it carries.
+  checkpoint?: boolean;
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
@@ -225,10 +228,16 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
   }
   const plans: string[] = [];
-  for (const plan of inputs.plans ?? []) {
+  // B02 (D6 §5.5): a checkpoint registers nothing, whatever it carries: a
+  // session's save is draft intent. What an Architect's one-shot integration
+  // commits is registered as D1 §7.8 built it, under the authority of that
+  // integration (`architect_integration`), until slice 35 routes a replan's
+  // plan through the check and §5.5's publication.
+  const legacy = inputs.checkpoint !== true && inputs.architect === true;
+  for (const plan of legacy ? (inputs.plans ?? []) : []) {
     const made = registerPlan(
       tx,
-      { project: op.project, baseRevision: inputs.new_oid, approvedBy: null, stages: plan.stages, phase: plan.phase, gitPath: plan.path, chain: inputs.chain ?? 1 },
+      { project: op.project, baseRevision: inputs.new_oid, authority: { kind: 'architect_integration' }, stages: plan.stages, phase: plan.phase, gitPath: plan.path, chain: inputs.chain ?? 1 },
       {},
     );
     plans.push(made.plan.id);

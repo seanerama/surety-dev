@@ -14,7 +14,7 @@ import { type IntentResult, type IntentSpec, intendOperation, opsOfRun } from '.
 import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoRow } from './repo.js';
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, transitionWork } from './work.js';
+import { transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
 
@@ -67,7 +67,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
   const run = getRun(tx, args.run);
   if (!run) throw notFound('run', args.run);
   const extra = tx.db.prepare('SELECT "result_value", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result_value: string | null; chain: number };
-  const item = getWorkItem(tx, run.work_item)!;
+  const item = workItemOfRun(tx, run);
   const subject = JSON.parse(item.subject) as { stage?: string };
   const stage = subject.stage ? (tx.db.prepare('SELECT "goal" FROM "stages" WHERE "id" = ?').get(subject.stage) as { goal: string } | undefined) : undefined;
   const p = projectRepoRow(tx, run.project);
@@ -106,7 +106,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
     return { id: o.id, state: o.state, status: o.status, detail: detail ? (JSON.parse(detail) as Record<string, unknown>) : null, new_oid: (JSON.parse(o.inputs) as RefInputs).new_oid };
   });
   return {
-    run: { id: run.id, state: run.state, role: run.role, work_item: run.work_item, base_revision: run.base_revision, chain: extra.chain, project: run.project, seq: run.seq },
+    run: { id: run.id, state: run.state, role: run.role, work_item: item.id, base_revision: run.base_revision, chain: extra.chain, project: run.project, seq: run.seq },
     work: { id: item.id, kind: item.kind, status: item.status, seq: item.seq, stage: subject.stage ?? null, goal: stage?.goal ?? null },
     result: extra.result_value ? (JSON.parse(extra.result_value) as RunResult) : null,
     project: { id: p.id, repo: p.dev_repo_path, branch: p.integration_branch, tier: p.tier },
@@ -246,7 +246,7 @@ export function intendCommit(
 // charged.
 export function checkpointContinue(tx: Tx, args: { run: string; sha: string }): void {
   const run = getRun(tx, args.run)!;
-  const item = getWorkItem(tx, run.work_item)!;
+  const item = workItemOfRun(tx, run);
   if (item.status !== 'executing') return;
   transitionWork(tx, item, 'eligible', { continue_from: args.sha, repair_due: 0 }, { run: run.id, cause: 'checkpoint' });
 }
@@ -255,7 +255,7 @@ export function checkpointContinue(tx: Tx, args: { run: string; sha: string }): 
 export function beginIntegration(tx: Tx, args: { run: string }): boolean {
   const run = getRun(tx, args.run)!;
   if (run.state !== 'validating') return false;
-  const item = getWorkItem(tx, run.work_item)!;
+  const item = workItemOfRun(tx, run);
   if (item.status === 'executing') transitionWork(tx, item, 'integrating', {}, { run: run.id });
   return true;
 }
@@ -304,7 +304,7 @@ export function intendIntegration(
   const run = getRun(tx, args.run)!;
   const extra = tx.db.prepare('SELECT "result_value", "chain" FROM "runs" WHERE "id" = ?').get(run.id) as { result_value: string | null; chain: number };
   const result = extra.result_value ? (JSON.parse(extra.result_value) as RunResult) : null;
-  const item = getWorkItem(tx, run.work_item)!;
+  const item = workItemOfRun(tx, run);
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
   const subject = JSON.parse(item.subject) as { stage?: string; finding?: string };

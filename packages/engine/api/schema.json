@@ -378,6 +378,27 @@
       "unexpected_unit",
       "identity_differs"
     ],
+    "PhasePlanStatus": [
+      "proposed",
+      "published",
+      "completed",
+      "replaced",
+      "stale"
+    ],
+    "BundleStatus": [
+      "proposed",
+      "published",
+      "stale",
+      "refused"
+    ],
+    "PlanCheckOutcome": [
+      "passed",
+      "refused"
+    ],
+    "PlanConformance": [
+      "within_baseline",
+      "uncertain"
+    ],
     "BaselineState": [
       "idea",
       "spec_ready",
@@ -439,7 +460,10 @@
       "unaccepted_result",
       "deployment_logs",
       "service_link_log",
-      "deploy_precondition_manifest"
+      "deploy_precondition_manifest",
+      "session_transcript",
+      "spec_impact",
+      "plan_check"
     ],
     "PostScan": [
       "pending",
@@ -453,6 +477,10 @@
       "recovery",
       "oob",
       "keep"
+    ],
+    "RequirementOrigin": [
+      "intended",
+      "observed"
     ],
     "RevisionKind": [
       "working",
@@ -578,6 +606,7 @@
       "assessment",
       "spec_change",
       "check_correction",
+      "check_authoring",
       "triage_accept",
       "export",
       "publish",
@@ -750,7 +779,22 @@
       "check.quarantined",
       "check.interrupted",
       "check.cancelled",
-      "check.lease_regranted"
+      "check.lease_regranted",
+      "baseline.idea_recorded",
+      "baseline.spec_approved",
+      "baseline.architecture_approved",
+      "baseline.roadmap_revised",
+      "baseline.plan_approved",
+      "baseline.plan_refused",
+      "plan.checked",
+      "plan.published",
+      "plan.generation_refused",
+      "session.allocated",
+      "session.turn_started",
+      "session.turn_ended",
+      "session.turn_settled",
+      "session.saved",
+      "session.closed"
     ],
     "EngineMode": [
       "restricted",
@@ -1071,6 +1115,46 @@
         },
         "consumed_at": {
           "required": true
+        }
+      }
+    },
+    "architecture_revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "version": {
+          "required": true
+        },
+        "spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "blobs": {
+          "required": true
+        },
+        "module_map": {
+          "required": true
+        },
+        "mapping_from_spec": {
+          "required": true
+        },
+        "approved_by": {
+          "required": true
+        },
+        "approved_at": {
+          "required": true
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
         }
       }
     },
@@ -3194,6 +3278,198 @@
         },
         "approved_at": {
           "required": false
+        },
+        "prepared_against_spec": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "prepared_against_architecture": {
+          "required": false,
+          "references": "architecture_revisions"
+        },
+        "prepared_against_roadmap": {
+          "required": false,
+          "references": "roadmap_revisions"
+        },
+        "roadmap_revision": {
+          "required": false,
+          "references": "roadmap_revisions"
+        },
+        "generation": {
+          "required": true
+        },
+        "active": {
+          "required": true
+        },
+        "bundle": {
+          "required": false,
+          "references": "plan_bundles"
+        },
+        "check": {
+          "required": false,
+          "references": "plan_checks"
+        },
+        "routing": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "PhasePlanStatus"
+        },
+        "published_at": {
+          "required": false
+        },
+        "authoring_ready_at": {
+          "required": false
+        },
+        "authoring_ready_by": {
+          "required": false
+        },
+        "completed_at": {
+          "required": false
+        },
+        "completion_binding": {
+          "required": false
+        },
+        "planned_obligations": {
+          "required": false,
+          "references": "records"
+        },
+        "verification": {
+          "required": false
+        },
+        "replaced_by": {
+          "required": false,
+          "references": "phase_plans"
+        },
+        "check_authoring": {
+          "required": false,
+          "references": "work_items"
+        }
+      }
+    },
+    "plan_bundles": {
+      "fields": {
+        "id": {
+          "required": true,
+          "references": "records"
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "head": {
+          "required": true
+        },
+        "phase_number": {
+          "required": false
+        },
+        "blobs": {
+          "required": true
+        },
+        "artifacts": {
+          "required": true
+        },
+        "versions": {
+          "required": true
+        },
+        "plan_check": {
+          "required": false,
+          "references": "plan_checks"
+        },
+        "batch_key": {
+          "required": false
+        },
+        "approvals": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "BundleStatus"
+        },
+        "published_at": {
+          "required": false
+        },
+        "stale_reason": {
+          "required": false
+        }
+      }
+    },
+    "plan_checks": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "bundle": {
+          "required": false,
+          "references": "plan_bundles"
+        },
+        "plan": {
+          "required": false,
+          "references": "phase_plans"
+        },
+        "phase_number": {
+          "required": false
+        },
+        "outcome": {
+          "required": true,
+          "enum": "PlanCheckOutcome"
+        },
+        "reasons": {
+          "required": true
+        },
+        "conformance": {
+          "required": true,
+          "enum": "PlanConformance"
+        },
+        "changes_architecture": {
+          "required": true
+        },
+        "changes_adrs": {
+          "required": true
+        },
+        "changes_roadmap": {
+          "required": true
+        },
+        "changes_goals": {
+          "required": true
+        },
+        "roadmap_revision": {
+          "required": true
+        },
+        "needs_spec_change": {
+          "required": true
+        },
+        "routing": {
+          "required": false
+        },
+        "planned_obligations": {
+          "required": false,
+          "references": "records"
+        },
+        "obligations": {
+          "required": true
+        },
+        "evidence": {
+          "required": false
         }
       }
     },
@@ -3344,6 +3620,21 @@
         },
         "nomination_due": {
           "required": false
+        },
+        "idea_version": {
+          "required": false
+        },
+        "idea_history": {
+          "required": true
+        },
+        "idea_blob": {
+          "required": false
+        },
+        "idea_identity": {
+          "required": false
+        },
+        "spec_evidence_generation": {
+          "required": true
         }
       }
     },
@@ -3694,6 +3985,35 @@
         },
         "sensitive_areas": {
           "required": true
+        },
+        "spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "human_test": {
+          "required": true
+        },
+        "descriptive": {
+          "required": true
+        },
+        "withdrawn_at": {
+          "required": false
+        },
+        "origin": {
+          "required": true,
+          "enum": "RequirementOrigin"
+        },
+        "defect": {
+          "required": true
+        },
+        "reverse_engineered": {
+          "required": true
+        },
+        "confirmed_at": {
+          "required": false
+        },
+        "criteria_text": {
+          "required": false
         }
       }
     },
@@ -3755,6 +4075,45 @@
         }
       }
     },
+    "roadmap_revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "version": {
+          "required": true
+        },
+        "architecture_revision": {
+          "required": false,
+          "references": "architecture_revisions"
+        },
+        "git_path": {
+          "required": true
+        },
+        "git_blob": {
+          "required": true
+        },
+        "phases": {
+          "required": true
+        },
+        "moved_requirements": {
+          "required": false
+        },
+        "approved_by": {
+          "required": true
+        },
+        "approved_at": {
+          "required": true
+        }
+      }
+    },
     "runs": {
       "fields": {
         "id": {
@@ -3771,7 +4130,7 @@
           "required": true
         },
         "work_item": {
-          "required": true,
+          "required": false,
           "references": "work_items"
         },
         "role": {
@@ -3871,6 +4230,15 @@
         },
         "collection": {
           "required": false
+        },
+        "idle_generation": {
+          "required": true
+        },
+        "session_notes": {
+          "required": false
+        },
+        "turn_count": {
+          "required": true
         }
       }
     },
@@ -3912,6 +4280,27 @@
         }
       }
     },
+    "session_transcripts": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "entries": {
+          "required": true
+        }
+      }
+    },
     "signoffs": {
       "fields": {
         "id": {
@@ -3949,6 +4338,83 @@
           "required": true
         },
         "recorded_at": {
+          "required": true
+        }
+      }
+    },
+    "spec_revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "version": {
+          "required": true
+        },
+        "git_path": {
+          "required": true
+        },
+        "git_blob": {
+          "required": true
+        },
+        "semantic_digest": {
+          "required": true
+        },
+        "semantics": {
+          "required": false,
+          "references": "spec_semantics"
+        },
+        "approved_by": {
+          "required": true
+        },
+        "approved_at": {
+          "required": true
+        },
+        "supersedes": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
+        }
+      }
+    },
+    "spec_semantics": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "git_blob": {
+          "required": true
+        },
+        "semantic_digest": {
+          "required": false
+        },
+        "representation": {
+          "required": false
+        },
+        "findings": {
+          "required": true
+        },
+        "readable": {
           "required": true
         }
       }
@@ -3997,6 +4463,33 @@
         },
         "adrs": {
           "required": true
+        },
+        "tasks": {
+          "required": true
+        },
+        "depends_on": {
+          "required": true
+        },
+        "validation": {
+          "required": true
+        },
+        "integration_obligations": {
+          "required": true
+        },
+        "generation": {
+          "required": true
+        },
+        "execution_inputs_digest": {
+          "required": false
+        },
+        "conformance": {
+          "required": true
+        },
+        "parked_at": {
+          "required": false
+        },
+        "cancelled_at": {
+          "required": false
         }
       }
     },
@@ -4176,6 +4669,18 @@
           "required": true
         },
         "finished_at": {
+          "required": false
+        },
+        "settled_at": {
+          "required": false
+        },
+        "usage_status": {
+          "required": false
+        },
+        "outcome": {
+          "required": false
+        },
+        "reply": {
           "required": false
         }
       }
@@ -4386,6 +4891,9 @@
         },
         "check_conflict": {
           "required": false
+        },
+        "boundary_passed_at": {
+          "required": false
         }
       }
     },
@@ -4540,6 +5048,16 @@
         ]
       },
       "check_correction": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "complete"
+        ],
+        "role": "verifier"
+      },
+      "check_authoring": {
         "m1": true,
         "path": [
           "eligible",
@@ -4877,19 +5395,54 @@
   },
   "decisions": {
     "idea_accept": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "baseline_revision",
+        "blob",
+        "idea_version",
+        "policy_revision"
+      ],
+      "target_seconds": 172800
     },
     "spec_approval": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "baseline_revision",
+        "blob",
+        "semantic_digest",
+        "spec_version",
+        "policy_revision"
+      ],
+      "target_seconds": 172800
     },
     "spec_change": {
       "enabled": false
     },
     "architecture_approval": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "baseline_revision",
+        "spec_version",
+        "bundle",
+        "blobs",
+        "versions",
+        "policy_revision"
+      ],
+      "target_seconds": 172800
     },
     "plan_approval": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "baseline_revision",
+        "spec_version",
+        "bundle",
+        "blobs",
+        "versions",
+        "policy_revision",
+        "plan_check",
+        "plan_generation"
+      ],
+      "target_seconds": 172800
     },
     "check_correction_loosening": {
       "enabled": true,
@@ -5571,6 +6124,51 @@
     },
     "check.lease_regranted": {
       "owner": "store/transitions/checks.ts"
+    },
+    "baseline.idea_recorded": {
+      "owner": "store/transitions/project.ts, sessions/decisions.ts"
+    },
+    "baseline.spec_approved": {
+      "owner": "spec/approval.ts"
+    },
+    "baseline.architecture_approved": {
+      "owner": "plan/bundle.ts"
+    },
+    "baseline.roadmap_revised": {
+      "owner": "plan/bundle.ts"
+    },
+    "baseline.plan_approved": {
+      "owner": "plan/bundle.ts"
+    },
+    "baseline.plan_refused": {
+      "owner": "plan/bundle.ts"
+    },
+    "plan.checked": {
+      "owner": "plan/bundle.ts"
+    },
+    "plan.published": {
+      "owner": "store/transitions/work.ts"
+    },
+    "plan.generation_refused": {
+      "owner": "plan/bundle.ts"
+    },
+    "session.allocated": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_started": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_ended": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_settled": {
+      "owner": "sessions/session.ts"
+    },
+    "session.saved": {
+      "owner": "sessions/session.ts"
+    },
+    "session.closed": {
+      "owner": "sessions/session.ts"
     }
   },
   "config": {
@@ -5696,7 +6294,12 @@
           "check_correction_unclassifiable": 86400,
           "qualification_approval": 172800,
           "trust_activation": 172800,
-          "rollout_partial": 14400
+          "rollout_partial": 14400,
+          "idea_accept": 172800,
+          "spec_approval": 172800,
+          "architecture_approval": 172800,
+          "plan_approval": 172800,
+          "spec_change": 259200
         }
       },
       "ui_bootstrap": {
@@ -5950,9 +6553,9 @@
         "integer": true
       },
       "max_chained_roles": {
-        "default": 1,
+        "default": 24,
         "min": 1,
-        "max": 6,
+        "max": 64,
         "integer": true
       },
       "preflight_refusals_max": {
@@ -6175,6 +6778,25 @@
           "codex"
         ],
         "widening": "never"
+      },
+      "autonomy": {
+        "default": "phase",
+        "type": "enum",
+        "values": [
+          "step",
+          "stage",
+          "phase"
+        ],
+        "widening": "later"
+      },
+      "alpha_deploy": {
+        "default": "manual",
+        "type": "enum",
+        "values": [
+          "manual",
+          "on_phase_complete"
+        ],
+        "widening": "later"
       },
       "backend_mode": {
         "default": "one_shot_headless",
