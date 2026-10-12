@@ -1,0 +1,84 @@
+{
+  "row": "activation",
+  "written_by": "the real-lane test, never edited by hand",
+  "entry": {
+    "id": "trust_01M4PRABF9G264VPKHVEDY8WS7",
+    "created_at": "2026-10-12T00:31:05.193Z",
+    "backend": "claude",
+    "version": "2.1.296 (Claude Code)",
+    "binary_path": "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+    "binary_sha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
+    "help_sha256": "550db4f88ae1d97bf7244ca96dc89554aabd3978241ceb69f79001e816c35f09",
+    "mode": "one_shot_headless",
+    "template": "claude -p --safe-mode --setting-sources user --strict-mcp-config --output-format stream-json --verbose --model <m> --tools <role tools> --disallowed-tools Agent Task ScheduleWakeup Workflow --permission-mode bypassPermissions --no-session-persistence --session-id <uuid> <prompt> (environment: CLAUDE_CODE_OAUTH_TOKEN=<credential> DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1)",
+    "template_version": "claude-subscription-1",
+    "model": "claude-sonnet-5-5",
+    "auth_mode": "subscription_token",
+    "capabilities": {
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "Write"
+      ],
+      "denied": [
+        "Agent",
+        "ScheduleWakeup",
+        "Task",
+        "Workflow"
+      ],
+      "features_disabled": [
+        "Agent",
+        "CronCreate",
+        "Monitor",
+        "RemoteTrigger",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Task",
+        "Workflow"
+      ],
+      "delegation_verified": true
+    },
+    "host_id": "1a2241c9653441439658410880ea14af",
+    "host_qualification": "hq_01M4PR7TMMMPEVXPYFG8M24W4Q",
+    "isolation": "linux-namespaces-1",
+    "boundary": "cgroup2-delegated-scope-1",
+    "profile_fingerprint": "f29a85c5d53f2b86c2d0fe943531b19e797eac1ccef7bda4bea52bc61a0323b8",
+    "egress_hosts": [
+      "api.anthropic.com"
+    ],
+    "usage_granularity": "model_call",
+    "usage_semantics": "delta",
+    "cost_reporting": "reported",
+    "enforceable_boundaries": [
+      {
+        "boundary": "invocation",
+        "mechanism": "dispatch_check",
+        "evidence": "rec_01M4PR8XWRAP7RH7MSMCR9FF32",
+        "overshoot": "deadline"
+      }
+    ],
+    "result_channel": "file",
+    "session_qualified": 0,
+    "provider_files": "{\"locations\":[\"/surety/home/.claude\",\"/surety/home/.claude.json\",\"/surety/out/result.json\",\"/tmp/cc-socks\",\"/tmp/claude-1000\"],\"persistence_flags\":[\"--no-session-persistence\"],\"excluded\":[\"/surety/home/.claude\"]}",
+    "term_to_exit_ms": 12,
+    "qualification_attempt": "qa_01M4PR7X24EWN5Z1EPA7G9TBQQ",
+    "evidence": [
+      "rec_01M4PR8XWRAP7RH7MSMCR9FF32",
+      "rec_01M4PR94HCV83E6302RG8C2A4V",
+      "rec_01M4PRABESHXH00Q8A4M88XEVC"
+    ],
+    "evidence_fingerprint": "ef2e97f74673811ea6447413396c5727b87c11eb00943dc54fc2d42f30ab91a2",
+    "status": "active",
+    "activated_by": "dec_01M4PRBCHQCJF4YH9GH3F33Q3X",
+    "revoked_at": null,
+    "revoked_reason": null,
+    "activated_by_decision": "dec_01M4PRBCHQCJF4YH9GH3F33Q3X",
+    "backends": [
+      "claude"
+    ]
+  },
+  "updated_at": "2026-10-12T00:31:55.922Z"
+}
