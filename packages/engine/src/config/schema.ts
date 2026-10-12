@@ -213,13 +213,22 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   trust_activation: 172_800,
   // D4 §4.4 (M4 slice 26): as a blocker's, for the deploy it holds.
   rollout_partial: 14_400,
+  // D6 §3.4 (M5 slice 31): the products' approvals, the owner's to answer.
+  idea_accept: 172_800,
+  spec_approval: 172_800,
+  architecture_approval: 172_800,
+  plan_approval: 172_800,
+  // D6 A.8 (D1 A.8): the specification change, 3 d.
+  spec_change: 259_200,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project
 // concurrency is exactly 1 through M3 (E18).
 export const PROJECT_POLICY: Record<string, NumberSpec> = {
   max_concurrent_runs: int(1, 1, 1),
-  max_chained_roles: int(1, 1, 6),
+  // D6 K3 (N02): a bound on inherited chain depth under the autonomy profile,
+  // not a budget; default 24 under `phase`.
+  max_chained_roles: int(24, 1, 64),
   preflight_refusals_max: int(3, 1, 10),
   repair_attempts_max: int(3, 0, 10),
   no_progress_max: int(2, 1, 5),
@@ -262,6 +271,12 @@ export const TRUST_MODES = ['one_shot_headless', 'session_headless'] as const;
 // only) and those the engine has an adapter for (D2 §4.5, §4.6).
 export const BACKEND_NAMES = ['scripted', 'claude', 'codex'] as const;
 
+// D6 A.2: the autonomy profile (K3) and the Alpha deploy policy (K9).
+export const AUTONOMY_PROFILES = ['step', 'stage', 'phase'] as const;
+export type Autonomy = (typeof AUTONOMY_PROFILES)[number];
+export const ALPHA_DEPLOY_POLICIES = ['manual', 'on_phase_complete'] as const;
+export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
+
 // Ungoverned project keys that are not numbers (D2 A.7). `widening` says when
 // a change of the key widens what the engine may do unasked: `added` when it
 // adds an element the effective value lacks, `coarser` when it names a
@@ -270,7 +285,7 @@ export interface OptionSpec {
   type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths';
   default: unknown;
   values?: readonly string[];
-  widening: 'added' | 'coarser' | 'never';
+  widening: 'added' | 'coarser' | 'later' | 'never';
 }
 
 export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
@@ -289,6 +304,14 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // D6 §6.5, K3 (E139 Q3): where the chaining boundary falls; `phase` by default.
+  // Sean's decision (2026-10-12): loosening on an existing project (a value
+  // later in the list: step → stage → phase) widens what the engine does
+  // unasked, and is confirmed by the owner; tightening is free.
+  autonomy: { type: 'enum', values: AUTONOMY_PROFILES, default: 'phase', widening: 'later' },
+  // D6 §6.8, K9 (E139 Q5): whether the engine requests Alpha at phase completion.
+  // Sean's decision (2026-10-12): manual → on_phase_complete widens.
+  alpha_deploy: { type: 'enum', values: ALPHA_DEPLOY_POLICIES, default: 'manual', widening: 'later' },
   backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
 };
 

@@ -720,6 +720,11 @@ export type Resolution =
   | { kind: 'entry'; backend: string; version: string; model: string; entry: EntryRow }
   | { kind: 'refused'; backend: string; version: string; model: string; code: string; reason: string; what_to_do: string; subject: Record<string, unknown> };
 
+// The interactive roles Vision and Spec Writer have no backend key before
+// slice 33's A.7 keys (the contract names none in slice 31): they resolve to
+// the scripted backend, which only harness mode provides, and are refused
+// `backend_refused` everywhere else. The Architect's session uses
+// `backend_architect`.
 const ROLE_KEY: Record<string, string> = { builder: 'backend_builder', verifier: 'backend_verifier', reviewer: 'backend_reviewer', architect: 'backend_architect' };
 
 // The backend a role of a project is dispatched to, or why it is refused,

@@ -103,6 +103,9 @@ export interface PlanFile {
 // Verifier may change the protected set and nothing else (its change is
 // captured as a proposal); a Reviewer may change nothing.
 const ARCHITECT_PREFIXES = ['.surety/adrs/', '.surety/architecture/', '.surety/roadmap/', '.surety/phases/'];
+// D6 §2.5: the interactive roles' permitted paths.
+const VISION_PATHS = ['.surety/idea.md'];
+const SPEC_WRITER_PREFIXES = ['.surety/spec/'];
 const IDENTITY_FILE = '.surety/project.json';
 const PLAN_FILE = /^\.surety\/phases\/phase-([0-9]+)\.json$/;
 
@@ -117,6 +120,8 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   if (role === 'verifier') return `${path} is not in the protected set, and a verifier may change only the protected set`;
   if (role === 'builder' && path.startsWith('.surety/')) return `${path} is under .surety/, which a builder may not change`;
   if (role === 'architect' && !ARCHITECT_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${ARCHITECT_PREFIXES.join(', ')}, the only paths an architect may change`;
+  if (role === 'vision' && !VISION_PATHS.includes(path)) return `${path} is not ${VISION_PATHS.join(', ')}, the only path a vision session may change`;
+  if (role === 'spec_writer' && !SPEC_WRITER_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${SPEC_WRITER_PREFIXES.join(', ')}, the only paths a spec writer may change`;
   return null;
 }
 
@@ -185,7 +190,9 @@ export interface DiffResult {
   changes: Change[];
 }
 
-export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps, roots: readonly string[]): Promise<DiffResult> {
+// `opts.plans` false: a session's save, whose phase plans are parsed at save
+// with Appendix B's schemas (D6 §3.3) and never registered from the commit.
+export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps, roots: readonly string[], opts: { plans?: boolean } = {}): Promise<DiffResult> {
   const ctx = repoContext(repo);
   const unknown = (what: string): DiffResult => ({ violation: { klass: 'infra_error', text: `the snapshot could not be validated: ${what} could not be read` }, plans: [], changes: [] });
   const changes = await diffTrees(ctx, base, tree);
@@ -230,7 +237,7 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   if (total > caps.bytes) return reject(`the run changed ${total} bytes, more than snapshot_max_bytes (${caps.bytes})`);
   // Phase plans: a committed plan is schedulable by construction (D1 §7.8).
   const plans: PlanFile[] = [];
-  for (const c of blobs) {
+  for (const c of opts.plans === false ? [] : blobs) {
     const m = PLAN_FILE.exec(c.path);
     if (!m) continue;
     const text = await catBlob(ctx, tree, c.path);

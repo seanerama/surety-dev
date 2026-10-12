@@ -28,7 +28,12 @@ export type DecisionKind =
   | 'check_correction_unclassifiable'
   | 'qualification_approval'
   | 'trust_activation'
-  | 'rollout_partial';
+  | 'rollout_partial'
+  // D6 §3.4 (M5 slice 31): the products' approvals.
+  | 'idea_accept'
+  | 'spec_approval'
+  | 'architecture_approval'
+  | 'plan_approval';
 
 export interface OptionSpec {
   key: string;
@@ -55,6 +60,8 @@ export interface DecisionRow {
   preview_hash: string;
   blocked_while_open: string;
   status: 'open' | 'answered' | 'consumed' | 'invalidated';
+  // D1 §10.3: the decisions answered as one batch share it (D6 §3.4).
+  batch_key?: string | null;
 }
 
 export interface DecisionSpec {

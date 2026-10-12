@@ -202,7 +202,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // The recorded path must be this domain's directory in this engine's own
   // scope; anything else is never created, entered or killed.
   if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
-  const limits = domainLimits(rt, claim.work_item);
+  const limits = domainLimits(rt, claim.work_item ?? claim.run);
   const inode = createDomainCgroup(may.cgroup_path, limits);
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
   // The probe profile (D2 §2.8, A.6 P15; SEAM.md §127): the domain's own
@@ -242,7 +242,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
 
   let plan: Plan;
   try {
-    const vb = volatileBounds(rt, claim.work_item);
+    const vb = volatileBounds(rt, claim.work_item ?? claim.run);
     const writable = vb.bytes;
     plan = buildPlan({
       area,

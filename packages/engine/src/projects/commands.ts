@@ -55,6 +55,9 @@ export async function prepareCommit(repo: string, base: string, files: Record<st
 }
 
 const PROJECT_FIELDS = ['name', 'tier', 'dev_repo_path', 'integration_branch'];
+// D6 §1 step 1, A.8 (SEAM.md §345): the owner's brief, optional.
+const IDEA_FIELD = 'idea';
+export const IDEA_PATH = '.surety/idea.md';
 
 // POST /v1/projects: the body checked, the repository read, and the bootstrap
 // commit prepared. Refusals create nothing.
@@ -62,9 +65,11 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw invalid('body', 'must be a JSON object');
   const b = body as Record<string, unknown>;
   for (const key of Object.keys(b)) {
-    if (!PROJECT_FIELDS.includes(key)) throw new Refusal(400, 'unknown_field', `"${key}" is not a field of a project.`, `Send only ${PROJECT_FIELDS.join(', ')}.`, { field: key });
+    if (!PROJECT_FIELDS.includes(key) && key !== IDEA_FIELD) throw new Refusal(400, 'unknown_field', `"${key}" is not a field of a project.`, `Send only ${[...PROJECT_FIELDS, IDEA_FIELD].join(', ')}.`, { field: key });
   }
   for (const field of PROJECT_FIELDS) if (typeof b[field] !== 'string' || (b[field] as string).length === 0) throw invalid(field, 'must be a non-empty string');
+  if (b.idea !== undefined && (typeof b.idea !== 'string' || b.idea.trim() === '')) throw invalid('idea', 'must be the brief\'s text, a non-empty string');
+  const idea = b.idea as string | undefined;
   const name = b.name as string;
   const tier = b.tier as string;
   const repo = b.dev_repo_path as string;
@@ -98,9 +103,15 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
   const id = newId('proj_');
   const identity = `${JSON.stringify({ id, name }, null, 2)}\n`;
   const message = messageText({ title: `surety: bootstrap project ${id}`, trailers: [['Surety-Project', id]] });
-  const commit = await prepareCommit(repo, head.oid, { '.surety/project.json': identity }, message, rt.scratch);
+  // With `idea`, the brief is the idea record version 1, committed verbatim
+  // beside the identity file in the bootstrap's one journaled commit (D6 §1
+  // step 1; §3.1).
+  const files: Record<string, string> = { '.surety/project.json': identity, ...(idea === undefined ? {} : { [IDEA_PATH]: idea }) };
+  const commit = await prepareCommit(repo, head.oid, files, message, rt.scratch);
   if (commit === null) throw repoUnreadable(repo);
-  return { id, name, tier, repo, branch, head: head.oid, commit, deadlineSeconds: rt.setting('git_deadline'), protectedSet };
+  const ideaBlob = idea === undefined ? null : await writeBlob(ctx, idea);
+  if (idea !== undefined && ideaBlob === null) throw repoUnreadable(repo);
+  return { id, name, tier, repo, branch, head: head.oid, commit, deadlineSeconds: rt.setting('git_deadline'), protectedSet, ...(ideaBlob === null ? {} : { idea: { blob: ideaBlob } }) };
 }
 
 // POST /v1/projects/:p/policy (SEAM.md §§27, 66, 78): the submission is

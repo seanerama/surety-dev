@@ -46,6 +46,7 @@ import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAtt
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { hostIdentity } from '../../trust/host.js';
+import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
 type Db = Tx['db'];
 
@@ -63,6 +64,9 @@ export interface Facts {
   classification?: string | null;
   discovery?: Discovery | null;
 }
+
+export type { KindSpec, Subject };
+export { consumed, recordApproval };
 
 export interface Preview {
   manifest: Record<string, unknown>;
@@ -230,7 +234,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         },
       ],
       question: `Run ${run.id} cannot be ended: the execution boundary has not reported its domains terminated. It stays quarantined until termination is observed.`,
-      blockedWorkItems: [run.work_item],
+      blockedWorkItems: run.work_item === null ? [] : [run.work_item],
     };
   }
   if (d.subject_type === 'operation') {
@@ -319,7 +323,9 @@ const BLOCKER: KindSpec = {
         // work starts a new chain and the scheduler dispatches it once; the
         // answer launches nothing itself.
         if (option === 'continue') {
-          tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL, "chain" = 0 WHERE "id" = ?').run(item.id);
+          // D6 K3: the boundary passed is recorded, so the `stage` profile
+          // does not hold the same item at it again.
+          tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL, "chain" = 0, "boundary_passed_at" = ? WHERE "id" = ?').run(tx.at, item.id);
           return consumed(d, [{ kind: 'tick' }]);
         }
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
@@ -385,7 +391,7 @@ export function controlManifest(tx: Tx, runId: string, kind: 'stop_confirm' | 'a
     | { generation: number }
     | undefined;
   const ws = tx.db.prepare('SELECT "id", "snapshot_tree" FROM "workspaces" WHERE "run" = ?').get(runId) as { id: string; snapshot_tree: string | null } | undefined;
-  const item = run ? getWorkItem(tx, run.work_item) : undefined;
+  const item = run && run.work_item !== null ? getWorkItem(tx, run.work_item) : undefined;
   const stoppable = !!run && run.state !== 'finalizing' && run.state !== 'ended' && run.quarantined === 0;
   return {
     run: runId,
@@ -1251,6 +1257,11 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   qualification_approval: QUALIFICATION_APPROVAL,
   trust_activation: TRUST_ACTIVATION,
   rollout_partial: ROLLOUT_PARTIAL,
+  // D6 §3.4 (M5 slice 31): the products' approvals (sessions/decisions.ts).
+  idea_accept: IDEA_ACCEPT,
+  spec_approval: SPEC_APPROVAL,
+  architecture_approval: ARCHITECTURE_APPROVAL,
+  plan_approval: PLAN_APPROVAL,
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1275,6 +1286,10 @@ const CORRECTION_KEYS = [
 ];
 const CONTROL_KEYS = ['run', 'stoppable', 'domains', 'lease_generation', 'workspace', 'workspace_snapshot', 'workspace_fate', 'work_fate'];
 export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = {
+  idea_accept: IDEA_ACCEPT_KEYS,
+  spec_approval: SPEC_APPROVAL_KEYS,
+  architecture_approval: BUNDLE_KEYS,
+  plan_approval: PLAN_KEYS,
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,

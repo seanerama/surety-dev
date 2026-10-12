@@ -209,6 +209,16 @@ const COLUMN_ENUMS: Record<string, string> = {
   'verification_rounds.step': 'VerificationRoundStep',
   'deployment_verifications.outcome': 'VerificationOutcome',
   'deployment_verifications.invalidated_reason': 'VerificationInvalidation',
+  // D6 A.2 (M5 slice 31).
+  'turns.usage_status': 'UsageStatus',
+  'turns.outcome': 'TurnOutcome',
+  'requirements.origin': 'RequirementOrigin',
+  'plan_bundles.status': 'BundleStatus',
+  'plan_checks.outcome': 'PlanCheckOutcome',
+  'plan_checks.conformance': 'PlanConformance',
+  'plan_checks.routing': 'PlanRouting',
+  'phase_plans.routing': 'PlanRouting',
+  'phase_plans.status': 'PhasePlanStatus',
 };
 
 const pascal = (text: string): string =>

@@ -79,7 +79,7 @@ export interface PreparedCommit {
 // in turn registers the project.
 export function bootstrapProject(
   tx: Tx,
-  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet },
+  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet; idea?: { blob: string } },
 ): { project: { id: string; registration_state: string } } {
   const ref = integrationRef(args.branch);
   createProject(
@@ -108,6 +108,14 @@ export function bootstrapProject(
     follow,
     deadlineSeconds: args.deadlineSeconds,
   });
+  // The idea record version 1 (D6 §1 step 1, §3.1; reading 5): the create
+  // route's own binding, the owner's, the brief's blob in the bootstrap
+  // commit; baseline `idea`.
+  if (args.idea) {
+    const history = [{ version: 1, blob: args.idea.blob, binding: { kind: 'create', actor: tx.actor.actor_kind }, at: tx.at }];
+    tx.db.prepare('UPDATE "projects" SET "idea_version" = 1, "idea_blob" = ?, "idea_history" = ? WHERE "id" = ?').run(args.idea.blob, JSON.stringify(history), args.id);
+    tx.emit('baseline.idea_recorded', { project: args.id }, { version: 1, blob: args.idea.blob, actor: tx.actor.actor_kind, commit: args.commit.sha });
+  }
   return { project: { id: args.id, registration_state: 'pending_bootstrap' } };
 }
 // Pause sets the flag the scheduler's select step skips on; resume clears it.

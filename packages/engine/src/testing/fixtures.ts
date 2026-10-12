@@ -240,7 +240,7 @@ export function installFixturePlan(db: Database, actor: Actor, args: PlanBody & 
       implements: requirementIds(tx, args.project, st.implements, `stages[${i}].implements`),
       modules: moduleIds(tx, args.project, st.modules, `stages[${i}].modules`),
     }));
-    const plan = registerPlan(tx, { project: args.project, baseRevision: args.baseRevision, approvedBy: 'test fixture', stages }, FIXTURE_LABEL);
+    const plan = registerPlan(tx, { project: args.project, baseRevision: args.baseRevision, authority: { kind: 'fixture' }, stages }, FIXTURE_LABEL);
     // The ADRs each stage cites (SEAM.md §139).
     for (const st of plan.stages) {
       const cites = args.stages.find((x) => x.number === st.number)?.adrs ?? [];

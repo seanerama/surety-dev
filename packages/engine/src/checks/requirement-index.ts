@@ -15,6 +15,9 @@ export interface IndexRow {
   phase: number | null;
   sensitive_areas: string[];
   criteria: string[];
+  // D6 K10: the optional sixth column, `intended` when the table has five.
+  // Syntax and a claim, never a confirmation (B10).
+  origin: 'intended' | 'observed';
 }
 
 export type IndexResult = { ok: true; rows: IndexRow[] } | { ok: false; row: number; text: string; why: string };
@@ -22,6 +25,8 @@ export type IndexResult = { ok: true; rows: IndexRow[] } | { ok: false; row: num
 const KEY = /^R[1-9][0-9]*$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const HEADER = ['key', 'title', 'phase', 'sensitive areas', 'criteria'];
+const ORIGIN_HEADER = 'origin';
+const ORIGINS = ['intended', 'observed'];
 
 const cells = (line: string): string[] | null => {
   const t = line.trim();
@@ -45,9 +50,15 @@ export function parseRequirementIndex(text: string): IndexResult {
   const refuse = (row: number, line: string, why: string): IndexResult => ({ ok: false, row, text: line.trim(), why });
   if (lines.length < 2) return refuse(0, text, 'the index has no header and separator');
   const header = cells(lines[0]!);
-  if (header === null || header.length !== 5 || header.some((h, i) => h.toLowerCase() !== HEADER[i])) return refuse(0, lines[0]!, 'the header is not | Key | Title | Phase | Sensitive areas | Criteria |');
+  // Five columns (D3 §4.5), or six with `Origin` (D6 K10): the five-column
+  // form stays valid and means `intended` for every row.
+  const width = header === null ? 0 : header.length;
+  const sixth = width === 6 && header![5]!.toLowerCase() === ORIGIN_HEADER;
+  if (header === null || (width !== 5 && !sixth) || header.slice(0, 5).some((h, i) => h.toLowerCase() !== HEADER[i])) {
+    return refuse(0, lines[0]!, 'the header is not | Key | Title | Phase | Sensitive areas | Criteria | (with an optional sixth column Origin)');
+  }
   const sep = cells(lines[1]!);
-  if (sep === null || sep.length !== 5 || sep.some((c) => !/^:?-{3,}:?$/.test(c))) return refuse(0, lines[1]!, 'the separator row is missing');
+  if (sep === null || sep.length !== width || sep.some((c) => !/^:?-{3,}:?$/.test(c))) return refuse(0, lines[1]!, 'the separator row is missing');
   const rows: IndexRow[] = [];
   const keys = new Set<string>();
   const criteria = new Set<string>();
@@ -55,8 +66,10 @@ export function parseRequirementIndex(text: string): IndexResult {
     const line = lines[n]!;
     const row = n - 1;
     const c = cells(line);
-    if (c === null || c.length !== 5) return refuse(row, line, 'the row does not have five cells');
+    if (c === null || c.length !== width) return refuse(row, line, `the row does not have ${width === 6 ? 'six' : 'five'} cells`);
     const [key, title, phase, areasCell, criteriaCell] = c as [string, string, string, string, string];
+    const originCell = width === 6 ? c[5]!.toLowerCase() : 'intended';
+    if (!ORIGINS.includes(originCell)) return refuse(row, line, `"${c[5]}" is not an origin (intended or observed)`);
     if (!KEY.test(key)) return refuse(row, line, `"${key}" is not a requirement key R<n>`);
     if (keys.has(key)) return refuse(row, line, `the requirement ${key} is listed twice`);
     if (title.length === 0) return refuse(row, line, 'the title is empty');
@@ -77,7 +90,7 @@ export function parseRequirementIndex(text: string): IndexResult {
       criteria.add(x);
     }
     keys.add(key);
-    rows.push({ key, title, phase: ph, sensitive_areas: areas, criteria: crit });
+    rows.push({ key, title, phase: ph, sensitive_areas: areas, criteria: crit, origin: originCell as 'intended' | 'observed' });
   }
   return { ok: true, rows };
 }

@@ -160,6 +160,11 @@ export function wideningKeys(effective: Policy, change: Policy): string[] {
           const before = new Set((effective[key] as string[] | undefined) ?? []);
           return (value as string[]).some((v) => !before.has(v));
         }
+        // An ordered enumeration loosens toward its later values (D6 K3, K9).
+        if (option.widening === 'later') {
+          const values = (option.values ?? []) as readonly unknown[];
+          return values.indexOf(value) > values.indexOf(effective[key] ?? option.default);
+        }
         if (option.widening === 'coarser') {
           const rank = (b: unknown) => (BUDGET_BOUNDARIES as readonly unknown[]).indexOf(b);
           return rank(value) > rank(effective[key] ?? option.default);
