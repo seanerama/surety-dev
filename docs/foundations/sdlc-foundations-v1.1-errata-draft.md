@@ -2233,3 +2233,12 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 3. **N3:** the retrofit real run adopts the repository the M4 real run's Builder wrote (one module, dependency-free Node).
 4. **N4:** `adoption_full_max_files` 2,000 (a recommendation on the adoption decision, never the choice).
 5. **D6 draft 2** (`586707a`) goes to Astra with `docs/reviews/D6/sdlc-design-D6-review-brief-astra.md`; the M5 build spec and acceptance plan are drafted meanwhile.
+
+## E141. Astra's D6 review; BS5 draft 1's questions (decided by Sean, 2026-10-12)
+
+**Status: decided by Sean**, except item 1, Astra's verdict as Sean relayed it.
+
+1. **Astra's cross-review of D6 draft 2** (`docs/reviews/D6/sdlc-review-D6-Astra.md`): **approve with the amendments of her section 2 applied**, blocking B01 to B14 (settled turns; separate authority for saved intent, approved baseline and registered plan; routing derived from artifacts; parsers and coverage inputs that establish the checks; spec approval fencing evidence; T1 phase completion and phase-check registration; protected-check readiness; current generations for early replacement and integrated dependencies; the envelope as built; human confirmation of origin; the conformance journey's source identity and barrier; a moved requirement's fix verified; copied tests' acceptance logic protected; automatic Alpha entering at the request), non-blocking N01 to N04. **D6 draft 3 applies them**; building starts from draft 3 and the build spec and plan updated to it.
+2. **BS5 question 1:** the project lane's reference project is purpose-written for M5's shape; fixture C gets its own specification for the benchmark after M5.
+3. **BS5 question 3:** the retrofit real run copies the M4 real-run repository from `~/surety-m4-real-20261012/repos/` and checks its recorded head; reconstruction from the M4 records is the stated fallback.
+4. **BS5 questions 2, 4, 5 and 6, as recommended:** D6-X06's over-limit case in the exhaust lane on `mini-hp01`; D6-S08 read under K2; a short hands-on script (M446); the adopted fixture carries one deliberately false README claim.
