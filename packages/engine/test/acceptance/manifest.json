@@ -357,7 +357,11 @@
       "M407-alpha-under-policy-enters-at-the-request.test.mjs",
       "M401-the-t1-variant-on-the-scripted-backend.test.mjs",
       "M401-the-journey-from-an-idea-to-phase-two.test.mjs",
-      "M401-the-journey-from-phase-two-to-alpha.test.mjs"
+      "M401-the-journey-from-phase-two-to-alpha.test.mjs",
+      "M403-a-turn-admitted-after-the-closes-save.test.mjs",
+      "M403-a-session-on-a-backend-not-session-qualified.test.mjs",
+      "M403-spec-approval-blocked-by-its-findings.test.mjs",
+      "M49-loosening-autonomy-is-a-widening.test.mjs"
     ]
   },
   "sandbox": [

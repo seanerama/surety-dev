@@ -12,8 +12,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
-import { consume, decision, decisionsOfKind } from '../decisions.mjs';
-import { eventsOfType, changePolicy } from '../journal.mjs';
+import { confirmRequired, consume, decision, decisionsOfKind } from '../decisions.mjs';
+import { eventsOfType, changePolicy, getPolicy } from '../journal.mjs';
 import { waitFor } from '../engine.mjs';
 import { makeProjectRepo, refOid } from '../repos.mjs';
 import { getRow, tick, tickUntil, waitForIdle } from '../runs.mjs';
@@ -35,8 +35,42 @@ export async function createWithIdea(fx, { idea = IDEA_BRIEF, name = PROJECT_NAM
   const id = res.body?.project?.id;
   assert.match(id ?? '', /^proj_/, `the response names the project (${res.text})`);
   await waitFor(() => getRow(fx.home, 'projects', id)?.registration_state === 'registered', { what: `project ${id} to be registered` });
-  if (policy !== undefined) await changePolicy(fx.engine, id, policy);
+  if (policy !== undefined) await ownerPolicy(fx, id, policy);
   return { id, repo, base: refOid(repo.path, repo.ref), res };
+}
+
+// Sean's decision of 2026-10-12 (SEAM.md §364): loosening `autonomy`
+// (step → stage → phase) or `alpha_deploy` (manual → on_phase_complete) on an
+// existing project is a policy widening, answered 409 `confirm_required`
+// and applied on the owner's approval; tightening applies directly.
+const AUTONOMY_RANK = Object.freeze({ step: 0, stage: 1, phase: 2 });
+export function wideningKeys(effective, change) {
+  return Object.keys(change).filter(
+    (k) =>
+      (k === 'autonomy' && AUTONOMY_RANK[change[k]] > AUTONOMY_RANK[effective.autonomy ?? 'phase']) ||
+      (k === 'alpha_deploy' && change[k] === 'on_phase_complete' && (effective.alpha_deploy ?? 'manual') !== 'on_phase_complete'),
+  );
+}
+
+// The owner's policy change: its ordinary keys by `changePolicy` (200), then
+// any loosening of `autonomy` or `alpha_deploy` through its confirmation, the
+// `policy_widening` decision approved by the owner. Returns the effective policy.
+export async function ownerPolicy(fx, project, change) {
+  const { effective } = await getPolicy(fx.engine, project);
+  const widening = wideningKeys(effective, change);
+  const ordinary = Object.fromEntries(Object.entries(change).filter(([k]) => !widening.includes(k)));
+  if (Object.keys(ordinary).length > 0) await changePolicy(fx.engine, project, ordinary);
+  if (widening.length === 0) return (await getPolicy(fx.engine, project)).effective;
+  const wide = Object.fromEntries(widening.map((k) => [k, change[k]]));
+  const previewed = await confirmRequired(fx, `/v1/projects/${project}/policy`, wide);
+  await consume(fx, project, previewed, 'approve');
+  return waitFor(
+    async () => {
+      const { effective: now } = await getPolicy(fx.engine, project);
+      return widening.every((k) => now[k] === change[k]) ? now : undefined;
+    },
+    { what: `the owner's widening of ${widening.join(', ')} to be effective` },
+  );
 }
 
 export const projectRow = (home, id) => getRow(home, 'projects', id);

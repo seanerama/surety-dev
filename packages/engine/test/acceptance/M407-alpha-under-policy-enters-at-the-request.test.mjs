@@ -35,7 +35,6 @@ import { after, before, describe, test } from 'node:test';
 import { fixtureAuthorization, qualifyByFixture, requestDeployment, scriptCall } from './harness/deploy/kernel.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { evaluationsOf, scopeOf, sharedFixture } from './harness/gates.mjs';
-import { changePolicy } from './harness/journal.mjs';
 import {
   alphaDeployed,
   alphaReady,
@@ -48,6 +47,7 @@ import {
   eventsAbout,
   journeyContext,
   journeyScripts,
+  ownerPolicy,
   nextPhasePublished,
   phaseCompleted,
   planOfPhase,
@@ -202,7 +202,7 @@ describe('M407 under manual, and an incomplete scope', () => {
     const rows = deploymentRequests(fx.home, ctx.project);
     assert.deepEqual(rows.map((r) => r.requested_by), ['human'], 'the request row names the human');
     // Switching the policy afterwards requests nothing for a key already requested.
-    await changePolicy(fx.engine, ctx.project, { alpha_deploy: 'on_phase_complete' });
+    await ownerPolicy(fx, ctx.project, { alpha_deploy: 'on_phase_complete' }); // a widening, approved by the owner (SEAM.md §364)
     await tick(fx.engine, ctx.project, { rounds: 3 });
     assert.deepEqual(policyRequests(fx.home, ctx.project), [], 'the completed key admits no policy request');
   });
