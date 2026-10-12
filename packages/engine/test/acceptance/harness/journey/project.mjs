@@ -15,7 +15,7 @@
 // `finally` (`endJourney`).
 
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { activeQualification, waitSelfTest } from '../checks/execution.mjs';
@@ -26,6 +26,7 @@ import { cgroupsNamed, endEnvironment, realAdapterStarts, unitsOfHome } from '..
 import { qualifyByCommand } from '../deploy/qualify.mjs';
 import { freePort } from '../engine.mjs';
 import { sandboxEngine } from '../sandbox/lane.mjs';
+import { storePath } from '../store.mjs';
 import {
   architectSession,
   authoringReady,
@@ -51,6 +52,10 @@ export const PROJECT_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: '
 
 const SELF_TEST = ['--harness-runner-self-test', 'run'];
 
+// The qualification row of the previous start, which this start's self-test
+// is not; null before any engine has made the home's store (objection 068).
+const previousQualification = (fx) => (existsSync(storePath(fx.home)) ? (activeQualification(fx.home)?.id ?? null) : null);
+
 // The engine of either file: a sandbox-lane fixture on the real adapter,
 // every project-lane start carrying the runner self-test, the classifier
 // `authoritative` naming the running version (the ruling). `lane`: 'project'
@@ -63,7 +68,7 @@ export async function journeyEngine(t, guard, { lane = 'project' } = {}) {
   fx.start = (opts = {}) => (opts.harness === false ? inner(opts) : inner({ ...opts, args: [...(opts.args ?? []), ...SELF_TEST] }));
   const start = async () => {
     if (lane === 'kernel') return fx.startKernel();
-    const previous = activeQualification(fx.home)?.id ?? null;
+    const previous = previousQualification(fx);
     await fx.start();
     return waitSelfTest(fx, { notRow: previous });
   };
@@ -111,7 +116,7 @@ export async function toPhaseTwoPublished(fx, { lane }) {
 // self-tested at this start. Returns the moment of the switch (ISO), after
 // which every candidate is nominated on the project lane.
 export async function toProjectLane(fx, ctx) {
-  const previous = activeQualification(fx.home)?.id ?? null;
+  const previous = previousQualification(fx);
   await fx.engine.kill();
   await fx.start();
   const qualification = await waitSelfTest(fx, { notRow: previous });
