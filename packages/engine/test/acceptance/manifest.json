@@ -361,7 +361,16 @@
       "M403-a-turn-admitted-after-the-closes-save.test.mjs",
       "M403-a-session-on-a-backend-not-session-qualified.test.mjs",
       "M403-spec-approval-blocked-by-its-findings.test.mjs",
-      "M49-loosening-autonomy-is-a-widening.test.mjs"
+      "M49-loosening-autonomy-is-a-widening.test.mjs",
+      "M401-a-spec-change-with-a-blocking-finding.test.mjs",
+      "M401-a-correction-resolves-only-the-checks-it-names.test.mjs",
+      "M406-a-phase-sign-off-before-a-new-protected-version.test.mjs",
+      "M401-a-replan-that-edits-an-adr-routes-to-the-owner.test.mjs",
+      "M401-spec-change-work-from-a-finding-is-not-dispatched.test.mjs",
+      "M407-a-policy-request-refused-in-preparation.test.mjs",
+      "M401-a-spec-change-that-no-longer-rebases.test.mjs",
+      "M401-a-spec-change-application-is-done-once.test.mjs",
+      "M407-the-spec-read-after-a-criterion-changes.test.mjs"
     ]
   },
   "sandbox": [
