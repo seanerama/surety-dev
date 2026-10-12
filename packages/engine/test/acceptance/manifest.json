@@ -352,7 +352,11 @@
       "M402-the-idea-record.test.mjs",
       "M403-close-raises-the-products-decision.test.mjs",
       "M404-the-architects-products-registered.test.mjs",
-      "M405-plan-published-by-the-authorized-finalizer.test.mjs"
+      "M405-plan-published-by-the-authorized-finalizer.test.mjs",
+      "M406-phase-completions-effects-once-per-binding.test.mjs",
+      "M407-alpha-under-policy-enters-at-the-request.test.mjs",
+      "M401-the-t1-variant-on-the-scripted-backend.test.mjs",
+      "M401-the-journey-from-an-idea-to-alpha.test.mjs"
     ]
   },
   "sandbox": [
@@ -444,7 +448,8 @@
     "M340-a-check-that-only-probes-health.test.mjs",
     "M339-the-reference-projects-journey.test.mjs",
     "M342-the-verifiers-deployment-check-package.test.mjs",
-    "M314-the-service-link-under-a-long-home.test.mjs"
+    "M314-the-service-link-under-a-long-home.test.mjs",
+    "M401-the-journey-from-an-idea-to-alpha.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

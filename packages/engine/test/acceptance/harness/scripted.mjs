@@ -261,6 +261,13 @@ export class Scripted {
     this.#writeJson(join(this.dir, 'scripts', `canary-${kind}.json`), Array.isArray(scripts) ? scripts : [scripts]);
   }
 
+  // M5 slice 31b (SEAM.md §350): launches of work kind `kind` with no script
+  // of their own follow `value`: one script for every such launch, or an
+  // array by that kind's launch ordinal. Written as given (not wrapped).
+  kindScript(kind, value) {
+    this.#writeJson(join(this.dir, 'scripts', `kind-${kind}.json`), value);
+  }
+
   // Every launch that has no script of its own follows this one.
   defaultScript(one) {
     this.#writeJson(join(this.dir, 'scripts', 'default.json'), one);
