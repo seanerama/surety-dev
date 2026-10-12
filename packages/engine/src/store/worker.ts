@@ -119,6 +119,7 @@ import {
   recordReconcile,
   requestDeployment,
   requestFacts,
+  policyRequestDue,
   artifactAdmission,
   artifactPaths,
   artifactRows,
@@ -291,7 +292,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
   // D4 §§3.2, 4.1, 4.6 (M4 slice 23).
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
-  'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
+  'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
   // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run
   // has ended (deploy/qualify.ts).
@@ -348,6 +349,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'deploy.policy_due': (d, a) => policyRequestDue(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
   'deploy.artifact_rows': (d) => artifactRows(d),
@@ -636,6 +638,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.turn_claim': (tx, a) => turnClaim(tx, a),
   // D6 §5.8 (M5 slice 31b): the phase's step at every tick (plan/phase.ts).
   'phase.step': (tx, a) => phaseStep(tx, a),
+  // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
+  'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.

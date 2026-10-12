@@ -25,6 +25,16 @@ const mustProject = (db: Database, project: string) => {
 
 export function specView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
+  // A requirement's delivery status (D6-D02; SEAM.md §354): `verified` once
+  // a stage of an active plan whose phase completed implements it, `pending`
+  // until then (neither failed nor passed), `withdrawn` when withdrawn.
+  const delivered = new Set(
+    (
+      db
+        .prepare(`SELECT s."implements" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."active" = 1 AND p."completed_at" IS NOT NULL AND s."cancelled_at" IS NULL`)
+        .all(args.project) as { implements: string | null }[]
+    ).flatMap((s) => json<string[]>(s.implements, [])),
+  );
   const versions = db.prepare('SELECT "version", "git_blob", "semantic_digest", "approved_by", "approved_at" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version"').all(args.project);
   const requirements = (
     db
@@ -37,7 +47,7 @@ export function specView(db: Database, args: { project: string }) {
     criteria: r.criteria_text !== null ? json<{ id: string; text: string }[]>(r.criteria_text, []) : json<string[]>(r.criteria, []).map((id) => ({ id, text: null })),
     sensitive_areas: json<string[]>(r.sensitive_areas, []),
     assigned_phase: r.assigned_phase,
-    status: r.status,
+    status: r.withdrawn_at !== null ? 'withdrawn' : delivered.has(r.key as string) ? 'verified' : 'pending',
     human_test: r.human_test === 1,
     withdrawn: r.withdrawn_at !== null,
   }));

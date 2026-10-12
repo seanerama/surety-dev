@@ -30,7 +30,7 @@ import { raiseFinding } from './findings.js';
 import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
-import { engineSettings, projectPolicy } from './settings.js';
+import { engineSettings, projectOptions, projectPolicy } from './settings.js';
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
@@ -608,6 +608,88 @@ export interface RequestArgs {
   builder: string;
   // The gate's facts, read on the main thread (gates/prepare.ts).
   facts: Record<string, unknown>;
+  // Who requests (D6 §6.8, A.3): the owner's command, or the engine under
+  // `alpha_deploy: on_phase_complete`.
+  requested_by?: 'human' | 'policy';
+}
+
+// ---- the deployment request and its key (D6 §6.8, A.3; K9; B14; SEAM.md §354) ----------------
+
+interface RequestRow {
+  id: string;
+  project: string;
+  request_key: string;
+  requested_by: 'human' | 'policy';
+  authorization: string | null;
+  outcome: string;
+}
+
+// The request key: the project, the completion binding of the phase that
+// completed on the candidate (null when none did), the candidate and the
+// environment's configuration version. Canonical text, unique per project.
+function requestKey(db: Db, args: { project: string; candidate: string; config: string }): string {
+  const plans = db
+    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "completed_at" DESC, rowid DESC`)
+    .all(args.project) as { completion_binding: string }[];
+  const binding = plans.map((p) => parseJson<Record<string, unknown>>(p.completion_binding)).find((b) => b?.candidate === args.candidate) ?? null;
+  return canonical({ project: args.project, completion_binding: binding, candidate: args.candidate, environment_configuration: args.config });
+}
+
+const requestOfKey = (db: Db, project: string, key: string): RequestRow | undefined =>
+  db.prepare('SELECT * FROM "deployment_requests" WHERE "project" = ? AND "request_key" = ?').get(project, key) as RequestRow | undefined;
+
+// The request's row: one per key. The owner's request again under a key
+// already requested takes the row on (its authorization, work and outcome
+// are the newest request's); a policy request never makes a second one.
+function recordRequest(tx: Tx, args: { project: string; key: string; requested_by: 'human' | 'policy'; candidate: string; environment: string; authorization: string; work_item: string | null; outcome: string }): RequestRow {
+  const existing = requestOfKey(tx.db, args.project, args.key);
+  if (existing) {
+    tx.db.prepare('UPDATE "deployment_requests" SET "authorization" = ?, "work_item" = ?, "outcome" = ? WHERE "id" = ?').run(args.authorization, args.work_item, args.outcome, existing.id);
+    return requestOfKey(tx.db, args.project, args.key)!;
+  }
+  const id = tx.newId('dreq_');
+  tx.db
+    .prepare('INSERT INTO "deployment_requests" ("id", "created_at", "project", "request_key", "requested_by", "candidate", "environment", "authorization", "work_item", "outcome") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, tx.at, args.project, args.key, args.requested_by, args.candidate, args.environment, args.authorization, args.work_item, args.outcome);
+  if (args.requested_by === 'policy') {
+    tx.emit('deploy.requested_by_policy', { project: args.project, candidate: args.candidate, environment: args.environment }, { request: id, request_key: JSON.parse(args.key) as unknown, authorization: args.authorization, outcome: args.outcome });
+  }
+  return requestOfKey(tx.db, args.project, args.key)!;
+}
+
+// The outcome of the request whose authorization an operation consumed,
+// when its orchestration ends (A.3): deployed, failed, not verified, or
+// unknown.
+function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_verified' | 'unknown'): void {
+  if (op.kind !== 'deploy' || !op.authorization) return;
+  tx.db.prepare(`UPDATE "deployment_requests" SET "outcome" = ? WHERE "authorization" = ? AND "outcome" = 'pending'`).run(outcome, op.authorization);
+}
+
+// `alpha_deploy: on_phase_complete` (D6 §6.8; SEAM.md §354): at a tick
+// after a phase's completion, the request the policy owes now, if any: the
+// newest phase-complete candidate, on a configured environment whose
+// adapter is qualified, under a key no request has had. Nothing while a
+// deployment of the candidate and environment is pending: the policy never
+// joins another request.
+export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
+  if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
+  const plan = db
+    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "completed_at" DESC, rowid DESC LIMIT 1`)
+    .get(args.project) as { completion_binding: string } | undefined;
+  const candidate = parseJson<{ candidate?: string }>(plan?.completion_binding ?? null)?.candidate;
+  if (!candidate || !getCandidate(db, candidate)) return null;
+  const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", "created_at"`).all(args.project) as EnvRow[];
+  for (const env of envs) {
+    const config = currentConfig(db, env);
+    if (!config || config.status === 'secrets_changed') continue;
+    if (qualificationFor(db, env) === undefined) continue;
+    const key = requestKey(db, { project: args.project, candidate, config: config.id });
+    if (requestOfKey(db, args.project, key)) continue;
+    const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
+    if (all.some((a) => pending(db, a))) continue;
+    return { candidate, environment: env.name, key };
+  }
+  return null;
 }
 
 // What the request needs the main thread to read first.
@@ -696,6 +778,16 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   // Coalescing (J3): while the candidate and environment have a deployment
   // pending, a request is answered with it and creates nothing.
   const pendingRow = all.find((a) => pending(tx.db, a));
+  const requestedBy = args.requested_by ?? 'human';
+  const key = requestKey(tx.db, { project: args.project, candidate: candidate.id, config: config.id });
+  if (requestedBy === 'policy') {
+    // The same key admits no second request (B14), and the policy's request
+    // derives its own authorization: it never joins a pending one (M407 (h)).
+    if (requestOfKey(tx.db, args.project, key)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    if (pendingRow) return { status: 200, body: { request: null, skipped: 'pending' } };
+  }
+  const record = (auth: string, outcome: string) =>
+    recordRequest(tx, { project: args.project, key, requested_by: requestedBy, candidate: candidate.id, environment: env.id, authorization: auth, work_item: workOf(auth)?.id ?? null, outcome });
   // An authorization issued while the adapter was qualified, whose row has
   // lapsed since: refused before any intent, the authorization not consumed
   // (D4 §2.6, A.6; the driver's ruling on M338 (d); SEAM.md §324).
@@ -709,6 +801,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     });
   }
   if (pendingRow) {
+    record(pendingRow.id, 'pending');
     const ev = pendingRow.evaluation === null ? undefined : (tx.db.prepare('SELECT "id", "outcome", "reasons" FROM "gate_evaluations" WHERE "id" = ?').get(pendingRow.evaluation) as { id: string; outcome: string; reasons: string } | undefined);
     return answer(200, pendingRow, ev ? { id: ev.id, gate_kind: 'alpha_authorize', outcome: ev.outcome, reasons: JSON.parse(ev.reasons) as unknown } : null);
   }
@@ -729,12 +822,13 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   const artifact = recordArtifact(tx, args.project, args.sealed);
   const mapping = recordMapping(tx, { project: args.project, artifact: artifact.id, revision: candidate.revision, config: config.id, spec: args.specFingerprint, builder: args.builder });
   const binding: Binding = { environment: env.id, artifact_digest: artifact.digest, mapping, config_identity: config.config_identity, target_set: targetsOf(config) };
-  const key = bindingKey(binding);
-  const proposed = all.find((a) => a.status === 'proposed' && bindingKey(bindingOf(a)) === key);
+  const bkey = bindingKey(binding);
+  const proposed = all.find((a) => a.status === 'proposed' && bindingKey(bindingOf(a)) === bkey);
   const auth = proposed ?? insertAuthorization(tx, { project: args.project, candidate, binding, generation: (all.at(-1)?.generation ?? 0) + 1 });
   const { evaluation } = evaluate(tx, { ...args.facts, project: args.project, candidate: candidate.id, kind: 'alpha_authorize', authorization: auth.id });
   const now = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(auth.id) as AuthRow;
   if (now.status !== 'issued') {
+    record(auth.id, 'not_issued');
     return {
       status: 409,
       body: {
@@ -758,6 +852,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     },
     {},
   );
+  record(auth.id, 'pending');
   return answer(201, now, evaluation);
 }
 
@@ -1162,6 +1257,7 @@ function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'block
   if (op.orchestration_stage !== 'ended') bumpRevision(tx, f.environment);
   releaseOperationLeases(tx, op);
   tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'ended' WHERE "id" = ?`).run(op.id);
+  settleRequest(tx, op, work === 'complete' ? 'deployed' : work === 'blocked' ? 'not_verified' : work === 'cancelled' && cause !== 'preempted' ? 'failed' : 'unknown');
   if (f.work_item === null || work === 'none') return;
   const item = getWorkItem(tx, f.work_item);
   if (!item || item.status === 'complete' || item.status === 'cancelled') return;

@@ -42,6 +42,7 @@ import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
+import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -146,6 +147,9 @@ export class Scheduler {
     // The phase (D6 §5.8): its checks registered, its gate evaluated on the
     // facts read here, its completion; once per tick.
     await this.phase(project).catch((err) => log('phase', err, { project }));
+    // `alpha_deploy: on_phase_complete` (D6 §6.8; SEAM.md §354): the request
+    // a completed phase owes, made through requestDeployment's own path.
+    await this.alphaPolicy(project).catch((err) => log('alpha policy', err, { project }));
     // The classifier (D3 §1.6; SEAM.md §215): every captured proposal,
     // classified at a tick after its capture, its question raised.
     await classifyDue(this.rt, project).catch((err) => log('classification', err, { project }));
@@ -163,6 +167,17 @@ export class Scheduler {
     const facts = await gateFacts(this.rt, project, step.evaluate.candidate);
     await this.rt.engine('gate.evaluate', { project, candidate: step.evaluate.candidate, kind: 'phase', phase_plan: step.evaluate.phase_plan, ...facts });
     await this.rt.engine('phase.step', { project });
+  }
+
+  private async alphaPolicy(project: string): Promise<void> {
+    const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
+    if (!due) return;
+    const prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    try {
+      await this.rt.engine('deploy.policy_request', prepared);
+    } finally {
+      await settleDeployment(this.rt, prepared);
+    }
   }
 
   private async tick(): Promise<void> {
