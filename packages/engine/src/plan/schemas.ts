@@ -5,8 +5,7 @@
 // naming the file and the field. Nothing a session writes is run (BS5 §4.1
 // rule 14): a plan is parsed and registered, never executed.
 
-import { SENSITIVE_AREAS } from '../checks/schema.js';
-import { KIND_INVENTORY } from '../checks/scope.js';
+import { CHECK_KINDS as KINDS, SENSITIVE_AREAS } from '../checks/schema.js';
 
 export interface SchemaFinding {
   file: string;
@@ -22,7 +21,8 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const KEY = /^R[1-9][0-9]*$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const ADR_KEY = /^ADR-[0-9]{3,}$/;
-const CHECK_KINDS = new Set(KIND_INVENTORY.T3);
+// B.5 `kinds: [CheckKind]`: every kind of F §5.7 (D3 A.2), the floor's included.
+const CHECK_KINDS = new Set(KINDS);
 const INTERFACE_KINDS = ['http', 'cli', 'module', 'file', 'event'];
 
 function parseJsonObject(file: string, text: string): Parsed<Record<string, unknown>> {

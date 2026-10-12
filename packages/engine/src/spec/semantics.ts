@@ -305,6 +305,22 @@ function parseModules(lines: string[] | undefined, findings: SemanticFinding[]):
 
 function parseEnvironments(lines: string[] | undefined): SemanticEnvironment[] {
   if (!lines) return [];
+  // TPL §7 in its table form: the environments by the table's first column,
+  // with the section's `- **Field:** value` lines as their fields.
+  if (!lines.some((l) => ENV_HEADING.test(l) && !l.startsWith('####'))) {
+    const table = firstTable(lines);
+    if (!table) return [];
+    const fields: Record<string, string> = {};
+    for (const line of lines) {
+      const f = /^-\s+\*\*(.+?):\*\*\s*(.*)$/.exec(line.trim());
+      if (f) fields[f[1]!.trim()] = f[2]!.replace(/\*\[.*?\]\*/g, '').trim();
+    }
+    return table
+      .slice(2)
+      .map((row) => (cells(row)?.[0] ?? '').replace(/^\[|\]$/g, '').replace(/`/g, ''))
+      .filter((name) => /^[a-z][a-z0-9_-]*$/.test(name))
+      .map((name) => ({ name, fields: { ...fields } }));
+  }
   const out: SemanticEnvironment[] = [];
   let cur: SemanticEnvironment | null = null;
   for (const line of lines) {
