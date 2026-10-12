@@ -2197,3 +2197,13 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 
 1. **The full `npm test`** on `main` at `8fec0fb` (the report final), from a clean scratch copy, 01:23 to 03:22 UTC: unit 559 of 559 in 70 files; acceptance 1,623 of 1,623 in 288 files, none failed, cancelled or skipped, M343 passing with the report final and both browser lanes run; the runner's own report that 7 real-lane and 4 exhaustion-lane files were not run (only their lanes run them: M342 4 of 4 and the exhaust lane 14 of 14, E135); exit 0; free memory never below 12.7 GiB; no `surety-*` unit before or after; one leftover `/tmp/surety-static-5bUg55` reported.
 2. **Left for Sean:** his decision to accept M4 (the report, `docs/acceptance/reports/M4-report.md`, its question 4 on the human acts made by the driver on his instruction, E135 item 1); the hands-on run if he wants it (`docs/acceptance/reports/M4-hands-on.sh`, M344); **revoking the temporary subscription token** he pasted (E135 item 1).
+
+## E138. M4 accepted (decided by Sean, 2026-10-12)
+
+**Status: decided by Sean.**
+
+1. **Accepted** on the record of E135 and E137: M342 4 of 4 on the real lane, the exhaust lane 14 of 14 on `mini-hp01`, `npm test` on `main` at `8fec0fb` (unit 559 of 559, acceptance 1,623 of 1,623), and the report final (`docs/acceptance/reports/M4-report.md`).
+2. **The report's question 4:** the human acts BS4 §12 names Sean's (the qualification approval, the trust activation, the classification decisions, `qualify-adapter` and the deploy request) were made by the driver on Sean's explicit instruction; Sean accepts them as made by his command, as in M3's later tries (E105, E107).
+3. **Not run:** the hands-on (M344), available to Sean at any time.
+4. **Left for Sean:** revoking the temporary subscription token (E135 item 1).
+5. **Next:** M5, idea to Alpha (E136); the D6 design is being drafted.
