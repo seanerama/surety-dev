@@ -30,8 +30,8 @@ export const X2_OPTIONS = Object.freeze(['cancel', 'change_spec', 'correct_check
 // implementing R1 (criterion R1.1). `defs`, `index` and `stages` replace them.
 export const ACC_SMOKE = Object.freeze({ acc: def('acceptance', { criteria: ['R1.1'] }), smoke: def('smoke') });
 
-export async function repairProject(fx, { tier = 'T1', defs = ACC_SMOKE, governed, index = [{ key: 'R1', criteria: ['R1.1'] }], stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }], files } = {}) {
-  return scopeProject(fx, { tier, defs, governed, index, stages, files });
+export async function repairProject(fx, { tier = 'T1', defs = ACC_SMOKE, governed, index = [{ key: 'R1', criteria: ['R1.1'] }], stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }], files, policy } = {}) {
+  return scopeProject(fx, { tier, defs, governed, index, stages, files, policy });
 }
 
 // The registrations of a candidate by one trigger source, {key: execution row}.
