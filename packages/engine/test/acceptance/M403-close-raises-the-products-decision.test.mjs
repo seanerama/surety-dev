@@ -53,8 +53,8 @@ import { roleThat } from './harness/gitruns.mjs';
 import { closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnThatSays, turnThatWrites } from './harness/sessions.mjs';
 
 // The idea accepted and the specification approved; the project ready for an Architect.
-async function readyForArchitect(fx) {
-  const p = await createWithIdea(fx);
+async function readyForArchitect(fx, { policy } = {}) {
+  const p = await createWithIdea(fx, policy === undefined ? {} : { policy });
   const vision = await visionSession(fx, p.id);
   const spec = await specSession(fx, p.id);
   return { p, vision, spec };
@@ -143,7 +143,8 @@ describe('M403 close raises the product\'s decision; the consolidated approval p
 
   test('(c) neither approval alone publishes; both do, once, by the authorized finalizer; a role cannot answer', async (t) => {
     const fx = await scriptedEngine(t);
-    const { p } = await readyForArchitect(fx);
+    // No repair of the refused run: its one scripted launch is the case (objection 058).
+    const { p } = await readyForArchitect(fx, { policy: { repair_attempts_max: 0 } });
     const arch = await architectSession(fx, p.id, p.repo, { answer: 'none' });
     const d = arch.decisions;
     // A role's attempt: a result field answering a decision is not in the schema.
