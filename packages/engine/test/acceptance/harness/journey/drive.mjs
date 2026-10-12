@@ -229,7 +229,7 @@ export { ADR_KEY };
 // answer recorded as the harness's.
 
 import { recordExit } from '../checks/selection.mjs';
-import { executionsOf } from '../checks/fixtures.mjs';
+import { executionRow, executionsOf } from '../checks/fixtures.mjs';
 import { configContent, configure, qualifyByFixture, scriptCall } from '../deploy/kernel.mjs';
 import { roleThat } from '../gitruns.mjs';
 import { script, step } from '../scripted.mjs';
@@ -298,7 +298,21 @@ export async function pump(fx, ctx, done, { max = 80, what = 'the journey to adv
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return value;
     if (ctx.lane !== 'project') {
-      for (const x of queuedExecutions(fx.home, project)) await recordExit(fx.engine, x.id, exits(x));
+      // The queue is read with no run under way (objection 067; SEAM.md §371):
+      // a run that integrates while the queue is being worked can nominate,
+      // supersede the candidate and cancel its queued executions (D1 §9.2;
+      // §192). An execution the engine itself moved on from `queued` before
+      // its turn is skipped and kept in `ctx.skipped`; any other refusal of
+      // the scripted boundary fails the journey.
+      await waitForIdle(fx.home, project, ctx.lane === 'project' ? { timeoutMs: 600_000 } : {});
+      for (const x of queuedExecutions(fx.home, project)) {
+        const now = executionRow(fx.home, x.id);
+        if (now?.status !== 'queued') {
+          (ctx.skipped ??= []).push({ execution: x.id, key: x.key, status: now?.status ?? null });
+          continue;
+        }
+        await recordExit(fx.engine, x.id, exits(x));
+      }
     }
     for (const d of openDecisions(fx.home, project)) {
       if (!ROUTED_KINDS.includes(d.kind)) continue;

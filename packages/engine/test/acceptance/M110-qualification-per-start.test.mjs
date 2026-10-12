@@ -52,7 +52,18 @@ function assertActiveRow(fx, info) {
     assert.ok(['passed', 'failed', 'not_exercised'].includes(c.result), `check ${c.id} has a result`);
     assert.ok('observed' in c, `check ${c.id} has an observed value`);
   }
-  for (const id of HOST_CHECK_IDS.filter((x) => x !== 'H13')) assert.equal(row.checks.find((c) => c.id === id).result, 'passed', `a pass has ${id} passed`);
+  // H10 applies only on WSL2 (D2 §6; the engine's `isRequired`, `isWsl2`: /proc/version
+  // naming microsoft or wsl). Off WSL2 it is not_exercised and not required (SEAM.md §372).
+  const onWsl2 = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+  for (const id of HOST_CHECK_IDS.filter((x) => x !== 'H13')) {
+    const c = row.checks.find((x) => x.id === id);
+    if (id === 'H10' && !onWsl2) {
+      assert.equal(c.result, 'not_exercised', `off WSL2, H10 is not exercised (${JSON.stringify(c)})`);
+      assert.equal(c.required, false, 'and not required');
+      continue;
+    }
+    assert.equal(c.result, 'passed', `a pass has ${id} passed (${JSON.stringify(c)})`);
+  }
   assert.deepEqual(row.probes.map((p) => p.id), PROBE_IDS, 'probes P1 to P20 in order');
   for (const p of row.probes) {
     assert.ok(typeof p.target_seeded === 'boolean', `probe ${p.id} says whether its target was seeded`);
@@ -124,7 +135,8 @@ describe('M110 one qualification per start', () => {
     const info = await fx.engine.engineInfo();
     assert.equal(info.bootstrap_exception, true, 'the exception is in force');
     const host = hostSection(info);
-    for (const id of HOST_CHECK_IDS.filter((x) => x !== 'H13')) assert.equal(checkOf(host, id).result, 'passed', `${id} ran and passed under the exception`);
+    const onWsl2 = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+    for (const id of HOST_CHECK_IDS.filter((x) => x !== 'H13')) assert.equal(checkOf(host, id).result, id === 'H10' && !onWsl2 ? 'not_exercised' : 'passed', `${id} ran under the exception (H10 not exercised off WSL2; SEAM.md §372)`);
     const rows = hostRows(fx.home);
     const mine = rows.filter((r) => r.incarnation === info.incarnation);
     assert.equal(mine.length, 1, 'the row is written');

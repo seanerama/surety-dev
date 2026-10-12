@@ -55,7 +55,7 @@ import {
 } from './harness/journey/drive.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, ROADMAP_MD, specText } from './harness/journey/reference.mjs';
 import { requestDeployment } from './harness/deploy/kernel.mjs';
-import { scriptedEngine, tick } from './harness/runs.mjs';
+import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { setEngineConfig, runningClassifier } from './harness/checks/classifier.mjs';
 
 // A project of `tier` at `developing`, the reference journey's scripts in
@@ -134,6 +134,10 @@ describe('M406 phase completion\'s effects, once per binding (T2, the shared jou
   test('(d) repeated ticks and a restart: no second completion, no second replan', async () => {
     const { fx, ctx, plan } = J;
     await tick(fx.engine, ctx.project, { rounds: 3 });
+    // The restart at an idle point (SEAM.md §371): under `phase` the next
+    // phase's runs go on, and a run a restart interrupts ends `recovered` with
+    // its work held for the owner's Resume (D1 §15.3), which is not this case.
+    await waitForIdle(fx.home, ctx.project);
     await fx.engine.kill();
     await fx.start();
     await tick(fx.engine, ctx.project, { rounds: 3 });
