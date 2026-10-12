@@ -15,6 +15,7 @@ import { hasIdForm, newId } from './ids.mjs';
 import { assertDispatched, assertEndedRun, assertQuarantinedRun } from './invariants.mjs';
 import { Scripted } from './scripted.mjs';
 import { withStore } from './store.mjs';
+import { forgetHome, registerHome, teardownHome } from './teardown.mjs';
 
 // Ticks only when a test asks; short real-time grace periods.
 export const SLICE2_CONFIG = Object.freeze({ tick_interval: 600, terminate_grace: 2, kill_grace: 1 });
@@ -42,11 +43,16 @@ export async function scriptedEngine(t, { config = {}, barriers = [], until = 'f
   // exists: restoring access to a repository it made unreadable, letting go
   // of git calls it held.
   const fx = { root, home, port, scripted, engine: null, engines: [], repos: 0, beforeCleanup: [] };
+  registerHome(home, root);
   t.after(async () => {
     for (const undo of fx.beforeCleanup.reverse()) await undo();
     for (const e of fx.engines) await e.kill();
+    // The home's engines, units and scopes, by exact name, while its store
+    // still shows what is its own; then the home (SEAM.md §367).
+    teardownHome(home, 'after');
     scripted.killStrays();
     removeDir(root);
+    forgetHome(home);
   });
   fx.start = async ({ barriers: armed = [], harness = true, withScripted = true, until: state = 'full', timeoutMs, args: more = [], env: extra = {} } = {}) => {
     const args = [...(harness && withScripted ? scripted.flag : []), ...armed.flatMap((b) => ['--harness-barrier', b]), ...more];
