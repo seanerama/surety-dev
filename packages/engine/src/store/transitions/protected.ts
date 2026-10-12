@@ -338,7 +338,7 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
   authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // A spec change's correction applied resolves its obligations (D6 §4.5).
-  resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal });
+  resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   return { version: v.id };
 }
 

@@ -112,30 +112,38 @@ export class Effects {
   // branch's move is the approval's one effect (spec/change.ts).
   private async applySpecChange(row: IntentRow): Promise<void> {
     if (row.status === 'pending') {
+      // What cannot be read or made as approved invalidates the intent and
+      // asks the owner again (D1 §10.5; the 31b review's S7, M4).
+      const refuse = (reason: string) => this.rt.engine('spec.refuse_application', { intent: row.id, reason });
       const facts = await this.rt.engine<SpecApplicationFacts | null>('spec.application_facts', { intent: row.id });
-      if (facts === null || facts.revision === null) {
-        await this.rt.engine('intent.revalidate', { intent: row.id, facts: {} });
-        return;
-      }
+      if (facts === null || facts.revision === null) return void (await refuse('proposal'));
       const ctx = repoContext(facts.repo);
       const read = await readRef(ctx, facts.ref);
-      const head = read.state === 'ok' ? read.oid : null;
-      if (head === null || head !== facts.head) return;
+      if (read.state !== 'ok' || read.oid === null) return void (await refuse('integration_revision_unread'));
+      const head = read.oid;
+      // The branch is somewhere the engine did not put it: the integrity
+      // observation takes it (D1 §7.6); nothing is begun meanwhile.
+      if (head !== facts.head) return;
       let commit: { sha: string; tree: string; content: string } | null = null;
-      if ((await isAncestor(ctx, head, facts.revision)) !== true) {
+      const ancestor = await isAncestor(ctx, head, facts.revision);
+      if (ancestor === null) return void (await refuse('integration_revision_unread'));
+      if (ancestor !== true) {
         const base = await mergeBase(ctx, head, facts.revision);
-        if (base === null) return;
+        if (base === null) return void (await refuse('merge_base_unread'));
+        // The approved representation is the proposal's: a rebase onto a
+        // head whose spec files moved since the proposal's base would commit
+        // a specification nobody approved (the 31b review's M4).
+        const specAt = async (rev: string) => (await gitOk(ctx, ['rev-parse', '--verify', '--quiet', `${rev}:.surety/spec`]))?.trim() ?? null;
+        const [atBase, atHead] = [await specAt(base), await specAt(head)];
+        if (atBase === null || atHead === null) return void (await refuse('spec_files_unread'));
+        if (atBase !== atHead) return void (await refuse('spec_files_moved'));
         const rebased = await rebaseTree(facts.repo, base, facts.revision, head, this.rt.scratch);
-        if (rebased === 'unknown') return;
-        if (rebased.conflict !== null) {
-          log('spec change application', new Error(`the approved change conflicts with the integration branch at ${rebased.conflict}`), { intent: row.id });
-          await this.rt.engine('intent.revalidate', { intent: row.id, facts: { head: null } });
-          return;
-        }
+        if (rebased === 'unknown') return void (await refuse('rebase_unread'));
+        if (rebased.conflict !== null) return void (await refuse(`rebase_conflict:${rebased.conflict}`));
         const message = messageText({ title: `surety: apply specification change ${facts.request}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
         const content = commitContent({ tree: rebased.tree, parent: head, message, at: nowIso() });
         const sha = await commitId(facts.repo, content);
-        if (sha === null) return;
+        if (sha === null) return void (await refuse('commit_unprepared'));
         commit = { sha, tree: rebased.tree, content };
       }
       const made = await this.journal.withProject(row.project, () =>

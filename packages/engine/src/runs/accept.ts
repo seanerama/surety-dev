@@ -32,7 +32,9 @@ import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
 import { checkPlan } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
-import { type AdrFrontMatter, PLAN_FILE, type PhasePlanFile, parseAdr, parsePhasePlan } from '../plan/schemas.js';
+import { blockingFindings } from '../spec/approval.js';
+import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
+import { architectFindings } from '../plan/findings.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
@@ -361,6 +363,11 @@ export class Acceptor {
     if (text === null) return failed('infra_error', `${path} at ${sha} could not be read`);
     const parsed = parseSpecification(text);
     if (!parsed.readable || parsed.representation === null) return failed('invalid_result', `the proposed specification is not readable: ${parsed.findings.map((f) => f.why).join('; ')}`);
+    // A specification that could not be approved is never proposed (D6 §3.4;
+    // the 31b review's S1): its blocking findings refuse it here, before any
+    // side ref, decision or effect.
+    const blocking = blockingFindings(parsed.findings);
+    if (blocking.length > 0) return failed('invalid_result', `spec_semantics_invalid: the proposed specification cannot be approved: ${blocking.map((f) => `${f.where}: ${f.code}: ${f.why}`).join('; ')}`);
     const claimed = (facts.result?.report as { changes?: unknown } | undefined)?.changes ?? null;
     let impact: unknown;
     try {
@@ -408,22 +415,42 @@ export class Acceptor {
     const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base });
     const approved = b.baseline.approved;
     if (approved === null) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
-    const adrFront: Record<string, AdrFrontMatter> = {};
-    const adrs: BundleContent['adrs'] = {};
-    for (const [key, text] of Object.entries(approved.adrs)) {
-      const front = parseAdr(text, `.surety/adrs/${key}.md`);
-      if (front.ok) adrFront[key] = front.value;
-      adrs[key] = { text, status: front.ok ? front.value.status : 'accepted' };
-    }
-    const roadmap = plan.roadmap_revision ?? approved.roadmap;
-    const check = checkPlan(b.baseline, { modules: approved.modules, roadmap, adrs: approved.adrs, adr_front_matter: adrFront, architecture_text: approved.architecture_text, plan });
-    if (check.outcome !== 'passed') return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+    // The commit's own architecture, module map, ADRs and roadmap, read from
+    // its tree and diffed against the approved baseline by the check (D6
+    // §5.4; the 31b review's S4): a replan that changes any of them is
+    // routed to the human, never registered. An ADR whose front matter does
+    // not parse, or a machine file that does not, refuses the replan: its
+    // status is not known, and unknown is not `accepted`.
     const tree = await treeOf(ctx, sha);
     const entries = tree === null ? null : await listTree(ctx, tree);
     if (entries === null) return { refused: 'the replan\'s tree could not be read' };
+    const ARCHITECT_PATHS = ['.surety/architecture/', '.surety/adrs/', '.surety/roadmap/', '.surety/phases/'];
     const blobs: Record<string, string> = {};
-    for (const e of entries.values()) if (e.type === 'blob' && ['.surety/architecture/', '.surety/adrs/', '.surety/roadmap/', '.surety/phases/'].some((p) => e.path.startsWith(p))) blobs[e.path] = e.oid;
-    const content: BundleContent = { modules: approved.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined, plan, adrs, architecture_text: approved.architecture_text };
+    const files: Record<string, string> = {};
+    for (const e of entries.values()) {
+      if (e.type !== 'blob' || !ARCHITECT_PATHS.some((p) => e.path.startsWith(p))) continue;
+      blobs[e.path] = e.oid;
+      if (e.path.startsWith('.surety/phases/')) continue;
+      const text = await catBlob(ctx, sha, e.path);
+      if (text === null) return { refused: `${e.path} could not be read` };
+      files[e.path] = text;
+    }
+    const parsedArch = architectFindings({ files }, { requirement_keys: b.requirement_keys, spec_modules: b.spec_modules });
+    if (parsedArch.findings.length > 0) return { refused: `the replan's architecture products do not parse: ${parsedArch.findings.map((f) => f.message).join('; ')}` };
+    if (parsedArch.parsed.modules === null) return { refused: `the replan's tree has no ${MODULES_FILE}` };
+    const adrTexts: Record<string, string> = {};
+    const adrFront: Record<string, AdrFrontMatter> = {};
+    const adrs: BundleContent['adrs'] = {};
+    for (const [key, a] of Object.entries(parsedArch.parsed.adrs)) {
+      adrTexts[key] = a.text;
+      adrFront[key] = a.front;
+      adrs[key] = { text: a.text, status: a.front.status, ...(a.front.supersedes ? { supersedes: a.front.supersedes } : {}) };
+    }
+    const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
+    const architectureText = parsedArch.parsed.architecture_text;
+    const check = checkPlan(b.baseline, { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan });
+    if (check.outcome !== 'passed') return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+    const content: BundleContent = { modules: parsedArch.parsed.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined || check.roadmap_revision, plan, adrs, architecture_text: architectureText };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
     const obligations = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) });
     return {

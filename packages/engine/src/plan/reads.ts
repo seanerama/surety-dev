@@ -25,18 +25,39 @@ const mustProject = (db: Database, project: string) => {
 
 export function specView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
-  // A requirement's delivery status (D6-D02; SEAM.md §354): `verified` once
-  // a stage of an active plan whose phase completed implements it, `pending`
-  // until then (neither failed nor passed), `withdrawn` when withdrawn.
-  const delivered = new Set(
-    (
-      db
-        .prepare(`SELECT s."implements" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."active" = 1 AND p."completed_at" IS NOT NULL AND s."cancelled_at" IS NULL`)
-        .all(args.project) as { implements: string | null }[]
-    ).flatMap((s) => json<string[]>(s.implements, [])),
+  // A requirement's delivery status (D6-D02; SEAM.md §354; the 31b
+  // review's S9): `verified` only while a completed phase's stage delivered
+  // it and nothing since has taken that away: no specification change
+  // approved after that completion changed it, and no obligation on a check
+  // of its criteria is open. Otherwise `pending` (neither failed nor
+  // passed); `withdrawn` when withdrawn.
+  const deliveredAt = new Map<string, string>();
+  for (const s of db
+    .prepare(`SELECT s."implements", p."completed_at" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."active" = 1 AND p."completed_at" IS NOT NULL AND s."cancelled_at" IS NULL`)
+    .all(args.project) as { implements: string | null; completed_at: string }[]) {
+    for (const r of json<string[]>(s.implements, [])) if (!deliveredAt.has(r) || deliveredAt.get(r)! < s.completed_at) deliveredAt.set(r, s.completed_at);
+  }
+  // Changed since: the keys an approved change's impact names, by when.
+  const changedAt = new Map<string, string>();
+  for (const c of db
+    .prepare(`SELECT c."impact_value", r."approved_at" FROM "spec_change_requests" c JOIN "spec_revisions" r ON r."id" = c."approved_revision" WHERE c."project" = ? AND c."status" = 'approved'`)
+    .all(args.project) as { impact_value: string | null; approved_at: string }[]) {
+    for (const q of json<{ requirements?: { key: string }[] }>(c.impact_value, {}).requirements ?? []) if (!changedAt.has(q.key) || changedAt.get(q.key)! < c.approved_at) changedAt.set(q.key, c.approved_at);
+  }
+  const owedCriteria = new Set(
+    (db.prepare(`SELECT "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { criteria: string }[]).flatMap((o) => json<string[]>(o.criteria, [])),
   );
-  // A stage names its requirements by id (SEAM.md §70).
   const ids = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
+  const statusOf = (r: Record<string, unknown>): string => {
+    if (r.withdrawn_at !== null) return 'withdrawn';
+    const key = r.key as string;
+    const at = deliveredAt.get(ids.get(key) ?? '') ?? deliveredAt.get(key);
+    if (at === undefined) return 'pending';
+    const changed = changedAt.get(key);
+    if (changed !== undefined && changed >= at) return 'pending';
+    if (json<string[]>(r.criteria, []).some((c) => owedCriteria.has(c))) return 'pending';
+    return 'verified';
+  };
   const versions = db.prepare('SELECT "version", "git_blob", "semantic_digest", "approved_by", "approved_at" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version"').all(args.project);
   const requirements = (
     db
@@ -49,7 +70,7 @@ export function specView(db: Database, args: { project: string }) {
     criteria: r.criteria_text !== null ? json<{ id: string; text: string }[]>(r.criteria_text, []) : json<string[]>(r.criteria, []).map((id) => ({ id, text: null })),
     sensitive_areas: json<string[]>(r.sensitive_areas, []),
     assigned_phase: r.assigned_phase,
-    status: r.withdrawn_at !== null ? 'withdrawn' : delivered.has(ids.get(r.key as string) ?? '') || delivered.has(r.key as string) ? 'verified' : 'pending',
+    status: statusOf(r),
     human_test: r.human_test === 1,
     withdrawn: r.withdrawn_at !== null,
   }));

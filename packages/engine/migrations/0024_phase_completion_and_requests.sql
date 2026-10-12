@@ -69,6 +69,10 @@ CREATE TABLE check_obligations (
 );
 
 ALTER TABLE check_results ADD COLUMN invalidated_reason TEXT;
+-- A `phase` evaluation's plan and its generation (D6 §5.8): an evaluation
+-- of another plan or generation decides nothing about this one.
+ALTER TABLE gate_evaluations ADD COLUMN phase_plan TEXT REFERENCES phase_plans(id);
+ALTER TABLE gate_evaluations ADD COLUMN plan_generation INTEGER;
 -- The spec-evidence generation an execution was registered under (D6 §4.5,
 -- B05): a result of an earlier generation than an obligation on its check is
 -- history and satisfies no current gate.
@@ -87,7 +91,12 @@ CREATE TABLE deployment_requests (
   authorization TEXT REFERENCES deployment_authorizations(id),
   work_item TEXT REFERENCES work_items(id),
   outcome TEXT NOT NULL CHECK (outcome IN ('pending', 'not_issued', 'deployed', 'failed', 'not_verified', 'unknown')),
-  UNIQUE (project, request_key)
+  -- A request refused before any authorization (the artifact or the runtime
+  -- refused at preparation): {code, reason}.
+  refusal TEXT,
+  -- One row per key and requester: the owner's request under a key the
+  -- policy already requested keeps the policy's row as it was.
+  UNIQUE (project, request_key, requested_by)
 );
 
 -- ---- the host as recorded at each engine start, per project (D6 §7.6, A.3; N01) ----------
@@ -99,7 +108,8 @@ CREATE TABLE host_observations (
   project TEXT NOT NULL REFERENCES projects(id),
   incarnation TEXT NOT NULL,
   engine_version TEXT NOT NULL,
-  autonomy TEXT NOT NULL,
+  -- null when the project's policy did not say (no default is assumed).
+  autonomy TEXT,
   -- {tick_interval, domain_memory_max, max_concurrent_domains, ...} as configured then.
   settings TEXT NOT NULL,
   -- MemAvailable in bytes then; null when it could not be read.

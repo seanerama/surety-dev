@@ -774,6 +774,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       JSON.stringify(entries),
       JSON.stringify(missingVerifications),
     );
+  if (target.phasePlan) {
+    const g = (db.prepare('SELECT "generation" FROM "phase_plans" WHERE "id" = ?').get(target.phasePlan) as { generation: number }).generation;
+    db.prepare('UPDATE "gate_evaluations" SET "phase_plan" = ?, "plan_generation" = ? WHERE "id" = ?').run(target.phasePlan, g, id);
+  }
 
   // What the evaluation itself records about the findings it read.
   for (const f of reevaluated) {

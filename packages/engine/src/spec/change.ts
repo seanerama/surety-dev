@@ -31,13 +31,13 @@ import { consumeDecision } from '../store/transitions/decisions.js';
 import { checksOfVersion, markStale } from '../store/transitions/evidence.js';
 import { intendCommit } from '../store/transitions/accept.js';
 import { intendOperation, type IntentResult } from '../store/transitions/journal.js';
-import { effectiveVersion, invalidateResults } from '../store/transitions/protected.js';
-import { type KindSpec, consumed, raiseQuestion, recordApproval, recordIntent, revalidateIntent } from '../store/transitions/queue.js';
+import { completeIntent, effectiveVersion, invalidateResults } from '../store/transitions/protected.js';
+import { type KindSpec, consumed, invalidateIntent, raiseQuestion, recordApproval, recordIntent, revalidateIntent } from '../store/transitions/queue.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
-import { approveSpec, recordSemantics } from './approval.js';
+import { type SemanticsRow, approveSpec, recordSemantics, specBlockers } from './approval.js';
 import type { SemanticFinding, SpecRepresentation } from './semantics.js';
 
 type Db = Tx['db'];
@@ -316,11 +316,16 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
 // The impact as it stands now (D6 §4.4: preview and effect recompute it):
 // the proposal's representation, recorded with the run's semantics, against
 // the approved version and the records as they are.
+// The proposal's recorded representation (finalizeProposal's).
+export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefined {
+  if (r.proposal_blob === null) return undefined;
+  return db
+    .prepare(`SELECT s.* FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .get(r.work_item, r.proposal_blob) as SemanticsRow | undefined;
+}
+
 export function currentImpact(db: Db, r: RequestRow): Impact | null {
-  if (r.proposal_blob === null) return null;
-  const sem = db
-    .prepare(`SELECT s."representation", s."semantic_digest" FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
-    .get(r.work_item, r.proposal_blob) as { representation: string | null; semantic_digest: string | null } | undefined;
+  const sem = proposalSemantics(db, r);
   const representation = parseJson<SpecRepresentation>(sem?.representation ?? null);
   if (!representation) return null;
   try {
@@ -374,6 +379,9 @@ export function specChangeKind(): KindSpec {
             label: 'Approve',
             consequence: 'The proposed specification is integrated as the next approved version; the listed results are invalidated, the listed checks owe a correction, and the Verifier and (where a current or later phase is touched) the Architect are given work.',
             effect: { request: r.id, revision: r.proposal_revision, spec_version: Number(manifest.spec_version) + 1 },
+            // What could not be approved as a specification cannot be approved
+            // as a change of one (D6 §3.4; the 31b review's S1).
+            blockers: specBlockers(proposalSemantics(tx.db, r)),
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal stays on its side ref as history; nothing of the specification changes.', effect: { request: r.id } },
         ],
@@ -443,6 +451,23 @@ export interface AppliedInputs {
   new_oid: string;
   request: string;
   intent: string;
+  // The impact recomputed at the effect's beginning, frozen with the intent
+  // (D1 correction 14): the finalizer recomputes it and falls back to this,
+  // never to the proposal's (the 31b review's M1).
+  impact: Impact;
+}
+
+// An application that cannot be made as approved (a precondition unread, a
+// rebase that conflicts or touches the spec files, a proposal that could
+// not be approved, an impact that cannot be recomputed): the intent is
+// invalidated EFFECT_PRECONDITION_CHANGED, the approval withdrawn and the
+// next generation of the question raised to the owner (D1 §10.5; the 31b
+// review's S7). Never a silent retry.
+export function refuseApplication(tx: Tx, args: { intent: string; reason: string }): boolean {
+  const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
+  if (!row || row.status !== 'pending') return false;
+  invalidateIntent(tx, args.intent, [args.reason]);
+  return true;
 }
 
 // The intent begins (decisions/effects.ts): its preconditions read again,
@@ -451,7 +476,23 @@ export interface AppliedInputs {
 export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string } | null; deadlineSeconds: number }): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, {})) return null;
   const facts = applicationFacts(tx, { intent: args.intent });
-  if (!facts || facts.revision === null || facts.head !== args.head) return null;
+  if (!facts || facts.revision === null) {
+    refuseApplication(tx, { intent: args.intent, reason: 'proposal' });
+    return null;
+  }
+  // The branch moved between the main thread's read and this transaction:
+  // begun at a later tick, against what is there then.
+  if (facts.head !== args.head) return null;
+  const r = getRequest(tx.db, facts.request)!;
+  if (specBlockers(proposalSemantics(tx.db, r)).length > 0) {
+    refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
+    return null;
+  }
+  const impact = currentImpact(tx.db, r);
+  if (impact === null) {
+    refuseApplication(tx, { intent: args.intent, reason: 'impact' });
+    return null;
+  }
   const target = args.commit?.sha ?? facts.revision;
   const follow = {
     project: facts.project,
@@ -459,7 +500,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
     payload: { repo: facts.repo, ref: facts.ref, old_oid: args.head, new_oid: target },
     target: { repo: facts.repo, ref: facts.ref },
     subject: { spec_change_request: facts.request, old_oid: args.head, new_oid: target },
-    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent } satisfies AppliedInputs as unknown as Record<string, unknown>,
+    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact } satisfies AppliedInputs as unknown as Record<string, unknown>,
     deadlineSeconds: args.deadlineSeconds,
   };
   const made = args.commit === null
@@ -489,11 +530,16 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
 export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inputs: AppliedInputs): Record<string, unknown> {
   const r = getRequest(tx.db, inputs.request);
   if (!r) throw notFound('spec_change_request', inputs.request);
-  if (r.status === 'approved') return { request: r.id };
+  if (r.status === 'approved') {
+    completeIntent(tx, inputs.intent);
+    return { request: r.id };
+  }
   const run = tx.db.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(r.work_item) as { id: string } | undefined;
   const intent = tx.db.prepare('SELECT "decision" FROM "effect_intents" WHERE "id" = ?').get(inputs.intent) as { decision: string } | undefined;
   if (!run || !intent) throw illegal('applying a spec change with no run or no decision', { spec_change_request: r.id });
-  const impact = currentImpact(tx.db, r) ?? (parseJson<Impact>(r.impact_value) as Impact);
+  // Recomputed against the records as they are now (D6 §4.4; ruling Q1), or
+  // as the effect's beginning recomputed them; never the proposal's.
+  const impact = currentImpact(tx.db, r) ?? inputs.impact;
   const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision });
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(op.project) as { spec_evidence_generation: number }).spec_evidence_generation;
   tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'approved', "approved_revision" = ? WHERE "id" = ?`).run(made.spec_revision, r.id);
@@ -505,7 +551,10 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   const insert = tx.db.prepare(
     `INSERT INTO "check_obligations" ("id", "created_at", "project", "check", "key", "criteria", "generation", "reason", "request") VALUES (?, ?, ?, ?, ?, ?, ?, 'spec_changed', ?)`,
   );
-  for (const c of impact.checks.obligations) insert.run(tx.newId('obl_'), tx.at, op.project, c.check, c.key, JSON.stringify(c.criteria), generation, r.id);
+  // A check on a removed criterion owes its correction too (the 31b
+  // review's M3): its results are invalidated with the others, and the
+  // obligation keeps every gate naming it until the correction lands.
+  for (const c of [...impact.checks.obligations, ...impact.checks.criterion_unknown]) insert.run(tx.newId('obl_'), tx.at, op.project, c.check, c.key, JSON.stringify(c.criteria), generation, r.id);
   // The Verifier's correction, naming the affected and uncovered criteria
   // (D3 §2.11's route).
   if (impact.checks.obligations.length > 0 || impact.checks.uncovered.length > 0 || impact.checks.criterion_unknown.length > 0) {
@@ -518,6 +567,8 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
     observeTrigger(tx, { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id }, chain: 0 }, { spec_change_request: r.id });
   }
   settleWork(tx, getRequest(tx.db, r.id)!, 'approved');
+  // The approval's intent is done with its effect (the 31b review's S8).
+  completeIntent(tx, inputs.intent);
   tx.emit('spec.change_approved', { project: op.project, spec_change_request: r.id }, { spec_revision: made.spec_revision, version: made.version, generation, obligations: impact.checks.obligations.length, results: impact.evidence.results.length, operation: op.id });
   markStale(tx, { project: op.project });
   return { request: r.id, spec_revision: made.spec_revision };
@@ -539,17 +590,39 @@ export function obligationGeneration(db: Db, project: string, key: string): numb
 }
 
 // A correction applied that the request's `check_correction` work proposed
-// resolves the request's obligations (D6 §4.5: "a protected correction
-// applied that names the criteria"; the work names them).
-export function resolveByCorrection(tx: Tx, args: { project: string; proposal: string }): void {
+// resolves the obligations it actually names (D6 §4.5: "a protected
+// correction applied that names the criteria"; the 31b review's S2): an
+// obligation whose check the applied proposal affected (its classification's
+// `affected_checks`), and whose recorded criteria the check of that key in
+// the applied version still covers. Any other obligation stays open.
+export function resolveByCorrection(tx: Tx, args: { project: string; proposal: string; version: string }): void {
   const row = tx.db
     .prepare(
-      `SELECT w."subject" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
+      `SELECT w."subject", p."affected_checks" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
        WHERE p."id" = ? AND w."kind" = 'check_correction'`,
     )
-    .get(args.proposal) as { subject: string } | undefined;
+    .get(args.proposal) as { subject: string; affected_checks: string | null } | undefined;
   const request = row ? parseJson<{ request?: string }>(row.subject)?.request : undefined;
-  if (!request) return;
-  const changed = tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "project" = ? AND "request" = ? AND "resolved_at" IS NULL`).run(args.proposal, tx.at, args.project, request).changes;
+  if (!row || !request) return;
+  const named = new Set((parseJson<{ check: string }[]>(row.affected_checks) ?? []).map((a) => a.check));
+  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "request" = ? AND "resolved_at" IS NULL`).all(args.project, request) as {
+    id: string;
+    key: string;
+    criteria: string;
+  }[];
+  // The criteria the approved specification has now: an owed criterion it
+  // still has must be covered by the corrected check; one it no longer has
+  // (a removed criterion) must no longer be.
+  const known = new Set((tx.db.prepare('SELECT "criteria" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL').all(args.project) as { criteria: string | null }[]).flatMap((q) => parseJson<string[]>(q.criteria) ?? []));
+  let changed = 0;
+  for (const o of open) {
+    if (!named.has(o.key)) continue;
+    const check = tx.db.prepare('SELECT "criteria" FROM "checks" WHERE "protected_version" = ? AND "key" = ?').get(args.version, o.key) as { criteria: string | null } | undefined;
+    const covers = check ? (parseJson<string[]>(check.criteria) ?? []) : [];
+    const owed = parseJson<string[]>(o.criteria) ?? [];
+    // A check the correction removed names nothing it owed.
+    if (check && !owed.every((c) => (known.has(c) ? covers.includes(c) : !covers.includes(c)))) continue;
+    changed += tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL`).run(args.proposal, tx.at, o.id).changes;
+  }
   if (changed > 0) markStale(tx, { project: args.project });
 }

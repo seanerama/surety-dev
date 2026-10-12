@@ -265,8 +265,8 @@ export function approveBundlePart(tx: Tx, args: { bundle: string; kind: 'archite
   approvals[args.kind] = args.decision;
   tx.db.prepare('UPDATE "plan_bundles" SET "approvals" = ? WHERE "id" = ?').run(JSON.stringify(approvals), b.id);
   const needsPlan = b.phase_number !== null;
-  // A replan routed to the human raises `plan_approval` alone (D6 §5.4): no
-  // architecture is approved with it, and its approval publishes the plan.
+  // A replan routed to the human that changes nothing of the baseline raises
+  // `plan_approval` alone (D6 §5.4): its approval publishes the plan.
   const needsArchitecture = tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
   if ((needsArchitecture && !approvals.architecture_approval) || (needsPlan && !approvals.plan_approval)) return { published: false, plan: null, bundle: b.id };
   if (!needsArchitecture) return { published: true, plan: publishPlan(tx, { bundle: b.id, by: 'human', routing: 'human' }), bundle: b.id };
@@ -400,6 +400,8 @@ export interface ReplanBaseline {
   roadmap_revision: string | null;
   phase: number;
   open_plan: { id: string; phase_number: number; generation: number } | null;
+  requirement_keys: string[];
+  spec_modules: { name: string; sensitive_areas: string[] }[];
 }
 
 export function replanBaseline(db: Db, args: { project: string; head: string }): ReplanBaseline {
@@ -413,6 +415,8 @@ export function replanBaseline(db: Db, args: { project: string; head: string }):
     roadmap_revision: facts.roadmap_revision,
     phase: facts.phase,
     open_plan: facts.open_plan,
+    requirement_keys: facts.requirement_keys,
+    spec_modules: facts.spec_modules,
   };
 }
 
@@ -462,8 +466,15 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
   }
   if (r.check.outcome !== 'passed') return null;
   if (r.check.routing === 'human') {
+    // A replan that changes the approved architecture, module map, ADRs or
+    // roadmap carries them to the human with the plan, in one batch (D6
+    // §5.4; the 31b review's S4): published together, or not at all.
+    const c = r.check.changes;
+    const baselineChanging = c.changes_architecture.changed || c.changes_adrs.added.length + c.changes_adrs.changed.length + c.changes_adrs.deleted.length > 0 || r.check.roadmap_revision;
+    if (baselineChanging) raiseQuestion(tx, { project: args.project, kind: 'architecture_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
     raiseQuestion(tx, { project: args.project, kind: 'plan_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
     tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "subject_type" = ? AND "subject_id" = ? AND "scope" = ? AND "status" = ?').run(r.bundle, 'run', args.run, r.bundle, 'open');
+    tx.db.prepare('UPDATE "plan_bundles" SET "batch_key" = ? WHERE "id" = ?').run(r.bundle, r.bundle);
     return null;
   }
   return publishPlan(tx, { bundle: r.bundle, by: 'engine:plan_check', routing: 'registered' });

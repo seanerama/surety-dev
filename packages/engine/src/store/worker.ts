@@ -120,6 +120,7 @@ import {
   requestDeployment,
   requestFacts,
   policyRequestDue,
+  policyRequestRefused,
   artifactAdmission,
   artifactPaths,
   artifactRows,
@@ -187,7 +188,7 @@ import {
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
-import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
@@ -570,6 +571,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.intend_proposal': (tx, a) => intendProposal(tx, a),
   'spec.application_facts': (tx, a) => specApplicationFacts(tx, a),
   'spec.begin_application': (tx, a) => beginSpecApplication(tx, a),
+  'spec.refuse_application': (tx, a) => refuseSpecApplication(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),
@@ -650,6 +652,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'phase.step': (tx, a) => phaseStep(tx, a),
   'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
+  'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session

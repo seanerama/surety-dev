@@ -43,6 +43,7 @@ import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
+import { Refusal } from '../refusal.js';
 import { ENGINE_VERSION } from '../index.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
@@ -187,7 +188,19 @@ export class Scheduler {
   private async alphaPolicy(project: string): Promise<void> {
     const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
     if (!due) return;
-    const prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
+    try {
+      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    } catch (err) {
+      // Refused at its preparation (the runtime, the artifact): recorded
+      // `not_issued` under its key with the reason, never made again (the
+      // 31b review's S6). Anything else is retried at a later tick.
+      if (err instanceof Refusal) {
+        await this.rt.engine('deploy.policy_refused', { project, candidate: due.candidate, environment: due.environment, key: due.key, refusal: { code: err.code, reason: err.reason } });
+        return;
+      }
+      throw err;
+    }
     try {
       await this.rt.engine('deploy.policy_request', prepared);
     } finally {

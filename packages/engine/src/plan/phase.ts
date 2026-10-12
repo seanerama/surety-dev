@@ -69,6 +69,10 @@ function phaseCandidate(tx: Tx, plan: PlanRow, tier: string): CandidateRow | nul
       if (head === null) return null;
       const due = (tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(plan.project) as { nomination_due: string | null }).nomination_due;
       const existing = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "revision" = ?').get(plan.project, head) as { id: string } | undefined;
+      // Another revision's nomination is due: the head is recorded only once
+      // something will nominate it (the 31b review's M8), so the phase never
+      // waits on a revision nobody nominates; a later tick asks again.
+      if (!existing && due !== null && parseJson<{ revision?: string }>(due)?.revision !== head) return null;
       if (due === null && !existing) {
         tx.db.prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?').run(JSON.stringify({ revision: head, by: 'engine_cadence', chain: 0 }), plan.project);
       }
@@ -112,8 +116,8 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
     .get(candidate.id, JSON.stringify(set.required.map((c) => c.id)));
   if (pending) return NONE;
   const evaluation = tx.db
-    .prepare(`SELECT "id", "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' ORDER BY rowid DESC LIMIT 1`)
-    .get(candidate.id) as { id: string; outcome: string; stale: number } | undefined;
+    .prepare(`SELECT "id", "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' AND "phase_plan" = ? AND "plan_generation" = ? ORDER BY rowid DESC LIMIT 1`)
+    .get(candidate.id, plan.id, plan.generation) as { id: string; outcome: string; stale: number } | undefined;
   if (!evaluation || evaluation.stale === 1) return { evaluate: { candidate: candidate.id, phase_plan: plan.id }, completed: null };
   if (evaluation.outcome !== 'satisfied') return NONE;
   const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string } | undefined;
@@ -121,10 +125,25 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // At T2 and T3 the Verifier's phase sign-off, bound to this candidate and
   // this generation (B06): a sign-off bound to another counts for nothing.
   if (tier !== 'T1') {
+    // Bound to the whole binding as it is now (D6 §5.8; B06; the 31b
+    // review's S3): a sign-off made before a spec change, a correction or a
+    // new plan generation counts for nothing.
     const signoffs = tx.db.prepare(`SELECT "binding" FROM "signoffs" WHERE "candidate" = ? AND "scope" = 'phase' AND "phase_plan" = ?`).all(candidate.id, plan.id) as { binding: string | null }[];
-    const bound = signoffs.some((s) => (parseJson<{ plan_generation?: number }>(s.binding)?.plan_generation ?? null) === plan.generation);
+    const bound = signoffs.some((s) => {
+      const b = parseJson<{ plan_generation?: number; acceptance_hash?: string; protected_version?: string; spec_revision?: string | null }>(s.binding);
+      return b !== null && b.plan_generation === plan.generation && b.acceptance_hash === acceptance && b.protected_version === effective.id && (b.spec_revision ?? null) === (spec?.id ?? null);
+    });
     if (!bound) {
-      observeTrigger(tx, { project: args.project, kind: 'phase_verification', trigger_source: 'phase', trigger_id: candidate.id, trigger_generation: plan.generation, subject: { candidate: candidate.id, phase_plan: plan.id }, chain: 0 }, {});
+      // One phase_verification at a time per candidate; one whose sign-off
+      // no longer binds is followed by the next generation, so a stale
+      // sign-off is replaced, never waited on.
+      const last = tx.db
+        .prepare(`SELECT "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' AND "trigger_source" = 'phase' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
+        .get(args.project, candidate.id) as { status: string; trigger_generation: number } | undefined;
+      // A Verifier who signed nothing is not asked again by the engine.
+      const stale = signoffs.length > 0 && last !== undefined && (last.status === 'complete' || last.status === 'cancelled');
+      const generation = !last ? 1 : stale ? last.trigger_generation + 1 : last.trigger_generation;
+      observeTrigger(tx, { project: args.project, kind: 'phase_verification', trigger_source: 'phase', trigger_id: candidate.id, trigger_generation: generation, subject: { candidate: candidate.id, phase_plan: plan.id }, chain: 0 }, { plan_generation: plan.generation });
       return NONE;
     }
   }

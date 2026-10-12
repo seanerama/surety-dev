@@ -641,20 +641,40 @@ const requestOfKey = (db: Db, project: string, key: string): RequestRow | undefi
 // The request's row: one per key. The owner's request again under a key
 // already requested takes the row on (its authorization, work and outcome
 // are the newest request's); a policy request never makes a second one.
-function recordRequest(tx: Tx, args: { project: string; key: string; requested_by: 'human' | 'policy'; candidate: string; environment: string; authorization: string; work_item: string | null; outcome: string }): RequestRow {
-  const existing = requestOfKey(tx.db, args.project, args.key);
-  if (existing) {
-    tx.db.prepare('UPDATE "deployment_requests" SET "authorization" = ?, "work_item" = ?, "outcome" = ? WHERE "id" = ?').run(args.authorization, args.work_item, args.outcome, existing.id);
-    return requestOfKey(tx.db, args.project, args.key)!;
+function recordRequest(
+  tx: Tx,
+  args: { project: string; key: string; requested_by: 'human' | 'policy'; candidate: string; environment: string; authorization: string | null; work_item: string | null; outcome: string; refusal?: { code: string; reason: string } },
+): RequestRow {
+  // The owner's request again under a key the owner already requested takes
+  // that row on; a policy's row is never rewritten by the owner's request
+  // (the 31b review's M5): the owner's gets a row of its own.
+  const mine = tx.db.prepare('SELECT * FROM "deployment_requests" WHERE "project" = ? AND "request_key" = ? AND "requested_by" = ?').get(args.project, args.key, args.requested_by) as RequestRow | undefined;
+  if (mine) {
+    tx.db.prepare('UPDATE "deployment_requests" SET "authorization" = ?, "work_item" = ?, "outcome" = ?, "refusal" = ? WHERE "id" = ?').run(args.authorization, args.work_item, args.outcome, args.refusal ? JSON.stringify(args.refusal) : null, mine.id);
+    return tx.db.prepare('SELECT * FROM "deployment_requests" WHERE "id" = ?').get(mine.id) as RequestRow;
   }
   const id = tx.newId('dreq_');
   tx.db
-    .prepare('INSERT INTO "deployment_requests" ("id", "created_at", "project", "request_key", "requested_by", "candidate", "environment", "authorization", "work_item", "outcome") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tx.at, args.project, args.key, args.requested_by, args.candidate, args.environment, args.authorization, args.work_item, args.outcome);
+    .prepare(
+      'INSERT INTO "deployment_requests" ("id", "created_at", "project", "request_key", "requested_by", "candidate", "environment", "authorization", "work_item", "outcome", "refusal") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(id, tx.at, args.project, args.key, args.requested_by, args.candidate, args.environment, args.authorization, args.work_item, args.outcome, args.refusal ? JSON.stringify(args.refusal) : null);
   if (args.requested_by === 'policy') {
-    tx.emit('deploy.requested_by_policy', { project: args.project, candidate: args.candidate, environment: args.environment }, { request: id, request_key: JSON.parse(args.key) as unknown, authorization: args.authorization, outcome: args.outcome });
+    tx.emit('deploy.requested_by_policy', { project: args.project, candidate: args.candidate, environment: args.environment }, { request: id, request_key: JSON.parse(args.key) as unknown, authorization: args.authorization, outcome: args.outcome, ...(args.refusal ? { refusal: args.refusal } : {}) });
   }
-  return requestOfKey(tx.db, args.project, args.key)!;
+  return tx.db.prepare('SELECT * FROM "deployment_requests" WHERE "id" = ?').get(id) as RequestRow;
+}
+
+// The policy's request refused at its preparation, before any authorization
+// (the runtime or the artifact refused, D4 §3.1; the 31b review's S6): the
+// request is recorded `not_issued` under its key with the refusal, so it is
+// never made again for that key (SEAM.md §354).
+export function policyRequestRefused(tx: Tx, args: { project: string; candidate: string; environment: string; key: string; refusal: { code: string; reason: string } }): { recorded: boolean } {
+  const env = environmentByName(tx.db, args.project, args.environment);
+  if (!env) throw notFound('environment', args.environment);
+  if (requestOfKey(tx.db, args.project, args.key)) return { recorded: false };
+  recordRequest(tx, { project: args.project, key: args.key, requested_by: 'policy', candidate: args.candidate, environment: env.id, authorization: null, work_item: null, outcome: 'not_issued', refusal: args.refusal });
+  return { recorded: true };
 }
 
 // The outcome of the request whose authorization an operation consumed,

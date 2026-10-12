@@ -27,7 +27,10 @@ function between(a: string | null | undefined, b: string | null | undefined, wha
   const y = ms(b);
   if (x === null) return unknown(`${what[0]} was not recorded`);
   if (y === null) return unknown(`${what[1]} was not recorded`);
-  return Math.max(0, (y - x) / 1000);
+  // An interval that runs backwards (a clock stepped back) is not a measured
+  // zero (the 31b review's M6).
+  if (y < x) return unknown(`${what[1]} was recorded before ${what[0]}`);
+  return (y - x) / 1000;
 }
 const json = <T>(text: unknown, fallback: T): T => {
   try {
@@ -170,22 +173,34 @@ export function paceView(db: Database, args: { project: string }) {
   }));
 
   const host = db.prepare('SELECT * FROM "host_observations" WHERE "project" = ? ORDER BY "created_at" DESC, rowid DESC LIMIT 1').get(p) as
-    | { created_at: string; incarnation: string; engine_version: string; autonomy: string; settings: string; mem_available: number | null }
+    | { created_at: string; incarnation: string; engine_version: string; autonomy: string | null; settings: string; mem_available: number | null }
     | undefined;
   const settings = host ? json<Record<string, number>>(host.settings, {}) : {};
+  const none = unknown('no host observation was recorded for the project');
   const hostSection = host
     ? {
         observed_at: host.created_at,
         incarnation: host.incarnation,
         engine_version: host.engine_version,
-        autonomy: host.autonomy,
+        autonomy: host.autonomy ?? unknown('the policy recorded no autonomy then'),
         tick_interval: settings.tick_interval ?? unknown('not recorded'),
         domain_memory_max: settings.domain_memory_max ?? unknown('not recorded'),
         max_concurrent_domains: settings.max_concurrent_domains ?? unknown('not recorded'),
         mem_available: host.mem_available ?? unknown('MemAvailable could not be read then'),
         peak_domains: unknown('the scheduler does not record the peak number of domains at once (slice 37)'),
       }
-    : { autonomy: unknown('no host observation was recorded for the project'), observed_at: unknown('no host observation was recorded for the project') };
+    : {
+        // Every figure of the section, unknown (the 31b review's M6).
+        observed_at: none,
+        incarnation: none,
+        engine_version: none,
+        autonomy: none,
+        tick_interval: none,
+        domain_memory_max: none,
+        max_concurrent_domains: none,
+        mem_available: none,
+        peak_domains: none,
+      };
 
   return { project: projectSection, sessions, phases, stages, runs, domains, host: hostSection };
 }
@@ -198,6 +213,6 @@ export function observeHost(tx: Tx, args: { project: string; incarnation: string
   const settings = Object.fromEntries(Object.entries(args.settings ?? {}).filter(([, v]) => typeof v === 'number'));
   tx.db
     .prepare('INSERT INTO "host_observations" ("id", "created_at", "project", "incarnation", "engine_version", "autonomy", "settings", "mem_available") VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(tx.newId('hobs_'), tx.at, args.project, args.incarnation, args.engine_version, projectOptions(tx.db, args.project).autonomy ?? 'phase', JSON.stringify(settings), memAvailable());
+    .run(tx.newId('hobs_'), tx.at, args.project, args.incarnation, args.engine_version, (projectOptions(tx.db, args.project) as { autonomy?: string }).autonomy ?? null, JSON.stringify(settings), memAvailable());
   return true;
 }

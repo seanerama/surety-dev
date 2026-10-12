@@ -244,6 +244,20 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   if (item.status !== 'eligible') return `status ${item.status}`;
   if (item.dispatch_hold === 1) return 'dispatch hold';
   if (!ROLE_OF[item.kind]) return `kind ${item.kind} is not dispatched`;
+  // A spec_change is dispatched only for an owner's change request (D6
+  // §4.2); one a finding's `change_spec` raised is not built in this slice
+  // and is never dispatched (the 31b review's S5).
+  if (item.kind === 'spec_change') {
+    let request: unknown;
+    try {
+      request = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      request = undefined;
+    }
+    if (typeof request !== 'string' || !db.prepare('SELECT 1 FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(request, item.project)) {
+      return 'a spec_change names no change request (a finding\'s spec change is not dispatched)';
+    }
+  }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
