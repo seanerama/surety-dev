@@ -1,5 +1,5 @@
 {
-  "$comment": "The eleven decision kinds that have effect in M1 (build spec §3) and the two D2 adds for M2 (A.7: `qualification_approval`, `trust_activation`; SEAM.md §117), each with what its preview must bind. Derived from D1 A.8 with build spec §6 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent whose preconditions are checked again immediately before a journaled operation is made (D1 §10.5). Stop and Abandon act through the run-end protocol and record none. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md §76). `effect_options` names the options of a kind marked `effect: false` whose positive answer nevertheless records an effect intent: `finding_disposition`'s `alpha_exception` writes `findings.alpha_exception` as an effect (D2 §5 C1; SEAM.md §119). M3 slice 19 (D3 §3.3; T10; SEAM.md §218): the three `check_correction_*` manifests also bind `classifier_version`, `classifier_authority` and the proposal's `discovery`. The two trust kinds are engine-scoped: their decision rows have no project, and they are read and answered through `GET /v1/decisions` and `POST /v1/decisions/:d/answer` (SEAM.md §117). M4 slice 26 (D1 A.8; D4 §§2.4, 4.4, 4.6; E112; SEAM.md §275): `rollout_partial`, about a deploy operation whose attempt was reconciled `partial`, offering `retry`, `teardown` and `abandon`, its manifest binding the operation's status, the attempt, its deployment generation, the environment's current generation, the lease generation, the configuration identity, the adapter qualification, the reconciled read, the resource identities and the observations its effects were derived from; and `blocker`'s `teardown`, the preempting teardown a blocker of an ambiguous deploy offers (D4 §4.6). M4 slice 27 (D4 §6.3; J6; SEAM.md §293): `out_of_band_change` about an environment offers exactly `teardown` and `acknowledge` (no `adopt`), and its manifest also binds `resources` and `observation` (pinned by the cases, not here, so the repository kinds are unchanged).",
+  "$comment": "The eleven decision kinds that have effect in M1 (build spec \u00a73) and the two D2 adds for M2 (A.7: `qualification_approval`, `trust_activation`; SEAM.md \u00a7117), each with what its preview must bind. Derived from D1 A.8 with build spec \u00a76 corrections 5 and 22, RN R4, and the per-kind table of Review B12 and B18. `subject_types` is what the decision is about; `options` the keys it can offer (a decision offers a subset where SEAM.md says so); `manifest` the keys its `dependency_manifest` holds at least, each a value that the approval must be unable to drift across; `effect` whether consuming it records an effect intent whose preconditions are checked again immediately before a journaled operation is made (D1 \u00a710.5). Stop and Abandon act through the run-end protocol and record none. Tests read expectations from this file, never from the engine. The key names are the Verifier's (SEAM.md \u00a776). `effect_options` names the options of a kind marked `effect: false` whose positive answer nevertheless records an effect intent: `finding_disposition`'s `alpha_exception` writes `findings.alpha_exception` as an effect (D2 \u00a75 C1; SEAM.md \u00a7119). M3 slice 19 (D3 \u00a73.3; T10; SEAM.md \u00a7218): the three `check_correction_*` manifests also bind `classifier_version`, `classifier_authority` and the proposal's `discovery`. The two trust kinds are engine-scoped: their decision rows have no project, and they are read and answered through `GET /v1/decisions` and `POST /v1/decisions/:d/answer` (SEAM.md \u00a7117). M4 slice 26 (D1 A.8; D4 \u00a7\u00a72.4, 4.4, 4.6; E112; SEAM.md \u00a7275): `rollout_partial`, about a deploy operation whose attempt was reconciled `partial`, offering `retry`, `teardown` and `abandon`, its manifest binding the operation's status, the attempt, its deployment generation, the environment's current generation, the lease generation, the configuration identity, the adapter qualification, the reconciled read, the resource identities and the observations its effects were derived from; and `blocker`'s `teardown`, the preempting teardown a blocker of an ambiguous deploy offers (D4 \u00a74.6). M4 slice 27 (D4 \u00a76.3; J6; SEAM.md \u00a7293): `out_of_band_change` about an environment offers exactly `teardown` and `acknowledge` (no `adopt`), and its manifest also binds `resources` and `observation` (pinned by the cases, not here, so the repository kinds are unchanged). M5 slice 31 (D6 \u00a73.4, \u00a74.5, A.2, A.3; D1 A.8; SEAM.md \u00a7346): the products' decisions, each about the session `run` whose product it is: `idea_accept` (manifest: the baseline revision, the checkpoint's `blob`, the `idea_version` to record), `spec_approval` (the revision, the spec `blob`, its `semantic_digest`, the `spec_version` to allocate), `architecture_approval` and `plan_approval` (one `batch_key`; the `spec_version`, the `bundle` record, every proposed artifact's `blobs` by path, the `versions` publication will allocate, and for the plan its `plan_check` and `plan_generation`); and `spec_change` about a `spec_change_request` (the `spec_version`, the side ref's `proposal_revision`, the effective `protected_version`, the `impact` record and the impact's `dependency_manifest`). Each offers `approve` and `reject`; `spec_approval`'s `approve` carries option blockers (D1 \u00a79.7) where D6 \u00a73.4 says. Targets: the four approvals 2 d, `spec_change` 3 d (D1 A.8).",
   "codes": {
     "stale": "decision_stale",
     "consumed": "decision_consumed",
@@ -9,89 +9,411 @@
   },
   "kinds": {
     "blocker": {
-      "subject_types": ["work_item", "operation", "run"],
-      "options": ["retry", "cancel", "continue", "acknowledge", "teardown"],
-      "manifest": ["subject_status", "quarantined", "cause", "evidence", "continuation"],
+      "subject_types": [
+        "work_item",
+        "operation",
+        "run"
+      ],
+      "options": [
+        "retry",
+        "cancel",
+        "continue",
+        "acknowledge",
+        "teardown"
+      ],
+      "manifest": [
+        "subject_status",
+        "quarantined",
+        "cause",
+        "evidence",
+        "continuation"
+      ],
       "effect": false
     },
     "rollout_partial": {
-      "subject_types": ["operation"],
-      "options": ["retry", "teardown", "abandon"],
-      "manifest": ["operation_status", "attempt", "deployment_generation", "environment_generation", "lease_generation", "config_identity", "adapter_qualification", "reconciled", "resources", "observations"],
+      "subject_types": [
+        "operation"
+      ],
+      "options": [
+        "retry",
+        "teardown",
+        "abandon"
+      ],
+      "manifest": [
+        "operation_status",
+        "attempt",
+        "deployment_generation",
+        "environment_generation",
+        "lease_generation",
+        "config_identity",
+        "adapter_qualification",
+        "reconciled",
+        "resources",
+        "observations"
+      ],
       "effect": false
     },
     "out_of_band_change": {
-      "subject_types": ["out_of_band_change"],
-      "options": ["discard", "adopt", "stash", "teardown", "acknowledge"],
-      "manifest": ["subject_kind", "expected", "found"],
+      "subject_types": [
+        "out_of_band_change"
+      ],
+      "options": [
+        "discard",
+        "adopt",
+        "stash",
+        "teardown",
+        "acknowledge"
+      ],
+      "manifest": [
+        "subject_kind",
+        "expected",
+        "found"
+      ],
       "effect": true
     },
     "stop_confirm": {
-      "subject_types": ["run"],
-      "options": ["confirm"],
-      "manifest": ["run", "stoppable", "domains", "lease_generation", "workspace", "workspace_snapshot", "workspace_fate", "work_fate"],
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "confirm"
+      ],
+      "manifest": [
+        "run",
+        "stoppable",
+        "domains",
+        "lease_generation",
+        "workspace",
+        "workspace_snapshot",
+        "workspace_fate",
+        "work_fate"
+      ],
       "effect": false
     },
     "abandon_confirm": {
-      "subject_types": ["run"],
-      "options": ["confirm"],
-      "manifest": ["run", "stoppable", "domains", "lease_generation", "workspace", "workspace_snapshot", "workspace_fate", "work_fate"],
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "confirm"
+      ],
+      "manifest": [
+        "run",
+        "stoppable",
+        "domains",
+        "lease_generation",
+        "workspace",
+        "workspace_snapshot",
+        "workspace_fate",
+        "work_fate"
+      ],
       "effect": false
     },
     "policy_widening": {
-      "subject_types": ["project"],
-      "options": ["approve", "reject"],
-      "manifest": ["base_revision", "base_blob", "proposed_policy", "widens"],
+      "subject_types": [
+        "project"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "base_revision",
+        "base_blob",
+        "proposed_policy",
+        "widens"
+      ],
       "effect": true
     },
     "finding_disposition": {
-      "subject_types": ["finding"],
-      "options": ["approve", "reject", "alpha_exception"],
-      "manifest": ["finding_status", "disposition", "proposed_disposition", "effective_severity", "sensitive_area", "evidence", "defer_target", "linked_issue", "applicable", "candidate_revision", "acceptance_content_hash", "policy_revision"],
+      "subject_types": [
+        "finding"
+      ],
+      "options": [
+        "approve",
+        "reject",
+        "alpha_exception"
+      ],
+      "manifest": [
+        "finding_status",
+        "disposition",
+        "proposed_disposition",
+        "effective_severity",
+        "sensitive_area",
+        "evidence",
+        "defer_target",
+        "linked_issue",
+        "applicable",
+        "candidate_revision",
+        "acceptance_content_hash",
+        "policy_revision"
+      ],
       "effect": false,
-      "effect_options": ["alpha_exception"]
+      "effect_options": [
+        "alpha_exception"
+      ]
     },
     "severity_lower": {
-      "subject_types": ["finding"],
-      "options": ["approve", "reject"],
-      "manifest": ["finding_status", "effective_severity", "to", "sensitive_area", "applicable", "candidate_revision", "acceptance_content_hash", "policy_revision"],
+      "subject_types": [
+        "finding"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "finding_status",
+        "effective_severity",
+        "to",
+        "sensitive_area",
+        "applicable",
+        "candidate_revision",
+        "acceptance_content_hash",
+        "policy_revision"
+      ],
       "effect": false
     },
     "finding_applicability_exclusion": {
-      "subject_types": ["applicability_assessment"],
-      "options": ["approve", "reject"],
-      "manifest": ["assessment_status", "evidence", "reason", "proposed_by_run", "assessed_by_run", "finding", "candidate", "ancestry", "acceptance_content_hash", "effective_severity", "disposition", "sensitive_area", "blocks_gate", "protected_version", "policy_revision"],
+      "subject_types": [
+        "applicability_assessment"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "assessment_status",
+        "evidence",
+        "reason",
+        "proposed_by_run",
+        "assessed_by_run",
+        "finding",
+        "candidate",
+        "ancestry",
+        "acceptance_content_hash",
+        "effective_severity",
+        "disposition",
+        "sensitive_area",
+        "blocks_gate",
+        "protected_version",
+        "policy_revision"
+      ],
       "effect": false
     },
     "check_correction_tightening": {
-      "subject_types": ["protected_proposal"],
-      "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision", "classifier_version", "classifier_authority", "discovery"],
+      "subject_types": [
+        "protected_proposal"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
+      ],
       "effect": true
     },
     "check_correction_loosening": {
-      "subject_types": ["protected_proposal"],
-      "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision", "classifier_version", "classifier_authority", "discovery"],
+      "subject_types": [
+        "protected_proposal"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
+      ],
       "effect": true
     },
     "check_correction_unclassifiable": {
-      "subject_types": ["protected_proposal"],
-      "options": ["approve", "reject"],
-      "manifest": ["proposal_status", "tree", "diff_hash", "base_revision", "integration_revision", "classification", "evidence", "effective_protected_version", "spec_revision", "scope_approval", "policy_revision", "classifier_version", "classifier_authority", "discovery"],
+      "subject_types": [
+        "protected_proposal"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "proposal_status",
+        "tree",
+        "diff_hash",
+        "base_revision",
+        "integration_revision",
+        "classification",
+        "evidence",
+        "effective_protected_version",
+        "spec_revision",
+        "scope_approval",
+        "policy_revision",
+        "classifier_version",
+        "classifier_authority",
+        "discovery"
+      ],
       "effect": true
     },
     "qualification_approval": {
-      "subject_types": ["qualification_attempt"],
-      "options": ["approve", "reject"],
-      "manifest": ["attempt_status", "binary_sha256", "help_sha256", "template", "template_version", "model", "auth_mode", "host_qualification", "host_eligibility", "fixture_project", "candidate_egress", "canary_deadlines", "spend"],
+      "subject_types": [
+        "qualification_attempt"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "attempt_status",
+        "binary_sha256",
+        "help_sha256",
+        "template",
+        "template_version",
+        "model",
+        "auth_mode",
+        "host_qualification",
+        "host_eligibility",
+        "fixture_project",
+        "candidate_egress",
+        "canary_deadlines",
+        "spend"
+      ],
       "effect": false
     },
     "trust_activation": {
-      "subject_types": ["trust_entry"],
-      "options": ["approve", "reject"],
-      "manifest": ["entry_status", "binary_sha256", "help_sha256", "template", "template_version", "capabilities", "profile_fingerprint", "host_id", "host_eligibility", "evidence", "evidence_fingerprint"],
+      "subject_types": [
+        "trust_entry"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "entry_status",
+        "binary_sha256",
+        "help_sha256",
+        "template",
+        "template_version",
+        "capabilities",
+        "profile_fingerprint",
+        "host_id",
+        "host_eligibility",
+        "evidence",
+        "evidence_fingerprint"
+      ],
       "effect": false
+    },
+    "idea_accept": {
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "baseline_revision",
+        "blob",
+        "idea_version",
+        "policy_revision"
+      ],
+      "effect": false
+    },
+    "spec_approval": {
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "baseline_revision",
+        "blob",
+        "semantic_digest",
+        "spec_version",
+        "policy_revision"
+      ],
+      "effect": false
+    },
+    "architecture_approval": {
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "baseline_revision",
+        "spec_version",
+        "bundle",
+        "blobs",
+        "versions",
+        "policy_revision"
+      ],
+      "effect": false
+    },
+    "plan_approval": {
+      "subject_types": [
+        "run"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "baseline_revision",
+        "spec_version",
+        "bundle",
+        "blobs",
+        "versions",
+        "plan_check",
+        "plan_generation",
+        "policy_revision"
+      ],
+      "effect": false
+    },
+    "spec_change": {
+      "subject_types": [
+        "spec_change_request"
+      ],
+      "options": [
+        "approve",
+        "reject"
+      ],
+      "manifest": [
+        "spec_version",
+        "proposal_revision",
+        "protected_version",
+        "impact",
+        "dependency_manifest",
+        "policy_revision"
+      ],
+      "effect": true
     }
   }
 }

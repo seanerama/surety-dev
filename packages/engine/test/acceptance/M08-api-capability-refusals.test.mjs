@@ -52,13 +52,20 @@ const RESERVED = ['mechanic_issues', 'triage_dispositions', 'product_intent_cont
 const OBSERVATION_TABLES = ['observation_jobs', 'observation_history'];
 
 describe('M08 excluded capabilities are refused at the API', () => {
-  test('session open, turn, save and close are refused before any effect', async (t) => {
+  // M5 slice 31 narrows this case (D6 K6; C.2; SEAM.md §348; COVERAGE.md "M5 slice 31a"): the session routes
+  // are lifted (D6 §2.7, A.8), so they are no longer refused `unsupported`. What stays pinned here is that a
+  // session route about a run that does not exist refuses before any effect, and that nothing is fabricated;
+  // the routes' own contract is slice 33's (M415 to M419, M447) and slice 31's (M402, M403).
+  test('the session routes are lifted: a turn, save or close of a run that does not exist is not_found before any effect, never unsupported; nothing is fabricated', async (t) => {
     const fx = await projectFixture(t);
     const run = newId('run_');
     const base = `/v1/projects/${fx.project}/sessions`;
-    for (const path of [base, `${base}/${run}/turns`, `${base}/${run}/save`, `${base}/${run}/close`]) {
-      await assertExcluded(fx, 'POST', path, { status: 501, codes: 'unsupported' });
+    for (const path of [`${base}/${run}/turns`, `${base}/${run}/save`, `${base}/${run}/close`]) {
+      const res = await assertExcluded(fx, 'POST', path, { status: 404, codes: 'not_found' });
+      assert.notEqual(res.body?.code, 'unsupported', `${path} is a lifted route (D6 K6)`);
     }
+    const opened = await assertExcluded(fx, 'POST', base, { status: 400, codes: 'invalid_value' });
+    assert.equal(opened.body?.subject?.field, 'role', 'opening a session with no role is refused for the role it does not name, before any effect');
     withStore(fx.home, (db) => {
       for (const table of ['runs', 'turns', 'invocation_receipts', 'execution_domains', 'capability_grants']) {
         assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table}: no session fabricated`);

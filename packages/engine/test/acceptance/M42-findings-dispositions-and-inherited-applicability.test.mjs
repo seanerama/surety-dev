@@ -83,7 +83,7 @@ const defect = (severity, message, extra = {}) => ({ category: 'defect', severit
 // build (gates.mjs `nominated`).
 async function clean(t, checks = [check('login', { requirements: ['R1'] })], { policy } = {}) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx, { policy });
+  const ctx = await nominated(fx, { policy, autonomy: 'step' });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, checks)).id;
   return { fx, ctx, project, k, c1: ctx.candidate };
@@ -266,7 +266,7 @@ describe('M42 the findings a gate asks about', () => {
 describe('M42 the report of a run that was quarantined', () => {
   test("a Verifier whose domain could not at first be shown empty has its report recorded all the same: the Critical finding it reported is there when its verification completes, and the stage gate is not satisfied", async (t) => {
     const fx = await scriptedEngine(t, { config: { terminate_grace: 1, kill_grace: 1 } });
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const c1 = ctx.candidate;
     const stageWork = ctx.items[0];

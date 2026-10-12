@@ -37,7 +37,7 @@ import { after, before, describe, test } from 'node:test';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { alphaTarget, authorizationsOf, reasonSubjects, sharedFixture, stageGate } from './harness/gates.mjs';
 import { PERMITTED_EDIT, roleThat, waitForCandidates } from './harness/gitruns.mjs';
-import { eventsOfType, workItemsOf } from './harness/journal.mjs';
+import { changePolicy, eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, tickUntil } from './harness/runs.mjs';
 import { registerDetector, waitForPostScan } from './harness/records.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
@@ -92,6 +92,7 @@ async function journey(t) {
     [defPath('smoke')]: smoke('smoke', { command: ['probe', 'exit', '0'], inputs: [EXPECT], timeout: 300 }),
   };
   const project = await checkProject(fx, { files, tier: 'T1' });
+  await changePolicy(fx.engine, project.id, { autonomy: 'step' });
   const hostQualification = await qualifyRunnerByFixture(fx.engine);
   const plan = await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1', 'R1.2'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
   const [stage] = plan.stages;
@@ -232,6 +233,7 @@ describe('M237 a flagged check output never reaches the repair package', () => {
       [defPath('smoke')]: smoke('smoke', { command: ['probe', 'exit', '0'], inputs: [EXPECT], timeout: 300 }),
     };
     const project = await checkProject(fx, { files, tier: 'T1' });
+    await changePolicy(fx.engine, project.id, { autonomy: 'step' });
     await qualifyRunnerByFixture(fx.engine);
     const plan = await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
     const item = plan.stages[0].work_item;

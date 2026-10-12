@@ -206,7 +206,7 @@ describe('M71 latency under the declared maximum load', () => {
 
     // Project 1: a candidate whose stage gate waits for one execution of its check.
     const login = check('login', { requirements: ['R1'] });
-    const cand = await nominated(fx, { project: gated, tier: 'T1' });
+    const cand = await nominated(fx, { project: gated, tier: 'T1', autonomy: 'step' });
     const checks = await installChecks(engine, gated.id, [login]);
     const verification = workItemsOf(fx.home, gated.id).find((work) => work.kind === 'verification' && work.subject?.candidate === cand.candidate.id);
     assert.ok(verification, 'the fixture is live: the nomination registered verification work');

@@ -26,7 +26,7 @@ import { describe, test } from 'node:test';
 
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { addGitProject, addItem, addStagedProject, permittedEdit, roleThat, runToEnd, waitForCandidates, writePlan } from './harness/gitruns.mjs';
-import { assertCommitted, getPolicy, workItemsOf } from './harness/journal.mjs';
+import { assertCommitted, getPolicy, workItemsOf, stepAutonomy } from './harness/journal.mjs';
 import { addWork, answerDecision, decisionsAbout, resumeWork, runsOf, scriptedEngine, stopRun, tick, tickUntil, waitForRun, waitForRunState, waitForWork, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -42,7 +42,7 @@ const boundaryDecisions = (fx, item) => decisionsAbout(fx.home, item, 'blocker')
 async function nominatedStage(t) {
   const fx = await scriptedEngine(t);
   fx.scripted.defaultScript(script.complete());
-  const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+  const { project, items } = await addStagedProject(fx, { tier: 'T2', autonomy: 'step' });
   fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
   const run = await runToEnd(fx, project.id, items[0]);
   assertCommitted(fx, run.id, { kind: 'engine_commit', parent: project.base, integrated: true });
@@ -72,7 +72,8 @@ function assertAtBoundary(fx, item, what) {
 describe('M12 chaining stops at max_chained_roles', () => {
   test("work that a run's outcome created is not launched without a human step: the next step is a decision, asked once, while another project's work progresses; once a person continues, it is launched once", async (t) => {
     const { fx, project, built, verification } = await nominatedStage(t);
-    assert.equal((await getPolicy(fx.engine, project.id)).effective.max_chained_roles, 1, 'the fixture is live: the default limit is one role');
+    // M5 slice 31 (D6 K3; C.2): the boundary after every role is the `step` profile's; the default is now `phase` and `max_chained_roles` (24) bounds chain depth only.
+    assert.equal((await getPolicy(fx.engine, project.id)).effective.autonomy, 'step', 'the fixture is live: the project runs under autonomy step');
     const other = await addGitProject(fx);
     const otherItem = await addItem(fx, other.id, 'verification');
 
@@ -112,6 +113,7 @@ describe('M12 chaining stops at max_chained_roles', () => {
     const fx = await scriptedEngine(t);
     fx.scripted.defaultScript(roleThat([permittedEdit()]));
     const project = await addGitProject(fx);
+    await stepAutonomy(fx.engine, project.id);
     const replan = await addItem(fx, project.id, 'replan');
     fx.scripted.script(replan, [roleThat([writePlan(2, [{ number: 1, goal: 'the only stage' }])])]);
     await runToEnd(fx, project.id, replan);

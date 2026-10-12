@@ -54,7 +54,7 @@ const UNBUILT_KINDS = ['phase', 'beta_authorize', 'beta_complete', 'live_authori
 async function candidate(t, { pass = true, ...opts } = {}) {
   const fx = await scriptedEngine(t);
   fx.scripted.defaultScript(script.complete());
-  const ctx = await nominated(fx, opts);
+  const ctx = await nominated(fx, { autonomy: 'step', ...opts });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [LOGIN])).id;
   if (pass) await passAll(fx.engine, project, ctx.candidate.id, [k.login]);

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import { installProject, waitFor } from './engine.mjs';
-import { armBarrier, createProject, journalBarrier } from './journal.mjs';
+import { armBarrier, changePolicy, createProject, journalBarrier } from './journal.mjs';
 import { makeProjectRepo, refOid } from './repos.mjs';
 import { addWork, addWorkOfKind, getRow, runsOf, scriptedEngine, tick, waitForRun, workItem } from './runs.mjs';
 import { VALID_RESULT, script, step } from './scripted.mjs';
@@ -82,8 +82,10 @@ export const writePlan = (phase, stages) => step.write(planPath(phase), planText
 // A project of the given tier with a fixture plan of `stages` stages
 // (default one). Returns {project, plan, items}: `items[n]` is the
 // stage_build work item of stage n+1.
-export async function addStagedProject(fx, { tier = 'T2', stages = 1 } = {}) {
+export async function addStagedProject(fx, { tier = 'T2', stages = 1, autonomy } = {}) {
   const project = await addGitProject(fx, { tier });
+  // M5 slice 31 (K3; SEAM.md §348): a case that waits at the chain boundary pins `autonomy: 'step'`.
+  if (autonomy !== undefined) await changePolicy(fx.engine, project.id, { autonomy });
   const res = await fx.engine.post('/v1/harness/fixtures/plan', { project: project.id, stages: Array.from({ length: stages }, (unused, i) => ({ number: i + 1, goal: `stage ${i + 1} of the fixture plan` })) });
   assert.equal(res.status, 201, `plan fixture (body: ${res.text})`);
   return { project, plan: res.body, items: res.body.stages.map((stage) => stage.work_item) };
