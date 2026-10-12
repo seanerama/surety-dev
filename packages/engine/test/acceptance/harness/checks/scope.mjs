@@ -15,6 +15,8 @@ import assert from 'node:assert/strict';
 
 import { postResult, reasonSubjects, scopeOf } from '../gates.mjs';
 import { permittedEdit, roleThat } from '../gitruns.mjs';
+import { changePolicy } from '../journal.mjs';
+import { refOid } from '../repos.mjs';
 import { runsOf, tickUntil } from '../runs.mjs';
 import { step } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
@@ -64,8 +66,15 @@ export function protectedSet(defs, governed = {}) {
 // areas?}) with the plan's `stages` (each may list `modules`) and `modules`
 // ({name, paths, sensitive_areas?, tier_override?}). Returns {id, repo,
 // base, plan, stages}.
-export async function scopeProject(fx, { tier = 'T1', defs, governed, files = {}, index, stages, modules }) {
+export async function scopeProject(fx, { tier = 'T1', defs, governed, files = {}, index, stages, modules, policy }) {
   const p = await checkProject(fx, { files: { ...protectedSet(defs, governed), ...files }, tier });
+  // `policy` (M5 slice 31; SEAM.md §363): one policy change before the plan
+  // exists, so no tick can dispatch its work in between; the base re-read
+  // after the policy commit (§361).
+  if (policy !== undefined) {
+    await changePolicy(fx.engine, p.id, policy);
+    p.base = refOid(p.repo.path, p.repo.ref);
+  }
   const plan = await installIndexedPlan(fx.engine, p.id, { index, stages, modules });
   return { ...p, plan, stages: plan.stages };
 }
