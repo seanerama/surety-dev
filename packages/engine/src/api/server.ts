@@ -604,6 +604,21 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'spec' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'spec.view', args: { project } }) }) };
       }
+      // D6 §4.2 (SEAM.md §353): the owner's specification change request; the
+      // text is kept as a record before the request is.
+      if (rest.length === 2 && rest[0] === 'spec' && rest[1] === 'change-requests' && post) {
+        return {
+          kind: 'prepared',
+          name: 'spec.change_request',
+          prepare: async (b) => {
+            const body = onlyFields(b, ['text']);
+            if (typeof body.text !== 'string' || body.text.trim() === '') throw new Refusal(400, 'invalid_value', '"text" must be a non-empty string.', 'Send {"text": "<the change you want>"}.', { field: 'text' });
+            if (Buffer.byteLength(body.text) > 65536) throw new Refusal(400, 'invalid_value', '"text" is longer than 64 KiB.', 'Send a shorter request.', { field: 'text' });
+            const record = await writeWholeRecord(runtime(), { project, run: null, kind: 'raw_user_report', content: Buffer.from(body.text) });
+            return { project, text: body.text, record };
+          },
+        };
+      }
       if (rest.length === 1 && rest[0] === 'plan' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'plan.view', args: { project } }) }) };
       }

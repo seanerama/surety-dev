@@ -39,6 +39,8 @@ CREATE TABLE spec_change_requests (
   seq INTEGER NOT NULL,
   spec_revision TEXT REFERENCES spec_revisions(id),
   text TEXT REFERENCES records(id),
+  -- The owner's words as the Spec Writer's package carries them.
+  request_text TEXT NOT NULL,
   source TEXT NOT NULL CHECK (source IN ('owner', 'finding')),
   status TEXT NOT NULL CHECK (status IN ('requested', 'proposed', 'approved', 'rejected', 'failed')),
   work_item TEXT REFERENCES work_items(id),
@@ -67,6 +69,10 @@ CREATE TABLE check_obligations (
 );
 
 ALTER TABLE check_results ADD COLUMN invalidated_reason TEXT;
+-- The spec-evidence generation an execution was registered under (D6 §4.5,
+-- B05): a result of an earlier generation than an obligation on its check is
+-- history and satisfies no current gate.
+ALTER TABLE check_executions ADD COLUMN spec_generation INTEGER;
 
 -- ---- the deployment request (D6 §6.8, A.3; K9; B14) ----------------------------------------
 CREATE TABLE deployment_requests (

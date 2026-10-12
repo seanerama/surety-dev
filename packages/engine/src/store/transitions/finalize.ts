@@ -9,6 +9,7 @@
 
 import { illegal } from './common.js';
 import { markStale } from './evidence.js';
+import { type AppliedInputs, type ProposalInputs, finalizeApplied, finalizeProposal } from '../../spec/change.js';
 import { type ApplicationInputs, completeIntent, effectiveVersion, finalizeApplication } from './protected.js';
 import type { IntentSpec, OpDetail } from './journal.js';
 import { intendOperation } from './journal.js';
@@ -34,7 +35,7 @@ export interface DiscardInputs {
 }
 
 export interface CommitInputs {
-  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt';
+  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt' | 'spec';
   run?: string;
   sha: string;
   parent: string;
@@ -55,7 +56,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -188,6 +189,12 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     }
     case 'protected':
       return finalizeApplication(tx, op, inputs as unknown as ApplicationInputs);
+    // D6 §4.3: a spec change's proposal on its side ref; §4.5: its approval
+    // integrated.
+    case 'spec_change':
+      return finalizeProposal(tx, op, inputs as unknown as ProposalInputs);
+    case 'spec_applied':
+      return finalizeApplied(tx, op, inputs as unknown as AppliedInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':

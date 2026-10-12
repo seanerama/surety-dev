@@ -186,6 +186,7 @@ import {
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
@@ -292,6 +293,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
   // D4 §§3.2, 4.1, 4.6 (M4 slice 23).
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
+  // D6 §4.2 (SEAM.md §353): the owner's specification change request.
+  'spec.change_request': (tx, a) => requestSpecChange(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
   // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run
@@ -424,6 +427,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
+  'spec.change_impact': (d, a) => impactRead(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
@@ -560,6 +564,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),
+  // D6 §§4.3, 4.5: a spec change's side ref, and its approval's application.
+  'spec.intend_proposal': (tx, a) => intendProposal(tx, a),
+  'spec.application_facts': (tx, a) => specApplicationFacts(tx, a),
+  'spec.begin_application': (tx, a) => beginSpecApplication(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),

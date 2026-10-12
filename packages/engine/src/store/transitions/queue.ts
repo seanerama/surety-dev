@@ -46,6 +46,7 @@ import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAtt
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { hostIdentity } from '../../trust/host.js';
+import { specChangeKind } from '../../spec/change.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
 type Db = Tx['db'];
@@ -66,7 +67,7 @@ export interface Facts {
 }
 
 export type { KindSpec, Subject };
-export { consumed, recordApproval };
+export { consumed, recordApproval, recordIntent };
 
 export interface Preview {
   manifest: Record<string, unknown>;
@@ -1262,6 +1263,8 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   spec_approval: SPEC_APPROVAL,
   architecture_approval: ARCHITECTURE_APPROVAL,
   plan_approval: PLAN_APPROVAL,
+  // D6 §4.5 (M5 slice 31b): the specification change (spec/change.ts).
+  spec_change: specChangeKind(),
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1290,6 +1293,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   spec_approval: SPEC_APPROVAL_KEYS,
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
+  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,
