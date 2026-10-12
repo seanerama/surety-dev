@@ -194,7 +194,7 @@ describe('M406 at T1', () => {
     assert.equal(done.completion_binding.candidate, candidates[0].id);
     // The stage checks and the phase scope's checks registered and run on that candidate (D6 §5.8, T1).
     const keys = [...new Set(executionsOf(fx.home, candidates[0].id).filter((x) => x.status === 'recorded').map((x) => x.key))].sort();
-    for (const key of ['accept-r1', 'accept-r2', 'integration', 'lint', 'smoke']) assert.ok(keys.includes(key), `${key} recorded on the phase's candidate (${keys.join(', ')})`);
+    for (const key of ['accept-r1', 'accept-r2', 'integration-lib', 'integration', 'lint', 'smoke']) assert.ok(keys.includes(key), `${key} recorded on the phase's candidate (${keys.join(', ')})`);
     assert.ok(evaluationsOfKind(fx.home, ctx.project, 'stage').filter((e) => e.candidate === candidates[0].id && e.outcome === 'satisfied').length >= 2, 'both stage gates evaluated satisfied on that candidate');
     assert.equal(replans(fx.home, ctx.project).length, 1, 'one replan');
     assert.deepEqual(ctx.humanActs.map((h) => h.kind), ['check_correction_unclassifiable'], 'the toolchain proposal was the one human act');

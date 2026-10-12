@@ -525,11 +525,25 @@ test('R1.1: sum(2, 3) returns 5', () => {
     { path: '/sum?a=2&b=3', status: 200, body: { sum: 5 } },
     { path: '/sum?a=x&b=3', status: 400 },
   ]),
-  // The integration kind (T2): the service and the library together, as a child.
-  '.surety/checks/tests/integration.test.mjs': serviceTest('integration: /health and /sum through one process', [
+  // The integration kind (T2; D3 §4.3), one check per stage, each covering a
+  // criterion of the requirement its stage implements (D3 §1.3, §4.2 (b);
+  // objection 063). Stage 2's: the service and the library together, as a
+  // child, its refusal of a non-number (R2.2) among what it asks.
+  '.surety/checks/tests/integration.test.mjs': serviceTest('integration, R2.2: /health, /sum and its refusal through one process', [
     { path: '/health', status: 200, body: { ok: true } },
     { path: '/sum?a=1&b=1', status: 200, body: { sum: 2 } },
+    { path: '/sum?a=x&b=3', status: 400 },
   ]),
+  // Stage 1's: the library as a whole, loaded as a module in a process of its own.
+  '.surety/checks/tests/integration-lib.test.mjs': `import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { test } from 'node:test';
+
+test('integration, R1.1: src/sum.mjs loads in a fresh process and sum(2, 3) is 5 there', () => {
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', "import { sum } from './src/sum.mjs'; console.log(JSON.stringify({ five: sum(2, 3), again: sum(sum(2, 3), 0) }));"], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  assert.deepEqual(JSON.parse(out), { five: 5, again: 5 });
+});
+`,
   // The security_lint kind (T2): no eval, no child process, no network client in the tree.
   '.surety/checks/lint.mjs': `import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -569,7 +583,23 @@ let ok = false;
 try { ok = s.status === 200 && JSON.parse(s.body).sum === 5; } catch { ok = false; }
 process.exit(ok ? 0 : 1);
 `,
-  // Phase 2.
+  // Phase 2. Stage 3's integration check: the tally with the library, in a process of its own.
+  '.surety/checks/tests/integration-tally.test.mjs': `import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { test } from 'node:test';
+
+test('integration, R3.1: src/tally.mjs beside src/sum.mjs in a fresh process: three counts make a total of 3', () => {
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', "import { sum } from './src/sum.mjs'; import { makeTally } from './src/tally.mjs'; const t = makeTally(); for (let i = 0; i < 3; i++) { sum(i, 1); t.count(); } console.log(JSON.stringify({ total: t.total() }));"], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  assert.deepEqual(JSON.parse(out), { total: 3 });
+});
+`,
+  // Stage 4's: the service's sums and its stats together.
+  '.surety/checks/tests/integration-stats.test.mjs': serviceTest('integration, R4.1: two sums through the service, then /stats', [
+    { path: '/health', status: 200, body: { ok: true } },
+    { path: '/sum?a=2&b=3', status: 200 },
+    { path: '/sum?a=1&b=1', status: 200 },
+    { path: '/stats', status: 200, body: { count: 2 } },
+  ]),
   '.surety/checks/tests/tally.test.mjs': `import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -588,10 +618,11 @@ test('R3.1: three counts make a total of 3', () => {
   ]),
   // The phase-only check (M401's "a phase-only check"; K5): every service test
   // again on the phase's candidate, listed for the `phase` gate alone.
-  '.surety/checks/tests/phase-regression.test.mjs': serviceTest('phase: /sum, /stats and 400 together on the phase candidate', [
+  '.surety/checks/tests/phase-regression.test.mjs': serviceTest('phase, R4.1: /sum, its refusal and /stats together on the phase candidate', [
     { path: '/sum?a=2&b=3', status: 200, body: { sum: 5 } },
     { path: '/sum?a=x&b=3', status: 400 },
-    { path: '/stats', status: 200, body: { count: 1 } },
+    { path: '/sum?a=1&b=1', status: 200, body: { sum: 2 } },
+    { path: '/stats', status: 200, body: { count: 2 } },
   ]),
 });
 
@@ -605,27 +636,34 @@ export const GOVERNED = governedText({
 
 const GATES = ['stage', 'alpha_authorize'];
 // The check definitions per phase: {path: text}. Phase 1 covers R1.1, R2.1,
-// R2.2 with the T2 kinds and the post-deploy behaviour check; phase 2 adds
-// R3.1, R4.1 and the phase-only check.
+// R2.2 with the T2 kinds (an integration check per stage) and the post-deploy
+// behaviour check; phase 2 adds R3.1, R4.1, their integration checks and the
+// phase-only check. Every acceptance-origin check of a covering kind names a
+// criterion (D3 §1.3; objection 063).
 export const CHECK_DEFS = Object.freeze({
   1: {
     [defs('accept-r1')]: definitionText('accept-r1', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/sum.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
     [defs('accept-r2')]: definitionText('accept-r2', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/service.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.1', 'R2.2'] } }),
-    [defs('smoke')]: definitionText('smoke', { kind: 'smoke', command: ['node', '--check', 'server.mjs'], timeout_s: 60, gate_kinds: GATES }),
-    [defs('integration')]: definitionText('integration', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration.test.mjs'], timeout_s: 120, gate_kinds: GATES }),
+    // smoke covers nothing, so every stage's scope requires it (D3 §4.2 (a)): it reads the one file stage 1 already has.
+    [defs('smoke')]: definitionText('smoke', { kind: 'smoke', command: ['node', '--check', 'src/sum.mjs'], timeout_s: 60, gate_kinds: GATES }),
+    [defs('integration-lib')]: definitionText('integration-lib', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-lib.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R1.1'] } }),
+    [defs('integration')]: definitionText('integration', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.2'] } }),
     [defs('lint')]: definitionText('lint', { kind: 'security_lint', command: ['node', '.surety/checks/lint.mjs'], timeout_s: 60, gate_kinds: GATES }),
     [defs('operation')]: definitionText('operation', { kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
   },
   2: {
     [defs('accept-r3')]: definitionText('accept-r3', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
     [defs('accept-r4')]: definitionText('accept-r4', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
-    [defs('phase-regression')]: definitionText('phase-regression', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/phase-regression.test.mjs'], timeout_s: 120, gate_kinds: ['phase'] }),
+    [defs('integration-tally')]: definitionText('integration-tally', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-tally.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
+    [defs('integration-stats')]: definitionText('integration-stats', { kind: 'integration', command: ['node', WRAPPER_PATH, '.surety/checks/tests/integration-stats.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }),
+    // The phase-only check (gate_kinds phase alone): acceptance-origin, so it names a criterion of the phase's own requirements (D3 §1.3, §4.2 (b)).
+    [defs('phase-regression')]: definitionText('phase-regression', { kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/phase-regression.test.mjs'], timeout_s: 120, gate_kinds: ['phase'], covers: { criteria: ['R4.1'] } }),
   },
 });
 
 const PHASE_PROGRAMS = Object.freeze({
-  1: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/sum.test.mjs', '.surety/checks/tests/service.test.mjs', '.surety/checks/tests/integration.test.mjs', '.surety/checks/lint.mjs', '.surety/checks/post-deploy/operation.mjs'],
-  2: ['.surety/checks/tests/tally.test.mjs', '.surety/checks/tests/stats.test.mjs', '.surety/checks/tests/phase-regression.test.mjs'],
+  1: ['.surety/checks/wrapper.mjs', '.surety/checks/tests/sum.test.mjs', '.surety/checks/tests/service.test.mjs', '.surety/checks/tests/integration-lib.test.mjs', '.surety/checks/tests/integration.test.mjs', '.surety/checks/lint.mjs', '.surety/checks/post-deploy/operation.mjs'],
+  2: ['.surety/checks/tests/tally.test.mjs', '.surety/checks/tests/stats.test.mjs', '.surety/checks/tests/integration-tally.test.mjs', '.surety/checks/tests/integration-stats.test.mjs', '.surety/checks/tests/phase-regression.test.mjs'],
 });
 
 // The files the phase's check authoring writes under the protected root
@@ -639,8 +677,8 @@ export function authoringFiles(phase) {
 
 // The check keys each phase's authoring adds, and the criteria each covers.
 export const EXPECTED_CHECKS = Object.freeze({
-  1: { 'accept-r1': ['R1.1'], 'accept-r2': ['R2.1', 'R2.2'], smoke: [], integration: [], lint: [], operation: [] },
-  2: { 'accept-r3': ['R3.1'], 'accept-r4': ['R4.1'], 'phase-regression': [] },
+  1: { 'accept-r1': ['R1.1'], 'accept-r2': ['R2.1', 'R2.2'], smoke: [], 'integration-lib': ['R1.1'], integration: ['R2.2'], lint: [], operation: [] },
+  2: { 'accept-r3': ['R3.1'], 'accept-r4': ['R4.1'], 'integration-tally': ['R3.1'], 'integration-stats': ['R4.1'], 'phase-regression': ['R4.1'] },
 });
 
 // The correction the Verifier proposes for CR-1 (check_correction work,
