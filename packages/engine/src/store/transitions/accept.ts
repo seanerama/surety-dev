@@ -14,6 +14,7 @@ import { type IntentResult, type IntentSpec, intendOperation, opsOfRun } from '.
 import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoRow } from './repo.js';
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
+import type { ReplanPrepared } from '../../plan/bundle.js';
 import { transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
@@ -298,6 +299,8 @@ export function intendIntegration(
     head: string;
     commit: string;
     plans: PlanInput[];
+    // A replan's B.5 plan, checked on the main thread (runs/accept.ts).
+    replan?: ReplanPrepared;
     deadlineSeconds: number;
   },
 ): IntentResult {
@@ -329,6 +332,7 @@ export function intendIntegration(
     work_kind: item.kind,
     stage: subject.stage ?? null,
     plans: args.plans,
+    ...(args.replan ? { replan: args.replan } : {}),
     architect: run.role === 'architect',
     nominate,
     chain: extra.chain,

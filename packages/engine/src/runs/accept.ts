@@ -28,7 +28,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { nowIso } from '../clock.js';
 import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
-import { catBlob, isAncestor, mergeBase, treeOf } from '../git/repo.js';
+import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
+import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
+import { checkPlan } from '../plan/check.js';
+import { type AdrFrontMatter, PLAN_FILE, type PhasePlanFile, parseAdr, parsePhasePlan } from '../plan/schemas.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
@@ -283,10 +286,23 @@ export class Acceptor {
       if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
       const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
       if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
+      // A replan's plan in Appendix B.5's form (D6 §5.6): checked against
+      // the bundle now, on the main thread; its finalizer publishes it as its
+      // routing says. A plan in D1 §7.8's form registers as built.
+      let replan: ReplanPrepared | null = null;
+      let legacy = plans.plans;
+      if (role === 'architect' && plans.plans.length > 0) {
+        const prepared = await this.replanOf(facts, target.sha, plans.plans.map((x) => x.path), base);
+        if (prepared !== null && 'refused' in prepared) return failed('invalid_result', prepared.refused);
+        if (prepared !== null) {
+          replan = prepared.replan;
+          legacy = [];
+        }
+      }
       const intent = await this.journal.withProject(facts.project.id, () =>
         this.journal.intend(
           'accept.intend_integration',
-          { run, repo, head, commit: target.sha, plans: plans.plans, deadlineSeconds: this.rt.setting('git_deadline') },
+          { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
           'ref_update',
         ),
       );
@@ -318,6 +334,67 @@ export class Acceptor {
     // 7. A nomination that is due.
     await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  // A replan's B.5 plan, checked against the approved bundle (D6 §5.3,
+  // §5.4): null when the commit carries no plan in that form.
+  private async replanOf(facts: AcceptFacts, sha: string, paths: string[], base: string): Promise<{ replan: ReplanPrepared } | { refused: string } | null> {
+    const ctx = repoContext(facts.project.repo);
+    let plan: PhasePlanFile | null = null;
+    for (const path of paths) {
+      const m = PLAN_FILE.exec(path);
+      if (!m) continue;
+      const text = await catBlob(ctx, sha, path);
+      if (text === null) return { refused: `the plan ${path} could not be read` };
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      if (typeof value !== 'object' || value === null || !('prepared_against' in value)) continue;
+      const parsed = parsePhasePlan(text, path, Number(m[1]));
+      if (!parsed.ok) return { refused: `PLAN_INVALID: ${parsed.finding.file}: ${parsed.finding.field ?? ''} ${parsed.finding.why}` };
+      if (plan !== null) return { refused: 'the replan wrote more than one phase plan' };
+      plan = parsed.value;
+    }
+    if (plan === null) return null;
+    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base });
+    const approved = b.baseline.approved;
+    if (approved === null) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
+    const adrFront: Record<string, AdrFrontMatter> = {};
+    const adrs: BundleContent['adrs'] = {};
+    for (const [key, text] of Object.entries(approved.adrs)) {
+      const front = parseAdr(text, `.surety/adrs/${key}.md`);
+      if (front.ok) adrFront[key] = front.value;
+      adrs[key] = { text, status: front.ok ? front.value.status : 'accepted' };
+    }
+    const roadmap = plan.roadmap_revision ?? approved.roadmap;
+    const check = checkPlan(b.baseline, { modules: approved.modules, roadmap, adrs: approved.adrs, adr_front_matter: adrFront, architecture_text: approved.architecture_text, plan });
+    if (check.outcome !== 'passed') return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+    const tree = await treeOf(ctx, sha);
+    const entries = tree === null ? null : await listTree(ctx, tree);
+    if (entries === null) return { refused: 'the replan\'s tree could not be read' };
+    const blobs: Record<string, string> = {};
+    for (const e of entries.values()) if (e.type === 'blob' && ['.surety/architecture/', '.surety/adrs/', '.surety/roadmap/', '.surety/phases/'].some((p) => e.path.startsWith(p))) blobs[e.path] = e.oid;
+    const content: BundleContent = { modules: approved.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined, plan, adrs, architecture_text: approved.architecture_text };
+    const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
+    const obligations = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) });
+    return {
+      replan: {
+        bundle,
+        obligations_record: obligations,
+        phase: plan.phase,
+        head: sha,
+        blobs,
+        content,
+        check,
+        spec_revision: b.spec_revision,
+        architecture_revision: b.architecture_revision,
+        roadmap_revision: b.roadmap_revision,
+        versions: { architecture: b.baseline.architecture_version, roadmap: b.baseline.roadmap_version, phase_plan: 1 },
+      },
+    };
   }
 
   // A Verifier's or a Reviewer's run (SEAM.md §68): validated like a

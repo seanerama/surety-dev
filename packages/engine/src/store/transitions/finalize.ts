@@ -17,6 +17,7 @@ import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
+import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -67,6 +68,9 @@ export interface RefInputs {
   // D6 §5.5 (B02): a session's checkpoint, whose integration registers
   // nothing it carries.
   checkpoint?: boolean;
+  // A replan's plan in Appendix B.5's form, checked before the intent
+  // (runs/accept.ts; D6 §5.6): published here as its routing says.
+  replan?: ReplanPrepared;
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
@@ -241,6 +245,10 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
       {},
     );
     plans.push(made.plan.id);
+  }
+  if (inputs.replan && inputs.run) {
+    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid });
+    if (published) plans.push(published);
   }
   if (inputs.architect && item && status === 'integrated') {
     const now = getWorkItem(tx, item.id)!;

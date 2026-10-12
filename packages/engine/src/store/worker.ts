@@ -183,7 +183,7 @@ import {
   settleTurn,
   turnClaim,
 } from '../sessions/session.js';
-import { bundleBaselineFacts, recordBundle } from '../plan/bundle.js';
+import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { phaseStep } from '../plan/phase.js';
 import {
@@ -420,6 +420,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
   'session.view': (d, a: { project: string; run: string }) => sessionView(d, a.project, a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
+  'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
