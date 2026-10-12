@@ -30,7 +30,9 @@ export function ideaFindings(text: string): { findings: Finding[]; identity: Rec
   const parsed = parseIdentityBlock(text);
   if (parsed.ok) return { findings: [], identity: parsed.block as unknown as Record<string, unknown> };
   return {
-    findings: parsed.findings.map((f) => ({ code: 'identity_block_invalid', path: '.surety/idea.md', subject: { key: f.key, value: valueNamed(f.why) }, message: f.why })),
+    // The message names the key as well as the value (SEAM.md §345): the
+    // engine's transcript entry carries the message.
+    findings: parsed.findings.map((f) => ({ code: 'identity_block_invalid', path: '.surety/idea.md', subject: { key: f.key, value: valueNamed(f.why) }, message: f.key === null ? f.why : `${f.key}: ${f.why}` })),
     identity: null,
   };
 }

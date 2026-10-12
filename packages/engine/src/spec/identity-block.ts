@@ -17,7 +17,8 @@ export interface IdentityBlock {
   users: string[];
   non_goals: string[];
   success_measures: string[];
-  sensitive_areas: string[];
+  // As the block writes them: a list of the closed list's areas, or `none`.
+  sensitive_areas: string[] | 'none';
   tier_recommendation: 'T1' | 'T2' | 'T3' | 'unsure';
   environments: string[];
 }
@@ -141,6 +142,7 @@ export function parseIdentityBlock(text: string): IdentityResult {
   const users = list('users');
   const nonGoals = list('non_goals');
   const measures = list('success_measures');
+  const areasNone = typeof values.get('sensitive_areas') === 'string' && (values.get('sensitive_areas') as string).toLowerCase() === 'none';
   const areas = list('sensitive_areas');
   for (const a of areas) if (!SENSITIVE_AREAS.includes(a)) findings.push({ key: 'sensitive_areas', why: `"${a}" is not a sensitive area of the closed list` });
   if (new Set(areas).size !== areas.length) findings.push({ key: 'sensitive_areas', why: 'a sensitive area is repeated' });
@@ -154,6 +156,6 @@ export function parseIdentityBlock(text: string): IdentityResult {
   if (findings.length > 0) return { ok: false, findings };
   return {
     ok: true,
-    block: { name, one_line: oneLine, users, non_goals: nonGoals, success_measures: measures, sensitive_areas: areas, tier_recommendation: tier as IdentityBlock['tier_recommendation'], environments },
+    block: { name, one_line: oneLine, users, non_goals: nonGoals, success_measures: measures, sensitive_areas: areasNone ? 'none' : areas, tier_recommendation: tier as IdentityBlock['tier_recommendation'], environments },
   };
 }

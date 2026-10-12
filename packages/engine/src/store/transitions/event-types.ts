@@ -153,7 +153,7 @@ export const EVENT_OWNERS = {
   'check.lease_regranted': 'store/transitions/checks.ts',
   // D6 A.2 (M5 slice 31): the idea record, the sessions, the products'
   // approvals and the plan's publication.
-  'baseline.idea_recorded': 'store/transitions/project.ts, sessions/session.ts',
+  'baseline.idea_recorded': 'store/transitions/project.ts, sessions/decisions.ts',
   'baseline.spec_approved': 'spec/approval.ts',
   'baseline.architecture_approved': 'plan/bundle.ts',
   'baseline.roadmap_revised': 'plan/bundle.ts',
@@ -161,13 +161,11 @@ export const EVENT_OWNERS = {
   'baseline.plan_refused': 'plan/bundle.ts',
   'plan.checked': 'plan/bundle.ts',
   'plan.published': 'store/transitions/work.ts',
-  'plan.generation_refused': 'plan/bundle.ts, store/transitions/work.ts',
+  'plan.generation_refused': 'plan/bundle.ts',
   'session.allocated': 'sessions/session.ts',
   'session.turn_started': 'sessions/session.ts',
   'session.turn_ended': 'sessions/session.ts',
   'session.turn_settled': 'sessions/session.ts',
-  'session.turn_refused': 'sessions/session.ts',
-  'session.generation_refused': 'sessions/session.ts',
   'session.saved': 'sessions/session.ts',
   'session.closed': 'sessions/session.ts',
 } as const;

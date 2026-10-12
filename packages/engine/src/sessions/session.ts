@@ -28,6 +28,7 @@ import type { DecisionRow } from '../store/transitions/decisions.js';
 import { intendOperation } from '../store/transitions/journal.js';
 import type { IntentResult } from '../store/transitions/journal.js';
 import { recordSemantics } from '../spec/approval.js';
+import { effectiveVersion } from '../store/transitions/protected.js';
 import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect'] as const;
@@ -65,6 +66,10 @@ export interface SaveFinding {
   subject: Record<string, unknown>;
   message: string;
 }
+
+// D6 A.7's `turn_max_bytes` at its default: the key itself is slice 33's
+// (the contract names no session key in slice 31).
+export const TURN_MAX_BYTES = 65_536;
 
 const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
 
@@ -111,7 +116,6 @@ export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number;
   else {
     const id = tx.newId('str_');
     tx.db.prepare('INSERT INTO "session_transcripts" ("id", "created_at", "project", "run", "entries") VALUES (?, ?, ?, ?, ?)').run(id, tx.at, run.project, run.id, JSON.stringify(entries));
-    tx.db.prepare('UPDATE "runs" SET "transcript_record" = ? WHERE "id" = ?').run(id, run.id);
   }
 }
 
@@ -223,21 +227,16 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   if (run.session_state !== 'allocated' && run.session_state !== 'open_idle') throw notIdle(run, 'a turn');
   if (args.expectedGeneration !== undefined && args.expectedGeneration !== null && args.expectedGeneration !== run.idle_generation) throw generationStale(run, args.expectedGeneration);
   const bytes = Buffer.byteLength(args.text, 'utf8');
-  const max = engineSettings().turn_max_bytes ?? 65_536;
+  const max = TURN_MAX_BYTES;
   if (bytes > max) {
-    tx.emit('session.turn_refused', { project: run.project, run: run.id }, { reason: 'turn_too_large', bytes, turn_max_bytes: max });
     throw new Refusal(413, 'turn_too_large', `The turn is ${bytes} bytes, more than turn_max_bytes (${max}).`, 'Send a shorter message.', { run: run.id, bytes, turn_max_bytes: max });
   }
   // Every next turn revalidates the backend and the cumulative budget (D6
   // §2.4; D1 §13.3).
   const resolved = resolveBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
-  if (resolved.kind === 'refused') {
-    tx.emit('session.turn_refused', { project: run.project, run: run.id }, { reason: resolved.code });
-    throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
-  }
+  if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
   const exhausted = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true });
   if (exhausted.length > 0) {
-    tx.emit('session.turn_refused', { project: run.project, run: run.id }, { reason: 'budget_exhausted', limits: exhausted });
     throw new Refusal(409, 'budget_exhausted', `Project ${run.project} has passed ${exhausted.join(', ')}; the session admits no further turn.`, 'Raise the limit or wait for the day to pass.', { run: run.id, limits: exhausted });
   }
   const lease = tx.db.prepare(`SELECT "id", "generation", "closing" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { id: string; generation: number; closing: number } | undefined;
@@ -281,16 +280,16 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
 
 // The turns admitted and not yet dispatched (D1 §15.1: the choke point
 // dispatches; SEAM.md §344: a tick launches it in the kernel lane).
-export function pendingTurns(db: Tx['db'], project: string | null): { run: string; project: string; invocation: string; repo: string }[] {
+export function pendingTurns(db: Tx['db'], project: string | null): { run: string; project: string; invocation: string; repo: string; branch: string }[] {
   return db
     .prepare(
-      `SELECT r."id" AS "run", r."project", d."invocation", p."dev_repo_path" AS "repo"
+      `SELECT r."id" AS "run", r."project", d."invocation", p."dev_repo_path" AS "repo", p."integration_branch" AS "branch"
        FROM "runs" r JOIN "execution_domains" d ON d."run" = r."id" AND d."status" = 'allocated' JOIN "projects" p ON p."id" = r."project"
        WHERE r."kind" = 'session' AND r."session_state" = 'turn_running' AND r."state" IN ('claimed', 'executing') AND (? IS NULL OR r."project" = ?)
          AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = d."invocation")
        ORDER BY r."created_at"`,
     )
-    .all(project, project) as { run: string; project: string; invocation: string; repo: string }[];
+    .all(project, project) as { run: string; project: string; invocation: string; repo: string; branch: string }[];
 }
 
 // The claim of an admitted turn, rebuilt from its rows for the launcher.
@@ -463,15 +462,24 @@ export function saveFacts(tx: Tx, run: SessionRow, roots: string[]): SaveFacts {
   };
 }
 
+// What the close reads after its save: the session as it stands, no swap.
+export function closeFacts(tx: Tx, args: { project: string; run: string }): SaveFacts {
+  const run = getSession(tx, args.project, args.run);
+  if (run.session_state !== 'open_idle' && run.session_state !== 'allocated') throw notIdle(run, 'a close');
+  const version = effectiveVersion(tx.db, run.project);
+  return saveFacts(tx, run, version ? (JSON.parse(version.roots) as string[]) : ['.surety/checks/']);
+}
+
 // The compare-and-swap into `saving` (B01): one winner per generation.
-export function beginSave(tx: Tx, args: { project: string; run: string; expectedGeneration?: number | null; roots: string[] }): SaveFacts {
+export function beginSave(tx: Tx, args: { project: string; run: string; expectedGeneration?: number | null }): SaveFacts {
   const run = getSession(tx, args.project, args.run);
   if (run.session_state !== 'open_idle' && run.session_state !== 'allocated') throw notIdle(run, 'a save');
   if (args.expectedGeneration !== undefined && args.expectedGeneration !== null && args.expectedGeneration !== run.idle_generation) throw generationStale(run, args.expectedGeneration);
   const open = tx.db.prepare(`SELECT "id" FROM "execution_domains" WHERE "run" = ? AND "status" <> 'terminated'`).all(run.id) as { id: string }[];
   if (open.length > 0) throw illegal('a save while a domain of the session is not terminated', { run: run.id, domains: open.map((d) => d.id) });
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'saving' WHERE "id" = ?`).run(run.id);
-  return saveFacts(tx, run, args.roots);
+  const version = effectiveVersion(tx.db, run.project);
+  return saveFacts(tx, run, version ? (JSON.parse(version.roots) as string[]) : ['.surety/checks/']);
 }
 
 // The checkpoint's integration onto the branch (D6 §2.4): a compare-and-swap
@@ -485,7 +493,7 @@ export function intendCheckpointIntegration(tx: Tx, args: { project: string; run
     payload: { repo: args.repo, ref, old_oid: args.head, new_oid: args.commit, run: args.run },
     target: { repo: args.repo, ref },
     subject: { run: args.run, old_oid: args.head, new_oid: args.commit, checkpoint: true },
-    finalizer: { purpose: 'integration', ref, ref_kind: 'integration', new_oid: args.commit, run: args.run, checkpoint: true, plans: [], architect: false, nominate: null, chain: 0, authorized: false },
+    finalizer: { purpose: 'integration', ref, ref_kind: 'integration', new_oid: args.commit, run: args.run, checkpoint: true, plans: [], architect: false, nominate: null, chain: 0 },
     deadlineSeconds: args.deadlineSeconds,
   });
 }
@@ -515,15 +523,13 @@ export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number
   if (args.products.spec && args.committed) {
     semantics = recordSemantics(tx, { project: run.project, run: run.id, blob: args.products.spec.blob, digest: args.products.spec.digest, representation: args.products.spec.representation, findings: args.products.spec.findings, readable: args.products.spec.readable });
   }
-  const notes = {
-    at: tx.at,
-    saved: args.committed?.sha ?? null,
-    blobs: args.committed?.blobs ?? {},
-    refused: args.refused,
-    findings: args.findings,
-    identity: args.products.identity ?? null,
-    semantics,
-  };
+  // A save that committed nothing keeps what the last checkpoint gave the
+  // products (its blobs, identity and semantics): the close raises on the
+  // last checkpoint (SEAM.md §344).
+  const prior = saveNotesOf(tx.db, run.id);
+  const notes = args.committed
+    ? { at: tx.at, saved: args.committed.sha, blobs: args.committed.blobs, refused: args.refused, findings: args.findings, identity: args.products.identity ?? null, semantics }
+    : { ...prior, at: tx.at, refused: args.refused, findings: args.refused || args.findings.length > 0 ? args.findings : (prior.findings ?? []) };
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'open_idle', "idle_generation" = ?, "session_notes" = ? WHERE "id" = ?`).run(generation, JSON.stringify(notes), run.id);
   tx.emit('session.saved', { project: run.project, run: run.id }, { idle_generation: generation, revision: args.committed?.sha ?? null, refused: args.refused?.code ?? null, nothing_to_save: args.nothingToSave, findings: args.findings.length });
   return { idle_generation: generation, saved: args.committed !== null };
@@ -655,4 +661,27 @@ export function saveNotesOf(db: Tx['db'], run: string): { saved?: string | null;
   } catch {
     return {};
   }
+}
+
+// Whether `run` is a session of `project` (the routes answer 404 before
+// reading a body or writing a record).
+export function sessionExists(db: Tx['db'], project: string, run: string): boolean {
+  return db.prepare(`SELECT 1 FROM "runs" WHERE "id" = ? AND "project" = ? AND "kind" = 'session'`).get(run, project) !== undefined;
+}
+
+// What a turn's package is built from (sessions/package.ts): the transcript
+// so far with each entry's text, and the last save's notes.
+export function sessionContextFacts(db: Tx['db'], run: string): import('./package.js').SessionContextFacts | null {
+  const r = db.prepare(`SELECT "id", "project", "role", "turn_count" FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(run) as { id: string; project: string; role: SessionRole; turn_count: number } | undefined;
+  if (!r) return null;
+  const notes = saveNotesOf(db, run);
+  return {
+    run: r.id,
+    project: r.project,
+    role: r.role,
+    turn: r.turn_count,
+    paths: SESSION_PATHS[r.role] ?? [],
+    transcript: transcriptOf(db, run).map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text })),
+    findings: notes.findings ?? [],
+  };
 }

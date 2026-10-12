@@ -60,6 +60,8 @@ export interface DecisionRow {
   preview_hash: string;
   blocked_while_open: string;
   status: 'open' | 'answered' | 'consumed' | 'invalidated';
+  // D1 §10.3: the decisions answered as one batch share it (D6 §3.4).
+  batch_key?: string | null;
 }
 
 export interface DecisionSpec {

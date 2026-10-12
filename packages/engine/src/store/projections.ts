@@ -291,7 +291,39 @@ export function readProject(db: Db, args: { project: string; maxConcurrentRuns: 
       paused: row.paused === 1,
       registration_state: row.registration_state,
       environments: environmentsOf(db, args.project),
+      idea: ideaOf(db, args.project),
     },
+  };
+}
+
+// The project's idea record (D6 §3.1; SEAM.md §345): its version, its blob,
+// the binding that accepted it (the create route's or an `idea_accept`
+// decision), the identity block once one that parses was accepted, and every
+// binding kept. null for a project created without one.
+function ideaOf(db: Db, project: string): Record<string, unknown> | null {
+  const row = db.prepare('SELECT "idea_version", "idea_blob", "idea_identity", "idea_history" FROM "projects" WHERE "id" = ?').get(project) as
+    | { idea_version: number | null; idea_blob: string | null; idea_identity: string | null; idea_history: string }
+    | undefined;
+  if (!row || row.idea_version === null) return null;
+  let history: { version: number; blob: string; binding: Record<string, unknown> }[] = [];
+  try {
+    history = JSON.parse(row.idea_history) as typeof history;
+  } catch {
+    history = [];
+  }
+  const current = history.find((h) => h.version === row.idea_version) ?? null;
+  let identity: unknown = null;
+  try {
+    identity = row.idea_identity === null ? null : (JSON.parse(row.idea_identity) as unknown);
+  } catch {
+    identity = null;
+  }
+  return {
+    version: row.idea_version,
+    blob: row.idea_blob,
+    binding: current?.binding ?? null,
+    identity,
+    history: history.map((h) => ({ version: h.version, blob: h.blob, binding: h.binding })),
   };
 }
 

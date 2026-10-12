@@ -161,6 +161,9 @@ export interface RunHandle {
   // The entry's help hash, as checked before this run's claim; null where
   // the launch checks it itself.
   helpChecked: string | null;
+  // A session turn's reply as the engine took it (D6 B.7; SEAM.md §343):
+  // the first result line, accepted or `invalid`; null while none came.
+  sessionReply: import('./sessions/session.js').SessionReply | 'invalid' | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -217,6 +220,7 @@ export function newHandle(claim: Claim): RunHandle {
     sampler: null,
     samplingReport: null,
     helpChecked: null,
+    sessionReply: null,
   };
 }
 
@@ -282,6 +286,8 @@ export interface Services {
   collectAtEnd(handle: RunHandle, quarantined: boolean): Promise<void>;
   // Authorized qualification attempts taken on their way (trust/attempts.ts).
   qualificationStep(): Promise<void>;
+  // A session turn whose role has exited: settled (sessions/driver.ts).
+  settleTurn(handle: RunHandle): Promise<void>;
 }
 
 export class Runtime {
@@ -308,6 +314,8 @@ export class Runtime {
   checks: import('./checks/run.js').CheckRunner | null = null;
   // The Release Operator (deploy/release-operator.ts), set once at startup.
   deploy: import('./deploy/release-operator.js').ReleaseOperator | null = null;
+  // The session driver (sessions/driver.ts), set once at startup.
+  sessions: import('./sessions/driver.js').SessionDriver | null = null;
   // The adapter qualification by command (deploy/qualify.ts), set once at
   // startup.
   qualifier: import('./deploy/qualify.js').AdapterQualifier | null = null;

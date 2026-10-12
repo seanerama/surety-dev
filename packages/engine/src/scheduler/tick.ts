@@ -192,6 +192,12 @@ export class Scheduler {
     // their own authority (D2 §7.2, K10), not by the queue below.
     await this.rt.services?.qualificationStep().catch((err) => log('qualification', err));
     let dispatched = 0;
+    // The turns sessions admitted (D6 §2.2; SEAM.md §344): dispatched by the
+    // tick, the choke point's one caller, never by the turn route.
+    if (remaining() > 0 && this.rt.sessions) dispatched += await this.rt.sessions.dispatchTurns().catch((err) => {
+      log('turn dispatch', err);
+      return 0;
+    });
     if (remaining() > 0) {
       const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates', { maxConcurrentRuns: this.rt.setting('max_concurrent_runs') });
       for (const c of candidates) {

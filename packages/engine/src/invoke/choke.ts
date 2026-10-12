@@ -53,6 +53,13 @@ import { exitCause } from './exit-cause.js';
 import { type ContainmentWatch, watchContainment } from './containment.js';
 import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
 import { startBackendSampler } from './sampler.js';
+import { type ContextFacts, writeContextPackage } from './sandbox/context.js';
+import { domainArea } from './sandbox/prepare.js';
+import { recordsDir } from '../records/files.js';
+import { type SessionContextFacts, writeSessionPackage } from '../sessions/package.js';
+import { parseSessionReply } from '../sessions/session.js';
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 
 // What a qualification canary's run showed the engine (D2 §7.2), kept for
 // the attempt's judgement (trust/attempts.ts) once the run has ended.
@@ -222,7 +229,7 @@ const refusalForm = (code: string, reason: string, whatToDo: string, subject: Re
 const isUsageLine = (line: string): boolean => /"type"\s*:\s*"usage"/.test(line);
 
 // The one line the backend reads on its standard input (SEAM.md §13).
-function requestLine(handle: RunHandle, workspace: string): string {
+function requestLine(handle: RunHandle, workspace: string, context: string | null = null): string {
   const { claim } = handle;
   return `${JSON.stringify({
     invocation: claim.invocation,
@@ -236,6 +243,12 @@ function requestLine(handle: RunHandle, workspace: string): string {
     // The failed repair checks a stage's or a fix's run is told of (D3
     // §2.10; SEAM.md §229): key, check, deciding result, output record.
     ...(claim.check_outputs === undefined ? {} : { check_outputs: claim.check_outputs }),
+    // The invocation's context package directory (D2 §1.3; SEAM.md §343):
+    // in the sandbox it is mounted at /surety/context; in the kernel lane the
+    // engine names the directory it wrote.
+    ...(context === null ? {} : { context }),
+    // A session turn's number (D6 §2.1).
+    ...(claim.session ? { turn: claim.session.turn } : {}),
   })}\n`;
 }
 
@@ -326,6 +339,37 @@ export class Launcher {
       ready = await this.prepare(handle, runs, target.repo);
     } catch (err) {
       log('dispatch', err, { run: claim.run });
+      this.never(handle, 'failed', 'infra_error');
+      return true;
+    }
+    if (ready && runs) void this.launch(handle, runs, target.repo);
+    return true;
+  }
+
+  // One turn of a session (D6 §2.1, §2.2; SEAM.md §344): admitted by the
+  // turn route, dispatched here by the scheduler, never by the route. The
+  // claim is rebuilt from the rows the admission wrote (run, turn, receipt,
+  // domain); the launch is a one-shot's, into the session's one workspace,
+  // and its end is the turn's settlement (sessions/driver.ts), never the
+  // run's.
+  async dispatchTurn(target: DispatchTarget, args: { run: string; invocation: string }): Promise<boolean> {
+    if (this.rt.handles.has(args.run)) return false;
+    const backend = seamBackends().find((b) => b.id === M1_BACKEND) ?? null;
+    const claim = await this.rt.engine<Claim | null>('session.turn_claim', { run: args.run, invocation: args.invocation, scripted: backend?.version ?? null });
+    if (!claim || this.rt.handles.has(claim.run)) return false;
+    const handle = newHandle(claim);
+    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream({ costAs: claim.entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
+    this.rt.handles.set(claim.run, handle);
+    const ctx = repoContext(target.repo);
+    const tree = await treeOf(ctx, claim.base_revision).catch(() => null);
+    const index = tree === null ? null : await indexHashOfTree(ctx, tree).catch(() => null);
+    handle.baseline = tree === null || index === null ? null : { head: claim.base_revision, index_hash: index, tracked_tree_hash: tree };
+    const runs = claim.entry === null ? backend : realBackend(claim);
+    let ready = false;
+    try {
+      ready = await this.prepare(handle, runs, target.repo);
+    } catch (err) {
+      log('dispatch', err, { run: claim.run, turn: claim.session?.turn });
       this.never(handle, 'failed', 'infra_error');
       return true;
     }
@@ -520,6 +564,13 @@ export class Launcher {
       return false;
     }
 
+    // A session's later turns run in the workspace its first turn made
+    // (D6 §2.1: one workspace per session).
+    const reused = claim.session ? await this.rt.read<{ id: string; path: string } | null>('session.workspace', { run: claim.run }) : null;
+    if (reused) {
+      handle.workspacePath = reused.path;
+      return this.dispatchStarted(handle);
+    }
     // D1 §7.3: `git worktree add --detach <ws> <base>`, journaled. The
     // workspace's baseline is that of a fresh checkout of the base, fixed
     // with the intent.
@@ -562,7 +613,13 @@ export class Launcher {
       return false;
     }
     await this.rt.engine('workspace.metadata', { workspace, metadata });
+    return this.dispatchStarted(handle);
+  }
 
+  // `dispatch_started`, after the kernel lane's context package is written.
+  private async dispatchStarted(handle: RunHandle): Promise<boolean> {
+    const { claim } = handle;
+    if (claim.cgroup_path === null && claim.attempt === null) await this.writeKernelContext(handle);
     const started = await this.rt.engine<boolean>('invoke.dispatch_started', { run: claim.run, invocation: claim.invocation });
     if (!started || handle.abort) {
       handle.phase = 'aborted';
@@ -570,6 +627,43 @@ export class Launcher {
       return false;
     }
     return true;
+  }
+
+  // The kernel lane's context package (D2 §1.3; SEAM.md §343): the same
+  // package the sandbox mounts at /surety/context, written into the domain's
+  // area and named in the request line. A package that cannot be written is
+  // logged and the request names none: the kernel lane gave no package
+  // before M5, and the sandbox lane's own package is unchanged.
+  private readonly kernelContext = new Map<string, string>();
+  private async writeKernelContext(handle: RunHandle): Promise<void> {
+    const { claim } = handle;
+    const dir = join(domainArea(this.rt.home, claim.domain), 'context');
+    try {
+      mkdirSync(domainArea(this.rt.home, claim.domain), { recursive: true, mode: 0o700 });
+      if (claim.session) {
+        const facts = await this.rt.read<SessionContextFacts | null>('session.context', { run: claim.run });
+        if (facts === null) return;
+        writeSessionPackage(dir, claim, facts);
+      } else {
+        const facts = await this.rt.read<ContextFacts | null>('context.facts', { run: claim.run });
+        const paths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+        writeContextPackage(dir, claim, facts, {
+          probe: claim.profile === 'probe',
+          readRecord: (id) => {
+            const path = paths.get(id);
+            if (!path) return null;
+            try {
+              return readFileSync(join(recordsDir(this.rt.home), basename(path)));
+            } catch {
+              return null;
+            }
+          },
+        });
+      }
+      this.kernelContext.set(claim.invocation, dir);
+    } catch (err) {
+      log('context package', err, { run: claim.run });
+    }
   }
 
   // The launch, from the barrier before the spawn to the role's exit. Every
@@ -678,7 +772,8 @@ export class Launcher {
       });
     });
     child.stdin!.on('error', () => {});
-    child.stdin!.end(requestLine(handle, handle.workspacePath!));
+    child.stdin!.end(requestLine(handle, handle.workspacePath!, this.kernelContext.get(claim.invocation) ?? null));
+    this.kernelContext.delete(claim.invocation);
 
     try {
       await pausePoint('launch.before_ownership');
@@ -747,7 +842,7 @@ export class Launcher {
     }
     let prepared: Awaited<ReturnType<typeof prepareSandbox>>;
     try {
-      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace'), repo);
+      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace', '/surety/context'), repo);
     } catch (err) {
       log('sandbox', err, { run: claim.run });
       await transcript.abandon();
@@ -1480,6 +1575,13 @@ export class Launcher {
         handle.terminal = m.is_error === true || (m.subtype !== undefined && m.subtype !== 'success') ? 'failure' : 'success';
         return;
       }
+      // A session turn's reply (D6 B.7; SEAM.md §343): taken by the turn's
+      // settlement, never recorded as a run's result (the run goes on).
+      if (handle.claim.session) {
+        if (handle.sessionReply !== null || handle.ending) return;
+        handle.sessionReply = parseSessionReply(redactValue(m.result)) ?? 'invalid';
+        return;
+      }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
       if (handle.result !== null) return;
       // A run the engine has decided to end takes no late result, as a
@@ -1617,6 +1719,11 @@ export class Launcher {
   // accepted first (runs/accept.ts). From slice 5 that is every dispatched
   // kind: a Verifier's and a Reviewer's runs are validated too (SEAM.md §68).
   private childDone(handle: RunHandle): void {
+    // A session turn ends in its settlement; the session goes on (D6 §2.1).
+    if (handle.claim.session && !handle.ending && this.rt.services) {
+      void this.rt.services.settleTurn(handle).catch((err) => log('turn settlement', err, { run: handle.claim.run }));
+      return;
+    }
     const end = earnedEnd(handle);
     if (!handle.ending && end.outcome === 'completed' && ACCEPTED_KINDS.includes(handle.claim.work_kind) && this.rt.services) {
       this.rt.services.accept(handle);

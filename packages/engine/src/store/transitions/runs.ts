@@ -913,7 +913,11 @@ export function finishRun(
   if (args.recovery !== null) payload.recovery = { incarnation: args.recovery };
   tx.emit('run.ended', runSubject(run), payload);
 
-  const blockers = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "status" = 'open'`).all(run.id) as DecisionRow[];
+  // The decisions a session's close raised about its product stay open: they
+  // are answered from the queue after the run has ended (D6 §3.4).
+  const blockers = tx.db
+    .prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "status" = 'open' AND "kind" NOT IN ('idea_accept', 'spec_approval', 'architecture_approval', 'plan_approval')`)
+    .all(run.id) as DecisionRow[];
   for (const d of blockers) invalidateDecision(tx, d, 'the run has ended');
 
   // A Builder's objections, before anything its end moves (D3 §5 X2): a

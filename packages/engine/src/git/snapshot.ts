@@ -190,7 +190,9 @@ export interface DiffResult {
   changes: Change[];
 }
 
-export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps, roots: readonly string[]): Promise<DiffResult> {
+// `opts.plans` false: a session's save, whose phase plans are parsed at save
+// with Appendix B's schemas (D6 §3.3) and never registered from the commit.
+export async function validateDiff(repo: string, base: string, tree: string, role: string, caps: Caps, roots: readonly string[], opts: { plans?: boolean } = {}): Promise<DiffResult> {
   const ctx = repoContext(repo);
   const unknown = (what: string): DiffResult => ({ violation: { klass: 'infra_error', text: `the snapshot could not be validated: ${what} could not be read` }, plans: [], changes: [] });
   const changes = await diffTrees(ctx, base, tree);
@@ -235,7 +237,7 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   if (total > caps.bytes) return reject(`the run changed ${total} bytes, more than snapshot_max_bytes (${caps.bytes})`);
   // Phase plans: a committed plan is schedulable by construction (D1 §7.8).
   const plans: PlanFile[] = [];
-  for (const c of blobs) {
+  for (const c of opts.plans === false ? [] : blobs) {
     const m = PLAN_FILE.exec(c.path);
     if (!m) continue;
     const text = await catBlob(ctx, tree, c.path);

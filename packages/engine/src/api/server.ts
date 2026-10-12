@@ -21,7 +21,9 @@ import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/comm
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
-import { liveTranscript, readRecordBytes } from '../records/files.js';
+import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
+import { redactText } from '../records/redact.js';
+import { TURN_MAX_BYTES } from '../sessions/session.js';
 import type { RecordRow } from '../store/transitions/records.js';
 import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
@@ -517,12 +519,79 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
-      // Sessions are excluded from M1 (build spec §3, row M08): refused
-      // whether or not the run exists, before anything is read or written.
-      const sessionRoute =
-        (rest.length === 1 && rest[0] === 'sessions') ||
-        (rest.length === 3 && rest[0] === 'sessions' && ['turns', 'save', 'close'].includes(rest[2]!));
-      if (sessionRoute && post) return { kind: 'refuse', refusal: unsupported('Agent sessions') };
+      // The session routes (D6 §2.7, A.8; K6 lifts M1's refusal; SEAM.md
+      // §344). A turn, save or close of a run that is not the project's
+      // session is 404 before its body is judged or anything is written.
+      if (rest.length === 1 && rest[0] === 'sessions' && post) {
+        return {
+          kind: 'prepared',
+          name: 'session.open',
+          prepare: async (b) => {
+            const body = onlyFields(b, ['role', 'model']);
+            if (typeof body.role !== 'string' || body.role === '') throw new Refusal(400, 'invalid_value', '"role" must be one of vision, spec_writer, architect.', 'Open a session for an interactive role.', { field: 'role' });
+            return { project, role: body.role, model: body.model, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null };
+          },
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'sessions' && get) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'session.view', args: { project, run } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'sessions' && ['turns', 'save', 'close'].includes(rest[2]!) && post) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        const exists = async () => {
+          if (!(await store().call<boolean>('read', { name: 'session.exists', args: { project, run } }))) {
+            throw new Refusal(404, 'not_found', `No session ${run} exists in project ${project}.`, 'Check the project and the run.', { project, run });
+          }
+        };
+        const generation = (body: Record<string, unknown>): number | null => {
+          const v = body.expected_generation;
+          if (v === undefined || v === null) return null;
+          if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) throw new Refusal(400, 'invalid_value', '"expected_generation" must be a non-negative integer.', 'Send the idle generation the session read showed, or leave it out.', { field: 'expected_generation' });
+          return v;
+        };
+        if (rest[2] === 'turns') {
+          return {
+            kind: 'prepared',
+            name: 'session.turn',
+            prepare: async (b) => {
+              await exists();
+              const body = onlyFields(b, ['text', 'expected_generation']);
+              if (typeof body.text !== 'string' || body.text === '') throw new Refusal(400, 'invalid_value', '"text" must be a non-empty string.', 'Send what you say to the role.', { field: 'text' });
+              const expectedGeneration = generation(body);
+              // The owner's entry, written through the redactor before the
+              // admission's transaction names it (D6 §2.2, §2.3).
+              const textRecord = Buffer.byteLength(body.text, 'utf8') > TURN_MAX_BYTES ? null : await writeWholeRecord(runtime(), { project, run, kind: 'session_transcript', content: Buffer.from(body.text) });
+              return { project, run, text: redactText(body.text), textRecord, expectedGeneration, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null, scope: runtime().boundary() === 'real' ? (runtime().scope?.path ?? null) : null };
+            },
+          };
+        }
+        return {
+          kind: 'prepared',
+          name: 'session.reply',
+          prepare: async (b) => {
+            await exists();
+            const sessions = runtime().sessions;
+            if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
+            if (rest[2] === 'save') {
+              const body = onlyFields(b, ['expected_generation']);
+              return { status: 200, body: await sessions.save(project, run, { expectedGeneration: generation(body) }) };
+            }
+            const body = onlyFields(b, ['refuse', 'expected_generation']);
+            if (body.refuse !== undefined && typeof body.refuse !== 'boolean') throw new Refusal(400, 'invalid_value', '"refuse" must be a boolean.', 'Send {"refuse": true} or {}.', { field: 'refuse' });
+            return { status: 200, body: await sessions.close(project, run, { refuse: body.refuse === true, expectedGeneration: generation(body) }) };
+          },
+        };
+      }
+      // D6 A.8 (SEAM.md §346): the specification and the plan, read.
+      if (rest.length === 1 && rest[0] === 'spec' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'spec.view', args: { project } }) }) };
+      }
+      if (rest.length === 1 && rest[0] === 'plan' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'plan.view', args: { project } }) }) };
+      }
       // Management and releases belong to later designs; every method is refused.
       if (rest[0] === 'management') return { kind: 'refuse', refusal: unsupported('Management') };
       if (rest[0] === 'releases') return { kind: 'refuse', refusal: unsupported('Releases') };

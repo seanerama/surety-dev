@@ -12,8 +12,6 @@ import { type Policy, effectiveOf, projectPolicyDefaults } from '../../config/pr
 export interface EngineSettings {
   lease_ttl: number;
   git_deadline: number;
-  // D6 A.7 (M5 slice 31): the most a turn's owner text may be.
-  turn_max_bytes?: number;
   decision_targets: Record<string, number | null>;
   // D2 §2.6: the bootstrap exception is in force.
   ui_bootstrap?: boolean;
@@ -70,8 +68,6 @@ export interface ProjectOptions {
   backend_verifier: string;
   backend_reviewer: string;
   backend_architect: string;
-  backend_vision: string;
-  backend_spec_writer: string;
   autonomy: 'step' | 'stage' | 'phase';
   alpha_deploy: 'manual' | 'on_phase_complete';
   backend_mode: string;

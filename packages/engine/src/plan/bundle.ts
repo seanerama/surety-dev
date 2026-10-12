@@ -77,6 +77,9 @@ export interface BaselineFacts {
   spec_revision: string | null;
   spec_version: number;
   versions: BundleVersions;
+  // Whether the bundle's roadmap.json differs from the approved roadmap (or
+  // none is approved): a roadmap version is allocated only then.
+  roadmap_changed: boolean;
   // The next phase (D6 §5.2) and the open plan, if one.
   phase: number;
   open_plan: { id: string; phase_number: number; generation: number } | null;
@@ -90,7 +93,11 @@ export interface BaselineFacts {
 // requirements (with the questions that block them, from its semantics), the
 // head the check compares `prepared_against` with, the versions to allocate,
 // the phases complete, and the approved architecture artifacts if any.
-export function bundleBaselineFacts(db: Db, args: { project: string; head: string; withPlan: boolean }): BaselineFacts {
+// `head` is what a plan's `prepared_against.revision` must name: the head the
+// session started from (its run's base), since the plan file is itself in
+// the session's checkpoint. `roadmapBlob` is the bundle's roadmap.json blob:
+// a roadmap version is allocated only when it differs from the approved one.
+export function bundleBaselineFacts(db: Db, args: { project: string; head: string; withPlan: boolean; roadmapBlob?: string | null }): BaselineFacts {
   const p = db.prepare('SELECT "id", "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; tier: string } | undefined;
   if (!p) throw notFound('project', args.project);
   const spec = db.prepare('SELECT "id", "version", "semantics" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string; version: number; semantics: string | null } | undefined;
@@ -114,11 +121,14 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
     blocked_by_questions: blocked.get(r.key) ?? [],
   }));
   const arch = db.prepare('SELECT "id", "version", "module_map", "blobs" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string; version: number; module_map: string; blobs: string } | undefined;
-  const road = db.prepare('SELECT "id", "version", "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string; version: number; phases: string } | undefined;
+  const road = db.prepare('SELECT "id", "version", "phases", "git_blob" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as
+    | { id: string; version: number; phases: string; git_blob: string }
+    | undefined;
   const completed = (db.prepare(`SELECT "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(args.project) as { phase_number: number }[]).map((r) => r.phase_number);
   const open = (db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as { id: string; phase_number: number; generation: number } | undefined) ?? null;
   const phase = (completed.at(-1) ?? 0) + 1;
-  const versions: BundleVersions = { architecture: (arch?.version ?? 0) + 1, roadmap: road ? road.version : 1, phase_plan: args.withPlan ? 1 : null };
+  const roadmapChanged = !road || (args.roadmapBlob !== undefined && args.roadmapBlob !== null && args.roadmapBlob !== road.git_blob);
+  const versions: BundleVersions = { architecture: (arch?.version ?? 0) + 1, roadmap: roadmapChanged ? (road?.version ?? 0) + 1 : road!.version, phase_plan: args.withPlan ? 1 : null };
   let approved: BundleBaseline['approved'] = null;
   if (arch && road) {
     const adrs = (db.prepare(`SELECT "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' ORDER BY "key"`).all(args.project) as { key: string; text: string }[]).reduce<Record<string, string>>((o, a) => ({ ...o, [a.key]: a.text }), {});
@@ -140,6 +150,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
     spec_revision: spec?.id ?? null,
     spec_version: spec?.version ?? 0,
     versions,
+    roadmap_changed: roadmapChanged,
     phase,
     open_plan: open,
     architecture_revision: arch?.id ?? null,
@@ -173,6 +184,8 @@ export interface RecordBundleArgs {
 // before anything is recorded (sessions/driver.ts).
 export function recordBundle(tx: Tx, args: RecordBundleArgs): { bundle: string; plan_check: string | null } {
   if (getBundle(tx.db, args.bundle)) throw illegal('recording a bundle twice', { plan_bundle: args.bundle });
+  // The check and the bundle name each other: their keys are checked at commit.
+  tx.db.pragma('defer_foreign_keys = ON');
   let check: string | null = null;
   if (args.check) {
     check = tx.newId('pchk_');
@@ -326,14 +339,11 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
       {
         project: b.project,
         baseRevision: b.head,
-        approvedBy: args.by,
+        authority: { kind: 'publication', by: args.by === 'human' ? 'human' : 'engine:plan_check', bundle: b.id, check: b.plan_check, routing: args.by === 'human' ? 'human' : 'registered' },
         phase: plan.phase,
         gitPath: `.surety/phases/phase-${plan.phase}.json`,
         chain: 0,
         prepared: { spec: b.spec_revision, architecture: archId, roadmap: roadId },
-        bundle: b.id,
-        check: b.plan_check,
-        routing: 'human',
         plannedObligations: obligations,
         stages: plan.stages.map((s, i) => ({
           number: s.number,
@@ -349,7 +359,7 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
           execution_inputs_digest: executionInputsDigest(s),
         })),
       },
-      { bundle: b.id },
+      {},
     );
     planId = made.plan.id;
     if (b.plan_check) tx.db.prepare('UPDATE "plan_checks" SET "plan" = ? WHERE "id" = ?').run(planId, b.plan_check);

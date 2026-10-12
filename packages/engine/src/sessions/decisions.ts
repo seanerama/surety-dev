@@ -136,7 +136,8 @@ export const SPEC_APPROVAL: KindSpec = {
     if (option !== 'approve') return consumed(d);
     const made = approveSpec(tx, { project: d.project!, run: d.subject_id, decision: d.id });
     recordApproval(tx, d, { consequence: `specification version ${made.version} approved`, subjectType: 'spec_revision', subjectId: made.spec_revision });
-    return consumed(d, [{ kind: 'tick' }]);
+    // The answer launches nothing (D1 §10.5): the next tick sees the baseline.
+    return consumed(d);
   },
 };
 
@@ -180,7 +181,9 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       consumeDecision(tx, d, option, note);
       const made = approveBundlePart(tx, { run: d.subject_id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
       if (option === 'approve') recordApproval(tx, d, { consequence: made.published ? `bundle ${made.bundle} published${made.plan ? ` as plan ${made.plan}` : ''}` : `bundle ${made.bundle} approved in part (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
-      return consumed(d, made.published ? [{ kind: 'tick' }] : []);
+      // The answer launches nothing (D1 §10.5): what the publication made
+      // eligible is dispatched by the next tick.
+      return consumed(d);
     },
   };
 }

@@ -33,8 +33,6 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   git_output_cap: int(8_388_608, 65_536, 268_435_456),
   // D2 A.7, bytes in bytes (SEAM.md §115).
   max_concurrent_domains: int(2, 1, 8),
-  // D6 A.7 (K6): the most a turn's owner text may be.
-  turn_max_bytes: int(65_536, 4096, 1_048_576),
   host_reserve_memory: int(2_147_483_648, 536_870_912, 68_719_476_736),
   host_reserve_disk: int(5_368_709_120, 1_073_741_824, 1_099_511_627_776),
   domain_memory_max: int(8_589_934_592, 536_870_912, 68_719_476_736),
@@ -113,8 +111,6 @@ export const ENGINE_KEYS = [
   'ui_bootstrap',
   // D2 A.7.
   'max_concurrent_domains',
-  // D6 A.7 (M5 slice 31).
-  'turn_max_bytes',
   'host_reserve_memory',
   'host_reserve_disk',
   'domain_memory_max',
@@ -222,6 +218,8 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   spec_approval: 172_800,
   architecture_approval: 172_800,
   plan_approval: 172_800,
+  // D6 A.8 (D1 A.8): the specification change, 3 d.
+  spec_change: 259_200,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project
@@ -238,11 +236,6 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   deadline_verifier: int(1800, 300, 10_800),
   deadline_reviewer: int(1200, 300, 10_800),
   deadline_architect: int(1800, 300, 10_800),
-  // D6 A.7: a session turn's deadline per interactive role.
-  deadline_vision: int(1800, 300, 10_800),
-  deadline_spec_writer: int(1800, 300, 10_800),
-  // D6 A.7: the transcript a session may grow to.
-  transcript_max_bytes: int(8_388_608, 1_048_576, 67_108_864),
   session_idle_timeout: int(1200, 60, 7200),
   record_retention_days: int(90, 7, 3650),
   observation_cadence: int(30, 10, 3600),
@@ -311,9 +304,6 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  // D6 §2.7, §3 (M5 slice 31): the interactive roles' backends.
-  backend_vision: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  backend_spec_writer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   // D6 §6.5, K3 (E139 Q3): where the chaining boundary falls; `phase` by default.
   autonomy: { type: 'enum', values: AUTONOMY_PROFILES, default: 'phase', widening: 'never' },
   // D6 §6.8, K9 (E139 Q5): whether the engine requests Alpha at phase completion.

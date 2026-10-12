@@ -231,60 +231,76 @@ export interface PlanStageInput {
   execution_inputs_digest?: string | null;
 }
 
+// Who authorizes a plan's registration (D6 §5.5; B02; the driver's ruling:
+// the production registerPlan requires an authority argument):
+// - `publication`: the authorized finalizer of a bundle (plan/bundle.ts),
+//   by the owner's consolidated approval (`human`) or §5.4's routing
+//   (`engine:plan_check`, slice 35). Only it is held to §5.2's rules (the
+//   next phase, one open plan), registers the milestones of §6.4 and the
+//   phase's `check_authoring`, and emits `plan.published`.
+// - `architect_integration`: what an Architect's one-shot integration
+//   commits, registered as D1 §7.8 built it until slice 35 routes a replan
+//   through the check and the publication (store/transitions/finalize.ts).
+// - `fixture`: the labelled test fixture (src/testing/fixtures.ts; K4; M74),
+//   `approved_by` `test fixture`, the label on its rows' events.
+export type PlanAuthority =
+  | { kind: 'publication'; by: 'human' | 'engine:plan_check'; bundle: string; check: string | null; routing: 'human' | 'registered' }
+  | { kind: 'architect_integration' }
+  | { kind: 'fixture' };
+
 export interface RegisterPlanArgs {
   project: string;
   baseRevision: string;
-  // Who authorized the publication (D6 §5.5): the human's decision, the
-  // engine's routing (`engine:plan_check`) or, under the seam, the fixture.
-  approvedBy: string;
+  authority: PlanAuthority;
   stages: PlanStageInput[];
   phase?: number;
   gitPath?: string;
   chain?: number;
+  // `publication` only: what the plan was prepared against and its planned
+  // obligations record (K4; A.3).
   prepared?: { spec: string | null; architecture: string | null; roadmap: string | null };
-  bundle?: string | null;
-  check?: string | null;
-  routing?: 'registered' | 'human' | null;
-  plannedObligations?: unknown;
+  plannedObligations?: string | null;
 }
 
 // Register a phase plan's stages and the work of each (D1 §7.8: a registered
-// plan is schedulable by construction; D6 §5.5, K4). The plan must be the
-// next phase's (`phase_not_next`), and no other plan may be open
-// (`plan_generation_stale`; early replacement, the one exemption, is slice
-// 35's compare-and-swap). Each stage's `stage_build` comes from the trigger
-// ("plan", <stage id>, 1) and waits, at dispatch, on the two milestones of
-// D6 §6.4 (runs.ts stageMilestones); the phase's `check_authoring` from
-// ("phase_plan", <plan id>, 1). Publication is the caller's authority
-// (plan/bundle.ts; the fixture under src/testing/): this function refuses no
-// caller and sets no readiness.
+// plan is schedulable by construction; D6 §5.5, K4). Each stage's
+// `stage_build` comes from the trigger ("plan", <stage id>, 1). A
+// publication's plan must be the next phase's (`phase_not_next`) with no
+// other plan open (`plan_generation_stale`; early replacement, the one
+// exemption, is slice 35's compare-and-swap); its stage work waits, at
+// dispatch, on the two milestones of D6 §6.4 (runs.ts), and the phase's
+// `check_authoring` comes from ("phase_plan", <plan id>, 1).
 export function registerPlan(
   tx: Tx,
   args: RegisterPlanArgs,
   label: Record<string, unknown>,
-): { plan: { id: string; phase: number; generation: number }; stages: { id: string; number: number; work_item: string }[]; check_authoring: string } {
+): { plan: { id: string; phase: number; generation: number }; stages: { id: string; number: number; work_item: string }[]; check_authoring: string | null } {
   if (!tx.db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
   const phase = args.phase ?? 1;
-  const { done } = tx.db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(args.project) as { done: number };
-  const open = tx.db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as
-    | { id: string; phase_number: number; generation: number }
-    | undefined;
-  if (phase !== done + 1) {
-    throw new Refusal(409, 'phase_not_next', `Phase ${phase} is not the next phase of project ${args.project}: ${done === 0 ? 'no phase is complete' : `phase ${done} is the last complete`}, so the next plan is phase ${done + 1}'s.`, 'Plan the next phase only (F §3.10.1).', {
-      project: args.project,
-      phase,
-      next: done + 1,
-    });
+  const authority = args.authority;
+  const publication = authority.kind === 'publication' ? authority : null;
+  if (publication) {
+    const { done } = tx.db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(args.project) as { done: number };
+    if (phase !== done + 1) {
+      throw new Refusal(409, 'phase_not_next', `Phase ${phase} is not the next phase of project ${args.project}: ${done === 0 ? 'no phase is complete' : `phase ${done} is the last complete`}, so the next plan is phase ${done + 1}'s.`, 'Plan the next phase only (F §3.10.1).', {
+        project: args.project,
+        phase,
+        next: done + 1,
+      });
+    }
+    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as
+      | { id: string; generation: number }
+      | undefined;
+    if (open) {
+      throw new Refusal(409, 'plan_generation_stale', `Project ${args.project} already has an open plan (${open.id}, generation ${open.generation}); a second plan is registered only by early replacement.`, 'Replace the open plan through the replacement route, or complete it.', {
+        project: args.project,
+        phase,
+        phase_plan: open.id,
+        active_generation: open.generation,
+      });
+    }
   }
-  if (open) {
-    tx.emit('plan.generation_refused', { project: args.project, phase_plan: open.id }, { phase, active_generation: open.generation, cause: 'second_plan_for_open_phase' });
-    throw new Refusal(409, 'plan_generation_stale', `Phase ${phase} of project ${args.project} already has an open plan (${open.id}, generation ${open.generation}); a second plan is registered only by early replacement.`, 'Replace the open plan through the replacement route, or complete it.', {
-      project: args.project,
-      phase,
-      phase_plan: open.id,
-      active_generation: open.generation,
-    });
-  }
+  const approvedBy = publication ? publication.by : authority.kind === 'fixture' ? 'test fixture' : null;
   const plan = tx.newId('plan_');
   const generation = 1;
   tx.db
@@ -299,19 +315,19 @@ export function registerPlan(
       args.project,
       phase,
       args.baseRevision,
-      args.gitPath ?? `.surety/phases/phase-${phase}.json`,
-      args.approvedBy,
-      tx.at,
+      args.gitPath ?? (publication ? `.surety/phases/phase-${phase}.json` : '.surety/phases/phase-1.md'),
+      approvedBy,
+      approvedBy === null ? null : tx.at,
       args.prepared?.spec ?? null,
       args.prepared?.architecture ?? null,
       args.prepared?.roadmap ?? null,
       args.prepared?.roadmap ?? null,
       generation,
-      args.bundle ?? null,
-      args.check ?? null,
-      args.routing ?? null,
-      tx.at,
-      args.plannedObligations === undefined ? null : JSON.stringify(args.plannedObligations),
+      publication?.bundle ?? null,
+      publication?.check ?? null,
+      publication?.routing ?? null,
+      publication ? tx.at : null,
+      args.plannedObligations ?? null,
     );
   const ids = new Map<number, string>();
   for (const stage of args.stages) {
@@ -351,20 +367,27 @@ export function registerPlan(
         stage.execution_inputs_digest ?? null,
         stage.conformance === true ? 1 : 0,
       );
-    const milestones: Milestone[] = [{ milestone: 'authoring_ready', phase_plan: plan }, ...deps.map((d) => ({ milestone: 'stage_code' as const, stage: d }))];
+    // D6 §6.4 (B07, B08): a published stage's work waits on the phase's
+    // authoring readiness and on the stage-code milestone of each stage it
+    // depends on. A fixture's or an Architect integration's plan is as D1
+    // built it: no milestone.
+    const milestones: Milestone[] = publication ? [{ milestone: 'authoring_ready', phase_plan: plan }, ...deps.map((d) => ({ milestone: 'stage_code' as const, stage: d }))] : [];
     const made = observeTrigger(
       tx,
-      { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0, depends_on: milestones },
+      { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0, ...(milestones.length > 0 ? { depends_on: milestones } : {}) },
       label,
     );
     tx.db.prepare('UPDATE "stages" SET "work_item" = ? WHERE "id" = ?').run(made.work_item.id, id);
     out.push({ id, number: stage.number, work_item: made.work_item.id });
   }
-  // The phase's check authoring (D6 §6.2; K7), registered with the plan.
-  const authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label);
-  tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring.work_item.id, plan);
-  tx.emit('plan.published', { project: args.project, phase_plan: plan }, { ...label, phase, generation, approved_by: args.approvedBy, stages: out.map((s) => s.id), check_authoring: authoring.work_item.id, bundle: args.bundle ?? null });
-  return { plan: { id: plan, phase, generation }, stages: out, check_authoring: authoring.work_item.id };
+  let authoring: string | null = null;
+  if (publication) {
+    // The phase's check authoring (D6 §6.2; K7), registered with the plan.
+    authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
+    tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
+    tx.emit('plan.published', { project: args.project, phase_plan: plan }, { ...label, phase, generation, approved_by: publication.by, routing: publication.routing, stages: out.map((s) => s.id), check_authoring: authoring, bundle: publication.bundle });
+  }
+  return { plan: { id: plan, phase, generation }, stages: out, check_authoring: authoring };
 }
 
 // POST /v1/projects/:p/work/:w/resume (D1 §8.4, §15.3): held work becomes
