@@ -691,3 +691,31 @@ export const CORRECTED_SERVICE_TEST = serviceTest('R2.1, R2.2: /sum answers 200 
   { path: '/sum?a=2&b=3', status: 200, body: { sum: 5 }, header: 'application/json' },
   { path: '/sum?a=x&b=3', status: 400 },
 ]);
+
+// The rest of CR-1's correction (objection 070): R4's statement is
+// sharpened (`text_changed`), so D6 §4.4 lists R4.1's checks beside
+// accept-r2's, and the one correction rewrites each one's test so it reads
+// the sharpened statement: a refused /sum among the sums, and the count
+// still that of the successful ones.
+export const CORRECTED_R4_TESTS = Object.freeze({
+  '.surety/checks/tests/stats.test.mjs': serviceTest('R4.1 (CR-1): two successful sums and a refused one, then /stats answers {"count": 2}', [
+    { path: '/sum?a=1&b=2', status: 200 },
+    { path: '/sum?a=x&b=2', status: 400 },
+    { path: '/sum?a=2&b=2', status: 200 },
+    { path: '/stats', status: 200, body: { count: 2 } },
+  ]),
+  '.surety/checks/tests/integration-stats.test.mjs': serviceTest('integration, R4.1 (CR-1): two sums and a refused one through the service, then /stats', [
+    { path: '/health', status: 200, body: { ok: true } },
+    { path: '/sum?a=2&b=3', status: 200 },
+    { path: '/sum?a=2&b=y', status: 400 },
+    { path: '/sum?a=1&b=1', status: 200 },
+    { path: '/stats', status: 200, body: { count: 2 } },
+  ]),
+  '.surety/checks/tests/phase-regression.test.mjs': serviceTest('phase, R4.1 (CR-1): /sum, two refusals and /stats together on the phase candidate; refusals are not counted', [
+    { path: '/sum?a=2&b=3', status: 200, body: { sum: 5 } },
+    { path: '/sum?a=x&b=3', status: 400 },
+    { path: '/sum?a=1&b=1', status: 200, body: { sum: 2 } },
+    { path: '/sum?a=1&b=z', status: 400 },
+    { path: '/stats', status: 200, body: { count: 2 } },
+  ]),
+});

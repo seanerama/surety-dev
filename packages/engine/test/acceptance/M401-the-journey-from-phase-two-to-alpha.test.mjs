@@ -130,6 +130,8 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(invalidated.length > 0, 'accept-r2\'s results invalidated spec_changed');
     const obligations = obligationsOf(fx.home, p.id);
     assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R2.1')), `an obligation for the check covering R2.1 (${JSON.stringify(obligations)})`);
+    // R4's statement sharpened (`text_changed`): its criterion's checks are listed too (D6 §4.4, B05; objection 070).
+    assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
     const correction = workOf(fx.home, p.id, 'check_correction');
     assert.ok(correction.some((w) => w.status === 'complete'), 'check_correction done');
     const replans = workOf(fx.home, p.id, 'replan').filter((w) => w.trigger_source === 'spec_change');

@@ -14,7 +14,7 @@ import { describe, test } from 'node:test';
 
 import { evaluate } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
-import { authoringReady, candidatesOfProject, checkRows, correctionScript, obligationsOf, planOfPhase, pump, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
+import { authoringReady, candidatesOfProject, checkRows, obligationsOf, planOfPhase, pump, serviceCorrectionScript, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
 import { SPEC_R2_BOTH, journeyProject, postChange } from './harness/journey/review31b.mjs';
 import { step } from './harness/scripted.mjs';
 
@@ -23,7 +23,7 @@ describe('M401 (h) S2: a correction resolves only the obligations of the checks 
     const { fx, p, ctx, plan } = await journeyProject(t);
     await authoringReady(fx, ctx, 1);
     fx.scripted.kindScript('spec_change', roleThat([step.write('.surety/spec/spec.md', SPEC_R2_BOTH)], { changes: [{ key: 'R2', kind: 'criteria_changed', reason: 'S2: R2.1 and R2.2 name the content type' }] }));
-    fx.scripted.kindScript('check_correction', correctionScript());
+    fx.scripted.kindScript('check_correction', serviceCorrectionScript());
     await postChange(fx, ctx, 'S2: R2.1 and R2.2 name the content type.');
     await pump(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === 2), { what: 'spec version 2', max: 60 });
     const listed = obligationsOf(fx.home, p.id).filter((o) => o.reason === 'spec_changed');
