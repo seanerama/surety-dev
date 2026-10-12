@@ -52,7 +52,7 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   removeStagingLeftovers(rt.home);
   await recoverChecks(rt, ender.priorUnknown).catch((err) => log('recovery', err, { what: 'check executions' }));
 
-  const runs = await rt.engine<RunRow[]>('run.unended');
+  const runs = (await rt.engine<RunRow[]>('run.unended')).filter((run) => !(run.kind === 'session' && ['allocated', 'open_idle'].includes((run as RunRow & { session_state?: string | null }).session_state ?? '')));
   const recovery = { recovery: rt.incarnation };
   await Promise.all(
     runs.map(async (run) => {

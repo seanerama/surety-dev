@@ -791,7 +791,7 @@ export class Launcher {
           if (handle.ending || handle.abort) return false;
           // The domain's limits, read back again at the grant (D2 §3.7): no
           // role code is authorized into a domain without them.
-          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt, claim.work_item));
+          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt, claim.work_item ?? claim.run));
           if (wrong !== null) {
             log('launch', new Error(`the domain's limits do not read as written: ${wrong}`), { run: claim.run, domain: claim.domain });
             this.rt.requestEnd(handle, {

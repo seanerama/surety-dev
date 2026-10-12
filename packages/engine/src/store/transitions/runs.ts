@@ -19,9 +19,10 @@ import { type Baseline, blockingObservation, integrationRef, projectRepoRow, reb
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
+import { boundaryFalls } from '../../scheduler/autonomy.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
-import { type WorkRow, getWorkItem, transitionWork } from './work.js';
+import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections } from './repair.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
@@ -47,7 +48,8 @@ export interface RunRow {
   created_at: string;
   project: string;
   seq: number;
-  work_item: string;
+  // null for a session run (D6 §2.1; migration 0023).
+  work_item: string | null;
   role: string;
   kind: string;
   state: RunState;
@@ -147,6 +149,8 @@ export const ROLE_OF: Record<string, string> = {
   fix: 'builder',
   verification: 'verifier',
   check_correction: 'verifier',
+  // D6 K7: the phase's check authoring is the Verifier's.
+  check_authoring: 'verifier',
   review: 'reviewer',
   replan: 'architect',
   assessment: 'architect',
@@ -179,7 +183,9 @@ export interface ClaimArgs {
 export interface Claim {
   run: string;
   project: string;
-  work_item: string;
+  // null for a session turn (D6 §2.1: a session run has no work item); the
+  // turn is named under `session`.
+  work_item: string | null;
   work_kind: string;
   role: string;
   invocation: string;
@@ -211,6 +217,9 @@ export interface Claim {
   // current candidate when it is dispatched, with the deciding result and
   // its output record (D3 §2.10; D2 §1.3; SEAM.md §229). Absent for other kinds.
   check_outputs?: { key: string; check: string; check_result: string; output: string | null }[];
+  // A session turn (sessions/session.ts): its number, role and the idle
+  // generation it was admitted at.
+  session?: { turn: number; role: string; idle_generation: number };
 }
 
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
@@ -238,9 +247,17 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
-  for (const dep of JSON.parse(item.depends_on ?? '[]') as string[]) {
-    const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
-    if (!row || row.status !== 'complete') return `depends on ${dep}`;
+  for (const dep of JSON.parse(item.depends_on ?? '[]') as (string | Milestone)[]) {
+    if (typeof dep === 'string') {
+      const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
+      if (!row || row.status !== 'complete') return `depends on ${dep}`;
+      continue;
+    }
+    // D6 §6.4 (B07, B08; SEAM.md §347): the phase's authoring readiness, and
+    // the stage-code milestone of each stage depended on (its active
+    // generation integrated, neither cancelled nor parked).
+    const unmet = milestoneUnmet(db, dep);
+    if (unmet !== null) return unmet;
   }
   const holding = db
     .prepare(
@@ -249,9 +266,23 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
     )
     .get(item.project, item.id);
   if (holding) return 'held by an open decision';
-  // D1 §8.1 step 8, D1-34: work a run's outcome created runs only as far as
-  // max_chained_roles allows without a human step.
-  if (item.chain + 1 > projectPolicy(db, item.project).max_chained_roles!) return CHAIN_BOUNDARY;
+  // D1 §8.1 step 8, D1-34, as D6 K3 reads it: the autonomy profile decides
+  // where the boundary falls; max_chained_roles bounds inherited chain depth.
+  if (boundaryFalls(db, item)) return CHAIN_BOUNDARY;
+  return null;
+}
+
+// Why a milestone is unmet (D6 §6.4), or null.
+function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
+  if (m.milestone === 'authoring_ready') {
+    const plan = db.prepare('SELECT "authoring_ready_at", "active" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number } | undefined;
+    if (!plan) return `plan ${m.phase_plan} missing`;
+    if (plan.active !== 1) return 'plan not active';
+    if (plan.authoring_ready_at === null) return 'authoring not ready';
+    return null;
+  }
+  const d = db.prepare('SELECT "status", "parked_at", "cancelled_at" FROM "stages" WHERE "id" = ?').get(m.stage) as { status: string; parked_at: string | null; cancelled_at: string | null } | undefined;
+  if (!d || (d.status !== 'integrated' && d.status !== 'verified') || d.parked_at !== null || d.cancelled_at !== null) return `depends on stage ${m.stage}`;
   return null;
 }
 
@@ -564,8 +595,8 @@ export function recordLaunch(tx: Tx, args: { run: string; invocation: string; do
   if (run.state === 'claimed' && lease && lease.closing === 0 && !expired(lease, tx.at)) {
     setRunState(tx, run, 'executing', { started_at: tx.at });
     tx.emit('run.started', runSubject(run), {});
-    const item = getWorkItem(tx, run.work_item)!;
-    if (item.status === 'claimed') transitionWork(tx, item, 'executing', {}, { run: run.id });
+    const item = run.work_item === null ? undefined : getWorkItem(tx, run.work_item);
+    if (item && item.status === 'claimed') transitionWork(tx, item, 'executing', {}, { run: run.id });
   }
 }
 
@@ -707,7 +738,9 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
   return db
     .prepare(
       `SELECT r."id" AS "run", r."project", r."state" FROM "leases" l JOIN "runs" r ON r."id" = l."resource_id"
-       WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ? ORDER BY r."created_at", r."id"`,
+       WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ?
+         AND NOT (r."kind" = 'session' AND r."session_state" IN ('allocated', 'open_idle', 'saving'))
+       ORDER BY r."created_at", r."id"`,
     )
     .all(at) as { run: string; project: string; state: RunState }[];
 }
@@ -885,8 +918,11 @@ export function finishRun(
 
   // A Builder's objections, before anything its end moves (D3 §5 X2): a
   // conflict it reports wins over a repair its item would take.
-  recordObjections(tx, run);
-  workAfterRun(tx, run);
+  // A session run owns no work item: nothing of its end moves work (D6 §2.1).
+  if (run.work_item !== null) {
+    recordObjections(tx, run as RunRow & { work_item: string });
+    workAfterRun(tx, run);
+  }
   // The item's run has ended: a repair its check failures owe is taken now
   // (D3 §2.10; reconcileRepair waits for the run that holds the item). Every
   // item of the project, since a correction ending releases another's hold.
@@ -900,6 +936,7 @@ export function finishRun(
 // whose integration is journaled and not yet settled is left integrating, and
 // integrated work stays integrated after a recovery (SEAM.md §45).
 function workAfterRun(tx: Tx, run: RunRow): void {
+  if (run.work_item === null) return;
   const item = getWorkItem(tx, run.work_item);
   if (!item || !RUN_OWNING.includes(item.status)) return;
   const latest = tx.db.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item.id) as { id: string };

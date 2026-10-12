@@ -33,6 +33,8 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   git_output_cap: int(8_388_608, 65_536, 268_435_456),
   // D2 A.7, bytes in bytes (SEAM.md §115).
   max_concurrent_domains: int(2, 1, 8),
+  // D6 A.7 (K6): the most a turn's owner text may be.
+  turn_max_bytes: int(65_536, 4096, 1_048_576),
   host_reserve_memory: int(2_147_483_648, 536_870_912, 68_719_476_736),
   host_reserve_disk: int(5_368_709_120, 1_073_741_824, 1_099_511_627_776),
   domain_memory_max: int(8_589_934_592, 536_870_912, 68_719_476_736),
@@ -111,6 +113,8 @@ export const ENGINE_KEYS = [
   'ui_bootstrap',
   // D2 A.7.
   'max_concurrent_domains',
+  // D6 A.7 (M5 slice 31).
+  'turn_max_bytes',
   'host_reserve_memory',
   'host_reserve_disk',
   'domain_memory_max',
@@ -213,13 +217,20 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   trust_activation: 172_800,
   // D4 §4.4 (M4 slice 26): as a blocker's, for the deploy it holds.
   rollout_partial: 14_400,
+  // D6 §3.4 (M5 slice 31): the products' approvals, the owner's to answer.
+  idea_accept: 172_800,
+  spec_approval: 172_800,
+  architecture_approval: 172_800,
+  plan_approval: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project
 // concurrency is exactly 1 through M3 (E18).
 export const PROJECT_POLICY: Record<string, NumberSpec> = {
   max_concurrent_runs: int(1, 1, 1),
-  max_chained_roles: int(1, 1, 6),
+  // D6 K3 (N02): a bound on inherited chain depth under the autonomy profile,
+  // not a budget; default 24 under `phase`.
+  max_chained_roles: int(24, 1, 64),
   preflight_refusals_max: int(3, 1, 10),
   repair_attempts_max: int(3, 0, 10),
   no_progress_max: int(2, 1, 5),
@@ -227,6 +238,11 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   deadline_verifier: int(1800, 300, 10_800),
   deadline_reviewer: int(1200, 300, 10_800),
   deadline_architect: int(1800, 300, 10_800),
+  // D6 A.7: a session turn's deadline per interactive role.
+  deadline_vision: int(1800, 300, 10_800),
+  deadline_spec_writer: int(1800, 300, 10_800),
+  // D6 A.7: the transcript a session may grow to.
+  transcript_max_bytes: int(8_388_608, 1_048_576, 67_108_864),
   session_idle_timeout: int(1200, 60, 7200),
   record_retention_days: int(90, 7, 3650),
   observation_cadence: int(30, 10, 3600),
@@ -262,6 +278,12 @@ export const TRUST_MODES = ['one_shot_headless', 'session_headless'] as const;
 // only) and those the engine has an adapter for (D2 §4.5, §4.6).
 export const BACKEND_NAMES = ['scripted', 'claude', 'codex'] as const;
 
+// D6 A.2: the autonomy profile (K3) and the Alpha deploy policy (K9).
+export const AUTONOMY_PROFILES = ['step', 'stage', 'phase'] as const;
+export type Autonomy = (typeof AUTONOMY_PROFILES)[number];
+export const ALPHA_DEPLOY_POLICIES = ['manual', 'on_phase_complete'] as const;
+export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
+
 // Ungoverned project keys that are not numbers (D2 A.7). `widening` says when
 // a change of the key widens what the engine may do unasked: `added` when it
 // adds an element the effective value lacks, `coarser` when it names a
@@ -289,6 +311,13 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // D6 §2.7, §3 (M5 slice 31): the interactive roles' backends.
+  backend_vision: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_spec_writer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // D6 §6.5, K3 (E139 Q3): where the chaining boundary falls; `phase` by default.
+  autonomy: { type: 'enum', values: AUTONOMY_PROFILES, default: 'phase', widening: 'never' },
+  // D6 §6.8, K9 (E139 Q5): whether the engine requests Alpha at phase completion.
+  alpha_deploy: { type: 'enum', values: ALPHA_DEPLOY_POLICIES, default: 'manual', widening: 'never' },
   backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
 };
 

@@ -28,7 +28,12 @@ export type DecisionKind =
   | 'check_correction_unclassifiable'
   | 'qualification_approval'
   | 'trust_activation'
-  | 'rollout_partial';
+  | 'rollout_partial'
+  // D6 §3.4 (M5 slice 31): the products' approvals.
+  | 'idea_accept'
+  | 'spec_approval'
+  | 'architecture_approval'
+  | 'plan_approval';
 
 export interface OptionSpec {
   key: string;

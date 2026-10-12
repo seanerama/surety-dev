@@ -720,7 +720,15 @@ export type Resolution =
   | { kind: 'entry'; backend: string; version: string; model: string; entry: EntryRow }
   | { kind: 'refused'; backend: string; version: string; model: string; code: string; reason: string; what_to_do: string; subject: Record<string, unknown> };
 
-const ROLE_KEY: Record<string, string> = { builder: 'backend_builder', verifier: 'backend_verifier', reviewer: 'backend_reviewer', architect: 'backend_architect' };
+const ROLE_KEY: Record<string, string> = {
+  builder: 'backend_builder',
+  verifier: 'backend_verifier',
+  reviewer: 'backend_reviewer',
+  architect: 'backend_architect',
+  // D6 §3 (M5 slice 31): the interactive roles.
+  vision: 'backend_vision',
+  spec_writer: 'backend_spec_writer',
+};
 
 // The backend a role of a project is dispatched to, or why it is refused,
 // before any domain or process (D2 §4.1; SEAM.md §116). The role's backend

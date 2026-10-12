@@ -64,6 +64,12 @@ export interface RefInputs {
   work_item?: string;
   stage?: string | null;
   plans?: PlanInput[];
+  // D6 §5.5 (B02): a plan a commit carries is registered only when the
+  // commit is an authorized publication (a replan routed `registered`,
+  // slice 31b); a checkpoint, and an Architect's integration with no
+  // authority, register nothing.
+  authorized?: boolean;
+  checkpoint?: boolean;
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
@@ -225,10 +231,12 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
   }
   const plans: string[] = [];
-  for (const plan of inputs.plans ?? []) {
+  // B02: publication is the authorized finalizer's act alone. A committed
+  // plan with no authority is intent (`proposed`) and registers nothing.
+  for (const plan of inputs.authorized === true ? (inputs.plans ?? []) : []) {
     const made = registerPlan(
       tx,
-      { project: op.project, baseRevision: inputs.new_oid, approvedBy: null, stages: plan.stages, phase: plan.phase, gitPath: plan.path, chain: inputs.chain ?? 1 },
+      { project: op.project, baseRevision: inputs.new_oid, approvedBy: 'engine:plan_check', stages: plan.stages.map((s) => ({ ...s, implements: [], modules: [] })), phase: plan.phase, gitPath: plan.path, chain: 0 },
       {},
     );
     plans.push(made.plan.id);

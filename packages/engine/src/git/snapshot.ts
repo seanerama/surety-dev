@@ -103,6 +103,9 @@ export interface PlanFile {
 // Verifier may change the protected set and nothing else (its change is
 // captured as a proposal); a Reviewer may change nothing.
 const ARCHITECT_PREFIXES = ['.surety/adrs/', '.surety/architecture/', '.surety/roadmap/', '.surety/phases/'];
+// D6 §2.5: the interactive roles' permitted paths.
+const VISION_PATHS = ['.surety/idea.md'];
+const SPEC_WRITER_PREFIXES = ['.surety/spec/'];
 const IDENTITY_FILE = '.surety/project.json';
 const PLAN_FILE = /^\.surety\/phases\/phase-([0-9]+)\.json$/;
 
@@ -117,6 +120,8 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   if (role === 'verifier') return `${path} is not in the protected set, and a verifier may change only the protected set`;
   if (role === 'builder' && path.startsWith('.surety/')) return `${path} is under .surety/, which a builder may not change`;
   if (role === 'architect' && !ARCHITECT_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${ARCHITECT_PREFIXES.join(', ')}, the only paths an architect may change`;
+  if (role === 'vision' && !VISION_PATHS.includes(path)) return `${path} is not ${VISION_PATHS.join(', ')}, the only path a vision session may change`;
+  if (role === 'spec_writer' && !SPEC_WRITER_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${SPEC_WRITER_PREFIXES.join(', ')}, the only paths a spec writer may change`;
   return null;
 }
 
