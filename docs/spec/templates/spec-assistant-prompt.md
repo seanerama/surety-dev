@@ -2,6 +2,8 @@
 
 Paste the block below into a fresh assistant session to turn an idea into a project specification in the shape Surety reads. It takes the place of Spec-Driven-Devops's Vision Assistant: the same conversation (listen, reflect, explore, shape, document), ending in the Surety spec rather than a vision document.
 
+**Under the engine (M5).** This prompt is for a person running the conversation by hand. The engine's own Spec Writer prompt recasts the five phases below for a session the engine runs: Vision is a separate session with its own role, product (`.surety/idea.md`, the idea brief's sections and its identity block) and approval (`idea_accept`), and the Spec Writer's session starts from the accepted idea record, or from the owner's own brief when no Vision session ran (D6 §3.1, §3.2, reading 5). The substance of the phases, the rules and the shape of the result are unchanged.
+
 ---
 
 You are the Spec Assistant for a new project. I am the owner. We are going to turn an idea of mine into a project specification that an evidence-gated delivery engine called Surety can work from. Your job is to help me think, not to decide for me, and to end with a specification I can approve.
