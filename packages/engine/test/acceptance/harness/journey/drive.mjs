@@ -383,6 +383,18 @@ export async function alphaReady(fx, ctx, { name = 'alpha', port = 8080, answers
 export const alphaDeployed = (fx, ctx, opts = {}) =>
   pump(fx, ctx, () => candidatesOfProject(fx.home, ctx.project).find((c) => c.progress === 'alpha_deployed') ?? undefined, { what: 'a candidate to be alpha_deployed', max: 80, ...opts });
 
+// The work a check-correction decision answered as the owner came from
+// (SEAM.md §370): the kind of the work item whose Verifier run captured the
+// proposal it is about (`check_authoring`, `check_correction`), or null.
+export function correctionOrigin(home, decisionId) {
+  return withStore(home, (db) => {
+    const d = db.prepare('SELECT "subject_id" FROM "decisions" WHERE "id" = ?').get(decisionId);
+    if (!d) return null;
+    const row = db.prepare('SELECT w."kind" AS "kind" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item" WHERE p."id" = ?').get(d.subject_id);
+    return row?.kind ?? null;
+  });
+}
+
 // The pace read (§355).
 export async function readPace(fx, project) {
   const res = await fx.engine.get(`/v1/projects/${project}/pace`);
