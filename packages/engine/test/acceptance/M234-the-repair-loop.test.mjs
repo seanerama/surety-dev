@@ -32,7 +32,7 @@ import { describe, test } from 'node:test';
 import { openDecision } from './harness/decisions.mjs';
 import { changePolicy, workItemsOf } from './harness/journal.mjs';
 import { check, installChecks, nominated, postResult, raiseFindings, review, stageGate, successor } from './harness/gates.mjs';
-import { permittedEdit, pinStep, roleThat, waitForCandidates } from './harness/gitruns.mjs';
+import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { gitQuiet } from './harness/repos.mjs';
 import { pauseProject, resumeProject, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
@@ -72,8 +72,8 @@ const runEnded = (fx, project, item, n) =>
 // `.surety/policy.json` is already in candidate 1 (objection 031).
 async function builtStage(t, { config, second = REPAIR_WRITE, first, policy } = {}) {
   const fx = await scriptedEngine(t, config === undefined ? {} : { config });
-  const p = await pinStep(fx, await repairProject(fx));
-  if (policy !== undefined) await changePolicy(fx.engine, p.id, policy);
+  // One policy change, `autonomy: step` with the case's keys, before the plan exists (SEAM.md §363).
+  const p = await repairProject(fx, { policy: { autonomy: 'step', ...(policy ?? {}) } });
   const scripts = [first ?? roleThat([permittedEdit()], { nominate: true }), second];
   const b = await buildAndNominate(fx, p, { scripts });
   assert.equal(itemRow(fx.home, b.item).status, 'verifying', "the fixture is live: the nomination moved the stage's work to verifying");
@@ -101,7 +101,8 @@ describe('M234 the repair loop', () => {
 
   test("(a) a fix: its named check failing on the fix's candidate sends it back once; another check failing there, and the stage's checks, send nothing back", async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await repairProject(fx);
+    // The fix waits at its chain boundary and is let through (SEAM.md §§348, 363).
+    const p = await repairProject(fx, { policy: { autonomy: 'step' } });
     // The stage's Builder has a second run: by S1's ruling smoke's failure on the fix's candidate sends the stage back too (the S1 case below).
     const { item: stageItem, candidate: c1 } = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true }), REPAIR_WRITE] });
     const ids = checkIds(fx.home, p.id);
@@ -133,7 +134,8 @@ describe('M234 the repair loop', () => {
 
   test("(a) S1 (E100 item 1): a stage_build held by a later candidate by ancestry is repaired there: a check of its stage scope, not the fix's, failing on the fix's candidate sends the stage back once, check_repair naming that candidate, the failed output in its repair run's context; repeated ticks take no second repair", async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await repairProject(fx);
+    // The fix waits at its chain boundary and is let through (SEAM.md §§348, 363).
+    const p = await repairProject(fx, { policy: { autonomy: 'step' } });
     const { item: stageItem, candidate: c1 } = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true }), REPAIR_WRITE] });
     const ids = checkIds(fx.home, p.id);
     const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'medium', message: 'M234-S1: the session survives a logout', check: 'acc', criterion: 'R1.1' }], { kind: 'verification' });
