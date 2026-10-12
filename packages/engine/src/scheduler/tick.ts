@@ -43,6 +43,7 @@ import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
+import { ENGINE_VERSION } from '../index.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -127,7 +128,21 @@ export class Scheduler {
     }
   }
 
+  private readonly observed = new Set<string>();
+
   private async decide(project: string): Promise<void> {
+    // The host as it is at this engine start, once per project (D6 §7.6).
+    if (!this.observed.has(project)) {
+      await this.rt.engine('pace.observe_host', {
+          project,
+          incarnation: this.rt.incarnation,
+          engine_version: ENGINE_VERSION,
+          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains', 'max_concurrent_runs'] as const).map((k) => [k, this.rt.setting(k)])),
+        }).then(
+        () => this.observed.add(project),
+        (err) => log('host observation', err, { project }),
+      );
+    }
     await ensureAncestry(this.rt, project);
     // The repairs failed checks owe (D3 §2.10): reconciled from durable
     // state at every tick, so a failure recorded while its item was not yet

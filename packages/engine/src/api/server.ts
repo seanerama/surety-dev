@@ -619,6 +619,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // D6 §7.6 (SEAM.md §355): the pace read, a projection.
+      if (rest.length === 1 && rest[0] === 'pace' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };
+      }
       if (rest.length === 1 && rest[0] === 'plan' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'plan.view', args: { project } }) }) };
       }

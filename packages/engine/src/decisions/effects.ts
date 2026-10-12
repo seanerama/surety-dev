@@ -11,7 +11,8 @@
 import { commitContent, messageText } from '../git/commit.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import { checkoutContext } from '../git/integrity.js';
-import { checkoutBaseline, readRef, treeIndexHash } from '../git/repo.js';
+import { checkoutBaseline, isAncestor, mergeBase, readRef, treeIndexHash } from '../git/repo.js';
+import type { ApplicationFacts as SpecApplicationFacts } from '../spec/change.js';
 import { rebaseTree } from '../git/rebase.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
@@ -30,7 +31,7 @@ interface IntentRow {
   project: string;
   decision: string;
   status: 'pending' | 'executing' | 'done' | 'invalidated';
-  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt' | 'alpha_exception';
+  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt' | 'alpha_exception' | 'spec_change_application';
   plan: Record<string, unknown>;
   operation: string | null;
 }
@@ -94,12 +95,55 @@ export class Effects {
       case 'oob_adopt':
         await this.adopt(row);
         return;
+      case 'spec_change_application':
+        await this.applySpecChange(row);
+        return;
       case 'alpha_exception':
         // A store-only effect: its preconditions read again and the
         // exception written in one transaction (D2 §5 C1).
         if (row.status === 'pending') await this.rt.engine('alpha.apply', { intent: row.id });
         return;
     }
+  }
+
+  // A spec change approved (D6 §4.5): the proposal's revision onto the
+  // integration branch through the journal, rebased onto the head if it
+  // moved (D1 §7.5, the spec files alone changing); the finalizer of the
+  // branch's move is the approval's one effect (spec/change.ts).
+  private async applySpecChange(row: IntentRow): Promise<void> {
+    if (row.status === 'pending') {
+      const facts = await this.rt.engine<SpecApplicationFacts | null>('spec.application_facts', { intent: row.id });
+      if (facts === null || facts.revision === null) {
+        await this.rt.engine('intent.revalidate', { intent: row.id, facts: {} });
+        return;
+      }
+      const ctx = repoContext(facts.repo);
+      const read = await readRef(ctx, facts.ref);
+      const head = read.state === 'ok' ? read.oid : null;
+      if (head === null || head !== facts.head) return;
+      let commit: { sha: string; tree: string; content: string } | null = null;
+      if ((await isAncestor(ctx, head, facts.revision)) !== true) {
+        const base = await mergeBase(ctx, head, facts.revision);
+        if (base === null) return;
+        const rebased = await rebaseTree(facts.repo, base, facts.revision, head, this.rt.scratch);
+        if (rebased === 'unknown') return;
+        if (rebased.conflict !== null) {
+          log('spec change application', new Error(`the approved change conflicts with the integration branch at ${rebased.conflict}`), { intent: row.id });
+          await this.rt.engine('intent.revalidate', { intent: row.id, facts: { head: null } });
+          return;
+        }
+        const message = messageText({ title: `surety: apply specification change ${facts.request}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
+        const content = commitContent({ tree: rebased.tree, parent: head, message, at: nowIso() });
+        const sha = await commitId(facts.repo, content);
+        if (sha === null) return;
+        commit = { sha, tree: rebased.tree, content };
+      }
+      const made = await this.journal.withProject(row.project, () =>
+        this.journal.intend('spec.begin_application', { intent: row.id, head, commit, deadlineSeconds: this.rt.setting('git_deadline') }, commit === null ? 'ref_update' : 'commit_tree'),
+      );
+      if (made && 'operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));
+    }
+    await this.rt.services?.journal(row.project);
   }
 
   // A widening approved (SEAM.md §78): `.surety/policy.json` committed as

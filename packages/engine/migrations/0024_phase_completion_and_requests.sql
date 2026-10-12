@@ -89,3 +89,20 @@ CREATE TABLE deployment_requests (
   outcome TEXT NOT NULL CHECK (outcome IN ('pending', 'not_issued', 'deployed', 'failed', 'not_verified', 'unknown')),
   UNIQUE (project, request_key)
 );
+
+-- ---- the host as recorded at each engine start, per project (D6 §7.6, A.3; N01) ----------
+-- A historical run is reported with the values recorded for it, never with
+-- the present configuration.
+CREATE TABLE host_observations (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  project TEXT NOT NULL REFERENCES projects(id),
+  incarnation TEXT NOT NULL,
+  engine_version TEXT NOT NULL,
+  autonomy TEXT NOT NULL,
+  -- {tick_interval, domain_memory_max, max_concurrent_domains, ...} as configured then.
+  settings TEXT NOT NULL,
+  -- MemAvailable in bytes then; null when it could not be read.
+  mem_available INTEGER,
+  UNIQUE (project, incarnation)
+);

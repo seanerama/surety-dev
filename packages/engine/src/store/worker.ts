@@ -186,6 +186,7 @@ import {
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
+import { observeHost, paceView } from '../plan/pace.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { phaseStep } from '../plan/phase.js';
 import {
@@ -428,6 +429,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
   'spec.change_impact': (d, a) => impactRead(d, a),
+  'pace.view': (d, a) => paceView(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
@@ -646,6 +648,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.turn_claim': (tx, a) => turnClaim(tx, a),
   // D6 §5.8 (M5 slice 31b): the phase's step at every tick (plan/phase.ts).
   'phase.step': (tx, a) => phaseStep(tx, a),
+  'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   'session.settle': (tx, a) => settleTurn(tx, a),

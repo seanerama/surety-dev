@@ -500,7 +500,13 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // with no criterion uncertain, the tier's kind inventory, a floor for
   // every category, and every fact the scope needs read.
   const discoveryPaths = [...new Set(discoveryErrorsOf(db, scope.effective.id).map((e) => e.path))];
-  const missingNamed = missingSubjects(scope.missing);
+  // A check with an unresolved spec-change obligation (D6 §4.5, B05) is
+  // named until the correction lands: the scope is not complete.
+  const owed = new Set(
+    (db.prepare(`SELECT DISTINCT "key" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { key: string }[]).map((o) => o.key),
+  );
+  const obligated = scope.required.filter((c) => owed.has(c.key)).map((c) => c.id);
+  const missingNamed = [...missingSubjects(scope.missing), ...obligated];
   const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
   if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
 
