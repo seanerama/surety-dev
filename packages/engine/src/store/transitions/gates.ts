@@ -33,7 +33,9 @@ export const COMPUTED_GATES = ['stage', 'alpha_authorize', 'alpha_complete'] as 
 // `phase` is among them: D3 §4.2 defines its scope (checks/scope.ts), and the
 // gate stays `unsupported` until its milestone (SEAM.md §70; slice 20, not built).
 export const UNBUILT_GATES = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
-export type GateKind = (typeof COMPUTED_GATES)[number];
+// `phase` (D6 §5.8; K5; M5 slice 31b): evaluated by the engine's own phase
+// step (plan/phase.ts) on the phase's candidate, never through the gate route.
+export type GateKind = (typeof COMPUTED_GATES)[number] | 'phase';
 
 export type CheckState = 'missing' | 'stale' | 'skipped' | 'failed' | 'passed';
 export interface Reason {
@@ -120,12 +122,12 @@ export function candidateSignoffs(db: Db, project: string, candidate: CandidateR
   return candidateContent(db, project, candidate, effective?.id ?? '').signoffs;
 }
 
-export function buildScope(db: Db, args: { project: string; candidate: CandidateRow; kind: GateKind; stage: string | null; environment: string | null; artifact: string | null }): Scope {
+export function buildScope(db: Db, args: { project: string; candidate: CandidateRow; kind: GateKind; stage: string | null; environment: string | null; artifact: string | null; phasePlan?: string | null }): Scope {
   const project = db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string } | undefined;
   if (!project) throw notFound('project', args.project);
   const effective = effectiveVersion(db, args.project);
   if (!effective) throw new Refusal(409, 'illegal_transition', `Project ${args.project} has no effective protected version.`, 'Nothing was evaluated.', { project: args.project });
-  const { required, delivery, tier, scope } = requiredSet(db, { project: args.project, candidate: args.candidate, kind: args.kind, stage: args.stage, version: effective.id });
+  const { required, delivery, tier, scope } = requiredSet(db, { project: args.project, candidate: args.candidate, kind: args.kind, stage: args.stage, version: effective.id, phasePlan: args.phasePlan ?? null });
   return {
     candidate: args.candidate,
     kind: args.kind,
@@ -342,6 +344,8 @@ export interface EvaluateArgs {
   authorization?: unknown;
   // `alpha_complete` (D4 §5.5): the deploy operation it is evaluated with.
   operation?: unknown;
+  // `phase` (D6 §5.8): the phase plan whose gate it is.
+  phase_plan?: unknown;
   // The protected fingerprint of the integration branch's head, under the
   // effective roots, as the main thread read it; null if not read.
   headFingerprint?: string | null;
@@ -414,7 +418,15 @@ interface AuthorizationRow {
 export function evaluationTarget(
   db: Db,
   args: EvaluateArgs,
-): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null } {
+): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null; phasePlan?: string } {
+  // The `phase` gate is the engine's own (plan/phase.ts names the plan).
+  if (args.kind === 'phase' && typeof args.phase_plan === 'string') {
+    const candidate = getCandidate(db, args.candidate);
+    if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
+    const plan = db.prepare('SELECT "id", "project" FROM "phase_plans" WHERE "id" = ?').get(args.phase_plan) as { id: string; project: string } | undefined;
+    if (!plan || plan.project !== args.project) throw notFound('phase_plan', args.phase_plan);
+    return { candidate, kind: 'phase', stage: null, authorization: null, operation: null, phasePlan: plan.id };
+  }
   if ((UNBUILT_GATES as readonly string[]).includes(args.kind) || !(COMPUTED_GATES as readonly string[]).includes(args.kind)) {
     throw new Refusal(501, 'unsupported', `The ${args.kind} gate is outside milestone M1 and is not evaluated by this engine.`, 'Nothing was evaluated. This gate kind needs a later design and milestone.', {
       gate_kind: args.kind,
@@ -462,6 +474,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     candidate,
     kind,
     stage: target.stage,
+    phasePlan: target.phasePlan ?? null,
     environment: target.authorization?.environment ?? target.operation?.environment ?? null,
     artifact: target.authorization?.artifact_digest ?? target.operation?.artifact ?? null,
   });
@@ -796,6 +809,9 @@ function completeStageWork(tx: Tx, candidate: CandidateRow, stage: string, evalu
   const item = getWorkItem(tx, row.work_item);
   if (!item || item.status !== 'verifying' || item.kind !== 'stage_build') return;
   transitionWork(tx, item, 'complete', {}, { candidate: candidate.id, evaluation });
+  // The stage is verified with its satisfied gate (D6 §5.8: a phase waits for
+  // every stage `verified` at T2 and T3).
+  tx.db.prepare(`UPDATE "stages" SET "status" = 'verified' WHERE "id" = ? AND "status" = 'integrated'`).run(stage);
 }
 
 // The candidate's verification work: the item its nomination registered.

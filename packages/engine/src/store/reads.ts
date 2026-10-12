@@ -273,7 +273,12 @@ export function contextFacts(db: Database, args: { run: string }) {
       resumed = { run: parent.id, outcome: parent.outcome, reason_class: parent.reason_class, summary: parse<{ summary?: unknown } | null>(parent.result_value, null)?.summary ?? null, records };
     }
   }
+  // A review of a protected proposal (D3 §3.3; SEAM.md §350): the package
+  // holds what the work item binds, the proposal.
+  const proposalId = subjectId('proposal');
+  const proposalRow = proposalId === null ? undefined : (db.prepare('SELECT "id", "seq", "requested_change_kind", "classified_change_kind", "status", "base_revision", "tree_id", "diff_hash", "run" FROM "protected_proposals" WHERE "id" = ? AND "project" = ?').get(proposalId, item.project) as Record<string, unknown> | undefined);
   return {
+    proposal: proposalRow ?? null,
     run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },
     work_item: item,
     stage: stage ? { number: stage.number, goal: stage.goal, modules: parse<unknown>(stage.modules, []), requirement_ids: parse<unknown>(stage.requirement_ids, []), implements: parse<unknown>(stage.implements, []) } : null,

@@ -26,7 +26,7 @@ import { reconcileRepairs } from './repair.js';
 type Db = Tx['db'];
 
 export interface Trigger {
-  source: 'nomination' | 'protected_application' | 'operator_request' | 'recovery' | 'deployment_verification';
+  source: 'nomination' | 'protected_application' | 'operator_request' | 'recovery' | 'deployment_verification' | 'phase';
   id: string;
   generation: number;
 }

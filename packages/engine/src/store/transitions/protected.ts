@@ -335,7 +335,25 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   // to the Verifier, in the transaction that makes it effective (D3 §2.11).
   routeMissingAtVersion(tx, op.project);
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
+  authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   return { version: v.id };
+}
+
+// D6 §6.2 (B07; SEAM.md §351): the applied protected version that a
+// phase's `check_authoring` proposed makes the phase ready for Builders,
+// never the Verifier's run completing. Readiness is recorded once, on the
+// plan the authoring work names, with the version that made it.
+function authoringApplied(tx: Tx, args: { project: string; proposal: string; version: string }): void {
+  const row = tx.db
+    .prepare(
+      `SELECT w."subject" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE p."id" = ? AND w."kind" = 'check_authoring'`,
+    )
+    .get(args.proposal) as { subject: string } | undefined;
+  const plan = row ? parseJson<{ phase_plan?: string }>(row.subject)?.phase_plan : undefined;
+  if (!plan) return;
+  const changed = tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ? AND "authoring_ready_at" IS NULL').run(tx.at, args.version, plan).changes;
+  if (changed > 0) tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: args.version, proposal: args.proposal });
 }
 
 export function completeIntent(tx: Tx, intent: string): void {
@@ -352,8 +370,9 @@ export function completeIntent(tx: Tx, intent: string): void {
 // open again.
 export function invalidateResults(tx: Tx, project: string, ids: string[], why: string): void {
   if (ids.length === 0) return;
-  const update = tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ? WHERE "id" = ? AND "invalidated_at" IS NULL');
-  for (const id of ids) update.run(tx.at, id);
+  // The reason kept with the invalidation (D6 §4.5: `spec_changed`).
+  const update = tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ? WHERE "id" = ? AND "invalidated_at" IS NULL');
+  for (const id of ids) update.run(tx.at, why, id);
   const resolved = tx.db.prepare(`SELECT "id", "resolution_verification" FROM "findings" WHERE "project" = ? AND "status" = 'resolved'`).all(project) as {
     id: string;
     resolution_verification: string | null;

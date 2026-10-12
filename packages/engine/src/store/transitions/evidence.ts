@@ -277,7 +277,37 @@ export interface RequiredSet {
 // categories, its sign-offs and what it misses. One function for every
 // consumer: check registration (D3 §2.5), the scope, the sign-offs and the
 // content hash (B04; T12).
-export function requiredSet(db: Db, args: { project: string; candidate: CandidateRow; kind: string; stage: string | null; version: string }): RequiredSet {
+export function requiredSet(db: Db, args: { project: string; candidate: CandidateRow; kind: string; stage: string | null; version: string; phasePlan?: string | null }): RequiredSet {
+  // `phase` (D6 §5.8; D3 §4.2 (b); K5): every requirement assigned to the
+  // phase and to the phases before it is an obligation, delivered or not;
+  // the required set is the checks listing `phase` (the phase-only checks)
+  // and the regression set, every required check listing `stage` for those
+  // obligations, at the tier the phases' modules give. Its sign-off is the
+  // phase sign-off, which completion reads (plan/phase.ts), not a gate's.
+  if (args.kind === 'phase') {
+    const plan = db.prepare('SELECT "id", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(args.phasePlan ?? '') as { id: string; phase_number: number } | undefined;
+    const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
+    const delivery = deliveryOf(db, args.project, args.candidate);
+    const obligations = plan
+      ? (db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NOT NULL AND "assigned_phase" <= ? AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project, plan.phase_number) as { id: string }[]).map((r) => r.id)
+      : [];
+    const stageModules = plan
+      ? (
+          db
+            .prepare(
+              `SELECT s."modules" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan"
+               WHERE p."project" = ? AND p."phase_number" <= ? AND p."status" IN ('published', 'completed') AND s."cancelled_at" IS NULL`,
+            )
+            .all(args.project, plan.phase_number) as { modules: string }[]
+        ).flatMap((s) => JSON.parse(s.modules) as string[])
+      : [];
+    const all = modulesOf(db, args.project);
+    const modules = all.filter((m) => stageModules.includes(m.id)).map(scopeModule);
+    const rows = checksOfVersion(db, args.version);
+    const scope = computeScope({ kind: 'phase', projectTier, checks: rows.map(toScopeCheck), requirements: requirementRows(db, args.project), delivered: obligations, partial: [], stageImplements: obligations, modules });
+    const ids = new Set(scope.required.map((c) => c.id));
+    return { required: rows.filter((c) => ids.has(c.id)), obligations: scope.obligations, delivery, tier: scope.tier, scope: { ...scope, signoffs: [] } };
+  }
   // `alpha_complete` (D4 §5.1, J4; E121 decision 4): the release-required
   // obligations only, the required post-deploy checks listing the gate,
   // whatever requirements are delivered; never a workspace check. Its tier,

@@ -50,7 +50,7 @@ const RETRY_MAX_MS = 10_000;
 
 export const INTEGRATING_KINDS = ['stage_build', 'fix', 'replan', 'assessment'];
 // A Verifier's and a Reviewer's kinds: validated, never committed (SEAM.md §68).
-export const REPORTING_KINDS = ['verification', 'review', 'check_correction', 'check_authoring'];
+export const REPORTING_KINDS = ['verification', 'review', 'check_correction', 'check_authoring', 'phase_verification'];
 export const ACCEPTED_KINDS = [...INTEGRATING_KINDS, ...REPORTING_KINDS];
 
 const failed = (reason: RunEnd['reason'], text: string, detail?: Record<string, unknown>): RunEnd => ({ outcome: 'failed', reason, reasonText: text, ...(detail ? { detail } : {}) });

@@ -28,6 +28,7 @@
 // dispatches nothing further. Budgets are measured on the monotonic clock: a
 // wall clock that steps back cannot stretch them (E30).
 
+import type { PhaseStepResult } from '../plan/phase.js';
 import { performance } from 'node:perf_hooks';
 
 import { observeIntegrity } from '../git/integrity.js';
@@ -142,6 +143,9 @@ export class Scheduler {
       const facts = await gateFacts(this.rt, project, g.candidate);
       await this.rt.engine('gate.evaluate', { project, candidate: g.candidate, kind: 'stage', stage: g.stage, ...facts }).catch((err) => log('stage gate', err, { project, ...g }));
     }
+    // The phase (D6 §5.8): its checks registered, its gate evaluated on the
+    // facts read here, its completion; once per tick.
+    await this.phase(project).catch((err) => log('phase', err, { project }));
     // The classifier (D3 §1.6; SEAM.md §215): every captured proposal,
     // classified at a tick after its capture, its question raised.
     await classifyDue(this.rt, project).catch((err) => log('classification', err, { project }));
@@ -151,6 +155,14 @@ export class Scheduler {
     await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
     await deliverNotifications(this.rt, project);
+  }
+
+  private async phase(project: string): Promise<void> {
+    const step = await this.rt.engine<PhaseStepResult>('phase.step', { project });
+    if (!step.evaluate) return;
+    const facts = await gateFacts(this.rt, project, step.evaluate.candidate);
+    await this.rt.engine('gate.evaluate', { project, candidate: step.evaluate.candidate, kind: 'phase', phase_plan: step.evaluate.phase_plan, ...facts });
+    await this.rt.engine('phase.step', { project });
   }
 
   private async tick(): Promise<void> {

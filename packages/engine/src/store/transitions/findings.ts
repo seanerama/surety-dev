@@ -14,6 +14,7 @@ import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
+import { effectiveVersion } from './protected.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -33,6 +34,14 @@ export interface Report {
   // A Builder's objections to a check (D3 §5 X2, A.3), recorded with its
   // run's end (repair.ts).
   objections?: { check: string; criterion?: string; category: string; message: string }[];
+  // An Architect's replan (D6 §5.6): the plan it wrote, its declaration.
+  plan?: string;
+  roadmap_revision?: string;
+  adrs_changed?: string[];
+  conformance?: 'within_baseline' | 'uncertain';
+  notes?: string;
+  // A Spec Writer's proposed change (D6 §4.3): the changed requirements.
+  changes?: { key: string; kind: string; reason: string }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
@@ -142,6 +151,30 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // before the result was taken (invoke/choke.ts).
       criterion: f.criterion ?? null,
     });
+  }
+
+  // The phase sign-off (D6 §5.8; B06): a Verifier's on its phase_verification
+  // work, bound to the candidate's acceptance hash, the effective protected
+  // version, the spec revision and the plan's generation.
+  if (role === 'verifier' && item.kind === 'phase_verification' && candidate) {
+    const planId = parseJson<{ phase_plan?: string }>(item.subject)?.phase_plan ?? null;
+    const plan = planId ? (tx.db.prepare('SELECT "id", "generation" FROM "phase_plans" WHERE "id" = ?').get(planId) as { id: string; generation: number } | undefined) : undefined;
+    const reviewed = (tx.db.prepare('SELECT "content_hash" FROM "runs" WHERE "id" = ?').get(run.id) as { content_hash: string | null }).content_hash;
+    const hash = reviewed ?? contentHash(tx.db, project, candidate);
+    for (const s of (report.signoffs ?? []).filter((x) => x.scope === 'phase')) {
+      if (!plan) continue;
+      const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined;
+      const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation, phase_plan: plan.id };
+      const id = tx.newId('so_');
+      tx.db
+        .prepare(
+          `INSERT INTO "signoffs" ("id", "created_at", "project", "candidate", "revision", "role", "scope", "module", "run", "acceptance_content_hash", "recorded_at", "binding", "phase_plan")
+           VALUES (?, ?, ?, ?, ?, 'verifier', 'phase', NULL, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, tx.at, project, candidate.id, candidate.revision, run.id, hash, tx.at, JSON.stringify(binding), plan.id);
+      tx.emit('signoff.recorded', { project, candidate: candidate.id, signoff: id, run: run.id }, { scope: 'phase', module: null, binding });
+      void s;
+    }
   }
 
   if (role === 'reviewer' && candidate) {

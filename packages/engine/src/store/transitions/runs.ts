@@ -151,6 +151,10 @@ export const ROLE_OF: Record<string, string> = {
   check_correction: 'verifier',
   // D6 K7: the phase's check authoring is the Verifier's.
   check_authoring: 'verifier',
+  // D6 §5.8: the phase's verification is the Verifier's; D6 §4.3 (K8): the
+  // proposed specification change is the Spec Writer's one-shot.
+  phase_verification: 'verifier',
+  spec_change: 'spec_writer',
   review: 'reviewer',
   replan: 'architect',
   assessment: 'architect',

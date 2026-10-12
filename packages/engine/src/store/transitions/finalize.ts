@@ -273,6 +273,10 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
     )
     .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, version, JSON.stringify(held));
+  // The approved specification it is nominated under, a historical fact (D1
+  // A.3; D6 §4.6).
+  const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(op.project) as { id: string } | undefined;
+  if (spec) tx.db.prepare('UPDATE "candidates" SET "spec_revision" = ? WHERE "id" = ?').run(spec.id, candidate);
   // The presence frozen at intent (D3 §4.1); readers take it only under the
   // module definitions it was read under (evidence.ts presenceIn).
   if (inputs.module_presence) tx.db.prepare('UPDATE "candidates" SET "module_presence" = ? WHERE "id" = ?').run(JSON.stringify(inputs.module_presence), candidate);

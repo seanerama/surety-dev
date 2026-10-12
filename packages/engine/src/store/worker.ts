@@ -185,6 +185,7 @@ import {
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
+import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
   attemptUsage,
@@ -632,6 +633,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // D6 §2 (M5 slice 31; sessions/driver.ts): a turn's claim and settlement,
   // the save's swap, checkpoint and finish, the close.
   'session.turn_claim': (tx, a) => turnClaim(tx, a),
+  // D6 §5.8 (M5 slice 31b): the phase's step at every tick (plan/phase.ts).
+  'phase.step': (tx, a) => phaseStep(tx, a),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.
