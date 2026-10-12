@@ -154,6 +154,11 @@ export const getPolicy = async (engine, project) => {
 };
 
 // A valid policy change, and the wait until its revision is the effective one.
+// M5 slice 31 (D6 K3; C.2; SEAM.md §348): the accepted cases that assert a
+// chain boundary after every role run pin `autonomy: step`, since the
+// project default is now `phase`.
+export const stepAutonomy = (engine, project) => changePolicy(engine, project, { autonomy: 'step' });
+
 export async function changePolicy(engine, project, change) {
   const before = (await getPolicy(engine, project)).revision ?? 0;
   const res = await engine.post(`/v1/projects/${project}/policy`, change);

@@ -212,7 +212,7 @@ const reviewsOf = (fx, project) => workItemsOf(fx.home, project).filter((work) =
 async function verifiable(t, tier, { policy } = {}) {
   const fx = await scriptedEngine(t);
   fx.scripted.defaultScript(script.complete());
-  const ctx = await nominated(fx, { tier, policy });
+  const ctx = await nominated(fx, { tier, policy, autonomy: 'step' });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
   const verification = workItemsOf(fx.home, project).find((work) => work.kind === 'verification' && work.subject?.candidate === ctx.candidate.id);

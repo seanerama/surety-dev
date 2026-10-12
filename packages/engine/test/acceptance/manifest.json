@@ -347,6 +347,12 @@
       "M344-hands-on-script.test.mjs",
       "M342-the-verifiers-deployment-check-package.test.mjs",
       "M314-the-service-link-under-a-long-home.test.mjs"
+    ],
+    "31": [
+      "M402-the-idea-record.test.mjs",
+      "M403-close-raises-the-products-decision.test.mjs",
+      "M404-the-architects-products-registered.test.mjs",
+      "M405-plan-published-by-the-authorized-finalizer.test.mjs"
     ]
   },
   "sandbox": [

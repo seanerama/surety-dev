@@ -134,7 +134,7 @@ describe('M13 Stop while the work is integrated and its run has not ended', () =
 describe('M13 work that is being verified is owned by no run of its own', () => {
   test("stopping a candidate's verification run holds the verification work; the Builder's work stays verifying, its ended run cannot be stopped, and it is still verifying once a resumed verification completes", async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { tier: 'T2', autonomy: 'step' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     const built = await runToEnd(fx, project.id, items[0]);
     const [candidate] = await waitForCandidates(fx, project.id);

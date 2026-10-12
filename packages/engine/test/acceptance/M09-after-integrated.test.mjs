@@ -36,7 +36,7 @@ import { describe, test } from 'node:test';
 
 import { assertWorkHistory } from './harness/invariants.mjs';
 import { addGitProject, addItem, addStagedProject, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
-import { VALIDATION, assertCommitted, candidatesOf, workItemsOf } from './harness/journal.mjs';
+import { stepAutonomy, VALIDATION, assertCommitted, candidatesOf, workItemsOf } from './harness/journal.mjs';
 import { answerDecision, assertRunEnded, decisionsAbout, installPlan, runsOf, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -72,6 +72,7 @@ describe("M09 the Architect's kinds are complete once their artifacts are integr
     test(`a ${kind} item runs its whole path: ${WORK.kinds[kind].path.join(' → ')}`, async (t) => {
       const fx = await scriptedEngine(t);
       const project = await addGitProject(fx);
+      await stepAutonomy(fx.engine, project.id);
       const item = await addItem(fx, project.id, kind);
       fx.scripted.script(item, [roleThat([step.write('.surety/adrs/0001-a-decision.md', `# decided in a ${kind} run\n`)])]);
       const run = await runToEnd(fx, project.id, item);
@@ -87,7 +88,7 @@ describe("M09 the Architect's kinds are complete once their artifacts are integr
 describe("M09 the Builder's kinds are verified with their candidate", () => {
   test(`a stage_build item runs its path as far as verifying, ${WORK.kinds.stage_build.path.slice(0, -1).join(' → ')}: its candidate's verification does not complete it`, async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { tier: 'T2', autonomy: 'step' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     const run = await runToEnd(fx, project.id, items[0]);
     assertCommitted(fx, run.id, { kind: 'engine_commit', parent: project.base, integrated: true });
@@ -105,7 +106,7 @@ describe("M09 the Builder's kinds are verified with their candidate", () => {
 
   test("a verification that fails completes nothing: the Builder's work stays verifying through the failed run and its repair", async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { tier: 'T2', autonomy: 'step' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     await runToEnd(fx, project.id, items[0]);
     const [candidate] = await waitForCandidates(fx, project.id);
@@ -129,6 +130,7 @@ describe("M09 the Builder's kinds are verified with their candidate", () => {
     const fx = await scriptedEngine(t);
     // T1: nothing is nominated until the Builder asks.
     const project = await addGitProject(fx, { tier: 'T1' });
+    await stepAutonomy(fx.engine, project.id);
     const fix = await addItem(fx, project.id, 'fix');
     fx.scripted.script(fix, [roleThat([step.write('src/fixed.js', 'export const fixed = true;\n')])]);
     const fixRun = await runToEnd(fx, project.id, fix);
@@ -152,7 +154,7 @@ describe("M09 the Builder's kinds are verified with their candidate", () => {
 
   test('work integrated after a nomination is not held by that candidate: it stays integrated when the candidate is verified', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { tier: 'T2', autonomy: 'step' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     await runToEnd(fx, project.id, items[0]);
     const [candidate] = await waitForCandidates(fx, project.id);

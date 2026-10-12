@@ -34,7 +34,7 @@ import { join } from 'node:path';
 import { consume, openDecision } from './decisions.mjs';
 import { PROTECTED_FILES, alphaTarget, check, finding as findingRow, findingsOf, installChecks, installGatedPlan, passAll, stageGate } from './gates.mjs';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from './gitruns.mjs';
-import { createProject, workItemsOf } from './journal.mjs';
+import { createProject, stepAutonomy, workItemsOf } from './journal.mjs';
 import { checkoutState, makeProjectRepo, refOid } from './repos.mjs';
 import { runsOf, scriptedEngine, tickUntil, workItem } from './runs.mjs';
 import { script, step } from './scripted.mjs';
@@ -65,6 +65,8 @@ async function start(t, { decisionAbout, verifier }) {
   const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
   const checkout = checkoutState(repo.path);
   const { id } = await createProject(fx.engine, { repoPath: repo.path, name: 'journey', tier: 'T2' });
+  // M5 slice 31 (K3; D1-34; SEAM.md §348): the journey's `continue` steps are pinned under `autonomy: step`.
+  await stepAutonomy(fx.engine, id);
   const project = { id, repo, base: refOid(repo.path, repo.ref) };
 
   // 2. Fixtures: the approved baseline and plan (one requirement, one stage that implements it), and the protected check that covers the requirement.

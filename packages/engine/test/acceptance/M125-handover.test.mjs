@@ -455,6 +455,7 @@ describe('M125 what is handed over', () => {
     fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
     const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
     const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'an-unknown-check', tier: 'T2' });
+    await changePolicy(fx.engine, project, { autonomy: 'step' });
     const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
     // M3 slice 20 (B04; SEAM.md §226): the version also holds the tier's inventory checks.
     const installed = (await installChecks(fx.engine, project, CHECKS)).id;
@@ -647,6 +648,7 @@ async function fixLoopPackages(t, { checks, finding }) {
   fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
   const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
   const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'what-the-gates-read', tier: 'T2' });
+  await changePolicy(fx.engine, project, { autonomy: 'step' });
   const plan = await installGatedPlan(fx.engine, project, { requirements: ['R1'], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
   const ids = (await installChecks(fx.engine, project, checks)).id;
   fx.scripted.script(plan.stages[0].work_item, [roleThat([permittedEdit()])]);

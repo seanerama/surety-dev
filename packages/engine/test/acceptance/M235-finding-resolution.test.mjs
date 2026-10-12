@@ -38,7 +38,7 @@ import { describe, test } from 'node:test';
 import { consume, openDecision } from './harness/decisions.mjs';
 import { postResult, raiseFindings, reasonSubjects, review, stageGate, successor } from './harness/gates.mjs';
 import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
-import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
+import { changePolicy, eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { readGate } from './harness/reads.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { commitOnRef } from './harness/repos.mjs';
@@ -80,6 +80,7 @@ const finding = (message, extra = {}) => ({ category: 'defect', severity: 'mediu
 async function project(t) {
   const fx = await scriptedEngine(t);
   const p = await repairProject(fx, { defs: DEFS, governed: { required_checks: REQUIRED }, index: INDEX });
+  await changePolicy(fx.engine, p.id, { autonomy: 'step' });
   const b = await buildAndNominate(fx, p, { keys: REQUIRED });
   return { fx, p, ...b, ctx: { project: p, stage: p.stages[0].id, candidate: b.candidate }, ids: checkIds(fx.home, p.id) };
 }
@@ -168,6 +169,7 @@ describe('M235 finding resolution', () => {
         { number: 2, goal: 'stage two', implements: ['R2'] },
       ],
     });
+    await changePolicy(fx.engine, p.id, { autonomy: 'step' });
     const [s1, s2] = p.stages.map((s) => s.work_item);
     fx.scripted.script(s1, [roleThat([permittedEdit()], { nominate: true })]);
     fx.scripted.script(s2, [roleThat([step.write('src/stage-2.js', 'export const stage = 2;\n')], { nominate: true })]);

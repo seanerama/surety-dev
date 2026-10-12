@@ -11,6 +11,9 @@
 //   child.mjs               this program
 //   scripts/<work item>.json   an array of scripts; launch n of that work
 //                              item runs element n-1
+//   scripts/run-<run>.json  M5 (SEAM.md §343): an array of scripts for one run's launches (a
+//                           session's turns); launch n of that run runs element n-1, before
+//                           the work item's scripts are consulted
 //   scripts/default.json    one script, for a launch with no script of its own
 //   release/<key>.<name>    a file whose existence releases the hold <name>;
 //                           <key> is the invocation id, the work item id or "all"
@@ -372,15 +375,16 @@ function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-// How many launches this work item has had before this one.
-function priorLaunches(workItem) {
+// How many launches this work item has had before this one (`field`
+// 'work_item'), or, for M5's session turns (SEAM.md §343), this run.
+function priorLaunches(value, field = 'work_item') {
   if (!existsSync(logFile)) return 0;
   let n = 0;
   for (const line of readFileSync(logFile, 'utf8').split('\n')) {
     if (line === '') continue;
     try {
       const entry = JSON.parse(line);
-      if (entry.event === 'launch' && entry.work_item === workItem) n++;
+      if (entry.event === 'launch' && entry[field] === value) n++;
     } catch {
       // a torn line is not a launch
     }
@@ -407,12 +411,20 @@ function priorCanaryLaunches(kind) {
   return n;
 }
 
-function chooseScript(workItem, index) {
+function chooseScript(workItem, index, run = null) {
   const canary = readCanary();
   if (canary !== null && typeof canary.kind === 'string' && /^[a-z]+$/.test(canary.kind)) {
     const list = readJson(join(dir, 'scripts', `canary-${canary.kind}.json`));
     const n = priorCanaryLaunches(canary.kind);
     if (Array.isArray(list) && list[n] !== undefined) return { script: list[n], source: `canary-${canary.kind}` };
+  }
+  // M5 (SEAM.md §343): a session's turns are launches of one run; launch n of
+  // the run follows scripts/run-<run>.json's element n-1, before any script
+  // of its work item.
+  if (typeof run === 'string' && /^run_[0-9A-Z]+$/.test(run)) {
+    const byRun = readJson(join(dir, 'scripts', `run-${run}.json`));
+    const n = priorLaunches(run, 'run');
+    if (Array.isArray(byRun) && byRun[n] !== undefined) return { script: byRun[n], source: 'run' };
   }
   const own = workItem ? readJson(join(dir, 'scripts', `${workItem}.json`)) : undefined;
   if (Array.isArray(own) && own[index] !== undefined) return { script: own[index], source: 'work_item' };
@@ -1075,7 +1087,7 @@ async function runProbe(spec) {
       case 'context_dump': {
         // Every file under the context package (or `root`), without following
         // links, bounded: its size and hash, and its text where it is small.
-        const root = spec.root ?? '/surety/context';
+        const root = spec.root ?? contextDir;
         entry.root = root;
         let total = 0;
         try {
@@ -1914,7 +1926,11 @@ async function runSteps(steps, ctx) {
 const { request, ...requestProblem } = await readRequest();
 const workItem = request?.work_item ?? null;
 const index = priorLaunches(workItem);
-const { script, source } = chooseScript(workItem, index);
+const { script, source } = chooseScript(workItem, index, request?.run ?? null);
+// M5 (SEAM.md §343): where the engine put this invocation's context package.
+// In a sandbox it is mounted at /surety/context; in the kernel lane the
+// request names its directory, which `context_dump` reads by default.
+const contextDir = typeof request?.context === 'string' && request.context !== '' ? request.context : '/surety/context';
 const ctx = { keys: [identity.invocation, workItem, 'all'] };
 
 log('launch', {

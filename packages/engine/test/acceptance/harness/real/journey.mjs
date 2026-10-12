@@ -113,6 +113,8 @@ export async function realProject(ctx, fx, spec, { dayUsd, roles = {} }) {
   // rehearsal: set after the plan, the policy came too late and the Builder
   // ran on the default backend, refused).
   await changePolicy(fx.engine, id, {
+    // M5 slice 31 (K3; SEAM.md §348): the real journey's `continue` steps run under `autonomy: step`.
+    autonomy: 'step',
     ...realPolicy(dayUsd),
     backend_builder: roles.builder ?? REAL.backend,
     backend_verifier: roles.verifier ?? REAL.backend,

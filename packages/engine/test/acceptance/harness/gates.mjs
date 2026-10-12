@@ -454,9 +454,11 @@ export async function alphaTarget(fx, ctx, candidate = ctx.candidate, { environm
 // not about D3 §2.10's repair, sets `repair_attempts_max` 0, so Q2 parks the
 // work instead of sending it back to a Builder with no script).
 // Returns {project, plan, items, stage, candidate, requirement: {key: id}}.
-export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing, index = true, policy } = {}) {
+export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages, modules, files, roles = [], project: existing, index = true, policy, autonomy } = {}) {
   const project = existing ?? (await addGitProject(fx, { tier, files }));
-  if (policy !== undefined) await changePolicy(fx.engine, project.id, policy);
+  // M5 slice 31 (K3; SEAM.md §348): `autonomy: 'step'` for a case that lets chained work through a boundary.
+  const merged = autonomy === undefined ? policy : { ...(policy ?? {}), autonomy };
+  if (merged !== undefined) await changePolicy(fx.engine, project.id, merged);
   const plan = await installGatedPlan(fx.engine, project.id, { requirements, modules, index, stages: stages ?? [{ number: 1, goal: 'the first stage', implements: requirements }] });
   const items = plan.stages.map((stage) => stage.work_item);
   const nominate = tier === 'T1' ? { nominate: true } : {};

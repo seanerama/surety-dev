@@ -307,7 +307,7 @@ describe('M70 the work read', () => {
     // candidate's verification, which the engine made on the Builder's run,
     // waits at the chain boundary (SEAM.md §40): eligible, not dispatched,
     // with a blocker decision offering continue and cancel.
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const mine = ctx.project.id;
     const stageWork = ctx.items[0];
     const verification = workItemsOf(fx.home, mine).find((work) => work.kind === 'verification' && work.subject?.candidate === ctx.candidate.id);
