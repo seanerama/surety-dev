@@ -116,7 +116,8 @@ describe('M74 the states the accepted screens show are states the kernel produce
     const fx = await scriptedEngine(t);
     const engine = fx.engine;
     const login = check('login', { requirements: ['R1'] });
-    const ctx = await nominated(fx, { files: PROTECTED_FILES });
+    // D6 C.2 (K3; SEAM.md §§348, 361): chained work waits at its boundary, as it did when this case was accepted.
+    const ctx = await nominated(fx, { files: PROTECTED_FILES, autonomy: 'step' });
     const project = ctx.project.id;
     const checks = await installChecks(engine, project, [login]);
     await passAll(engine, project, ctx.candidate.id, [checks.id.login]);

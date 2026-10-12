@@ -458,7 +458,11 @@ export async function nominated(fx, { tier = 'T1', requirements = ['R1'], stages
   const project = existing ?? (await addGitProject(fx, { tier, files }));
   // M5 slice 31 (K3; SEAM.md §348): `autonomy: 'step'` for a case that lets chained work through a boundary.
   const merged = autonomy === undefined ? policy : { ...(policy ?? {}), autonomy };
-  if (merged !== undefined) await changePolicy(fx.engine, project.id, merged);
+  if (merged !== undefined) {
+    await changePolicy(fx.engine, project.id, merged);
+    // The policy commit moves the integration head: the base is read after it (objection 061; SEAM.md §361).
+    project.base = refOid(project.repo.path, project.repo.ref);
+  }
   const plan = await installGatedPlan(fx.engine, project.id, { requirements, modules, index, stages: stages ?? [{ number: 1, goal: 'the first stage', implements: requirements }] });
   const items = plan.stages.map((stage) => stage.work_item);
   const nominate = tier === 'T1' ? { nominate: true } : {};
