@@ -25,21 +25,23 @@ export function projectPolicy(db: Database, project: string) {
 // D1 §8.1 step 8 order: verification due, then builds, then replans, then
 // the rest; oldest first within each.
 const PRIORITY: Record<string, number> = { verification: 0, check_correction: 0, stage_build: 1, fix: 1, replan: 2 };
-// A Reviewer's review of a classified protected proposal (D3 §3.3, under
-// `authoritative`) goes with the protected path's other work, ahead of a
-// new correction: a correction captured on a base the pending proposal's
-// application then moves can never be applied as approved (its protected
-// set diverges, D3 §3.3), so the pending one is settled first.
-const priorityOf = (item: WorkRow): number => {
-  if (item.kind === 'review') {
-    try {
-      if (typeof (JSON.parse(item.subject) as { proposal?: unknown }).proposal === 'string') return 0;
-    } catch {
-      // an unreadable subject takes the default order
-    }
+// A new correction waits for a Reviewer's review of a classified protected
+// proposal that is pending (D3 §3.3, under `authoritative`): a correction
+// captured on a base the pending proposal's application then moves can
+// never be applied as approved (its protected set diverges, D3 §3.3), so the
+// pending one is settled first.
+const isProposalReview = (item: WorkRow): boolean => {
+  if (item.kind !== 'review') return false;
+  try {
+    return typeof (JSON.parse(item.subject) as { proposal?: unknown }).proposal === 'string';
+  } catch {
+    return false;
   }
-  return PRIORITY[item.kind] ?? 3;
 };
+// The review goes with the protected path's work (verification due, D1 §8.1
+// step 8) and ahead of a new correction.
+const priorityOf = (item: WorkRow, reviewPending: boolean): number =>
+  isProposalReview(item) ? 0 : item.kind === 'check_correction' && reviewPending ? 0.5 : (PRIORITY[item.kind] ?? 3);
 
 export interface ProjectCandidates {
   project: string;
@@ -61,10 +63,12 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
   for (const p of projects) {
     let items: ProjectCandidates['items'];
     try {
-      items = (db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[])
+      const eligible = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[];
+      const reviewPending = eligible.some(isProposalReview);
+      items = eligible
         .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
         .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
-        .sort((a, b) => priorityOf(a.item) - priorityOf(b.item) || a.item.seq - b.item.seq)
+        .sort((a, b) => priorityOf(a.item, reviewPending) - priorityOf(b.item, reviewPending) || a.item.seq - b.item.seq)
         .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));
     } catch {
       // A check that could not read what it needs (a budget, D1 §6.6) has
