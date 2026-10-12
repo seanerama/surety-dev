@@ -29,7 +29,8 @@ test('Stop and Abandon apply from every run-owning status, integrated and awaiti
     assert.ok(legal('stage_build', from, 'eligible'), `abandon from ${from}`);
   }
   assert.ok(legal('verification', 'awaiting_decision', 'held'));
-  assert.equal(legal('spec_change', 'awaiting_decision', 'held'), false, 'no run owns a spec_change');
+  // D6 K8 (M5 slice 31b): a spec_change has a Spec Writer run, so it is held like any run-owning kind.
+  assert.ok(legal('spec_change', 'awaiting_decision', 'held'));
   assert.equal(legal('verification', 'integrated', 'held'), false, 'a verification never reaches integrated');
 });
 
@@ -51,6 +52,6 @@ test('terminal statuses have no exit, and held and parked leave only by their ca
   assert.equal(legal('fix', 'parked', 'claimed'), false);
 });
 
-test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring', () => {
-  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_authoring', 'check_correction', 'fix', 'replan', 'review', 'stage_build', 'verification']);
+test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring and K8\'s phase_verification and spec_change', () => {
+  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_authoring', 'check_correction', 'fix', 'phase_verification', 'replan', 'review', 'spec_change', 'stage_build', 'verification']);
 });
