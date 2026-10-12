@@ -9,6 +9,7 @@
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
+import { buildComplete } from './phase.js';
 
 const json = <T>(text: unknown, fallback: T): T => {
   try {
@@ -112,5 +113,6 @@ export function planView(db: Database, args: { project: string }) {
     changes_roadmap: json<unknown>(c.changes_roadmap, null),
     obligations: json<unknown>(c.obligations, null),
   }));
-  return { roadmap: road ? { version: road.version, phases: json<unknown>(road.phases, []) } : null, plan, proposals, checks };
+  // The build is complete when every phase of the roadmap is (SEAM.md §352).
+  return { roadmap: road ? { version: road.version, phases: json<unknown>(road.phases, []) } : null, plan, proposals, checks, build: { complete: buildComplete(db, args.project) } };
 }
