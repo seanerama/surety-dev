@@ -61,8 +61,13 @@ export const reachable = (kind, table = WORK) => {
 };
 
 // The continuations a kind can store on entering awaiting_decision.
+// Entering it by `block` stores the status left; so does entering it along
+// the kind's own path from a status that is a continuation (D6 A.5's
+// spec_change waits for its decision from `executing`; SEAM.md §371).
 export const continuationsOf = (kind, table = WORK) =>
-  legalEdges(kind, table).filter((e) => e.via === 'block').map((e) => e.from);
+  legalEdges(kind, table)
+    .filter((e) => e.to === 'awaiting_decision' && (e.via === 'block' || (e.via === 'path' && table.continuations.includes(e.from))))
+    .map((e) => e.from);
 
 // Is from → to legal for this kind? Leaving awaiting_decision for executing,
 // integrating or verifying is legal only for the continuation the item
@@ -96,21 +101,32 @@ export function routeTo(kind, target, { continuation } = {}, table = WORK) {
     }
     return [...routeTo(kind, from, {}, table), 'awaiting_decision'];
   }
-  const edges = legalEdges(kind, table).filter((e) => e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision');
+  const all = legalEdges(kind, table);
   const start = kindOf(kind, table).path[0];
-  const queue = [[start]];
-  const seen = new Set([start]);
-  while (queue.length > 0) {
-    const route = queue.shift();
-    const at = route.at(-1);
-    if (at === target) return route.slice(1);
-    for (const e of edges) {
-      if (e.from !== at || seen.has(e.to)) continue;
-      seen.add(e.to);
-      queue.push([...route, e.to]);
+  const search = (edges) => {
+    const queue = [[start]];
+    const seen = new Set([start]);
+    while (queue.length > 0) {
+      const route = queue.shift();
+      const at = route.at(-1);
+      if (at === target) return route.slice(1);
+      for (const e of edges) {
+        if (e.from !== at || seen.has(e.to)) continue;
+        seen.add(e.to);
+        queue.push([...route, e.to]);
+      }
     }
-  }
-  throw new Error(`${kind} cannot reach ${target}`);
+    return null;
+  };
+  // Around awaiting_decision where the kind can; through it only along the
+  // kind's own path, for a kind whose path waits for a decision before it
+  // ends (D6 A.5's spec_change: … → executing → awaiting_decision →
+  // complete; SEAM.md §371).
+  const route =
+    search(all.filter((e) => e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision')) ??
+    search(all.filter((e) => (e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision') || e.via === 'path'));
+  if (route === null) throw new Error(`${kind} cannot reach ${target}`);
+  return route;
 }
 
 // Every (from, to) the kind must refuse, with how to reach `from`. For
