@@ -262,16 +262,19 @@ export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', confi
   const index = [{ key: 'R1', criteria: ['R1.1'] }];
   const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
   let p;
-  if (entries === undefined && governed === undefined) p = await scopeProject(fx, { tier, defs, files: { ...SERVICE_FILES, ...files }, index, stages });
+  // `autonomy` (M5 slice 31; SEAM.md §§362, 363): pinned once, after the
+  // project and before its plan exists, so no tick can dispatch the stage
+  // before its script; the base re-read after the policy commit.
+  const pin = autonomy === undefined ? undefined : { autonomy };
+  if (entries === undefined && governed === undefined) p = await scopeProject(fx, { tier, defs, files: { ...SERVICE_FILES, ...files }, index, stages, policy: pin });
   else {
     const made = await checkProject(fx, { files: { ...protectedSet(defs, governed), ...SERVICE_FILES, ...files }, entries, tier });
+    if (pin !== undefined) {
+      await changePolicy(fx.engine, made.id, pin);
+      made.base = refOid(made.repo.path, made.repo.ref);
+    }
     const plan = await installIndexedPlan(fx.engine, made.id, { index, stages });
     p = { ...made, plan, stages: plan.stages };
-  }
-  // `autonomy` (M5 slice 31; SEAM.md §362): pinned before the build, so the nomination's chained work waits at its boundary.
-  if (autonomy !== undefined) {
-    await changePolicy(fx.engine, p.id, { autonomy });
-    p.base = refOid(p.repo.path, p.repo.ref);
   }
   const workspace = Object.keys(defs).filter((k) => !(defs[k].gate_kinds ?? []).every((g) => g === 'alpha_complete'));
   const built = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true })], keys: workspace });

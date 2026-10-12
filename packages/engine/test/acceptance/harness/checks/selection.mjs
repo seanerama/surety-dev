@@ -11,6 +11,8 @@
 import assert from 'node:assert/strict';
 
 import { addItem, permittedEdit, roleThat, waitForCandidates } from '../gitruns.mjs';
+import { changePolicy } from '../journal.mjs';
+import { refOid } from '../repos.mjs';
 import { getRow, runsOf, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 import { step } from '../scripted.mjs';
@@ -83,10 +85,15 @@ export { executionRow };
 // plan whose one stage implements R1 (criterion R1.1). Smoke checks cover no
 // criterion, so they are release obligations and each nomination registers
 // them (SEAM.md §180).
-export async function discoveredProject(fx, keys) {
+export async function discoveredProject(fx, keys, { policy } = {}) {
   const files = { [GOVERNED_FILE]: governedText({ check_commands: KERNEL_COMMANDS }) };
   for (const key of keys) files[defPath(key)] = smoke(key);
   const p = await checkProject(fx, { files, tier: 'T1' });
+  // `policy` (M5 slice 31; SEAM.md §363): one change before the plan exists; the base re-read after it.
+  if (policy !== undefined) {
+    await changePolicy(fx.engine, p.id, policy);
+    p.base = refOid(p.repo.path, p.repo.ref);
+  }
   const plan = await installIndexedPlan(fx.engine, p.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
   return { ...p, plan, stage: plan.stages[0] };
 }
