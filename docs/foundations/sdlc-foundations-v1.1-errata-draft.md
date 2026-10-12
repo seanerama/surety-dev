@@ -2182,3 +2182,11 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - Ledger: 0.681029 USD estimated over nine rows, plus one row unknown (the cancellation canary), never counted as zero.
 3. **The exhaust lane on `mini-hp01`, final**, on `1f9c02b`: **14 of 14** (M133, M130 (f) (g), M205 (g), M341 (a) (b)); six OOM kills, each `CONSTRAINT_MEMCG` in a `surety-` domain, probe or service cgroup; no unit before or after; the staging containers up and untouched.
 4. **The M4 report** (`1e3de98`; M343 2 of 2) and `M4-not-claimed.md` are final, the real lane's records under `docs/acceptance/reports/M4-real-lane/2026-10-12/`. Not run: the hands-on (M344), Sean's. The final `npm test` on `main` follows this entry and is the driver's record.
+
+## E136. M5 is "idea to Alpha" (decided by Sean, 2026-10-12)
+
+**Status: decided by Sean** (E119 item 2 left M5's order open until after M4).
+
+1. **M5 builds the front of the pipeline and the build's execution:** the interactive roles (Vision, Spec Writer and Architect as engine-metered sessions, E10), the specification and its change workflow (F §3.8), the architecture, the roadmap and phase plans (F §4), and the engine driving a whole multi-stage build from an approved specification to Alpha, so that a project no longer starts from a hand-entered fixture. **D5 (Beta and Live, rollback, authenticated reattachment) follows M5.** Rejected: D5 first (a full Surety-run build would still need a hand-entered spec), both in one milestone (against E40's frozen scope).
+2. **Why now:** Sean's benchmark (E130 item 9) tests a full build run by Surety after M5 against Verity's recorded numbers; M5 is what makes that build possible.
+3. **Next:** the design (D6, `docs/design/sdlc-design-D6-idea-to-alpha.md`) on a design branch with its questions for Sean; then the M5 build spec and acceptance plan; then slices. The design is to keep ceremony proportional to risk (F P3) and to state, for a Surety-run build, where its wall-clock time goes.
