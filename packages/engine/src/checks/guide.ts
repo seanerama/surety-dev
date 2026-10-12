@@ -51,6 +51,32 @@ export const EVALUATED_GATE_KINDS: readonly string[] = Object.freeze([...SCOPE_K
 const code = (s: string): string => `\`${s}\``;
 const list = (xs: readonly string[]): string => xs.map(code).join(', ');
 const andList = (xs: readonly string[]): string => (xs.length <= 1 ? list(xs) : `${list(xs.slice(0, -1))} and ${code(xs[xs.length - 1]!)}`);
+const jsonList = (xs: readonly string[]): string => `[${xs.map((x) => `"${x}"`).join(', ')}]`;
+
+// The tier's kind floor at the `alpha_authorize` gate (D3 §4.3;
+// src/checks/scope.ts, computeScope): KIND_INVENTORY[tier] is applied at
+// each of SCOPE_KINDS separately, over the required checks listing that gate
+// kind, so a deployment request's gate needs a required acceptance-origin
+// check of each floor kind listing `alpha_authorize` in its `gate_kinds`.
+// Sean's real run of M342 (E135): the Verifier's smoke check listed `stage`
+// only, and the deployment was refused `ACCEPTANCE_SCOPE_INCOMPLETE`
+// (`kind:smoke`); the package had never said so. The project's tier names
+// its floor when known; otherwise every tier's.
+export const AUTHORIZE_GATE = SCOPE_KINDS.find((k) => k !== 'stage')!;
+export function authorizeFloorText(tier: string | undefined): string {
+  const known = tier !== undefined && Object.hasOwn(KIND_INVENTORY, tier) ? (tier as Tier) : null;
+  const floor =
+    known === null
+      ? `at least one required acceptance-origin check of each kind the project's tier requires (${(Object.keys(KIND_INVENTORY) as Tier[]).map((t) => `${t}: ${list(KIND_INVENTORY[t])}`).join('; ')})`
+      : `at ${known}, at least one required acceptance-origin check of each of the kinds ${list(KIND_INVENTORY[known])}`;
+  const exampleKind = (known === null ? KIND_INVENTORY.T1 : KIND_INVENTORY[known]).find((k) => k === 'smoke') ?? KIND_INVENTORY.T1[0]!;
+  return (
+    `The tier's kind floor is applied at each of ${andList(SCOPE_KINDS)} separately, over the checks listing that gate kind in their \`gate_kinds\`. ` +
+    `${code(AUTHORIZE_GATE)}, the gate a deployment request evaluates, therefore needs ${floor}, each listing ${code(AUTHORIZE_GATE)} in its \`gate_kinds\`; ` +
+    `a check of a floor kind listing only ${code('stage')} supplies its kind to no deployment, and the request is refused with \`ACCEPTANCE_SCOPE_INCOMPLETE\` naming the kind missing (\`kind:${exampleKind}\`). ` +
+    `So a ${code(exampleKind)} check lists \`"gate_kinds": ${jsonList(SCOPE_KINDS)}\`, and so does every other check of a floor kind.`
+  );
+}
 const reqNumber = (key: string): number => Number(key.slice(1)) || 0;
 const critOrder = (a: string, b: string): number => {
   const [ra, ma] = a.slice(1).split('.').map(Number);
@@ -130,7 +156,7 @@ export function examplePostDeployDefinition(f: CheckWritingFacts): { file: strin
 // needs a required `post_deploy_behavior` check, how a definition of one is
 // written, where it runs, how it reaches its target and its secrets, and the
 // project's environments with their targets' variables.
-export function deploymentChecksText(f: Pick<CheckWritingFacts, 'environments'>): string[] {
+export function deploymentChecksText(f: Pick<CheckWritingFacts, 'environments'> & Partial<Pick<CheckWritingFacts, 'tier'>>): string[] {
   const [identity, behavior] = [POST_DEPLOY.find((k) => k.endsWith('identity'))!, POST_DEPLOY.find((k) => k.endsWith('behavior'))!];
   const out: string[] = [
     '',
@@ -138,6 +164,7 @@ export function deploymentChecksText(f: Pick<CheckWritingFacts, 'environments'>)
     '',
     `- When the owner deploys a candidate to one of the project's environments, the engine verifies the running service with the environment-bound checks: kind ${code(behavior)} (what the service does for its user) and kind ${code(identity)}.`,
     `- The ${code(DEPLOYMENT_GATE)} gate needs at least one required ${code(behavior)} check, and ${code('alpha_authorize')} is not satisfied without one either, so without it nothing is deployed and no candidate becomes \`alpha_deployed\`.`,
+    `- A deployment request is refused unless ${code(AUTHORIZE_GATE)} is satisfied, and that gate also applies the tier's kind floor to the checks listing it. ${authorizeFloorText(f.tier)}`,
     "- The `post_deploy_behavior` check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them, which only the owner can add (say so in your summary); when it lists none, every check discovered is required.",
     `- Write such a check with \`"gate_kinds": ["${DEPLOYMENT_GATE}"]\` and no other gate kind, and with \`"requires": ["environment", "artifact_digest"]\`. Listed under \`stage\` or \`alpha_authorize\`, it would be required at a gate where it can never run, and that gate would never be satisfied. Give it no \`covers\`: on these kinds discovery refuses it (\`covers_not_allowed\`), and a discovery error leaves every gate of the version unsatisfied.`,
     "- It runs only in a deployment's verification, between two reads the engine makes of the running service itself; from any other trigger it is recorded not run (`environment_unbound`). Write it to pass against the service the requirements describe.",
@@ -306,6 +333,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
   }
   out.push(
     `- Gate kinds: the engine evaluates ${andList(EVALUATED_GATE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both ${andList(SCOPE_KINDS)} for a check of the workspace that should decide both. ${code(DEPLOYMENT_GATE)} reads only the environment-bound checks (below). The others (${list(GATE_KINDS.filter((k) => !EVALUATED_GATE_KINDS.includes(k)))}) are accepted but not evaluated.`,
+    `- ${authorizeFloorText(f.tier)}`,
     g.required_checks === null
       ? '- Every check discovered is required: the governed file lists no `required_checks`.'
       : `- Only the checks the governed file's \`required_checks\` lists are required: ${g.required_checks.length > 0 ? list(g.required_checks) : 'none'}. A check you add is not required unless the owner lists it.`,

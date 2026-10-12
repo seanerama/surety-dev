@@ -447,3 +447,34 @@ test('no environment, an environment with no configuration, an unreadable one, u
   assert.match(some.prompt, /- Environment `odd`: target `app`, reached as `SURETY_TARGET_APP`; which secrets its checks may receive could not be read, so name none\./);
   for (const facts of [undefined, null]) assert.match(deploymentChecksText({ environments: facts }).join('\n'), /could not be read here, so their target names are unknown: write no environment-bound check/);
 });
+
+// Sean's real run of M342 (E135): the Verifier wrote its smoke check with
+// `gate_kinds: ["stage"]` only, and the deployment request was refused,
+// `alpha_authorize` not satisfied, `ACCEPTANCE_SCOPE_INCOMPLETE` with subject
+// `kind:smoke`. The package said that every scope requires each floor kind,
+// never that the floor is applied per gate kind over the checks listing it.
+const { authorizeFloorText } = await import(join(dist, 'checks', 'guide.js'));
+const { KIND_INVENTORY } = await import(join(dist, 'checks', 'scope.js'));
+
+test("the package says that alpha_authorize applies the tier's kind floor to the checks listing it, names the T1 floor, and gives a smoke check's gate kinds in full, in both the gate-kinds and the deployment sections", (t) => {
+  const db = store(t);
+  environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, check_secrets: [] } });
+  const { prompt } = packageOf(t, db, 'run_cc');
+  const sentence =
+    'The tier\'s kind floor is applied at each of `stage` and `alpha_authorize` separately, over the checks listing that gate kind in their `gate_kinds`. ' +
+    '`alpha_authorize`, the gate a deployment request evaluates, therefore needs at T1, at least one required acceptance-origin check of each of the kinds `acceptance`, `smoke`, each listing `alpha_authorize` in its `gate_kinds`; ' +
+    'a check of a floor kind listing only `stage` supplies its kind to no deployment, and the request is refused with `ACCEPTANCE_SCOPE_INCOMPLETE` naming the kind missing (`kind:smoke`). ' +
+    'So a `smoke` check lists `"gate_kinds": ["stage", "alpha_authorize"]`, and so does every other check of a floor kind.';
+  assert.equal(prompt.split(sentence).length - 1, 2, 'said once under the gate kinds and once under the deployment checks');
+  const gateKinds = prompt.indexOf('- Gate kinds: the engine evaluates');
+  assert.ok(gateKinds > 0 && prompt.indexOf(`- ${sentence}`, gateKinds) > gateKinds, 'the bullet follows the gate-kinds bullet');
+  assert.ok(prompt.includes(`- A deployment request is refused unless \`alpha_authorize\` is satisfied, and that gate also applies the tier's kind floor to the checks listing it. ${sentence}`), 'the deployment section');
+  // The text is built from the engine's own floor: T2's kinds at T2, every tier's when the tier is unknown.
+  assert.match(authorizeFloorText('T2'), /at T2, at least one required acceptance-origin check of each of the kinds `acceptance`, `smoke`, `integration`, `security_lint`, each listing `alpha_authorize`/);
+  const unknown = authorizeFloorText('T9');
+  for (const tier of Object.keys(KIND_INVENTORY)) assert.ok(unknown.includes(`${tier}: ${KIND_INVENTORY[tier].map((k) => `\`${k}\``).join(', ')}`), `${tier}'s floor when the tier is unknown`);
+  assert.ok(!unknown.includes('at T1,'), 'an unknown tier is not read as T1');
+  assert.ok(authorizeFloorText(undefined).includes('T3: `acceptance`, `smoke`, `integration`, `security_lint`, `property`, `failure_recovery`'));
+  // The slice-30 section without a tier still states the rule, over every tier.
+  assert.match(deploymentChecksText({ environments: [] }).join('\n'), /alpha_authorize.*kind floor.*T1: `acceptance`, `smoke`; T2:/);
+});
