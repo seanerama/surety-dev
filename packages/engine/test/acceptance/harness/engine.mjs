@@ -12,6 +12,8 @@ import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { forgetHome, registerEngine, registerHome, teardownHome } from './teardown.mjs';
+
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
 
 // Through slice 3 the harness self-check pointed the tests at its witness
@@ -273,6 +275,8 @@ export function isRefusalBody(body) {
 export function spawnEngine({ home, harness = true, args = [], cli = CLI, env = {}, cwd = home }) {
   const argv = [cli, 'serve', ...(harness ? ['--harness'] : []), ...args];
   const child = spawn(process.execPath, argv, { env: { ...engineEnv(home), ...env }, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Registered for the fail-closed teardown (teardown.mjs; SEAM.md §367).
+  registerEngine(home, child);
   const out = { stdout: '', stderr: '' };
   child.stdout.on('data', (c) => (out.stdout += c));
   child.stderr.on('data', (c) => (out.stderr += c));
@@ -437,9 +441,13 @@ export async function engineFixture(t, { harness = true, config = {}, args = [],
   const port = await freePort();
   writeEngineConfig(home, { api_port: port, ...config });
   const engines = [];
+  registerHome(home, home);
   t.after(async () => {
     for (const e of engines) await e.kill();
+    // Whatever the test left of its home, by exact name, before the home goes (SEAM.md §367).
+    teardownHome(home, 'after');
     removeDir(home);
+    forgetHome(home);
   });
   const engine = await startEngine({ home, port, harness, args, until, authority });
   engines.push(engine);
