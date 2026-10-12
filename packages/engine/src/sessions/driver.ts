@@ -14,6 +14,7 @@ import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, listTree, treeOf } from '../git/repo.js';
 import { type MetadataBaseline, snapshotTree, validateDiff } from '../git/snapshot.js';
 import type { Launcher } from '../invoke/choke.js';
+import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
 import { type BundleArtifacts, type PlanCheckResult, checkPlan } from '../plan/check.js';
@@ -76,11 +77,31 @@ export class SessionDriver {
         this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: "the termination of the turn's domain could not be established; the turn is not settled" }, { afterExit: true });
         return;
       }
-      const reply = handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
+      // On the real boundary what the turn wrote is on its domain's volatile
+      // filesystem: it reaches the session's workspace now, through the
+      // secret screen, so that a save sees it (D2 §§2.3, 2.5; D6 §2.4); the
+      // hold is then dropped, before the next turn's domain is placed.
+      let materializeFailure: string | null = null;
+      const hold = handle.sandbox?.volatile ?? null;
+      if (handle.sandbox !== null && hold !== null && hold.held && handle.workspacePath !== null && !handle.materialized) {
+        const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+        const caps = { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
+        const m = materialize({ hold, home: this.rt.home, workspace: handle.workspacePath, caps });
+        if (m.state === 'refused') {
+          if (m.reason === 'secret') {
+            await this.rt.engine('evidence.secret_refused', { run, domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
+          }
+          materializeFailure = `what the turn wrote could not be taken into the workspace (${m.reason}): ${redactText(m.detail)}`;
+        } else handle.materialized = true;
+      }
+      handle.sandbox?.releaseVolatile();
+      const reply = materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
       const failure =
         reply !== null
           ? null
-          : handle.sessionReply === 'invalid'
+          : materializeFailure !== null
+            ? materializeFailure
+            : handle.sessionReply === 'invalid'
             ? "the role's result is not a turn's result (D6 B.7)"
             : handle.sessionReply === null
               ? 'the role exited without a result'

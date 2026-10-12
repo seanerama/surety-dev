@@ -1102,6 +1102,13 @@ export class Launcher {
     const collected = await this.collectOnce(handle);
     handle.collecting = false;
     if (handle.ending) return;
+    // A session turn ends in its settlement, its reply collected above (D6
+    // §2.1): the turn's file is never decided as a run's result.
+    if (claim.session) {
+      handle.exitedFirst = false;
+      this.childDone(handle);
+      return;
+    }
     const decided = await this.decideAfterExit(handle, cls, collected);
     // The exit's end is decided: from here a Stop, an Abandon or a deadline
     // takes its course as before (S1; SEAM.md §47).
@@ -1307,7 +1314,18 @@ export class Launcher {
     else if (result.state === 'absent') verdict = { outcome: 'missing', reason: null, bytes_read: 0 };
     else if (result.state === 'refused') verdict = { outcome: 'invalid', reason: REFUSAL_REASON[result.reason] ?? 'not_regular', bytes_read: 0 };
     else if (result.state === 'secret') verdict = { outcome: 'invalid', reason: 'secret_refused', bytes_read: null };
-    else {
+    else if (claim.session) {
+      // A session turn's file is a turn's reply (D6 B.7; SEAM.md §343), taken
+      // by the turn's settlement as on the kernel lane, never a run's result.
+      let reply: ReturnType<typeof parseSessionReply> = null;
+      try {
+        reply = parseSessionReply(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))));
+      } catch {
+        reply = null;
+      }
+      if (handle.sessionReply === null) handle.sessionReply = reply ?? 'invalid';
+      verdict = reply === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
+    } else {
       try {
         value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
       } catch {
