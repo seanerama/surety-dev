@@ -2223,3 +2223,13 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 9. **Q9 (a):** a project's first toolchain proposal stays its own approval (D3's unclassifiable `check_commands`), not folded into the architecture's.
 10. **Corrections K1 to K9 accepted as a block** (D6 §12.1).
 11. **D6 goes to Astra for cross-review** (milestone-level, as D1 to D4) before building; the M5 build spec and acceptance plan are drafted meanwhile.
+
+## E140. D6 draft 2's four numerics (decided by Sean, 2026-10-12)
+
+**Status: decided by Sean** (D6 decision sheet Part 1, as recommended).
+
+1. **N1:** per-profile memory maxima under the unchanged 8 GiB `domain_memory_max` ceiling: `role_memory_max` 4 GiB, `check_memory_max` 2 GiB; `memory.peak` recorded per domain so the defaults are revisited on measurements.
+2. **N2:** `max_concurrent_domains` default 4.
+3. **N3:** the retrofit real run adopts the repository the M4 real run's Builder wrote (one module, dependency-free Node).
+4. **N4:** `adoption_full_max_files` 2,000 (a recommendation on the adoption decision, never the choice).
+5. **D6 draft 2** (`586707a`) goes to Astra with `docs/reviews/D6/sdlc-design-D6-review-brief-astra.md`; the M5 build spec and acceptance plan are drafted meanwhile.
