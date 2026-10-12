@@ -227,7 +227,9 @@ function parseRequirements(lines: string[], findings: SemanticFinding[]): Semant
       const names = value.toLowerCase() === 'none' ? [] : list(value);
       if (names.length === 0 && value.toLowerCase() !== 'none') findings.push({ where: cur.key, code: 'areas_missing', why: `${cur.key}'s sensitive areas are empty: write none` });
       for (const a of names) if (!SENSITIVE_AREAS.includes(a)) findings.push({ where: cur.key, code: 'area_unknown', why: `${cur.key} names "${a}", which is not a sensitive area of the closed list` });
-      cur.sensitive_areas = names.filter((a) => SENSITIVE_AREAS.includes(a));
+      // An area outside the closed list stays in the representation, as
+      // written, beside the finding that blocks approval: never dropped.
+      cur.sensitive_areas = names;
       cur.seenStatement = true;
       continue;
     }
@@ -298,7 +300,7 @@ function parseModules(lines: string[] | undefined, findings: SemanticFinding[]):
     if (name === '') continue;
     const areas = c[2]!.toLowerCase() === 'none' ? [] : list(c[2]!);
     for (const a of areas) if (!SENSITIVE_AREAS.includes(a)) findings.push({ where: 'modules', code: 'area_unknown', why: `the module ${name} names "${a}", which is not a sensitive area of the closed list` });
-    out.push({ name, paths: list(c[1]!), sensitive_areas: areas.filter((a) => SENSITIVE_AREAS.includes(a)) });
+    out.push({ name, paths: list(c[1]!), sensitive_areas: areas });
   }
   return out;
 }

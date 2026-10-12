@@ -21,7 +21,7 @@ import type { BaselineFacts, BundleContent } from '../plan/bundle.js';
 import { type Finding, architectFindings, ideaFindings, specFindings } from '../plan/findings.js';
 import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE } from '../plan/schemas.js';
 import { writeWholeRecord } from '../records/files.js';
-import { redactText } from '../records/redact.js';
+import { redactText, redactValue } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
@@ -111,7 +111,9 @@ export class SessionDriver {
       else {
         const parsed = await this.parse(facts, made.sha);
         outcome.committed = { sha: made.sha, blobs: parsed.blobs };
-        outcome.findings = parsed.findings;
+        // What a finding quotes of a file is role text: through the
+        // redactor before the transcript and the notes keep it (D1 §14.2).
+        outcome.findings = parsed.findings.map((f) => ({ ...f, message: redactText(f.message), subject: redactValue(f.subject) as Record<string, unknown> }));
         outcome.products = parsed.products;
       }
     } catch (err) {
@@ -241,14 +243,26 @@ export class SessionDriver {
   async close(project: string, run: string, opts: { refuse: boolean; expectedGeneration?: number | null }): Promise<Record<string, unknown>> {
     const answer = await this.save(project, run, { expectedGeneration: opts.expectedGeneration ?? null });
     const saved = answer.saved ? { revision: answer.revision } : null;
-    const facts = await this.rt.engine<SaveFacts & { session_state: string }>('session.close_facts', { project, run });
+    // The close holds the generation its own save left (B01): a turn
+    // admitted since wins it, and the close is refused
+    // `session_generation_stale` rather than losing that turn.
+    const expectedGeneration = answer.idle_generation;
+    const facts = await this.rt.engine<SaveFacts & { session_state: string }>('session.close_facts', { project, run, expectedGeneration });
     let raise: Record<string, unknown> = { kind: 'none' };
     if (!opts.refuse) {
       if (facts.role === 'vision') raise = { kind: 'idea_accept' };
       else if (facts.role === 'spec_writer') raise = { kind: 'spec_approval' };
       else raise = await this.bundle(facts);
     }
-    const closed = await this.rt.engine<{ decisions: { id: string; kind: string; batch_key: string | null }[] }>('session.close', { project, run, raise });
+    let closed: { decisions: { id: string; kind: string; batch_key: string | null }[] };
+    try {
+      closed = await this.rt.engine('session.close', { project, run, raise, expectedGeneration });
+    } catch (err) {
+      // A bundle recorded for a close that lost its generation is stale,
+      // never a proposal awaiting a decision that was not raised.
+      if (raise.kind === 'bundle') await this.rt.engine('session.bundle_stale', { bundle: raise.bundle, reason: 'the close that recorded it was refused' }).catch((e) => log('bundle', e, { run }));
+      throw err;
+    }
     await this.ender.endRun(run, { outcome: 'completed', reason: 'none' });
     const summary = await this.rt.read<{ run: Record<string, unknown> }>('session.view', { project, run });
     return { run: summary.run, saved, decisions: closed.decisions.map((d) => ({ id: d.id, kind: d.kind, ...(d.batch_key ? { batch_key: d.batch_key } : {}) })) };

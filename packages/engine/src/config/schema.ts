@@ -285,7 +285,7 @@ export interface OptionSpec {
   type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths';
   default: unknown;
   values?: readonly string[];
-  widening: 'added' | 'coarser' | 'never';
+  widening: 'added' | 'coarser' | 'later' | 'never';
 }
 
 export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
@@ -305,9 +305,13 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   // D6 §6.5, K3 (E139 Q3): where the chaining boundary falls; `phase` by default.
-  autonomy: { type: 'enum', values: AUTONOMY_PROFILES, default: 'phase', widening: 'never' },
+  // Sean's decision (2026-10-12): loosening on an existing project (a value
+  // later in the list: step → stage → phase) widens what the engine does
+  // unasked, and is confirmed by the owner; tightening is free.
+  autonomy: { type: 'enum', values: AUTONOMY_PROFILES, default: 'phase', widening: 'later' },
   // D6 §6.8, K9 (E139 Q5): whether the engine requests Alpha at phase completion.
-  alpha_deploy: { type: 'enum', values: ALPHA_DEPLOY_POLICIES, default: 'manual', widening: 'never' },
+  // Sean's decision (2026-10-12): manual → on_phase_complete widens.
+  alpha_deploy: { type: 'enum', values: ALPHA_DEPLOY_POLICIES, default: 'manual', widening: 'later' },
   backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
 };
 

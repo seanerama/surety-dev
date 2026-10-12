@@ -19,7 +19,7 @@ import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.j
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import { engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
-import { resolveBackend } from '../store/transitions/trust.js';
+import { type Resolution, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
@@ -71,6 +71,25 @@ export interface SaveFinding {
 // (the contract names no session key in slice 31).
 export const TURN_MAX_BYTES = 65_536;
 
+// The backend a session of `role` runs on (D6 §2.6; D2 §4.1): the role's,
+// refused `backend_refused` for a real entry not qualified for sessions. No
+// entry is until slice 33's continuation canary, so only the scripted
+// backend runs a session in slice 31.
+export function sessionBackend(db: Tx['db'], args: { project: string; role: string; scripted: string | null }): Resolution {
+  const resolved = resolveBackend(db, args);
+  if (resolved.kind !== 'entry' || resolved.entry.session_qualified === 1) return resolved;
+  return {
+    kind: 'refused',
+    backend: resolved.backend,
+    version: resolved.version,
+    model: resolved.model,
+    code: 'backend_refused',
+    reason: `${resolved.backend}'s trust entry is not qualified for sessions (session_qualified is false): no continuation canary established it (D6 §2.6).`,
+    what_to_do: `Run the ${args.role} session on a backend qualified for sessions.`,
+    subject: { backend: resolved.backend, role: args.role, trust_entry: resolved.entry.id, session_qualified: false },
+  };
+}
+
 const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
 
 export function getSession(tx: Tx, project: string, run: string): SessionRow {
@@ -95,14 +114,30 @@ const generationStale = (run: SessionRow, expected: number) =>
 
 // ---- the transcript record (D6 §2.3; A.3; B01) ---------------------------------------------
 
-export function transcriptOf(db: Tx['db'], run: string): TranscriptEntry[] {
+// The entries so far: [] for a session with none yet, null when the record
+// cannot be read (unknown, never empty).
+export function transcriptOf(db: Tx['db'], run: string): TranscriptEntry[] | null {
   const row = db.prepare('SELECT "entries" FROM "session_transcripts" WHERE "run" = ?').get(run) as { entries: string } | undefined;
   if (!row) return [];
   try {
-    return JSON.parse(row.entries) as TranscriptEntry[];
+    const entries = JSON.parse(row.entries) as unknown;
+    return Array.isArray(entries) ? (entries as TranscriptEntry[]) : null;
   } catch {
-    return [];
+    return null;
   }
+}
+
+// What a turn's admission found of the transcript's last entry: the owner's
+// entry gets its record once the record is written (after the admission, so
+// a refused turn leaves no record behind).
+export function attachOwnerText(tx: Tx, args: { run: string; turn: number; record: string }): void {
+  const row = tx.db.prepare('SELECT "id", "entries" FROM "session_transcripts" WHERE "run" = ?').get(args.run) as { id: string; entries: string } | undefined;
+  if (!row) return;
+  const entries = JSON.parse(row.entries) as TranscriptEntry[];
+  const entry = entries.find((e) => e.turn === args.turn && e.speaker === 'owner' && e.text_ref === null);
+  if (!entry) return;
+  entry.text_ref = args.record;
+  tx.db.prepare('UPDATE "session_transcripts" SET "entries" = ? WHERE "id" = ?').run(JSON.stringify(entries), row.id);
 }
 
 // One entry appended by an engine transition only: the speaker and the turn
@@ -110,7 +145,10 @@ export function transcriptOf(db: Tx['db'], run: string): TranscriptEntry[] {
 // record the main thread wrote through the redactor before the transition.
 export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number; speaker: SpeakerKind; text: string; text_ref: string | null }): void {
   const existing = tx.db.prepare('SELECT "id", "entries" FROM "session_transcripts" WHERE "run" = ?').get(run.id) as { id: string; entries: string } | undefined;
-  const entries = existing ? (JSON.parse(existing.entries) as TranscriptEntry[]) : [];
+  const read = existing ? transcriptOf(tx.db, run.id) : [];
+  // An unreadable record is never overwritten as if empty.
+  if (read === null) throw illegal('appending to a session transcript that cannot be read', { run: run.id });
+  const entries = read;
   entries.push({ turn: entry.turn, speaker: entry.speaker, at: tx.at, text_ref: entry.text_ref, text: entry.text });
   if (existing) tx.db.prepare('UPDATE "session_transcripts" SET "entries" = ? WHERE "id" = ?').run(JSON.stringify(entries), existing.id);
   else {
@@ -141,7 +179,11 @@ export function openSession(tx: Tx, args: { project: string; role: unknown; mode
     });
   }
   const role = args.role as SessionRole;
-  const resolved = resolveBackend(tx.db, { project: p.id, role, scripted: args.scripted });
+  // The Architect works from an approved specification (D6 §3.3, §3.5).
+  if (role === 'architect' && !tx.db.prepare('SELECT 1 FROM "spec_revisions" WHERE "project" = ?').get(p.id)) {
+    throw illegal('an Architect session on a project with no approved specification', { project: p.id, role });
+  }
+  const resolved = sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   const repo = projectRepoRow(tx, p.id);
   const head = registryRow(tx, p.id, integrationRef(repo.integration_branch));
@@ -233,11 +275,34 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   }
   // Every next turn revalidates the backend and the cumulative budget (D6
   // §2.4; D1 §13.3).
-  const resolved = resolveBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
+  const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
   const exhausted = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true });
   if (exhausted.length > 0) {
     throw new Refusal(409, 'budget_exhausted', `Project ${run.project} has passed ${exhausted.join(', ')}; the session admits no further turn.`, 'Raise the limit or wait for the day to pass.', { run: run.id, limits: exhausted });
+  }
+  // The session's cumulative run budget (D6 §2.4; D1 §13.3): every earlier
+  // turn's billable tokens, an unknown remainder counted at its allowance;
+  // a turn whose usage is unknown with no allowance cannot be judged, and no
+  // turn is admitted on it (never read as zero).
+  const policyNow = projectPolicy(tx.db, run.project);
+  // (The scripted backend's invocation with nothing observed carries no
+  // allowance by D2's policy, as on any run: it is charged nothing.)
+  const rows = tx.db.prepare('SELECT "provider", "billable_in", "unknown_allowance_tokens" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL').all(run.id) as {
+    provider: string;
+    billable_in: number | null;
+    unknown_allowance_tokens: number | null;
+  }[];
+  if (rows.some((r) => r.provider !== 'scripted' && r.billable_in === null && r.unknown_allowance_tokens === null)) {
+    throw new Refusal(409, 'budget_exhausted', `Session ${run.id}'s spend so far cannot be judged: a turn's usage is unknown and no allowance was charged for it.`, 'Close the session; open another once the usage is known.', { run: run.id, limits: ['budget_usage_unknown'] });
+  }
+  const spent = rows.reduce((n, r) => n + (r.billable_in ?? 0) + (r.unknown_allowance_tokens ?? 0), 0);
+  if (spent >= policyNow.budget_run_billable_tokens!) {
+    throw new Refusal(409, 'budget_exhausted', `Session ${run.id} has spent ${spent} billable tokens, at or over budget_run_billable_tokens (${policyNow.budget_run_billable_tokens}); it admits no further turn.`, 'Close the session, or raise the limit.', {
+      run: run.id,
+      limits: ['budget_run_billable_tokens'],
+      spent,
+    });
   }
   const lease = tx.db.prepare(`SELECT "id", "generation", "closing" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { id: string; generation: number; closing: number } | undefined;
   if (!lease || lease.closing === 1) throw illegal('a turn on a session whose lease is closing or released', { run: run.id });
@@ -302,8 +367,32 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
   if (!d || d.status !== 'allocated') return null;
   const lease = tx.db.prepare(`SELECT "generation", "renewed_at" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { generation: number; renewed_at: string } | undefined;
   if (!lease) return null;
-  const resolved = resolveBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
-  if (resolved.kind === 'refused') return null;
+  const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
+  // Refused since the admission: the claim carries the refusal, and the
+  // launcher refuses the turn before any process (D2 §4.1).
+  if (resolved.kind === 'refused') {
+    return {
+      run: run.id,
+      project: run.project,
+      work_item: null,
+      work_kind: 'session',
+      role: run.role,
+      invocation: args.invocation,
+      domain: turn.domain,
+      generation: lease.generation,
+      deadline_at: run.deadline_at,
+      base_revision: run.base_revision,
+      lease_renewed_at: lease.renewed_at,
+      cgroup_path: d.cgroup_path,
+      profile: 'role',
+      backend: resolved.backend,
+      trust_entry: null,
+      entry: null,
+      attempt: null,
+      refusal: { code: resolved.code, reason: resolved.reason, what_to_do: resolved.what_to_do, subject: resolved.subject },
+      session: { turn: turn.number, role: run.role as SessionRole, idle_generation: run.idle_generation },
+    };
+  }
   const keyRef = credentialRef(resolved.backend, resolved.kind === 'entry' ? resolved.entry.auth_mode : 'api_key');
   return {
     run: run.id,
@@ -463,9 +552,10 @@ export function saveFacts(tx: Tx, run: SessionRow, roots: string[]): SaveFacts {
 }
 
 // What the close reads after its save: the session as it stands, no swap.
-export function closeFacts(tx: Tx, args: { project: string; run: string }): SaveFacts {
+export function closeFacts(tx: Tx, args: { project: string; run: string; expectedGeneration?: number | null }): SaveFacts {
   const run = getSession(tx, args.project, args.run);
   if (run.session_state !== 'open_idle' && run.session_state !== 'allocated') throw notIdle(run, 'a close');
+  if (args.expectedGeneration !== undefined && args.expectedGeneration !== null && args.expectedGeneration !== run.idle_generation) throw generationStale(run, args.expectedGeneration);
   const version = effectiveVersion(tx.db, run.project);
   return saveFacts(tx, run, version ? (JSON.parse(version.roots) as string[]) : ['.surety/checks/']);
 }
@@ -560,8 +650,10 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
   if (args.raise.kind === 'idea_accept' || args.raise.kind === 'spec_approval') {
     raised(raiseQuestion(tx, { project: run.project, kind: args.raise.kind, subjectType: 'run', subjectId: run.id }));
   } else if (args.raise.kind === 'bundle') {
-    const arch = raiseQuestion(tx, { project: run.project, kind: 'architecture_approval', subjectType: 'run', subjectId: run.id });
-    const plan = args.raise.withPlan ? raiseQuestion(tx, { project: run.project, kind: 'plan_approval', subjectType: 'run', subjectId: run.id }) : null;
+    // The bundle is each decision's identity scope (B02): what it binds is
+    // named, never found by the run.
+    const arch = raiseQuestion(tx, { project: run.project, kind: 'architecture_approval', subjectType: 'run', subjectId: run.id, scope: args.raise.bundle });
+    const plan = args.raise.withPlan ? raiseQuestion(tx, { project: run.project, kind: 'plan_approval', subjectType: 'run', subjectId: run.id, scope: args.raise.bundle }) : null;
     const ids = [arch?.id, plan?.id].filter((x): x is string => typeof x === 'string');
     if (ids.length > 0) tx.db.prepare(`UPDATE "decisions" SET "batch_key" = ? WHERE "id" IN (${ids.map(() => '?').join(', ')})`).run(args.raise.bundle, ...ids);
     tx.db.prepare('UPDATE "plan_bundles" SET "batch_key" = ? WHERE "id" = ?').run(args.raise.bundle, args.raise.bundle);
@@ -587,7 +679,19 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
   } catch {
     notes = null;
   }
-  const sum = (key: string) => ledger.reduce<number | null>((acc, l) => (typeof l[key] === 'number' ? (acc ?? 0) + (l[key] as number) : acc), null);
+  // The session's spend: unknown (null) as soon as one turn's usage is
+  // unknown or one figure is missing, never a partial sum read as the total.
+  const turnUnknown = turns.some((t) => t.settled_at !== null && t.usage_status !== 'recorded');
+  const known = !turnUnknown && ledger.every((l) => l.usage_complete === 1);
+  const sum = (key: string): number | null => {
+    if (!known) return null;
+    let total = 0;
+    for (const l of ledger) {
+      if (typeof l[key] !== 'number') return null;
+      total += l[key] as number;
+    }
+    return total;
+  };
   return {
     run: {
       id: run.id,
@@ -628,9 +732,10 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
         ledger_row: (byInvocation.get(t.invocation as string)?.id as string | undefined) ?? null,
       };
     }),
-    transcript: transcriptOf(db, runId).map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text, text_ref: e.text_ref })),
+    // null: the transcript record cannot be read (unknown, never empty).
+    transcript: transcriptOf(db, runId)?.map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text, text_ref: e.text_ref })) ?? null,
     findings: notes?.findings ?? [],
-    spend: { turns: ledger.length, billable_in: sum('billable_in'), cached_in: sum('cached_in'), out: sum('out'), cost_usd: sum('cost_usd'), rows: ledger },
+    spend: { turns: ledger.length, usage: known ? 'recorded' : 'unknown', billable_in: sum('billable_in'), cached_in: sum('cached_in'), out: sum('out'), cost_usd: sum('cost_usd'), rows: ledger },
   };
 }
 
@@ -681,7 +786,20 @@ export function sessionContextFacts(db: Tx['db'], run: string): import('./packag
     role: r.role,
     turn: r.turn_count,
     paths: SESSION_PATHS[r.role] ?? [],
-    transcript: transcriptOf(db, run).map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text })),
+    transcript: transcriptOf(db, run)?.map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text })) ?? null,
     findings: notes.findings ?? [],
+    approved: approvedInputs(db, r.project, r.role),
   };
+}
+
+function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { name: string; blob: string; what: string }[] {
+  if (role === 'architect') {
+    const spec = db.prepare('SELECT "version", "git_blob" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number; git_blob: string } | undefined;
+    return spec ? [{ name: 'spec.md', blob: spec.git_blob, what: `the approved specification, version ${spec.version}` }] : [];
+  }
+  if (role === 'spec_writer') {
+    const idea = db.prepare('SELECT "idea_version", "idea_blob" FROM "projects" WHERE "id" = ?').get(project) as { idea_version: number | null; idea_blob: string | null } | undefined;
+    return idea?.idea_blob ? [{ name: 'idea.md', blob: idea.idea_blob, what: `the accepted idea record, version ${idea.idea_version}` }] : [];
+  }
+  return [];
 }

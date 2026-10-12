@@ -50,7 +50,21 @@ export function recordSemantics(tx: Tx, args: { project: string; run: string | n
 }
 
 // The reason codes that block `approve` (D6 §3.4; A.6 `spec_semantics_invalid`).
-const BLOCKING_CODES = new Set(['index_invalid', 'index_missing', 'section_missing', 'no_criteria_no_mark', 'header_missing', 'header_invalid']);
+// Slice 31's depth (the driver's ruling on question 4): B.2's forms, the
+// index's agreement with section 4 (a requirement or a criterion in one and
+// not the other), criterion-or-mark, the closed areas and the tier.
+const BLOCKING_CODES = new Set([
+  'index_invalid',
+  'index_missing',
+  'section_missing',
+  'no_criteria_no_mark',
+  'header_missing',
+  'header_invalid',
+  'index_subsection_mismatch',
+  'criterion_mismatch',
+  'area_unknown',
+  'areas_missing',
+]);
 
 export function specBlockers(row: SemanticsRow | undefined): string[] {
   if (!row) return ['spec_not_saved'];

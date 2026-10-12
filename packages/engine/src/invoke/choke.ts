@@ -20,7 +20,7 @@ import { performance } from 'node:perf_hooks';
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
-import { repoContext } from '../git/exec.js';
+import { gitOk, repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
 import { ACCEPTED_KINDS } from '../runs/accept.js';
@@ -643,7 +643,10 @@ export class Launcher {
       if (claim.session) {
         const facts = await this.rt.read<SessionContextFacts | null>('session.context', { run: claim.run });
         if (facts === null) return;
-        writeSessionPackage(dir, claim, facts);
+        const texts = new Map<string, string | null>();
+        const repo = await this.rt.read<{ repo: string } | null>('project.repo', { project: claim.project });
+        for (const a of facts.approved) texts.set(a.blob, repo === null ? null : await gitOk(repoContext(repo.repo), ['cat-file', 'blob', a.blob]));
+        writeSessionPackage(dir, claim, facts, texts);
       } else {
         const facts = await this.rt.read<ContextFacts | null>('context.facts', { run: claim.run });
         const paths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));

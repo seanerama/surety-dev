@@ -65,9 +65,12 @@ export function getBundle(db: Db, id: string): BundleRow | undefined {
   return db.prepare('SELECT * FROM "plan_bundles" WHERE "id" = ?').get(id) as BundleRow | undefined;
 }
 
-// The bundle of a session's close (the decisions are about the run).
-export function bundleOfRun(db: Db, run: string): BundleRow | undefined {
-  return db.prepare(`SELECT * FROM "plan_bundles" WHERE "run" = ? AND "status" IN ('proposed', 'published', 'stale') ORDER BY "created_at" DESC LIMIT 1`).get(run) as BundleRow | undefined;
+// The bundle a decision binds: named by the decision's identity scope (and
+// its batch key), which the close sets to the bundle's id (B02), never
+// found by the run alone.
+export function bundleOfDecision(db: Db, d: { scope: string; batch_key?: string | null }): BundleRow | undefined {
+  const id = d.scope !== 'subject' ? d.scope : (d.batch_key ?? null);
+  return id === null ? undefined : getBundle(db, id);
 }
 
 // ---- the baseline a bundle is checked against (D6 §3.4, §5.3) --------------------------
@@ -230,8 +233,7 @@ export function recordBundle(tx: Tx, args: RecordBundleArgs): { bundle: string; 
 // What the approvals are bound to (D1 §4.6; contract/decisions.json): the
 // head as registered now (a save since the preview stales the answer), the
 // approved spec version, the bundle, its blobs and versions, the policy.
-export function bundleManifest(db: Db, run: string, kind: 'architecture_approval' | 'plan_approval'): Record<string, unknown> {
-  const b = bundleOfRun(db, run);
+export function bundleManifest(db: Db, run: string, b: BundleRow | undefined, kind: 'architecture_approval' | 'plan_approval'): Record<string, unknown> {
   const runRow = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(run) as { project: string } | undefined;
   const project = runRow?.project ?? b?.project ?? null;
   const head = project === null ? null : (headOf(db, project) ?? null);
@@ -249,9 +251,9 @@ function headOf(db: Db, project: string): string | undefined {
 
 // One approval of the pair consumed (D6 §3.4): recorded on the bundle; the
 // last one publishes. A `reject` on either refuses the bundle.
-export function approveBundlePart(tx: Tx, args: { run: string; kind: 'architecture_approval' | 'plan_approval'; decision: string; option: 'approve' | 'reject' }): { published: boolean; plan: string | null; bundle: string } {
-  const b = bundleOfRun(tx.db, args.run);
-  if (!b) throw notFound('plan_bundle', args.run);
+export function approveBundlePart(tx: Tx, args: { bundle: string; kind: 'architecture_approval' | 'plan_approval'; decision: string; option: 'approve' | 'reject' }): { published: boolean; plan: string | null; bundle: string } {
+  const b = getBundle(tx.db, args.bundle);
+  if (!b) throw notFound('plan_bundle', args.bundle);
   if (b.status !== 'proposed') throw illegal(`answering an approval of a ${b.status} bundle`, { plan_bundle: b.id });
   const approvals = JSON.parse(b.approvals) as Record<string, string>;
   if (args.option === 'reject') {
@@ -278,6 +280,8 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
   if (!b) throw notFound('plan_bundle', args.bundle);
   if (b.status === 'published') throw illegal('publishing a bundle twice', { plan_bundle: b.id });
   if (b.status !== 'proposed') throw illegal(`publishing a ${b.status} bundle`, { plan_bundle: b.id });
+  // An architecture is published only on an approved specification (D6 §3.3).
+  if (b.spec_revision === null) throw illegal('publishing an architecture with no approved specification', { plan_bundle: b.id });
   const p = projectRepoRow(tx, b.project);
   const head = registryRow(tx, b.project, integrationRef(p.integration_branch));
   const stale = (why: string): never => {

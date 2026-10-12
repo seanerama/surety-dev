@@ -6787,7 +6787,7 @@
           "stage",
           "phase"
         ],
-        "widening": "never"
+        "widening": "later"
       },
       "alpha_deploy": {
         "default": "manual",
@@ -6796,7 +6796,7 @@
           "manual",
           "on_phase_complete"
         ],
-        "widening": "never"
+        "widening": "later"
       },
       "backend_mode": {
         "default": "one_shot_headless",

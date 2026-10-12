@@ -23,7 +23,6 @@ import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { redactText } from '../records/redact.js';
-import { TURN_MAX_BYTES } from '../sessions/session.js';
 import type { RecordRow } from '../store/transitions/records.js';
 import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
@@ -555,16 +554,32 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (rest[2] === 'turns') {
           return {
             kind: 'prepared',
-            name: 'session.turn',
+            name: 'session.reply',
             prepare: async (b) => {
               await exists();
               const body = onlyFields(b, ['text', 'expected_generation']);
               if (typeof body.text !== 'string' || body.text === '') throw new Refusal(400, 'invalid_value', '"text" must be a non-empty string.', 'Send what you say to the role.', { field: 'text' });
               const expectedGeneration = generation(body);
-              // The owner's entry, written through the redactor before the
-              // admission's transaction names it (D6 §2.2, §2.3).
-              const textRecord = Buffer.byteLength(body.text, 'utf8') > TURN_MAX_BYTES ? null : await writeWholeRecord(runtime(), { project, run, kind: 'session_transcript', content: Buffer.from(body.text) });
-              return { project, run, text: redactText(body.text), textRecord, expectedGeneration, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null, scope: runtime().boundary() === 'real' ? (runtime().scope?.path ?? null) : null };
+              // The admission first (D6 §2.2): the owner's entry, verbatim
+              // and redacted, and the session `turn_running`, in one
+              // transaction; then the entry's record, so a refused turn
+              // leaves none. The scheduler dispatches the turn at the tick
+              // this answer asks for.
+              const admitted = await runtime().engine<{ run: string; turn: number }>('session.admit_turn', {
+                project,
+                run,
+                text: redactText(body.text),
+                textRecord: null,
+                expectedGeneration,
+                scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null,
+                scope: runtime().boundary() === 'real' ? (runtime().scope?.path ?? null) : null,
+              });
+              const record = await writeWholeRecord(runtime(), { project, run, kind: 'session_transcript', content: Buffer.from(body.text) }).catch((err) => {
+                log('turn record', err, { run });
+                return null;
+              });
+              if (record !== null) await runtime().engine('session.attach_text', { run, turn: admitted.turn, record }).catch((err) => log('turn record', err, { run }));
+              return { status: 202, body: admitted, tick: true };
             },
           };
         }

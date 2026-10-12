@@ -17,8 +17,13 @@ export interface SessionContextFacts {
   role: string;
   turn: number;
   paths: readonly string[];
-  transcript: { turn: number; speaker: string; at: string; text: string }[];
+  // null: the transcript record cannot be read; the package says so.
+  transcript: { turn: number; speaker: string; at: string; text: string }[] | null;
   findings: { code: string; path: string | null; subject: Record<string, unknown>; message: string }[];
+  // The approved inputs the role reads by their bindings (D6 §3.5; B02): the
+  // Spec Writer the accepted idea record, the Architect the approved
+  // specification; never a newer checkpoint of the same file.
+  approved: { name: string; blob: string; what: string }[];
 }
 
 const TASK: Record<string, string> = {
@@ -46,7 +51,9 @@ export const TURN_RESULT_SCHEMA = {
   additionalProperties: false,
 };
 
-export function writeSessionPackage(dir: string, claim: Claim, facts: SessionContextFacts): void {
+// `texts`: each approved input's text by blob, read from git by the caller;
+// a blob that could not be read is said to be unknown in the package.
+export function writeSessionPackage(dir: string, claim: Claim, facts: SessionContextFacts, texts: Map<string, string | null> = new Map()): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: string; source: string | null; sha256: string }[] = [];
   const put = (path: string, kind: string, content: string) => {
@@ -54,7 +61,7 @@ export function writeSessionPackage(dir: string, claim: Claim, facts: SessionCon
     writeFileSync(join(dir, path), content);
     files.push({ path, kind, source: null, sha256: createHash('sha256').update(content).digest('hex') });
   };
-  const last = facts.transcript.filter((e) => e.speaker === 'owner').at(-1);
+  const last = facts.transcript === null ? undefined : facts.transcript.filter((e) => e.speaker === 'owner').at(-1);
   put(
     'prompt.md',
     'prompt',
@@ -67,9 +74,10 @@ export function writeSessionPackage(dir: string, claim: Claim, facts: SessionCon
       '',
       '## The owner says',
       '',
-      last?.text ?? '(nothing yet)',
+      facts.transcript === null ? "(the session's transcript cannot be read: what the owner said is unknown)" : (last?.text ?? '(nothing yet)'),
       '',
       ...(facts.findings.length > 0 ? ['## What the engine found at the last save', '', ...facts.findings.map((f) => `- ${f.code}${f.path ? ` (${f.path})` : ''}: ${f.message}`), ''] : []),
+      ...(facts.approved.length > 0 ? [`The approved inputs you work from are in approved/: ${facts.approved.map((a) => `${a.name} (${a.what})`).join(', ')}. The checkout may hold a newer draft; these are what was approved.`, ''] : []),
       'The whole conversation so far is in transcript.json. Read instructions.md first.',
       '',
     ].join('\n'),
@@ -87,8 +95,12 @@ export function writeSessionPackage(dir: string, claim: Claim, facts: SessionCon
       '',
     ].join('\n'),
   );
-  put('transcript.json', 'transcript', `${JSON.stringify(facts.transcript, null, 2)}\n`);
+  put('transcript.json', 'transcript', `${JSON.stringify(facts.transcript === null ? { unknown: 'the transcript record cannot be read' } : facts.transcript, null, 2)}\n`);
   put('notes.json', 'instructions', `${JSON.stringify({ findings: facts.findings }, null, 2)}\n`);
+  for (const a of facts.approved) {
+    const text = texts.get(a.blob) ?? null;
+    put(`approved/${a.name}`, 'approved', text ?? `The ${a.what} (blob ${a.blob}) could not be read; it is unknown to this package.\n`);
+  }
   put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files }, null, 2)}\n`);
 }

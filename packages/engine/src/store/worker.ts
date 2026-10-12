@@ -168,6 +168,7 @@ import { contextFacts, mountContext, recordPaths, runCheckKeys } from './reads.j
 import { reconcileRepairs } from './transitions/repair.js';
 import {
   admitTurn,
+  attachOwnerText,
   beginSave,
   closeFacts,
   closeSession,
@@ -306,8 +307,7 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
   'session.open': (tx, a) => ({ status: 201, body: openSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
-  'session.turn': (tx, a) => ({ status: 202, body: admitTurn(tx, { ...a, incarnation: engineSettings().incarnation! }), effects: [{ kind: 'tick' }] }),
-  'session.reply': (_tx, a: { status: number; body: unknown }) => ({ status: a.status, body: a.body }),
+  'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
 };
 
 // The checks a round requires (D4 §5.3): the `alpha_complete` scope's.
@@ -633,11 +633,17 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // the save's swap, checkpoint and finish, the close.
   'session.turn_claim': (tx, a) => turnClaim(tx, a),
   'session.settle': (tx, a) => settleTurn(tx, a),
+  // A turn's admission (D6 §2.2): the owner's entry and the session
+  // `turn_running`, in one transaction; its record is attached after.
+  'session.admit_turn': (tx, a) => admitTurn(tx, { ...a, incarnation: engineSettings().incarnation! }),
+  'session.attach_text': (tx, a) => attachOwnerText(tx, a),
   'session.begin_save': (tx, a) => beginSave(tx, a),
   'session.intend_checkpoint': (tx, a) => intendCheckpointIntegration(tx, a),
   'session.finish_save': (tx, a) => finishSave(tx, a),
   'session.close_facts': (tx, a) => closeFacts(tx, a),
   'session.record_bundle': (tx, a) => recordBundle(tx, a),
+  'session.bundle_stale': (tx, a: { bundle: string; reason: string }) =>
+    tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'stale', "stale_reason" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(a.reason, a.bundle).changes,
   'session.close': (tx, a) => {
     const made = closeSession(tx, a);
     return { decisions: made.decisions };

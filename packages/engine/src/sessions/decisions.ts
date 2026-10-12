@@ -7,10 +7,11 @@
 // its effect in the answer's own transaction (no effect intent). No role
 // answers any of them (E12): the route is the owner's.
 
+import { Refusal } from '../refusal.js';
 import { type KindSpec, type Subject, consumed, recordApproval } from '../store/transitions/queue.js';
 import { consumeDecision } from '../store/transitions/decisions.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { approveBundlePart, bundleManifest, bundleOfRun } from '../plan/bundle.js';
+import { approveBundlePart, bundleManifest, bundleOfDecision } from '../plan/bundle.js';
 import { approveSpec, latestSemantics, specBlockers } from '../spec/approval.js';
 import { integrationRef } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
@@ -150,10 +151,10 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
   const what = kind === 'architecture_approval' ? 'the architecture, module map and ADRs' : 'the phase plan';
   return {
     preview(tx, d: Subject) {
-      const b = bundleOfRun(tx.db, d.subject_id);
+      const b = bundleOfDecision(tx.db, d);
       if (!b || b.status !== 'proposed') return null;
       if (kind === 'plan_approval' && b.phase_number === null) return null;
-      const manifest = bundleManifest(tx.db, d.subject_id, kind);
+      const manifest = bundleManifest(tx.db, d.subject_id, b, kind);
       const check = b.plan_check ? (tx.db.prepare('SELECT "outcome", "conformance" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { outcome: string; conformance: string } | undefined) : undefined;
       return {
         manifest,
@@ -175,11 +176,13 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
         evidence: evidenceOf(JSON.parse(b.blobs) as Record<string, string>),
       };
     },
-    manifest: (tx, d) => bundleManifest(tx.db, d.subject_id, kind),
+    manifest: (tx, d) => bundleManifest(tx.db, d.subject_id, bundleOfDecision(tx.db, d), kind),
     reraise: false,
     answer(tx, d, option, note) {
       consumeDecision(tx, d, option, note);
-      const made = approveBundlePart(tx, { run: d.subject_id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
+      const b = bundleOfDecision(tx.db, d);
+      if (!b) throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} names no bundle.`, 'Read the current decisions about the session.', { decision: d.id });
+      const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
       if (option === 'approve') recordApproval(tx, d, { consequence: made.published ? `bundle ${made.bundle} published${made.plan ? ` as plan ${made.plan}` : ''}` : `bundle ${made.bundle} approved in part (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
       // The answer launches nothing (D1 §10.5): what the publication made
       // eligible is dispatched by the next tick.
