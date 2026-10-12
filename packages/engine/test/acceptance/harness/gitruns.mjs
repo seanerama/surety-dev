@@ -85,7 +85,13 @@ export const writePlan = (phase, stages) => step.write(planPath(phase), planText
 export async function addStagedProject(fx, { tier = 'T2', stages = 1, autonomy } = {}) {
   const project = await addGitProject(fx, { tier });
   // M5 slice 31 (K3; SEAM.md §348): a case that waits at the chain boundary pins `autonomy: 'step'`.
-  if (autonomy !== undefined) await changePolicy(fx.engine, project.id, { autonomy });
+  if (autonomy !== undefined) {
+    await changePolicy(fx.engine, project.id, { autonomy });
+    // The policy change commits `.surety/policy.json` on the integration
+    // branch, so the base the cases compare with is the head after it
+    // (objection 061; SEAM.md §361).
+    project.base = refOid(project.repo.path, project.repo.ref);
+  }
   const res = await fx.engine.post('/v1/harness/fixtures/plan', { project: project.id, stages: Array.from({ length: stages }, (unused, i) => ({ number: i + 1, goal: `stage ${i + 1} of the fixture plan` })) });
   assert.equal(res.status, 201, `plan fixture (body: ${res.text})`);
   return { project, plan: res.body, items: res.body.stages.map((stage) => stage.work_item) };

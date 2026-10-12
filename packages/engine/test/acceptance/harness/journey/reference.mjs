@@ -413,6 +413,10 @@ export const BAD_ARCHITECTURE = Object.freeze({
   },
   area_moved: {
     files: { '.surety/architecture/modules.json': { ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => ({ ...m, sensitive_areas: m.name === 'lib' ? ['secrets_credentials'] : [] })) } },
+    // Phase 1's stages with the moved area validated where it now sits: stage
+    // 1 touches `lib` (D6 §5.3 item 4, PLAN_AREA_UNVALIDATED; objection 059),
+    // with the floor's kind its scope will need (D3 §4.4).
+    stages: STAGES[1].map((s) => (s.modules.includes('lib') ? { ...s, validation: { ...s.validation, kinds: [...s.validation.kinds, 'sensitivity_floor'], sensitive_areas: ['secrets_credentials'] } } : s)),
   },
   unknown_field: { files: { '.surety/roadmap/roadmap.json': { ...ROADMAP_JSON, owner: 'Sean' } }, names: 'owner' },
   requirement_twice: { files: { '.surety/roadmap/roadmap.json': { ...ROADMAP_JSON, phases: ROADMAP_JSON.phases.map((p) => (p.number === 2 ? { ...p, requirement_ids: ['R1', 'R3', 'R4'] } : p)) } }, names: 'R1' },
