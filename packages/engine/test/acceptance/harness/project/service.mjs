@@ -40,6 +40,7 @@ import { dirname, join } from 'node:path';
 
 import { roleThat, runToEnd, step, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy } from '../journal.mjs';
+import { refOid } from '../repos.mjs';
 import { sandboxEngine } from '../sandbox/lane.mjs';
 import { withStore } from '../store.mjs';
 import { definitionText, executionsOf, governedText, installIndexedPlan, nodeReadPaths, qualifyRunnerByFixture, checkProject, waitRecorded } from '../checks/fixtures.mjs';
@@ -184,7 +185,10 @@ export async function referenceDeployable(t, guard, { service = SERVER, behaviou
   assert.equal(qualification?.qualified, true, `the adapter is qualified by command (${JSON.stringify(qualification).slice(0, 400)})`);
 
   const p = await checkProject(fx, { files: serviceProjectFiles({ behaviour }), tier: 'T1' });
-  if (Object.keys(policy).length > 0) await changePolicy(fx.engine, p.id, policy);
+  // M5 (D6 C.2, K3; SEAM.md §§348, 366): the M4 fixture runs under `autonomy: step`, the M1-M4 profile,
+  // pinned with its other keys in one change before the plan exists; the base re-read after it.
+  await changePolicy(fx.engine, p.id, { autonomy: 'step', ...policy });
+  p.base = refOid(p.repo.path, p.repo.ref);
   const plan = await installIndexedPlan(fx.engine, p.id, { index: [REQUIREMENT], stages: [{ number: 1, goal: 'the reference service', implements: ['R1'] }] });
   const [stage] = plan.stages;
   fx.scripted.script(stage.work_item, [roleThat(builderSteps({ service }), { nominate: true })]);

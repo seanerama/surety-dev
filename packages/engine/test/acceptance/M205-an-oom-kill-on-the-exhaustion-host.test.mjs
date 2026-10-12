@@ -30,6 +30,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { pinStep } from './harness/gitruns.mjs';
 import { stageGate } from './harness/gates.mjs';
 import { CAPS, assertDomainCaps } from './harness/sandbox/limits.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
@@ -65,7 +66,7 @@ describe('M205 (g) an OOM kill (exhaustion lane)', () => {
       [GOVERNED_FILE]: sandboxGoverned(prog),
       [defPath('oom')]: smoke('oom', { command: ['probe', ...holdArgs(prog, 'oom'), ...guardArgs(), 'alloc', String(CAPS.memory_max)], gates: ['stage'], timeout: 120 }),
     };
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     const { stage, candidate } = await buildStage(fx, project);
 
     const held = await heldExecution(fx, project.id, candidate.id, { oom: 'oom' });

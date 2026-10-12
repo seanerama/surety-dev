@@ -113,7 +113,8 @@ async function realBuilderProject(t, { sha256 } = {}) {
   const standIn = new StandIn(join(fx.root, 'standin'), { logDir: fx.scripted.dir });
   const project = (await addGitProject(fx)).id;
   await holdSecret(fx.engine, apiKeyRef(BACKENDS.claude), KEY);
-  await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: PARK_ON_REFUSAL });
+  // M5 (D6 C.2, K3; SEAM.md §366): the M2 profile, `autonomy: step`, in the same change.
+  await useBackend(fx.engine, project, BACKENDS.claude, { roles: ['builder'], extra: { ...PARK_ON_REFUSAL, autonomy: 'step' } });
   const entry = await installTrustEntry(fx.engine, standIn, { status: 'active', ...(sha256 === undefined ? {} : { binary: { path: standIn.path, sha256 } }) });
   return { fx, standIn, project, entry };
 }
@@ -216,6 +217,7 @@ describe('M125 what is handed over', () => {
   test("(c) the context package, fresh and resumed, with a raw report on the trigger: read-only, holding what the work item binds as its manifest lists, the approved texts of the bound requirement, ADR and constraint and nothing unbound (E67 item 7); the resumed run's rebuilt from the prior run's records; never the raw report", async (t) => {
     const fx = await sandboxEngine(t);
     const project = (await addGitProject(fx)).id;
+    await changePolicy(fx.engine, project, { autonomy: 'step' }); // M5 (D6 C.2; SEAM.md §366): the M2 profile, before the plan
 
     // Fresh, a stage's work binding a requirement, an ADR and the project's
     // constraint, with a requirement and an ADR beside them that it does
@@ -501,6 +503,7 @@ describe('M125 what is handed over', () => {
     fx.scripted.defaultScript({ steps: [step.result({ status: 'completed', summary: 'scripted role finished' })] });
     const repo = makeProjectRepo(join(fx.root, 'repo'), { files: PROTECTED_FILES });
     const { id: project } = await createProject(fx.engine, { repoPath: repo.path, name: 'required-by-the-scope', tier: 'T1' });
+    await changePolicy(fx.engine, project, { autonomy: 'step' }); // M5 (D6 C.2; SEAM.md §366): the M2 profile, before the plan
     const plan = await installGatedPlan(fx.engine, project, {
       requirements: ['R1'],
       modules: [{ name: 'core', paths: ['src/'], tier_override: 'T3' }],
@@ -540,7 +543,7 @@ describe('M125 what is handed over', () => {
   test("(i) E106: a first candidate's Reviewer is told which commits of its diff's range are the engine's or the owner's (the bootstrap, a policy revision), and not the Builder's commits, a Builder commit whose message carries `Surety-Project: <project>` included", async (t) => {
     const fx = await sandboxEngine(t);
     const { id: project, repo } = await addGitProject(fx, { via: 'api', tier: 'T1' });
-    await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
+    await changePolicy(fx.engine, project, { repair_attempts_max: 0, autonomy: 'step' }); // one revision (M5: the M2 profile; SEAM.md §366)
     // A Builder's plain commit: the stage, integrated, not nominated (T1, no request).
     const stage = await addItem(fx, project, 'stage_build', { goal: 'the first stage' });
     fx.scripted.script(stage, [roleThat([permittedEdit()])]);
@@ -601,7 +604,7 @@ describe('M125 what is handed over', () => {
     const fx = await sandboxEngine(t, { start: false });
     await fx.start({ args: ['--harness-clock-offset', '3600'] });
     const { id: project, repo } = await addGitProject(fx, { via: 'api', tier: 'T1' });
-    await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
+    await changePolicy(fx.engine, project, { repair_attempts_max: 0, autonomy: 'step' }); // one revision (M5: the M2 profile; SEAM.md §366)
     await fx.engine.stop();
     await fx.start();
     const stage = await addItem(fx, project, 'stage_build', { goal: 'the first stage' });

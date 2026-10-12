@@ -40,7 +40,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { decisionsOn } from './harness/decisions.mjs';
 import { effectiveVersion, sharedFixture, stageGate } from './harness/gates.mjs';
-import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { refOid } from './harness/repos.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
@@ -79,7 +79,7 @@ const shown = (c) => `exit ${c.row.exit_status}, state ${c.state}; output: ${JSO
 async function journey(t) {
   const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2 } });
   await qualifyRunnerByFixture(fx.engine);
-  const project = await checkProject(fx, { files: m238Project(), tier: 'T1' });
+  const project = await pinStep(fx, await checkProject(fx, { files: m238Project(), tier: 'T1' }));
   // Every mutant's candidate fails a required check while its item is verifying; this row is about
   // the checks, not the repair (D3 §2.10; objection 030): at repair_attempts_max 0, set before the
   // build, no item is sent back and every candidate holds the commit its Builder made.

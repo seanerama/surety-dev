@@ -76,7 +76,7 @@ describe('M101 no entry, no dispatch', () => {
     assert.ok(!(await fx.engine.engineInfo()).backends.includes(BACKENDS.claude), 'a backend with no active entry is not among the backends the engine would dispatch to');
   });
 
-  test('(d) session mode is refused backend_refused beside an active one-shot entry, with no fallback to one-shot; the session routes stay 501; a session-mode entry can never be active', async (t) => {
+  test('(d) session mode is refused backend_refused beside an active one-shot entry, with no fallback to one-shot; the session routes refuse as in the narrowed M08 case (D6 K6); a session-mode entry can never be active', async (t) => {
     const { fx, standIn, project } = await realBackendProject(t, { policy: PARK_ON_REFUSAL });
     const active = await installTrustEntry(fx.engine, standIn, { status: 'active' });
     assert.equal(trustEntry(fx.home, active.id)?.status, 'active', 'the fixture is live: an active one-shot entry exists');
@@ -84,10 +84,12 @@ describe('M101 no entry, no dispatch', () => {
 
     await assertDispatchRefused(fx, standIn, project, '(d) session mode');
 
-    // M08's refusal of the session routes is unchanged.
-    for (const path of [`/v1/projects/${project}/sessions`, `/v1/projects/${project}/sessions/run_00000000000000000000000000/turns`]) {
-      assertRefused(await fx.engine.post(path, {}), 501, 'unsupported', `POST ${path}`);
-    }
+    // The session routes, lifted in M5 (D6 K6; SEAM.md §§344, 366), refuse as M08's narrowed case
+    // does: no role is invalid_value, a run that is not the project's session is not_found.
+    const opened = await fx.engine.post(`/v1/projects/${project}/sessions`, {});
+    assertRefused(opened, 400, 'invalid_value', 'POST …/sessions with no role');
+    assert.equal(opened.body?.subject?.field, 'role');
+    assertRefused(await fx.engine.post(`/v1/projects/${project}/sessions/run_00000000000000000000000000/turns`, { text: 'hello' }), 404, 'not_found', 'POST …/turns for no such session');
 
     // A session_headless entry can never be active: the fixture refuses to
     // install one, and the store refuses to make a proposed one active.

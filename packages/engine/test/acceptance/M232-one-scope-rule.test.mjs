@@ -65,7 +65,7 @@ async function redefineModules(fx, project, modules) {
 async function signedOff(t, { tier = 'T2', defs = {}, files, index = [{ key: 'R1', criteria: ['R1.1'] }], modules = [{ name: 'core', paths: ['src/'] }], signoffs = [{ scope: 'candidate' }], alpha = false } = {}) {
   const fx = await scriptedEngine(t);
   const all = { ...inventoryDefs(tier, ['R1.1']), ...defs };
-  const p = await scopeProject(fx, { tier, defs: all, files, index, modules, stages: [{ number: 1, goal: 'R1, in core', implements: ['R1'], modules: ['core'] }] });
+  const p = await scopeProject(fx, { policy: { autonomy: 'step' }, tier, defs: all, files, index, modules, stages: [{ number: 1, goal: 'R1, in core', implements: ['R1'], modules: ['core'] }] });
   await buildStages(fx, p);
   const [c] = await tickUntil(fx.engine, p.id, () => {
     const found = candidatesOfProject(fx.home, p.id);

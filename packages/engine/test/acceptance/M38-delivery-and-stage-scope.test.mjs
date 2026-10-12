@@ -38,6 +38,7 @@ const [A, B, C, D, Z] = ['R1', 'R2', 'R3', 'R4', 'R5'];
 async function history(t) {
   const fx = await scriptedEngine(t);
   const ctx = await nominated(fx, {
+    autonomy: 'step',
     requirements: [A, B, C, D, Z],
     stages: [
       { number: 1, goal: 'the first stage', implements: [A, B, D] },

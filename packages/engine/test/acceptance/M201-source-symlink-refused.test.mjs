@@ -33,7 +33,7 @@ import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
 import { installGatedPlan } from './harness/gates.mjs';
-import { permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { permittedEdit, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { gitQuiet, refOid } from './harness/repos.mjs';
 import { answerDecision, tick } from './harness/runs.mjs';
 import { eventsOfType, outOfBand } from './harness/journal.mjs';
@@ -96,7 +96,7 @@ describe('M201 a symlink ancestor of an input in the source refuses the mount pl
       [EXPECT]: 'the protected input\n',
       [defPath('smoke')]: smoke('smoke', { command: ['probe', '--report', 'exit', '0'], inputs: [EXPECT], gates: ['stage'], timeout: 300 }),
     };
-    const project = await checkProject(fx, { files, tier: 'T1' });
+    const project = await pinStep(fx, await checkProject(fx, { files, tier: 'T1' }));
     await qualifyRunnerByFixture(fx.engine);
     const plan = await installGatedPlan(fx.engine, project.id, { requirements: [], stages: [{ number: 1, goal: 'the first stage', implements: [] }] });
 

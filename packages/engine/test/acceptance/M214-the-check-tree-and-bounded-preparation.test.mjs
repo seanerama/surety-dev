@@ -46,7 +46,7 @@ import { describe, test } from 'node:test';
 
 import { releaseBarrier, sha256Hex } from './harness/engine.mjs';
 import { reachBarrier } from './harness/decisions.mjs';
-import { addGitProject, addItem, roleThat, waitForCandidates } from './harness/gitruns.mjs';
+import { addGitProject, addItem, pinStep, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { armBarrier, changePolicy } from './harness/journal.mjs';
 import { evidenceProgram, gitQuiet, holdGit, plantAllHooks, plantFilter, readEvidence } from './harness/repos.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
@@ -122,7 +122,7 @@ describe('M214 the check tree and bounded preparation', () => {
     for (const label of ['first', 'second']) {
       const governed = sandboxGoverned(prog);
       const files = { [GOVERNED_FILE]: governed, [DATA]: `${label} project's data\n`, [INPUT]: `${label} project's expectation\n`, [defPath('reads')]: readerOf('reads', prog) };
-      const project = await checkProject(fx, { files, plant: label === 'first' ? plant : undefined });
+      const project = await pinStep(fx, await checkProject(fx, { files, plant: label === 'first' ? plant : undefined }));
       const { candidate } = await buildStage(fx, project);
       const held = await heldExecution(fx, project.id, candidate.id, { reads: 'reads' });
       const entries = checktreeEntries(fx.home);
@@ -151,7 +151,7 @@ describe('M214 the check tree and bounded preparation', () => {
     await qualifyRunnerByFixture(fx.engine);
     const DATA_1 = 'the first candidate\'s unique source\n';
     const files = { [GOVERNED_FILE]: sandboxGoverned(prog), [DATA]: DATA_1, [INPUT]: 'the shared expectation, unique too\n', [defPath('one')]: writerOf('one', prog), [defPath('two')]: writerOf('two', prog) };
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     await changePolicy(fx.engine, project.id, { max_concurrent_checks: 2 });
     const { candidate } = await buildStage(fx, project);
 
@@ -189,13 +189,13 @@ describe('M214 the check tree and bounded preparation', () => {
 
     // (c), (d) entries: 1001 zero-byte files, the first tree of this engine.
     const many = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`bulk/e${String(i).padStart(4, '0')}`, '']));
-    const entries = await checkProject(fx, { files: { ...base('the entries project'), ...many } });
+    const entries = await pinStep(fx, await checkProject(fx, { files: { ...base('the entries project'), ...many } }));
     const e = await buildStage(fx, entries);
     assertNotRunMaterialization(fx, await terminalExecution(fx, entries.id, e.candidate.id, 'reads'), 'more entries than checktree_max_entries');
     assert.deepEqual(checktreeFiles(fx.home).map((f) => f.path), [], 'host-read: no file of the refused tree is left, or visible, under checktrees/');
 
     // (c) bytes per tree: one file a byte over 64 MiB.
-    const big = await checkProject(fx, { files: { ...base('the bytes project'), 'bin/big.bin': Buffer.alloc(64 * MiB + 1) } });
+    const big = await pinStep(fx, await checkProject(fx, { files: { ...base('the bytes project'), 'bin/big.bin': Buffer.alloc(64 * MiB + 1) } }));
     const b = await buildStage(fx, big);
     assertNotRunMaterialization(fx, await terminalExecution(fx, big.id, b.candidate.id, 'reads'), 'more bytes than checktree_max_bytes');
     assert.deepEqual(filesHolding(checktreeFiles(fx.home), 'the bytes project\n').map((f) => f.path), [], 'host-read: nothing of the refused tree is left');
@@ -207,7 +207,7 @@ describe('M214 the check tree and bounded preparation', () => {
     const role = await roleHolding(fx, other.id, otherItem);
 
     // (c) a git that does not answer, reached at the materialization.
-    const stalled = await checkProject(fx, { files: base('the stalled project') });
+    const stalled = await pinStep(fx, await checkProject(fx, { files: base('the stalled project') }));
     await armBarrier(fx.engine, 'checks.before_materialize', 'pause');
     const s = await buildStage(fx, stalled);
     await reachBarrier(fx, stalled.id, 'checks.before_materialize');
@@ -244,12 +244,12 @@ describe('M214 the check tree and bounded preparation', () => {
     await qualifyRunnerByFixture(fx.engine);
     const payload = (label) => Buffer.alloc(60 * 1024, label);
     const make = (label) => ({ [GOVERNED_FILE]: sandboxGoverned(prog), [INPUT]: `${label}\n`, 'bin/payload.bin': payload(label), [defPath('reads')]: readerOf('reads', prog) });
-    const first = await checkProject(fx, { files: make('first') });
+    const first = await pinStep(fx, await checkProject(fx, { files: make('first') }));
     const f = await buildStage(fx, first);
     await heldExecution(fx, first.id, f.candidate.id, { reads: 'reads' });
     assert.equal(filesHolding(checktreeFiles(fx.home), payload('first')).length, 1, "the fixture is live: the first project's tree, 60 KiB, is built and in use");
 
-    const second = await checkProject(fx, { files: make('second') });
+    const second = await pinStep(fx, await checkProject(fx, { files: make('second') }));
     const s = await buildStage(fx, second);
     assertNotRunMaterialization(fx, await terminalExecution(fx, second.id, s.candidate.id, 'reads'), 'a tree past checktrees_max_bytes with the trees in use');
     assert.deepEqual(filesHolding(checktreeFiles(fx.home), payload('second')).map((x) => x.path), [], 'host-read: nothing of the refused tree is left');

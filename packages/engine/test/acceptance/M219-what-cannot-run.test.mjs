@@ -30,6 +30,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
+import { pinStep } from './harness/gitruns.mjs';
 import { stageGate } from './harness/gates.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
@@ -77,7 +78,7 @@ describe('M219 what cannot run', () => {
       [defPath('nocwd')]: smoke('nocwd', { command: ['probe', 'exit', '0'], cwd: 'not-in-the-tree', gates: ['stage'] }),
       [defPath('noprog')]: smoke('noprog', { command: ['gone'], gates: ['stage'] }),
     };
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     const { stage, candidate } = await buildStage(fx, project);
     await assertNotRun(fx, project, stage, candidate, 'nocwd', 'definition_invalid');
     await assertNotRun(fx, project, stage, candidate, 'noprog', 'toolchain_missing');
@@ -91,12 +92,12 @@ describe('M219 what cannot run', () => {
     await qualifyRunnerByFixture(fx.engine);
 
     // mount_plan_refused: read_paths naming the engine home.
-    const refusedProject = await checkProject(fx, {
+    const refusedProject = await pinStep(fx, await checkProject(fx, {
       files: {
         [GOVERNED_FILE]: sandboxGoverned(prog, { runner_config: { direct: { read_paths: [...prog.readPaths, fx.home] } } }),
         [defPath('plan')]: smoke('plan', { command: ['probe', 'exit', '0'], gates: ['stage'] }),
       },
-    });
+    }));
     const refused = await buildStage(fx, refusedProject);
     await assertNotRun(fx, refusedProject, refused.stage, refused.candidate, 'plan', 'mount_plan_refused');
     const now = await projectNow(fx.engine, refusedProject.id);
@@ -104,7 +105,7 @@ describe('M219 what cannot run', () => {
 
     // materialization_failed, and its recovery registrations.
     const many = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`bulk/e${String(i).padStart(4, '0')}`, '']));
-    const bigProject = await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('tree')]: smoke('tree', { command: ['probe', 'exit', '0'], gates: ['stage'] }), ...many } });
+    const bigProject = await pinStep(fx, await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('tree')]: smoke('tree', { command: ['probe', 'exit', '0'], gates: ['stage'] }), ...many } }));
     const big = await buildStage(fx, bigProject);
     const chain = await askingForTicks(
       fx,
@@ -122,13 +123,13 @@ describe('M219 what cannot run', () => {
     assert.equal(executionsOf(fx.home, big.candidate.id).filter((x) => x.key === 'tree').length, 3, 'and no more than check_infra_retries_max times');
 
     // Never attempted: two checks, one slot; the first admitted holds it.
-    const waitProject = await checkProject(fx, {
+    const waitProject = await pinStep(fx, await checkProject(fx, {
       files: {
         [GOVERNED_FILE]: sandboxGoverned(prog),
         [defPath('first')]: smoke('first', { command: ['probe', ...holdArgs(prog, 'first'), 'exit', '0'], gates: ['stage'], timeout: 300 }),
         [defPath('later')]: smoke('later', { command: ['probe', ...holdArgs(prog, 'later'), 'exit', '0'], gates: ['stage'], timeout: 300 }),
       },
-    });
+    }));
     const waiting = await buildStage(fx, waitProject);
     const holder = await heldExecution(fx, waitProject.id, waiting.candidate.id, { first: 'first', later: 'later' });
     const other = holder.key === 'first' ? 'later' : 'first';
@@ -144,7 +145,7 @@ describe('M219 what cannot run', () => {
     // does not run. The next start fails H5.
     const fx = await sandboxEngine(t);
     const prog = installCheckProgram(fx.root);
-    const project = await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('host')]: smoke('host', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } });
+    const project = await pinStep(fx, await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('host')]: smoke('host', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } }));
     const { stage, candidate } = await buildStage(fx, project);
     await fx.engine.stop();
     await fx.start({ args: ['--harness-host-check', 'H5=failed'] });

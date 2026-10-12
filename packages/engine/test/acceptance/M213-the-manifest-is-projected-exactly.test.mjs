@@ -23,6 +23,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
+import { pinStep } from './harness/gitruns.mjs';
 import { effectiveVersion, sharedFixture } from './harness/gates.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
@@ -65,7 +66,7 @@ async function exercise(t) {
   await qualifyRunnerByFixture(fx.engine);
 
   // The governed file under the root: (a) to (d).
-  const inside = await checkProject(fx, {
+  const inside = await pinStep(fx, await checkProject(fx, {
     files: {
       [GOVERNED_FILE]: sandboxGoverned(prog),
       [A]: 'input a\n',
@@ -76,15 +77,15 @@ async function exercise(t) {
       [defPath('containing')]: reporter('containing', { inputs: [ROOT], digests: [A, B, UNDECLARED] }),
       [defPath('defaulted')]: reporter('defaulted', { inputs: undefined, digests: [A, B, UNDECLARED] }),
     },
-  });
+  }));
   // The governed file outside every root: (e).
-  const outside = await checkProject(fx, {
+  const outside = await pinStep(fx, await checkProject(fx, {
     files: {
       [GOVERNED_FILE]: governedText({ ...JSON.parse(sandboxGoverned(prog)), protected_paths: [OUTSIDE_ROOT], check_discovery: { definitions: OUTSIDE_DEFS } }),
       [CONTRACT]: 'the accepted contract\n',
       [`${OUTSIDE_DEFS}outside.json`]: reporter('outside', { inputs: undefined, digests: [CONTRACT] }),
     },
-  });
+  }));
 
   const runs = {};
   for (const [label, project, keys, roots] of [

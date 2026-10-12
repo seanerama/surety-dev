@@ -30,7 +30,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { alphaTarget, check, effectiveVersion, evaluate, installChecks, installGatedPlan, nominated, passAll, reasonCodes, scopeOf } from './harness/gates.mjs';
-import { addGitProject, permittedEdit, roleThat } from './harness/gitruns.mjs';
+import { addGitProject, permittedEdit, roleThat, pinStep } from './harness/gitruns.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -43,7 +43,7 @@ const stageGateOf = (fx, p, candidate, stage) => evaluate(fx.engine, p.id, candi
 describe('M229 (a) every criterion of an obligation requirement needs a required acceptance-origin check', () => {
   test('a criterion no check names, and a requirement registered with no criterion, leave the stage scope incomplete, naming them; the stage whose criteria are all named is satisfied', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: { acc1: def('acceptance', { criteria: ['R1.1', 'R1.2'] }), acc2: def('acceptance', { criteria: ['R2.1'] }), smoke: def('smoke') },
       index: [
         { key: 'R1', criteria: ['R1.1', 'R1.2'] },
@@ -81,7 +81,7 @@ describe('M229 (a) every criterion of an obligation requirement needs a required
 
   test('a developer check naming a criterion is refused at discovery and covers nothing: the criterion is uncovered, and the definition is named', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: { acc: def('acceptance', { criteria: ['R1.1'] }), smoke: def('smoke'), dev: def('acceptance', { origin: 'developer', criteria: ['R1.2'] }) },
       index: [{ key: 'R1', criteria: ['R1.1', 'R1.2'] }],
       stages: [{ number: 1, goal: 'R1', implements: ['R1'] }],
@@ -105,7 +105,7 @@ describe('M229 (b) every sensitivity category needs a floor check listing the ga
   test('an area from a requirement, then from a scope module, with no floor check listing the stage gate: incomplete, area:<name>; at the Alpha gate, whose floors list it, both areas are covered and the gate is satisfied', async (t) => {
     const fx = await scriptedEngine(t);
     const alphaOnly = ['alpha_authorize'];
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: {
         acc: def('acceptance', { criteria: ['R1.1', 'R2.1'] }),
         smoke: def('smoke'),
@@ -149,7 +149,7 @@ describe('M229 (b) every sensitivity category needs a floor check listing the ga
   test('the floor applies at every tier: at T1, T2 and T3 the floor check naming the scope area is in the required set, and no area is uncovered', async (t) => {
     const fx = await scriptedEngine(t);
     for (const tier of ['T1', 'T2', 'T3']) {
-      const p = await scopeProject(fx, {
+      const p = await scopeProject(fx, { policy: { autonomy: 'step' },
         tier,
         defs: { ...inventoryDefs(tier, ['R1.1']), floor: def('sensitivity_floor', { areas: ['authentication'] }) },
         index: [{ key: 'R1', criteria: ['R1.1'], areas: ['authentication'] }],
@@ -172,7 +172,7 @@ describe('M229 (b) every sensitivity category needs a floor check listing the ga
 describe('M229 (c) partial delivery does not suppress a floor', () => {
   test('a sensitive requirement two stages implement, no module declaring its area: once the first stage alone is integrated, its floor check is in the first stage\'s scope', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: { acc: def('acceptance', { criteria: ['R1.1'] }), smoke: def('smoke'), fauth: def('sensitivity_floor', { areas: ['authentication'] }) },
       index: [{ key: 'R1', criteria: ['R1.1'], areas: ['authentication'] }],
       stages: [
@@ -218,7 +218,7 @@ describe('M229 (c) partial delivery does not suppress a floor', () => {
     const checks = [check('acc'), check('smoke', { kind: 'smoke' }), check('fauth', { kind: 'sensitivity_floor', sensitive_areas: ['authentication'] })];
     for (const indexed of [true, false]) {
       const what = indexed ? 'R1 indexed, its area authentication' : 'R1 with no index row';
-      const project = await addGitProject(fx, { tier: 'T1' });
+      const project = await pinStep(fx, await addGitProject(fx, { tier: 'T1' }));
       const plan = indexed
         ? await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1'], areas: ['authentication'] }], stages })
         : await installGatedPlan(fx.engine, project.id, { requirements: ['R1'], stages, index: false });
@@ -262,7 +262,7 @@ describe('M229 (d) the M1 fixture\'s former scope is now refused (AD §8.3)', ()
       ['no index: R1 has no criterion', false, (ctx) => ctx.requirement.R1],
       ['R1 registered with R1.1, the check naming none', true, () => 'R1.1'],
     ]) {
-      const ctx = await nominated(fx, { index });
+      const ctx = await nominated(fx, { autonomy: 'step', index });
       const ids = (await installChecks(fx.engine, ctx.project.id, m1Checks, { inventory: false })).id;
       await passAll(fx.engine, ctx.project.id, ctx.candidate.id, Object.values(ids));
       const evaluation = await evaluate(fx.engine, ctx.project.id, ctx.candidate.id, 'stage', { stage: ctx.stage });

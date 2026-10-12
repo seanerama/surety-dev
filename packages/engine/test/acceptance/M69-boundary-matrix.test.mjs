@@ -195,7 +195,8 @@ describe('M69 the boundary matrix: origin evidence, body caps, parser refusals, 
       ['404, an unknown route', await engine.get('/v1/no-such-route'), 404],
       ['413, a declared body over the cap', await sendRaw(engine, requestHead(engine, 'POST', pause, { ...JSON_BODY, 'Content-Length': BODY_CAP + 1 })), 413],
       ['417, an Expect the engine does not meet', await sendRaw(engine, `${requestHead(engine, 'POST', pause, { ...JSON_BODY, 'Content-Length': 2, Expect: 'something-else' })}{}`), 417],
-      ['501, an excluded capability', await engine.post(`/v1/projects/${project}/sessions`, {}), 501],
+      // M5 (D6 K6; SEAM.md §366): the session routes exist now; Releases is still an excluded capability.
+      ['501, an excluded capability', await engine.post(`/v1/projects/${project}/releases`, {}), 501],
     ];
     for (const [what, res, status] of responses) {
       assert.equal(res.status, status, `${what} (body: ${res.text})`);

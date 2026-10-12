@@ -42,7 +42,7 @@ const KIND = 'check_correction_tightening';
 // instead (objection 030).
 async function withFindings(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx, { files: PROTECTED_FILES, policy: { repair_attempts_max: 0 } });
+  const ctx = await nominated(fx, { autonomy: 'step', files: PROTECTED_FILES, policy: { repair_attempts_max: 0 } });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
