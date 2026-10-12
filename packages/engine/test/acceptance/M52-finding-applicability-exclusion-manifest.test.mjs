@@ -27,7 +27,7 @@ import { withStore } from './harness/store.mjs';
 // decision the engine raised for the human owner.
 async function assessedExclusion(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const c1 = ctx.candidate;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;

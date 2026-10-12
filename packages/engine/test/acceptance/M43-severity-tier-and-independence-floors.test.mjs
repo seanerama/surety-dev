@@ -80,7 +80,7 @@ describe('M43 the obligations of a tier are cumulative, and every sign-off it na
     test(`${tier}: requires ${expect.required.join(', ')}; ${expect.signoffs.flat().length === 0 ? 'no sign-off' : `sign-offs ${expect.signoffs.flat().map((s) => s.module ?? s.scope).join(', ')}`}`, async (t) => {
       const fx = await scriptedEngine(t);
       // The stage lists both modules: a stage scope's modules are its stage's (D3 §4.1; M3 slice 20, SEAM.md §226), so T3 asks a sign-off of each.
-      const ctx = await nominated(fx, { tier, modules: MODULES, stages: [{ number: 1, goal: 'the first stage', implements: ['R1'], modules: MODULES.map((m) => m.name) }] });
+      const ctx = await nominated(fx, { autonomy: 'step', tier, modules: MODULES, stages: [{ number: 1, goal: 'the first stage', implements: ['R1'], modules: MODULES.map((m) => m.name) }] });
       const project = ctx.project.id;
       const k = (await installChecks(fx.engine, project, CHECKS)).id;
       // Every check passes, including those this tier does not require.
@@ -107,7 +107,7 @@ describe('M43 the obligations of a tier are cumulative, and every sign-off it na
 describe('M43 severity at Alpha', () => {
   test("a Critical finding blocks; a High finding blocks unless its exception is recorded, and still blocks in a sensitive area; the exception waives no check; and a role's verdict decides nothing", async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
     await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
@@ -163,7 +163,7 @@ describe('M43 a sign-off binds the content its run was started on', () => {
   test("a Reviewer whose run was started under one protected version, and who signs off after a tightening that adds a check has been applied, has not signed off the new content: the stage gate still lacks the sign-off", async (t) => {
     const fx = await scriptedEngine(t);
     const repo = await addGitProject(fx, { tier: 'T2', files: PROTECTED_FILES });
-    const ctx = await nominated(fx, { tier: 'T2', project: repo });
+    const ctx = await nominated(fx, { tier: 'T2', project: repo, autonomy: 'step' });
     const project = repo.id;
     const c = ctx.candidate;
     const first = effectiveVersion(fx.home, project);

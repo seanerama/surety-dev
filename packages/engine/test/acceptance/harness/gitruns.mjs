@@ -97,6 +97,16 @@ export async function addStagedProject(fx, { tier = 'T2', stages = 1, autonomy }
   return { project, plan: res.body, items: res.body.stages.map((stage) => stage.work_item) };
 }
 
+// D6 C.2 (K3; SEAM.md §§348, 361, 362): pin `autonomy: step` on a project a
+// fixture made, so chained work waits at its boundary as it did when the
+// case was accepted, and re-read its base after the policy commit. Returns
+// the project (any object with `id` and, if it has one, `repo`).
+export async function pinStep(fx, project) {
+  await changePolicy(fx.engine, project.id, { autonomy: 'step' });
+  if (project.repo) project.base = refOid(project.repo.path, project.repo.ref);
+  return project;
+}
+
 // The candidates of a project once it has at least `count` of them. A tick is
 // asked for first: a nomination that is due is made by then.
 export async function waitForCandidates(fx, project, count = 1) {

@@ -53,7 +53,7 @@ const LOGIN = check('login', { requirements: ['R1'] });
 // project with a protected set, and a tightening proposal captured after it.
 async function proposalAfterPass(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx, { files: PROTECTED_FILES });
+  const ctx = await nominated(fx, { files: PROTECTED_FILES, autonomy: 'step' });
   const checks = await installChecks(fx.engine, ctx.project.id, [LOGIN]);
   const [result] = await passAll(fx.engine, ctx.project.id, ctx.candidate.id, [checks.id.login]);
   const evaluation = await stageGate(fx, ctx);

@@ -13,7 +13,9 @@
 //
 // The first case also raises the chain limit, which slice 3 could not do
 // (row M12): with a limit of two, the second role of a chain runs unasked
-// and the third waits for a person.
+// and the third waits for a person. M5 (D6 K3; SEAM.md §362): the default
+// limit is 24, so a widening is a value above it (25, 26), the default read
+// back is 24, and the chain runs after a narrowing to two.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -42,22 +44,28 @@ describe('M49 the policy_widening manifest', () => {
   test('raising the chain limit is committed only on approval, bound to the base and to the complete resulting policy; with a limit of two the second role of a chain runs unasked and the third waits', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25 });
     assert.deepEqual(
       { kind: previewed.kind, base: previewed.manifest.base_revision, proposed: previewed.manifest.proposed_policy.max_chained_roles, widens: previewed.manifest.widens },
-      { kind: 'policy_widening', base: null, proposed: 2, widens: ['max_chained_roles'] },
+      { kind: 'policy_widening', base: null, proposed: 25, widens: ['max_chained_roles'] },
       'the preview binds the base (no revision yet), the complete proposed policy and what it widens',
     );
-    assert.deepEqual([(await getPolicy(fx.engine, project.id)).effective.max_chained_roles, head(project)], [1, project.base], 'nothing is changed or committed before the approval');
+    assert.deepEqual([(await getPolicy(fx.engine, project.id)).effective.max_chained_roles, head(project)], [24, project.base], 'nothing is changed or committed before the approval');
 
     await consume(fx, project.id, previewed, 'approve');
     const policy = await atRevision(fx, project, 1);
-    assert.equal(policy.effective.max_chained_roles, 2);
+    assert.equal(policy.effective.max_chained_roles, 25);
     const [revision] = policyRevisions(fx.home, project.id);
     assert.deepEqual([revision.widens_authority, revision.decision, revision.committed], [1, previewed.id, 1], 'the revision records that it widens authority and which decision confirmed it');
-    assert.equal(JSON.parse(fileAt(project.repo.path, head(project), '.surety/policy.json')).max_chained_roles, 2, 'and it is committed');
+    assert.equal(JSON.parse(fileAt(project.repo.path, head(project), '.surety/policy.json')).max_chained_roles, 25, 'and it is committed');
     await waitFor(() => intentsOf(fx.home, previewed.id)[0]?.status === 'done', { what: 'the effect of the approval to be done' });
     assert.deepEqual([approvalsOf(fx.home, previewed.id).length, intentsOf(fx.home, previewed.id).length], [1, 1], 'one approval and one effect');
+
+    // M5 (D6 K3, N02; SEAM.md §362): the default limit is 24, so the widening
+    // above goes past it, and the chain below runs at a limit of two set by an
+    // ordinary change: a narrowing, committed on request with no decision.
+    const narrowed = await changePolicy(fx.engine, project.id, { max_chained_roles: 2 });
+    assert.equal(narrowed.effective.max_chained_roles, 2, 'the narrowing to two is in effect');
 
     // A chain of three roles: an Architect's plan, its stage's Builder, the candidate's Verifier.
     const replan = await addItem(fx, project.id, 'replan');
@@ -83,20 +91,20 @@ describe('M49 the policy_widening manifest', () => {
   test('the base changes while the proposed change stays the same: the approval is stale, no update is lost, and the same submission is a new generation against the new base', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 3 });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 26 });
     await changePolicy(fx.engine, project.id, { repair_attempts_max: 2 });
 
     await assertStaleAnswer(fx, project.id, previewed, 'approve');
     const unchanged = await getPolicy(fx.engine, project.id);
-    assert.deepEqual([unchanged.revision, unchanged.effective.repair_attempts_max, unchanged.effective.max_chained_roles], [1, 2, 1], 'the ordinary change stands and nothing was widened');
+    assert.deepEqual([unchanged.revision, unchanged.effective.repair_attempts_max, unchanged.effective.max_chained_roles], [1, 2, 24], 'the ordinary change stands and nothing was widened');
 
-    const next = await confirmRequired(fx, policyPath(project), { max_chained_roles: 3 });
+    const next = await confirmRequired(fx, policyPath(project), { max_chained_roles: 26 });
     assert.deepEqual([next.id !== previewed.id, next.semantic_generation, decision(fx.home, previewed.id).status], [true, previewed.semantic_generation + 1, 'invalidated']);
     assert.notEqual(next.preview_hash, previewed.preview_hash);
     assert.notDeepEqual(next.manifest.base_revision, previewed.manifest.base_revision, 'the new preview is bound to the new base');
     await consume(fx, project.id, next, 'approve');
     const both = await atRevision(fx, project, 2);
-    assert.deepEqual([both.effective.repair_attempts_max, both.effective.max_chained_roles], [2, 3], 'approved against the new base, the widening keeps the change made in between');
+    assert.deepEqual([both.effective.repair_attempts_max, both.effective.max_chained_roles], [2, 26], 'approved against the new base, the widening keeps the change made in between');
   });
 
   test('the base changes after the approval and before its effect: the effect is invalidated, the budget is not raised, and the approval is not carried over', async (t) => {
@@ -119,7 +127,7 @@ describe('M49 the policy_widening manifest', () => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx, { files: PROTECTED_FILES });
     const authorized = effectiveVersion(fx.home, project.id);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2, required_checks: [] });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25, required_checks: [] });
     const [proposal] = proposalsOf(fx.home, project.id);
     assert.deepEqual([previewed.response.body.subject.proposal, proposal?.proposed_by, proposal?.status], [proposal?.id, 'human', 'captured'], 'the governed part became a protected proposal, named in the response');
 
@@ -138,16 +146,16 @@ describe('M49 the policy_widening manifest', () => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
     const before = await getPolicy(fx.engine, project.id);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25 });
     assert.deepEqual(previewed.options.map((option) => option.key).sort(), ['approve', 'reject'], 'the fixture is live: the widening offers reject');
 
     await reject(fx, project.id, previewed);
     const after = await getPolicy(fx.engine, project.id);
     assert.deepEqual([after.revision, after.effective], [before.revision, before.effective], 'the effective policy is as it was: no revision, the chain limit at its default');
-    assert.equal(after.effective.max_chained_roles, 1);
+    assert.equal(after.effective.max_chained_roles, 24);
     assert.deepEqual(policyRevisions(fx.home, project.id), [], 'no policy revision was recorded');
     assert.equal(head(project), project.base, 'nothing was committed to the integration branch');
     await assertQuestionClosed(fx, project.id, previewed);
-    assert.deepEqual([(await getPolicy(fx.engine, project.id)).effective.max_chained_roles, head(project)], [1, project.base], 'and the ticks widened and committed nothing');
+    assert.deepEqual([(await getPolicy(fx.engine, project.id)).effective.max_chained_roles, head(project)], [24, project.base], 'and the ticks widened and committed nothing');
   });
 });
