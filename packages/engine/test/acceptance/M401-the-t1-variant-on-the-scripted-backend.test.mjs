@@ -17,6 +17,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import {
+  correctionOrigin,
   alphaDeployed,
   alphaReady,
   architectSession,
@@ -99,11 +100,16 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     assert.equal(J.deployed.progress, 'alpha_deployed');
     const requests = deploymentRequests(fx.home, ctx.project);
     assert.ok(requests.some((r) => r.requested_by === 'policy' && r.request_key?.candidate === J.deployed.id), `the policy requested the deployed candidate (${JSON.stringify(requests.map((r) => [r.requested_by, r.request_key?.candidate]))})`);
+    // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
+    // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
     assert.deepEqual(
       ctx.humanActs.map((h) => h.kind).sort(),
-      ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'].sort(),
-      `the human acts: the toolchain proposal, CR-1's submission and its approval, nothing else (${JSON.stringify(ctx.humanActs)})`,
+      ['check_correction_unclassifiable', 'check_correction_unclassifiable', 'spec_change', 'spec_change_request'].sort(),
+      `the human acts: the toolchain proposal, CR-1's submission, its approval and its check correction, nothing else (${JSON.stringify(ctx.humanActs)})`,
     );
+    const corrections = ctx.humanActs.filter((h) => h.kind === 'check_correction_unclassifiable');
+    assert.deepEqual(corrections.map((h) => correctionOrigin(fx.home, h.id)).sort(), ['check_authoring', 'check_correction'], 'one from phase 1\'s check authoring, one from CR-1\'s check correction');
+    assert.ok(corrections.every((h) => h.option === 'approve' && h.status === 200), 'each answered approve by the owner');
     assert.ok(planOfPhase(fx.home, ctx.project, 2).some((p) => p.completed_at));
   });
 });

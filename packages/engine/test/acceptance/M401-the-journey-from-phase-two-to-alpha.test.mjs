@@ -35,6 +35,7 @@ import { serviceOf, operatorGuard, unitShow } from './harness/deploy/host.mjs';
 import { unitPrefix } from './harness/deploy/kernel.mjs';
 import { evaluationsOf, scopeOf, sharedFixture } from './harness/gates.mjs';
 import {
+  correctionOrigin,
   alphaDeployed,
   authorizationsOfProject,
   candidatesOfProject,
@@ -140,7 +141,13 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(gates.length > 0, 'gates were evaluated after the approval');
     assert.deepEqual(gates.filter((g) => !onV2.has(g.candidate)).map((g) => [g.gate_kind, g.candidate]), [], 'every gate evaluated afterwards is on a version-2 candidate');
     assert.ok(obligations.filter((o) => o.reason === 'spec_changed').every((o) => o.resolved_at), 'every spec_changed obligation resolved before the end');
-    assert.deepEqual(J.ctx.humanActs.filter((h) => h.at > J.switched.at).map((h) => h.kind).sort(), ['spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission and its approval (${JSON.stringify(J.ctx.humanActs)})`);
+    // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
+    // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
+    const acts = J.ctx.humanActs.filter((h) => h.at > J.switched.at);
+    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(J.ctx.humanActs)})`);
+    const owned = acts.find((h) => h.kind === 'check_correction_unclassifiable');
+    assert.equal(correctionOrigin(fx.home, owned.id), 'check_correction', 'the unclassifiable decision is CR-1\'s check correction');
+    assert.deepEqual([owned.option, owned.status], ['approve', 200], 'answered approve by the owner');
   });
 
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {
