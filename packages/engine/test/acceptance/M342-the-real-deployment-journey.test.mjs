@@ -42,7 +42,7 @@ import { describe, test } from 'node:test';
 
 import { activation } from './harness/real/attempt.mjs';
 import { CONFIRM_PHRASE_M4, REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, realPreflight, secretHits, stepValue } from './harness/real/lane.mjs';
-import { ADAPTER_CASES, M342_JOURNEY, M342_STEPS, homeOf, journeyResults, m4Build, m4Checks, m4Deploy, m4Qualify, showCost } from './harness/real/deploy-journey.mjs';
+import { ADAPTER_CASES, M342_JOURNEY, M342_STEPS, authorizationIssued, homeOf, journeyResults, m4Build, m4Checks, m4Deploy, m4Qualify, showCost } from './harness/real/deploy-journey.mjs';
 
 const preflight = () => {
   const ctx = realPreflight({ confirm: CONFIRM_PHRASE_M4, order: M342_STEPS });
@@ -115,10 +115,20 @@ describe('M342 the real deployment journey (real lane, paid)', () => {
       const stageDeciding = Object.values(last.stage_gate.checks ?? {}).map((e) => e?.deciding?.execution).filter(Boolean);
       assert.ok(stageDeciding.length > 0 && stageDeciding.every((id) => ids.has(id)), `decided by the engine's executions of the candidate (${JSON.stringify(last.stage_gate.checks)})`);
       // The Alpha gate is evaluated by Sean's request (D4 §4.1): read from the authorization it issued.
+      // That the request issued it is established from the durable record (the row's evaluation and its
+      // `authorization.issued` event), not from the row's status now: the deploy consumes the authorization
+      // as soon as it is admitted, so the status read after the request is `issued` or already `consumed`.
       const c = await deployed(ctx);
       const alpha = c.request?.alpha_authorize;
-      assert.equal(c.request?.authorization?.status_at_request, 'issued', `Sean's request issued the authorization (${JSON.stringify(c.request?.authorization)})`);
-      assert.deepEqual([alpha?.gate_kind, alpha?.outcome, alpha?.reasons], ['alpha_authorize', 'satisfied', []], `alpha_authorize: satisfied (${JSON.stringify(alpha)})`);
+      const auth = c.request?.authorization;
+      assert.ok(auth?.id, `Sean's request names its authorization (${JSON.stringify(c.request)})`);
+      assert.ok(['issued', 'consumed'].includes(auth.status_at_request), `the authorization was issued, consumed by the deploy or not yet (${JSON.stringify(auth)})`);
+      assert.ok(['issued', 'consumed'].includes(c.authorization_after?.status), `and is issued or consumed after the deployment (${JSON.stringify(c.authorization_after)})`);
+      // A record made before the harness kept the event reads it from the run home's journal, read-only.
+      const issued = c.request?.issued ?? authorizationIssued(homeOf(ctx), auth.id);
+      assert.ok(issued, `the journal holds authorization.issued for ${auth.id}`);
+      assert.deepEqual([issued.evaluation, issued.environment], [auth.evaluation, auth.environment], `issued by the authorization's evaluation, for its environment (${JSON.stringify(issued)})`);
+      assert.deepEqual([alpha?.id, alpha?.gate_kind, alpha?.outcome, alpha?.reasons], [auth.evaluation, 'alpha_authorize', 'satisfied', []], `that evaluation: alpha_authorize, satisfied (${JSON.stringify(alpha)})`);
       const alphaDeciding = Object.values(alpha.checks ?? {}).map((e) => e?.deciding?.execution).filter(Boolean);
       assert.ok(alphaDeciding.length > 0 && alphaDeciding.every((id) => ids.has(id)), `decided by the engine's executions of the candidate (${JSON.stringify(alpha.checks)})`);
     });

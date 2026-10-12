@@ -69,7 +69,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { CLI, freePort } from '../engine.mjs';
 import { authorizationsOf, effectiveVersion, evaluationsOf, installGatedPlan, proposalsOf, stageGate } from '../gates.mjs';
-import { changePolicy, createProject } from '../journal.mjs';
+import { changePolicy, createProject, eventsOfType } from '../journal.mjs';
 import { makeProjectRepo } from '../repos.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, workItem } from '../runs.mjs';
 import { withStore } from '../store.mjs';
@@ -148,6 +148,18 @@ export const M342_JOURNEY = Object.freeze({ name: 'the M4 real deployment journe
 // ---- the run home, its units, its secret, its engine ----------------------------------------
 
 export const homeOf = (ctx) => join(ctx.runDir, 'home');
+
+// The durable record that an authorization was issued: its `authorization.issued`
+// journal event, with the evaluation that issued it (SEAM.md §75). Read-only, from
+// the store; null when no such event exists. The row's status is read elsewhere:
+// a deploy consumes the authorization as soon as it is admitted, so a status read
+// after the request may already say `consumed` (the judgement of M342 (b) accepts
+// either, and establishes the issue from this event).
+export function authorizationIssued(home, authorization) {
+  if (!authorization) return null;
+  const e = eventsOfType(home, 'authorization.issued').find((x) => x.subject?.authorization === authorization);
+  return e ? { seq: e.seq, evaluation: e.payload?.evaluation ?? null, environment: e.payload?.environment ?? null } : null;
+}
 const runHomePrefix = (ctx) => `surety-${homeHash(homeOf(ctx))}-`;
 
 const notEstablished = (path, what, detail) => {
@@ -549,6 +561,7 @@ export async function m4Deploy(ctx) {
         work_item: work.id,
         trigger: { source: work.trigger_source ?? null, id: work.trigger_id ?? null, generation: work.trigger_generation ?? null },
         authorization: authorization && { id: authorization.id, status_at_request: authorization.status, environment: authorization.environment, artifact_digest: authorization.artifact_digest, config_identity: authorization.config_identity, target_set: json(authorization.target_set), evaluation: authorization.evaluation },
+        issued: authorizationIssued(fx.home, authorization?.id),
         alpha_authorize: gateEvaluation(fx.home, authorization?.evaluation),
       };
       const op = await tickWhile(fx, project, () => operationsOf(fx.home, project, 'deploy').find((o) => !opsBefore.has(o.id)), { timeoutMs: 600_000, everyMs: 5_000, what: 'the deploy operation' });
