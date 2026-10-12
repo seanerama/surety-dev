@@ -103,8 +103,9 @@ test('the requirement index: rows parsed; a malformed row, an unknown area, a fo
   assert.deepEqual(r, {
     ok: true,
     rows: [
-      { key: 'R1', title: 'login', phase: 1, sensitive_areas: ['authentication'], criteria: ['R1.1', 'R1.2'] },
-      { key: 'R2', title: 'report', phase: 2, sensitive_areas: [], criteria: ['R2.1'] },
+      // D6 K10: a five-column index means `intended` for every row.
+      { key: 'R1', title: 'login', phase: 1, sensitive_areas: ['authentication'], criteria: ['R1.1', 'R1.2'], origin: 'intended' },
+      { key: 'R2', title: 'report', phase: 2, sensitive_areas: [], criteria: ['R2.1'], origin: 'intended' },
     ],
   });
   assert.equal(parseRequirementIndex(`${head}| R1 | a | 1 | none |\n`).row, 1);
