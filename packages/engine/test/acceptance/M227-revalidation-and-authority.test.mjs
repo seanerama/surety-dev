@@ -57,11 +57,13 @@ import {
   writeGov,
 } from './harness/checks/classifier.mjs';
 import { answerAndHoldEffect, assertEffectInvalidated, consume, decisionsOn, nextGeneration, openDecision, reachBarrier, untilKilled } from './harness/decisions.mjs';
-import { assertApplied, assertNotApplied, effectiveVersion, protectedVersions, reviewerApproves, scopeApproval, waitApplied } from './harness/gates.mjs';
+import { PROPOSAL_RATIONALE, assertApplied, assertNotApplied, effectiveVersion, proposalsOf, protectedVersions, reviewerApproves, scopeApproval, waitApplied } from './harness/gates.mjs';
+import { roleThat } from './harness/gitruns.mjs';
 import { armBarrier } from './harness/journal.mjs';
-import { releaseBarrier } from './harness/engine.mjs';
+import { releaseBarrier, waitFor } from './harness/engine.mjs';
+import { withStore } from './harness/store.mjs';
 import { refOid } from './harness/repos.mjs';
-import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { addWork, requestTick, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
 const INDEX = [
@@ -99,14 +101,80 @@ const EXPECTED = {
   unclassifiable: { kind: 'unclassifiable', contains: ['check_added:n', 'required_key_added_with_check:n', 'input_changed:a'] },
 };
 
+// The Verifier's protected-only diff captured as a proposal (as
+// `verifierProposal`, SEAM §68), its run waited for by ticks that do not wait
+// for idle: under `authoritative` the tick after the capture classifies it
+// and dispatches the engine's review, which holds (objection 069).
+async function capturedNoIdle(fx, project, steps) {
+  const item = await addWork(fx.engine, project.id, 'check_correction');
+  fx.scripted.script(item, [roleThat(steps, { proposal: { rationale: `${PROPOSAL_RATIONALE} (tightening).`, requested_change_kind: 'tightening' } })]);
+  const run = await waitFor(
+    async () => {
+      const r = runsOf(fx.home, item)[0];
+      if (r?.state === 'ended') return r;
+      await tick(fx.engine, project.id, { rounds: 1 });
+      return undefined;
+    },
+    { what: 'the Verifier\'s check_correction run to end' },
+  );
+  assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the check_correction run was accepted (${run.reason_text})`);
+  const proposal = proposalsOf(fx.home, project.id).find((row) => row.run === run.id);
+  assert.ok(proposal, 'the Verifier\'s protected-only diff was captured as a proposal');
+  return proposal;
+}
+
 async function correctionOn(fx, steps, kind) {
   const project = await classifierProject(fx, { files: FILES, index: INDEX });
   const previous = effectiveVersion(fx.home, project.id);
-  const proposal = await verifierProposal(fx, project, steps);
+  const proposal = await capturedNoIdle(fx, project, steps);
   const running = await runningClassifier(fx.engine);
-  assertClassification(await engineClassification(fx, project.id, proposal), EXPECTED[kind], { label: `the ${kind} correction`, running });
+  // Ticks without waiting for idle: under `authoritative` the engine's review, dispatched at the classification, holds until the case lets it go.
+  const classified = await waitFor(
+    async () => {
+      const row = proposalRow(fx.home, project.id, proposal.id);
+      if (row.classification && typeof row.classification.change_kind === 'string') return { row, c: row.classification };
+      await tick(fx.engine, project.id, { rounds: 1 });
+      return undefined;
+    },
+    { what: `the engine's own classification of proposal ${proposal.id}` },
+  );
+  assertClassification(classified, EXPECTED[kind], { label: `the ${kind} correction`, running });
   return { project, previous, proposal, headBefore: refOid(project.repo.path, project.repo.ref) };
 }
+
+// Under `authoritative` naming the running classifier the engine raises the
+// Reviewer's review of a classified tightening itself, from
+// ("protected_proposal", <proposal>, 1) (D3 §3.3; D6 §6.2; SEAM.md §§351,
+// 373; objection 069). The scripted Reviewer of every review with no script
+// of its own approves the proposal its package names (`review_auto`, §350),
+// once the case lets it: it holds until `letEngineReview` releases it, so
+// the case decides when the Reviewer's approval lands, as it did when it
+// added the review itself.
+const engineReviews = (fx) => fx.scripted.kindScript('review', { steps: [step.hold('gate'), { review_auto: { reason: 'The approved spec requires the new check.' } }] });
+const engineReviewItem = (fx, projectId, proposal) =>
+  withStore(fx.home, (db) => db.prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND "trigger_source" = 'protected_proposal' AND "trigger_id" = ?`).get(projectId, proposal.id))?.id ?? null;
+// Let the engine's review of the proposal approve it; returns its run once ended.
+async function letEngineReview(fx, projectId, proposal) {
+  const item = await waitFor(() => engineReviewItem(fx, projectId, proposal), { what: `the engine's review of ${proposal.id} to be registered` });
+  fx.scripted.release(item, 'gate');
+  return engineReviewRun(fx, projectId, proposal);
+}
+// The engine's review run about the proposal, once it has ended.
+// Ticks are asked for meanwhile (not waited idle for), in case the review is dispatched at a later tick than its registration.
+const engineReviewRun = (fx, projectId, proposal) =>
+  waitFor(
+    async () => {
+      const ended = withStore(fx.home, (db) =>
+        db
+          .prepare(`SELECT r.* FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."project" = ? AND w."kind" = 'review' AND w."trigger_source" = 'protected_proposal' AND w."trigger_id" = ? AND r."state" = 'ended' ORDER BY r."seq" LIMIT 1`)
+          .get(projectId, proposal.id),
+      );
+      if (ended) return ended;
+      await requestTick(fx.engine, projectId).catch(() => null);
+      return undefined;
+    },
+    { intervalMs: 500, what: `the engine's own review of ${proposal.id} to end` },
+  );
 
 const classOf = (fx, ctx) => proposalRow(fx.home, ctx.project.id, ctx.proposal.id).classification?.change_kind;
 const approveOption = (row) => row.options.find((o) => o.key === 'approve');
@@ -193,6 +261,7 @@ describe('M227 revalidation and authority', () => {
 
   test("(c) recommend: a Reviewer's approval is a recommendation; authoritative for another version reads as recommend; for the running version it applies after revalidation, and (a) is withdrawn when a bound input changes first", async (t) => {
     const fx = await scriptedEngine(t);
+    engineReviews(fx);
     const V = await runningClassifier(fx.engine);
 
     for (const [what, authority] of [['recommend, the default', undefined], ['authoritative naming another version', { mode: 'authoritative', version: V + 1 }]]) {
@@ -223,8 +292,9 @@ describe('M227 revalidation and authority', () => {
     const first = await openDecision(fx, pid, TIGHT, ctx.proposal.id);
 
     // (a) The spec's criteria change between the Reviewer's approval and its application.
+    // The engine's own review approved at the classification; its application waits for a later tick.
     await armBarrier(fx.engine, BEFORE_REVALIDATION, 'pause');
-    await reviewerApproval(fx, pid, ctx.proposal);
+    await letEngineReview(fx, pid, ctx.proposal);
     await reachBarrier(fx, pid, BEFORE_REVALIDATION);
     const pending = proposalRow(fx.home, pid, ctx.proposal.id);
     assert.deepEqual([pending.status, pending.approver_authority], ['approved', 'reviewer'], 'the Reviewer\'s approval is recorded, its application not begun');
@@ -251,12 +321,13 @@ describe('M227 revalidation and authority', () => {
     setEngineConfig(fx, { classifier_authority: authoritative });
     await fx.start();
     assert.deepEqual((await fx.engine.engineInfo()).config.classifier_authority, { value: authoritative, source: 'file' }, 'the setting is read as configured');
+    engineReviews(fx);
 
     const ctx = await correctionOn(fx, REQUIRED_N, 'required');
     const pid = ctx.project.id;
     const human = await openDecision(fx, pid, TIGHT, ctx.proposal.id);
     assert.ok(approveOption(human).blockers.includes('APPROVAL_MISSING'), `the fixture is live: the required set changes and no validation-scope approval is recorded (options: ${JSON.stringify(human.options)})`);
-    const { run } = await reviewerApproves(fx, ctx.project, ctx.proposal);
+    const run = await letEngineReview(fx, pid, ctx.proposal);
     await tick(fx.engine, pid, { rounds: 3 });
     const what = "the Reviewer's approval without the validation-scope approval";
     assertWithdrawn(fx, ctx, what);
@@ -270,7 +341,7 @@ describe('M227 revalidation and authority', () => {
     // The contrast: a tightening that leaves the required set applies on the Reviewer's approval.
     const plain = await correctionOn(fx, NEW_N, 'tightening');
     await openDecision(fx, plain.project.id, TIGHT, plain.proposal.id);
-    const approved = await reviewerApproves(fx, plain.project, plain.proposal);
+    const approved = { run: await letEngineReview(fx, plain.project.id, plain.proposal) };
     await waitApplied(fx, plain.project, plain.proposal);
     assertApplied(fx, plain.project, { proposal: plain.proposal, previous: plain.previous, headBefore: plain.headBefore, authority: 'reviewer', changeKind: 'tightening' });
     assert.equal(proposalRow(fx.home, plain.project.id, plain.proposal.id).approver, approved.run.id, "the contrast: the Reviewer's run is the approver");
@@ -283,11 +354,12 @@ describe('M227 revalidation and authority', () => {
     await fx.engine.stop();
     setEngineConfig(fx, { classifier_authority: authoritative });
     await fx.start();
+    engineReviews(fx);
 
     // (d) Killed before the application's revalidation; restarted under recommend.
     const d = await correctionOn(fx, TIGHTENING, 'tightening');
     await armBarrier(fx.engine, BEFORE_REVALIDATION, 'kill');
-    await reviewerApproval(fx, d.project.id, d.proposal);
+    await letEngineReview(fx, d.project.id, d.proposal);
     await untilKilled(fx, d.project.id);
     assert.equal(proposalRow(fx.home, d.project.id, d.proposal.id).status, 'approved', 'the fixture is live: the Reviewer\'s application is pending');
     setEngineConfig(fx, { classifier_authority: undefined });
@@ -304,7 +376,7 @@ describe('M227 revalidation and authority', () => {
     await fx.start();
     const b = await correctionOn(fx, TIGHTENING, 'tightening');
     await armBarrier(fx.engine, 'journal.commit_tree.intent_committed', 'kill');
-    await reviewerApproval(fx, b.project.id, b.proposal);
+    await letEngineReview(fx, b.project.id, b.proposal);
     await untilKilled(fx, b.project.id);
     const intended = protectedVersions(fx.home, b.project.id).filter((version) => version.proposal === b.proposal.id);
     assert.equal(intended.length, 1, 'the fixture is live: the application\'s intended version is recorded');

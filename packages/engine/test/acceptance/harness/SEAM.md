@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 372 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 373 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -6071,6 +6071,11 @@ Sections 350 to 372 were written with the slice-31b acceptance tests (2026-10-12
 ## 372. H10 by host class (M110 on a host that is not WSL2)
 
 (D2 §6 H10; the engine's `isRequired` and `isWsl2`, `store/transitions/trust.ts`: WSL2 when `/proc/version` names `microsoft` or `wsl`; `trust/checks.ts` H10.) H10 applies only on WSL2: elsewhere it is `not_exercised`, observed "not a WSL2 host", and **not required**, so it never blocks eligibility. `M110-qualification-per-start` (a), (d) (through `assertActiveRow`) and (e) now expect H10 `passed` on WSL2 and `not_exercised` with `required` false elsewhere, deciding WSL2 as the engine does; found by the gate on mini-hp01 (native Linux). The other trust and probe files already decide by host class: M110-host-checks-and-scope (H10), M122 (P10's /run/WSL, P11, P12's WSL claim), M124 (P11 left out of the probes it compares).
+
+## 373. The engine's own review under `authoritative` (objection 069); the project lane's first qualification read (objection 068)
+
+- **069** (D3 §3.3; D6 §1 step 10; §351): under `authoritative` naming the running classifier, the engine raises the Reviewer's review of a classified tightening itself, from (`protected_proposal`, `<proposal>`, 1), once per proposal. M227 now uses that review instead of adding its own: the kind script `review` is `[hold, review_auto]`, the case releases the hold (`letEngineReview`) where it used to add its review, so the approval lands where it did (after (a)'s pause and (d)'s and (b)'s kill barriers are armed), and its capture and classification are waited for by ticks that do not wait for idle (the held review is a live run). Under `recommend`, or `authoritative` naming another version, the engine raises none and the case adds its own; after a withdrawal the engine raises no second review and the case's Reviewer approves again.
+- **068**: `journeyEngine`'s first project-lane start reads no qualification before the home's store exists (`previousQualification`, null until the store file exists).
 
 ## What was run
 
