@@ -92,8 +92,8 @@ CREATE TABLE deployment_requests (
   work_item TEXT REFERENCES work_items(id),
   outcome TEXT NOT NULL CHECK (outcome IN ('pending', 'not_issued', 'deployed', 'failed', 'not_verified', 'unknown')),
   -- A request refused before any authorization (the artifact or the runtime
-  -- refused at preparation): {code, reason}.
-  refusal TEXT,
+  -- refused at preparation): the refusal's code (SEAM.md §374).
+  reason TEXT,
   -- One row per key and requester: the owner's request under a key the
   -- policy already requested keeps the policy's row as it was.
   UNIQUE (project, request_key, requested_by)

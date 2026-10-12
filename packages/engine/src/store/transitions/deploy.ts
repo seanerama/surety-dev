@@ -650,15 +650,15 @@ function recordRequest(
   // (the 31b review's M5): the owner's gets a row of its own.
   const mine = tx.db.prepare('SELECT * FROM "deployment_requests" WHERE "project" = ? AND "request_key" = ? AND "requested_by" = ?').get(args.project, args.key, args.requested_by) as RequestRow | undefined;
   if (mine) {
-    tx.db.prepare('UPDATE "deployment_requests" SET "authorization" = ?, "work_item" = ?, "outcome" = ?, "refusal" = ? WHERE "id" = ?').run(args.authorization, args.work_item, args.outcome, args.refusal ? JSON.stringify(args.refusal) : null, mine.id);
+    tx.db.prepare('UPDATE "deployment_requests" SET "authorization" = ?, "work_item" = ?, "outcome" = ?, "reason" = ? WHERE "id" = ?').run(args.authorization, args.work_item, args.outcome, args.refusal?.code ?? null, mine.id);
     return tx.db.prepare('SELECT * FROM "deployment_requests" WHERE "id" = ?').get(mine.id) as RequestRow;
   }
   const id = tx.newId('dreq_');
   tx.db
     .prepare(
-      'INSERT INTO "deployment_requests" ("id", "created_at", "project", "request_key", "requested_by", "candidate", "environment", "authorization", "work_item", "outcome", "refusal") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO "deployment_requests" ("id", "created_at", "project", "request_key", "requested_by", "candidate", "environment", "authorization", "work_item", "outcome", "reason") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run(id, tx.at, args.project, args.key, args.requested_by, args.candidate, args.environment, args.authorization, args.work_item, args.outcome, args.refusal ? JSON.stringify(args.refusal) : null);
+    .run(id, tx.at, args.project, args.key, args.requested_by, args.candidate, args.environment, args.authorization, args.work_item, args.outcome, args.refusal?.code ?? null);
   if (args.requested_by === 'policy') {
     tx.emit('deploy.requested_by_policy', { project: args.project, candidate: args.candidate, environment: args.environment }, { request: id, request_key: JSON.parse(args.key) as unknown, authorization: args.authorization, outcome: args.outcome, ...(args.refusal ? { refusal: args.refusal } : {}) });
   }

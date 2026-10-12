@@ -1990,7 +1990,7 @@
           "required": true,
           "enum": "DeploymentRequestsOutcome"
         },
-        "refusal": {
+        "reason": {
           "required": false
         }
       }
