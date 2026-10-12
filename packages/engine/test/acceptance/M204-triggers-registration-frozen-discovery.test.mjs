@@ -26,7 +26,7 @@ import { describe, test } from 'node:test';
 import { answer, openDecision, untilKilled } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { capturedProposal, effectiveVersion, humanApplies, protectedVersions, proposalsOf, roleRun, waitApplied } from './harness/gates.mjs';
-import { addItem, permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, permittedEdit, pinStep, roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { armBarrier, candidatesOf, changePolicy, eventsOfType } from './harness/journal.mjs';
 import { runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
@@ -70,7 +70,7 @@ function files(defs = DEFS, required = REQUIRED) {
 
 // A T1 project with the definitions, the index (R1, R2) and one stage implementing R1.
 async function project(fx, opts = {}) {
-  const p = await checkProject(fx, { files: files(opts.defs, opts.required), tier: 'T1' });
+  const p = await pinStep(fx, await checkProject(fx, { files: files(opts.defs, opts.required), tier: 'T1' }));
   const plan = await installIndexedPlan(fx.engine, p.id, {
     index: [
       { key: 'R1', criteria: ['R1.1'] },

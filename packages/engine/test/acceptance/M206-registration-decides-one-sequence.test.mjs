@@ -45,7 +45,7 @@ describe('M206 registration decides; one sequence', () => {
   test('(b), (c) an old matching pass and an assessed reuse pass, then a newer registration: the satisfied evaluation is stale in the registration\'s transaction, and queued, materializing, running, quarantined, interrupted and cancelled the check is missing, never the earlier pass', async (t) => {
     // No recovery registration after `interrupted` (D3 §2.7; SEAM.md §189).
     const fx = await scriptedEngine(t, { config: { check_infra_retries_max: 0 } });
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const c1 = ctx.candidate;
     const c2 = await successor(fx, ctx);
@@ -88,7 +88,7 @@ describe('M206 registration decides; one sequence', () => {
 
   test('(a), (d) two registrations of the same bindings, the later recorded first, with a fixture result between them: one sequence; the later registration decides throughout, whatever finishes last', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx);
+    const ctx = await nominated(fx, { autonomy: 'step' });
     const project = ctx.project.id;
     const c = ctx.candidate;
     const k = (await installChecks(fx.engine, project, [check('own', { requirements: ['R1'] })])).id;
@@ -128,7 +128,7 @@ describe('M206 registration decides; one sequence', () => {
     const fx = await scriptedEngine(t);
     // The fixture's failure below is recorded while the stage's work is verifying on the candidate, so under Q2 (D3 §2.10; E90 item 2) it would send the
     // stage back to its Builder. (e) is about which registration resolves the finding, not the repair: at repair_attempts_max 0 the work is parked instead (objection 030).
-    const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 } });
+    const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 }, autonomy: 'step' });
     const project = ctx.project.id;
     const c = ctx.candidate;
     const k = (await installChecks(fx.engine, project, [check('own', { requirements: ['R1'] })])).id;

@@ -23,6 +23,7 @@ import { recordExit } from '../checks/selection.mjs';
 import { buildAndNominate, def } from '../checks/repair.mjs';
 import { protectedSet, scopeProject } from '../checks/scope.mjs';
 import { checkProject, installIndexedPlan } from '../checks/fixtures.mjs';
+import { refOid } from '../repos.mjs';
 import { requestTick, tick, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 
@@ -257,7 +258,7 @@ export const DEPLOY_DEFS = Object.freeze({ acc: def('acceptance', { criteria: ['
 // git type (checks/fixtures.mjs `commitEntries`: an executable file, a
 // symbolic link, a submodule); `governed` adds to the governed file.
 // Returns {fx, p, project, candidate, reg, env: {id, name}, config, qualification}.
-export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed, policy = {} } = {}) {
+export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed, policy = {}, autonomy } = {}) {
   const index = [{ key: 'R1', criteria: ['R1.1'] }];
   const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
   let p;
@@ -266,6 +267,11 @@ export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', confi
     const made = await checkProject(fx, { files: { ...protectedSet(defs, governed), ...SERVICE_FILES, ...files }, entries, tier });
     const plan = await installIndexedPlan(fx.engine, made.id, { index, stages });
     p = { ...made, plan, stages: plan.stages };
+  }
+  // `autonomy` (M5 slice 31; SEAM.md §362): pinned before the build, so the nomination's chained work waits at its boundary.
+  if (autonomy !== undefined) {
+    await changePolicy(fx.engine, p.id, { autonomy });
+    p.base = refOid(p.repo.path, p.repo.ref);
   }
   const workspace = Object.keys(defs).filter((k) => !(defs[k].gate_kinds ?? []).every((g) => g === 'alpha_complete'));
   const built = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true })], keys: workspace });

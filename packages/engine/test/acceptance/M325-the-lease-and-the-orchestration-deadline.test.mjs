@@ -93,7 +93,7 @@ function assertDeadlineRow(ctx, op, row, { kinds = [], ids = [] }) {
 describe('M325 (a) the lease is held from the intent until completion is evaluated', () => {
   test('an ordinary teardown requested while the deploy is in verification waits, and is intended only after the completion\'s evaluation released the lease', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op1, execution } = await deployToRound(ctx);
     await scriptCall(fx.engine, ctx.env.id, 'teardown', [{ result: 'issued', apply: true }]);
     const asked = await teardown(fx.engine, ctx.project, ctx.env.name);
@@ -113,7 +113,7 @@ describe('M325 (a) the lease is held from the intent until completion is evaluat
 
   test('a second deploy (of a successor) waits environment_busy while the first is in verification, and is intended only once its completion was evaluated (here refused: the first candidate superseded)', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op1, execution } = await deployToRound(ctx);
     await stepExecution(fx.engine, execution.id, 'materializing');
     await stepExecution(fx.engine, execution.id, 'running');
@@ -139,7 +139,7 @@ describe('M325 (a) the lease is held from the intent until completion is evaluat
 describe('M325 (c) the orchestration deadline survives a restart and is never renewed', () => {
   test('a restart made near the deadline (the clock carried across it), then ticks: the deadline unchanged; reached, the operation fails before its effect with nothing applied', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     await setAdmission(fx.engine, ctx.env.id, 'held');
     await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
     await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
@@ -162,7 +162,7 @@ describe('M325 (c) the orchestration deadline survives a restart and is never re
 
   test('a retry near the deadline (attempt 1 read absent at deadline minus 60 s): attempt 2 runs under the same, unrenewed deadline', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued' }, { result: 'issued', apply: true }]);
     await armBarrier(fx.engine, 'deploy.receipt_recorded', 'pause');
     await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
@@ -180,7 +180,7 @@ describe('M325 (c) the orchestration deadline survives a restart and is never re
 describe('M325 (d) the deadline reached in verification', () => {
   test('a registration missing (the clock passes the deadline right after the round is registered): unknown, missing naming the check execution and the deadline; no result synthesized', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued', apply: true }]);
     await armBarrier(fx.engine, 'deploy.round_registered', 'pause');
     await deploy(fx.engine, ctx.project, ctx.candidate.id, ctx.env.name);
@@ -197,7 +197,7 @@ describe('M325 (d) the deadline reached in verification', () => {
 
   test('a check quarantined: unknown, missing naming the execution; the execution stays quarantined (no termination claimed) and has no result', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution } = await deployToRound(ctx);
     await stepExecution(fx.engine, execution.id, 'materializing');
     await stepExecution(fx.engine, execution.id, 'quarantined');
@@ -210,7 +210,7 @@ describe('M325 (d) the deadline reached in verification', () => {
 
   test('a check\'s admission starved (its execution never admitted): unknown, missing naming the execution; no result synthesized', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution } = await deployToRound(ctx);
     await advanceClock(fx.engine, DEADLINE + STEP_MARGIN);
     const row = await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);
@@ -220,7 +220,7 @@ describe('M325 (d) the deadline reached in verification', () => {
 
   test('a read outstanding (the deadline passes before the second identity read): unknown, missing naming the identity read; no second read recorded as a match', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution } = await deployToRound(ctx);
     await armBarrier(fx.engine, 'verify.before_second_read', 'pause');
     await recordExit(fx.engine, execution.id, 0);
@@ -236,7 +236,7 @@ describe('M325 (d) the deadline reached in verification', () => {
 describe('M325 (e) each way out of D4 §4.7 releases the lease by its rule', () => {
   test('a reconciled failure (absent, not retried) with the effect not yet quiescent: the lease held while a manager job is pending, released only after the absent read', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     await changePolicy(fx.engine, ctx.project, { deploy_auto_retries_max: 0 });
     await scriptCall(fx.engine, ctx.env.id, 'deploy', [{ result: 'issued' }]);
     const g1 = unitName(fx.home, ctx.env.id, 1);
@@ -255,7 +255,7 @@ describe('M325 (e) each way out of D4 §4.7 releases the lease by its rule', () 
 
   test('verification failed: the lease released; the work waits on a blocker naming the cause; re-verification and an ordinary teardown are then available', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution, request } = await deployToRound(ctx);
     await recordExit(fx.engine, execution.id, 1);
     await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);
@@ -269,7 +269,7 @@ describe('M325 (e) each way out of D4 §4.7 releases the lease by its rule', () 
 
   test('a candidate superseded meanwhile, its queued check cancelled: the lease released', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution } = await deployToRound(ctx);
     await successor(fx, { project: { id: ctx.project } });
     await tickUntil(fx.engine, ctx.project, () => (withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(execution.id)).status === 'cancelled' ? true : undefined), { max: 8, what: 'the queued check to be cancelled (D3)' });
@@ -280,7 +280,7 @@ describe('M325 (e) each way out of D4 §4.7 releases the lease by its rule', () 
 
   test('a refused completion (the candidate superseded while its check ran, then verified): the lease released; the work waits on a blocker naming CANDIDATE_SUPERSEDED', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution, request } = await deployToRound(ctx);
     await stepExecution(fx.engine, execution.id, 'materializing');
     await stepExecution(fx.engine, execution.id, 'running');
@@ -298,7 +298,7 @@ describe('M325 (e) each way out of D4 §4.7 releases the lease by its rule', () 
 describe('M325 (f) CD1: a re-verification requested after the operation\'s deadline', () => {
   test('the round has its own deadline_at, takes the lease again, and reaching it records the round unknown naming deadline; the operation\'s deadline is unchanged', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await deployable(fx);
+    const ctx = await deployable(fx, { autonomy: 'step' });
     const { operation: op, execution } = await deployToRound(ctx);
     await recordExit(fx.engine, execution.id, 1);
     await rowWhen(ctx, roundsOf(fx.home, op.id)[0].id);

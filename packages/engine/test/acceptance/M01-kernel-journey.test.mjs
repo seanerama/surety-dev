@@ -41,12 +41,13 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
+import { CONTRACT } from './harness/fixtures.mjs';
 import { authorizationsOf, evaluationsOf, finding, passedInventory, reasonCodes, reasonSubjects, sharedFixture, signoffsOf } from './harness/gates.mjs';
 import { PERMITTED_EDIT } from './harness/gitruns.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
-import { assertCommitted, assertOperations, candidatesOf, eventsOfType, lineagesOf, workItemsOf } from './harness/journal.mjs';
+import { assertCommitted, assertOperations, candidatesOf, eventsOfType, lineagesOf, policyRevisions, workItemsOf } from './harness/journal.mjs';
 import { FIX_EDIT, FINDING, fixLoop, journey } from './harness/journey.mjs';
-import { changedPaths, checkoutState, refOid, refsOf } from './harness/repos.mjs';
+import { changedPaths, checkoutState, fileAt, refOid, refsOf } from './harness/repos.mjs';
 import { assertRunEnded, countOf, getRow, runsOf, runsOfProject } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 import { WORK } from './harness/transitions.mjs';
@@ -61,11 +62,24 @@ describe('M01 the kernel journey: a T2 project from its creation to an issued Al
 
   test('runtime data stays outside tracked source', () => {
     const { repo } = J.project;
+    const tip = refOid(repo.path, repo.ref);
     assert.deepEqual(
-      changedPaths(repo.path, repo.head, refOid(repo.path, repo.ref)),
-      { '.surety/project.json': 'A', [PERMITTED_EDIT.path]: 'A' },
-      "all the journey added to the integration branch is the project's identity file and the Builder's edit",
+      changedPaths(repo.path, repo.head, tip),
+      { '.surety/project.json': 'A', '.surety/policy.json': 'A', [PERMITTED_EDIT.path]: 'A' },
+      "all the journey added to the integration branch is the project's identity file, the owner's policy pin and the Builder's edit",
     );
+    // M5 (D6 C.2, K3; SEAM.md §§348, 362): the policy file is the owner's one
+    // revision pinning `autonomy: step`, and nothing else: every other key it
+    // holds is at the schema's default.
+    const revisions = policyRevisions(J.fx.home, J.project.id);
+    assert.deepEqual(revisions.map((r) => [r.revision, r.committed, r.widens_authority]), [[1, 1, 0]], 'one ordinary policy revision, the pin');
+    const policy = JSON.parse(fileAt(repo.path, tip, '.surety/policy.json'));
+    assert.equal(policy.autonomy, 'step', 'the committed policy pins autonomy step');
+    for (const [key, value] of Object.entries(policy)) {
+      if (key === 'autonomy') continue;
+      assert.ok(key in CONTRACT.project, `${key} is a project key`);
+      assert.deepEqual(value, CONTRACT.project[key].default, `${key} is at its default: the pin changed nothing else`);
+    }
     assert.deepEqual(checkoutState(repo.path), J.checkout, "the developer's checkout holds exactly what it held before the project existed");
   });
 
