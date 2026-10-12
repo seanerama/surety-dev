@@ -1989,6 +1989,9 @@
         "outcome": {
           "required": true,
           "enum": "DeploymentRequestsOutcome"
+        },
+        "refusal": {
+          "required": false
         }
       }
     },
@@ -2660,6 +2663,13 @@
         },
         "missing_verifications": {
           "required": true
+        },
+        "phase_plan": {
+          "required": false,
+          "references": "phase_plans"
+        },
+        "plan_generation": {
+          "required": false
         }
       }
     },
@@ -2743,7 +2753,7 @@
           "required": true
         },
         "autonomy": {
-          "required": true
+          "required": false
         },
         "settings": {
           "required": true
