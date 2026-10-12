@@ -313,6 +313,23 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
   return { request: r.id, decision: d?.id ?? null };
 }
 
+// The impact as it stands now (D6 §4.4: preview and effect recompute it):
+// the proposal's representation, recorded with the run's semantics, against
+// the approved version and the records as they are.
+export function currentImpact(db: Db, r: RequestRow): Impact | null {
+  if (r.proposal_blob === null) return null;
+  const sem = db
+    .prepare(`SELECT s."representation", s."semantic_digest" FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .get(r.work_item, r.proposal_blob) as { representation: string | null; semantic_digest: string | null } | undefined;
+  const representation = parseJson<SpecRepresentation>(sem?.representation ?? null);
+  if (!representation) return null;
+  try {
+    return computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null });
+  } catch {
+    return null;
+  }
+}
+
 // ---- the decision (D6 §4.5; floor) ---------------------------------------------------------
 
 export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'];
@@ -321,13 +338,19 @@ function changeManifest(db: Db, id: string): Record<string, unknown> {
   const r = getRequest(db, id);
   const project = r?.project ?? null;
   const spec = project === null ? undefined : currentSpec(db, project);
-  const impact = parseJson<Impact>(r?.impact_value ?? null);
+  const impact = r ? currentImpact(db, r) : null;
   return {
     request: id,
     spec_version: spec?.version ?? null,
     proposal_revision: r?.proposal_revision ?? null,
     protected_version: project === null ? null : (effectiveVersion(db, project)?.id ?? null),
-    impact: impact === null ? null : sha256(canonical({ ...impact, dependency_manifest: null })),
+    // What the approval decides on: the requirements and criteria changed,
+    // the checks that would owe a correction, the phases touched. The listed
+    // evidence is recomputed at the effect (results come and go every tick).
+    impact:
+      impact === null
+        ? null
+        : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current })),
     dependency_manifest: project === null ? null : dependencyManifest(db, project),
     policy_revision: project === null ? null : policyRevision(db, project),
   };
@@ -339,7 +362,8 @@ export function specChangeKind(): KindSpec {
       const r = getRequest(tx.db, d.subject_id);
       if (!r || r.status !== 'proposed' || r.proposal_revision === null) return null;
       const manifest = changeManifest(tx.db, r.id);
-      const impact = parseJson<Impact>(r.impact_value) as Impact;
+      const impact = currentImpact(tx.db, r);
+      if (impact === null) return null;
       const listed = impact.checks.obligations.map((c) => c.key);
       return {
         manifest,
@@ -358,7 +382,9 @@ export function specChangeKind(): KindSpec {
       };
     },
     manifest: (tx, d) => changeManifest(tx.db, d.subject_id),
-    reraise: false,
+    // A dependency that changes (a new protected version, a plan's
+    // generation) raises the next generation with the impact recomputed.
+    reraise: true,
     answer(tx, d, option, note) {
       consumeDecision(tx, d, option, note);
       const r = getRequest(tx.db, d.subject_id);
@@ -380,9 +406,10 @@ export function specChangeKind(): KindSpec {
 function settleWork(tx: Tx, r: RequestRow, cause: string): void {
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
   if (!item || item.status === 'complete' || item.status === 'cancelled') return;
+  // The proposal path (work-table.ts): executing → awaiting_decision → complete.
   let it = item;
-  if (it.status === 'awaiting_decision') it = transitionWork(tx, it, 'executing', { blocker: null }, { spec_change_request: r.id, cause });
-  if (it.status === 'executing') transitionWork(tx, it, 'complete', { blocker: null }, { spec_change_request: r.id, cause });
+  if (it.status === 'executing') it = transitionWork(tx, it, 'awaiting_decision', {}, { spec_change_request: r.id, cause });
+  if (it.status === 'awaiting_decision') transitionWork(tx, it, 'complete', { blocker: null }, { spec_change_request: r.id, cause });
 }
 
 // ---- the application (D6 §4.5) -------------------------------------------------------------
@@ -466,11 +493,13 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   const run = tx.db.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(r.work_item) as { id: string } | undefined;
   const intent = tx.db.prepare('SELECT "decision" FROM "effect_intents" WHERE "id" = ?').get(inputs.intent) as { decision: string } | undefined;
   if (!run || !intent) throw illegal('applying a spec change with no run or no decision', { spec_change_request: r.id });
+  const impact = currentImpact(tx.db, r) ?? (parseJson<Impact>(r.impact_value) as Impact);
   const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision });
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(op.project) as { spec_evidence_generation: number }).spec_evidence_generation;
   tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'approved', "approved_revision" = ? WHERE "id" = ?`).run(made.spec_revision, r.id);
-  const impact = parseJson<Impact>(r.impact_value) as Impact;
-  // Every listed result invalidated, every listed evaluation stale.
+  // (The impact was recomputed above, against the records as they were
+  // before the new version: D6 §4.4.)
+  tx.db.prepare('UPDATE "spec_change_requests" SET "impact_value" = ? WHERE "id" = ?').run(JSON.stringify(impact), r.id);
   invalidateResults(tx, op.project, impact.evidence.results, 'spec_changed');
   // An unresolved obligation per listed check (A.3).
   const insert = tx.db.prepare(
@@ -480,7 +509,7 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // The Verifier's correction, naming the affected and uncovered criteria
   // (D3 §2.11's route).
   if (impact.checks.obligations.length > 0 || impact.checks.uncovered.length > 0 || impact.checks.criterion_unknown.length > 0) {
-    observeTrigger(tx, { project: op.project, kind: 'check_correction', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, chain: 0 }, { spec_change_request: r.id });
+    observeTrigger(tx, { project: op.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, chain: 0 }, { spec_change_request: r.id });
   }
   // The Architect's replan when the current or a later phase is touched
   // (F §3.10.7), the impact its triggering evidence.

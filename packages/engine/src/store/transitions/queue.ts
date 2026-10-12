@@ -1480,8 +1480,11 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
   const d = getDecision(tx, intent.decision)!;
   const spec = KINDS[d.kind as DecisionKind];
   const now = spec.manifest(tx, d, facts);
-  if (canonical(now) === canonical(JSON.parse(intent.preconditions))) return true;
-  invalidateIntent(tx, intent.id);
+  const before = JSON.parse(intent.preconditions) as Record<string, unknown>;
+  if (canonical(now) === canonical(before)) return true;
+  // Which preconditions changed, named on the invalidation.
+  const changed = [...new Set([...Object.keys(now), ...Object.keys(before)])].filter((k) => canonical(now[k] ?? null) !== canonical(before[k] ?? null)).sort();
+  invalidateIntent(tx, intent.id, changed);
   return false;
 }
 
@@ -1489,13 +1492,13 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
 // EFFECT_PRECONDITION_CHANGED, the consumption's local transition withdrawn,
 // and the next generation raised with no approval. An intent already done or
 // invalidated is left as it is.
-export function invalidateIntent(tx: Tx, intentId: string): void {
+export function invalidateIntent(tx: Tx, intentId: string, changed?: string[]): void {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(intentId) as { id: string; project: string; decision: string; status: string; kind: string } | undefined;
   if (!intent || intent.status === 'done' || intent.status === 'invalidated') return;
   const d = getDecision(tx, intent.decision)!;
   const spec = KINDS[d.kind as DecisionKind];
   tx.db.prepare(`UPDATE "effect_intents" SET "status" = 'invalidated', "invalidated_reason" = 'EFFECT_PRECONDITION_CHANGED' WHERE "id" = ?`).run(intent.id);
-  tx.emit('intent.invalidated', { project: intent.project, decision: d.id, intent: intent.id }, { reason: 'EFFECT_PRECONDITION_CHANGED', kind: intent.kind });
+  tx.emit('intent.invalidated', { project: intent.project, decision: d.id, intent: intent.id }, { reason: 'EFFECT_PRECONDITION_CHANGED', kind: intent.kind, ...(changed ? { changed } : {}) });
   if (spec.withdraw?.(tx, d)) raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
 }
 

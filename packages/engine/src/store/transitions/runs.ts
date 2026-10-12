@@ -335,7 +335,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       return undefined;
     }
   })();
-  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`]!;
+  // A Spec Writer's one-shot (D6 §4.3) has no deadline key of its own in
+  // this engine's policy: D6's `deadline_spec_writer` is per turn, and the
+  // one-shot takes the Architect's, as a session's turn does (sessions/session.ts).
+  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`] ?? policy.deadline_architect!;
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
   // process started.
