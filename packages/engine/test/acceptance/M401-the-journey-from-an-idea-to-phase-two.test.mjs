@@ -132,7 +132,7 @@ describe('M401 the journey from an idea to Alpha, part 1: the idea to phase 2 pu
     const firstBuilder = Date.parse(builders[0].at);
     assert.equal(results.filter((r) => Date.parse(r.created_at) < firstBuilder).length, 0, 'no check result before the first Builder: the checks exist, and nothing has run them (D3 registers at a nomination)');
     const keys = checkRows(fx.home, p.id).filter((c) => c.protected_version === effectiveAtReadiness.id).map((c) => c.key).sort();
-    assert.deepEqual(keys, ['accept-r1', 'accept-r2', 'integration', 'lint', 'operation', 'smoke'], 'the checks exist in the effective version at readiness');
+    assert.deepEqual(keys, ['accept-r1', 'accept-r2', 'integration', 'integration-lib', 'lint', 'operation', 'smoke'], 'the checks exist in the effective version at readiness');
   });
 
   test('(f) stages 1 and 2: each integrated then verified through engine-run checks in check domains, a Verifier and a Reviewer run, no decision raised but the routed; the serial path recorded (the run caps as built)', () => {

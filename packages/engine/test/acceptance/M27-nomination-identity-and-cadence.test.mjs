@@ -266,9 +266,12 @@ describe('M27 a nomination that a crash interrupts is completed by its finalizer
 
   test('killed after a T2 stage was integrated and before it was nominated: the stage is still nominated after the restart, once', async (t) => {
     const barrier = journalBarrier('ref_update', 'finalizer_committed');
-    const fx = await scriptedEngine(t, { barriers: [`${barrier}=kill`] });
+    const fx = await scriptedEngine(t);
     const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
+    // Armed after the step pin, which is itself a ref update with a finalizer
+    // (SEAM.md §§33, 366): the first ref update it meets is the stage's integration.
+    await armBarrier(fx.engine, barrier, 'kill');
     const dead = fx.engine;
     await requestTick(dead, project.id).catch(() => {});
     assert.deepEqual(await within(dead.exited, 20_000), { code: null, signal: 'SIGKILL' }, `the engine kills itself at ${barrier}, in the integration`);

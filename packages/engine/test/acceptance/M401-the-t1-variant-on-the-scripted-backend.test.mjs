@@ -83,10 +83,10 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     const { fx, ctx } = J;
     const c1 = J.phase1.completion_binding.candidate;
     const keys1 = [...new Set(executionsOf(fx.home, c1).map((x) => x.key))].sort();
-    for (const key of ['accept-r1', 'accept-r2', 'integration', 'lint', 'smoke']) assert.ok(keys1.includes(key), `${key} executed on phase 1's candidate (${keys1.join(', ')})`);
+    for (const key of ['accept-r1', 'accept-r2', 'integration-lib', 'integration', 'lint', 'smoke']) assert.ok(keys1.includes(key), `${key} executed on phase 1's candidate (${keys1.join(', ')})`);
     const c2 = J.phase2.completion_binding.candidate;
     const keys2 = [...new Set(executionsOf(fx.home, c2).map((x) => x.key))].sort();
-    for (const key of ['accept-r3', 'accept-r4', 'phase-regression', 'accept-r1']) assert.ok(keys2.includes(key), `${key} executed on phase 2's candidate (${keys2.join(', ')})`);
+    for (const key of ['accept-r3', 'accept-r4', 'integration-tally', 'integration-stats', 'phase-regression', 'accept-r1']) assert.ok(keys2.includes(key), `${key} executed on phase 2's candidate (${keys2.join(', ')})`);
     assert.ok(!executionsOf(fx.home, c1).some((x) => x.key === 'phase-regression'), 'the phase-only check of phase 2 never ran on phase 1\'s candidate');
     assert.ok(evaluationsOfKind(fx.home, ctx.project, 'phase').some((e) => e.candidate === c2 && e.outcome === 'satisfied'));
   });
