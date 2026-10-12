@@ -2,6 +2,8 @@
 
 One page the owner fills in before a Spec Assistant session (`spec-assistant-prompt.md`), so that phase 1 ("listen") starts from something written and phase 3 ("explore") has fewer gaps to find. Nothing here is binding: the specification that comes out of the session is what gets approved, and it may contradict this brief wherever the conversation went further.
 
+Under the engine (D6 §3.1) this is also the shape of the **idea record**, `.surety/idea.md`: the Vision session fills these sections from the conversation and closes the file with the identity block at the end of this template, which is the one part of it the engine reads; or the owner creates the project with this brief directly (`surety project create <name> --repo <path> --idea idea-brief.md`) and no Vision session runs.
+
 Write in plain sentences. Leave a line blank rather than guessing; "I don't know yet" is an answer the assistant can work with, and a guess is not.
 
 Copy from the line below into a new file (`idea-brief.md` beside the future `.surety/spec/spec.md`, or anywhere) and paste it as your first message when the assistant asks for the idea.
@@ -76,3 +78,18 @@ Copy from the line below into a new file (`idea-brief.md` beside the future `.su
 *[Anything you keep going back and forth on. The assistant will ask about these first.]*
 
 -
+
+## Identity
+
+*[The one part of this file the engine reads (D6 §3.1, Appendix B.1): a fenced `yaml` block headed `surety-identity`, with these eight keys and no others; an unknown key, a tier outside the three or an area outside the closed list is reported, not guessed at. The Vision session fills it at the end of the conversation from what you agreed; if you create the project with this brief and no session, fill it yourself. A list may be empty. `sensitive_areas` is `none` or a list of identifiers from Surety's closed list, matching the ticks above: `authentication`, `authorization`, `payments_financial_data`, `personal_data`, `secrets_credentials`, `data_migrations_destructive`, `irreversible_external_actions`. `tier_recommendation` is `T1`, `T2`, `T3` or `unsure`. `environments` names the places in "Where it runs".]*
+
+```yaml surety-identity
+name: [working name]
+one_line: [what it is and for whom, in one sentence]
+users: []
+non_goals: []
+success_measures: []
+sensitive_areas: none
+tier_recommendation: unsure
+environments: []
+```
