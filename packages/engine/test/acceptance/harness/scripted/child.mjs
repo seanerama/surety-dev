@@ -14,6 +14,8 @@
 //   scripts/run-<run>.json  M5 (SEAM.md §343): an array of scripts for one run's launches (a
 //                           session's turns); launch n of that run runs element n-1, before
 //                           the work item's scripts are consulted
+//   scripts/kind-<kind>.json M5 (SEAM.md §350): a script for every launch of that work kind with no
+//                           script of its own, or an array by that kind's launch ordinal
 //   scripts/default.json    one script, for a launch with no script of its own
 //   release/<key>.<name>    a file whose existence releases the hold <name>;
 //                           <key> is the invocation id, the work item id or "all"
@@ -411,7 +413,7 @@ function priorCanaryLaunches(kind) {
   return n;
 }
 
-function chooseScript(workItem, index, run = null) {
+function chooseScript(workItem, index, run = null, kind = null) {
   const canary = readCanary();
   if (canary !== null && typeof canary.kind === 'string' && /^[a-z]+$/.test(canary.kind)) {
     const list = readJson(join(dir, 'scripts', `canary-${canary.kind}.json`));
@@ -428,6 +430,17 @@ function chooseScript(workItem, index, run = null) {
   }
   const own = workItem ? readJson(join(dir, 'scripts', `${workItem}.json`)) : undefined;
   if (Array.isArray(own) && own[index] !== undefined) return { script: own[index], source: 'work_item' };
+  // M5 slice 31b (SEAM.md §350): a launch with no script of its own follows
+  // scripts/kind-<work kind>.json: one script for every launch of that kind,
+  // or an array in which launch n of that kind (counted in the log by
+  // work_kind) follows element n-1; past the array's end, the default.
+  if (typeof kind === 'string' && /^[a-z_]+$/.test(kind)) {
+    const byKind = readJson(join(dir, 'scripts', `kind-${kind}.json`));
+    if (Array.isArray(byKind)) {
+      const n = priorLaunches(kind, 'work_kind');
+      if (byKind[n] !== undefined) return { script: byKind[n], source: 'kind' };
+    } else if (byKind !== undefined) return { script: byKind, source: 'kind' };
+  }
   const fallback = readJson(join(dir, 'scripts', 'default.json'));
   if (fallback !== undefined) return { script: fallback, source: 'default' };
   return { script: HOLD_FOREVER, source: 'unscripted' };
@@ -1866,7 +1879,14 @@ async function runSteps(steps, ctx) {
     else if (step.write !== undefined) {
       const target = at(step.write.path);
       mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : (step.write.content ?? ''));
+      let content = step.write.content ?? '';
+      // M5 slice 31b (SEAM.md §350): `substitute_head` puts the workspace's HEAD
+      // where the text says __HEAD__ (a replan's `prepared_against.revision`).
+      if (step.write.substitute_head === true) {
+        const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
+        content = content.split('__HEAD__').join((head.stdout ?? '').trim());
+      }
+      writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : content);
     } else if (step.write_many !== undefined) {
       const target = at(step.write_many.dir);
       mkdirSync(target, { recursive: true });
@@ -1898,6 +1918,23 @@ async function runSteps(steps, ctx) {
         }
       }
       log('released', { hold: step.hold });
+    } else if (step.review_auto !== undefined) {
+      // M5 slice 31b (SEAM.md §350): a Reviewer's result decided from its
+      // package: a proposal review (`proposal.json` present) approves the
+      // proposal by its id; otherwise the candidate is signed off.
+      let value;
+      const proposal = (() => {
+        try {
+          return JSON.parse(readFileSync(join(contextDir, 'proposal.json'), 'utf8'));
+        } catch {
+          return null;
+        }
+      })();
+      if (proposal && typeof proposal.id === 'string') value = { status: 'completed', summary: `approving ${proposal.id}`, proposal_approval: { proposal: proposal.id, reason: step.review_auto.reason ?? 'The approved specification requires the checks.' } };
+      else value = { status: 'completed', summary: 'signed off', signoffs: [{ scope: step.review_auto.scope ?? 'candidate' }] };
+      log('review_auto', { proposal: proposal?.id ?? null, scope: value.signoffs ? value.signoffs[0].scope : null });
+      if (outDirPresent()) writeResultFile(value);
+      emit({ type: 'result', result: value });
     } else if (step.result !== undefined) {
       // In a sandbox: the file first, then the terminal success event.
       if (outDirPresent()) writeResultFile(step.result);
@@ -1926,7 +1963,7 @@ async function runSteps(steps, ctx) {
 const { request, ...requestProblem } = await readRequest();
 const workItem = request?.work_item ?? null;
 const index = priorLaunches(workItem);
-const { script, source } = chooseScript(workItem, index, request?.run ?? null);
+const { script, source } = chooseScript(workItem, index, request?.run ?? null, request?.work_kind ?? null);
 // M5 (SEAM.md §343): where the engine put this invocation's context package.
 // In a sandbox it is mounted at /surety/context; in the kernel lane the
 // request names its directory, which `context_dump` reads by default.
