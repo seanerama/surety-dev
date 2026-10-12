@@ -306,10 +306,16 @@ export function waitForRunState(home, runId, state, { timeoutMs } = {}) {
   );
 }
 
-// No run of these projects is still under way (a quarantined run counts as settled).
+// No run of these projects is still under way (a quarantined run counts as
+// settled). A session's run stays live between turns (D6 §2.1; D1 §4.2,
+// A.5): while its `session_state` is `allocated` or `open_idle` nothing of
+// it is under way, so it counts as idle; `turn_running`, `saving` and
+// `closing` are busy (objection 057; SEAM.md §358).
+export const SESSION_IDLE_STATES = Object.freeze(['allocated', 'open_idle']);
+export const runIsIdle = (r) => r.state === 'ended' || r.quarantined === 1 || (r.kind === 'session' && SESSION_IDLE_STATES.includes(r.session_state));
 export function waitForIdle(home, projects, { timeoutMs } = {}) {
   const ids = [projects].flat();
-  return waitFor(() => ids.every((p) => runsOfProject(home, p).every((r) => r.state === 'ended' || r.quarantined === 1)), {
+  return waitFor(() => ids.every((p) => runsOfProject(home, p).every(runIsIdle)), {
     timeoutMs,
     what: `every run of ${ids.join(', ')} to end`,
   });
