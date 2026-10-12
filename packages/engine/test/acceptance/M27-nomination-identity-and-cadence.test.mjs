@@ -27,7 +27,7 @@ import { describe, test } from 'node:test';
 
 import { releaseBarrier, within } from './harness/engine.mjs';
 import { assertWorkHistory } from './harness/invariants.mjs';
-import { addGitProject, addItem, addStagedProject, permittedEdit, roleThat, roleThatHolds, runToEnd, runToHold, waitForCandidates } from './harness/gitruns.mjs';
+import { addGitProject, pinStep, addItem, addStagedProject, permittedEdit, roleThat, roleThatHolds, runToEnd, runToHold, waitForCandidates } from './harness/gitruns.mjs';
 import {
   armBarrier,
   assertCommitted,
@@ -104,7 +104,7 @@ function assertCandidate(fx, project, candidate, expect) {
 describe('M27 the engine nominates at the cadence point of the tier', () => {
   test('T2: the completion of a stage nominates the integrated revision: candidate, immutable ref and lineage succession agree, and the work is being verified', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     const run = await runToEnd(fx, project.id, items[0]);
     const committed = assertCommitted(fx, run.id, { kind: 'engine_commit', parent: project.base, integrated: true });
@@ -130,7 +130,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 
   test('T1: the completion of a stage nominates nothing; the work stays integrated', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T1' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T1' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     const run = await runToEnd(fx, project.id, items[0]);
     assertCommitted(fx, run.id, { kind: 'engine_commit', parent: project.base, integrated: true });
@@ -143,7 +143,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 
   test("T1: a Builder's request, `nominate: true`, is performed by the engine: the integrated revision is nominated by builder_request", async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T1' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T1' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()], { nominate: true })]);
     const run = await runToEnd(fx, project.id, items[0]);
     const committed = assertCommitted(fx, run.id, { kind: 'engine_commit', parent: project.base, integrated: true });
@@ -157,7 +157,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 
   test("T2: a Builder's request before the cadence point is not a nomination: the run is integrated as usual and no candidate exists", async (t) => {
     const fx = await scriptedEngine(t);
-    const project = await addGitProject(fx, { tier: 'T2' });
+    const project = await pinStep(fx, await addGitProject(fx, { tier: 'T2' }));
     const item = await addItem(fx, project.id, 'fix');
     fx.scripted.script(item, [roleThat([permittedEdit()], { nominate: true })]);
     const run = await runToEnd(fx, project.id, item);
@@ -169,7 +169,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 
   test('T1: a checkpoint is never a candidate, although the Builder asked for a nomination with it', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T1' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T1' });
     fx.scripted.script(items[0], [roleThat([step.write('src/part-one.js', 'export const one = 1;\n')], { checkpoint: true, nominate: true })]);
     const run = await runToEnd(fx, project.id, items[0]);
     assertCommitted(fx, run.id, { kind: 'checkpoint', parent: project.base, integrated: false, branchAt: project.base });
@@ -179,7 +179,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 
   test('a `nominate` that is not a boolean makes the result invalid', async (t) => {
     const fx = await scriptedEngine(t, { config: {} });
-    const { project, items } = await addStagedProject(fx, { tier: 'T1' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T1' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()], { nominate: 'yes' })]);
     const run = await runToEnd(fx, project.id, items[0]);
     assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result']);
@@ -191,7 +191,7 @@ describe('M27 the engine nominates at the cadence point of the tier', () => {
 describe('M27 a candidate is immutable, and later source changes land on its successor lineage', () => {
   test('a second stage integrated after a nomination is recorded on the successor lineage and nominated as the next candidate; the first candidate, its ref and its lineage are as they were', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2', stages: 2 });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2', stages: 2 });
     fx.scripted.script(items[0], [roleThat([step.write('src/stage-one.js', 'export const stage = 1;\n')])]);
     fx.scripted.script(items[1], [roleThat([step.write('src/stage-two.js', 'export const stage = 2;\n')])]);
     const firstRun = await runToEnd(fx, project.id, items[0]);
@@ -224,7 +224,7 @@ describe('M27 a candidate is immutable, and later source changes land on its suc
 describe('M27 a nomination that a crash interrupts is completed by its finalizer, once', () => {
   test('killed after the nomination ref was written and confirmed, before the finalizer: the restart writes the candidate, registers the ref and succeeds the lineage, and a second restart writes nothing again (D1-18)', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2' });
     fx.scripted.script(items[0], [roleThatHolds([permittedEdit()])]);
     await runToHold(fx, project.id, items[0]);
     // Let the integration through, then kill the engine at the next ref update's confirmation: the nomination's.
@@ -267,7 +267,7 @@ describe('M27 a nomination that a crash interrupts is completed by its finalizer
   test('killed after a T2 stage was integrated and before it was nominated: the stage is still nominated after the restart, once', async (t) => {
     const barrier = journalBarrier('ref_update', 'finalizer_committed');
     const fx = await scriptedEngine(t, { barriers: [`${barrier}=kill`] });
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
+    const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2' });
     fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
     const dead = fx.engine;
     await requestTick(dead, project.id).catch(() => {});

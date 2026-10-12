@@ -25,7 +25,7 @@ import { appendFileSync, rmSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 import { askingForTicks, reasonSubjects, stageGate } from './harness/gates.mjs';
-import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
@@ -66,7 +66,7 @@ describe('M223 a real project\'s toolchain', () => {
     const fx = await sandboxEngine(t, { config: { terminate_grace: 3, kill_grace: 2 } });
     await qualifyRunnerByFixture(fx.engine);
     const ref = referenceProject(fx.root);
-    const project = await checkProject(fx, { files: ref.files, tier: 'T1' });
+    const project = await pinStep(fx, await checkProject(fx, { files: ref.files, tier: 'T1' }));
     // The broken candidate below is a fix's, and its acceptance check fails while the fix is verifying, so under Q2 (D3 §2.10; E90 item 2) it would
     // send the fix back to its Builder. This row is about the toolchain, not the repair: at repair_attempts_max 0, set before the build so every
     // candidate holds its commit, the fix is parked instead (objection 030).

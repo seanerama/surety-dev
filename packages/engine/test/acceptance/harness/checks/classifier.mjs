@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { CODES, answer, approvalsOf, assertPreview, decision, decisionsOn, intentsOf, untilKilled } from '../decisions.mjs';
 import { writeEngineConfig } from '../engine.mjs';
 import { GOVERNED_FILE, assertNotApplied, capturedProposal, effectiveVersion, governedEdit, protectedVersions, proposalsOf } from '../gates.mjs';
-import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
+import { permittedEdit, pinStep, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { armBarrier } from '../journal.mjs';
 import { gitQuiet, refOid } from '../repos.mjs';
 import { addWork, tickUntil, workItem } from '../runs.mjs';
@@ -68,7 +68,8 @@ export const writeGov = (fields) => step.write(GOVERNED_FILE, governedText(field
 // `withErrors`, has at least one (M228 (c): an error of P0's own). Returns
 // {id, repo, base, plan, stage, candidate, version: <the version read>}.
 export async function classifierProject(fx, { files, index, tier = 'T1', withErrors = false }) {
-  const p = await checkProject(fx, { files, tier });
+  // M5 (D6 C.2, K3; SEAM.md §366): the M3 profile, `autonomy: step`, pinned before the plan exists.
+  const p = await pinStep(fx, await checkProject(fx, { files, tier }));
   const plan = await installIndexedPlan(fx.engine, p.id, { index, stages: [{ number: 1, goal: 'the first stage', implements: index.map((row) => row.key) }] });
   const item = plan.stages[0].work_item;
   fx.scripted.script(item, [roleThat([permittedEdit()], { nominate: true })]);

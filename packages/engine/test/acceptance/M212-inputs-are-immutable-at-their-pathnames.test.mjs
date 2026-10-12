@@ -40,7 +40,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { sha256Hex } from './harness/engine.mjs';
-import { PERMITTED_EDIT } from './harness/gitruns.mjs';
+import { PERMITTED_EDIT, pinStep } from './harness/gitruns.mjs';
 import { gitQuiet } from './harness/repos.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { assertContained } from './harness/sandbox/view.mjs';
@@ -93,7 +93,7 @@ describe('M212 inputs are immutable at their pathnames', () => {
       [BESIDE]: 'source beside the protected root\n',
       [defPath('immutable')]: smoke('immutable', { command, inputs: [INPUT], gates: ['stage'], timeout: 300 }),
     };
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     await qualifyRunnerByFixture(fx.engine);
     const { candidate } = await buildStage(fx, project);
     const inputSha = blobSha(project.repo.path, project.base, INPUT);

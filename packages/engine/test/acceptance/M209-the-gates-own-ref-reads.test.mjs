@@ -32,7 +32,7 @@ import { scriptedEngine, tick, workItem } from './harness/runs.mjs';
 // has been issued or completed.
 async function ready(t, config = {}) {
   const fx = await scriptedEngine(t, { config });
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
@@ -127,7 +127,7 @@ describe("M209 the gate's own ref reads", () => {
 
   test("(c) an evaluation whose refs are read while a protected application's ref update is confirmed and not finalized, and whose transaction follows the finalizer: reconciled against the registry, never reported as out of band", async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx, { files: PROTECTED_FILES });
+    const ctx = await nominated(fx, { autonomy: 'step', files: PROTECTED_FILES });
     const project = ctx.project.id;
     const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
     await passAll(fx.engine, project, ctx.candidate.id, [k.login]);

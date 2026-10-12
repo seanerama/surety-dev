@@ -26,7 +26,7 @@ const inDays = (n) => new Date(Date.now() + n * DAY * 1000).toISOString();
 // A T1 candidate whose one required check passes, and a Medium finding a Reviewer raised on it.
 async function mediumFinding(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);

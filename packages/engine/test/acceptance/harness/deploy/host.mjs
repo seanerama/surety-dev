@@ -46,6 +46,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { permittedEdit, roleThat, runToEnd, waitForCandidates } from '../gitruns.mjs';
 import { changePolicy, eventsOfType } from '../journal.mjs';
+import { refOid } from '../repos.mjs';
 import {
   GOVERNED_FILE,
   acceptance,
@@ -621,7 +622,10 @@ export async function hostDeployable(t, guard, { engineConfig = {}, engineArgs =
     ...files,
   };
   const p = await checkProject(fx, { files: projectFiles, entries, tier: 'T1' });
-  if (Object.keys(policy).length > 0) await changePolicy(fx.engine, p.id, policy);
+  // M5 (D6 C.2, K3; SEAM.md §§348, 366): the M4 fixture runs under `autonomy: step`, the M1-M4 profile,
+  // pinned with its other keys in one change before the plan exists; the base re-read after it.
+  await changePolicy(fx.engine, p.id, { autonomy: 'step', ...policy });
+  p.base = refOid(p.repo.path, p.repo.ref);
   await qualifyRunnerByFixture(fx.engine);
   const plan = await installIndexedPlan(fx.engine, p.id, { index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
   const [stage] = plan.stages;

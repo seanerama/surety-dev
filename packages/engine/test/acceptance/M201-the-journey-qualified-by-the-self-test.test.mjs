@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
 import { alphaTarget, authorizationsOf, reasonSubjects, sharedFixture, stageGate } from './harness/gates.mjs';
-import { PERMITTED_EDIT, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, PERMITTED_EDIT, permittedEdit, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
@@ -59,7 +59,7 @@ async function journey(t) {
     [defPath('accept')]: acceptance('accept', ['R1.1', 'R1.2'], { command: ['probe', 'expect', PERMITTED_EDIT.path, EXPECT], inputs: [EXPECT], timeout: 120 }),
     [defPath('smoke')]: smoke('smoke', { command: ['probe', '--report', 'exit', '0'], inputs: [EXPECT], timeout: 120 }),
   };
-  const project = await checkProject(fx, { files, tier: 'T1' });
+  const project = await pinStep(fx, await checkProject(fx, { files, tier: 'T1' }));
   const plan = await installIndexedPlan(fx.engine, project.id, { index: [{ key: 'R1', criteria: ['R1.1', 'R1.2'] }], stages: [{ number: 1, goal: 'the first stage', implements: ['R1'] }] });
   const [stage] = plan.stages;
   fx.scripted.script(stage.work_item, [roleThat([permittedEdit()], { nominate: true })]);

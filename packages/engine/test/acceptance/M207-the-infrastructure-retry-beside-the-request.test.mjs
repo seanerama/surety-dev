@@ -28,7 +28,7 @@ import { TO_RUNNING, discoveredProject, drive, entryOf, nominateStage, operatorR
 describe('M207 (c) the infrastructure retry beside the operator request', () => {
   test('an interrupted execution is registered again as recovery; its failure is not retried; the gate read tells the retry from the requests and relabels nothing', async (t) => {
     const fx = await scriptedEngine(t, { config: { check_infra_retries_max: 2 } });
-    const p = await discoveredProject(fx, ['sm']);
+    const p = await discoveredProject(fx, ['sm'], { policy: { autonomy: 'step' } });
     const c = await nominateStage(fx, p, ['sm']);
     const ctx = { project: p, stage: p.stage.id };
 

@@ -28,7 +28,7 @@ const LOGIN = check('login', { requirements: ['R1'] });
 describe('M55 the check_correction_unclassifiable manifest', () => {
   test('an unclassifiable correction goes to the human owner; the approval applies that proposal, waives no check, and applies no later diff', async (t) => {
     const fx = await scriptedEngine(t);
-    const ctx = await nominated(fx, { files: PROTECTED_FILES });
+    const ctx = await nominated(fx, { autonomy: 'step', files: PROTECTED_FILES });
     const project = ctx.project;
     const before = await installChecks(fx.engine, project.id, [LOGIN]);
     await passAll(fx.engine, project.id, ctx.candidate.id, [before.id.login]);
