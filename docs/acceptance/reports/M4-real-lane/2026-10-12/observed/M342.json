@@ -1,0 +1,3278 @@
+{
+  "row": "M342",
+  "written_by": "the real-lane test, never edited by hand",
+  "cost_statement": "SURETY REAL LANE, M4 (row M342): what this run can cost, before anything starts.\nExpected: under 1 USD in Claude Code's own estimates (BS4 §12; M3's runs cost 0.04 to 0.07 USD each), drawn from your subscription's usage limits, which your own Claude use shares.\nAt most, in billable tokens alone: each run is bounded by 300000 billable tokens, 3.00 USD at the dearest rate (10 USD per million output tokens);\n  the journey's 4 role runs (one Verifier, up to three Builders): 12.00 USD, stopped earlier by the project's day limit of 6 USD in estimates;\n  a new qualification attempt, only if the run directory has none: 3 canaries, 9.00 USD, within the fixture project's day limit of 10 USD;\n  plus cache reads (not counted by the run limit) and any overshoot until a run's deadline (D2 §4.2, §8 class C).\nThe only hard maximum is your subscription's own usage limits. The qualification, the deployment, the identity reads, the checks and the teardown call no model.\nAn estimate, not a cap and not an authorization (D4 §9.4). Nothing paid starts before your qualification_approval, your trust_activation and your answer to the checks' decision.",
+  "updated_at": "2026-10-12T01:00:08.503Z",
+  "checks": {
+    "project": "proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+    "repo": "/home/smahoney/surety-m4-real-20261012/repos/real-deployment-journey-3",
+    "toolchain": {
+      "node": "/home/smahoney/surety-m4-real-20261012/toolchain/node",
+      "sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31"
+    },
+    "qualification": {
+      "id": "hq_01M4PSFBRVABZ7KPJX0JE2XB5N",
+      "profile_fingerprint": "3f7152b9803100432455af40e3b5636bfe182f2feb1fd9e6196a30769c432a00",
+      "cases": [
+        [
+          "exit_zero",
+          "passed"
+        ],
+        [
+          "exit_nonzero",
+          "passed"
+        ],
+        [
+          "prints_passed_exits_nonzero",
+          "passed"
+        ],
+        [
+          "foreign_signal",
+          "passed"
+        ],
+        [
+          "deadline",
+          "passed"
+        ],
+        [
+          "term_handled_after_cancel",
+          "passed"
+        ],
+        [
+          "missing_program",
+          "passed"
+        ],
+        [
+          "input_immutable",
+          "passed"
+        ],
+        [
+          "orphan_stdout_closed",
+          "passed"
+        ],
+        [
+          "egress",
+          "passed"
+        ]
+      ]
+    },
+    "environment": {
+      "id": "env_01M4PSG3SQDS887EWCZP34MNFV",
+      "name": "alpha",
+      "config": "envc_01M4PSG3SRH9JDH0PK08SKDF3V",
+      "config_identity": "sha256:3fc812dc669d2c292ec7a224c07633f26c3180561270de463f1e891e697c3a0d"
+    },
+    "initial_version": {
+      "id": "pv_01M4PSG3GW79FE3JZ3QEH6VAW6",
+      "checks": [],
+      "discovery_errors": []
+    },
+    "stage": "stage_01M4PSG3TFWJFEESCR0MEWPTAF",
+    "stage_work_item": "wi_01M4PSG3TGKP2BRFZDE8AM2BZK",
+    "correction": {
+      "work_item": "wi_01M4PSG3TN15435N1C716F58N7",
+      "run": {
+        "id": "run_01M4PSG4FZ14G90G8BBBKQZYQH",
+        "role": "verifier",
+        "work_item": "wi_01M4PSG3TN15435N1C716F58N7",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "reason_text": null,
+        "ledger": [
+          {
+            "id": "led_01M4PSHW2RY6F2HE6V1QJDPAP8",
+            "created_at": "2026-10-12T00:52:40.150Z",
+            "project": "proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+            "invocation": "inv_01M4PSG4G1BVRRE9WYEJ8AV1K7",
+            "run": "run_01M4PSG4FZ14G90G8BBBKQZYQH",
+            "turn": null,
+            "role": "verifier",
+            "provider": "claude",
+            "model_requested": "claude-sonnet-5-5",
+            "model_observed": "claude-sonnet-5-5",
+            "raw_usage": "{\"input_tokens\":16,\"cache_creation_input_tokens\":17730,\"cache_read_input_tokens\":120210,\"output_tokens\":7930,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.162273}",
+            "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+            "billable_in": 17746,
+            "cached_in": 120210,
+            "out": 7930,
+            "usage_complete": 1,
+            "cost_status": "estimated",
+            "cost_usd": 0.162273,
+            "day_utc": "2026-10-12",
+            "corrects": null,
+            "correction_seq": null,
+            "unknown_allowance_tokens": null
+          }
+        ]
+      }
+    },
+    "proposal": {
+      "id": "prop_01M4PSHW1T2BSESFF72706WPVH",
+      "class": "tightening",
+      "elements": [
+        {
+          "reason": "check_added",
+          "check": "r1-1"
+        },
+        {
+          "reason": "check_added",
+          "check": "r2-1"
+        },
+        {
+          "reason": "check_added",
+          "check": "smoke"
+        },
+        {
+          "reason": "check_added",
+          "check": "user-operation"
+        }
+      ],
+      "classifier_version": 1,
+      "discovery_errors": [],
+      "decision": "dec_01M4PSJ1046NT49CJ19WF1T4V0",
+      "decision_kind": "check_correction_tightening",
+      "answer": "approve",
+      "status": "applied",
+      "resulting_version": "pv_01M4PSJGNXKEQA3H4M2GZQ9XTC"
+    },
+    "version": {
+      "id": "pv_01M4PSJGNXKEQA3H4M2GZQ9XTC",
+      "change_kind": "tightening",
+      "discovery_errors": [],
+      "checks": [
+        {
+          "key": "r1-1",
+          "required": true,
+          "kind": "acceptance",
+          "origin": "acceptance",
+          "criteria": [
+            "R1.1"
+          ],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/r1-1.mjs"
+          ],
+          "requires": []
+        },
+        {
+          "key": "r2-1",
+          "required": true,
+          "kind": "acceptance",
+          "origin": "acceptance",
+          "criteria": [
+            "R2.1"
+          ],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/r2-1.mjs"
+          ],
+          "requires": []
+        },
+        {
+          "key": "smoke",
+          "required": true,
+          "kind": "smoke",
+          "origin": "acceptance",
+          "criteria": [],
+          "gate_kinds": [
+            "stage",
+            "alpha_authorize"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/run/smoke.mjs"
+          ],
+          "requires": []
+        },
+        {
+          "key": "user-operation",
+          "required": true,
+          "kind": "post_deploy_behavior",
+          "origin": "acceptance",
+          "criteria": [],
+          "gate_kinds": [
+            "alpha_complete"
+          ],
+          "command": [
+            "node",
+            ".surety/checks/post-deploy/user-operation.mjs"
+          ],
+          "requires": [
+            "environment",
+            "artifact_digest"
+          ]
+        }
+      ]
+    }
+  },
+  "build_domain_samples": [
+    {
+      "at": "2026-10-12T00:53:29.082Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:30.084Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:31.090Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:32.093Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:33.096Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:34.098Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:35.125Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:36.128Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:37.127Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:38.133Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:39.136Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:40.162Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        },
+        {
+          "pid": 763091,
+          "argv": [
+            "/bin/bash",
+            "-c",
+            "source /surety/home/.claude/shell-snapshots/snapshot-bash-1791766413570-qkyupo.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /surety/workspace; mkdir -p src /surety/out\ncat > src/sum.mjs <<'\"'\"'EOF'\"'\"'\nexport function sum(a, b) {\n  return a + b;\n}\nEOF\ncat > server.mjs <<'\"'\"'EOF'\"'\"'\nimport { createServer } from '\"'\"'node:http'\"'\"';\nimport { sum } from '\"'\"'./src/sum.mjs'\"'\"';\n\nif (!process.env.REF_SECRET) {\n  process.stderr.write('\"'\"'REF_SECRET must be set and not empty\\n'\"'\"');\n  process.exit(1);\n}\n\nfunction parseNumber(value) {\n  if (value === null || value.trim() === '\"'\"''\"'\"') return null;\n  const n = Number(value);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction send(res, status, body) {\n  const text = JSON.stringify(body);\n  res.writeHead(status, {\n    '\"'\"'content-type'\"'\"': '\"'\"'application/json'\"'\"',\n    '\"'\"'content-length'\"'\"': Buffer.byteLength(text),\n  });\n  res.end(text);\n}\n\nconst server = createServer((req, res) => {\n  const url = new URL(req.url, '\"'\"'http://127.0.0.1'\"'\"');\n  if (req.method === '\"'\"'GET'\"'\"' && url.pathname === '\"'\"'/health'\"'\"') {\n    return send(res, 200, { ok: true });\n  }\n  if (req.method === '\"'\"'GET'\"'\"' && url.pathname === '\"'\"'/sum'\"'\"') {\n    const a = parseNumber(url.searchParams.get('\"'\"'a'\"'\"'));\n    const b = parseNumber(url.searchParams.get('\"'\"'b'\"'\"'));\n    if (a === null || b === null) {\n      return send(res, 400, { error: '\"'\"'a and b must be numbers'\"'\"' });\n    }\n    return send(res, 200, { sum: sum(a, b) });\n  }\n  send(res, 404, { error: '\"'\"'not found'\"'\"' });\n});\n\nserver.listen(Number(process.env.PORT), '\"'\"'127.0.0.1'\"'\"');\nEOF\n(PORT=36999 REF_SECRET=x node server.mjs & sleep 1; curl -s \"127.0.0.1:36999/sum?a=2&b=3\"; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' \"127.0.0.1:36999/sum?a=2&b=x\"; curl -s 127.0.0.1:36999/health; kill %1)\nREF_SECRET= node server.mjs; echo $?\ncat > /surety/out/result.json <<'\"'\"'EOF'\"'\"'\n{\"status\":\"completed\",\"summary\":\"Added src/sum.mjs (sum export) and server.mjs (node:http on 127.0.0.1:$PORT, REF_SECRET check, /health, /sum with 400 on non-numbers, 404 otherwise). Verified manually.\",\"nominate\":true}\nEOF' && pwd -P >| /tmp/claude-087d-cwd"
+          ]
+        },
+        {
+          "pid": 763095,
+          "argv": [
+            "/bin/bash",
+            "-c",
+            "source /surety/home/.claude/shell-snapshots/snapshot-bash-1791766413570-qkyupo.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /surety/workspace; mkdir -p src /surety/out\ncat > src/sum.mjs <<'\"'\"'EOF'\"'\"'\nexport function sum(a, b) {\n  return a + b;\n}\nEOF\ncat > server.mjs <<'\"'\"'EOF'\"'\"'\nimport { createServer } from '\"'\"'node:http'\"'\"';\nimport { sum } from '\"'\"'./src/sum.mjs'\"'\"';\n\nif (!process.env.REF_SECRET) {\n  process.stderr.write('\"'\"'REF_SECRET must be set and not empty\\n'\"'\"');\n  process.exit(1);\n}\n\nfunction parseNumber(value) {\n  if (value === null || value.trim() === '\"'\"''\"'\"') return null;\n  const n = Number(value);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction send(res, status, body) {\n  const text = JSON.stringify(body);\n  res.writeHead(status, {\n    '\"'\"'content-type'\"'\"': '\"'\"'application/json'\"'\"',\n    '\"'\"'content-length'\"'\"': Buffer.byteLength(text),\n  });\n  res.end(text);\n}\n\nconst server = createServer((req, res) => {\n  const url = new URL(req.url, '\"'\"'http://127.0.0.1'\"'\"');\n  if (req.method === '\"'\"'GET'\"'\"' && url.pathname === '\"'\"'/health'\"'\"') {\n    return send(res, 200, { ok: true });\n  }\n  if (req.method === '\"'\"'GET'\"'\"' && url.pathname === '\"'\"'/sum'\"'\"') {\n    const a = parseNumber(url.searchParams.get('\"'\"'a'\"'\"'));\n    const b = parseNumber(url.searchParams.get('\"'\"'b'\"'\"'));\n    if (a === null || b === null) {\n      return send(res, 400, { error: '\"'\"'a and b must be numbers'\"'\"' });\n    }\n    return send(res, 200, { sum: sum(a, b) });\n  }\n  send(res, 404, { error: '\"'\"'not found'\"'\"' });\n});\n\nserver.listen(Number(process.env.PORT), '\"'\"'127.0.0.1'\"'\"');\nEOF\n(PORT=36999 REF_SECRET=x node server.mjs & sleep 1; curl -s \"127.0.0.1:36999/sum?a=2&b=3\"; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' \"127.0.0.1:36999/sum?a=2&b=x\"; curl -s 127.0.0.1:36999/health; kill %1)\nREF_SECRET= node server.mjs; echo $?\ncat > /surety/out/result.json <<'\"'\"'EOF'\"'\"'\n{\"status\":\"completed\",\"summary\":\"Added src/sum.mjs (sum export) and server.mjs (node:http on 127.0.0.1:$PORT, REF_SECRET check, /health, /sum with 400 on non-numbers, 404 otherwise). Verified manually.\",\"nominate\":true}\nEOF' && pwd -P >| /tmp/claude-087d-cwd"
+          ]
+        },
+        {
+          "pid": 763097,
+          "argv": [
+            "sleep",
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:41.189Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:42.191Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:43.213Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:44.237Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:45.242Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        },
+        {
+          "pid": 763112,
+          "argv": [
+            "/bin/bash",
+            "-c",
+            "source /surety/home/.claude/shell-snapshots/snapshot-bash-1791766413570-qkyupo.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /surety/workspace; N=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node\n(PORT=36999 REF_SECRET=x $N server.mjs & sleep 1; curl -s \"127.0.0.1:36999/sum?a=2&b=3\"; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' \"127.0.0.1:36999/sum?a=2&b=x\"; curl -s 127.0.0.1:36999/health; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' 127.0.0.1:36999/x; kill %1)\nREF_SECRET= $N server.mjs; echo $?' < /dev/null && pwd -P >| /tmp/claude-26b2-cwd"
+          ]
+        },
+        {
+          "pid": 763113,
+          "argv": [
+            "/bin/bash",
+            "-c",
+            "source /surety/home/.claude/shell-snapshots/snapshot-bash-1791766413570-qkyupo.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /surety/workspace; N=/home/smahoney/.nvm/versions/node/v22.22.0/bin/node\n(PORT=36999 REF_SECRET=x $N server.mjs & sleep 1; curl -s \"127.0.0.1:36999/sum?a=2&b=3\"; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' \"127.0.0.1:36999/sum?a=2&b=x\"; curl -s 127.0.0.1:36999/health; curl -s -w '\"'\"' %{http_code}\\n'\"'\"' 127.0.0.1:36999/x; kill %1)\nREF_SECRET= $N server.mjs; echo $?' < /dev/null && pwd -P >| /tmp/claude-26b2-cwd"
+          ]
+        },
+        {
+          "pid": 763114,
+          "argv": [
+            "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+            "server.mjs"
+          ]
+        },
+        {
+          "pid": 763115,
+          "argv": [
+            "sleep",
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:46.249Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:47.248Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:48.252Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-10-12T00:53:48.537Z",
+      "domain": "dom_01M4PSKAJJE0TJ5DB93K3DWGBT",
+      "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+      "members": [
+        {
+          "pid": 762891,
+          "argv": [
+            "/usr/bin/unshare",
+            "--user",
+            "--map-root-user",
+            "--mount"
+          ]
+        },
+        {
+          "pid": 762898,
+          "argv": [
+            "/.init/node",
+            "/.init/init.js",
+            "init"
+          ]
+        },
+        {
+          "pid": 762922,
+          "argv": [
+            "/home/smahoney/surety-m4-real-20261012/home/backends/claude-2.1.296-24972e3bc859fab2",
+            "-p",
+            "--safe-mode",
+            "--setting-sources"
+          ]
+        }
+      ]
+    }
+  ],
+  "build": {
+    "project": "proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+    "qualification": {
+      "id": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+      "profile_fingerprint": "3f7152b9803100432455af40e3b5636bfe182f2feb1fd9e6196a30769c432a00",
+      "cases": [
+        [
+          "exit_zero",
+          "passed"
+        ],
+        [
+          "exit_nonzero",
+          "passed"
+        ],
+        [
+          "prints_passed_exits_nonzero",
+          "passed"
+        ],
+        [
+          "foreign_signal",
+          "passed"
+        ],
+        [
+          "deadline",
+          "passed"
+        ],
+        [
+          "term_handled_after_cancel",
+          "passed"
+        ],
+        [
+          "missing_program",
+          "passed"
+        ],
+        [
+          "input_immutable",
+          "passed"
+        ],
+        [
+          "orphan_stdout_closed",
+          "passed"
+        ],
+        [
+          "egress",
+          "passed"
+        ]
+      ]
+    },
+    "rounds": [
+      {
+        "build": {
+          "id": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+          "role": "builder",
+          "work_item": "wi_01M4PSG3TGKP2BRFZDE8AM2BZK",
+          "state": "ended",
+          "outcome": "completed",
+          "reason_class": "none",
+          "reason_text": null,
+          "ledger": [
+            {
+              "id": "led_01M4PSKZEJZ9889GZJMW95EYG5",
+              "created_at": "2026-10-12T00:53:49.136Z",
+              "project": "proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+              "invocation": "inv_01M4PSKAJH3VKNCP60D261XF37",
+              "run": "run_01M4PSKAJGBYC1ZWY89X5MR45Z",
+              "turn": null,
+              "role": "builder",
+              "provider": "claude",
+              "model_requested": "claude-sonnet-5-5",
+              "model_observed": "claude-sonnet-5-5",
+              "raw_usage": "{\"input_tokens\":14,\"cache_creation_input_tokens\":6698,\"cache_read_input_tokens\":61630,\"output_tokens\":1952,\"model\":\"claude-sonnet-5-5\",\"usage_final\":true,\"usage_scope\":\"all_models\",\"total_cost_usd_estimate\":0.052503}",
+              "normalization_version": "claude-stream-json-1+claude-code-total_cost_usd",
+              "billable_in": 6712,
+              "cached_in": 61630,
+              "out": 1952,
+              "usage_complete": 1,
+              "cost_status": "estimated",
+              "cost_usd": 0.052503,
+              "day_utc": "2026-10-12",
+              "corrects": null,
+              "correction_seq": null,
+              "unknown_allowance_tokens": null
+            }
+          ]
+        },
+        "candidate": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+        "revision": "5fcd423b0bd333273344c23725b23b8e836d3255",
+        "executions": [
+          {
+            "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+            "key": "r1-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 1,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM7A5P7T9ANQY4MDJT9VR",
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM79XP2BEY3QCP5PA3PZH"
+            },
+            "domain": {
+              "id": "dom_01M4PSM6SV25QN9Y10ZH8DT8AW",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM6SV25QN9Y10ZH8DT8AW"
+            }
+          },
+          {
+            "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+            "key": "r2-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 2,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM8D2M230K4CC058Q0XG8",
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM8CTZ0SEY4N0BQ39PYQ9"
+            },
+            "domain": {
+              "id": "dom_01M4PSM7J2BC5KZ957FWFFWGJ1",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM7J2BC5KZ957FWFFWGJ1"
+            }
+          },
+          {
+            "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+            "key": "smoke",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 3,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM979Z8ZEC7XDV6MCQKDQ",
+              "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM97129PY8MZM1ADHZA89"
+            },
+            "domain": {
+              "id": "dom_01M4PSM8N2DK1A8CCYDFWAEW2Y",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM8N2DK1A8CCYDFWAEW2Y"
+            }
+          }
+        ],
+        "all_executions": [
+          {
+            "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+            "key": "r1-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 1,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM7A5P7T9ANQY4MDJT9VR",
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM79XP2BEY3QCP5PA3PZH"
+            },
+            "domain": {
+              "id": "dom_01M4PSM6SV25QN9Y10ZH8DT8AW",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM6SV25QN9Y10ZH8DT8AW"
+            }
+          },
+          {
+            "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+            "key": "r2-1",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 2,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM8D2M230K4CC058Q0XG8",
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM8CTZ0SEY4N0BQ39PYQ9"
+            },
+            "domain": {
+              "id": "dom_01M4PSM7J2BC5KZ957FWFFWGJ1",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM7J2BC5KZ957FWFFWGJ1"
+            }
+          },
+          {
+            "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+            "key": "smoke",
+            "status": "recorded",
+            "trigger": {
+              "source": "nomination",
+              "id": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+              "generation": 1
+            },
+            "execution_seq": 3,
+            "not_run_reason": null,
+            "result": {
+              "id": "cr_01M4PSM979Z8ZEC7XDV6MCQKDQ",
+              "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+              "execution_established": 1,
+              "exit_status": 0,
+              "signaled": 0,
+              "deadline_hit": 0,
+              "orphans": 0,
+              "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031",
+              "runner_qualification": "hq_01M4PSJMFHC1NYMVR22AK3X8JP",
+              "output": "rec_01M4PSM97129PY8MZM1ADHZA89"
+            },
+            "domain": {
+              "id": "dom_01M4PSM8N2DK1A8CCYDFWAEW2Y",
+              "profile": "check",
+              "check_execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+              "status": "terminated",
+              "launch_state": "closed",
+              "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131d4d4-inc_01M4PSJJ8BBJ8PY062C5WAN472.scope/dom_01M4PSM8N2DK1A8CCYDFWAEW2Y"
+            }
+          }
+        ],
+        "stage_gate": {
+          "id": "gate_01M4PSMBF4S3GB0KWXWNMRD0N8",
+          "outcome": "satisfied",
+          "reasons": [],
+          "check_states": {
+            "chk_01M4PSJGNXKEQA3H4M2GZQ9XTD": "passed",
+            "chk_01M4PSJGNZMAWH3CH5WAFDVSXT": "passed",
+            "chk_01M4PSJGNZMAWH3CH5WAFDVSXV": "passed"
+          },
+          "checks": {
+            "chk_01M4PSJGNXKEQA3H4M2GZQ9XTD": {
+              "key": "r1-1",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+                "result": "cr_01M4PSM7A5P7T9ANQY4MDJT9VR",
+                "execution_seq": 1
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+              }
+            },
+            "chk_01M4PSJGNZMAWH3CH5WAFDVSXT": {
+              "key": "r2-1",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+                "result": "cr_01M4PSM8D2M230K4CC058Q0XG8",
+                "execution_seq": 2
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+              }
+            },
+            "chk_01M4PSJGNZMAWH3CH5WAFDVSXV": {
+              "key": "smoke",
+              "state": "passed",
+              "deciding": {
+                "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+                "result": "cr_01M4PSM979Z8ZEC7XDV6MCQKDQ",
+                "execution_seq": 3
+              },
+              "not_run_reason": null,
+              "pending": null,
+              "due": null,
+              "history": {
+                "count": 0,
+                "executions": [],
+                "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+              }
+            }
+          },
+          "missing_verifications": []
+        }
+      }
+    ],
+    "candidate": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+    "revision": "5fcd423b0bd333273344c23725b23b8e836d3255",
+    "stage_gate": "satisfied",
+    "stage_status": "complete"
+  },
+  "qualification": {
+    "at": "2026-10-12T00:54:46.138Z",
+    "by": "Sean's command",
+    "command": "SURETY_HOME=/home/smahoney/surety-m4-real-20261012/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js qualify-adapter local_service",
+    "cli": null,
+    "waited_ms": 20083,
+    "host_qualification": "hq_01M4PSMDYVHQPQS5DGBB9RTTHD",
+    "run": {
+      "id": "aqr_01M4PSNCB2DXE1NAYNY7MFV2A1",
+      "status": "qualified",
+      "cases": [
+        {
+          "case": "deploy_read_back",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNCVFCK4A4CT3KVJ9DKN8",
+            "attempt": "att_01M4PSNCWT47KZ9BN51VJPGQ33",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+            "generation": 2,
+            "receipt": "issued",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "one launch granted, the init instance recorded at the grant",
+                "held": true,
+                "read": {
+                  "grants": 1,
+                  "init": {
+                    "pid": 764972,
+                    "start_time": 2614335
+                  }
+                }
+              },
+              {
+                "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 765003,
+                    "start_time": 2614346,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "disagreement": null
+                }
+              },
+              {
+                "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "generation": 2,
+                    "at": "2026-10-12T00:54:36.289Z",
+                    "read": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "bd1b08687d994fadb36cdd33e8e1167c",
+                      "pid": 765003,
+                      "start_time": 2614346
+                    },
+                    "detail": null,
+                    "duration_ms": 93
+                  }
+                ]
+              }
+            ],
+            "control": [
+              {
+                "what": "the same read, expecting B's digest, differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "generation": 2,
+                    "at": "2026-10-12T00:54:36.395Z",
+                    "read": "unread",
+                    "match": "differs",
+                    "instance": {
+                      "pid": 765003,
+                      "start_time": 2614346
+                    },
+                    "detail": {
+                      "field": "mounts",
+                      "expected": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25"
+                      },
+                      "read": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53"
+                      }
+                    },
+                    "duration_ms": 87
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "case": "replace",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNE2R521EBEN21ES0C2PM",
+            "attempt": "att_01M4PSNE4CZQP841103PRZ14WB",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g3.service",
+            "generation": 3,
+            "replaced": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service is gone",
+                "held": true,
+                "read": "not-found"
+              },
+              {
+                "what": "verify reads B's digest",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "generation": 3,
+                    "at": "2026-10-12T00:54:37.698Z",
+                    "read": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "c5b374ca977d4bcfaaafdc2745d50181",
+                      "pid": 765094,
+                      "start_time": 2614486
+                    },
+                    "detail": null,
+                    "duration_ms": 95
+                  }
+                ]
+              },
+              {
+                "what": "the new generation is recorded current",
+                "held": true,
+                "read": {
+                  "recorded": 3,
+                  "attempt": 3
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service read loaded and active before the replacement",
+                "held": true,
+                "read": {
+                  "load": "loaded",
+                  "active": "active"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "receipt_lost",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "incarnation": "inc_01M4PSMBP6RM2FNV1MBNTNV1XN",
+            "scope": "in_process",
+            "engine_crash": false,
+            "dropped_receipt": {
+              "result": "issued",
+              "bound": null,
+              "refused": null
+            },
+            "operation": "op_01M4PSNEZDRPRS44JMPJ9N7SQV",
+            "attempt": "att_01M4PSNF10GF7DPBXY12V8XTW7",
+            "assertions": [
+              {
+                "what": "reconcile answers applied with no receipt recorded",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "the attempt holds no receipt",
+                "held": true,
+                "read": null
+              },
+              {
+                "what": "the attempt succeeded",
+                "held": true,
+                "read": "succeeded"
+              }
+            ],
+            "control": [
+              {
+                "what": "before the effect, the same read answered absent",
+                "held": true,
+                "read": "absent"
+              }
+            ]
+          }
+        },
+        {
+          "case": "not_issued",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNFSKGFKBGZKGN1MCCREF",
+            "attempt": "att_01M4PSNFV4GAKCZX4ND2J0SB9D",
+            "assertions": [
+              {
+                "what": "reconcile answers absent",
+                "held": true,
+                "read": "absent"
+              },
+              {
+                "what": "no launch was granted",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the running deployment's attempt read the same way answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "late_launcher",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNCDSEB88DEXMX1D5TFP2",
+            "attempt": "att_01M4PSNCEZA61ZQAZ25AGWEZJF",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g1.service",
+            "assertions": [
+              {
+                "what": "the launcher asked and was refused because its launch is closed",
+                "held": true,
+                "read": {
+                  "reason": "the launch is closed",
+                  "refusals": [
+                    {
+                      "reason": "the launch is closed",
+                      "at": "2026-10-12T00:54:35.363Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "no launch was granted: nothing of the application ran",
+                "held": true,
+                "read": 0
+              },
+              {
+                "what": "while the unit was loaded, reconcile did not answer absent",
+                "held": true,
+                "read": {
+                  "unit": {
+                    "load": "loaded",
+                    "active": "active"
+                  },
+                  "outcome": "unknown"
+                }
+              },
+              {
+                "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                "held": true,
+                "read": {
+                  "gone": true,
+                  "before_cleanup": "partial",
+                  "outcome": "absent"
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "another attempt's launcher, its launch authorizable, was granted once",
+                "held": true,
+                "read": {
+                  "attempt": "att_01M4PSNM7ASEW3VTHVFK1QRCB0",
+                  "grants": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "out_of_band",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "stopped": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+            "restarted": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+            "changed": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service",
+            "assertions": [
+              {
+                "what": "the stop by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl stop surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service: exit 0"
+              },
+              {
+                "what": "detected: the environment down, surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service recorded stopped out of band after the stop",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:41.057Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the restart by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl restart surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service: exit 0"
+              },
+              {
+                "what": "a new invocation of the unit",
+                "held": true,
+                "read": {
+                  "before": "d57b2f986308407a8d06632e749ca2b9",
+                  "after": "29ac4d88e7214abc83f3790f61de557b"
+                }
+              },
+              {
+                "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                "held": true,
+                "read": {
+                  "reason": "a launch connection of this attempt has already proved its peer",
+                  "grants": 1
+                }
+              },
+              {
+                "what": "nothing of the application runs again: the original instance is gone",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 765353,
+                    "start_time": 2614892,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "gone": true
+                }
+              },
+              {
+                "what": "detected: surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service recorded restarted out of band after the restart",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:43.093Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": "2026-10-12T00:54:41.748Z",
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M4PSNM4P0MCDT1KMHR75HXTH",
+                      "change": "restarted",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:43.093Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "one byte of the sealed copy changed",
+                "held": true,
+                "read": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53/server.js: its last byte changed"
+              },
+              {
+                "what": "an identity read differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "generation": 9,
+                    "at": "2026-10-12T00:54:43.952Z",
+                    "read": "sha256:cdf10c678ebd5505368581a15ea2668bdcdf81be6a85f93342465fbf3fc67379",
+                    "match": "differs",
+                    "instance": {
+                      "invocation_id": "06d1ddfdb78c493a855e9e3366009fb4",
+                      "pid": 765443,
+                      "start_time": 2615095
+                    },
+                    "detail": {
+                      "field": "tree",
+                      "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                      "read": "sha256:cdf10c678ebd5505368581a15ea2668bdcdf81be6a85f93342465fbf3fc67379"
+                    },
+                    "duration_ms": 95
+                  }
+                ]
+              },
+              {
+                "what": "detected: surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service recorded with an identity that differs, after the change",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "degraded",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:44.197Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": "2026-10-12T00:54:41.748Z",
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M4PSNM4P0MCDT1KMHR75HXTH",
+                      "change": "restarted",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": "2026-10-12T00:54:43.161Z",
+                      "detected_at": "2026-10-12T00:54:43.093Z"
+                    },
+                    {
+                      "seq": 7,
+                      "id": "oob_01M4PSNM6V07CA9QVTDFVBZQ1R",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": "2026-10-12T00:54:43.804Z",
+                      "detected_at": "2026-10-12T00:54:43.161Z"
+                    },
+                    {
+                      "seq": 8,
+                      "id": "oob_01M4PSNN76Y4PEX6WC573M3KJD",
+                      "change": "identity_differs",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:44.197Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the byte restored",
+                "held": true,
+                "read": null
+              }
+            ],
+            "control": [
+              {
+                "what": "before the stop: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:39.919Z"
+                }
+              },
+              {
+                "what": "before the restart: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:41.888Z"
+                }
+              },
+              {
+                "what": "before the byte is changed: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:43.946Z"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "unreadable",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "bus": "/home/smahoney/surety-m4-real-20261012/home/run/qualify-nayny7mfv2a1-no-bus",
+            "bus_existed": false,
+            "assertions": [
+              {
+                "what": "status is unread (a failure), never an empty or complete inventory",
+                "held": true,
+                "read": {
+                  "failure": "unavailable"
+                }
+              },
+              {
+                "what": "verify reads nothing: every identity unread",
+                "held": true,
+                "read": [
+                  "unread"
+                ]
+              },
+              {
+                "what": "reconcile answers unknown, never absent or applied",
+                "held": true,
+                "read": "unknown"
+              }
+            ],
+            "control": [
+              {
+                "what": "with the engine's own bus, status reads the running unit",
+                "held": true,
+                "read": {
+                  "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+                  "kind": "unit",
+                  "recorded": true,
+                  "state": "active",
+                  "pendingJob": false,
+                  "generation": 2,
+                  "invocation_id": "bd1b08687d994fadb36cdd33e8e1167c",
+                  "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service"
+                }
+              },
+              {
+                "what": "verify matches",
+                "held": true,
+                "read": [
+                  "match"
+                ]
+              },
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "refused",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNG0P9WJD6K8WSVRYKM1N",
+            "attempt": "att_01M4PSNG2EY2N6RXS6EZQW7ZFW",
+            "stale_attempt": "att_01M4PSNFV4GAKCZX4ND2J0SB9D",
+            "assertions": [
+              {
+                "what": "a capability forged in environment is refused naming environment",
+                "held": true,
+                "read": {
+                  "member": "environment",
+                  "refused": "environment",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                "held": true,
+                "read": {
+                  "member": "artifact_digest",
+                  "refused": "artifact_digest",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in create_units is refused naming create_units",
+                "held": true,
+                "read": {
+                  "member": "create_units",
+                  "refused": "create_units",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in attempt is refused naming attempt",
+                "held": true,
+                "read": {
+                  "member": "attempt",
+                  "refused": "attempt",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in lease_generation is refused naming lease_generation",
+                "held": true,
+                "read": {
+                  "member": "lease_generation",
+                  "refused": "lease_generation",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "the adapter's effect entry was never reached",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the minted capability passes the same check",
+                "held": true,
+                "read": null
+              }
+            ]
+          }
+        },
+        {
+          "case": "teardown",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNN8SJZYNJG5DCGBWPHNW",
+            "at": "2026-10-12T00:54:44.667Z",
+            "assertions": [
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": {
+                  "receipt": "issued",
+                  "outcome": "applied"
+                }
+              },
+              {
+                "what": "no unit of the environment is listed",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no cgroup of it",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no socket or runtime directory of it under run/, each read",
+                "held": true,
+                "read": {
+                  "dirs": [],
+                  "files": []
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "the same reads before it found units of the environment",
+                "held": true,
+                "read": {
+                  "units": [
+                    "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service"
+                  ],
+                  "cgroups": [
+                    "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service"
+                  ],
+                  "dirs": [
+                    {
+                      "path": "/home/smahoney/surety-m4-real-20261012/home/run/env_01M4PSNCB3GS220R6M09XGR7Z7-g9",
+                      "state": "present"
+                    }
+                  ],
+                  "files": [
+                    "env_01M4PSNCB3GS220R6M09XGR7Z7-g9"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "row": {
+      "id": "aq_01M4PSNNP43K7KVKC8BGMHF7B3",
+      "status": "current",
+      "label": null,
+      "adapter": "local_service",
+      "adapter_version": "1",
+      "engine_build": "sha256:7e03c3cf5bbe985837aafdab108ddfd7eca80d63982c80861215d2df9d499d5e",
+      "host_qualification": "hq_01M4PSMDYVHQPQS5DGBB9RTTHD",
+      "profile_fingerprint": "sha256:1304b5901b380ba5c45fbea53b7b2f1ccace38eb78c6baba1902be7e4c9b96cc",
+      "cases": [
+        {
+          "case": "deploy_read_back",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNCVFCK4A4CT3KVJ9DKN8",
+            "attempt": "att_01M4PSNCWT47KZ9BN51VJPGQ33",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+            "generation": 2,
+            "receipt": "issued",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "one launch granted, the init instance recorded at the grant",
+                "held": true,
+                "read": {
+                  "grants": 1,
+                  "init": {
+                    "pid": 764972,
+                    "start_time": 2614335
+                  }
+                }
+              },
+              {
+                "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 765003,
+                    "start_time": 2614346,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "disagreement": null
+                }
+              },
+              {
+                "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "generation": 2,
+                    "at": "2026-10-12T00:54:36.289Z",
+                    "read": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "bd1b08687d994fadb36cdd33e8e1167c",
+                      "pid": 765003,
+                      "start_time": 2614346
+                    },
+                    "detail": null,
+                    "duration_ms": 93
+                  }
+                ]
+              }
+            ],
+            "control": [
+              {
+                "what": "the same read, expecting B's digest, differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "generation": 2,
+                    "at": "2026-10-12T00:54:36.395Z",
+                    "read": "unread",
+                    "match": "differs",
+                    "instance": {
+                      "pid": 765003,
+                      "start_time": 2614346
+                    },
+                    "detail": {
+                      "field": "mounts",
+                      "expected": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25"
+                      },
+                      "read": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53"
+                      }
+                    },
+                    "duration_ms": 87
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "case": "replace",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNE2R521EBEN21ES0C2PM",
+            "attempt": "att_01M4PSNE4CZQP841103PRZ14WB",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g3.service",
+            "generation": 3,
+            "replaced": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service is gone",
+                "held": true,
+                "read": "not-found"
+              },
+              {
+                "what": "verify reads B's digest",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "generation": 3,
+                    "at": "2026-10-12T00:54:37.698Z",
+                    "read": "sha256:6f78919dbb5326eef3fd092a93c053e5a7c957a3f351a3535e10f7f24c869a25",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "c5b374ca977d4bcfaaafdc2745d50181",
+                      "pid": 765094,
+                      "start_time": 2614486
+                    },
+                    "detail": null,
+                    "duration_ms": 95
+                  }
+                ]
+              },
+              {
+                "what": "the new generation is recorded current",
+                "held": true,
+                "read": {
+                  "recorded": 3,
+                  "attempt": 3
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service read loaded and active before the replacement",
+                "held": true,
+                "read": {
+                  "load": "loaded",
+                  "active": "active"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "receipt_lost",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "incarnation": "inc_01M4PSMBP6RM2FNV1MBNTNV1XN",
+            "scope": "in_process",
+            "engine_crash": false,
+            "dropped_receipt": {
+              "result": "issued",
+              "bound": null,
+              "refused": null
+            },
+            "operation": "op_01M4PSNEZDRPRS44JMPJ9N7SQV",
+            "attempt": "att_01M4PSNF10GF7DPBXY12V8XTW7",
+            "assertions": [
+              {
+                "what": "reconcile answers applied with no receipt recorded",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "the attempt holds no receipt",
+                "held": true,
+                "read": null
+              },
+              {
+                "what": "the attempt succeeded",
+                "held": true,
+                "read": "succeeded"
+              }
+            ],
+            "control": [
+              {
+                "what": "before the effect, the same read answered absent",
+                "held": true,
+                "read": "absent"
+              }
+            ]
+          }
+        },
+        {
+          "case": "not_issued",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNFSKGFKBGZKGN1MCCREF",
+            "attempt": "att_01M4PSNFV4GAKCZX4ND2J0SB9D",
+            "assertions": [
+              {
+                "what": "reconcile answers absent",
+                "held": true,
+                "read": "absent"
+              },
+              {
+                "what": "no launch was granted",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the running deployment's attempt read the same way answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "late_launcher",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNCDSEB88DEXMX1D5TFP2",
+            "attempt": "att_01M4PSNCEZA61ZQAZ25AGWEZJF",
+            "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g1.service",
+            "assertions": [
+              {
+                "what": "the launcher asked and was refused because its launch is closed",
+                "held": true,
+                "read": {
+                  "reason": "the launch is closed",
+                  "refusals": [
+                    {
+                      "reason": "the launch is closed",
+                      "at": "2026-10-12T00:54:35.363Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "no launch was granted: nothing of the application ran",
+                "held": true,
+                "read": 0
+              },
+              {
+                "what": "while the unit was loaded, reconcile did not answer absent",
+                "held": true,
+                "read": {
+                  "unit": {
+                    "load": "loaded",
+                    "active": "active"
+                  },
+                  "outcome": "unknown"
+                }
+              },
+              {
+                "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                "held": true,
+                "read": {
+                  "gone": true,
+                  "before_cleanup": "partial",
+                  "outcome": "absent"
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "another attempt's launcher, its launch authorizable, was granted once",
+                "held": true,
+                "read": {
+                  "attempt": "att_01M4PSNM7ASEW3VTHVFK1QRCB0",
+                  "grants": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "out_of_band",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "stopped": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+            "restarted": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+            "changed": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service",
+            "assertions": [
+              {
+                "what": "the stop by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl stop surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service: exit 0"
+              },
+              {
+                "what": "detected: the environment down, surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service recorded stopped out of band after the stop",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:41.057Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the restart by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl restart surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service: exit 0"
+              },
+              {
+                "what": "a new invocation of the unit",
+                "held": true,
+                "read": {
+                  "before": "d57b2f986308407a8d06632e749ca2b9",
+                  "after": "29ac4d88e7214abc83f3790f61de557b"
+                }
+              },
+              {
+                "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                "held": true,
+                "read": {
+                  "reason": "a launch connection of this attempt has already proved its peer",
+                  "grants": 1
+                }
+              },
+              {
+                "what": "nothing of the application runs again: the original instance is gone",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 765353,
+                    "start_time": 2614892,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "gone": true
+                }
+              },
+              {
+                "what": "detected: surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service recorded restarted out of band after the restart",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:43.093Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": "2026-10-12T00:54:41.748Z",
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M4PSNM4P0MCDT1KMHR75HXTH",
+                      "change": "restarted",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:43.093Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "one byte of the sealed copy changed",
+                "held": true,
+                "read": "/home/smahoney/surety-m4-real-20261012/home/artifacts/proj_01M4PR7TPJ9V07HVHHZ54SN4VW/75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53/server.js: its last byte changed"
+              },
+              {
+                "what": "an identity read differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                    "generation": 9,
+                    "at": "2026-10-12T00:54:43.952Z",
+                    "read": "sha256:cdf10c678ebd5505368581a15ea2668bdcdf81be6a85f93342465fbf3fc67379",
+                    "match": "differs",
+                    "instance": {
+                      "invocation_id": "06d1ddfdb78c493a855e9e3366009fb4",
+                      "pid": 765443,
+                      "start_time": 2615095
+                    },
+                    "detail": {
+                      "field": "tree",
+                      "expected": "sha256:75432477f80e8e07ab127617c4ad34ad82b652566ff4745fd862430be0e79d53",
+                      "read": "sha256:cdf10c678ebd5505368581a15ea2668bdcdf81be6a85f93342465fbf3fc67379"
+                    },
+                    "duration_ms": 95
+                  }
+                ]
+              },
+              {
+                "what": "detected: surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service recorded with an identity that differs, after the change",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "degraded",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-12T00:54:44.197Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M4PSNJ5238R9J7M1EYWZKMF7",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+                      "closed_at": "2026-10-12T00:54:41.748Z",
+                      "detected_at": "2026-10-12T00:54:41.057Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M4PSNM4P0MCDT1KMHR75HXTH",
+                      "change": "restarted",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": "2026-10-12T00:54:43.161Z",
+                      "detected_at": "2026-10-12T00:54:43.093Z"
+                    },
+                    {
+                      "seq": 7,
+                      "id": "oob_01M4PSNM6V07CA9QVTDFVBZQ1R",
+                      "change": "stopped",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+                      "closed_at": "2026-10-12T00:54:43.804Z",
+                      "detected_at": "2026-10-12T00:54:43.161Z"
+                    },
+                    {
+                      "seq": 8,
+                      "id": "oob_01M4PSNN76Y4PEX6WC573M3KJD",
+                      "change": "identity_differs",
+                      "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-12T00:54:44.197Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the byte restored",
+                "held": true,
+                "read": null
+              }
+            ],
+            "control": [
+              {
+                "what": "before the stop: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:39.919Z"
+                }
+              },
+              {
+                "what": "before the restart: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:41.888Z"
+                }
+              },
+              {
+                "what": "before the byte is changed: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-12T00:54:43.946Z"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "unreadable",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "bus": "/home/smahoney/surety-m4-real-20261012/home/run/qualify-nayny7mfv2a1-no-bus",
+            "bus_existed": false,
+            "assertions": [
+              {
+                "what": "status is unread (a failure), never an empty or complete inventory",
+                "held": true,
+                "read": {
+                  "failure": "unavailable"
+                }
+              },
+              {
+                "what": "verify reads nothing: every identity unread",
+                "held": true,
+                "read": [
+                  "unread"
+                ]
+              },
+              {
+                "what": "reconcile answers unknown, never absent or applied",
+                "held": true,
+                "read": "unknown"
+              }
+            ],
+            "control": [
+              {
+                "what": "with the engine's own bus, status reads the running unit",
+                "held": true,
+                "read": {
+                  "resource": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+                  "kind": "unit",
+                  "recorded": true,
+                  "state": "active",
+                  "pendingJob": false,
+                  "generation": 2,
+                  "invocation_id": "bd1b08687d994fadb36cdd33e8e1167c",
+                  "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service"
+                }
+              },
+              {
+                "what": "verify matches",
+                "held": true,
+                "read": [
+                  "match"
+                ]
+              },
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "refused",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNG0P9WJD6K8WSVRYKM1N",
+            "attempt": "att_01M4PSNG2EY2N6RXS6EZQW7ZFW",
+            "stale_attempt": "att_01M4PSNFV4GAKCZX4ND2J0SB9D",
+            "assertions": [
+              {
+                "what": "a capability forged in environment is refused naming environment",
+                "held": true,
+                "read": {
+                  "member": "environment",
+                  "refused": "environment",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                "held": true,
+                "read": {
+                  "member": "artifact_digest",
+                  "refused": "artifact_digest",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in create_units is refused naming create_units",
+                "held": true,
+                "read": {
+                  "member": "create_units",
+                  "refused": "create_units",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in attempt is refused naming attempt",
+                "held": true,
+                "read": {
+                  "member": "attempt",
+                  "refused": "attempt",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in lease_generation is refused naming lease_generation",
+                "held": true,
+                "read": {
+                  "member": "lease_generation",
+                  "refused": "lease_generation",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "the adapter's effect entry was never reached",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the minted capability passes the same check",
+                "held": true,
+                "read": null
+              }
+            ]
+          }
+        },
+        {
+          "case": "teardown",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M4PSNN8SJZYNJG5DCGBWPHNW",
+            "at": "2026-10-12T00:54:44.667Z",
+            "assertions": [
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": {
+                  "receipt": "issued",
+                  "outcome": "applied"
+                }
+              },
+              {
+                "what": "no unit of the environment is listed",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no cgroup of it",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no socket or runtime directory of it under run/, each read",
+                "held": true,
+                "read": {
+                  "dirs": [],
+                  "files": []
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "the same reads before it found units of the environment",
+                "held": true,
+                "read": {
+                  "units": [
+                    "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service"
+                  ],
+                  "cgroups": [
+                    "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service"
+                  ],
+                  "dirs": [
+                    {
+                      "path": "/home/smahoney/surety-m4-real-20261012/home/run/env_01M4PSNCB3GS220R6M09XGR7Z7-g9",
+                      "state": "present"
+                    }
+                  ],
+                  "files": [
+                    "env_01M4PSNCB3GS220R6M09XGR7Z7-g9"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "evidence": "rec_01M4PSNNNWSJMA2V1A9J9FG5ZP"
+    },
+    "evidence": {
+      "tools": {
+        "systemd-run": {
+          "path": "/usr/bin/systemd-run",
+          "version": "systemd 255 (255.4-1ubuntu8.17)"
+        },
+        "systemctl": {
+          "path": "/usr/bin/systemctl",
+          "version": "systemd 255 (255.4-1ubuntu8.17)"
+        }
+      },
+      "host_time_ms": 9710,
+      "identity_reads": [
+        {
+          "case": "deploy_read_back",
+          "duration_ms": 104,
+          "match": "match",
+          "generation": 2,
+          "target": "app"
+        },
+        {
+          "case": "deploy_read_back",
+          "duration_ms": 94,
+          "match": "differs",
+          "generation": 2,
+          "target": "app"
+        },
+        {
+          "case": "unreadable",
+          "duration_ms": 102,
+          "match": "match",
+          "generation": 2,
+          "target": "app"
+        },
+        {
+          "case": "unreadable",
+          "duration_ms": 40,
+          "match": "unread",
+          "generation": "unread",
+          "target": "app"
+        },
+        {
+          "case": "replace",
+          "duration_ms": 105,
+          "match": "match",
+          "generation": 3,
+          "target": "app"
+        },
+        {
+          "case": "out_of_band",
+          "duration_ms": 103,
+          "match": "differs",
+          "generation": 9,
+          "target": "app"
+        }
+      ],
+      "unread_host_facts": []
+    },
+    "environment": {
+      "id": "env_01M4PSNCB3GS220R6M09XGR7Z7",
+      "prefix": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-"
+    },
+    "left": {
+      "units": [],
+      "cgroups": [],
+      "runFiles": []
+    },
+    "roles_started": 0
+  },
+  "deploy": {
+    "project": "proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+    "candidate": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+    "environment": {
+      "id": "env_01M4PSG3SQDS887EWCZP34MNFV",
+      "name": "alpha"
+    },
+    "host_qualification": "hq_01M4PSNSK2SRRB7Y5S4Z5TEXF0",
+    "qualification_at_start": {
+      "id": "aq_01M4PSNNP43K7KVKC8BGMHF7B3",
+      "status": "current",
+      "lapsed_reason": null
+    },
+    "config": {
+      "id": "envc_01M4PSPF29JEE91M5X5TPW513A",
+      "version": 2,
+      "config_identity": "sha256:5bb9afc57409c0ea9aaa1dafd587bd66d68ebf2cdbb787da7ec8a28e540e76b0",
+      "content": {
+        "adapter": "local_service",
+        "adapter_version": "1",
+        "targets": [
+          "app"
+        ],
+        "runtime": {
+          "path": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+          "sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31"
+        },
+        "start": [
+          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+          "server.mjs"
+        ],
+        "port": 37437,
+        "env": {},
+        "secrets": {
+          "REF_SECRET": "deploy/ref_secret"
+        },
+        "check_secrets": [],
+        "egress": [],
+        "artifact": {
+          "exclude": []
+        },
+        "identity_method": "tree_digest"
+      }
+    },
+    "command": "SURETY_HOME=/home/smahoney/surety-m4-real-20261012/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js deploy cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F --env alpha --project proj_01M4PSG3G0ADYD1G6NFZ62G7YM",
+    "request": {
+      "work_item": "wi_01M4PSPMM9EJHXTEKW9K3W6E87",
+      "trigger": {
+        "source": "deployment_request",
+        "id": "dauth_01M4PSPMKW52CE5QPFC69KTDS8",
+        "generation": 1
+      },
+      "authorization": {
+        "id": "dauth_01M4PSPMKW52CE5QPFC69KTDS8",
+        "status_at_request": "consumed",
+        "environment": "env_01M4PSG3SQDS887EWCZP34MNFV",
+        "artifact_digest": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+        "config_identity": "sha256:5bb9afc57409c0ea9aaa1dafd587bd66d68ebf2cdbb787da7ec8a28e540e76b0",
+        "target_set": [
+          "app"
+        ],
+        "evaluation": "gate_01M4PSPMM8Q3NVYGYTD52CDDWH"
+      },
+      "alpha_authorize": {
+        "id": "gate_01M4PSPMM8Q3NVYGYTD52CDDWH",
+        "gate_kind": "alpha_authorize",
+        "outcome": "satisfied",
+        "reasons": [],
+        "check_states": {
+          "chk_01M4PSJGNXKEQA3H4M2GZQ9XTD": "passed",
+          "chk_01M4PSJGNZMAWH3CH5WAFDVSXT": "passed",
+          "chk_01M4PSJGNZMAWH3CH5WAFDVSXV": "passed"
+        },
+        "checks": {
+          "chk_01M4PSJGNXKEQA3H4M2GZQ9XTD": {
+            "key": "r1-1",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0W",
+              "result": "cr_01M4PSM7A5P7T9ANQY4MDJT9VR",
+              "execution_seq": 1
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+            }
+          },
+          "chk_01M4PSJGNZMAWH3CH5WAFDVSXT": {
+            "key": "r2-1",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4PSKZDHFYBVG630J4CESM0Y",
+              "result": "cr_01M4PSM8D2M230K4CC058Q0XG8",
+              "execution_seq": 2
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+            }
+          },
+          "chk_01M4PSJGNZMAWH3CH5WAFDVSXV": {
+            "key": "smoke",
+            "state": "passed",
+            "deciding": {
+              "execution": "cx_01M4PSKZDJ52TDWGH44HNAVPRM",
+              "result": "cr_01M4PSM979Z8ZEC7XDV6MCQKDQ",
+              "execution_seq": 3
+            },
+            "not_run_reason": null,
+            "pending": null,
+            "due": null,
+            "history": {
+              "count": 0,
+              "executions": [],
+              "link": "/v1/projects/proj_01M4PSG3G0ADYD1G6NFZ62G7YM/candidates/cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F/checks"
+            }
+          }
+        }
+      }
+    },
+    "operation": {
+      "id": "op_01M4PSPMXPTPHW7RBYGBS7PF44",
+      "authorization": "dauth_01M4PSPMKW52CE5QPFC69KTDS8",
+      "attempts": [
+        {
+          "id": "att_01M4PSPMZC9A72HCH57TMSRSKK",
+          "number": 1,
+          "status": "succeeded",
+          "generation": 1,
+          "launch_state": "authorized",
+          "last_read": "applied"
+        }
+      ]
+    },
+    "service": {
+      "unit": "surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service",
+      "unit_pattern": true,
+      "init": {
+        "pid": 766690,
+        "start_time": 2618510
+      },
+      "app": {
+        "pid": 766721,
+        "start_time": 2618521,
+        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+        "argv": [
+          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+          "server.mjs"
+        ]
+      },
+      "domain": {
+        "id": "dom_01M4PSPMZC9A72HCH57TMSRSKP",
+        "profile": "service",
+        "cgroup_path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service"
+      }
+    },
+    "host": {
+      "at": "2026-10-12T00:55:20.917Z",
+      "unit": "surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service",
+      "own_prefix": true,
+      "props": {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "SubState": "running",
+        "MainPID": "766665",
+        "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service",
+        "InvocationID": "957e467fb4864d5ba66b6554b8ec3d06",
+        "Delegate": "yes",
+        "Restart": "no",
+        "MemoryMax": "67108864",
+        "MemorySwapMax": "0",
+        "TasksMax": "128"
+      },
+      "app": {
+        "pid": 766721,
+        "start_time": 2618521,
+        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+        "argv": [
+          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+          "server.mjs"
+        ]
+      },
+      "app_cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service",
+      "app_in_unit_tree": true,
+      "unit_cgroup_procs": [
+        766665,
+        766690,
+        766721
+      ],
+      "unit_property_search": {
+        "read": true,
+        "hits": 0
+      },
+      "transient_file_search": {
+        "read": true,
+        "hits": 0
+      },
+      "journal_search": {
+        "status": 0,
+        "hits": 0
+      }
+    },
+    "round": {
+      "id": "vr_01M4PSPNJTAWA9DP6SDXCG0YQ9",
+      "round": 1,
+      "required_checks": [
+        "chk_01M4PSJGNZMAWH3CH5WAFDVSXW"
+      ]
+    },
+    "verification": {
+      "id": "dv_01M4PSPPW66JWJNV5636JWRM2G",
+      "outcome": "verified",
+      "identity_reads": [
+        {
+          "target": "app",
+          "method": "tree_digest",
+          "expected": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+          "read": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+          "match": "match",
+          "instance": {
+            "invocation_id": "957e467fb4864d5ba66b6554b8ec3d06",
+            "pid": 766721,
+            "start_time": 2618521
+          },
+          "generation": 1,
+          "at": "2026-10-12T00:55:17.344Z",
+          "duration_ms": 95,
+          "detail": null,
+          "bracket": "first"
+        },
+        {
+          "target": "app",
+          "method": "tree_digest",
+          "expected": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+          "read": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+          "match": "match",
+          "instance": {
+            "invocation_id": "957e467fb4864d5ba66b6554b8ec3d06",
+            "pid": 766721,
+            "start_time": 2618521
+          },
+          "generation": 1,
+          "at": "2026-10-12T00:55:18.556Z",
+          "duration_ms": 92,
+          "detail": null,
+          "bracket": "second"
+        }
+      ],
+      "missing": null
+    },
+    "post_deploy": [
+      {
+        "execution": "cx_01M4PSPNPBGF8AH6E1TZPQX10K",
+        "key": "user-operation",
+        "status": "recorded",
+        "domain": {
+          "id": "dom_01M4PSPNZC1JM3DB08Y2XN3V6X",
+          "profile": "check",
+          "check_execution": "cx_01M4PSPNPBGF8AH6E1TZPQX10K"
+        },
+        "result": {
+          "id": "cr_01M4PSPPG5T25AFV88H8HM705C",
+          "execution": "cx_01M4PSPNPBGF8AH6E1TZPQX10K",
+          "execution_established": 1,
+          "exit_status": 0,
+          "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+        },
+        "link": [
+          {
+            "decision": "accepted",
+            "round": "vr_01M4PSPNJTAWA9DP6SDXCG0YQ9",
+            "attempt": "att_01M4PSPMZC9A72HCH57TMSRSKK",
+            "generation": 1,
+            "limit": null
+          }
+        ]
+      }
+    ],
+    "kinds": {
+      "r1-1": "acceptance",
+      "r2-1": "acceptance",
+      "smoke": "smoke",
+      "user-operation": "post_deploy_behavior"
+    },
+    "completed": true,
+    "progress": "alpha_deployed",
+    "alpha_complete": {
+      "id": "gate_01M4PSPQ5B39JQW04RECQV713E",
+      "outcome": "satisfied",
+      "reasons": []
+    },
+    "last_verified": {
+      "candidate": "cand_01M4PSKZDFPQJVTSJEWZJ2CZ9F",
+      "artifact_digest": "sha256:c5858a4cff98af59e9609153f928dc71a60908545a340cffdbe4726d5bcad71f",
+      "config_identity": "sha256:5bb9afc57409c0ea9aaa1dafd587bd66d68ebf2cdbb787da7ec8a28e540e76b0",
+      "generation": 1,
+      "round": "vr_01M4PSPNJTAWA9DP6SDXCG0YQ9",
+      "operation": "op_01M4PSPMXPTPHW7RBYGBS7PF44",
+      "at": "2026-10-12T00:55:18.659Z",
+      "verification": "dv_01M4PSPPW66JWJNV5636JWRM2G"
+    },
+    "authorization_after": {
+      "id": "dauth_01M4PSPMKW52CE5QPFC69KTDS8",
+      "status": "consumed"
+    },
+    "deploy_work": [
+      "wi_01M4PSPMM9EJHXTEKW9K3W6E87"
+    ],
+    "deploy_operations": [
+      "op_01M4PSPMXPTPHW7RBYGBS7PF44"
+    ],
+    "roles_started": 0,
+    "failure": null
+  },
+  "teardown": {
+    "environment": "env_01M4PSG3SQDS887EWCZP34MNFV",
+    "deploys": [
+      "op_01M4PSPMXPTPHW7RBYGBS7PF44"
+    ],
+    "loaded_before": [
+      "surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service"
+    ],
+    "request": {
+      "status": 202,
+      "preempt": false,
+      "code": null
+    },
+    "operation": "op_01M4PSPSBPS1HZX5V6J6D969T2",
+    "attempt": {
+      "id": "att_01M4PSPSD47G833ZDPSS5WMNV9",
+      "status": "succeeded",
+      "last_read": "applied"
+    },
+    "applied": true,
+    "left": {
+      "units": [],
+      "cgroups": [],
+      "run_files": []
+    },
+    "journal_search": [
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g1.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g2.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g3.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g4.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g5.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g6.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g7.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g8.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PS14MKED9Z59HQVFN7BHV3-g9.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g1.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g2.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g3.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g4.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g5.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g6.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g7.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g8.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSNCB3GS220R6M09XGR7Z7-g9.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-b57bbcd14131-env_01M4PSG3SQDS887EWCZP34MNFV-g1.service",
+        "status": 0,
+        "hits": 0
+      }
+    ],
+    "roles_started": 0
+  },
+  "key_search": {
+    "roots": [
+      "/home/smahoney/surety-m4-real-20261012"
+    ],
+    "repos": [
+      "/home/smahoney/surety-m4-real-20261012/repos/real-deployment-journey-3",
+      "/home/smahoney/surety-m4-real-20261012/home/qualification/fixture"
+    ],
+    "hits": 0
+  }
+}
