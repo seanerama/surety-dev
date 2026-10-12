@@ -72,6 +72,9 @@
       "secret_not_allowed",
       "redaction_unavailable"
     ],
+    "CheckObligationsReason": [
+      "spec_changed"
+    ],
     "RunnerClass": [
       "direct",
       "container",
@@ -171,6 +174,18 @@
       "issued",
       "consumed",
       "superseded"
+    ],
+    "DeploymentRequestsRequestedBy": [
+      "human",
+      "policy"
+    ],
+    "DeploymentRequestsOutcome": [
+      "pending",
+      "not_issued",
+      "deployed",
+      "failed",
+      "not_verified",
+      "unknown"
     ],
     "VerificationOutcome": [
       "verified",
@@ -540,7 +555,19 @@
     "SignOffScope": [
       "candidate",
       "module",
-      "security"
+      "security",
+      "phase"
+    ],
+    "SpecChangeRequestsSource": [
+      "owner",
+      "finding"
+    ],
+    "SpecChangeRequestsStatus": [
+      "requested",
+      "proposed",
+      "approved",
+      "rejected",
+      "failed"
     ],
     "StageStatus": [
       "planned",
@@ -794,7 +821,14 @@
       "session.turn_ended",
       "session.turn_settled",
       "session.saved",
-      "session.closed"
+      "session.closed",
+      "phase.authoring_ready",
+      "phase.completion_bound",
+      "baseline.phase_complete",
+      "spec.change_requested",
+      "spec.change_proposed",
+      "spec.change_approved",
+      "deploy.requested_by_policy"
     ],
     "EngineMode": [
       "restricted",
@@ -1509,6 +1543,50 @@
         },
         "secret_refs": {
           "required": false
+        },
+        "spec_generation": {
+          "required": false
+        }
+      }
+    },
+    "check_obligations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "check": {
+          "required": true,
+          "references": "checks"
+        },
+        "key": {
+          "required": true
+        },
+        "criteria": {
+          "required": true
+        },
+        "generation": {
+          "required": true
+        },
+        "reason": {
+          "required": true,
+          "enum": "CheckObligationsReason"
+        },
+        "request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "resolved_by": {
+          "required": false
+        },
+        "resolved_at": {
+          "required": false
         }
       }
     },
@@ -1600,6 +1678,9 @@
           "references": "host_qualifications"
         },
         "deployment": {
+          "required": false
+        },
+        "invalidated_reason": {
           "required": false
         }
       }
@@ -1867,6 +1948,47 @@
         },
         "binding_hash": {
           "required": true
+        }
+      }
+    },
+    "deployment_requests": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "request_key": {
+          "required": true
+        },
+        "requested_by": {
+          "required": true,
+          "enum": "DeploymentRequestsRequestedBy"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "environment": {
+          "required": true,
+          "references": "environments"
+        },
+        "authorization": {
+          "required": false,
+          "references": "deployment_authorizations"
+        },
+        "work_item": {
+          "required": false,
+          "references": "work_items"
+        },
+        "outcome": {
+          "required": true,
+          "enum": "DeploymentRequestsOutcome"
         }
       }
     },
@@ -2599,6 +2721,35 @@
         },
         "last_event_seq": {
           "required": true
+        }
+      }
+    },
+    "host_observations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "incarnation": {
+          "required": true
+        },
+        "engine_version": {
+          "required": true
+        },
+        "autonomy": {
+          "required": true
+        },
+        "settings": {
+          "required": true
+        },
+        "mem_available": {
+          "required": false
         }
       }
     },
@@ -4339,6 +4490,73 @@
         },
         "recorded_at": {
           "required": true
+        },
+        "binding": {
+          "required": false
+        },
+        "phase_plan": {
+          "required": false,
+          "references": "phase_plans"
+        }
+      }
+    },
+    "spec_change_requests": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "text": {
+          "required": false,
+          "references": "records"
+        },
+        "request_text": {
+          "required": true
+        },
+        "source": {
+          "required": true,
+          "enum": "SpecChangeRequestsSource"
+        },
+        "status": {
+          "required": true,
+          "enum": "SpecChangeRequestsStatus"
+        },
+        "work_item": {
+          "required": false,
+          "references": "work_items"
+        },
+        "proposal_revision": {
+          "required": false
+        },
+        "proposal_blob": {
+          "required": false
+        },
+        "side_ref": {
+          "required": false
+        },
+        "impact": {
+          "required": false,
+          "references": "records"
+        },
+        "impact_value": {
+          "required": false
+        },
+        "approved_revision": {
+          "required": false,
+          "references": "spec_revisions"
         }
       }
     },
@@ -5007,13 +5225,14 @@
         "role": "reviewer"
       },
       "phase_verification": {
-        "m1": false,
+        "m1": true,
         "path": [
           "eligible",
           "claimed",
           "executing",
           "complete"
-        ]
+        ],
+        "role": "verifier"
       },
       "replan": {
         "m1": true,
@@ -5040,12 +5259,15 @@
         "role": "architect"
       },
       "spec_change": {
-        "m1": false,
+        "m1": true,
         "path": [
           "eligible",
+          "claimed",
+          "executing",
           "awaiting_decision",
           "complete"
-        ]
+        ],
+        "role": "spec_writer"
       },
       "check_correction": {
         "m1": true,
@@ -5416,7 +5638,16 @@
       "target_seconds": 172800
     },
     "spec_change": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "spec_version",
+        "proposal_revision",
+        "protected_version",
+        "impact",
+        "dependency_manifest",
+        "policy_revision"
+      ],
+      "target_seconds": 259200
     },
     "architecture_approval": {
       "enabled": true,
@@ -6169,6 +6400,27 @@
     },
     "session.closed": {
       "owner": "sessions/session.ts"
+    },
+    "phase.authoring_ready": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "phase.completion_bound": {
+      "owner": "plan/phase.ts"
+    },
+    "baseline.phase_complete": {
+      "owner": "plan/phase.ts"
+    },
+    "spec.change_requested": {
+      "owner": "spec/change.ts"
+    },
+    "spec.change_proposed": {
+      "owner": "spec/change.ts"
+    },
+    "spec.change_approved": {
+      "owner": "spec/change.ts"
+    },
+    "deploy.requested_by_policy": {
+      "owner": "store/transitions/deploy.ts"
     }
   },
   "config": {
