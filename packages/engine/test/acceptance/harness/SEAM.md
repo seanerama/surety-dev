@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 359 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 360 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -5992,6 +5992,10 @@ Sections 350 to 359 were written with the slice-31b acceptance tests (2026-10-12
 ## 359. A refused role run in a case with one scripted launch (objection 058)
 
 (D1 §4.3, `repair_attempts_max`; SEAM §13's "with no script at all the program holds until it is killed".) A case that scripts exactly one launch for a work item whose run it expects refused (M403 (c): a review result carrying `decisions`, `failed` / `invalid_result`) pins `repair_attempts_max` 0 on its project, as M404's `approvedSpec` does, so the refused run parks the work instead of dispatching an unscripted repair that holds and keeps `waitForIdle` (§358) from returning. No assertion changed.
+
+## 360. A moved sensitive area is validated where it sits (objection 059)
+
+(D6 §5.3 item 4, §3.4; SEAM §344; D3 §4.4.) M404 (b)'s accepted "moved" bundle carries a phase-1 plan whose stage touching `lib`, where the map now puts `secrets_credentials`, lists that area in `validation.sensitive_areas` and `sensitivity_floor` in its kinds (`BAD_ARCHITECTURE.area_moved.stages`); a plan that leaves a module's area unvalidated is refused at close, 422 `plan_refused` with `PLAN_AREA_UNVALIDATED`, as the engine answered. No assertion changed.
 
 ## What was run
 
