@@ -28,7 +28,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { sha256Hex } from './harness/engine.mjs';
 import { alphaTarget, authorizationsOf, reasonSubjects, sharedFixture, stageGate } from './harness/gates.mjs';
-import { PERMITTED_EDIT, addItem, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, PERMITTED_EDIT, permittedEdit, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { readGate } from './harness/reads.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
@@ -80,7 +80,7 @@ async function journey(t) {
     }),
     [defPath('smoke')]: smoke('smoke', { command: ['probe', '--report', ...holdArgs(prog, 'smoke'), 'exit', '0'], inputs: [EXPECT], timeout: 300 }),
   };
-  const project = await checkProject(fx, { files, tier: 'T1' });
+  const project = await pinStep(fx, await checkProject(fx, { files, tier: 'T1' }));
   const hostQualification = await qualifyRunnerByFixture(fx.engine);
   const plan = await installIndexedPlan(fx.engine, project.id, {
     index: [{ key: 'R1', criteria: ['R1.1', 'R1.2'] }],

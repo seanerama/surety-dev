@@ -29,7 +29,7 @@ import { describe, test } from 'node:test';
 
 import { sha256Hex } from './harness/engine.mjs';
 import { installGatedPlan, stageGate } from './harness/gates.mjs';
-import { roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { GOVERNED_FILE, checkProject, defPath, installCheckProgram, outputText, programReport, qualifyRunnerByFixture, resultRow, sandboxGoverned, smoke, waitRecorded } from './harness/checks/fixtures.mjs';
 
@@ -75,7 +75,7 @@ describe('M201 the check tree is the revision and the version, byte for byte', (
         timeout: 300,
       }),
     };
-    const project = await checkProject(fx, { files, tier: 'T1', plant });
+    const project = await pinStep(fx, await checkProject(fx, { files, tier: 'T1', plant }));
     await qualifyRunnerByFixture(fx.engine);
     const plan = await installGatedPlan(fx.engine, project.id, { requirements: [], stages: [{ number: 1, goal: 'the first stage', implements: [] }] });
     fx.scripted.script(plan.stages[0].work_item, [roleThat([], { nominate: true })]);

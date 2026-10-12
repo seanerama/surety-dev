@@ -30,7 +30,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { alphaTarget, askingForTicks, capturedProposal, humanApplies, installGatedPlan, postResult, proposalsOf, reasonSubjects, stageGate } from './harness/gates.mjs';
-import { addItem, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addItem, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
@@ -84,7 +84,7 @@ describe('M222 runner classes, developer checks, the reserved environment', () =
       [defPath('far')]: smoke('far', { command: ['probe', 'exit', '0'], gates: alphaOnly, runner_class: 'remote' }),
       [defPath('deployed')]: definitionText('deployed', { kind: 'post_deploy_behavior', command: ['probe', 'exit', '0'], timeout_s: 60, gate_kinds: alphaOnly, requires: ['environment', 'artifact_digest'] }),
     };
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     // The developer check fails on the first candidate while the stage's work is verifying there, so under Q2 (D3 §2.10; E90 item 2; E100 S1) it would
     // send the stage back to its Builder. This row is about runner classes, developer checks and the environment, not the repair: at
     // repair_attempts_max 0, set before the build so every candidate holds its commit, the stage's work is parked instead (objection 030's ruling).

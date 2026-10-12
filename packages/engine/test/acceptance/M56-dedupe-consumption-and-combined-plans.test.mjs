@@ -27,6 +27,7 @@ import { addWork, scriptedEngine, tickUntil, workItem } from './harness/runs.mjs
 import { script } from './harness/scripted.mjs';
 
 const policyPath = (project) => `/v1/projects/${project.id}/policy`;
+// M5 (D6 K3; SEAM.md §§362, 366): `max_chained_roles` defaults to 24, so a widening is a value above it (25, 26).
 
 async function projectFor(t) {
   const fx = await scriptedEngine(t);
@@ -49,8 +50,8 @@ const counts = (fx, project, row) => ({ status: decision(fx.home, row.id).status
 describe('M56 a question has one identity', () => {
   test('the same question with its content in another order is the same decision with the same preview, before and after a restart', async (t) => {
     const { fx, project } = await projectFor(t);
-    const first = await confirmRequired(fx, policyPath(project), { max_chained_roles: 3, budget_run_billable_tokens: 2_000_000 });
-    const reordered = { budget_run_billable_tokens: 2_000_000, max_chained_roles: 3 };
+    const first = await confirmRequired(fx, policyPath(project), { max_chained_roles: 26, budget_run_billable_tokens: 2_000_000 });
+    const reordered = { budget_run_billable_tokens: 2_000_000, max_chained_roles: 26 };
     const second = await confirmRequired(fx, policyPath(project), reordered);
     assert.deepEqual([second.id, second.preview_hash], [first.id, first.preview_hash], 'order does not make another question');
     await fx.engine.kill();
@@ -71,7 +72,7 @@ describe('M56 a question has one identity', () => {
 describe('M56 a decision is consumed at most once', () => {
   test('a failed consuming transaction consumes nothing; the answer consumes once, with one approval, one effect and no role launched; the same answer again is refused as consumed', async (t) => {
     const { fx, project } = await projectFor(t);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25 });
 
     await armFault(fx.engine, { point: 'before_event', event_type: 'decision.consumed' });
     assertRefused(await answer(fx.engine, project.id, previewed, 'approve'), 500, 'store_error', 'an answer whose transaction fails');
@@ -88,7 +89,7 @@ describe('M56 a decision is consumed at most once', () => {
 
   test('the engine is killed after the consumption and before the effect: the answer is consumed durably, the effect is made once after the restart, and the answer sent again is refused as consumed', async (t) => {
     const { fx, project } = await projectFor(t);
-    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
+    const previewed = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25 });
     await armBarrier(fx.engine, INTENT_BARRIER, 'kill');
     answer(fx.engine, project.id, previewed, 'approve').catch(() => null);
     await untilKilled(fx, project.id);
@@ -98,7 +99,7 @@ describe('M56 a decision is consumed at most once', () => {
     assertRefused(await answer(fx.engine, project.id, previewed, 'approve'), 409, CODES.consumed, 'the answer sent again after the restart');
     await tickUntil(fx.engine, project.id, () => policyRevisions(fx.home, project.id).length === 1 && intentsOf(fx.home, previewed.id)[0].status === 'done', { max: 4, what: 'the consumed effect to be made' });
     assert.deepEqual(counts(fx, project, previewed), { status: 'consumed', approvals: 1, intents: 1, revisions: 1 }, 'made once');
-    assert.equal((await getPolicy(fx.engine, project.id)).effective.max_chained_roles, 2);
+    assert.equal((await getPolicy(fx.engine, project.id)).effective.max_chained_roles, 25);
   });
 });
 
@@ -116,8 +117,8 @@ describe('M56 a batch of answers', () => {
   test('conflicting plans consume none; and of two questions the one that was answered is consumed and the one it overtook is invalidated, each with its own code', async (t) => {
     const { fx, project } = await projectFor(t);
     // Two widenings of the same key, previewed against the same base.
-    const two = await confirmRequired(fx, policyPath(project), { max_chained_roles: 2 });
-    const three = await confirmRequired(fx, policyPath(project), { max_chained_roles: 3 });
+    const two = await confirmRequired(fx, policyPath(project), { max_chained_roles: 25 });
+    const three = await confirmRequired(fx, policyPath(project), { max_chained_roles: 26 });
     assert.notEqual(two.id, three.id, 'the fixture is live: two different questions');
 
     assertRefused(await batch(fx, project, [two, three], 'approve'), 409, CODES.batch_conflict, 'a batch whose plans conflict');
@@ -127,6 +128,6 @@ describe('M56 a batch of answers', () => {
     await tickUntil(fx.engine, project.id, () => decision(fx.home, three.id).status === 'invalidated', { max: 4, what: 'the overtaken question to be invalidated' });
     assertRefused(await answer(fx.engine, project.id, two, 'approve'), 409, CODES.consumed, 'answering the consumed decision');
     assertRefused(await answer(fx.engine, project.id, three, 'approve'), 409, CODES.invalidated, 'answering the invalidated decision');
-    await waitFor(async () => (await getPolicy(fx.engine, project.id)).effective.max_chained_roles === 2, { what: 'the approved widening to be effective' });
+    await waitFor(async () => (await getPolicy(fx.engine, project.id)).effective.max_chained_roles === 25, { what: 'the approved widening to be effective' });
   });
 });

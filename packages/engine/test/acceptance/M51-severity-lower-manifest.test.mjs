@@ -26,7 +26,7 @@ import { withStore } from './harness/store.mjs';
 // (objection 030).
 async function findingOf(t, severity) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 } });
+  const ctx = await nominated(fx, { autonomy: 'step', policy: { repair_attempts_max: 0 } });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);

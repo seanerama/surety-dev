@@ -30,7 +30,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { armFault } from './harness/engine.mjs';
 import { installGatedPlan, sharedFixture, stageGate } from './harness/gates.mjs';
-import { permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { permittedEdit, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
   GOVERNED_FILE,
@@ -68,7 +68,7 @@ async function history(t) {
   CASES.lost.command = ['probe', ...holdArgs(prog, 'lost'), 'exit', '0'];
   const files = { [GOVERNED_FILE]: sandboxGoverned(prog) };
   for (const [key, c] of Object.entries(CASES)) files[defPath(key)] = smoke(key, { command: c.command, gates: ['stage'], timeout: c.timeout ?? 120 });
-  const project = await checkProject(fx, { files, tier: 'T1' });
+  const project = await pinStep(fx, await checkProject(fx, { files, tier: 'T1' }));
   await qualifyRunnerByFixture(fx.engine);
   const plan = await installGatedPlan(fx.engine, project.id, { requirements: [], stages: [{ number: 1, goal: 'the first stage', implements: [] }] });
   const [stage] = plan.stages;

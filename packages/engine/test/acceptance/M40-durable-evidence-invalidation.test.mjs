@@ -37,7 +37,7 @@ const RETENTION_DAYS = 90; // record_retention_days, the default (contract/confi
 // execution left `output` as its evidence record.
 async function passed(t, output = 'login check: ok\n') {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const checks = await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })]);
   const [result] = await passAll(fx.engine, project, ctx.candidate.id, [checks.id.login], { output });

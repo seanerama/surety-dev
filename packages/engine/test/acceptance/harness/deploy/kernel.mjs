@@ -258,14 +258,16 @@ export const DEPLOY_DEFS = Object.freeze({ acc: def('acceptance', { criteria: ['
 // git type (checks/fixtures.mjs `commitEntries`: an executable file, a
 // symbolic link, a submodule); `governed` adds to the governed file.
 // Returns {fx, p, project, candidate, reg, env: {id, name}, config, qualification}.
-export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed, policy = {}, autonomy } = {}) {
+export async function deployable(fx, { defs = DEPLOY_DEFS, name = 'alpha', config = {}, qualify = true, tier = 'T1', files = {}, entries, governed, policy = {}, autonomy = 'step' } = {}) {
   const index = [{ key: 'R1', criteria: ['R1.1'] }];
   const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
   let p;
-  // `autonomy` (M5 slice 31; SEAM.md §§362, 363): pinned once, after the
-  // project and before its plan exists, so no tick can dispatch the stage
-  // before its script; the base re-read after the policy commit.
-  const pin = autonomy === undefined ? undefined : { autonomy };
+  // `autonomy` (M5 slice 31; SEAM.md §§362, 363, 366): `step` by default, the
+  // M4 profile these cases were accepted under (`null` leaves the project's
+  // default); pinned once, after the project and before its plan exists, so
+  // no tick can dispatch the stage before its script; the base re-read after
+  // the policy commit.
+  const pin = autonomy === undefined || autonomy === null ? undefined : { autonomy };
   if (entries === undefined && governed === undefined) p = await scopeProject(fx, { tier, defs, files: { ...SERVICE_FILES, ...files }, index, stages, policy: pin });
   else {
     const made = await checkProject(fx, { files: { ...protectedSet(defs, governed), ...SERVICE_FILES, ...files }, entries, tier });

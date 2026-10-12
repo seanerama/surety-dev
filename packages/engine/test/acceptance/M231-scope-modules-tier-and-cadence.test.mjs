@@ -50,7 +50,7 @@ async function laterCandidate(fx, p, steps) {
 describe('M231 (a) a module override raises the scope tier, and never lowers it', () => {
   test('in a T1 project, the stage whose module is T3 requires the tier-floored checks, the T3 kinds and the T3 sign-offs; the stage whose module has no override requires none of them', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: {
         acc1: def('acceptance', { criteria: ['R1.1'] }),
         acc2: def('acceptance', { criteria: ['R2.1'] }),
@@ -98,7 +98,7 @@ describe('M231 (a) a module override raises the scope tier, and never lowers it'
 
   test('in a T2 project, a stage module overridden T1 lowers nothing: the T2-floored checks and the T2 sign-off are still required', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       tier: 'T2',
       defs: { ...inventoryDefs('T1', ['R1.1']), integ: def('integration', { criteria: ['R1.1'], tier_floor: 'T2' }), lint: def('security_lint', { tier_floor: 'T2' }) },
       index: [{ key: 'R1', criteria: ['R1.1'] }],
@@ -122,7 +122,7 @@ describe('M231 (a) a module override raises the scope tier, and never lowers it'
 describe('M231 (b) which modules a scope takes', () => {
   test('a stage scope takes its stage\'s modules; a deployment scope every module present at the revision, recorded on the candidate; a module deleted at a later revision drops out; an unreadable presence fact leaves the scope incomplete', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await scopeProject(fx, {
+    const p = await scopeProject(fx, { policy: { autonomy: 'step' },
       defs: {
         acc: def('acceptance', { criteria: ['R1.1'] }),
         smoke: def('smoke'),
@@ -194,7 +194,7 @@ describe('M231 (c) the scope tier sets the cadence', () => {
     const steps = [[step.write('billing/pay.js', 'export const pay = () => 0;\n')], [step.write('web/index.js', 'export const page = 1;\n')]];
 
     // The T2 module: the stage nominates by cadence.
-    const p = await scopeProject(fx, shape(true));
+    const p = await scopeProject(fx, { ...shape(true), policy: { autonomy: 'step' } });
     await buildStages(fx, p, { steps });
     const stages = withStore(fx.home, (db) => db.prepare('SELECT * FROM "stages" WHERE "project" = ? ORDER BY "number"').all(p.id));
     const stage1 = stages.find((s) => s.number === 1);
@@ -220,7 +220,7 @@ describe('M231 (c) the scope tier sets the cadence', () => {
     // The control: the same shape with no override. Its stages nominate nothing; a fix-free candidate is made on request. The same fix,
     // its Builder asking for nothing: before E104 it nominated nothing at T1 (the straddle; COVERAGE.md, "M3 slice 22: E104"); now the
     // integration of a fix that names a finding is a nomination point at every tier (E104, Sean 2026-10-08), by engine cadence as at T2.
-    const q = await scopeProject(fx, shape(false));
+    const q = await scopeProject(fx, { ...shape(false), policy: { autonomy: 'step' } });
     await buildStages(fx, q, { steps });
     assert.deepEqual(candidatesOfProject(fx.home, q.id), [], 'the control: in a T1 project with no T2 module, no stage integration nominates without a request');
     const d1 = await nextCandidate(fx, q.id);

@@ -28,6 +28,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
+import { pinStep } from './harness/gitruns.mjs';
 import { sharedFixture, stageGate } from './harness/gates.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
@@ -66,7 +67,7 @@ async function history(t) {
     [defPath('foreign')]: smoke('foreign', { command: ['probe', ...holdArgs(prog, 'foreign'), 'exit', '0'], gates: ['stage'], timeout: 120 }),
     [defPath('forger')]: smoke('forger', { command: ['probe', ...holdArgs(prog, 'forger'), ...guardArgs(), 'print', ...FORGED], gates: ['stage'], timeout: 120 }),
   };
-  const project = await checkProject(fx, { files });
+  const project = await pinStep(fx, await checkProject(fx, { files }));
   const { stage, candidate } = await buildStage(fx, project);
   let signalled = null;
   const pending = { foreign: 'foreign', forger: 'forger' };

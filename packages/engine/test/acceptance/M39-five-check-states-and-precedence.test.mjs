@@ -28,7 +28,7 @@ const CASES = ['none', 'source', 'runner', 'environment', 'artifact', 'not_execu
 
 async function evaluated(t) {
   const fx = await scriptedEngine(t);
-  const ctx = await nominated(fx);
+  const ctx = await nominated(fx, { autonomy: 'step' });
   const project = ctx.project.id;
   const candidate = ctx.candidate.id;
   const alpha = await alphaTarget(fx, ctx);

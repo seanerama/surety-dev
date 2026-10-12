@@ -35,7 +35,7 @@ const resultRows = (home, candidate) => withStore(home, (db) => db.prepare('SELE
 describe('M207 reuse bounded; history beside the deciding result', () => {
   test('(c) two failures then a pass at the same bindings: the gate read shows the earlier executions, their states and triggers, and a link to their history; the pass relabels nothing; (b) a protected application then invalidates every result of the old version and creates no reuse entry', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = await discoveredProject(fx, ['sm']);
+    const p = await discoveredProject(fx, ['sm'], { policy: { autonomy: 'step' } });
     // The nomination's failure below is recorded while the stage's work is verifying on the candidate, so under Q2 (D3 §2.10; E90 item 2) it would send
     // the stage back to its Builder. This row is about the history beside the result, not the repair: at repair_attempts_max 0, set before the build so
     // the candidate holds its commit, the work is parked instead (objection 030).

@@ -32,7 +32,7 @@ const SIGNOFFS = { T1: [], T2: [{ scope: 'candidate' }], T3: [{ scope: 'candidat
 // whose protected set holds `defs`; its candidate with every check passed and
 // the tier's sign-offs recorded; the stage gate evaluated.
 async function judged(fx, { tier = 'T3', defs, governed }) {
-  const p = await scopeProject(fx, { tier, defs, governed, index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'R1', implements: ['R1'] }] });
+  const p = await scopeProject(fx, { policy: { autonomy: 'step' }, tier, defs, governed, index: [{ key: 'R1', criteria: ['R1.1'] }], stages: [{ number: 1, goal: 'R1', implements: ['R1'] }] });
   await buildStages(fx, p, { nominate: [tier === 'T1'] });
   const [c] = await tickUntil(fx.engine, p.id, () => {
     const found = candidatesOfProject(fx.home, p.id);
@@ -102,7 +102,7 @@ describe('M230 (d) the former fixture scopes are refused now (AD §8.3)', () => 
       ['T1', ['kind:smoke']],
       ['T2', ['kind:integration', 'kind:security_lint', 'kind:smoke']],
     ]) {
-      const ctx = await nominated(fx, { tier });
+      const ctx = await nominated(fx, { autonomy: 'step', tier });
       const ids = (await installChecks(fx.engine, ctx.project.id, [check('login', { requirements: ['R1'] })], { inventory: false })).id;
       await passAll(fx.engine, ctx.project.id, ctx.candidate.id, Object.values(ids));
       if (SIGNOFFS[tier].length > 0) await review(fx, ctx.project.id, ctx.candidate.id, { signoffs: SIGNOFFS[tier] });

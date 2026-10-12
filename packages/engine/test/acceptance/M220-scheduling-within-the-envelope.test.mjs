@@ -25,7 +25,7 @@ import { describe, test } from 'node:test';
 
 import { writeEngineConfig, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
-import { addGitProject, addItem } from './harness/gitruns.mjs';
+import { addGitProject, addItem, pinStep } from './harness/gitruns.mjs';
 import { run as runRow, stopRun, tick, waitForRunState } from './harness/runs.mjs';
 import { SANDBOX_CONFIG, roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
@@ -99,7 +99,7 @@ describe('M220 scheduling within the envelope', () => {
     const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 1, ...ADMIT } });
     const prog = installCheckProgram(fx.root);
     await qualifyRunnerByFixture(fx.engine);
-    const project = await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('quick')]: smoke('quick', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } });
+    const project = await pinStep(fx, await checkProject(fx, { files: { [GOVERNED_FILE]: sandboxGoverned(prog), [defPath('quick')]: smoke('quick', { command: ['probe', 'exit', '0'], gates: ['stage'] }) } }));
     const { candidate } = await buildStage(fx, project);
     await waitRecorded(fx, project.id, candidate.id, ['quick'], { what: "the nomination's check, before anything holds the domain" });
 
@@ -141,7 +141,7 @@ describe('M220 scheduling within the envelope', () => {
     await qualifyRunnerByFixture(fx.engine);
     const files = { [GOVERNED_FILE]: sandboxGoverned(prog) };
     for (const key of ['one', 'two']) files[defPath(key)] = smoke(key, { command: ['probe', ...holdArgs(prog, key), 'exit', '0'], gates: ['stage'], timeout: 300 });
-    const project = await checkProject(fx, { files });
+    const project = await pinStep(fx, await checkProject(fx, { files }));
     const { candidate } = await buildStage(fx, project);
 
     // (c) The first admitted holds; the other stays queued however many ticks pass.
