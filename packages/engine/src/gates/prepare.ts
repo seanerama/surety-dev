@@ -13,7 +13,7 @@
 import type { ConformanceFacts } from '../adopt/conformance.js';
 import { projectionDigest } from '../adopt/projection.js';
 import { repoContext } from '../git/exec.js';
-import { isAncestor, listTree, readRefs } from '../git/repo.js';
+import { isAncestor, listTree, readRef, readRefs } from '../git/repo.js';
 import { presentModules } from '../checks/scope.js';
 import type { RefFact } from '../store/transitions/gates.js';
 import { pausePoint, seamPresenceFault } from '../testing/seam.js';
@@ -125,16 +125,21 @@ export interface GateFacts {
 // candidate, of the integration head and of each stage's bound source; null
 // where git could not say (unknown is moved, never equal).
 export async function conformanceFacts(rt: Runtime, project: string, candidate: string): Promise<ConformanceFacts | undefined> {
-  const read = await rt.read<{ repo: string; candidate_revision: string; head: string | null; stages: { id: string; source_revision: string | null }[] } | null>('conformance.facts', { project, candidate });
+  const read = await rt.read<{ repo: string; branch: string; candidate_revision: string; head: string | null; stages: { id: string; source_revision: string | null }[] } | null>('conformance.facts', { project, candidate });
   if (!read) return undefined;
   const ctx = repoContext(read.repo);
+  // The integration branch as the repository has it now, not as the
+  // registry expects it: an application-source change on the branch, adopted
+  // or not yet, is a source that moved (B11). Unread is unread.
+  const branch = await readRef(ctx, `refs/heads/${read.branch}`);
+  const head = branch.state === 'ok' ? branch.oid : null;
   const source_digests: Record<string, string | null> = {};
   for (const s of read.stages) source_digests[s.id] = s.source_revision === null ? null : await projectionDigest(ctx, s.source_revision);
   return {
     candidate_revision: read.candidate_revision,
     candidate_digest: await projectionDigest(ctx, read.candidate_revision),
-    head: read.head,
-    head_digest: read.head === null ? null : await projectionDigest(ctx, read.head),
+    head,
+    head_digest: head === null ? null : await projectionDigest(ctx, head),
     source_digests,
   };
 }

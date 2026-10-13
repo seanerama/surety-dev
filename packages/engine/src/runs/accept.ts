@@ -22,7 +22,7 @@
 // issued is in flight (D1 §4.5 step 4); an effect on behalf of a run whose
 // lease is closing is refused in the store.
 
-import { type BoundaryError, boundaryErrors } from '../adopt/boundary.js';
+import { type AdoptedTest, type BoundaryError, boundaryErrors } from '../adopt/boundary.js';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -517,7 +517,9 @@ export class Acceptor {
     const adopted = await this.rt.read<boolean>('project.adopted', { project: facts.project.id });
     const adoptedTests = report.adopted_tests ?? [];
     let boundary: BoundaryError[] | null = [];
-    if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, adoptedTests);
+    // What earlier applied proposals declared stays declared (their copies
+    // are already under the root): the boundary is theirs and this one's.
+    if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, [...(await this.rt.read<AdoptedTest[]>('project.adopted_tests', { project: facts.project.id })), ...adoptedTests]);
     await this.rt.engine('accept.capture_proposal', {
       run,
       base,

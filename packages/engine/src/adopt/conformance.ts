@@ -102,14 +102,14 @@ export function conformanceNominated(tx: Tx, args: { project: string; candidate:
 
 // What the main thread reads before an evaluation of a project with a
 // conformance stage: the revisions whose projections it digests.
-export function conformanceFactsRead(db: Db, args: { project: string; candidate: string }): { repo: string; candidate_revision: string; head: string | null; stages: { id: string; source_revision: string | null }[] } | null {
+export function conformanceFactsRead(db: Db, args: { project: string; candidate: string }): { repo: string; branch: string; candidate_revision: string; head: string | null; stages: { id: string; source_revision: string | null }[] } | null {
   const stages = conformanceStagesOf(db, args.project);
   if (stages.length === 0) return null;
   const c = db.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ? AND "project" = ?').get(args.candidate, args.project) as { revision: string } | undefined;
   if (!c) return null;
   const p = db.prepare('SELECT "dev_repo_path", "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string; integration_branch: string };
   const head = (db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(args.project, integrationRef(p.integration_branch)) as { expected_oid: string } | undefined)?.expected_oid ?? null;
-  return { repo: p.dev_repo_path, candidate_revision: c.revision, head, stages: stages.map((s) => ({ id: s.id, source_revision: s.source_revision })) };
+  return { repo: p.dev_repo_path, branch: p.integration_branch, candidate_revision: c.revision, head, stages: stages.map((s) => ({ id: s.id, source_revision: s.source_revision })) };
 }
 
 // The digests the main thread read: null where git could not say.

@@ -347,3 +347,10 @@ export function afterChange(tx: Tx, args: { project: string; rep: SpecRepresenta
     tx.db.prepare(`UPDATE "requirements" SET "status" = 'pending' WHERE "project" = ? AND "key" = ? AND "status" = 'approved'`).run(args.project, q.key);
   }
 }
+
+// The adopted tests every applied protected proposal of the project
+// declared (D6 §8.3; B13): their dependency boundaries stay in force.
+export function appliedAdoptedTests(db: Db, project: string): unknown[] {
+  const rows = db.prepare(`SELECT "adopted_tests" FROM "protected_proposals" WHERE "project" = ? AND "status" = 'applied' AND "adopted_tests" IS NOT NULL ORDER BY "seq"`).all(project) as { adopted_tests: string }[];
+  return rows.flatMap((r) => parseJson<unknown[]>(r.adopted_tests) ?? []);
+}
