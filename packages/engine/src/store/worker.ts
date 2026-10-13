@@ -119,6 +119,8 @@ import {
   recordReconcile,
   requestDeployment,
   requestFacts,
+  policyRequestDue,
+  policyRequestRefused,
   artifactAdmission,
   artifactPaths,
   artifactRows,
@@ -183,8 +185,11 @@ import {
   settleTurn,
   turnClaim,
 } from '../sessions/session.js';
-import { bundleBaselineFacts, recordBundle } from '../plan/bundle.js';
+import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
+import { observeHost, paceView } from '../plan/pace.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
+import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
   attemptUsage,
@@ -290,7 +295,9 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.rebind': (tx, a: { project: string; dev_repo_path: string }) => ({ status: 200, body: rebindProject(tx, a), effects: [{ kind: 'tick' }] }),
   // D4 §§3.2, 4.1, 4.6 (M4 slice 23).
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
-  'deployment.request': (tx, a) => requestDeployment(tx, a, (t, e) => evaluateGate(t, e as never)),
+  // D6 §4.2 (SEAM.md §353): the owner's specification change request.
+  'spec.change_request': (tx, a) => requestSpecChange(tx, a),
+  'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
   // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run
   // has ended (deploy/qualify.ts).
@@ -347,6 +354,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'deploy.policy_due': (d, a) => policyRequestDue(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
   'deploy.artifact_rows': (d) => artifactRows(d),
@@ -419,7 +427,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
   'session.view': (d, a: { project: string; run: string }) => sessionView(d, a.project, a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
+  'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
+  'spec.change_impact': (d, a) => impactRead(d, a),
+  'pace.view': (d, a) => paceView(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
@@ -556,6 +567,11 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),
+  // D6 §§4.3, 4.5: a spec change's side ref, and its approval's application.
+  'spec.intend_proposal': (tx, a) => intendProposal(tx, a),
+  'spec.application_facts': (tx, a) => specApplicationFacts(tx, a),
+  'spec.begin_application': (tx, a) => beginSpecApplication(tx, a),
+  'spec.refuse_application': (tx, a) => refuseSpecApplication(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),
@@ -632,6 +648,12 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // D6 §2 (M5 slice 31; sessions/driver.ts): a turn's claim and settlement,
   // the save's swap, checkpoint and finish, the close.
   'session.turn_claim': (tx, a) => turnClaim(tx, a),
+  // D6 §5.8 (M5 slice 31b): the phase's step at every tick (plan/phase.ts).
+  'phase.step': (tx, a) => phaseStep(tx, a),
+  'pace.observe_host': (tx, a) => observeHost(tx, a),
+  // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
+  'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
+  'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.

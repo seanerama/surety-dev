@@ -426,6 +426,18 @@ export function insertExecutionResult(
     { project: a.project, check: a.check, candidate: a.candidate, check_result: id, check_execution: a.execution },
     { execution_seq: a.execution_seq, exit_status: a.exit_status, execution: a.execution, not_run_reason: a.not_run_reason },
   );
+  // Old-generation work provides no current acceptance (D6 §4.5): a result
+  // of an execution registered under an earlier spec-evidence generation
+  // than an obligation on its check is recorded as history.
+  const gen = tx.db
+    .prepare(
+      `SELECT x."spec_generation" AS g, (SELECT MAX(o."generation") FROM "check_obligations" o WHERE o."project" = x."project" AND o."key" = x."key") AS o
+       FROM "check_executions" x WHERE x."id" = ?`,
+    )
+    .get(a.execution) as { g: number | null; o: number | null } | undefined;
+  if (gen && gen.o !== null && (gen.g ?? 0) < gen.o) {
+    tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ? WHERE "id" = ?').run(tx.at, 'spec_changed', id);
+  }
   markStale(tx, { candidate: a.candidate });
   return id;
 }

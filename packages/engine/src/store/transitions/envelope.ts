@@ -74,7 +74,7 @@ const readNumber = (path: string): number | null => {
   }
 };
 
-function memAvailable(): number | null {
+export function memAvailable(): number | null {
   try {
     const m = /^MemAvailable:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'));
     return m ? Number(m[1]) * 1024 : null;

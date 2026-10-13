@@ -46,6 +46,7 @@ import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAtt
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { hostIdentity } from '../../trust/host.js';
+import { specChangeKind } from '../../spec/change.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
 type Db = Tx['db'];
@@ -66,7 +67,7 @@ export interface Facts {
 }
 
 export type { KindSpec, Subject };
-export { consumed, recordApproval };
+export { consumed, recordApproval, recordIntent };
 
 export interface Preview {
   manifest: Record<string, unknown>;
@@ -299,6 +300,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
 
 export const PARK_TEXT: Record<string, string> = {
   repair_attempts_max: 'every permitted repair attempt failed',
+  phase_signoff_missing: "its Verifier's run reported no phase sign-off, so the phase cannot complete; retry to ask again",
   preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
   deadline: 'its run passed its deadline',
   no_progress_max: 'its repairs left the same rejected result as often as policy allows',
@@ -1262,6 +1264,8 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   spec_approval: SPEC_APPROVAL,
   architecture_approval: ARCHITECTURE_APPROVAL,
   plan_approval: PLAN_APPROVAL,
+  // D6 §4.5 (M5 slice 31b): the specification change (spec/change.ts).
+  spec_change: specChangeKind(),
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1290,6 +1294,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   spec_approval: SPEC_APPROVAL_KEYS,
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
+  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,
@@ -1476,8 +1481,11 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
   const d = getDecision(tx, intent.decision)!;
   const spec = KINDS[d.kind as DecisionKind];
   const now = spec.manifest(tx, d, facts);
-  if (canonical(now) === canonical(JSON.parse(intent.preconditions))) return true;
-  invalidateIntent(tx, intent.id);
+  const before = JSON.parse(intent.preconditions) as Record<string, unknown>;
+  if (canonical(now) === canonical(before)) return true;
+  // Which preconditions changed, named on the invalidation.
+  const changed = [...new Set([...Object.keys(now), ...Object.keys(before)])].filter((k) => canonical(now[k] ?? null) !== canonical(before[k] ?? null)).sort();
+  invalidateIntent(tx, intent.id, changed);
   return false;
 }
 
@@ -1485,13 +1493,13 @@ export function revalidateIntent(tx: Tx, intentId: string, facts: Facts): boolea
 // EFFECT_PRECONDITION_CHANGED, the consumption's local transition withdrawn,
 // and the next generation raised with no approval. An intent already done or
 // invalidated is left as it is.
-export function invalidateIntent(tx: Tx, intentId: string): void {
+export function invalidateIntent(tx: Tx, intentId: string, changed?: string[]): void {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(intentId) as { id: string; project: string; decision: string; status: string; kind: string } | undefined;
   if (!intent || intent.status === 'done' || intent.status === 'invalidated') return;
   const d = getDecision(tx, intent.decision)!;
   const spec = KINDS[d.kind as DecisionKind];
   tx.db.prepare(`UPDATE "effect_intents" SET "status" = 'invalidated', "invalidated_reason" = 'EFFECT_PRECONDITION_CHANGED' WHERE "id" = ?`).run(intent.id);
-  tx.emit('intent.invalidated', { project: intent.project, decision: d.id, intent: intent.id }, { reason: 'EFFECT_PRECONDITION_CHANGED', kind: intent.kind });
+  tx.emit('intent.invalidated', { project: intent.project, decision: d.id, intent: intent.id }, { reason: 'EFFECT_PRECONDITION_CHANGED', kind: intent.kind, ...(changed ? { changed } : {}) });
   if (spec.withdraw?.(tx, d)) raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
 }
 

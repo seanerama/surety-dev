@@ -9,6 +9,7 @@
 
 import { illegal } from './common.js';
 import { markStale } from './evidence.js';
+import { type AppliedInputs, type ProposalInputs, finalizeApplied, finalizeProposal } from '../../spec/change.js';
 import { type ApplicationInputs, completeIntent, effectiveVersion, finalizeApplication } from './protected.js';
 import type { IntentSpec, OpDetail } from './journal.js';
 import { intendOperation } from './journal.js';
@@ -17,6 +18,7 @@ import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
+import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -33,7 +35,7 @@ export interface DiscardInputs {
 }
 
 export interface CommitInputs {
-  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt';
+  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt' | 'spec';
   run?: string;
   sha: string;
   parent: string;
@@ -54,7 +56,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -67,6 +69,9 @@ export interface RefInputs {
   // D6 §5.5 (B02): a session's checkpoint, whose integration registers
   // nothing it carries.
   checkpoint?: boolean;
+  // A replan's plan in Appendix B.5's form, checked before the intent
+  // (runs/accept.ts; D6 §5.6): published here as its routing says.
+  replan?: ReplanPrepared;
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
@@ -184,6 +189,12 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     }
     case 'protected':
       return finalizeApplication(tx, op, inputs as unknown as ApplicationInputs);
+    // D6 §4.3: a spec change's proposal on its side ref; §4.5: its approval
+    // integrated.
+    case 'spec_change':
+      return finalizeProposal(tx, op, inputs as unknown as ProposalInputs);
+    case 'spec_applied':
+      return finalizeApplied(tx, op, inputs as unknown as AppliedInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':
@@ -242,6 +253,10 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     );
     plans.push(made.plan.id);
   }
+  if (inputs.replan && inputs.run) {
+    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid });
+    if (published) plans.push(published);
+  }
   if (inputs.architect && item && status === 'integrated') {
     const now = getWorkItem(tx, item.id)!;
     transitionWork(tx, now, 'complete', {}, { run: inputs.run, operation: op.id });
@@ -273,6 +288,10 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'developing', ?)`,
     )
     .run(candidate, tx.at, op.project, inputs.seq, inputs.new_oid, lineage, tx.at, inputs.by, version, JSON.stringify(held));
+  // The approved specification it is nominated under, a historical fact (D1
+  // A.3; D6 §4.6).
+  const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(op.project) as { id: string } | undefined;
+  if (spec) tx.db.prepare('UPDATE "candidates" SET "spec_revision" = ? WHERE "id" = ?').run(spec.id, candidate);
   // The presence frozen at intent (D3 §4.1); readers take it only under the
   // module definitions it was read under (evidence.ts presenceIn).
   if (inputs.module_presence) tx.db.prepare('UPDATE "candidates" SET "module_presence" = ? WHERE "id" = ?').run(JSON.stringify(inputs.module_presence), candidate);

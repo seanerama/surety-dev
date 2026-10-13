@@ -26,7 +26,7 @@ import { reconcileRepairs } from './repair.js';
 type Db = Tx['db'];
 
 export interface Trigger {
-  source: 'nomination' | 'protected_application' | 'operator_request' | 'recovery' | 'deployment_verification';
+  source: 'nomination' | 'protected_application' | 'operator_request' | 'recovery' | 'deployment_verification' | 'phase';
   id: string;
   generation: number;
 }
@@ -304,6 +304,7 @@ export function registerExecutions(
         args.binding?.artifact_digest ?? null,
         args.binding ? JSON.stringify(args.binding.deployment) : null,
       );
+    stampGeneration(tx, id, args.project);
     tx.emit('check.registered', { project: args.project, candidate: args.candidate.id, check_execution: id }, { key: c.key, trigger: args.trigger, execution_seq: seq, check: c.id });
     out.push({ id, check: c.id, key: c.key, created: true });
   }
@@ -1023,6 +1024,7 @@ export function registerRecoveryRetry(tx: Tx, execution: string): string | null 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at);
+  stampGeneration(tx, id, x.project);
   if (x.deployment !== null) {
     tx.db.prepare('UPDATE "check_executions" SET "environment" = ?, "artifact_digest" = ?, "deployment" = ? WHERE "id" = ?').run(x.environment, x.artifact_digest, x.deployment, id);
   }
@@ -1302,4 +1304,11 @@ export function liveExecutions(db: Db): { id: string; project: string; status: s
   return db
     .prepare(`SELECT "id", "project", "status", "domain", "source_revision", "protected_version" FROM "check_executions" WHERE "status" IN (${LIVE.map(() => '?').join(', ')}) ORDER BY "execution_seq"`)
     .all(...LIVE) as { id: string; project: string; status: string; domain: string | null; source_revision: string; protected_version: string }[];
+}
+
+// Every registration records the project's spec-evidence generation (D6
+// §4.1, §4.5; B05): a result of an execution registered under an earlier
+// generation than an obligation on its check is history.
+function stampGeneration(tx: Tx, execution: string, project: string): void {
+  tx.db.prepare('UPDATE "check_executions" SET "spec_generation" = (SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?) WHERE "id" = ?').run(project, execution);
 }
