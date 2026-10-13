@@ -202,7 +202,11 @@ describe('M448 (a) M4: a routed replan is checked against the architecture versi
   test('a replan revising an ADR, prepared against architecture v+1: approved by the owner and published prepared against the registered version 2', async (t) => {
     const { fx, p, ctx } = await journeyProject(t);
     fx.scripted.kindScript('replan', [replanChangingTheArchitecture(2)]);
-    const published = await pumpNoIdle(fx, ctx, () => planOfPhase(fx.home, p.id, 2).find((x) => x.published_at), { what: 'phase 2 published through the owner\'s approval', max: 600, answerKinds: [...ROUTED_KINDS, 'architecture_approval'] });
+    const published = await pumpNoIdle(fx, ctx, () => {
+      const refused = replanRuns(fx.home, p.id).find((r) => r.state === 'ended' && r.outcome !== 'completed');
+      assert.equal(refused, undefined, `the replan prepared against the version its publication allocates is not refused (${refused?.reason_class}: ${refused?.reason_text})`);
+      return planOfPhase(fx.home, p.id, 2).find((x) => x.published_at);
+    }, { what: 'phase 2 published through the owner\'s approval', max: 600, answerKinds: [...ROUTED_KINDS, 'architecture_approval'] });
     const revisions = architectureRevisions(fx.home, p.id);
     assert.deepEqual(revisions.map((r) => r.version), [1, 2], 'the replan registered architecture version 2');
     assert.equal(published.prepared_against_architecture, revisions[1].id, `the published plan is prepared against the registered version 2 (${published.prepared_against_architecture})`);

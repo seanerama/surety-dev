@@ -12,18 +12,20 @@
 // - a head move that changes a bound input (a spec change approved) marks the
 //   bundle `stale`, with no open decision for it.
 // Never a `proposed` bundle with no open decision binding it.
+// The same for the first Architect session's pending pair: a harmless head
+// move leaves it publishable through its current generation.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { answer, decision, decisionsOfKind } from './harness/decisions.mjs';
 import { waitFor } from './harness/engine.mjs';
-import { ROUTED_KINDS, ownerPolicy, planOfPhase, readPlan, specChangeScript, specRevisions } from './harness/journey/drive.mjs';
+import { ROUTED_KINDS, architectSession, createWithIdea, ownerPolicy, planOfPhase, readPlan, specChangeScript, specRevisions, specSession, visionSession } from './harness/journey/drive.mjs';
 import { ADR_001_REVISED, ADR_KEY } from './harness/journey/reference.mjs';
-import { replanScript, replanWith } from './harness/journey/replan34.mjs';
+import { replanRuns, replanScript, replanWith } from './harness/journey/replan34.mjs';
 import { journeyProject, postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { refOid } from './harness/repos.mjs';
-import { tick } from './harness/runs.mjs';
+import { scriptedEngine, tick } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 
 const PAIR = ['architecture_approval', 'plan_approval'];
@@ -48,7 +50,12 @@ async function pendingRoutedBundle(t) {
   const { fx, p, ctx } = await journeyProject(t);
   fx.scripted.kindScript('replan', [replanChangingTheArchitecture(), replanScript({ spec_version: 2, architecture_version: 2 }), replanScript({ spec_version: 2, architecture_version: 2 })]);
   fx.scripted.defaultScript(script.complete());
-  const approval = await pumpNoIdle(fx, ctx, () => decisionsOfKind(fx.home, p.id, 'plan_approval').find((d) => d.status === 'open'), {
+  const approval = await pumpNoIdle(fx, ctx, () => {
+    // Fail fast: the routed bundle must exist for the case to say anything (it needs M4's ruling, SEAM.md §405).
+    const refused = replanRuns(fx.home, p.id).find((r) => r.state === 'ended' && r.outcome !== 'completed');
+    assert.equal(refused, undefined, `the fixture is live: phase 2's replan, prepared against architecture 2, is routed to the owner, not refused (${refused?.reason_class}: ${refused?.reason_text})`);
+    return decisionsOfKind(fx.home, p.id, 'plan_approval').find((d) => d.status === 'open');
+  }, {
     what: 'phase 2\'s plan_approval pending',
     max: 600,
     answerKinds: ROUTED_KINDS.filter((k) => k !== 'plan_approval'),
@@ -67,34 +74,52 @@ async function assertNoOrphanProposal(fx, p) {
   return read;
 }
 
+// After a harmless head move: each pending decision is open on `bundle`
+// (still, or as its next generation, the earlier never consumed); no orphan;
+// approving the current generations publishes phase `phase` from `bundle`.
+async function publishableAfterAHarmlessMove(fx, p, bundle, pending, phase) {
+  const before = refOid(p.repo.path, p.repo.ref);
+  await ownerPolicy(fx, p.id, { deadline_reviewer: 900 });
+  assert.notEqual(refOid(p.repo.path, p.repo.ref), before, 'the policy change moved the head');
+  const kinds = new Set(pending.map((d) => d.kind));
+  const next = await ticksUntil(
+    fx,
+    p,
+    () => {
+      const open = openFor(fx.home, p.id, bundle);
+      return [...kinds].every((k) => open.some((d) => d.kind === k)) ? open : undefined;
+    },
+    'the pending decisions open on the same bundle after the head moved',
+  );
+  for (const d of pending) {
+    const now = decision(fx.home, d.id);
+    if (now.status !== 'open') assert.equal(now.status, 'invalidated', `an earlier generation is invalidated, never consumed (${d.kind}: ${now.status})`);
+  }
+  await assertNoOrphanProposal(fx, p);
+  for (const d of next) {
+    const res = await answer(fx.engine, p.id, decision(fx.home, d.id), 'approve');
+    assert.equal(res.status, 200, `the owner approves ${d.kind} through its current generation (→ ${res.status} ${res.text})`);
+  }
+  const published = await ticksUntil(fx, p, () => planOfPhase(fx.home, p.id, phase).find((x) => x.published_at), `phase ${phase} to be published`);
+  assert.equal(published.bundle, bundle, 'published from the bundle that was pending');
+}
+
 describe('M424 a routed replan\'s pending approval under a moving head', () => {
+  test('the first Architect session\'s pending pair: a harmless head move leaves it publishable through its current generation', async (t) => {
+    const fx = await scriptedEngine(t);
+    fx.scripted.defaultScript(script.complete());
+    const p = await createWithIdea(fx);
+    await visionSession(fx, p.id);
+    await specSession(fx, p.id);
+    const arch = await architectSession(fx, p.id, p.repo, { answer: 'none' });
+    const bundle = decision(fx.home, arch.decisions.plan_approval.id).manifest?.bundle;
+    assert.ok(bundle, 'the pair binds a bundle');
+    await publishableAfterAHarmlessMove(fx, p, bundle, openFor(fx.home, p.id, bundle), 1);
+  });
+
   test('a harmless head move re-raises the pending decisions as their next generation; the bundle stays publishable through them', async (t) => {
     const { fx, p, bundle, pending } = await pendingRoutedBundle(t);
-    const before = refOid(p.repo.path, p.repo.ref);
-    await ownerPolicy(fx, p.id, { deadline_reviewer: 900 });
-    assert.notEqual(refOid(p.repo.path, p.repo.ref), before, 'the policy change moved the head');
-    // Each pending decision either still open, or invalidated with its next generation open on the same bundle.
-    const next = await ticksUntil(
-      fx,
-      p,
-      () => {
-        const open = openFor(fx.home, p.id, bundle);
-        const kinds = new Set(pending.map((d) => d.kind));
-        return [...kinds].every((k) => open.some((d) => d.kind === k)) ? open : undefined;
-      },
-      'the pending decisions open on the same bundle after the head moved',
-    );
-    for (const d of pending) {
-      const now = decision(fx.home, d.id);
-      if (now.status !== 'open') assert.equal(now.status, 'invalidated', `an earlier generation is invalidated, never consumed (${d.kind}: ${now.status})`);
-    }
-    await assertNoOrphanProposal(fx, p);
-    for (const d of next) {
-      const res = await answer(fx.engine, p.id, decision(fx.home, d.id), 'approve');
-      assert.equal(res.status, 200, `the owner approves ${d.kind} through its current generation (→ ${res.status} ${res.text})`);
-    }
-    const published = await ticksUntil(fx, p, () => planOfPhase(fx.home, p.id, 2).find((x) => x.published_at), 'phase 2 to be published');
-    assert.equal(published.bundle, bundle, 'published from the bundle that was pending');
+    await publishableAfterAHarmlessMove(fx, p, bundle, pending, 2);
   });
 
   test('a head move that changes a bound input (a spec change approved) marks the pending bundle stale, with no open decision for it', async (t) => {
