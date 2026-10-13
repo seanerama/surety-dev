@@ -97,14 +97,17 @@ describe('M422 the spec approval\'s floor', () => {
     for (const r of REQUIREMENTS) {
       const row = reqs.find((x) => x.key === r.key);
       assert.equal(row.text, r.statement, `${r.key}'s statement`);
-      assert.deepEqual(row.criteria, r.criteria.map((c) => ({ id: c.id, text: c.text })), `${r.key}'s criteria with their text`);
+      // Objection 080 (upheld): the criteria with their text are `criteria_text`; `criteria` keeps D3's IDs.
+      const withText = typeof row.criteria_text === 'string' ? JSON.parse(row.criteria_text) : row.criteria_text;
+      assert.deepEqual(withText, r.criteria.map((c) => ({ id: c.id, text: c.text })), `${r.key}'s criteria with their text`);
+      assert.deepEqual(row.criteria, r.criteria.map((c) => c.id), `${r.key}'s criterion IDs, as D3's index has them`);
       assert.deepEqual(row.sensitive_areas, [], `${r.key}'s areas`);
       assert.equal(row.human_test, 0);
     }
     assert.deepEqual(modulesOf(fx.home, p.id).map((m) => [m.name, m.paths]), [['lib', ['src/']], ['service', ['server.mjs']]], 'modules from TPL §6');
     const envs = environmentsOf(fx.home, p.id);
     assert.deepEqual(envs.map((e) => e.name), ['alpha'], 'the environment by name');
-    assert.equal(envs[0].adapter ?? null, null, 'with no adapter');
+    assert.equal(envs[0].adapter, 'none', 'with no adapter (objection 080: `none`, the column being NOT NULL since M4)');
     const project = projectRow(fx.home, p.id);
     assert.deepEqual([project.baseline_state, project.spec_evidence_generation], ['spec_ready', 1]);
     assert.equal(eventsAbout(fx.home, 'baseline.spec_approved', p.id).length, 1, 'baseline.spec_approved once');
