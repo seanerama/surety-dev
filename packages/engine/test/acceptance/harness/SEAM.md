@@ -6161,6 +6161,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12
 
 - **`backend_vision` and `backend_spec_writer`** are project keys like the other `backend_*` (default `scripted`; `scripted`, `claude` or `codex`). A session of a role is dispatched to the backend its key names.
 - **An entry that is not `session_qualified`.** A conversational role on `claude` whose active entry is not `session_qualified` is refused `backend_refused`, either at the opening (409) or at its turn, and nothing is launched on the entry (M403's S2 for the Architect).
+- **The trust-entry fixture** (§116) gains the field **`session_qualified`** † (bool, default false), so a kernel case can install an active entry that is, or is not, qualified for sessions.
 - **`model_<role>`** † for the six roles. The defaults are **`opus`** for Vision, Spec Writer and Architect and **`sonnet`** for Builder, Verifier and Reviewer (Claude Code's model aliases). The values are "an active entry's model", and the contract records the unit `model`.
 - **The ledger.** Each session turn's and each one-shot run's `ledger_rows.model_requested` is its role's key, and a project setting changes it.
 
