@@ -354,5 +354,10 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   const effective = effectiveVersion(tx.db, args.project);
   if (!effective) return;
   const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
-  registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
+  // A conformance stage's gate reads its own checks' registrations on this
+  // candidate (K11): the regression set, the same checks, follows its
+  // conformance, as phaseStep registers it; the phase-only checks now.
+  const conformance = activeStages<{ conformance: number }>(tx.db, plan.id).some((st) => st.conformance === 1);
+  const checks = conformance ? set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage')) : set.required;
+  registerExecutions(tx, { project: args.project, candidate, checks, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
 }
