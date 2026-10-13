@@ -382,7 +382,12 @@
       "M413-the-conformance-stage.test.mjs",
       "M414-evidence-rules-dependency-boundary-scoped-mode.test.mjs",
       "M452-retrofit-mode-rules-at-approval.test.mjs",
-      "M453-the-conformance-alpha-barrier.test.mjs"
+      "M453-the-conformance-alpha-barrier.test.mjs",
+      "M403-a-settled-turn-leaves-no-failure-entry.test.mjs",
+      "M409-the-same-repository-under-a-second-name.test.mjs",
+      "M411-a-withdrawn-requirement-stays-withdrawn-across-a-change.test.mjs",
+      "M413-a-fix-after-conformance-creates-no-work.test.mjs",
+      "M414-scoped-touching-is-decided-by-the-module-map.test.mjs"
     ]
   },
   "sandbox": [

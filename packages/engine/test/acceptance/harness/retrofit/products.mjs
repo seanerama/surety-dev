@@ -151,11 +151,14 @@ export const ARCHITECTURE_MD = `# Sums: architecture as it is
 
 Two modules: \`lib\` (\`src/sum.mjs\`) and \`service\` (\`server.mjs\`, Node's own \`http\`). Reconstructed from the code.
 `;
+// Sean, 2026-10-13: each module entry lists the requirements it holds
+// (`requirements`, B.3 †, SEAM.md §387); scoped mode's "touching" is decided
+// by this map.
 export const MODULES_JSON = {
   version: 1,
   modules: [
-    { name: 'lib', paths: ['src/'], sensitive_areas: [], interfaces: [{ name: 'sum', kind: 'module', path: 'src/sum.mjs', description: 'export const sum = (a, b) => number' }] },
-    { name: 'service', paths: ['server.mjs'], sensitive_areas: [], interfaces: [{ name: 'sum-route', kind: 'http', path: '/sum', description: 'GET /sum?a&b answers {"sum": n}' }, { name: 'health', kind: 'http', path: '/health', description: 'GET /health answers {"ok": true}' }] },
+    { name: 'lib', paths: ['src/'], sensitive_areas: [], requirements: ['R1'], interfaces: [{ name: 'sum', kind: 'module', path: 'src/sum.mjs', description: 'export const sum = (a, b) => number' }] },
+    { name: 'service', paths: ['server.mjs'], sensitive_areas: [], requirements: ['R2', 'R3', 'R4'], interfaces: [{ name: 'sum-route', kind: 'http', path: '/sum', description: 'GET /sum?a&b answers {"sum": n}' }, { name: 'health', kind: 'http', path: '/health', description: 'GET /health answers {"ok": true}' }] },
   ],
   mapping_from_spec: [
     { spec_module: 'lib', to: ['lib'] },
@@ -347,6 +350,8 @@ export function authoringFiles({ withR4 = false, withoutR1 = false, extra = {} }
 // floor's check covering it (D3 §4.4; SEAM.md §382).
 export const SENSITIVE_AREA = 'secrets_credentials';
 export const MODULES_SENSITIVE = Object.freeze(MODULES.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: [SENSITIVE_AREA] } : m)));
+// The module map with `requirements` per module replaced ({lib: [...]}).
+export const modulesJsonWith = (byModule) => ({ ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => (m.name in byModule ? { ...m, requirements: byModule[m.name] } : m)) });
 export const MODULES_JSON_SENSITIVE = { ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: [SENSITIVE_AREA] } : m)) };
 export const FLOOR_CHECK = Object.freeze({
   [defs('floor')]: definitionText('floor', { inputs: [], kind: 'sensitivity_floor', command: ['node', '--check', 'server.mjs'], timeout_s: 60, gate_kinds: GATES, covers: { sensitive_areas: [SENSITIVE_AREA] } }),
