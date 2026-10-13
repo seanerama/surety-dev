@@ -6437,6 +6437,18 @@ A question that blocks only phase-2 requirements, and carries a hint (`(phase 2)
 - **080 (M422 (b)).** `requirements.criteria` keeps the criterion IDs that D3's index, the coverage primitive and the gates read. The criteria with their text are **`requirements.criteria_text`** (`[{id, text}]`, migration 0023), served by `GET …/spec` as `criteria`. An environment with no adapter carries **`adapter = 'none'`**, because the column has been NOT NULL since M4's 0005. M422 (b) reads both forms.
 - **081 (`M401-a-spec-change-application-is-done-once`).** When one pump round answers phase 1's check correction and CR-1 back to back, the protected application can finish first. CR-1's first `spec_change_application` intent is then invalidated `EFFECT_PRECONDITION_CHANGED` (D1 §10.5), and the re-raised generation's intent is the one applied. The case reads **the applied intent**: exactly one is `done`, any other is `invalidated`, and the applied one has `intent.done` once and `intent.executing` once, unchanged by later ticks.
 
+## 405. The slice-34 review's rulings (the driver, 2026-10-13; no serious finding)
+
+- **M1 (M421 (c)).** A criterion moved to another requirement (R1.2's text reappearing as R4.2, with R1.2 gone) is reported as withdrawn plus added: `spec_key_withdrawn` names R1.2. It is never `spec_keys_renumbered`, and `approve` stays open. A criterion renumbered within its own requirement (R1.2 → R1.3, same text) is still `spec_keys_renumbered`, `{key: "R1.3", from: "R1.2"}`.
+- **N3 (M421 (d)).** A §10 question citing a key the spec does not have gives the finding **`spec_question_unknown_key`** †, naming the key. `approve` carries a blocker, and answering it gets 409.
+- **N4 (M421 (c)).** Once a version 2, approved through a change request, has withdrawn a key, a later Spec Writer save that adds the key again gives the finding **`spec_key_reused`** †, naming the key. That session's `spec_approval` `approve` carries a blocker, and answering it gets 409.
+- **N1 (M422 (b)).** A §11 row with an escaped pipe (`\|`) in a cell is one row: approval replaces it and writes into the one `## 11. Change log`, never a second. A specification with no §11 gains exactly one, holding the engine's row, and nothing before it changes.
+- **M4 (M448 (a); B02).** A routed replan that changes the architecture (it revises ADR-001) is checked against the version its publication allocates. Prepared against `architecture_version` 2, it is approved by the owner and published with `prepared_against_architecture` the registered `architecture_revisions` version 2. Naming version 1 while changing the architecture is refused at the commit's check: the run ends `failed` / `invalid_result` naming `PLAN_STALE_BASELINE`, and no architecture version is registered.
+- **The gap (M424; B03), `M424-a-pending-plan-approval-and-a-moving-head`.** While the first Architect session's pair, or phase 2's routed bundle (revising ADR-001, prepared against architecture 2, and so reachable only with M4 built), awaits the owner:
+  - **A harmless head move** (the owner's policy commit) leaves the pending decisions open on the same bundle (`manifest.bundle`). They are either still open, or invalidated with their next generation open; the earlier generation is never consumed. Approving the current generation publishes phase 2 from that bundle.
+  - **A head move that changes a bound input** (a spec change approved) marks the bundle `stale`, and no open decision binds it.
+  - **Never an orphan:** every bundle the plan read lists `proposed` has an open decision binding it.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33" and "M5 slice 34".

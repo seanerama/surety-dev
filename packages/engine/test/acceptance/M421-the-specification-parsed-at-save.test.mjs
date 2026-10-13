@@ -17,15 +17,25 @@
 //     `spec_semantics_invalid` and the defect, the answer refused;
 // (g) criteria reordered with no text change: the `semantic_digest`
 //     unchanged; a statement changed with every ID unchanged: changed.
+// The slice-34 review's rulings (the driver, 2026-10-13; SEAM.md §405):
+// (c) M1: a criterion moved to another requirement (R1.2's text now R4.2) is
+//     withdrawn plus added, never `spec_keys_renumbered`, and leaves `approve`
+//     open; renumbered within its requirement (R1.2 → R1.3) it still is;
+// (d) N3: a §10 question naming a key the spec lacks: `spec_question_unknown_key`,
+//     `approve` blocked;
+// (c) N4: a key withdrawn in an approved version and added again in a later
+//     save: `spec_key_reused`, `approve` blocked.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { answer, consume } from './harness/decisions.mjs';
-import { createWithIdea, projectRow, requirementsOf, specRevisions } from './harness/journey/drive.mjs';
-import { SPEC } from './harness/journey/reference.mjs';
-import { VARIANTS, blockersOf, findingNaming, semanticsOf, specSaves } from './harness/journey/spec34.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { createWithIdea, journeyContext, projectRow, requirementsOf, specRevisions } from './harness/journey/drive.mjs';
+import { REQUIREMENTS, SPEC, specText } from './harness/journey/reference.mjs';
+import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
+import { SPEC_PATH, SPEC_R1_2_MOVED, SPEC_R1_2_RENUMBERED, SPEC_R1_TWO, VARIANTS, blockersOf, findingNaming, semanticsOf, specSaves, withQuestions } from './harness/journey/spec34.mjs';
+import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { transcriptEntries } from './harness/sessions.mjs';
 
 // The defect each variant must be named by (SEAM.md §§346, 397).
@@ -123,5 +133,67 @@ describe('M421 the specification parsed at save; the semantic representation', (
     assert.notEqual(rows[0].git_blob, rows[1].git_blob, 'the reordered text is another blob');
     assert.equal(reordered, base, 'reordering identified criteria without a change of value changes the digest by nothing');
     assert.notEqual(changed, base, 'a changed requirement statement with every ID unchanged changes the digest');
+  });
+});
+
+describe('M421 the slice-34 review\'s rulings (M1, N3, N4)', () => {
+  test('(c) M1: a criterion moved to another requirement is withdrawn plus added, never renumbered, and leaves approve open', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const s = await specSaves(fx, p.id, [SPEC_R1_TWO, SPEC_R1_2_MOVED]);
+    const findings = s.saves[1].findings ?? [];
+    assert.ok(findingNaming(findings, 'spec_key_withdrawn', 'R1.2'), `R1.2 is reported withdrawn (${JSON.stringify(findings)})`);
+    assert.equal(findings.filter((f) => f.code === 'spec_keys_renumbered').length, 0, `a move to another requirement is not a renumbering (${JSON.stringify(findings)})`);
+    assert.ok(s.approval, `the close raised spec_approval (${JSON.stringify(s.closed)})`);
+    assert.deepEqual(blockersOf(s.approval), [], 'approve is open');
+    await consume(fx, p.id, s.approval, 'approve');
+    assert.deepEqual(specRevisions(fx.home, p.id).map((r) => r.version), [1]);
+  });
+
+  test('(c) M1: a criterion renumbered within its requirement (R1.2 → R1.3, same text) is still spec_keys_renumbered', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const s = await specSaves(fx, p.id, [SPEC_R1_TWO, SPEC_R1_2_RENUMBERED], { close: false });
+    const finding = findingNaming(s.saves[1].findings, 'spec_keys_renumbered', 'R1.2');
+    assert.ok(finding, `the renumbering is named (${JSON.stringify(s.saves[1].findings)})`);
+    assert.deepEqual([finding.subject?.key, finding.subject?.from], ['R1.3', 'R1.2'], 'naming the new key and the one it replaced');
+  });
+
+  test('(d) N3: a §10 question naming a key the spec lacks: spec_question_unknown_key, approve blocked', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const s = await specSaves(fx, p.id, [withQuestions(SPEC, ['Q1 Should R9 round its result? Owner: Sean. (phase 2)'])]);
+    assert.ok(findingNaming(s.saves[0].findings, 'spec_question_unknown_key', 'R9'), `the save names the unknown key (${JSON.stringify(s.saves[0].findings)})`);
+    const blockers = blockersOf(s.approval);
+    assert.ok(blockers.length > 0, 'approve carries a blocker');
+    const res = await answer(fx.engine, p.id, s.approval, 'approve');
+    assert.equal(res.status, 409, `approving is refused (→ ${res.status} ${res.text})`);
+    assert.deepEqual(specRevisions(fx.home, p.id), [], 'no spec revision');
+  });
+
+  test('(c) N4: a key withdrawn in an approved version and added again in a later save: spec_key_reused, approve blocked', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const first = await specSaves(fx, p.id, [SPEC]);
+    await consume(fx, p.id, first.approval, 'approve');
+    // Version 2 withdraws R3 through the owner's change request.
+    const withoutR3 = specText({ version: 2, requirements: REQUIREMENTS.filter((r) => r.key !== 'R3') });
+    fx.scripted.defaultScript(script.complete());
+    fx.scripted.kindScript('spec_change', { steps: [step.write(SPEC_PATH, withoutR3), step.result({ status: 'completed', summary: 'R3 withdrawn', changes: [{ key: 'R3', kind: 'withdrawn', reason: 'counting moves out of scope' }] })] });
+    const ctx = journeyContext(fx, p);
+    await postChange(fx, ctx, 'Withdraw R3.');
+    await pumpNoIdle(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === 2), { what: 'spec version 2', answerKinds: ['spec_change'] });
+    await tick(fx.engine, p.id, { rounds: 2 });
+    await waitForIdle(fx.home, p.id);
+    const r3 = requirementsOf(fx.home, p.id).find((r) => r.key === 'R3');
+    assert.ok(r3 && (r3.status === 'withdrawn' || r3.withdrawn_at), `the fixture is live: R3 is withdrawn in version 2 (${JSON.stringify(r3)})`);
+    // A later Spec Writer session adds R3 again.
+    const again = await specSaves(fx, p.id, [specText({ version: 3 })]);
+    assert.ok(findingNaming(again.saves[0].findings, 'spec_key_reused', 'R3'), `the save names the reused key (${JSON.stringify(again.saves[0].findings)})`);
+    assert.ok(again.approval, `the close raised spec_approval (${JSON.stringify(again.closed)})`);
+    assert.ok(blockersOf(again.approval).length > 0, `approve carries a blocker (${JSON.stringify(blockersOf(again.approval))})`);
+    const res = await answer(fx.engine, p.id, again.approval, 'approve');
+    assert.equal(res.status, 409, `approving is refused (→ ${res.status} ${res.text})`);
+    assert.deepEqual(specRevisions(fx.home, p.id).map((r) => r.version), [1, 2], 'no version 3');
   });
 });

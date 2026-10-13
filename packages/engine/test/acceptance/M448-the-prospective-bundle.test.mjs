@@ -13,6 +13,10 @@
 //     (`plan.before_publication` †), and with the publication written
 //     (`plan.after_publication` †): one publication, one `plan.published`, no
 //     duplicate rows or work.
+// M4 (the slice-34 review; SEAM.md §405): a routed replan that changes the
+//     architecture is checked against the version its publication allocates:
+//     published prepared against architecture v+1; naming v while changing
+//     the architecture, refused `PLAN_STALE_BASELINE`.
 // Not here (COVERAGE): (c) a checkpoint and a refused close publish nothing
 // (M405 (e), M403 (d), M404 (c)); (d)'s competing proposal (M403 (f),
 // M405 (f)).
@@ -26,8 +30,12 @@ import { waitFor } from './harness/engine.mjs';
 import { armBarrier, eventsOfType } from './harness/journal.mjs';
 import {
   NOTHING,
+  ROUTED_KINDS,
   activePlan,
   architectSession,
+  architectureRevisions,
+  phaseCompleted,
+  planOfPhase,
   createWithIdea,
   eventsAbout,
   journeyContext,
@@ -44,12 +52,13 @@ import {
   waitPublished,
   workOf,
 } from './harness/journey/drive.mjs';
-import { STAGES, phasePlan } from './harness/journey/reference.mjs';
-import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
+import { ADR_001_REVISED, ADR_KEY, STAGES, phasePlan } from './harness/journey/reference.mjs';
+import { replanRuns, replanWith } from './harness/journey/replan34.mjs';
+import { journeyProject, postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { recordFile } from './harness/records.mjs';
 import { refOid } from './harness/repos.mjs';
-import { scriptedEngine, tick } from './harness/runs.mjs';
-import { script } from './harness/scripted.mjs';
+import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { closeSession } from './harness/sessions.mjs';
 
 async function readyForArchitect(fx) {
@@ -182,5 +191,36 @@ describe('M448 the prospective bundle', () => {
 
   test('(e) a kill with the publication written (plan.after_publication): exactly one publication and one plan.published after recovery', async (t) => {
     await killedAt(t, 'plan.after_publication');
+  });
+});
+
+// The replan of phase 2 whose commit also revises ADR-001 (an architecture
+// change, so routed to the owner), prepared against `architecture_version`.
+const replanChangingTheArchitecture = (architecture_version) => replanWith({ architecture_version, before: [step.write(`.surety/adrs/${ADR_KEY}.md`, ADR_001_REVISED)] });
+
+describe('M448 (a) M4: a routed replan is checked against the architecture version its publication allocates', () => {
+  test('a replan revising an ADR, prepared against architecture v+1: approved by the owner and published prepared against the registered version 2', async (t) => {
+    const { fx, p, ctx } = await journeyProject(t);
+    fx.scripted.kindScript('replan', [replanChangingTheArchitecture(2)]);
+    const published = await pumpNoIdle(fx, ctx, () => {
+      const refused = replanRuns(fx.home, p.id).find((r) => r.state === 'ended' && r.outcome !== 'completed');
+      assert.equal(refused, undefined, `the replan prepared against the version its publication allocates is not refused (${refused?.reason_class}: ${refused?.reason_text})`);
+      return planOfPhase(fx.home, p.id, 2).find((x) => x.published_at);
+    }, { what: 'phase 2 published through the owner\'s approval', max: 600, answerKinds: [...ROUTED_KINDS, 'architecture_approval'] });
+    const revisions = architectureRevisions(fx.home, p.id);
+    assert.deepEqual(revisions.map((r) => r.version), [1, 2], 'the replan registered architecture version 2');
+    assert.equal(published.prepared_against_architecture, revisions[1].id, `the published plan is prepared against the registered version 2 (${published.prepared_against_architecture})`);
+    assert.notEqual(published.approved_by, 'engine:plan_check', 'routed to the owner');
+  });
+
+  test('a replan revising an ADR while naming architecture v: refused PLAN_STALE_BASELINE', async (t) => {
+    const { fx, p, ctx } = await journeyProject(t);
+    fx.scripted.kindScript('replan', [replanChangingTheArchitecture(1), replanChangingTheArchitecture(1), replanChangingTheArchitecture(1), replanChangingTheArchitecture(1)]);
+    await phaseCompleted(fx, ctx, 1);
+    const first = await tickUntil(fx.engine, p.id, () => replanRuns(fx.home, p.id).find((r) => r.state === 'ended'), { max: 6, what: 'the first replan run to end' });
+    assert.deepEqual([first.outcome, first.reason_class], ['failed', 'invalid_result'], `the plan is refused (${first.reason_text})`);
+    assert.match(first.reason_text ?? '', /PLAN_STALE_BASELINE/, 'naming PLAN_STALE_BASELINE');
+    assert.equal(planOfPhase(fx.home, p.id, 2).filter((x) => x.published_at).length, 0, 'nothing of phase 2 published');
+    assert.deepEqual(architectureRevisions(fx.home, p.id).map((r) => r.version), [1], 'no architecture version registered from it');
   });
 });

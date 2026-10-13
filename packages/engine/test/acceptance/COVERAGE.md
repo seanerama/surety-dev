@@ -2703,6 +2703,25 @@ Run times were 7 s to 30 s per file.
 - **080:** M422 (b) reads criteria with their text from `requirements.criteria_text` and the IDs from `criteria`, and an environment with no adapter as `'none'`.
 - **081:** `M401-a-spec-change-application-is-done-once` (slice 31) reads the applied `spec_change_application` intent (exactly one `done`, any other `invalidated`), not the first one recorded.
 
+**The slice-34 review's rulings** (the driver, 2026-10-13; no serious finding; SEAM §405), written after `main` was merged at `fa623cc`:
+
+| Ruling | Row | File | Cases | Status |
+|---|---|---|---|---|
+| M1 | M421 (c) | `M421-the-specification-parsed-at-save.test.mjs` | a criterion moved to another requirement is withdrawn plus added, not renumbered, and `approve` stays open; renumbered within its requirement it is still `spec_keys_renumbered` | written |
+| N3 | M421 (d) | same | a question citing an unknown key gives `spec_question_unknown_key`, and `approve` is blocked | written |
+| N4 | M421 (c) | same | a key withdrawn in an approved version 2 and added again gives `spec_key_reused`, and `approve` is blocked | written |
+| N1 | M422 (b) | `M422-the-spec-approvals-floor.test.mjs` | an escaped pipe in the role's row; no §11 at all | written |
+| M4 | M448 (a) | `M448-the-prospective-bundle.test.mjs` | a routed replan revising an ADR, prepared against architecture 2, is published against version 2; naming version 1 is refused `PLAN_STALE_BASELINE` | written |
+| the gap | M424 (f) | `M424-a-pending-plan-approval-and-a-moving-head.test.mjs` (new, slice `34`, 3 cases) | the first session's pending pair, and phase 2's routed bundle: a harmless head move leaves the pending decisions open on the same bundle, which then publishes; a spec change marks phase 2's bundle `stale`; no orphaned `proposed` bundle | written |
+
+**What was run for the rulings, 2026-10-13.** A scratch checkout of `build/m5-s34` at `c9e25d4` (slice 34 built) with this branch merged (main at `fa623cc` included), built and each file run alone:
+- **M421 14/17:** M1 reports R1.2 → R4.2 as `spec_keys_renumbered` (`kind: criterion`); N3 and N4 give no finding. The within-requirement renumbering already passes.
+- **M422 13/14:** N1's escaped-pipe row adds a second `## 11. Change log`. The no-§11 case already passes.
+- **M448 6/8:** M4 v+1: the replan prepared against architecture 2 is refused `PLAN_STALE_BASELINE (architecture_version 2 (bundle 1))`. M4 v: the replan naming 1 while revising the ADR is `completed`, not refused.
+- **M424 pending 0/3:**
+  - The first session's pair after the owner's policy commit stays open, but answering its current preview gets 409 `decision_stale`: no next generation is raised. This is the gap itself.
+  - The two phase-2 cases fail at their precondition. The routed bundle prepared against architecture 2 is refused by the same M4 defect, so they show the gap only once M4 is built. They fail fast and name it.
+
 **An observation for the driver, not pinned:** on this build, approving a spec change before any roadmap exists (at `spec_ready`) registers a `replan`. An unscripted replan holds the project `session_busy`. D6 §4.5 registers a replan "when the impact touches the current or a later phase", and before a roadmap there is no phase. M449 (d) and M448 (d) let such side work end at once (a default script) rather than pin it.
 
 ## M5 slice 33: sessions on the real boundary (BS5 §9.2; D6 §2; the driver's approval of the outline, 2026-10-13)
