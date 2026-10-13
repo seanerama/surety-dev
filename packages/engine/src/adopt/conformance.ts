@@ -223,7 +223,13 @@ export const conformanceStateOf = (db: Db, project: string): { stage: string; st
     return { stage: s.id, state: s.conformance_state, source_revision: s.source_revision, reasons: parseJson<unknown>(last?.reasons ?? null) };
   });
 
-// The conformance phase of an adopted project: a conformance stage that is
-// not conformed (B12: a `fix` then records and blocks).
-export const inConformancePhase = (db: Db, project: string): boolean =>
-  db.prepare(`SELECT 1 FROM "stages" WHERE "project" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL AND COALESCE("conformance_state", '') <> 'conformed'`).get(project) !== undefined;
+// The conformance phase of an adopted project (B12; D6 §8.1 steps 5 and 6,
+// §8.3): until phase 1 is complete and the Alpha barrier has opened, no
+// source change is made, so a `fix` records and blocks. A conformed stage
+// does not end it: the phase gate and the Alpha of the adopted code are
+// still ahead (the slice-32 review's S2).
+export function inConformancePhase(db: Db, project: string): boolean {
+  if (!adoptionOf(db, project)) return false;
+  if (conformancePhaseComplete(db, project) === null) return true;
+  return !alphaBarrier(db, project).open;
+}

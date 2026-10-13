@@ -44,6 +44,8 @@ export interface Adoption {
   source_digest: string;
   idea_given: boolean;
   idea_first_version: string[];
+  // The environments the signals name, or unknown with the names read.
+  environments?: string[] | { unknown: string; named: string[] };
   tracked_paths?: string[];
   tracked_paths_total?: number | { unknown: string };
   mode: AdoptionMode | null;
@@ -79,6 +81,9 @@ export interface AdoptArgs {
 }
 
 export function adoptProject(tx: Tx, args: AdoptArgs): { project: { id: string; registration_state: string; adoption: Adoption } } {
+  // The repository held by another project (Q1), checked again here.
+  const holder = tx.db.prepare('SELECT "id", "name" FROM "projects" WHERE "dev_repo_path" = ?').get(args.repo) as { id: string; name: string } | undefined;
+  if (holder) throw new Refusal(409, 'adoption_repository_in_use', `The repository ${args.repo} is already the repository of project ${holder.name} (${holder.id}).`, 'Adopt a repository no project holds; nothing was created.', { path: args.repo, project: holder.id, name: holder.name });
   if (args.adoption.pinned_revision !== args.head) throw new Refusal(409, 'adoption_branch_moved', `The branch moved from ${args.adoption.pinned_revision} to ${args.head} after the adoption observed it.`, 'Adopt again; nothing was created.', { observed: args.adoption.pinned_revision, found: args.head });
   const made = bootstrapProject(tx, args);
   const id = made.project.id;
@@ -320,8 +325,10 @@ export function applyConfirmations(tx: Tx, args: { project: string; rep: SpecRep
       set(q.key, `"status" = 'pending', "confirmed_at" = ?, "confirmed_by" = ?`, tx.at, answer!.decision);
       tx.emit('requirement.confirmed', { project: args.project, requirement: q.key }, { decision: answer!.decision, origin: q.origin });
     } else {
-      // Scoped mode: never silently promoted (E6).
-      set(q.key, `"status" = 'descriptive_unverified'`);
+      // Scoped mode: never silently promoted (E6). A defect answered for a
+      // requirement with no criteria yet keeps the owner's mark (the slice-32
+      // review's M6).
+      set(q.key, `"status" = 'descriptive_unverified', "defect" = ?, "assigned_phase" = CASE WHEN ? = 1 THEN MAX(COALESCE("assigned_phase", 2), 2) ELSE "assigned_phase" END`, option === 'defect' ? 1 : 0, option === 'defect' ? 1 : 0);
     }
   }
   // Every open confirmation of this approval is settled by it.
@@ -337,14 +344,16 @@ export function recordClaims(tx: Tx, args: { project: string; specRevision: stri
   });
 }
 
-// An approved specification change in an adopted project (D6 §8.3): a
+// An approved specification change in an adopted project (D6 §8.3), on
+// the keys it altered only (the slice-32 review's S3): a
 // descriptive_unverified requirement the change gives criteria leaves that
 // state, the owner's approval of the change being the explicit act on the
-// identified requirement; a requirement the change adds is the owner's own
-// (not reverse-engineered) and pending; every other status stands.
-export function afterChange(tx: Tx, args: { project: string; rep: SpecRepresentation }): void {
+// identified requirement; a requirement the change adds, or reinstates after
+// a withdrawal, is the owner's own and pending. Every other status stands.
+export function afterChange(tx: Tx, args: { project: string; rep: SpecRepresentation; altered: Set<string> }): void {
   if (!isAdopted(tx.db, args.project)) return;
   for (const q of args.rep.requirements) {
+    if (!args.altered.has(q.key)) continue;
     if (q.criteria.length > 0) tx.db.prepare(`UPDATE "requirements" SET "status" = 'pending', "confirmed_at" = ?, "confirmed_by" = 'spec_change' WHERE "project" = ? AND "key" = ? AND "status" = 'descriptive_unverified'`).run(tx.at, args.project, q.key);
     tx.db.prepare(`UPDATE "requirements" SET "status" = 'pending' WHERE "project" = ? AND "key" = ? AND "status" = 'approved'`).run(args.project, q.key);
   }
@@ -367,4 +376,9 @@ export function reraiseOnPolicy(tx: Tx, project: string): void {
     const next = raiseQuestion(tx, { project, kind: d.kind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope });
     if (next && next.id !== d.id && d.batch_key) tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "id" = ?').run(d.batch_key, next.id);
   }
+}
+
+// Every project's repository path (Q1: one project per repository).
+export function projectRepositories(db: Db): { id: string; name: string; dev_repo_path: string }[] {
+  return db.prepare('SELECT "id", "name", "dev_repo_path" FROM "projects" ORDER BY "created_at"').all() as { id: string; name: string; dev_repo_path: string }[];
 }

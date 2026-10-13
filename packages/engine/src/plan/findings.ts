@@ -111,6 +111,9 @@ export interface ArchitectBaseline {
   requirement_keys: string[];
   // TPL §6's modules of the approved specification, with their areas.
   spec_modules: { name: string; sensitive_areas: string[] }[];
+  // Scoped mode's descriptive, criteria-less requirements (Sean,
+  // 2026-10-13): each must be held by a module of the map.
+  descriptive_keys?: string[];
 }
 
 export interface ArchitectParsed {
@@ -166,6 +169,22 @@ export function architectFindings(texts: ArchitectTexts, baseline: ArchitectBase
       for (const area of sm.sensitive_areas) {
         if (!present.has(area)) findings.push({ code: 'architecture_area_dropped', path: MODULES_FILE, subject: { area, module: sm.name }, message: `${MODULES_FILE} drops the sensitive area ${area} of the specification's module ${sm.name} from every module; an area can be moved, never dropped` });
       }
+    }
+  }
+  // The requirements the modules hold (Sean, 2026-10-13): each a requirement
+  // of the approved specification; in scoped mode every descriptive,
+  // criteria-less requirement held by some module, so that a stage touching
+  // it can be known (D6-R04, R08; E6).
+  if (parsed.modules) {
+    const held = new Set<string>();
+    for (const m of parsed.modules.modules) {
+      for (const k of m.requirements ?? []) {
+        held.add(k);
+        if (!baseline.requirement_keys.includes(k)) findings.push({ code: 'module_requirement_unknown', path: MODULES_FILE, subject: { module: m.name, key: k }, message: `${MODULES_FILE}: the module ${m.name} holds ${k}, which the approved specification does not have` });
+      }
+    }
+    for (const k of baseline.descriptive_keys ?? []) {
+      if (!held.has(k)) findings.push({ code: 'module_requirement_unmapped', path: MODULES_FILE, subject: { key: k }, message: `${MODULES_FILE}: no module holds ${k}, a descriptive requirement with no criteria; in scoped mode every one is held by the module it describes` });
     }
   }
   // The roadmap's references (D6 §3.3, §5.1): every approved requirement in

@@ -436,7 +436,7 @@ export class Acceptor {
       if (text === null) return { refused: `${e.path} could not be read` };
       files[e.path] = text;
     }
-    const parsedArch = architectFindings({ files }, { requirement_keys: b.requirement_keys, spec_modules: b.spec_modules });
+    const parsedArch = architectFindings({ files }, { requirement_keys: b.requirement_keys, spec_modules: b.spec_modules, descriptive_keys: b.descriptive_keys });
     if (parsedArch.findings.length > 0) return { refused: `the replan's architecture products do not parse: ${parsedArch.findings.map((f) => f.message).join('; ')}` };
     if (parsedArch.parsed.modules === null) return { refused: `the replan's tree has no ${MODULES_FILE}` };
     const adrTexts: Record<string, string> = {};
@@ -451,6 +451,11 @@ export class Acceptor {
     const architectureText = parsedArch.parsed.architecture_text;
     const check = checkPlan(b.baseline, { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan });
     const requests = facts.result?.report?.spec_change_requests ?? [];
+    // A retrofit replan's field (D6 §8.3, B.7): carried by any other
+    // project's replan, the result is not one this engine takes.
+    if (requests.length > 0 && !(await this.rt.read<boolean>('project.adopted', { project: facts.project.id }))) {
+      return { refused: 'spec_change_requests is a retrofit replan\'s field: this project was not adopted, and its specification changes are the owner\'s requests' };
+    }
     if (check.outcome !== 'passed') {
       // Recorded as a refused check, with the requests the result carried
       // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.

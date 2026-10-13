@@ -253,7 +253,7 @@ import {
 } from './transitions/checks.js';
 // Last: adopt/records.ts and queue.ts import each other (queue's KINDS needs
 // records' kinds evaluated first).
-import { adoptProject, appliedAdoptedTests, isAdopted } from '../adopt/records.js';
+import { adoptProject, appliedAdoptedTests, isAdopted, projectRepositories } from '../adopt/records.js';
 import { conformanceFactsRead } from '../adopt/conformance.js';
 import { recordRefusedReplan } from '../plan/bundle.js';
 
@@ -447,6 +447,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   // D6 §8.1 step 5 (B11): what a conformance stage's projection is read of.
   'conformance.facts': (d, a: { project: string; candidate: string }) => conformanceFactsRead(d, a),
   'project.adopted': (d, a: { project: string }) => isAdopted(d, a.project),
+  'projects.repositories': (d) => projectRepositories(d),
   'project.adopted_tests': (d, a: { project: string }) => appliedAdoptedTests(d, a.project),
   'gate.ref_registry': (d, a: { project: string; candidate: string }) => gateRefRegistry(d, a),
   'gates.due': (d, a: { project: string }) => dueStageGates(d, a),

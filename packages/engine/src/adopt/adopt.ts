@@ -19,10 +19,13 @@
 // The store transaction (adopt/records.ts) records A before the bootstrap
 // commit is intended, and never changes it (migration 0025's trigger).
 //
-// Host calls: git reads only (ls-tree, rev-list --count, the refs, a CI
-// file's blob), through the engine's git path; nothing is written to the
-// repository here.
+// Host calls: git through the engine's git path. Reads: ls-tree,
+// rev-list --count, the refs, a CI file's blob. Writes: only the bootstrap
+// commit's objects, which `prepareBootstrap` writes as project creation does
+// (the brief's blob, the tree, the commit), and which nothing references
+// until the journal publishes the commit. No ref moves here.
 
+import { realpathSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 
 import { prepareBootstrap } from '../projects/commands.js';
@@ -135,6 +138,8 @@ function signal<T>(name: string, read: () => T | null, why: string): Signal<T> {
   return v === null ? { unknown: why } : v;
 }
 
+export const repositoryInUse = (path: string, holder: { id: string; name: string }) =>
+  new Refusal(409, 'adoption_repository_in_use', `The repository ${path} is already the repository of project ${holder.name} (${holder.id}).`, 'Adopt a repository no project holds; nothing was created.', { path, project: holder.id, name: holder.name });
 const unreadable = (path: string) => new Refusal(409, 'repo_unreadable', `${path} is not a git repository the engine can read.`, 'Give the path of a readable git repository; nothing was created.', { path });
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the request and send it again; nothing was created.', { field });
 
@@ -163,6 +168,19 @@ export async function prepareAdopt(rt: Runtime, body: unknown): Promise<Record<s
   if (/[\0\n]/.test(branch)) throw invalid('integration_branch', 'is not a branch name');
   const ctx = repoContext(repo);
   if ((await gitOk(ctx, ['rev-parse', '--git-dir'])) === null) throw unreadable(repo);
+  // A repository another project already holds is refused before anything
+  // is read or pinned (the slice-32 review's Q1), by its path as given and
+  // as resolved.
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const holders = await rt.read<{ id: string; name: string; dev_repo_path: string }[]>('projects.repositories', {});
+  const holder = holders.find((h) => h.dev_repo_path === repo || real(h.dev_repo_path) === real(repo));
+  if (holder) throw repositoryInUse(repo, holder);
 
   // 1. A: the branch's head as observed.
   const observed = await readRef(ctx, `refs/heads/${branch}`);
@@ -211,11 +229,15 @@ export async function prepareAdopt(rt: Runtime, body: unknown): Promise<Record<s
   const recommended = typeof signals.files === 'number' ? (signals.files <= threshold ? 'full' : 'scoped') : null;
   const sourceDigest = await projectionDigest(ctx, A);
   if (sourceDigest === null) throw unreadable(repo);
-  // The environments the CI files name, and the tags as releases.
+  // The environments the CI files name, and the tags as releases. Where the
+  // CI files could not be listed, or one of them read, the set is unknown
+  // (recorded so, never empty); the names read are still recorded.
   const environments = new Set<string>();
+  let environmentsUnknown: string | null = Array.isArray(signals.ci_files) ? null : 'the CI files could not be listed';
   for (const path of Array.isArray(signals.ci_files) ? signals.ci_files : []) {
     const text = await catBlob(ctx, A, path);
-    if (text !== null) for (const env of ciEnvironments(text)) environments.add(env);
+    if (text === null) environmentsUnknown = `the CI file ${path} could not be read`;
+    else for (const env of ciEnvironments(text)) environments.add(env);
   }
   const tags = [...refs.entries()].filter(([r]) => r.startsWith('refs/tags/')).map(([r, oid]) => ({ name: r.slice('refs/tags/'.length), revision: oid })).sort((x, y) => x.name.localeCompare(y.name));
   const idea = b.idea as string | undefined;
@@ -249,6 +271,7 @@ export async function prepareAdopt(rt: Runtime, body: unknown): Promise<Record<s
       tracked_paths: (paths ?? []).slice(0, 500),
       tracked_paths_total: paths === null ? { unknown: why } : paths.length,
       idea_first_version: firstVersionItems(idea),
+      environments: environmentsUnknown === null ? [...environments].sort() : { unknown: environmentsUnknown, named: [...environments].sort() },
     },
     environments: [...environments].sort(),
     tags,

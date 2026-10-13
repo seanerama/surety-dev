@@ -514,11 +514,12 @@ export function settleTurn(tx: Tx, args: SettleArgs): { turn: number; idle_gener
   const ledger = tx.db.prepare('SELECT "usage_complete" FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(args.invocation) as { usage_complete: number } | undefined;
   const usageStatus = ledger && ledger.usage_complete === 1 ? 'recorded' : 'unknown';
   const outcome: 'replied' | 'failed' = args.reply !== null ? 'replied' : 'failed';
-  if (args.reply !== null) appendTranscript(tx, run, { turn: turnRow.number, speaker: 'role', text: args.reply.reply, text_ref: args.textRecord });
-  if (args.reply?.answered_nothing && args.reply.answered_nothing.length > 0) {
-    appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The reply carried ${args.reply.answered_nothing.join(', ')}: a role cannot answer the owner's confirmations, and nothing was answered.`, text_ref: null });
-  }
-  else appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The turn failed: ${args.failure ?? 'the role left no reply the engine could take'}.`, text_ref: args.textRecord });
+  if (args.reply !== null) {
+    appendTranscript(tx, run, { turn: turnRow.number, speaker: 'role', text: args.reply.reply, text_ref: args.textRecord });
+    if (args.reply.answered_nothing && args.reply.answered_nothing.length > 0) {
+      appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The reply carried ${args.reply.answered_nothing.join(', ')}: a role cannot answer the owner's confirmations, and nothing was answered.`, text_ref: null });
+    }
+  } else appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The turn failed: ${args.failure ?? 'the role left no reply the engine could take'}.`, text_ref: args.textRecord });
   tx.db
     .prepare('UPDATE "turns" SET "finished_at" = ?, "settled_at" = ?, "usage_status" = ?, "outcome" = ?, "reply" = ? WHERE "id" = ?')
     .run(tx.at, tx.at, usageStatus, outcome, args.reply === null ? JSON.stringify({ failure: args.failure }) : JSON.stringify(args.reply), turnRow.id);

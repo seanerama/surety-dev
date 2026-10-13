@@ -184,6 +184,7 @@ export const EVENT_OWNERS = {
   'requirement.confirmed': 'adopt/records.ts',
   'conformance.source_bound': 'adopt/conformance.ts',
   'stage.conformance_integrated': 'adopt/conformance.ts',
+  'conformance.alpha_barrier_opened': 'plan/phase.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

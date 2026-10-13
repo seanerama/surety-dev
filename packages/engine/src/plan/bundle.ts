@@ -92,6 +92,8 @@ export interface BaselineFacts {
   roadmap_revision: string | null;
   requirement_keys: string[];
   spec_modules: { name: string; sensitive_areas: string[] }[];
+  // Scoped mode's descriptive, criteria-less requirements (Sean, 2026-10-13).
+  descriptive_keys: string[];
 }
 
 // What the store holds for the check: the approved spec revision and its
@@ -171,6 +173,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
     architecture_revision: arch?.id ?? null,
     roadmap_revision: road?.id ?? null,
     requirement_keys: requirements.filter((r) => !r.withdrawn).map((r) => r.key),
+    descriptive_keys: requirements.filter((r) => !r.withdrawn && r.descriptive_unverified).map((r) => r.key),
     spec_modules: specModules,
   };
 }
@@ -403,6 +406,10 @@ export type { AdrFrontMatter };
 // read; and the requests its result carried are made (D6 §8.3). The run
 // itself fails its acceptance as before.
 export function recordRefusedReplan(tx: Tx, args: { project: string; run: string; phase: number; check: PlanCheckResult; requests: { keys: string[]; text: string }[] }): { plan_check: string; requests: string[] } {
+  // Once per run: an acceptance retried records nothing twice (the slice-32
+  // review's M7).
+  const done = tx.db.prepare(`SELECT "id" FROM "plan_checks" WHERE "project" = ? AND "bundle" IS NULL AND json_extract("evidence", '$.run') = ?`).get(args.project, args.run) as { id: string } | undefined;
+  if (done) return { plan_check: done.id, requests: (tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "run" = ? ORDER BY "seq"`).all(args.run) as { id: string }[]).map((r) => r.id) };
   const id = tx.newId('pchk_');
   const c = args.check;
   tx.db
@@ -447,6 +454,8 @@ export interface ReplanBaseline {
   open_plan: { id: string; phase_number: number; generation: number } | null;
   requirement_keys: string[];
   spec_modules: { name: string; sensitive_areas: string[] }[];
+  // Scoped mode's descriptive, criteria-less requirements (Sean, 2026-10-13).
+  descriptive_keys: string[];
 }
 
 export function replanBaseline(db: Db, args: { project: string; head: string }): ReplanBaseline {
@@ -461,6 +470,7 @@ export function replanBaseline(db: Db, args: { project: string; head: string }):
     phase: facts.phase,
     open_plan: facts.open_plan,
     requirement_keys: facts.requirement_keys,
+    descriptive_keys: facts.descriptive_keys,
     spec_modules: facts.spec_modules,
   };
 }

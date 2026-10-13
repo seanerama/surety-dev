@@ -190,12 +190,12 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
 }
 
 // The replan of the phase after `plan`, once, when the roadmap has one.
-function replanAfter(tx: Tx, project: string, plan: string, phase: number): void {
+function replanAfter(tx: Tx, project: string, plan: string, phase: number): string | null {
   const road = tx.db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
   const phases = parseJson<{ number: number }[]>(road?.phases ?? null) ?? [];
-  if (!phases.some((p) => p.number > phase)) return;
-  if (tx.db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'phase_complete' AND "trigger_id" = ?`).get(project, plan)) return;
-  observeTrigger(tx, { project, kind: 'replan', trigger_source: 'phase_complete', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, {});
+  if (!phases.some((p) => p.number > phase)) return null;
+  if (tx.db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'phase_complete' AND "trigger_id" = ?`).get(project, plan)) return null;
+  return observeTrigger(tx, { project, kind: 'replan', trigger_source: 'phase_complete', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, {}).work_item.id;
 }
 
 // The Alpha barrier (D6 §8.1 step 6; B11; D6-R10): the conformance phase of
@@ -205,8 +205,11 @@ function replanAfter(tx: Tx, project: string, plan: string, phase: number): void
 function alphaBarrierStep(tx: Tx, project: string): void {
   const done = conformancePhaseComplete(tx.db, project);
   if (!done) return;
-  if (!alphaBarrier(tx.db, project).open) return;
-  replanAfter(tx, project, done.plan, done.phase);
+  const barrier = alphaBarrier(tx.db, project);
+  if (!barrier.open) return;
+  const replan = replanAfter(tx, project, done.plan, done.phase);
+  // Recorded once, when it opens (the slice-32 review's M5).
+  if (replan !== null) tx.emit('conformance.alpha_barrier_opened', { project, phase_plan: done.plan }, { candidate: barrier.candidate, replan });
 }
 
 // Whether every phase of the current roadmap has a completed plan (the plan

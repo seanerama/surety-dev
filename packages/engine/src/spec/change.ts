@@ -112,6 +112,8 @@ export function requestSpecChange(tx: Tx, args: { project: string; text: string;
 export function requestsFromReplan(tx: Tx, args: { project: string; run: string; requests: { keys: string[]; text: string }[] }): string[] {
   const spec = currentSpec(tx.db, args.project);
   if (!spec) return [];
+  // Only an adopted project's replan asks (the slice-32 review's M4).
+  if ((tx.db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null } | undefined)?.adoption == null) return [];
   const out: string[] = [];
   for (const r of args.requests) {
     const keys = JSON.stringify([...r.keys].sort());

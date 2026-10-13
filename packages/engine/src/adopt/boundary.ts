@@ -6,7 +6,10 @@
 // would delegate its acceptance decision to Builder-owned files; it is
 // refused by name. The engine reads the proposal's tree with git and runs
 // nothing; no general semantic dependency analyzer is claimed (only the
-// static and literal-dynamic module specifiers below are read).
+// static and literal-dynamic module specifiers below are read: a computed
+// specifier, a loader hook, a `node_modules` resolution or a runner
+// configuration that reaches outside is not seen; D6 §8.3 claims no more).
+// A symbolic link under the root is refused by name.
 
 import { posix } from 'node:path';
 
@@ -72,8 +75,15 @@ export async function boundaryErrors(repo: string, tree: string, roots: string[]
   const errors: BoundaryError[] = [];
   for (const entry of listing.split('\0').filter((e) => e.length > 0)) {
     const tab = entry.indexOf('\t');
-    const [, type, oid] = entry.slice(0, tab).split(' ');
+    const [mode, type, oid] = entry.slice(0, tab).split(' ');
     const path = entry.slice(tab + 1);
+    // A symbolic link under the protected root could point anywhere: the
+    // copy would no longer be what the fingerprint covers (the slice-32
+    // review's M3). Refused, named.
+    if (mode === '120000') {
+      errors.push({ file: path, import: '', resolved: null, why: `${path} is a symbolic link under the protected root; an adopted check's files are copies, never links` });
+      continue;
+    }
     if (type !== 'blob' || !SOURCE.test(path)) continue;
     const text = await gitOk(ctx, ['cat-file', 'blob', oid!]);
     if (text === null) return null;

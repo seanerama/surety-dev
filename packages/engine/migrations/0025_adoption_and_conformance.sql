@@ -7,12 +7,17 @@
 
 -- ---- projects.adoption: A is immutable once recorded (B11; D6-R01) ------------------------
 -- `adoption` (JSON) holds {pinned_revision, branch, signals, recommended_mode,
--- mode, source_digest, ...}. Its `pinned_revision` is written in the
--- transaction that intends the bootstrap commit and is never changed after.
+-- mode, source_digest, ...}. Its `pinned_revision`, the branch it was read
+-- from and A's application-source digest are written in the transaction
+-- that intends the bootstrap commit and are never changed after; nor is the
+-- adoption removed.
 CREATE TRIGGER projects_adoption_pinned_immutable BEFORE UPDATE OF adoption ON projects
 WHEN json_extract(OLD.adoption, '$.pinned_revision') IS NOT NULL
-  AND json_extract(NEW.adoption, '$.pinned_revision') IS NOT json_extract(OLD.adoption, '$.pinned_revision')
-BEGIN SELECT RAISE(ABORT, 'projects: the adoption''s pinned revision A is immutable'); END;
+  AND (NEW.adoption IS NULL
+    OR json_extract(NEW.adoption, '$.pinned_revision') IS NOT json_extract(OLD.adoption, '$.pinned_revision')
+    OR json_extract(NEW.adoption, '$.source_digest') IS NOT json_extract(OLD.adoption, '$.source_digest')
+    OR json_extract(NEW.adoption, '$.branch') IS NOT json_extract(OLD.adoption, '$.branch'))
+BEGIN SELECT RAISE(ABORT, 'projects: the adoption''s pinned revision A, its branch and its source digest are immutable'); END;
 
 -- ---- releases: tags of an adopted repository (E6; D6 §8.1 step 1, §8.3) -------------------
 -- A tag the repository carries is a release Surety did not make:

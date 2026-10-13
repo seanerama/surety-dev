@@ -1014,7 +1014,7 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       // the owner's decision on them, spending no repair attempt: planning
       // cannot proceed on the request alone, and the owner's answer is not
       // the Architect's to race.
-      if (item.kind === 'replan') {
+      if (item.kind === 'replan' && (tx.db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(item.project) as { adoption: string | null } | undefined)?.adoption != null) {
         const open = (tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "run" = ? AND "source" = 'replan' AND "status" IN ('requested', 'proposed') ORDER BY "seq"`).all(run.id) as { id: string }[]).map((r) => r.id);
         if (open.length > 0) {
           transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'awaiting_spec_change', requests: open });

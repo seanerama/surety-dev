@@ -280,7 +280,17 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     if (plan.phase === 1) misplaced.push(...plan.stages.filter((s) => s.conformance !== true).map((s) => `stage ${s.number}: phase 1 of an adopted project changes no source`));
   }
   add('PLAN_CONFORMANCE_MISPLACED', misplaced);
-  add('PLAN_DESCRIPTIVE_MODULE_TOUCHED', plan.stages.flatMap((s) => s.implements.filter((k) => reqs.get(k)?.descriptive_unverified === true).map((k) => `stage ${s.number}:${k}`)));
+  // Scoped mode (Sean, 2026-10-13; D6-R04, R08): a stage that touches a
+  // module the module map says holds a descriptive, criteria-less
+  // requirement is refused, whatever the stage claims to implement; one that
+  // claims to implement such a requirement is refused too.
+  const descriptive = (k: string) => reqs.get(k)?.descriptive_unverified === true;
+  const touched: string[] = [];
+  for (const s of plan.stages) {
+    for (const m of a.modules.modules.filter((mm) => s.modules.includes(mm.name))) for (const k of (m.requirements ?? []).filter(descriptive)) touched.push(`stage ${s.number}:${m.name}:${k}`);
+    for (const k of s.implements.filter(descriptive)) touched.push(`stage ${s.number}:${k}`);
+  }
+  add('PLAN_DESCRIPTIVE_MODULE_TOUCHED', touched);
   add('PLAN_CRITERION_UNVALIDATED', unvalidatedCriteria);
   add('PLAN_AREA_UNVALIDATED', unvalidatedAreas);
   add('PLAN_KIND_MISSING', missingKinds);

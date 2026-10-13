@@ -61,6 +61,9 @@ export interface ModuleMapEntry {
   sensitive_areas: string[];
   tier_override?: 'T1' | 'T2' | 'T3';
   interfaces: ModuleInterface[];
+  // The requirements the module holds (Sean, 2026-10-13): what scoped
+  // mode's "a stage touching a descriptive requirement's module" reads.
+  requirements?: string[];
 }
 
 export interface ModuleMap {
@@ -86,7 +89,7 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
     // one; SEAM.md §381: a dropped classification names the module).
     const at = isObj(m) && typeof m.name === 'string' && m.name !== '' ? `modules[${i}] (${m.name})` : `modules[${i}]`;
     if (!isObj(m)) return refuse(file, at, 'must be an object');
-    const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
+    const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
     if (cm) return { ok: false, finding: cm };
     if (typeof m.name !== 'string' || m.name === '') return refuse(file, `${at}.name`, 'must be a non-empty string');
     if (names.has(m.name)) return refuse(file, `${at}.name`, `the module ${m.name} is listed twice`);
@@ -95,6 +98,10 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
     if (!strings(m.sensitive_areas)) return refuse(file, `${at}.sensitive_areas`, 'must be an array of sensitive areas');
     for (const a of m.sensitive_areas) if (!SENSITIVE_AREAS.includes(a)) return refuse(file, `${at}.sensitive_areas`, `"${a}" is not a sensitive area of the closed list`);
     if (m.tier_override !== undefined && m.tier_override !== 'T1' && m.tier_override !== 'T2' && m.tier_override !== 'T3') return refuse(file, `${at}.tier_override`, 'must be T1, T2 or T3');
+    if (m.requirements !== undefined) {
+      if (!strings(m.requirements)) return refuse(file, `${at}.requirements`, 'must be an array of requirement keys');
+      for (const k of m.requirements) if (!KEY.test(k)) return refuse(file, `${at}.requirements`, `"${k}" is not a requirement key R<n>`);
+    }
     if (!Array.isArray(m.interfaces)) return refuse(file, `${at}.interfaces`, 'must be an array');
     const interfaces: ModuleInterface[] = [];
     for (const [j, f] of m.interfaces.entries()) {
@@ -108,7 +115,14 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
       if (typeof f.description !== 'string') return refuse(file, `${fat}.description`, 'must be a string');
       interfaces.push({ name: f.name, kind: f.kind, ...(f.path !== undefined ? { path: f.path } : {}), description: f.description });
     }
-    modules.push({ name: m.name, paths: m.paths, sensitive_areas: m.sensitive_areas, ...(m.tier_override !== undefined ? { tier_override: m.tier_override as 'T1' } : {}), interfaces });
+    modules.push({
+      name: m.name,
+      paths: m.paths,
+      sensitive_areas: m.sensitive_areas,
+      ...(m.tier_override !== undefined ? { tier_override: m.tier_override as 'T1' } : {}),
+      interfaces,
+      ...(m.requirements !== undefined ? { requirements: m.requirements as string[] } : {}),
+    });
   }
   if (!Array.isArray(o.mapping_from_spec)) return refuse(file, 'mapping_from_spec', 'must be an array');
   const mapping: ModuleMap['mapping_from_spec'] = [];

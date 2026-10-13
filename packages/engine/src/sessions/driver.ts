@@ -242,7 +242,7 @@ export class SessionDriver {
       };
     }
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules });
+    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys });
     return { blobs, findings: r.findings, products: {} };
   }
 
@@ -309,7 +309,7 @@ export class SessionDriver {
     if (changed.length === 0) return { kind: 'none' };
     const plans = changed.filter((p) => PLAN_FILE.test(p)).map((p) => Number(PLAN_FILE.exec(p)![1]));
     const probe = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules });
+    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules, descriptive_keys: probe.descriptive_keys });
     const parsed = found.parsed;
     const findings = [...found.findings];
     if (!parsed.modules) findings.push({ code: 'machine_file_invalid', path: MODULES_FILE, subject: { path: MODULES_FILE, field: null }, message: `${MODULES_FILE} is missing or does not parse` });
