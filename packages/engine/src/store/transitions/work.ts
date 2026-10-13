@@ -140,7 +140,12 @@ export function applyWorkTransition(tx: Tx, args: { workItem: string; to: unknow
 }
 
 // The two dependency milestones of a stage's work (D6 §6.4; B07, B08; SEAM.md §347).
-export type Milestone = { milestone: 'authoring_ready'; phase_plan: string } | { milestone: 'stage_code'; stage: string };
+export type Milestone =
+  | { milestone: 'authoring_ready'; phase_plan: string }
+  | { milestone: 'stage_code'; stage: string }
+  // D6 §8.3 (B10): a retrofit replan waits for the owner's decision on the
+  // requests for criteria its refused result made.
+  | { milestone: 'spec_change_requests'; requests: string[] };
 
 export interface TriggerInput {
   project: string;
