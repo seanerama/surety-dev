@@ -371,6 +371,18 @@
       "M401-a-spec-change-that-no-longer-rebases.test.mjs",
       "M401-a-spec-change-application-is-done-once.test.mjs",
       "M407-the-spec-read-after-a-criterion-changes.test.mjs"
+    ],
+    "32": [
+      "M408-the-retrofit-journey.test.mjs",
+      "M408-a-confirmed-requirement-that-fails-blocks-conformance.test.mjs",
+      "M409-adoption-records-and-the-immutable-source.test.mjs",
+      "M410-origin-and-the-claims-table-as-syntax.test.mjs",
+      "M411-requirement-confirm-and-engine-owned-provenance.test.mjs",
+      "M412-retrofit-mode-paths-and-classification.test.mjs",
+      "M413-the-conformance-stage.test.mjs",
+      "M414-evidence-rules-dependency-boundary-scoped-mode.test.mjs",
+      "M452-retrofit-mode-rules-at-approval.test.mjs",
+      "M453-the-conformance-alpha-barrier.test.mjs"
     ]
   },
   "sandbox": [
@@ -464,7 +476,9 @@
     "M342-the-verifiers-deployment-check-package.test.mjs",
     "M314-the-service-link-under-a-long-home.test.mjs",
     "M401-the-journey-from-an-idea-to-phase-two.test.mjs",
-    "M401-the-journey-from-phase-two-to-alpha.test.mjs"
+    "M401-the-journey-from-phase-two-to-alpha.test.mjs",
+    "M408-the-retrofit-journey.test.mjs",
+    "M408-a-confirmed-requirement-that-fails-blocks-conformance.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
