@@ -20,7 +20,7 @@ check_correction_unclassifiable dec_…C2Y  approve 200   (the same proposal's n
 
 Only one owner act took effect on CR-1's correction. The 409 left nothing in the store, no approval and no intent, as D1 requires of a refused answer. The engine raised no question D3 does not call for. The correction's decision was raised again because a bound input moved while phase 2's work went on. On the T1 lane that is most likely the integration revision, as phase 2's Builders integrate beside the correction.
 
-On this workstation the T1 variant passed in each of seven runs at 827e2ad and later, and every logged act was answered 200. The race needs the re-raise to fall between the pump's read and its post, which the faster host hit once.
+On this workstation the T1 variant passed in eight runs at the fixed head (three of the file itself, four of a copy that prints the acts, one kept for the pace read). In the four that printed them, every act was answered 200. The race needs the re-raise to fall between the pump's read and its post, which the faster host hit once.
 
 What I believe the harness should do: count as a human act only an answer the engine accepted (2xx), or count the decisions consumed by a human actor from the store (`decisions.status = 'consumed'` with `answer.actor = 'human'`). A refused 409 on a stale preview is not an act the owner made.
 
