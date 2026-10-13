@@ -444,6 +444,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const repairs = item.repair_due === 1 ? item.repair_attempts + 1 : item.repair_attempts;
   transitionWork(tx, item, 'claimed', { prior_status: 'eligible', repair_attempts: repairs, repair_due: 0 }, { run });
   tx.db.prepare('UPDATE "work_items" SET "held" = NULL WHERE "id" = ?').run(item.id);
+  // D1 A.5 StageStatus: a stage whose Builder is first claimed is
+  // `building` (D6 §5.7 tells a building stage from a planned one).
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    if (stage) tx.db.prepare(`UPDATE "stages" SET "status" = 'building' WHERE "id" = ? AND "status" = 'planned'`).run(stage);
+  }
 
   const lease = tx.newId('lease_');
   tx.db

@@ -44,6 +44,10 @@ export interface ReplanPlan {
 export interface ReplanFacts {
   repo: string;
   trigger: { source: string | null; id: string | null; generation: number | null };
+  // An early replan's (D6 §5.7): the generation it replaces, the trigger's
+  // evidence and what it made stale; a rejected proposal's note (§5.4).
+  // Each null when the trigger carries none.
+  trigger_subject: { replaces: { phase_plan: string; generation: number } | null; evidence: unknown; stale: unknown; rejected: unknown };
   generation: {
     spec_revision: { id: string; version: number; git_blob: string; semantic_digest: string } | null;
     architecture_revision: { id: string; version: number } | null;
@@ -101,7 +105,7 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
 
 const FINDING_COLUMNS = '"id", "seq", "created_at", "scope", "candidate", "category", "effective_severity" AS "severity", "message", "check", "criterion", "sensitive_area", "status", "disposition", "disposition_at", "defer_target", "linked_issue", "source_role", "remediation"';
 
-export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null }): ReplanFacts {
+export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null }): ReplanFacts {
   const project = item.project;
   const p = db.prepare('SELECT "dev_repo_path", "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(project) as { dev_repo_path: string; spec_evidence_generation: number };
   const spec = db.prepare('SELECT "id", "version", "git_blob", "semantic_digest" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as
@@ -163,6 +167,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
   return {
     repo: p.dev_repo_path,
     trigger: { source: item.trigger_source, id: item.trigger_id, generation: item.trigger_generation },
+    trigger_subject: subjectFacts(item.subject ?? null),
     generation: {
       spec_revision: spec ?? null,
       architecture_revision: arch ? { id: arch.id, version: arch.version } : null,
@@ -183,6 +188,16 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
   };
 }
 
+function subjectFacts(text: string | null): ReplanFacts['trigger_subject'] {
+  const s = (json(text) ?? {}) as { phase_plan?: unknown; generation?: unknown; evidence?: unknown; stale?: unknown; rejected?: unknown };
+  return {
+    replaces: typeof s.phase_plan === 'string' && typeof s.generation === 'number' ? { phase_plan: s.phase_plan, generation: s.generation } : null,
+    evidence: s.evidence ?? null,
+    stale: s.stale ?? null,
+    rejected: s.rejected ?? null,
+  };
+}
+
 // The approved specification's text by its approved blob (D6 §3.5: the
 // spec by `spec_revisions.git_blob`), on the main thread; null if it cannot
 // be read.
@@ -193,7 +208,7 @@ export async function loadReplanSpec(facts: { replan?: ReplanFacts | null } | nu
   r.spec_text = blob === null ? null : await gitOk(repoContext(r.repo), ['cat-file', 'blob', blob]).catch(() => null);
 }
 
-export type ReplanFileKind = 'spec' | 'index' | 'roadmap' | 'module_map' | 'phase_plan' | 'evaluation' | 'findings' | 'deferrals' | 'objections' | 'generation' | 'refusal';
+export type ReplanFileKind = 'spec' | 'index' | 'roadmap' | 'module_map' | 'phase_plan' | 'evaluation' | 'findings' | 'deferrals' | 'objections' | 'generation' | 'refusal' | 'trigger';
 
 // The package's files for a replan, each with its kind and what it was
 // made from.
@@ -217,6 +232,8 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
   out.push({ path: 'deferrals.json', kind: 'deferrals', source: null, content: j(r.deferrals) });
   out.push({ path: 'objections.json', kind: 'objections', source: null, content: j(r.objections) });
   if (r.refusal) out.push({ path: 'refusal.json', kind: 'refusal', source: r.refusal.plan_check?.id ?? r.refusal.run, content: j(r.refusal) });
+  const t = r.trigger_subject;
+  if (t && (t.replaces || t.evidence !== null || t.rejected !== null)) out.push({ path: 'trigger.json', kind: 'trigger', source: r.trigger.id, content: j({ trigger: r.trigger, ...t }) });
   return out;
 }
 
@@ -245,6 +262,17 @@ export function replanPromptText(r: ReplanFacts): string[] {
             : `Its run failed (${r.refusal.reason_class ?? 'unknown'}): ${r.refusal.reason_text ?? 'no reason was recorded'}.`,
           'This is the one automatic repair: correct the plan for those reasons. Details in /surety/context/refusal.json.',
         ]
+      : []),
+    ...(r.trigger_subject?.replaces
+      ? [
+          '',
+          '## An early replacement',
+          '',
+          `This replan replaces generation ${r.trigger_subject.replaces.generation} of the open plan (${r.trigger.source}): /surety/context/trigger.json holds the evidence and what became stale. Stages already integrated or verified are kept as they are: list them unchanged or not at all; a stage not yet built is replaced by what you plan.`,
+        ]
+      : []),
+    ...(r.trigger_subject?.rejected
+      ? ['', '## Your last proposal was rejected', '', `The owner rejected it${typeof (r.trigger_subject.rejected as { note?: unknown }).note === 'string' ? `: "${(r.trigger_subject.rejected as { note: string }).note}"` : ''}. Details in /surety/context/trigger.json.`]
       : []),
   ];
 }

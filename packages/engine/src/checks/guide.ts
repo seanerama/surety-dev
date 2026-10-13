@@ -46,7 +46,11 @@ export interface CheckWritingFacts {
 // COMPUTED_GATES): the scopes of D3 §4.2 and, since M4, `alpha_complete`
 // (D4 §5.5), which reads only the environment-bound checks.
 export const DEPLOYMENT_GATE = 'alpha_complete';
-export const EVALUATED_GATE_KINDS: readonly string[] = Object.freeze([...SCOPE_KINDS, DEPLOYMENT_GATE]);
+// The scopes a gate route evaluates: `phase` is the engine's own phase
+// step's (plan/phase.ts), reached through no route and needing no listing of
+// its own beyond a phase-only check's.
+const ROUTE_SCOPES: readonly string[] = SCOPE_KINDS.filter((k) => k !== 'phase');
+export const EVALUATED_GATE_KINDS: readonly string[] = Object.freeze([...ROUTE_SCOPES, DEPLOYMENT_GATE]);
 
 const code = (s: string): string => `\`${s}\``;
 const list = (xs: readonly string[]): string => xs.map(code).join(', ');
@@ -62,7 +66,7 @@ const jsonList = (xs: readonly string[]): string => `[${xs.map((x) => `"${x}"`).
 // only, and the deployment was refused `ACCEPTANCE_SCOPE_INCOMPLETE`
 // (`kind:smoke`); the package had never said so. The project's tier names
 // its floor when known; otherwise every tier's.
-export const AUTHORIZE_GATE = SCOPE_KINDS.find((k) => k !== 'stage')!;
+export const AUTHORIZE_GATE = ROUTE_SCOPES.find((k) => k !== 'stage')!;
 export function authorizeFloorText(tier: string | undefined): string {
   const known = tier !== undefined && Object.hasOwn(KIND_INVENTORY, tier) ? (tier as Tier) : null;
   const floor =
@@ -71,10 +75,10 @@ export function authorizeFloorText(tier: string | undefined): string {
       : `at ${known}, at least one required acceptance-origin check of each of the kinds ${list(KIND_INVENTORY[known])}`;
   const exampleKind = (known === null ? KIND_INVENTORY.T1 : KIND_INVENTORY[known]).find((k) => k === 'smoke') ?? KIND_INVENTORY.T1[0]!;
   return (
-    `The tier's kind floor is applied at each of ${andList(SCOPE_KINDS)} separately, over the checks listing that gate kind in their \`gate_kinds\`. ` +
+    `The tier's kind floor is applied at each of ${andList(ROUTE_SCOPES)} separately, over the checks listing that gate kind in their \`gate_kinds\`. ` +
     `${code(AUTHORIZE_GATE)}, the gate a deployment request evaluates, therefore needs ${floor}, each listing ${code(AUTHORIZE_GATE)} in its \`gate_kinds\`; ` +
     `a check of a floor kind listing only ${code('stage')} supplies its kind to no deployment, and the request is refused with \`ACCEPTANCE_SCOPE_INCOMPLETE\` naming the kind missing (\`kind:${exampleKind}\`). ` +
-    `So a ${code(exampleKind)} check lists \`"gate_kinds": ${jsonList(SCOPE_KINDS)}\`, and so does every other check of a floor kind.`
+    `So a ${code(exampleKind)} check lists \`"gate_kinds": ${jsonList(ROUTE_SCOPES)}\`, and so does every other check of a floor kind.`
   );
 }
 const reqNumber = (key: string): number => Number(key.slice(1)) || 0;
@@ -111,7 +115,7 @@ export function exampleDefinition(f: CheckWritingFacts): { file: string; program
     command: [name, program],
     timeout_s: Math.min(120, g.runner_config.direct.timeout_max_s),
     ...(criterion === null ? {} : { covers: { criteria: [criterion] } }),
-    gate_kinds: [...SCOPE_KINDS],
+    gate_kinds: [...ROUTE_SCOPES],
     inputs: [program],
   };
   const file = `${g.check_discovery.definitions}${key}.json`;
@@ -332,7 +336,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     );
   }
   out.push(
-    `- Gate kinds: the engine evaluates ${andList(EVALUATED_GATE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both ${andList(SCOPE_KINDS)} for a check of the workspace that should decide both. ${code(DEPLOYMENT_GATE)} reads only the environment-bound checks (below). The others (${list(GATE_KINDS.filter((k) => !EVALUATED_GATE_KINDS.includes(k)))}) are accepted but not evaluated.`,
+    `- Gate kinds: the engine evaluates ${andList(EVALUATED_GATE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both ${andList(ROUTE_SCOPES)} for a check of the workspace that should decide both. ${code(DEPLOYMENT_GATE)} reads only the environment-bound checks (below). A check listing ${code('phase')} alone is a phase-only check: it is registered and run when the phase completes, on the phase's candidate, never at a stage's nomination; every required check listing ${code('stage')} also runs then, as the phase's regression set. The others (${list(GATE_KINDS.filter((k) => !EVALUATED_GATE_KINDS.includes(k) && k !== 'phase'))}) are accepted but not evaluated.`,
     `- ${authorizeFloorText(f.tier)}`,
     g.required_checks === null
       ? '- Every check discovered is required: the governed file lists no `required_checks`.'

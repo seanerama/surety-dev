@@ -7,10 +7,12 @@
 // and publication is bundle.ts's.
 //
 // `PLAN_QUESTION_OPEN` names `R<n>:Q<k>`, a hint-less question on an
-// unassigned requirement refusing every plan (slice 34); the sixteen
-// reasons' cases are slice 35's (BS5 §9.2).
+// unassigned requirement refusing every plan (slice 34). Slice 35: the
+// validation clause through D3 §4.3's one coverage primitive; `phase_size`
+// as computed uncertainty, never a refusal; an early replacement's kept
+// stages (D6 §5.7; B08).
 
-import { KIND_INVENTORY, TIER_RANK, type Tier, cadenceTier } from '../checks/scope.js';
+import { KIND_INVENTORY, TIER_RANK, type Tier, cadenceTier, coverageMissing } from '../checks/scope.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';
 import { canonical, sha256 } from '../store/transitions/common.js';
 
@@ -44,6 +46,15 @@ export interface BundleBaseline {
   project_tier: string;
   // Phases complete already (their numbers).
   completed_phases: number[];
+  // D6 §5.2, A.7 (F §9.2): the project's `phase_size`; a plan outside it is
+  // `uncertain` and routed to the human, never refused. Absent: not judged.
+  phase_size?: { min: number; max: number };
+  // D6 §5.7 (B08): an early replacement's kept stages (integrated or
+  // verified in the generation it replaces), by number, with their
+  // execution-inputs digest and the requirement keys they implement. Each
+  // is a stage of the plan whether the file lists it or not; listed with
+  // other inputs it is a second stage under its number.
+  kept?: { number: number; digest: string | null; implements: string[] }[];
   // The approved artifacts, for the computed diff (B03): null for a first
   // bundle, which has none.
   approved: { modules: ModuleMap; roadmap: Roadmap; adrs: Record<string, string>; architecture_text: string | null } | null;
@@ -75,6 +86,12 @@ export interface Changes {
 
 export interface PlanCheckResult {
   outcome: 'passed' | 'refused';
+  // Why the check itself routes to the human (D6 §5.2: `phase_size`), never
+  // a reason to refuse.
+  uncertain: string[];
+  // The Architect's declaration, recorded and overridden by the computed
+  // routing (D6 §5.4): it can add uncertainty, never suppress a change.
+  declared: { conformance: 'within_baseline' | 'uncertain' };
   reasons: PlanReason[];
   planned_obligations: ScopeObligation[];
   changes: Changes;
@@ -173,6 +190,8 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   const moduleNames = new Set(a.modules.modules.map((m) => m.name));
   const adrKeys = new Set(Object.keys(a.adr_front_matter));
   const stageNumbers = plan.stages.map((s) => s.number);
+  const kept = baseline.kept ?? [];
+  const keptNumbers = kept.map((k) => k.number);
   const phase = a.roadmap.phases.find((p) => p.number === plan.phase);
 
   // 1. References.
@@ -196,7 +215,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
       const r = reqs.get(key);
       if (!s.implements.includes(key) || !r || !r.criteria.includes(c)) criterionMismatch.push(c);
     }
-    for (const d of s.depends_on) if (!stageNumbers.includes(d) || d === s.number) unknownStage.push(`stage ${s.number} -> ${d}`);
+    for (const d of s.depends_on) if ((!stageNumbers.includes(d) && !keptNumbers.includes(d)) || d === s.number) unknownStage.push(`stage ${s.number} -> ${d}`);
   }
   add('PLAN_UNKNOWN_REQUIREMENT', unknownReq);
   add('PLAN_UNKNOWN_MODULE', unknownModule);
@@ -204,7 +223,14 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   add('PLAN_CRITERION_MISMATCH', criterionMismatch);
   add('PLAN_UNKNOWN_STAGE', unknownStage);
   const dup = stageNumbers.filter((n, i) => stageNumbers.indexOf(n) !== i);
-  add('PLAN_DUPLICATE_STAGE', dup.map((n) => `stage ${n}`));
+  // A kept stage listed with other inputs would be a second stage under
+  // its number: the replacement keeps the stage as it is (D6 §5.7; the
+  // driver's ruling 1).
+  const keptChanged = plan.stages.filter((st) => {
+    const k = kept.find((x) => x.number === st.number);
+    return k !== undefined && k.digest !== executionInputsDigest(st);
+  });
+  add('PLAN_DUPLICATE_STAGE', [...dup.map((n) => `stage ${n}`), ...keptChanged.map((st) => `stage ${st.number}: kept (integrated) with other inputs`)]);
   // A question with no phase hint whose requirement no phase holds blocks
   // every plan, whatever it implements, until the question is resolved or
   // the requirement assigned (D6 §5.3 clause 1; D6-P07).
@@ -249,8 +275,10 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   if (!phase) add('PLAN_REQUIREMENT_UNPLANNED', [`phase ${plan.phase} is not in the roadmap`]);
   else {
     add('PLAN_MODULE_OUTSIDE_PHASE', plan.stages.flatMap((s) => s.modules.filter((m) => !phase.modules.includes(m)).map((m) => `stage ${s.number}:${m}`)));
-    const implemented = new Set(plan.stages.flatMap((s) => s.implements));
-    add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k)));
+    const implemented = new Set([...plan.stages.flatMap((s) => s.implements), ...kept.filter((k) => !stageNumbers.includes(k.number)).flatMap((k) => k.implements)]);
+    // A `descriptive_unverified` requirement is no obligation of the phase
+    // (D6 §8.2, K10; the driver's ruling 7): still held to the roadmap.
+    add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k) && reqs.get(k)?.descriptive_unverified !== true));
     add('PLAN_DEPENDENCY_INCOMPLETE', phase.depends_on.filter((d) => !baseline.completed_phases.includes(d)).map((d) => `phase ${d}`));
     // A stage may implement only what the roadmap assigns to the phase.
     add('PLAN_MODULE_OUTSIDE_PHASE', plan.stages.flatMap((s) => s.implements.filter((k) => reqs.has(k) && !phase.requirement_ids.includes(k)).map((k) => `stage ${s.number}:${k}`)));
@@ -264,20 +292,28 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   const unvalidatedCriteria: string[] = [];
   const unvalidatedAreas: string[] = [];
   const missingKinds: string[] = [];
+  // Only a requirement with criteria to validate is an obligation: a
+  // descriptive one is excluded (ruling 7).
+  const obligated = (k: string) => reqs.get(k)?.descriptive_unverified !== true;
   for (const s of plan.stages) {
     const tier = tierOf(s.modules);
-    const criteria = uniq(s.implements.flatMap((k) => reqs.get(k)?.criteria ?? []));
-    const areas = uniq([...s.implements.flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => s.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
+    const criteria = uniq(s.implements.filter(obligated).flatMap((k) => reqs.get(k)?.criteria ?? []));
+    const areas = uniq([...s.implements.filter(obligated).flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => s.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
     const kinds = [...KIND_INVENTORY[tier]];
     obligations.push({ scope: { kind: 'stage', number: s.number }, tier, criteria, kinds, sensitive_areas: areas });
-    for (const c of criteria) if (!s.validation.criteria.includes(c)) unvalidatedCriteria.push(c);
-    for (const area of areas) if (!s.validation.sensitive_areas.includes(area)) unvalidatedAreas.push(`stage ${s.number}:${area}`);
-    for (const k of kinds) if (!s.validation.kinds.includes(k)) missingKinds.push(`stage ${s.number}:${k}`);
+    // D3 §4.3's primitive, the stage's declared validation in place of the
+    // required set (B04; D6-P04): the union of every stage's arrays
+    // satisfies nothing.
+    const missing = coverageMissing({ criteria, kinds, areas }, { criteria: s.validation.criteria, kinds: s.validation.kinds, areas: s.validation.sensitive_areas });
+    unvalidatedCriteria.push(...missing.criteria);
+    unvalidatedAreas.push(...missing.areas.map((area) => `stage ${s.number}:${area}`));
+    missingKinds.push(...missing.kinds.map((k) => `stage ${s.number}:${k}`));
   }
   if (phase) {
     const tier = tierOf(phase.modules);
-    const criteria = uniq(phase.requirement_ids.flatMap((k) => reqs.get(k)?.criteria ?? []));
-    const areas = uniq([...phase.requirement_ids.flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => phase.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
+    const assignedReqs = phase.requirement_ids.filter(obligated);
+    const criteria = uniq(assignedReqs.flatMap((k) => reqs.get(k)?.criteria ?? []));
+    const areas = uniq([...assignedReqs.flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => phase.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
     obligations.push({ scope: { kind: 'phase', number: phase.number }, tier, criteria, kinds: [...KIND_INVENTORY[tier]], sensitive_areas: areas });
   }
   // 5. Retrofit (D6 §8; K11; B10, B11): the conformance stage is phase 1's
@@ -323,10 +359,17 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   const baselineChanging = changes.changes_architecture.changed || adrsChanged || roadmapChanged || a.plan.roadmap_revision !== undefined;
   const needsSpecChange = unknownReq.length > 0;
   const outcome = reasons.length === 0 ? 'passed' : 'refused';
-  const conformance = plan.conformance;
+  // §5.2: a stage count outside `phase_size` is sense, not error: it routes
+  // to the human, never refuses. Kept stages count toward it.
+  const uncertain: string[] = [];
+  const size = new Set([...stageNumbers, ...keptNumbers]).size;
+  if (baseline.phase_size && (size < baseline.phase_size.min || size > baseline.phase_size.max)) uncertain.push(`phase_size: ${size} stages, outside {min ${baseline.phase_size.min}, max ${baseline.phase_size.max}}`);
+  const conformance: 'within_baseline' | 'uncertain' = plan.conformance === 'uncertain' || uncertain.length > 0 ? 'uncertain' : 'within_baseline';
   const routing: 'registered' | 'human' = outcome === 'passed' && !baselineChanging && conformance === 'within_baseline' ? 'registered' : 'human';
   return {
     outcome,
+    uncertain,
+    declared: { conformance: plan.conformance },
     reasons,
     planned_obligations: obligations,
     changes,
@@ -365,3 +408,34 @@ export const PLAN_REASONS = [
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;
+
+// The complete diff of every changed artifact (D6 §5.4; B03; M427 (b),
+// M426 (b)): each architecture or module-map artifact, ADR or roadmap the
+// computed changes name, in full as approved and as proposed (null where
+// one side has none), and the proposed plan. Built from the texts the
+// store and the bundle hold, so it reads nothing from git. The whole
+// roadmap is carried whenever any part of it changes.
+export interface ArtifactDiff {
+  artifact: 'architecture' | 'modules' | 'adr' | 'roadmap' | 'plan';
+  path: string;
+  approved: unknown;
+  proposed: unknown;
+}
+
+export function artifactDiff(baseline: BundleBaseline, a: BundleArtifacts, changes: Changes): ArtifactDiff[] {
+  const approved = baseline.approved;
+  const out: ArtifactDiff[] = [];
+  if (changes.changes_architecture.subjects.includes('architecture')) out.push({ artifact: 'architecture', path: '.surety/architecture/architecture.md', approved: approved?.architecture_text ?? null, proposed: a.architecture_text });
+  if (changes.changes_architecture.subjects.includes('modules')) out.push({ artifact: 'modules', path: '.surety/architecture/modules.json', approved: approved?.modules ?? null, proposed: a.modules });
+  const c = changes.changes_adrs;
+  for (const key of [...c.added, ...c.changed, ...c.deleted].sort()) out.push({ artifact: 'adr', path: `.surety/adrs/${key}.md`, approved: approved?.adrs[key] ?? null, proposed: a.adrs[key] ?? null });
+  const r = changes.changes_roadmap;
+  const roadmapChanged = r.phases_added.length + r.phases_removed.length + r.goals.length + r.memberships.length + r.assignments.length + r.dependencies.length > 0 || a.plan.roadmap_revision !== undefined;
+  if (roadmapChanged) out.push({ artifact: 'roadmap', path: '.surety/roadmap/roadmap.json', approved: approved?.roadmap ?? null, proposed: a.roadmap });
+  out.push({ artifact: 'plan', path: `.surety/phases/phase-${a.plan.phase}.json`, approved: null, proposed: a.plan });
+  return out;
+}
+
+// The spec-change workflow's route an unknown requirement is offered
+// through (D6 §5.4; the driver's ruling 5): named, never invoked.
+export const specChangeRoute = (project: string): string => `POST /v1/projects/${project}/spec/change-requests`;

@@ -273,7 +273,7 @@ function configSection(): ContractDocument['config'] {
   }
   const project: Record<string, Record<string, unknown>> = {};
   for (const [key, spec] of Object.entries(PROJECT_POLICY)) project[key] = { default: spec.default, min: spec.min, max: spec.max, integer: spec.integer };
-  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) project[key] = { default: spec.default, type: spec.type, ...(spec.values ? { values: [...spec.values] } : {}), widening: spec.widening };
+  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) project[key] = { default: spec.default, type: spec.type, ...(spec.values ? { values: [...spec.values] } : {}), ...(spec.range ? { range: { ...spec.range } } : {}), widening: spec.widening };
   return { engine, project };
 }
 

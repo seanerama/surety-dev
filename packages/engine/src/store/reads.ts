@@ -1,6 +1,7 @@
 // Read-only queries. Reads never write and never call out of the store.
 
 import { replanFacts } from '../plan/replan-package.js';
+import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
@@ -311,6 +312,9 @@ export function contextFacts(db: Database, args: { run: string }) {
   return {
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,
+    // The phase Verifier's (D6 §5.8; M429 (a)): the phase evaluation and
+    // the phase's findings.
+    phase: phaseVerificationFacts(db, item),
     change_request: changeRequest ?? null,
     proposal: proposalRow ?? null,
     run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },

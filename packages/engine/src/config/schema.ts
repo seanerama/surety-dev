@@ -300,7 +300,10 @@ export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
 // adds an element the effective value lacks, `coarser` when it names a
 // coarser budget boundary, `never` when no change does.
 export interface OptionSpec {
-  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model';
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model' | 'size_range';
+  // `size_range` (D6 §5.2, A.7 `phase_size`): `{min, max}`, each an integer
+  // within [range.min, range.max], min not above max.
+  range?: { min: number; max: number };
   default: unknown;
   values?: readonly string[];
   widening: 'added' | 'coarser' | 'later' | 'never';
@@ -342,6 +345,9 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   // D6 §6.8, K9 (E139 Q5): whether the engine requests Alpha at phase completion.
   // Sean's decision (2026-10-12): manual → on_phase_complete widens.
   alpha_deploy: { type: 'enum', values: ALPHA_DEPLOY_POLICIES, default: 'manual', widening: 'later' },
+  // D6 §5.2, A.7 (F §3.10.1, §9.2): how many stages a phase plan has. A plan
+  // outside it is `uncertain` and goes to the human, never refused outright.
+  phase_size: { type: 'size_range', default: { min: 3, max: 5 }, range: { min: 1, max: 12 }, widening: 'never' },
   backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
 };
 

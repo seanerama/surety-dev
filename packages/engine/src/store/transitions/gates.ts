@@ -26,6 +26,7 @@ import { type OobRow, blockingObservation, candidateObservation, nominationRef, 
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
+import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 
 type Db = Tx['db'];
@@ -513,6 +514,15 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const missingNamed = [...missingSubjects(scope.missing), ...obligated];
   const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
   if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
+  // The `phase` gate's own (D6 §5.8; A.4; K5, B07): an assigned requirement
+  // no active stage implements, and planned obligations the actual
+  // protected checks do not meet.
+  if (kind === 'phase' && target.phasePlan) {
+    const unplanned = unplannedRequirements(db, target.phasePlan);
+    if (unplanned.length > 0) add('PLAN_REQUIREMENT_UNPLANNED', unplanned);
+    const shortfall = authoringShortfall(db, target.phasePlan, scope.effective.id);
+    if (shortfall.length > 0) add('AUTHORING_INCOMPLETE', shortfall);
+  }
 
   // (2) The protected path is authorized and effective. A protected set
   // that could not be read is not shown authorized.

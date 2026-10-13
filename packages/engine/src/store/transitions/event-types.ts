@@ -81,13 +81,16 @@ export const EVENT_OWNERS = {
   'finding.raised': 'store/transitions/findings.ts',
   'finding.severity_changed': 'store/transitions/queue.ts',
   'finding.dispositioned': 'store/transitions/queue.ts',
-  'finding.resolved': 'store/transitions/gates.ts',
+  'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
   'assessment.proposed': 'store/transitions/findings.ts',
   'assessment.assessed': 'store/transitions/findings.ts',
   'assessment.approved': 'store/transitions/queue.ts',
   'assessment.rejected': 'store/transitions/findings.ts, store/transitions/queue.ts',
   'signoff.recorded': 'store/transitions/findings.ts',
+  // D6 §5.8 (B06): a phase sign-off bound to a replaced plan generation or a
+  // superseded candidate, refused and not recorded.
+  'signoff.refused': 'store/transitions/findings.ts',
   'intent.recorded': 'store/transitions/queue.ts',
   'intent.executing': 'store/transitions/intents.ts, store/transitions/protected.ts',
   'intent.done': 'store/transitions/protected.ts',

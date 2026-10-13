@@ -73,6 +73,8 @@ export interface ProjectOptions {
   backend_architect: string;
   autonomy: 'step' | 'stage' | 'phase';
   alpha_deploy: 'manual' | 'on_phase_complete';
+  // D6 §5.2, A.7: the stage count a phase plan is expected to have.
+  phase_size: { min: number; max: number };
   backend_mode: string;
 }
 

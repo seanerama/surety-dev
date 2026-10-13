@@ -643,8 +643,21 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // coordinator's ruling on slice 34): no replan holds the project then.
   const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
   if (impact.touches_current && roadmap) {
-    const open = tx.db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string } | undefined;
-    observeTrigger(tx, { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id }, chain: 0 }, { spec_change_request: r.id });
+    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string; generation: number } | undefined;
+    // An early replan (D6 §5.7; B08): it names the generation it replaces,
+    // and records the impact as its evidence and what the impact made stale.
+    const stale = {
+      stages: impact.stages.map((st) => st.number),
+      requirements: impact.requirements.map((q) => q.key),
+      criteria: uniq([...impact.affected_criteria, ...impact.removed_criteria, ...impact.added_criteria]),
+      checks: uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)),
+    };
+    const evidence = { request: r.id, impact: r.impact ?? null, spec_revision: made.spec_revision };
+    observeTrigger(
+      tx,
+      { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, generation: open.generation, request: r.id, evidence, stale } : { request: r.id, evidence, stale }, chain: 0 },
+      { spec_change_request: r.id },
+    );
   }
   settleWork(tx, getRequest(tx.db, r.id)!, 'approved');
   // The approval's intent is done with its effect (the 31b review's S8).

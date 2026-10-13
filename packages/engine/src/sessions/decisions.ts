@@ -163,10 +163,11 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       if (!b || b.status !== 'proposed') return null;
       if (kind === 'plan_approval' && b.phase_number === null) return null;
       const manifest = bundleManifest(tx.db, d.subject_id, b, kind);
-      const check = b.plan_check ? (tx.db.prepare('SELECT "outcome", "conformance" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { outcome: string; conformance: string } | undefined) : undefined;
+      const check = b.plan_check ? (tx.db.prepare('SELECT "outcome", "conformance", "diff", "uncertain" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { outcome: string; conformance: string; diff: string | null; uncertain: string } | undefined) : undefined;
+      const uncertain = check ? (JSON.parse(check.uncertain) as string[]) : [];
       return {
         manifest,
-        question: `Approve ${what} the Architect session ${d.subject_id} proposed${b.phase_number === null ? '' : ` for phase ${b.phase_number}`} (bundle ${b.id})?${check ? ` The mechanical check ${check.outcome}; conformance declared ${check.conformance}.` : ''}${b.phase_number === null ? '' : ' Both approvals of the batch publish it once.'}`,
+        question: `Approve ${what} the Architect ${b.run !== null && tx.db.prepare(`SELECT 1 FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(b.run) === undefined ? 'replan' : 'session'} ${d.subject_id} proposed${b.phase_number === null ? '' : ` for phase ${b.phase_number}`} (bundle ${b.id})?${check ? ` The mechanical check ${check.outcome}; conformance ${check.conformance}${uncertain.length > 0 ? ` (${uncertain.join('; ')})` : ''}.` : ''}${check?.diff ? ` The complete diff of every changed artifact is record ${check.diff}.` : ''}${b.phase_number === null ? '' : ' Both approvals of the batch publish it once.'}`,
         options: [
           {
             key: 'approve',
@@ -181,7 +182,9 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
           },
           { key: 'reject', label: 'Reject', consequence: 'The bundle is refused; the saves stay committed as checkpoints with no effect.', effect: { bundle: b.id, refused: true } },
         ],
-        evidence: evidenceOf(JSON.parse(b.blobs) as Record<string, string>),
+        // The bundle's blobs, and the complete diff of every changed
+        // artifact recorded by the check (D6 §5.4; B03).
+        evidence: [...evidenceOf(JSON.parse(b.blobs) as Record<string, string>), ...(check?.diff ? [{ record: check.diff, path: 'plan_check.diff', provenance: 'observed' as const }] : [])],
       };
     },
     manifest: (tx, d) => bundleManifest(tx.db, d.subject_id, bundleOfDecision(tx.db, d), kind),
@@ -193,7 +196,7 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       consumeDecision(tx, d, option, note);
       const b = bundleOfDecision(tx.db, d);
       if (!b) throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} names no bundle.`, 'Read the current decisions about the session.', { decision: d.id });
-      const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
+      const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject', note: note ?? null });
       if (option === 'approve') recordApproval(tx, d, { consequence: `bundle ${made.bundle} approved (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
       // The answer launches nothing (D1 §10.5). The answer that completes the
       // bundle's authority is followed by its publication by the authorized

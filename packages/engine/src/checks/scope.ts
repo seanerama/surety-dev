@@ -6,15 +6,16 @@
 // sign-offs, the acceptance content hash and so the staleness of a preview
 // bound to it (store/transitions/evidence.ts gathers the inputs).
 //
-// Not built here, by design (slice 20, approved): the `phase` scope (D3
-// §4.2 defines it; the gate stays `unsupported`, SEAM.md §70); the
-// requirement index from spec approval (the plan fixture supplies it, D3
-// §4.5).
+// The `phase` scope (D3 §4.2; D6 §5.8, K5) is the engine's phase step's
+// (plan/phase.ts), evaluated by the engine, never through the gate route.
 
 export type Tier = 'T1' | 'T2' | 'T3';
-// The gate kinds whose scope the engine evaluates (the `phase` gate stays
-// `unsupported`, deployment gates beyond Alpha's authorization are not built).
-export const SCOPE_KINDS = ['stage', 'alpha_authorize'] as const;
+// The gate kinds whose scope the engine evaluates (deployment gates beyond
+// Alpha's authorization are not built). `phase` (D6 §5.8; K5; B06): a check
+// listing it alone is a phase-only check, registered and executed at phase
+// completion and never at a stage nomination; its gate is the engine's own
+// phase step's, never the gate route's.
+export const SCOPE_KINDS = ['stage', 'phase', 'alpha_authorize'] as const;
 export type ScopeKind = (typeof SCOPE_KINDS)[number];
 
 export const TIER_RANK: Record<string, number> = { T1: 1, T2: 2, T3: 3 };
@@ -64,7 +65,7 @@ export interface ScopeModule {
 export interface ScopeInputs {
   // `phase` (D6 §5.8; K5): built by the engine's phase step, not a gate a
   // route evaluates (SCOPE_KINDS stays the routes' list).
-  kind: ScopeKind | 'phase';
+  kind: ScopeKind;
   projectTier: string;
   checks: ScopeCheck[];
   requirements: ScopeRequirement[];
@@ -149,13 +150,14 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   // neither.
   const counting = required.filter((c) => c.origin === 'acceptance');
   const missing: Missing = { criteria: [], uncertain: [], kinds: [], areas: [], unread: [] };
+  const criteria: string[] = [];
   for (const id of obligations) {
     const r = inputs.requirements.find((x) => x.id === id);
     if (!r || r.criteria === null || r.criteria.length === 0) {
       missing.uncertain.push(id);
       continue;
     }
-    for (const k of r.criteria) if (!counting.some((c) => c.criteria.includes(k))) missing.criteria.push(k);
+    criteria.push(...r.criteria);
   }
   // A requirement the scope touches that no index row registered (criteria
   // null) has no known areas: its categories are unknown, never none, so the
@@ -166,13 +168,44 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
     const r = inputs.requirements.find((x) => x.id === id);
     if (!r || r.criteria === null) missing.uncertain.push(id);
   }
-  for (const kind of KIND_INVENTORY[tier]) if (!counting.some((c) => c.kind === kind)) missing.kinds.push(`kind:${kind}`);
   // A floor counts only when acceptance-origin, like a criterion or a kind
   // (slice 20 review, minor 4).
-  for (const a of [...categories].sort()) if (!counting.some((c) => isFloor(c) && c.sensitive_areas.includes(a))) missing.areas.push(`area:${a}`);
+  const uncovered = coverageMissing(
+    { criteria, kinds: KIND_INVENTORY[tier], areas: [...categories].sort() },
+    { criteria: counting.flatMap((c) => c.criteria), kinds: counting.map((c) => c.kind), areas: counting.filter(isFloor).flatMap((c) => c.sensitive_areas) },
+  );
+  missing.criteria.push(...uncovered.criteria);
+  missing.kinds.push(...uncovered.kinds.map((k) => `kind:${k}`));
+  missing.areas.push(...uncovered.areas.map((a) => `area:${a}`));
   if (inputs.modules === null) missing.unread.push(MODULE_PRESENCE);
 
   return { tier, modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
+}
+
+// D3 §4.3's coverage primitive (B04; D6 §5.3 clause 4, D6-P04): what an
+// obligation (criteria, the kinds its tier requires, the sensitive areas it
+// carries) lacks against what covers it. One implementation for every
+// consumer: the required set's acceptance-origin checks at a gate
+// (computeScope), a plan stage's declared `validation` at the plan check
+// (plan/check.ts), and the actual protected checks against a phase's
+// recorded planned obligations at the `phase` gate (AUTHORING_INCOMPLETE).
+// The planned input is never a CheckDefinition and never evidence.
+export interface CoverageObligation {
+  criteria: readonly string[];
+  kinds: readonly string[];
+  areas: readonly string[];
+}
+
+export function coverageMissing(obligation: CoverageObligation, covering: CoverageObligation): { criteria: string[]; kinds: string[]; areas: string[] } {
+  const criteria = new Set(covering.criteria);
+  const kinds = new Set(covering.kinds);
+  const areas = new Set(covering.areas);
+  const once = <T>(xs: readonly T[]): T[] => [...new Set(xs)];
+  return {
+    criteria: once(obligation.criteria).filter((c) => !criteria.has(c)),
+    kinds: once(obligation.kinds).filter((k) => !kinds.has(k)),
+    areas: once(obligation.areas).filter((a) => !areas.has(a)),
+  };
 }
 
 // The sign-offs a scope's tier requires (D1 §9; E36 item 3; D3 §4.1): T2 a

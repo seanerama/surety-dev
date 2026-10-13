@@ -12,7 +12,7 @@ import { reviewerApprove } from './classification.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, workItemOfRun } from './work.js';
+import { getWorkItem, observeTrigger, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
 
@@ -24,7 +24,7 @@ const BLOCKING = ['critical', 'high'];
 export interface Report {
   findings?: { category: string; severity: string; message: string; scope?: string; sensitive_area?: string; check?: string; criterion?: string }[];
   signoffs?: { scope: string; module?: string }[];
-  dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string; remediation?: string }[];
+  dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string; remediation?: string; target?: 'plan' }[];
   severity_changes?: { finding: string; to: string }[];
   applicability?: { finding: string; candidate: string; reason: string; evidence: string }[];
   assessments?: { assessment: string; verdict: 'not_applicable' | 'applicable' }[];
@@ -140,7 +140,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
 
   for (const f of report.findings ?? []) {
     const scope = (f.scope ?? 'candidate') as 'project' | 'lineage' | 'candidate';
-    raiseFinding(tx, {
+    const raised = raiseFinding(tx, {
       project,
       scope,
       candidate: candidate?.id ?? null,
@@ -155,6 +155,13 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // before the result was taken (invoke/choke.ts).
       criterion: f.criterion ?? null,
     });
+    // An Architect's `requirement_conflict` (a requirement it cannot plan;
+    // D6 §5.4): a finding routed to `change_spec` as D3 X2's answer routes
+    // one, never a silent change; the spec_change work it makes waits for
+    // the owner (M401's not-dispatched rule).
+    if (role === 'architect' && f.category === 'requirement_conflict') {
+      observeTrigger(tx, { project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: raised, trigger_generation: 1, subject: { finding: raised }, chain: 0, engineRaised: true }, { finding: raised, run: run.id });
+    }
   }
 
   // The phase sign-off (D6 §5.8; B06): a Verifier's on its phase_verification
@@ -162,13 +169,27 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   // version, the spec revision and the plan's generation.
   if (role === 'verifier' && item.kind === 'phase_verification' && candidate) {
     const planId = parseJson<{ phase_plan?: string }>(item.subject)?.phase_plan ?? null;
-    const plan = planId ? (tx.db.prepare('SELECT "id", "generation" FROM "phase_plans" WHERE "id" = ?').get(planId) as { id: string; generation: number } | undefined) : undefined;
+    const plan = planId ? (tx.db.prepare('SELECT "id", "generation", "active", "status" FROM "phase_plans" WHERE "id" = ?').get(planId) as { id: string; generation: number; active: number; status: string } | undefined) : undefined;
+    // A sign-off bound to a replaced plan generation or to a superseded
+    // candidate is refused (D6 §5.8; B06; the driver's ruling 6): no
+    // sign-off is recorded, the refusal is, and the work completes.
+    const refusal = plan === undefined ? null : plan.active !== 1 || plan.status === 'replaced' ? 'plan_generation_replaced' : candidate.superseded_by ? 'candidate_superseded' : null;
     const reviewed = (tx.db.prepare('SELECT "content_hash" FROM "runs" WHERE "id" = ?').get(run.id) as { content_hash: string | null }).content_hash;
     const hash = reviewed ?? contentHash(tx.db, project, candidate);
     for (const s of (report.signoffs ?? []).filter((x) => x.scope === 'phase')) {
       if (!plan) continue;
       const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined;
       const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation, phase_plan: plan.id };
+      if (refusal !== null) {
+        const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
+        tx.emit('signoff.refused', { project, candidate: candidate.id, run: run.id, phase_plan: plan.id }, {
+          scope: 'phase',
+          binding,
+          cause: refusal,
+          ...(refusal === 'candidate_superseded' ? { superseded_by: candidate.superseded_by } : { active: active ? { phase_plan: active.id, generation: active.generation } : null }),
+        });
+        continue;
+      }
       const id = tx.newId('so_');
       tx.db
         .prepare(
@@ -182,6 +203,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     // No phase sign-off: the work parks behind a blocker the owner sees (the
     // coordinator's ruling on the 31b review), never re-asked by the engine.
     const signed = plan !== undefined && (report.signoffs ?? []).some((x) => x.scope === 'phase');
+    // (A refused sign-off is not a missing one: the work completes, ruling 6.)
     if (!signed && item.status === 'executing') parkWork(tx, item, 'phase_signoff_missing', { run: run.id });
   }
 
@@ -210,6 +232,15 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // nothing is recorded for it (D3 §5 X2; slice 21 review, minor 2).
       if (isObjection(f as FindingRow & { source_role: string | null })) continue;
       const deferLow = d.disposition === 'defer' && f.effective_severity === 'low' && d.linked_issue && d.defer_target;
+      // A `fix` targeted at the plan (D6 §5.7; the driver's ruling 2): valid
+      // only on a Reviewer's own `contract_conflict`; any other entry with
+      // the target is not one this engine takes, and records nothing.
+      if (d.target === 'plan') {
+        const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
+        if (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers) continue;
+        recordDisposition(tx, f, { disposition: 'fix', authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: null, remediation: d.remediation ?? null, target: 'plan' });
+        continue;
+      }
       if (d.disposition === 'fix' || deferLow) {
         recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null, remediation: d.remediation ?? null });
         continue;

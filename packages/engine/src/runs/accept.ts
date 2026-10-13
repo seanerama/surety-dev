@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { checkPlan, computeChanges } from '../plan/check.js';
+import { artifactDiff, checkPlan, computeChanges } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -413,7 +413,10 @@ export class Acceptor {
       plan = parsed.value;
     }
     if (plan === null) return null;
-    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base });
+    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base, work_item: facts.run.work_item });
+    // An early replan's plan for the phase it replaces (D6 §5.7; B08): its
+    // kept stages are stages of the plan; any other plan replaces nothing.
+    const replacement = b.replacement !== null && b.replacement.phase === plan.phase ? b.replacement : null;
     const approved = b.baseline.approved;
     if (approved === null) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
     // The commit's own architecture, module map, ADRs and roadmap, read from
@@ -467,7 +470,19 @@ export class Acceptor {
           roadmap_architecture_version: roadmapChanging ? b.baseline.architecture_version + 1 : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
         }
       : b.baseline;
-    const check = checkPlan(against, artifacts);
+    const check = checkPlan(replacement ? { ...against, kept: replacement.kept } : against, artifacts);
+    const report = facts.result?.report as Record<string, unknown> | undefined;
+    const declared = Object.fromEntries(['conformance', 'adrs_changed', 'roadmap_revision', 'notes'].filter((k) => report?.[k] !== undefined).map((k) => [k, report![k]]));
+    // The Architect's findings (B.7, as D3 X2): recorded with the run, a
+    // `requirement_conflict` routed to `change_spec` (D6 §5.4), whatever
+    // the check decides.
+    if (Array.isArray(report?.findings) && (report.findings as unknown[]).length > 0) await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: [] });
+    // The result's declaration can add uncertainty, never remove a detected
+    // change (D6 §5.4).
+    if (report?.conformance === 'uncertain') {
+      check.conformance = 'uncertain';
+      check.routing = 'human';
+    }
     const requests = facts.result?.report?.spec_change_requests ?? [];
     // A retrofit replan's field (D6 §8.3, B.7): carried by any other
     // project's replan, the result is not one this engine takes.
@@ -477,12 +492,14 @@ export class Acceptor {
     if (check.outcome !== 'passed') {
       // Recorded as a refused check, with the requests the result carried
       // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.
-      await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests });
+      await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests, declared });
       return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
     }
     const content: BundleContent = { modules: parsedArch.parsed.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined || check.roadmap_revision, plan, adrs, architecture_text: architectureText };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
     const obligations = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) });
+    // The complete diff of every changed artifact, the decision's evidence (D6 §5.4).
+    const diff = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, diff: artifactDiff(against, artifacts, check.changes) }, null, 2)}\n`) });
     return {
       replan: {
         bundle,
@@ -495,7 +512,10 @@ export class Acceptor {
         spec_revision: b.spec_revision,
         architecture_revision: b.architecture_revision,
         roadmap_revision: b.roadmap_revision,
-        versions: { architecture: against.architecture_version, roadmap: against.roadmap_version, phase_plan: 1 },
+        versions: { architecture: against.architecture_version, roadmap: against.roadmap_version, phase_plan: replacement ? replacement.generation + 1 : 1 },
+        diff,
+        declared,
+        replaces: replacement ? { phase_plan: replacement.phase_plan, generation: replacement.generation, trigger: replacement.trigger, evidence: replacement.evidence, stale: replacement.stale } : null,
         ...(requests.length > 0 ? { spec_change_requests: requests } : {}),
       },
     };

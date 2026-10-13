@@ -21,6 +21,7 @@ import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
+import { supersededWhileRunning } from '../../plan/replace.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
@@ -248,6 +249,18 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   }
   if (inputs.stage) {
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
+    // A stage an early replacement superseded while its Builder ran (D6
+    // §5.7; the driver's ruling 10): its late integration is history, the
+    // code on the branch; its work completes `superseded` and is never
+    // verified, and it fulfils no replacement work.
+    if (item && supersededWhileRunning(tx.db, inputs.stage)) {
+      const now = getWorkItem(tx, item.id)!;
+      if (now.status === 'integrated') {
+        const verifying = transitionWork(tx, now, 'verifying', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
+        transitionWork(tx, verifying, 'complete', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
+        status = 'complete';
+      }
+    }
   }
   const plans: string[] = [];
   // B02 (D6 §5.5): a checkpoint registers nothing, whatever it carries: a

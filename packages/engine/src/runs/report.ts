@@ -41,7 +41,10 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
         optString(d.linked_issue) &&
         (d.defer_target === undefined || isTime(d.defer_target)) &&
         // B12 (SEAM.md §382): the remediation a `fix` proposes.
-        optString(d.remediation),
+        optString(d.remediation) &&
+        // D6 §5.7 (A.2 ReplanTrigger contract_conflict; the driver's ruling
+        // 2): a `fix` whose target is the plan, not the code.
+        (d.target === undefined || (d.target === 'plan' && d.disposition === 'fix')),
     ),
   severity_changes: (v) => listOf(v, (c) => isString(c.finding) && SEVERITIES.includes(c.to as string)),
   applicability: (v) => listOf(v, (a) => isString(a.finding) && isString(a.candidate) && isString(a.reason) && isString(a.evidence)),
