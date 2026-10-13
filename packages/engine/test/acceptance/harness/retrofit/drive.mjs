@@ -35,13 +35,13 @@ const json = (t) => (t === null || t === undefined ? t : typeof t === 'string' ?
 // The scripted engine with the classifier `authoritative` (slice 31's
 // ruling; SEAM.md §351), the retrofit scripts by kind in place. `config`
 // goes to the engine's configuration (e.g. `adoption_full_max_files`).
-export async function retrofitEngine(t, { config = {}, withR4 = false, withoutR1 = false } = {}) {
+export async function retrofitEngine(t, { config = {}, withR4 = false, withoutR1 = false, extraAuthoring = {} } = {}) {
   const fx = await scriptedEngine(t, { config });
   const version = await runningClassifier(fx.engine);
   setEngineConfig(fx, { classifier_authority: { mode: 'authoritative', version } });
   await fx.engine.kill();
   await fx.start();
-  retrofitScripts(fx, { withR4, withoutR1 });
+  retrofitScripts(fx, { withR4, withoutR1, extraAuthoring });
   return fx;
 }
 
@@ -59,8 +59,8 @@ export const replanScript = ({ spec_version = 1 } = {}) => ({
 // The retrofit journey's scripts by work kind (§350's form). Phase 1's
 // authoring adopts the project's sum test (`authoringResult`); phase 2's adds
 // R4.1's check; phase 2's Builder refuses a non-number.
-export function retrofitScripts(fx, { withR4 = false, withoutR1 = false } = {}) {
-  const phase1 = authoringFiles({ withR4, withoutR1 });
+export function retrofitScripts(fx, { withR4 = false, withoutR1 = false, extraAuthoring = {} } = {}) {
+  const phase1 = authoringFiles({ withR4, withoutR1, extra: extraAuthoring });
   fx.scripted.kindScript('check_authoring', [roleThat(writes(phase1), authoringResult(withoutR1 ? { adopted: [] } : {})), roleThat(writes(R4_CHECK), { proposal: { rationale: 'Phase 2: R4.1\'s check.', requested_change_kind: 'tightening' } })]);
   fx.scripted.kindScript('stage_build', roleThat(writes({ 'server.mjs': SERVER_MJS_FIXED })));
   fx.scripted.kindScript('verification', script.complete());

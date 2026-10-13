@@ -6178,10 +6178,11 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
   - `accept` and `defer` change none of that.
   - A roadmap revision moving R2 to phase 2 changes neither the stage's `implements`, nor the gate, nor Alpha: no authorization is issued.
   - The way out is a `check_correction` run whose work item the harness adds (**labelled test setup**) and whose proposal the owner approves. After it, the earlier failed result is invalidated and a fresh one passes, and the gate is satisfied.
-- **Not written:**
-  - **a High in a sensitive area:** the fixture has no sensitive area, and a variant would need the floor's checks;
+- **A High finding in a sensitive area** (the row names it; the driver's ruling of 2026-10-12). This uses the fixture's sensitive-area variant: `service` is classified `secrets_credentials` (TPL §6 and `modules.json`), the conformance stage validates the area with the kind `sensitivity_floor`, and the floor's check `floor` covers it. The Verifier's High finding on c-1 carries `sensitive_area`; the run's work item is added by the harness, labelled test setup, as in (f). The owner's deployment request for c-1 issues no authorization. The last `alpha_authorize` evaluation for c-1 is not satisfied, and its `FINDING_BLOCKING` names the finding (§70).
+- **Not written, by the driver's ruling of 2026-10-12:**
   - **the spec-change way out:** it converges on a correction, already covered;
-  - **a conformance stage in phase 2:** the replan path is M408's.
+  - **a conformance stage in phase 2:** it arises through the replan path, so it is carried into slice 35's cases.
+- **The kernel lane's limit.** Check verdicts there are the scripted boundary's. The adopted copy's real verdict, run against the unchanged code, is shown on the project lane by M408 (the journey's (e), and (i)'s failing `accept-r4`). M413 (f)'s correction way out uses a harness-added `check_correction` work item.
 
 ## 383. The evidence rules and the dependency boundary (M414; D6-R07, R08; B13)
 
@@ -6189,7 +6190,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
 - **`suite`** is `origin` `developer` and covers nothing.
 - **The authoring proposal** has **`protected_proposals.adopted_tests`** † (JSON, as the Verifier declared it). Its `application` entry `src/sum.mjs` is recorded.
 - **An undeclared import.** A copy that imports `../../../test/helpers/expect.mjs` without declaring it is refused by the proposal check: nothing is applied, and the run's `reason_text` or the proposal names the import.
-- **The Builder's changes.** Phase 2's Builder changes the original test (its expectation), the original helper, and the server. The adopted check's row is unchanged, and every proposal is a Verifier run's. On the kernel lane verdicts are scripted, so the copy's real verdict is M408's.
+- **The Builder's changes.** Phase 2's Builder changes the original test (its expectation), the original helper, and the server. The adopted check's row is unchanged, and every proposal is a Verifier run's. **This is a structural reading:** on the kernel lane verdicts are scripted. The adopted copy's real verdict, that it still detects what it detected whatever the originals become, is shown only on the project lane, by M408.
 - **Scoped mode.** R1 is descriptive and in phase 2. Phase 1 conforms R2 and R3 (`service`), with authoring that has no adopted test.
   - The first two phase-2 replans touch `lib`: the first with no request, the second with `spec_change_requests` for R1. Each is a `plan_checks` row carrying **`PLAN_DESCRIPTIVE_MODULE_TOUCHED`**.
   - The request is an ordinary `spec_change_requests` row. The harness answers its `spec_change` as the owner.
@@ -6207,7 +6208,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
 - **Completion.** Phase 1 complete under `manual`: `completed_at` and `baseline.phase_complete`. No `replan` before the owner's deploy, nor after a restart. `GET …/plan` carries **`CONFORMANCE_ALPHA_PENDING`** † (anywhere in its body).
 - **The barrier opens** with the owner's deploy of c-1 (`POST …/deployments`) completing `alpha_complete`: c-1 `alpha_deployed`, then one `replan`, and no second.
 - **It stays closed**, with the reason still shown, for a deploy answered `refused`, a deploy answered `uncertain`, and one whose `verify` reads fail (`unavailable`).
-- **(e)** has no case. Before the barrier opens, no production path makes a candidate whose source is not A. This is the driver's question.
+- **(e)** has no acceptance case (the driver's ruling, 2026-10-12: not faked). Before the barrier opens, no production path makes a candidate whose source is not A: phase 1 changes no source, a `fix` creates no work, and an application change refuses conformance (`CONFORMANCE_SOURCE_MOVED`). The guard that only a candidate whose source is A opens the barrier is held to the slice-32 Builder's unit tests.
 - **(f)**, the project that is not adopted, relies on slice 31b's phase completion. It fails on `main` while 31b is unmerged and passes on `build/m5-s31`.
 
 ## 386. The retrofit journey on the project lane (M408; D6-J03)

@@ -23,27 +23,31 @@
 //       `fix` records the remediation and changes nothing else (no fix work,
 //       the check still failed, the gate unsatisfied); a roadmap revision
 //       moving the requirement changes nothing; `accept` and `defer` do not
-//       override it; a protected correction of the check, with fresh
-//       evidence, is what satisfies the gate (K11's reach into M234 and M235:
-//       a conformance `fix` resolves nothing, neither weakened);
+//       override it; a High finding in a sensitive area blocks Alpha (the
+//       sensitive-area variant: `service` classified, the floor's check); a
+//       protected correction of the check, with fresh evidence, is what
+//       satisfies the gate (K11's reach into M234 and M235: a conformance
+//       `fix` resolves nothing, neither weakened);
 //   (g) the stage gate is due and the stage's work completes through the
 //       conformance lifecycle, not through stage-build rows.
-// Not written here (SEAM.md §382): a High in a sensitive area (the fixture
-// has no sensitive area), and the spec-change way out.
+// Not written here (SEAM.md §382): the spec-change way out, and a
+// conformance stage in phase 2 (slice 35's, through the replan path). On the
+// kernel lane check verdicts are scripted; the adopted copy's real verdict is
+// M408's on the project lane.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { commitEntries } from './harness/checks/fixtures.mjs';
 import { consume, decisionsOfKind } from './harness/decisions.mjs';
-import { findingsOf, raiseFindings, review, roleRun } from './harness/gates.mjs';
-import { alphaReady, architectSession, createWithIdea, eventsAbout, evaluationsOfKind, resultsOf, specSession, visionSession, workOf } from './harness/journey/drive.mjs';
+import { evaluationsOf, findingsOf, raiseFindings, reasonSubjects, review, roleRun } from './harness/gates.mjs';
+import { alphaReady, architectSession, checkRows, createWithIdea, eventsAbout, evaluationsOfKind, resultsOf, specSession, visionSession, workOf } from './harness/journey/drive.mjs';
 import { STAGES, phasePlan as tallyPlan } from './harness/journey/reference.mjs';
 import { commitOnRef, gitQuiet } from './harness/repos.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 import { FULL_ANSWERS, adoptProject, advance, chooseMode, confirmAndApprove, conformanceStages, gateReasons, retrofitArchitectSession, retrofitEngine, retrofitSpecSession, toConformancePublished } from './harness/retrofit/drive.mjs';
-import { conformanceStage, phasePlan, retrofitArchitectFiles, roadmapJson, serviceCheck } from './harness/retrofit/products.mjs';
+import { FLOOR_CHECK, MODULES_JSON_SENSITIVE, MODULES_SENSITIVE, SENSITIVE_AREA, conformanceStage, phasePlan, retrofitArchitectFiles, retrofitSpecText, roadmapJson, sensitiveConformanceStage, serviceCheck } from './harness/retrofit/products.mjs';
 import { SERVER_MJS, refOid } from './harness/retrofit/repo.mjs';
 
 // The application-source projection as test-side git reads it: every entry
@@ -203,6 +207,26 @@ describe('M413 the conformance stage', () => {
     const evidence = resultsOfKey(fx.home, p.id, 'accept-r2');
     assert.ok(evidence.some((r) => r.invalidated_at && r.exit_status !== 0), 'the failed evidence invalidated by the correction');
     assert.ok(evidence.some((r) => !r.invalidated_at && r.exit_status === 0), 'and fresh evidence passes');
+  });
+
+  test('(f) a High finding in a sensitive area blocks Alpha of the adopted code: alpha_authorize not satisfied, FINDING_BLOCKING naming it, no authorization issued', async (t) => {
+    // The sensitive-area variant (SEAM.md §382): `service` classified, the stage validating the area, the floor's check.
+    const fx = await retrofitEngine(t, { extraAuthoring: FLOOR_CHECK });
+    const J = await toConformancePublished(fx, { spec: retrofitSpecText({ modules: MODULES_SENSITIVE }), architect: { modules: MODULES_JSON_SENSITIVE, stages: [sensitiveConformanceStage()] } });
+    const { p, ctx } = J;
+    const ready = await alphaReady(fx, ctx);
+    const c1 = await nominated(fx, ctx);
+    await advance(fx, ctx, () => (conformanceStages(fx.home, p.id)[0]?.conformance_state === 'conformed' ? true : undefined), { what: 'conformance, every check passing', max: 30 });
+    assert.ok(checkRows(fx.home, p.id).some((c) => c.key === 'floor'), 'the fixture is live: the floor\'s check is in force');
+    const [high] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'high', message: 'the service echoes its PORT secret in an error', sensitive_area: SENSITIVE_AREA }], { kind: 'verification' });
+    const res = await fx.engine.post(`/v1/projects/${p.id}/deployments`, { candidate: c1.id, environment: ready.env.name });
+    assert.notEqual(res.body?.authorization?.status, 'issued', `no Alpha of the adopted code (→ ${res.status} ${res.text})`);
+    const row = evaluationsOf(fx.home, c1.id, 'alpha_authorize').at(-1);
+    const evaluation = row && { ...row, reasons: typeof row.reasons === 'string' ? JSON.parse(row.reasons) : row.reasons };
+    assert.ok(evaluation, 'alpha_authorize evaluated for c-1');
+    assert.notEqual(evaluation.outcome, 'satisfied', 'not satisfied');
+    assert.ok([...reasonSubjects(evaluation, 'FINDING_BLOCKING')].includes(high.id), `FINDING_BLOCKING names the High finding in the sensitive area (${JSON.stringify(evaluation.reasons)})`);
+    assert.equal(withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "deployment_authorizations" WHERE "candidate" = ? AND "status" = \'issued\'').get(c1.id).n), 0, 'no authorization issued');
   });
 
   test('(f) a roadmap revision moving the failing requirement to phase 2 changes nothing: verdict, delivered set and gate; no Alpha', async (t) => {

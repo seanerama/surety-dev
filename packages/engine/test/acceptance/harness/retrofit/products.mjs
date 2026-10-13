@@ -320,7 +320,7 @@ export const GOVERNED = governedText({
 // (covering nothing, counting toward no kind; D3 §2.9); the post-deploy
 // behaviour check. `withR4` (M408 (i)): R4.1's check too, when R4 is confirmed
 // into the conformance set.
-export function authoringFiles({ withR4 = false, withoutR1 = false } = {}) {
+export function authoringFiles({ withR4 = false, withoutR1 = false, extra = {} } = {}) {
   const files = {
     '.surety/checks/protected-policy.json': GOVERNED,
     [WRAPPER_PATH]: WRAPPER,
@@ -337,9 +337,25 @@ export function authoringFiles({ withR4 = false, withoutR1 = false } = {}) {
     [defs('operation')]: definitionText('operation', { inputs: ['.surety/checks/post-deploy/operation.mjs'], kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
   };
   if (withR4) Object.assign(files, R4_CHECK);
+  Object.assign(files, extra);
   if (withoutR1) for (const path of [ADOPTED.to, '.surety/checks/adopted/helpers/expect.mjs', defs('accept-r1')]) delete files[path];
   return files;
 }
+// The sensitive-area variant (M413 (f), a High in a sensitive area): the
+// `service` module classified `secrets_credentials` (TPL §6, modules.json),
+// the conformance stage validating the area with the floor's kind, and the
+// floor's check covering it (D3 §4.4; SEAM.md §382).
+export const SENSITIVE_AREA = 'secrets_credentials';
+export const MODULES_SENSITIVE = Object.freeze(MODULES.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: [SENSITIVE_AREA] } : m)));
+export const MODULES_JSON_SENSITIVE = { ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: [SENSITIVE_AREA] } : m)) };
+export const FLOOR_CHECK = Object.freeze({
+  [defs('floor')]: definitionText('floor', { inputs: [], kind: 'sensitivity_floor', command: ['node', '--check', 'server.mjs'], timeout_s: 60, gate_kinds: GATES, covers: { sensitive_areas: [SENSITIVE_AREA] } }),
+});
+export const sensitiveConformanceStage = () => {
+  const stage = conformanceStage();
+  return { ...stage, validation: { ...stage.validation, kinds: [...stage.validation.kinds, 'sensitivity_floor'], sensitive_areas: [SENSITIVE_AREA] } };
+};
+
 // R4.1's check (phase 2's authoring; or phase 1's when R4 is confirmed, M408 (i)).
 export const R4_CHECK = Object.freeze({
   '.surety/checks/tests/refuse.test.mjs': serviceCheck('R4.1: GET /sum?a=x&b=3 answers 400', [{ path: '/sum?a=x&b=3', status: 400 }]),
