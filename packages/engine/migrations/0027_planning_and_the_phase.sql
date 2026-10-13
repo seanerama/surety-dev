@@ -74,3 +74,10 @@ ALTER TABLE plan_checks ADD COLUMN diff TEXT REFERENCES records(id);
 -- evidence, what it made stale, and a rejected proposal's note. Engine-owned;
 -- NULL for every other item. The subject keeps D1 A.3's closed keys.
 ALTER TABLE work_items ADD COLUMN trigger_evidence TEXT;
+
+-- ---- work_items.end_cause (D6 §5.7; the driver's ruling 10) -------------------------------
+-- Why a work item ended other than by its own path: `superseded` for a
+-- stage's Builder whose run an early replacement superseded (its late
+-- integration history, its work complete and never verified);
+-- `plan_replaced` for idle work the swap cancelled. NULL otherwise.
+ALTER TABLE work_items ADD COLUMN end_cause TEXT CHECK (end_cause IS NULL OR end_cause IN ('superseded', 'plan_replaced'));

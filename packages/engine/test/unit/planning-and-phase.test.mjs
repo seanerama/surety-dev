@@ -20,7 +20,7 @@ const { coverageMissing, computeScope, SCOPE_KINDS } = await import(join(dist, '
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { registerPlan } = await import(join(dist, 'store', 'transitions', 'work.js'));
-const { keptOf, replacementOf, supersededWhileRunning } = await import(join(dist, 'plan', 'replace.js'));
+const { activeStages, keptOf, replacementOf, supersededWhileRunning } = await import(join(dist, 'plan', 'replace.js'));
 const { validatePolicySubmission, effectiveOf } = await import(join(dist, 'config', 'project-policy.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 
@@ -104,7 +104,7 @@ test('the union of the stages\' arrays satisfies nothing: each stage answers for
     stage(2, { implements: ['R2'], modules: ['auth'], validation: { criteria: ['R2.1', 'R1.2'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } }),
   ];
   const r = checkPlan(baseline(), artifacts(stages));
-  assert.deepEqual(subjects(r, 'PLAN_CRITERION_UNVALIDATED'), ['R1.2']);
+  assert.deepEqual(subjects(r, 'PLAN_CRITERION_UNVALIDATED'), ['stage 1:R1.2']);
   // R1.2 named by stage 2, which does not implement R1.
   assert.deepEqual(subjects(r, 'PLAN_CRITERION_MISMATCH'), ['R1.2']);
   assert.deepEqual(subjects(r, 'PLAN_AREA_UNVALIDATED'), ['stage 2:secrets_credentials']);
@@ -221,8 +221,9 @@ test('the swap: integrated kept, building with unchanged inputs retained, a chan
   const old = db.prepare('SELECT * FROM phase_plans WHERE id = ?').get(first.plan.id);
   assert.deepEqual([old.status, old.active, old.replaced_by], ['replaced', 0, second.plan.id]);
   assert.deepEqual(second.stages.map((x) => x.number), [3, 4, 5], 'only the remainder is registered');
-  assert.deepEqual([stageRow(db, s1.id).phase_plan, stageRow(db, s2.id).phase_plan], [second.plan.id, second.plan.id], 'kept and retained under their ids');
-  assert.equal(stageRow(db, s1.id).generation, 2);
+  assert.deepEqual([stageRow(db, s1.id).phase_plan, stageRow(db, s2.id).phase_plan], [first.plan.id, first.plan.id], 'kept and retained on their own rows, under their ids');
+  assert.deepEqual(activeStages(db, second.plan.id).map((x) => x.number), [1, 2, 3, 4, 5], 'the active generation: kept, retained and the remainder');
+  assert.ok(!activeStages(db, second.plan.id).some((x) => x.id === s3.id || x.id === s4.id), 'no superseded or cancelled stage');
   assert.deepEqual([stageRow(db, s3.id).status, stageRow(db, s3.id).cancelled_at !== null, work(db, s3.work_item).status], ['building', true, 'executing'], 'a changed building stage runs on as history');
   assert.equal(supersededWhileRunning(db, s3.id), true);
   assert.deepEqual([stageRow(db, s4.id).status, work(db, s4.work_item).status], ['cancelled', 'cancelled']);
@@ -232,7 +233,7 @@ test('the swap: integrated kept, building with unchanged inputs retained, a chan
   assert.deepEqual(JSON.parse(five.depends_on), [second.stages[0].id], 'the remainder depends on the new stage 3, not the superseded one');
   const record = JSON.parse(db.prepare('SELECT replacement FROM phase_plans WHERE id = ?').get(second.plan.id).replacement);
   assert.deepEqual([record.kept, record.retained, record.cancelled, record.superseded], [[s1.id], [s2.id], [s4.id], [s3.id]]);
-  assert.deepEqual(record.stale, { stages: [3] });
+  assert.deepEqual(record.stale, { stages: [3] }, 'the stale as the trigger recorded it');
 
   // A second replacement naming the replaced generation loses the swap.
   assert.throws(() => publish(db, next, replaces), (err) => err.code === 'plan_generation_stale');

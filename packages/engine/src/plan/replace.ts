@@ -83,7 +83,13 @@ function workStatus(db: Db, id: string | null): string | null {
   return (db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status ?? null;
 }
 
-const stagesOf = (db: Db, plan: string): StageRow[] => db.prepare('SELECT * FROM "stages" WHERE "phase_plan" = ? AND "cancelled_at" IS NULL ORDER BY "number"').all(plan) as StageRow[];
+// The active stages of a plan generation (D6 §5.7; B08): its own, and those
+// an earlier generation it replaced kept or retained, under their ids and
+// on their own plan rows, none cancelled or superseded.
+export const ACTIVE_STAGES = `WITH RECURSIVE "gen"("id") AS (SELECT ? UNION SELECT p."id" FROM "phase_plans" p JOIN "gen" g ON p."replaced_by" = g."id")
+  SELECT s.* FROM "stages" s JOIN "gen" g ON s."phase_plan" = g."id" WHERE s."cancelled_at" IS NULL`;
+export const activeStages = <T = StageRow>(db: Db, plan: string): T[] => db.prepare(`${ACTIVE_STAGES} ORDER BY s."number"`).all(plan) as T[];
+const stagesOf = (db: Db, plan: string): StageRow[] => activeStages<StageRow>(db, plan);
 
 // Kept: `integrated` or `verified`, its work neither parked nor waiting on
 // a decision (A.5: integrated → parked closes the stage; a parked stage is
@@ -104,7 +110,9 @@ export function keptOf(db: Db, plan: string): { number: number; digest: string |
 }
 
 export interface SwapResult {
-  // number → the stage id the new generation holds without a new row.
+  // number → the stage id the new generation holds without a new row: kept
+  // and retained stages stay on their own plan's row, active through the
+  // generation chain (activeStages).
   carried: Map<number, string>;
   kept: string[];
   retained: string[];
@@ -145,10 +153,7 @@ export function swapGeneration(tx: Tx, args: { project: string; replaces: Replac
   }
   const carriedIds = new Set([...kept, ...retained].map((s) => s.id));
   const out: SwapResult = { carried: new Map(), kept: kept.map((s) => s.id), retained: retained.map((s) => s.id), cancelled: [], superseded: [] };
-  for (const s of [...kept, ...retained]) {
-    tx.db.prepare('UPDATE "stages" SET "phase_plan" = ?, "generation" = ? WHERE "id" = ?').run(args.plan, args.generation, s.id);
-    out.carried.set(s.number, s.id);
-  }
+  for (const s of [...kept, ...retained]) out.carried.set(s.number, s.id);
   // A retained stage's work, if it must be dispatched again, waits on the
   // new generation's authoring readiness.
   for (const s of retained) {
@@ -157,9 +162,15 @@ export function swapGeneration(tx: Tx, args: { project: string; replaces: Replac
     const deps = (parseJson<{ milestone?: string; phase_plan?: string }[]>(w.depends_on) ?? []).map((m) => (m.milestone === 'authoring_ready' ? { ...m, phase_plan: args.plan } : m));
     tx.db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), w.id);
   }
+  // Superseded: a stage with no code and no live run is `cancelled` with its
+  // work; one whose Builder still runs finishes it as history (its status
+  // left to the integration); an integrated one parked or waiting on a
+  // decision keeps its integration as history. Each has `cancelled_at`.
   for (const s of stages) {
     if (carriedIds.has(s.id)) continue;
-    if (s.status === 'planned') {
+    const running = RUNNING.includes(workStatus(tx.db, s.work_item) ?? '');
+    const unbuilt = s.status === 'planned' || (s.status === 'building' && !running);
+    if (unbuilt) {
       tx.db.prepare(`UPDATE "stages" SET "status" = 'cancelled', "cancelled_at" = ? WHERE "id" = ?`).run(tx.at, s.id);
       out.cancelled.push(s.id);
     } else {
@@ -182,6 +193,7 @@ function cancelIdle(tx: Tx, id: string | null, payload: Record<string, unknown>)
   const w = getWorkItem(tx, id);
   if (!w || !IDLE.includes(w.status)) return;
   transitionWork(tx, w, 'cancelled', { blocker: null }, payload);
+  tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'plan_replaced' WHERE "id" = ?`).run(w.id);
   const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
   for (const d of open) invalidateDecision(tx, d, `the plan was replaced (${String(payload.phase_plan)})`);
 }
@@ -212,11 +224,17 @@ export function requestEarlyReplan(tx: Tx, args: { project: string; source: Earl
 // What a stage's work, parked or waiting on a decision, makes stale when
 // the owner answers `replan` (D6 §5.7: "the blocker's evidence"): its stage
 // and the checks and findings its blocker names.
-export function blockerStale(tx: Tx, item: WorkRow): { stages: number[]; checks: string[]; findings: string[]; tasks: string[] } {
+// (A list of what became stale: `stage <n>`, `task:<text>`, `check:<id>`,
+// `finding:<id>`; D6 §5.7 "which tasks, assumptions and checks".)
+export function blockerStale(tx: Tx, item: WorkRow): string[] {
   const stage = parseJson<{ stage?: string }>(item.subject)?.stage ?? null;
   const row = stage ? (tx.db.prepare('SELECT "number", "tasks" FROM "stages" WHERE "id" = ?').get(stage) as { number: number; tasks: string } | undefined) : undefined;
   const b = parseJson<{ checks?: string[]; findings?: string[] }>(item.blocker) ?? {};
-  return { stages: row ? [row.number] : [], tasks: row ? (parseJson<string[]>(row.tasks) ?? []) : [], checks: b.checks ?? [], findings: b.findings ?? [] };
+  return [
+    ...(row ? [`stage ${row.number}`, ...(parseJson<string[]>(row.tasks) ?? []).map((t) => `task:${t}`)] : []),
+    ...(b.checks ?? []).map((c) => `check:${c}`),
+    ...(b.findings ?? []).map((f) => `finding:${f}`),
+  ];
 }
 
 export const RUNNING_STATUSES = RUNNING;
@@ -251,9 +269,9 @@ export const REPLAN_OPTION = (item: { id: string }) => ({
 // milestone closed for later dispatch, D6 §6.6) until the replacement
 // supersedes or keeps it. The item keeps its status; its question no longer
 // stands.
-export function answerReplan(tx: Tx, item: WorkRow, decision: string, source: 'blocker_replan' | 'objection_upheld', evidence: Record<string, unknown>): string {
+export function answerReplan(tx: Tx, item: WorkRow, decision: string, source: 'blocker_replan' | 'objection_upheld', evidence: Record<string, unknown>, id: string = item.id): string {
   const stale = blockerStale(tx, item);
-  const replan = requestEarlyReplan(tx, { project: item.project, source, id: item.id, evidence: { work_item: item.id, decision, blocker: parseJson<unknown>(item.blocker), ...evidence }, stale, label: { decision } });
+  const replan = requestEarlyReplan(tx, { project: item.project, source, id, evidence: { work_item: item.id, decision, blocker: parseJson<unknown>(item.blocker), ...evidence }, stale, label: { decision } });
   const blocker = parseJson<Record<string, unknown>>(item.blocker) ?? {};
   tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ ...blocker, decision: null, replan }), item.id);
   const stage = parseJson<{ stage?: string }>(item.subject)?.stage;

@@ -12,7 +12,7 @@
 // as computed uncertainty, never a refusal; an early replacement's kept
 // stages (D6 §5.7; B08).
 
-import { KIND_INVENTORY, TIER_RANK, type Tier, cadenceTier, coverageMissing } from '../checks/scope.js';
+import { TIER_RANK, type Tier, computeScope } from '../checks/scope.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';
 import { canonical, sha256 } from '../store/transitions/common.js';
 
@@ -285,36 +285,35 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   }
 
   // 4. Validation obligations per scope (B04): derived from implements and
-  // modules and the phase's assignment, not the union of the arrays.
+  // modules and the phase's assignment, never from the union of the arrays,
+  // and counted by D3 §4.3's primitive, computeScope, given the stage's
+  // declared validation as an explicit planned-obligation input in place
+  // of the required set (D6 §5.3 clause 4; D6-P04): one implementation.
   const obligations: ScopeObligation[] = [];
   const moduleRows = a.modules.modules;
-  const tierOf = (names: string[]): Tier => cadenceTier(baseline.project_tier, moduleRows.filter((m) => names.includes(m.name)).map((m) => ({ tier_override: m.tier_override ?? null })));
   const unvalidatedCriteria: string[] = [];
   const unvalidatedAreas: string[] = [];
   const missingKinds: string[] = [];
   // Only a requirement with criteria to validate is an obligation: a
   // descriptive one is excluded (ruling 7).
-  const obligated = (k: string) => reqs.get(k)?.descriptive_unverified !== true;
+  const obligated = (k: string) => reqs.has(k) && reqs.get(k)!.descriptive_unverified !== true && !reqs.get(k)!.withdrawn;
+  const scopeRequirements = baseline.requirements.map((r) => ({ id: r.key, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas }));
+  const scopeModules = (names: string[]) => moduleRows.filter((m) => names.includes(m.name)).map((m) => ({ id: m.name, name: m.name, sensitive_areas: m.sensitive_areas, tier_override: m.tier_override ?? null }));
+  const planned = (kind: 'stage' | 'phase', keys: string[], modules: string[], covering?: { criteria: string[]; kinds: string[]; areas: string[] }) =>
+    computeScope({ kind, projectTier: baseline.project_tier, checks: [], requirements: scopeRequirements, delivered: keys, partial: [], stageImplements: keys, modules: scopeModules(modules), ...(covering ? { covering } : {}) });
   for (const s of plan.stages) {
-    const tier = tierOf(s.modules);
-    const criteria = uniq(s.implements.filter(obligated).flatMap((k) => reqs.get(k)?.criteria ?? []));
-    const areas = uniq([...s.implements.filter(obligated).flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => s.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
-    const kinds = [...KIND_INVENTORY[tier]];
-    obligations.push({ scope: { kind: 'stage', number: s.number }, tier, criteria, kinds, sensitive_areas: areas });
-    // D3 §4.3's primitive, the stage's declared validation in place of the
-    // required set (B04; D6-P04): the union of every stage's arrays
-    // satisfies nothing.
-    const missing = coverageMissing({ criteria, kinds, areas }, { criteria: s.validation.criteria, kinds: s.validation.kinds, areas: s.validation.sensitive_areas });
-    unvalidatedCriteria.push(...missing.criteria);
-    unvalidatedAreas.push(...missing.areas.map((area) => `stage ${s.number}:${area}`));
-    missingKinds.push(...missing.kinds.map((k) => `stage ${s.number}:${k}`));
+    const keys = s.implements.filter(obligated);
+    const scope = planned('stage', keys, s.modules, { criteria: s.validation.criteria, kinds: s.validation.kinds, areas: s.validation.sensitive_areas });
+    const criteria = uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? []));
+    obligations.push({ scope: { kind: 'stage', number: s.number }, tier: scope.tier, criteria, kinds: [...scope.kinds], sensitive_areas: scope.categories });
+    unvalidatedCriteria.push(...scope.missing.criteria.map((c) => `stage ${s.number}:${c}`));
+    unvalidatedAreas.push(...scope.missing.areas.map((area) => `stage ${s.number}:${area.replace(/^area:/, '')}`));
+    missingKinds.push(...scope.missing.kinds.map((k) => `stage ${s.number}:${k.replace(/^kind:/, '')}`));
   }
   if (phase) {
-    const tier = tierOf(phase.modules);
-    const assignedReqs = phase.requirement_ids.filter(obligated);
-    const criteria = uniq(assignedReqs.flatMap((k) => reqs.get(k)?.criteria ?? []));
-    const areas = uniq([...assignedReqs.flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => phase.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
-    obligations.push({ scope: { kind: 'phase', number: phase.number }, tier, criteria, kinds: [...KIND_INVENTORY[tier]], sensitive_areas: areas });
+    const keys = phase.requirement_ids.filter(obligated);
+    const scope = planned('phase', keys, phase.modules);
+    obligations.push({ scope: { kind: 'phase', number: phase.number }, tier: scope.tier, criteria: uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? [])), kinds: [...scope.kinds], sensitive_areas: scope.categories });
   }
   // 5. Retrofit (D6 §8; K11; B10, B11): the conformance stage is phase 1's
   // one stage of an adopted project, with no tasks, implementing no defect;

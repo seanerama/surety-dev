@@ -12,7 +12,7 @@ import { reviewerApprove } from './classification.js';
 import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, observeTrigger, workItemOfRun } from './work.js';
+import { getWorkItem, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
 
@@ -140,7 +140,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
 
   for (const f of report.findings ?? []) {
     const scope = (f.scope ?? 'candidate') as 'project' | 'lineage' | 'candidate';
-    const raised = raiseFinding(tx, {
+    raiseFinding(tx, {
       project,
       scope,
       candidate: candidate?.id ?? null,
@@ -155,13 +155,6 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // before the result was taken (invoke/choke.ts).
       criterion: f.criterion ?? null,
     });
-    // An Architect's `requirement_conflict` (a requirement it cannot plan;
-    // D6 §5.4): a finding routed to `change_spec` as D3 X2's answer routes
-    // one, never a silent change; the spec_change work it makes waits for
-    // the owner (M401's not-dispatched rule).
-    if (role === 'architect' && f.category === 'requirement_conflict') {
-      observeTrigger(tx, { project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: raised, trigger_generation: 1, subject: { finding: raised }, chain: 0, engineRaised: true }, { finding: raised, run: run.id });
-    }
   }
 
   // The phase sign-off (D6 §5.8; B06): a Verifier's on its phase_verification
@@ -179,7 +172,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     for (const s of (report.signoffs ?? []).filter((x) => x.scope === 'phase')) {
       if (!plan) continue;
       const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined;
-      const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation, phase_plan: plan.id };
+      const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation };
       if (refusal !== null) {
         const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
         tx.emit('signoff.refused', { project, candidate: candidate.id, run: run.id, phase_plan: plan.id }, {

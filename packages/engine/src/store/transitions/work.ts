@@ -5,6 +5,8 @@
 
 import { bindConformanceStage } from '../../adopt/conformance.js';
 import { type Replaces, swapGeneration } from '../../plan/replace.js';
+import { authoringShortfall } from '../../plan/phase.js';
+import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
 import { raiseQuestion } from './queue.js';
@@ -452,10 +454,23 @@ export function registerPlan(
     out.push({ id, number: stage.number, work_item: made.work_item.id });
   }
   let authoring: string | null = null;
+  // An early replacement whose planned obligations the effective protected
+  // version already meets is ready as published: the authorized version
+  // that establishes them is applied (D6 §6.2; B07), so no authoring is
+  // owed; otherwise it registers its own, as any plan (the driver's ruling 8).
+  let inherited = false;
+  if (publication && replaces) {
+    const effective = effectiveVersion(tx.db, args.project);
+    if (effective && authoringShortfall(tx.db, plan, effective.id).length === 0) {
+      tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ?').run(tx.at, effective.id, plan);
+      tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: effective.id, inherited_from: replaces.phase_plan });
+      inherited = true;
+    }
+  }
   if (publication) {
     // The phase's check authoring (D6 §6.2; K7), registered with the plan.
-    authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
-    tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
+    if (!inherited) authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
+    if (authoring !== null) tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
     tx.emit('plan.published', { project: args.project, phase_plan: plan }, {
       ...label,
       phase,

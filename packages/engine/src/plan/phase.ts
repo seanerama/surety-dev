@@ -25,6 +25,7 @@ import { parseJson } from '../store/transitions/common.js';
 import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
 import { coverageMissing } from '../checks/scope.js';
 import type { ScopeObligation } from './check.js';
+import { activeStages } from './replace.js';
 import { registerExecutions } from '../store/transitions/checks.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
 import { integrationRef, registryRow, projectRepoRow } from '../store/transitions/repo.js';
@@ -61,7 +62,7 @@ function openPlan(db: Db, project: string): PlanRow | undefined {
 // made (once every stage is integrated); at T2 and T3 the newest, once every
 // stage is verified. null while the phase is not there yet.
 function phaseCandidate(tx: Tx, plan: PlanRow, tier: string): CandidateRow | null {
-  const stages = tx.db.prepare(`SELECT "status" FROM "stages" WHERE "phase_plan" = ? AND "cancelled_at" IS NULL`).all(plan.id) as { status: string }[];
+  const stages = activeStages<{ status: string }>(tx.db, plan.id);
   if (stages.length === 0) return null;
   if (tier === 'T1') {
     if (!stages.every((s) => s.status === 'integrated' || s.status === 'verified')) return null;
@@ -115,17 +116,28 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   const trigger = { source: 'phase' as const, id: plan.id, generation: plan.generation };
   const phaseOnly = set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage'));
   registerExecutions(tx, { project: args.project, candidate, checks: phaseOnly, trigger });
-  // At T1 the held stages' gates are evaluated on the candidate first (their
-  // verification and stage gates run as for any nomination).
+  // At T1 the candidate's verification ends and the held stages' gates are
+  // evaluated on it before the phase gate (§5.8: "dispatches verification
+  // work, and then evaluates the stage gates of the held stages and the
+  // phase gate"): satisfied or not, so a shortfall is named on the phase
+  // gate too.
+  const active = activeStages<{ id: string; work_item: string | null; conformance: number; conformance_state: string | null }>(tx.db, plan.id);
   if (tier === 'T1') {
-    const open = tx.db
-      .prepare(`SELECT 1 FROM "stages" s JOIN "work_items" w ON w."id" = s."work_item" WHERE s."phase_plan" = ? AND s."cancelled_at" IS NULL AND w."status" <> 'complete'`)
-      .get(plan.id);
-    if (open) return NONE;
+    const verifying = tx.db
+      .prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'verification' AND "trigger_source" = 'nomination' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled')`)
+      .get(args.project, candidate.id);
+    if (verifying) return NONE;
+    const unevaluated = active.some((st) => {
+      if (st.conformance === 1 || !st.work_item) return false;
+      const w = tx.db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(st.work_item) as { status: string } | undefined;
+      if (w?.status === 'complete') return false;
+      return tx.db.prepare(`SELECT 1 FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? AND "stale" = 0`).get(candidate.id, st.id) === undefined;
+    });
+    if (unevaluated) return NONE;
   }
   // A conformance stage completes only through its own lifecycle (K11): the
   // phase waits for it conformed, never for the absence of stage-build work.
-  const unconformed = tx.db.prepare(`SELECT 1 FROM "stages" WHERE "phase_plan" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL AND COALESCE("conformance_state", '') <> 'conformed'`).get(plan.id);
+  const unconformed = active.some((st) => st.conformance === 1 && st.conformance_state !== 'conformed');
   if (unconformed) return NONE;
   registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger });
   // Every one of them recorded on this candidate before the gate is read.
@@ -176,11 +188,11 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
     .prepare(`UPDATE "phase_plans" SET "completed_at" = ?, "completion_binding" = ?, "status" = 'completed' WHERE "id" = ? AND "completed_at" IS NULL`)
     .run(tx.at, JSON.stringify(binding), plan.id).changes;
   if (changed === 0) return NONE;
-  tx.db.prepare(`UPDATE "stages" SET "status" = 'verified' WHERE "phase_plan" = ? AND "cancelled_at" IS NULL`).run(plan.id);
+  for (const st of active) tx.db.prepare(`UPDATE "stages" SET "status" = 'verified' WHERE "id" = ?`).run(st.id);
   // At T1 the held stage work is complete with its stage gates; a stage work
   // still verifying completes with the phase.
-  const items = tx.db.prepare(`SELECT "work_item" FROM "stages" WHERE "phase_plan" = ? AND "work_item" IS NOT NULL`).all(plan.id) as { work_item: string }[];
-  for (const { work_item } of items) {
+  for (const { work_item } of active) {
+    if (!work_item) continue;
     const w = getWorkItem(tx, work_item);
     if (w && w.status === 'verifying') transitionWork(tx, w, 'complete', {}, { phase_plan: plan.id, cause: 'phase_complete' });
   }
@@ -189,7 +201,7 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // An adopted project's requirements delivered by the completed phase
   // are recorded verified (D6 §8.1 steps 6, 7; SEAM.md §386).
   if (isAdopted(tx.db, args.project)) {
-    const delivered = tx.db.prepare(`SELECT "implements" FROM "stages" WHERE "phase_plan" = ? AND "cancelled_at" IS NULL`).all(plan.id) as { implements: string }[];
+    const delivered = activeStages<{ implements: string }>(tx.db, plan.id);
     for (const s of delivered) for (const key of parseJson<string[]>(s.implements) ?? []) {
       tx.db.prepare(`UPDATE "requirements" SET "status" = 'verified' WHERE "project" = ? AND ("key" = ? OR "id" = ?) AND "status" = 'pending'`).run(args.project, key, key);
     }
@@ -243,7 +255,7 @@ export function unplannedRequirements(db: Db, planId: string): string[] {
   const plan = db.prepare('SELECT "project", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(planId) as { project: string; phase_number: number } | undefined;
   if (!plan) return [];
   const implemented = new Set(
-    (db.prepare('SELECT "implements" FROM "stages" WHERE "phase_plan" = ? AND "cancelled_at" IS NULL').all(planId) as { implements: string }[]).flatMap((s) => parseJson<string[]>(s.implements) ?? []),
+    activeStages<{ implements: string }>(db, planId).flatMap((s) => parseJson<string[]>(s.implements) ?? []),
   );
   return (
     db
@@ -251,7 +263,7 @@ export function unplannedRequirements(db: Db, planId: string): string[] {
       .all(plan.project, plan.phase_number) as { id: string; key: string }[]
   )
     .filter((r) => !implemented.has(r.id) && !implemented.has(r.key))
-    .map((r) => r.key);
+    .map((r) => `phase ${plan.phase_number}:${r.key}`);
 }
 
 // AUTHORING_INCOMPLETE on the gate (B07; D6-P04, D6-W04): the plan's
@@ -326,4 +338,21 @@ export function phaseVerificationFacts(db: Db, item: { kind: string; project: st
     evaluation: ev ? { id: ev.id, outcome: ev.outcome, reasons: parseJson(ev.reasons), check_states: parseJson(ev.check_states), computed_at: ev.computed_at, stale: ev.stale === 1 } : null,
     findings,
   };
+}
+
+// The phase's own T1 nomination (D6 §5.8; reading 8; the driver's ruling on
+// M428 (a)): in the nomination's finalizer the phase scope's checks are
+// registered on the candidate beside the held stages', before its
+// verification work. Any other nomination registers none.
+export function registerPhaseAtNomination(tx: Tx, args: { project: string; candidate: string }): void {
+  const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string } | undefined)?.tier;
+  if (tier !== 'T1') return;
+  const plan = openPlan(tx.db, args.project);
+  const candidate = getCandidate(tx.db, args.candidate);
+  if (!plan || !candidate) return;
+  if (parseJson<{ nominated_revision?: string }>(plan.verification)?.nominated_revision !== candidate.revision) return;
+  const effective = effectiveVersion(tx.db, args.project);
+  if (!effective) return;
+  const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
+  registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
 }

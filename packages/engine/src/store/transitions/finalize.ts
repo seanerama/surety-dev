@@ -22,6 +22,7 @@ import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './wor
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
 import { supersededWhileRunning } from '../../plan/replace.js';
+import { registerPhaseAtNomination } from '../../plan/phase.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
@@ -258,6 +259,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
       if (now.status === 'integrated') {
         const verifying = transitionWork(tx, now, 'verifying', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
         transitionWork(tx, verifying, 'complete', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
+        tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(item.id);
         status = 'complete';
       }
     }
@@ -340,11 +342,6 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
       markStale(tx, { candidate: earlier });
     }
   }
-  const verification = observeTrigger(
-    tx,
-    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
-    {},
-  );
   for (const id of held) {
     const item = getWorkItem(tx, id)!;
     transitionWork(tx, item, 'verifying', {}, { candidate });
@@ -353,8 +350,16 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   if (due.nomination_due !== null && (JSON.parse(due.nomination_due) as { revision: string }).revision === inputs.new_oid) {
     tx.db.prepare('UPDATE "projects" SET "nomination_due" = NULL WHERE "id" = ?').run(op.project);
   }
-  // The nomination's checks, registered in its finalizer (D3 §2.5; L2).
+  // The nomination's checks, registered in its finalizer (D3 §2.5; L2);
+  // at T1 the phase's own nomination registers the phase scope's too (D6
+  // §5.8; reading 8): all of them before the verification work.
   registerAtNomination(tx, { project: op.project, candidate });
+  registerPhaseAtNomination(tx, { project: op.project, candidate });
+  const verification = observeTrigger(
+    tx,
+    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
+    {},
+  );
   cancelSuperseded(tx, op.project);
   // The items now verifying are reconciled (D3 §2.10): a failure already
   // recorded at their current candidate is repaired here.

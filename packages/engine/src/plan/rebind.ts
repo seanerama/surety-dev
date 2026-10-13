@@ -15,10 +15,23 @@ export async function rebindBundles(rt: Runtime, project: string): Promise<void>
   const due = await rt.read<RebindDue[]>('plan.rebind_due', { project });
   for (const d of due) {
     let touched: string[] | null = [];
+    let deleted: string[] = [];
     if (d.from !== d.to) {
-      const out = await gitOk(repoContext(d.repo), ['diff', '--name-only', '-z', '--no-renames', d.from, d.to]).catch(() => null);
-      touched = out === null ? null : touchesBundle(out.split('\0').filter((x) => x.length > 0), d.paths);
+      // Each changed path with its status (`D` for a deletion): a deleted
+      // ADR the plan cites is named as such (M425 (e)).
+      const out = await gitOk(repoContext(d.repo), ['diff', '--name-status', '-z', '--no-renames', d.from, d.to]).catch(() => null);
+      if (out === null) touched = null;
+      else {
+        const parts = out.split('\0').filter((x) => x.length > 0);
+        const changed: string[] = [];
+        for (let i = 0; i + 1 < parts.length; i += 2) {
+          changed.push(parts[i + 1]!);
+          if (parts[i] === 'D') deleted.push(parts[i + 1]!);
+        }
+        touched = touchesBundle(changed, d.paths);
+        deleted = touchesBundle(deleted, d.paths);
+      }
     }
-    await rt.engine('plan.rebind', { bundle: d.bundle, from: d.from, to: d.to, touched }).catch((err) => log('bundle rebind', err, { project, bundle: d.bundle }));
+    await rt.engine('plan.rebind', { bundle: d.bundle, from: d.from, to: d.to, touched, deleted }).catch((err) => log('bundle rebind', err, { project, bundle: d.bundle }));
   }
 }

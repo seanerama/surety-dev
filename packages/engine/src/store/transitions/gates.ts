@@ -32,9 +32,9 @@ import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualifica
 type Db = Tx['db'];
 
 export const COMPUTED_GATES = ['stage', 'alpha_authorize', 'alpha_complete'] as const;
-// `phase` is among them: D3 §4.2 defines its scope (checks/scope.ts), and the
-// gate stays `unsupported` until its milestone (SEAM.md §70; slice 20, not built).
-export const UNBUILT_GATES = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
+// `phase` is no longer among them (D6 §5.8; K5): evaluated by the engine's
+// phase step and by the route for a named plan.
+export const UNBUILT_GATES = ['beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
 // `phase` (D6 §5.8; K5; M5 slice 31b): evaluated by the engine's own phase
 // step (plan/phase.ts) on the phase's candidate, never through the gate route.
 export type GateKind = (typeof COMPUTED_GATES)[number] | 'phase';
@@ -425,11 +425,15 @@ export function evaluationTarget(
   args: EvaluateArgs,
 ): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null; phasePlan?: string } {
   // The `phase` gate is the engine's own (plan/phase.ts names the plan).
-  if (args.kind === 'phase' && typeof args.phase_plan === 'string') {
+  if (args.kind === 'phase') {
     const candidate = getCandidate(db, args.candidate);
     if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
-    const plan = db.prepare('SELECT "id", "project" FROM "phase_plans" WHERE "id" = ?').get(args.phase_plan) as { id: string; project: string } | undefined;
-    if (!plan || plan.project !== args.project) throw notFound('phase_plan', args.phase_plan);
+    // The plan the phase gate is evaluated for: named, and the project's.
+    const plan =
+      typeof args.phase_plan === 'string' ? (db.prepare('SELECT "id", "project" FROM "phase_plans" WHERE "id" = ?').get(args.phase_plan) as { id: string; project: string } | undefined) : undefined;
+    if (!plan || plan.project !== args.project) {
+      throw new Refusal(400, 'invalid_value', typeof args.phase_plan === 'string' ? `"phase_plan" ${args.phase_plan} is not a phase plan of project ${args.project}.` : '"phase_plan" is required for the phase gate.', 'Name the phase plan whose gate is evaluated.', { field: 'phase_plan' });
+    }
     return { candidate, kind: 'phase', stage: null, authorization: null, operation: null, phasePlan: plan.id };
   }
   if ((UNBUILT_GATES as readonly string[]).includes(args.kind) || !(COMPUTED_GATES as readonly string[]).includes(args.kind)) {

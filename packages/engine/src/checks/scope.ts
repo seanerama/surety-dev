@@ -76,6 +76,11 @@ export interface ScopeInputs {
   // The scope's modules: at `stage` its stage's; at a deployment gate those
   // present at the revision, null when that fact is unread (D3 §4.1).
   modules: ScopeModule[] | null;
+  // D6 §5.3 clause 4 (B04; D6-P04): an explicit planned-obligation input in
+  // place of the required set, as D3 §4.3 anticipated: what a plan stage's
+  // `validation` declares it will cover. Never a CheckDefinition, never
+  // evidence; given, the counting is against it alone.
+  covering?: CoverageObligation;
 }
 
 export interface Missing {
@@ -94,6 +99,8 @@ export interface Signoff {
 
 export interface ScopeResult {
   tier: Tier;
+  // F §5.7's kinds the scope's tier requires.
+  kinds: readonly string[];
   modules: ScopeModule[];
   obligations: string[];
   categories: string[];
@@ -172,14 +179,14 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   // (slice 20 review, minor 4).
   const uncovered = coverageMissing(
     { criteria, kinds: KIND_INVENTORY[tier], areas: [...categories].sort() },
-    { criteria: counting.flatMap((c) => c.criteria), kinds: counting.map((c) => c.kind), areas: counting.filter(isFloor).flatMap((c) => c.sensitive_areas) },
+    inputs.covering ?? { criteria: counting.flatMap((c) => c.criteria), kinds: counting.map((c) => c.kind), areas: counting.filter(isFloor).flatMap((c) => c.sensitive_areas) },
   );
   missing.criteria.push(...uncovered.criteria);
   missing.kinds.push(...uncovered.kinds.map((k) => `kind:${k}`));
   missing.areas.push(...uncovered.areas.map((a) => `area:${a}`));
   if (inputs.modules === null) missing.unread.push(MODULE_PRESENCE);
 
-  return { tier, modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
+  return { tier, kinds: KIND_INVENTORY[tier], modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
 }
 
 // D3 §4.3's coverage primitive (B04; D6 §5.3 clause 4, D6-P04): what an

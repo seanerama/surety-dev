@@ -646,12 +646,12 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
     const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string; generation: number } | undefined;
     // An early replan (D6 §5.7; B08): it names the generation it replaces,
     // and records the impact as its evidence and what the impact made stale.
-    const stale = {
-      stages: impact.stages.map((st) => st.number),
-      requirements: impact.requirements.map((q) => q.key),
-      criteria: uniq([...impact.affected_criteria, ...impact.removed_criteria, ...impact.added_criteria]),
-      checks: uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)),
-    };
+    const stale = [
+      ...impact.stages.map((st) => `stage ${st.number}`),
+      ...impact.requirements.map((q) => `requirement:${q.key}`),
+      ...uniq([...impact.affected_criteria, ...impact.removed_criteria, ...impact.added_criteria]).map((c) => `criterion:${c}`),
+      ...uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)).map((k) => `check:${k}`),
+    ];
     const evidence = { request: r.id, impact: r.impact ?? null, spec_revision: made.spec_revision };
     observeTrigger(
       tx,

@@ -148,6 +148,17 @@ function recordIntent(tx: Tx, d: DecisionRow, args: { approval: string | null; k
   return { kind: 'effect', intent: id };
 }
 
+// The open requirement_conflict findings an Architect's runs of a replan
+// reported (D6 §5.4).
+function replanConflicts(db: Db, item: { id: string; kind: string }): string[] {
+  if (item.kind !== 'replan') return [];
+  return (
+    db
+      .prepare(`SELECT f."id" FROM "findings" f JOIN "runs" r ON r."id" = f."source_run" WHERE r."work_item" = ? AND f."category" = 'requirement_conflict' AND f."status" <> 'resolved' ORDER BY f."seq"`)
+      .all(item.id) as { id: string }[]
+  ).map((r) => r.id);
+}
+
 // ---- blocker --------------------------------------------------------------------------
 
 const BLOCKER_EVIDENCE: unknown[] = [];
@@ -206,6 +217,11 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
           // D6 §5.7, A.2: a stage's work parked by its repair limits.
           ...((blocker.reason === 'repair_attempts_max' || blocker.reason === 'no_progress_max') && replanOffered(tx.db, item) ? [REPLAN_OPTION(item)] : []),
+          // D6 §5.4: a replan whose Architect reported a requirement it
+          // cannot plan routes the conflict to a specification change (D3 X2).
+          ...(replanConflicts(tx.db, item).length > 0
+            ? [{ key: 'change_spec', label: 'Change the spec', consequence: 'spec_change work is raised for each conflict the Architect reported; nothing of the spec changes until it is approved. This replan is cancelled: the approved change replans.', effect: { work_item: item.id, register: 'spec_change', findings: replanConflicts(tx.db, item) } }]
+            : []),
           { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
         ],
         question:
@@ -365,7 +381,9 @@ const BLOCKER: KindSpec = {
       // chooses the next work.
       if (conflictPreview(item, tx.db) !== null) {
         if (option === 'replan') {
-          answerReplan(tx, item, d.id, 'objection_upheld', { findings: parseJson<{ findings?: string[] }>(item.blocker)?.findings ?? [] });
+          // The trigger names the objection upheld (its finding).
+          const findings = parseJson<{ findings?: string[] }>(item.blocker)?.findings ?? [];
+          answerReplan(tx, item, d.id, 'objection_upheld', { findings }, findings[0] ?? item.id);
           return consumed(d, [{ kind: 'tick' }]);
         }
         return consumed(d, answerConflict(tx, item, option, d.id));
@@ -373,6 +391,15 @@ const BLOCKER: KindSpec = {
       if (option === 'replan') {
         answerReplan(tx, item, d.id, 'blocker_replan', { evidence: workEvidence(tx, item.id) });
         return consumed(d, [{ kind: 'tick' }]);
+      }
+      if (option === 'change_spec') {
+        // As D3 X2's answer: spec_change work per conflict, recorded and
+        // waiting for the owner's request; this replan ends.
+        for (const f of replanConflicts(tx.db, item)) {
+          observeTrigger(tx, { project: item.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: f, trigger_generation: 1, subject: { finding: f }, chain: 0, engineRaised: true }, { finding: f, decision: d.id });
+        }
+        transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'change_spec' });
+        return consumed(d);
       }
       if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
       else transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
@@ -994,7 +1021,7 @@ export function recordDisposition(
       source: 'contract_conflict',
       id: f.id,
       evidence: { finding: f.id, run: args.by, category: f.category, remediation: args.remediation ?? null },
-      stale: { findings: [f.id], checks: f.check ? [f.check] : [], criteria: f.criterion ? [f.criterion] : [] },
+      stale: [`finding:${f.id}`, ...(f.check ? [`check:${f.check}`] : []), ...(f.criterion ? [`criterion:${f.criterion}`] : [])],
       label: { finding: f.id },
     });
     markStale(tx, { project: f.project });

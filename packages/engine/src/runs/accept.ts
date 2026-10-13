@@ -452,24 +452,26 @@ export class Acceptor {
     }
     const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
     const architectureText = parsedArch.parsed.architecture_text;
-    // A replan that changes the approved architecture, module map, ADRs or
-    // roadmap is published with the next architecture version (and the next
-    // roadmap version when its roadmap changes): it is checked against those
-    // versions, as the first close is (B02; M448 (a); the review's M4).
+    // A replan that changes the approved architecture text, module map or an
+    // ADR is published with the next architecture version; one that changes
+    // the roadmap with the next roadmap version; a roadmap-only change
+    // allocates no architecture version (the driver's ruling, slice 35). It
+    // is checked against the versions its publication allocates, as the
+    // first close is (B02; M448 (a); the review's M4).
     const artifacts = { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan };
     const pre = computeChanges(b.baseline, artifacts);
     const r0 = pre.changes_roadmap;
     const roadmapChanging = plan.roadmap_revision !== undefined || r0.phases_added.length + r0.phases_removed.length + r0.goals.length + r0.memberships.length + r0.assignments.length + r0.dependencies.length > 0;
-    const changing = roadmapChanging || pre.changes_architecture.changed || pre.changes_adrs.added.length + pre.changes_adrs.changed.length + pre.changes_adrs.deleted.length > 0;
-    const against = changing
-      ? {
-          ...b.baseline,
-          architecture_version: b.baseline.architecture_version + 1,
-          roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version,
-          // An unchanged roadmap.json names the architecture it was made with.
-          roadmap_architecture_version: roadmapChanging ? b.baseline.architecture_version + 1 : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
-        }
-      : b.baseline;
+    const architectureChanging = pre.changes_architecture.changed || pre.changes_adrs.added.length + pre.changes_adrs.changed.length + pre.changes_adrs.deleted.length > 0;
+    const architectureVersion = architectureChanging ? b.baseline.architecture_version + 1 : b.baseline.architecture_version;
+    const against = {
+      ...b.baseline,
+      architecture_version: architectureVersion,
+      roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version,
+      // An unchanged roadmap.json names the architecture it was made with; a
+      // changed one the architecture it is published with.
+      roadmap_architecture_version: roadmapChanging ? architectureVersion : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
+    };
     const check = checkPlan(replacement ? { ...against, kept: replacement.kept } : against, artifacts);
     const report = facts.result?.report as Record<string, unknown> | undefined;
     const declared = Object.fromEntries(['conformance', 'adrs_changed', 'roadmap_revision', 'notes'].filter((k) => report?.[k] !== undefined).map((k) => [k, report![k]]));
@@ -477,6 +479,11 @@ export class Acceptor {
     // `requirement_conflict` routed to `change_spec` (D6 §5.4), whatever
     // the check decides.
     if (Array.isArray(report?.findings) && (report.findings as unknown[]).length > 0) await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: [] });
+    // A requirement it cannot plan (D6 §5.4): routed to `change_spec` by
+    // the owner through the replan's blocker (D3 X2), never a plan taken
+    // over a conflict and never a silent change.
+    const conflicts = ((report?.findings as { category?: string; criterion?: string; message?: string }[] | undefined) ?? []).filter((f) => f.category === 'requirement_conflict');
+    if (conflicts.length > 0) return { refused: `requirement_conflict: the Architect reports a requirement it cannot plan (${conflicts.map((f) => f.criterion ?? f.message ?? '').join('; ')}); it is the owner's to route to a specification change` };
     // The result's declaration can add uncertainty, never remove a detected
     // change (D6 §5.4).
     if (report?.conformance === 'uncertain') {

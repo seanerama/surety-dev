@@ -173,7 +173,7 @@ export const EVENT_OWNERS = {
   'session.closed': 'sessions/session.ts',
   // D6 §§4, 5.6, 5.8, 6.2, 6.8 (M5 slice 31b): readiness, completion, the
   // replan's publication, the specification change, the policy's request.
-  'phase.authoring_ready': 'store/transitions/protected.ts',
+  'phase.authoring_ready': 'store/transitions/protected.ts, store/transitions/work.ts',
   'phase.completion_bound': 'plan/phase.ts',
   'baseline.phase_complete': 'plan/phase.ts',
   'spec.change_requested': 'spec/change.ts',

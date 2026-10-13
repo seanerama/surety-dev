@@ -104,7 +104,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   // A session's turn has its own package (sessions/package.ts).
   if (!run || run.work_item === null) return null;
-  const item = db.prepare('SELECT "id", "kind", "subject", "project", "trigger_source", "trigger_id", "trigger_generation" FROM "work_items" WHERE "id" = ?').get(run.work_item) as {
+  const item = db.prepare('SELECT "id", "kind", "subject", "project", "trigger_source", "trigger_id", "trigger_generation", "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(run.work_item) as {
     id: string;
     kind: string;
     subject: string;
@@ -112,6 +112,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     trigger_source: string | null;
     trigger_id: string | null;
     trigger_generation: number | null;
+    trigger_evidence: string | null;
   };
   const parse = <T>(text: unknown, fallback: T): T => {
     try {

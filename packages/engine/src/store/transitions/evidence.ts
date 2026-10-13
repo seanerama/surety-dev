@@ -301,7 +301,7 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
           db
             .prepare(
               `SELECT s."modules" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan"
-               WHERE p."project" = ? AND p."phase_number" <= ? AND ((p."status" IN ('published', 'completed') AND s."cancelled_at" IS NULL) OR s."integrated_revision" IS NOT NULL)`,
+               WHERE p."project" = ? AND p."phase_number" <= ? AND p."status" IN ('published', 'completed', 'replaced') AND (s."cancelled_at" IS NULL OR s."integrated_revision" IS NOT NULL)`,
             )
             .all(args.project, plan.phase_number) as { modules: string }[]
         ).flatMap((s) => JSON.parse(s.modules) as string[])
