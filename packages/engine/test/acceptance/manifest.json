@@ -371,6 +371,18 @@
       "M401-a-spec-change-that-no-longer-rebases.test.mjs",
       "M401-a-spec-change-application-is-done-once.test.mjs",
       "M407-the-spec-read-after-a-criterion-changes.test.mjs"
+    ],
+    "33": [
+      "M415-a-session-is-a-run-of-settled-turns.test.mjs",
+      "M416-the-transcript-and-its-speakers.test.mjs",
+      "M416-the-next-turns-package-in-the-domain.test.mjs",
+      "M417-save-validates-under-one-idle-generation.test.mjs",
+      "M418-idle-timeout-budget-exhaustion-and-resume.test.mjs",
+      "M419-one-session-per-project.test.mjs",
+      "M420-session-backends-and-models.test.mjs",
+      "M447-turn-settlement-in-order.test.mjs",
+      "M420-the-continuation-canary.test.mjs",
+      "M447-turn-settlement-in-a-real-domain.test.mjs"
     ]
   },
   "sandbox": [
@@ -464,7 +476,11 @@
     "M342-the-verifiers-deployment-check-package.test.mjs",
     "M314-the-service-link-under-a-long-home.test.mjs",
     "M401-the-journey-from-an-idea-to-phase-two.test.mjs",
-    "M401-the-journey-from-phase-two-to-alpha.test.mjs"
+    "M401-the-journey-from-phase-two-to-alpha.test.mjs",
+    "M415-a-session-is-a-run-of-settled-turns.test.mjs",
+    "M416-the-next-turns-package-in-the-domain.test.mjs",
+    "M420-the-continuation-canary.test.mjs",
+    "M447-turn-settlement-in-a-real-domain.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
@@ -479,6 +495,7 @@
     "M138-containment-canary.test.mjs",
     "M140-real-backend-journey.test.mjs",
     "M239-the-real-check-journey.test.mjs",
-    "M342-the-real-deployment-journey.test.mjs"
+    "M342-the-real-deployment-journey.test.mjs",
+    "M420-the-continuation-canary-on-the-real-backend.test.mjs"
   ]
 }
