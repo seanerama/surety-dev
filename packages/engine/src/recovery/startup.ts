@@ -52,6 +52,13 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   removeStagingLeftovers(rt.home);
   await recoverChecks(rt, ender.priorUnknown).catch((err) => log('recovery', err, { what: 'check executions' }));
 
+  // A qualification attempt left `running` by a prior incarnation cannot be
+  // judged by this one (D2 §7.2): it is invalidated now, at start, not at a
+  // later tick that nothing may request (D6 §2.7; the review's M6). Its
+  // canary session is ended below with the other unended runs.
+  const running = (await rt.read<{ id: string; status: string }[]>('qualification.due')).filter((a) => a.status === 'running');
+  for (const a of running) await rt.engine('qualification.invalidate', { attempt: a.id, reason: 'engine_restarted' }).catch((err) => log('recovery', err, { attempt: a.id }));
+
   // An idle session survives a restart (it owns no process); a qualification
   // canary's session does not: its attempt is invalidated at this start, so
   // its session is ended now and the fixture project is not left busy
