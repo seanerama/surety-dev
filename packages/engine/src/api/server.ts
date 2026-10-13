@@ -603,6 +603,14 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
               // transaction; then the entry's record, so a refused turn
               // leaves none. The scheduler dispatches the turn at the tick
               // this answer asks for.
+              // Budget exhaustion admits no further turn and closes the
+              // session by the idle protocol (D6 §2.4; B01; D1 §13.3).
+              const exhausted = (err: unknown) => {
+                if ((err as { code?: string }).code === 'budget_exhausted') {
+                  void runtime().sessions?.closeByProtocol(project, run, 'budget_exhausted').catch((e) => log('session close', e, { run }));
+                }
+                throw err;
+              };
               const admitted = await runtime().engine<{ run: string; turn: number }>('session.admit_turn', {
                 project,
                 run,
@@ -612,7 +620,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
                 admittedAt,
                 scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null,
                 scope: runtime().boundary() === 'real' ? (runtime().scope?.path ?? null) : null,
-              });
+              }).catch(exhausted);
               const record = await writeWholeRecord(runtime(), { project, run, kind: 'session_transcript', content: Buffer.from(body.text) }).catch((err) => {
                 log('turn record', err, { run });
                 return null;

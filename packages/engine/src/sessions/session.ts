@@ -1092,8 +1092,8 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
 }
 
 // The sessions the idle protocol closes now (D6 §2.4; B01): idle past
-// `session_idle_timeout` (`idle_timeout`), or idle with the cumulative
-// budget spent (`budget_exhausted`). The deadline is read on the engine
+// `session_idle_timeout` (`idle_timeout`, or `budget_exhausted` when the
+// cumulative budget is spent). The deadline is read on the engine
 // clock, which the harness controls (SEAM.md §389).
 export function dueCloses(db: Tx['db'], at: string): { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] {
   const idle = db
@@ -1103,10 +1103,14 @@ export function dueCloses(db: Tx['db'], at: string): { run: string; project: str
     .all() as { id: string; project: string; deadline_at: string }[];
   const out: { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] = [];
   for (const r of idle) {
+    if (r.deadline_at > at) continue;
+    // Past the idle deadline: closed as `idle_timeout`, or as
+    // `budget_exhausted` when the session's budget was spent meanwhile.
+    // (A turn refused on an exhausted budget closes the session at once,
+    // api/server.ts.)
     const spent = sessionSpent(db, r.id);
     const limit = projectPolicy(db, r.project).budget_run_billable_tokens!;
-    if (spent === null || spent >= limit) out.push({ run: r.id, project: r.project, cause: 'budget_exhausted' });
-    else if (r.deadline_at <= at) out.push({ run: r.id, project: r.project, cause: 'idle_timeout' });
+    out.push({ run: r.id, project: r.project, cause: spent === null || spent >= limit ? 'budget_exhausted' : 'idle_timeout' });
   }
   return out;
 }
