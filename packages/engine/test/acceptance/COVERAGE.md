@@ -2714,6 +2714,8 @@ Run times were 7 s to 30 s per file.
 | M4 | M448 (a) | `M448-the-prospective-bundle.test.mjs` | a routed replan revising an ADR, prepared against architecture 2, is published against version 2; naming version 1 is refused `PLAN_STALE_BASELINE` | written |
 | the gap | M424 (f) | `M424-a-pending-plan-approval-and-a-moving-head.test.mjs` (new, slice `34`, 3 cases) | the first session's pending pair, and phase 2's routed bundle: a harmless head move leaves the pending decisions open on the same bundle, which then publishes; a spec change marks phase 2's bundle `stale`; no orphaned `proposed` bundle | written |
 
+**The straddle of ruling M4** (the driver, 2026-10-13; SEAM §405). `M401-a-replan-that-edits-an-adr-routes-to-the-owner` (slice 31, the 31b review's S4): both its replans, the revised ADR and the unparseable ADR, are now prepared against architecture 2, the version their publication allocates. The first still routes to the owner. The former form, an ADR edited while the plan names architecture 1, is **now refused** at the commit's check: `failed` / `invalid_result`, `PLAN_STALE_BASELINE`, no `plan_approval`. M448 (a) M4's "naming v" case pins it. Nothing of S4 is weakened: a replan that edits an ADR is still never registered by `engine:plan_check`.
+
 **What was run for the rulings, 2026-10-13.** A scratch checkout of `build/m5-s34` at `c9e25d4` (slice 34 built) with this branch merged (main at `fa623cc` included), built and each file run alone:
 - **M421 14/17:** M1 reports R1.2 → R4.2 as `spec_keys_renumbered` (`kind: criterion`); N3 and N4 give no finding. The within-requirement renumbering already passes.
 - **M422 13/14:** N1's escaped-pipe row adds a second `## 11. Change log`. The no-§11 case already passes.

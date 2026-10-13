@@ -125,18 +125,29 @@ export interface ApprovedKeys {
   withdrawn: string[];
 }
 
-export function approvedRepresentation(db: Db, project: string): ApprovedKeys {
+// The keys a used-again check reads (TPL §4; the review's N4): the keys the
+// project withdrew whose requirement left the approved text. A key withdrawn
+// by the owner's answer at confirmation (D6 §8.1 step 2) stays in the text,
+// and keeping it there is not a reuse.
+export function vanishedKeys(db: Db, project: string, rep: SpecRepresentation | null | 'unreadable'): string[] {
   const withdrawn = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NOT NULL ORDER BY "key"').all(project) as { key: string }[]).map((r) => r.key);
+  if (rep === null || rep === 'unreadable') return withdrawn;
+  const kept = new Set(rep.requirements.filter((r) => r.withdrawn !== true).map((r) => r.key));
+  return withdrawn.filter((k) => !kept.has(k));
+}
+
+export function approvedRepresentation(db: Db, project: string): ApprovedKeys {
+  const keysOf = (rep: SpecRepresentation | null | 'unreadable'): ApprovedKeys => ({ rep, withdrawn: vanishedKeys(db, project, rep) });
   const v = db.prepare('SELECT "semantics" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { semantics: string | null } | undefined;
-  if (!v) return { rep: null, withdrawn };
+  if (!v) return keysOf(null);
   const row = v.semantics === null ? undefined : (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(v.semantics) as { representation: string | null } | undefined);
-  if (!row?.representation) return { rep: 'unreadable', withdrawn };
+  if (!row?.representation) return keysOf('unreadable');
   try {
     const rep = JSON.parse(row.representation) as SpecRepresentation;
-    if (typeof rep !== 'object' || rep === null || !Array.isArray(rep.requirements)) return { rep: 'unreadable', withdrawn };
-    return { rep: liveRepresentation(rep), withdrawn };
+    if (typeof rep !== 'object' || rep === null || !Array.isArray(rep.requirements)) return keysOf('unreadable');
+    return keysOf(liveRepresentation(rep));
   } catch {
-    return { rep: 'unreadable', withdrawn };
+    return keysOf('unreadable');
   }
 }
 
