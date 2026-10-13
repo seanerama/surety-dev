@@ -383,6 +383,15 @@
       "M447-turn-settlement-in-order.test.mjs",
       "M420-the-continuation-canary.test.mjs",
       "M447-turn-settlement-in-a-real-domain.test.mjs"
+    ],
+    "34": [
+      "M421-the-specification-parsed-at-save.test.mjs",
+      "M422-the-spec-approvals-floor.test.mjs",
+      "M423-the-roles-prohibitions.test.mjs",
+      "M424-the-replan-one-shot-and-its-repairs.test.mjs",
+      "M424-a-replan-under-a-moving-baseline.test.mjs",
+      "M448-the-prospective-bundle.test.mjs",
+      "M449-the-semantic-representation-and-open-questions.test.mjs"
     ]
   },
   "sandbox": [
