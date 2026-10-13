@@ -76,7 +76,10 @@ export function conformanceHeldBy(db: Db, candidate: CandidateRow): string[] {
 
 // The nomination owed: once the phase's authoring is ready, the head is
 // nominated once by the engine's cadence, at every tier (at T1 the phase's
-// own nomination is the same one).
+// own nomination is the same one). A reading of D6 §8.1 step 5, accepted by
+// the coordinator on 2026-10-12: publication binds the source to A; c-1 is
+// nominated here, once authoring is ready, so its checks run under the
+// applied protected version rather than at the instant of publication.
 export function conformanceNominationDue(tx: Tx, args: { project: string }): void {
   for (const s of conformanceStagesOf(tx.db, args.project)) {
     if (s.conformance_state !== 'source_bound') continue;
