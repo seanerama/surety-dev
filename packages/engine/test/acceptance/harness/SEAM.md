@@ -6295,7 +6295,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387
 - **A transcript-shaped marker in an artifact** is artifact bytes and makes no entry.
 - **UPDATE and DELETE** on `session_transcripts` are refused by trigger.
 - **A held secret typed by the owner** is redacted before the record, and so is the raw stream record when the role echoes it on stdout (sandbox).
-- **The size bounds.** A turn over `turn_max_bytes` (64 KiB) is answered **413 `turn_too_large`**. **`transcript_max_bytes`** is a project policy key (D6 A.7), and a turn that would exceed it is refused with a body naming it.
+- **The size bounds.** A turn over `turn_max_bytes` (64 KiB) is answered **413 `turn_too_large`**. **`transcript_max_bytes`** is a project policy key (D6 A.7; in the contract since objection 077, with `turn_max_bytes`, `deadline_vision` and `deadline_spec_writer`), and a turn that would exceed it is refused with a body naming it.
 - **A failed turn** (the role exits 3 with no result) has its failure as the engine's entry and no role entry. A second `result` line appends nothing.
 - **Not written:** (g)'s reconstruction after a restore (M66's choreography). It is recorded in COVERAGE for the driver.
 
@@ -6332,7 +6332,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387
 ## 394. Save, idle, budget and resume as M417 and M418 read them
 
 - **A save at `open_idle`** commits a `checkpoint` revision (`revisions.kind`) whose `sha` is the answer's `revision`. It advances `runs.current_base` and leaves `idle_generation` unchanged: a save takes the generation by compare-and-swap, without advancing it (the row's (a)).
-- **Exhaustion between turns.** The cumulative budget is the run's `budget_run_billable_tokens`. A first turn spending all of it settles; the next turn is not admitted, and the session ends `budget_exhausted`.
+- **Exhaustion between turns.** The cumulative budget is the run's `budget_run_billable_tokens`. A first turn spending all of it settles; the next turn is not admitted, and the session ends with reason class `budget`, whose public code (the run read's `run.code`) is `budget_exhausted`. That code is not a `RunOutcome` (D6 A.2; the driver's ruling).
 - **The idle timeout.** Past `session_idle_timeout`, the session ends `timed_out` with `reason_class` `deadline`. A differing workspace is saved first. A save the role's paths refuse leaves `workspaces.disposition` `retained`, with the refusal as the engine's entry. Leases are released.
 - **`POST …/sessions/:r/resume`** † answers **201** `{run}`: a new `session` run with `parent_run`, the same role, `current_base` at the last checkpoint, and its transcript beginning with the old run's entries. A retained, uncommitted workspace is offered through the checkout integrity route as an `out_of_band_change` with `stash` or `discard`, never `adopt`.
 - **A crash at each `session.turn_settling.<fact>`** (`kill`), then restart and resume: the interrupted turn is settled `unknown` or `failed` on its own row, with at most one role entry. The new run's transcript holds each owner message once.
@@ -6340,7 +6340,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387
 ## 395. One session per project as M419 reads it
 
 - **A one-shot while a session is open** is left `eligible`, with `work_items.held` naming `session_busy` (N01) and no run created. A second session, or a session while a one-shot runs, is refused **409 `session_busy`** until the run ends.
-- **The session's turn domain** is `execution_domains.memory_max` = `role_memory_max` (4 GiB by default; K2).
+- **The session's turn domain** records `execution_domains.memory_max` as the configured `domain_memory_max`, and that is the value the envelope counts. The per-profile maxima (`role_memory_max`, 4 GiB) are slice 37's, by the driver's ruling, and the 4 GiB role figure is carried into its cases.
 - **The race, in both orders** (§389): an opening held at its admission while a tick claims a one-shot, and a claim held at `dispatch.run_created` while the opening is tried. Exactly one is admitted, and a refused opening is `session_busy`.
 - **No project run counter.** `max_concurrent_runs` is not a project policy key.
 

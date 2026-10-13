@@ -4,6 +4,13 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+Objection 077 and the driver's two rulings, 2026-10-13, on `verify/m5-s33` (SEAM §§390, 394, 395):
+- **077 (upheld):** the contract gains D6 A.7's `turn_max_bytes` (engine), and `transcript_max_bytes`, `deadline_vision` and `deadline_spec_writer` (project).
+- **Budget exhaustion:** M415 (f) and M418 (b) read reason class `budget`, with the public code `budget_exhausted`, not a RunOutcome.
+- **M419 (c):** narrowed to the domain's `memory_max` being the configured `domain_memory_max`; the 4 GiB role figure goes to slice 37.
+
+The paragraph that follows is the previous pass's.
+
 Slice 33, sessions on the real boundary, 2026-10-13, on `verify/m5-s33` (from `main` at `5b85ddf`): rows M415 to M420 and M447 in ten files under manifest slice `33`, plus the driver's real file `M420-the-continuation-canary-on-the-real-backend`, with SEAM §§388 to 395. See "M5 slice 33" below for each case and how each file fails alone on `main`. The contract additions make M07, and M73 where it reads the configuration, require the slice-33 engine. The paragraph that follows is the previous pass's.
 
 Objection 076, 2026-10-13, on `verify/m5-s32`: all three parts upheld, SEAM §386. (1) The developer suite's command is `node --test 'test/*.test.mjs'`, and the README and CI file name it too. (2) M408's engine runs at `domain_memory_max` 4 GiB (N1). (3) The project lane's stall bound resets on progress events only, and its message names the blockers; this is shared with M401. On `build/m5-s32` at `355cf3c`, each file alone: `M408-the-retrofit-journey` 8/8 in 310 s and M408 (i) 1/1 in 278 s, nothing left. The paragraph that follows is the previous pass's.
@@ -2660,7 +2667,7 @@ The project-lane files were not run here.
 | M416 | sandbox | `M416-the-next-turns-package-in-the-domain.test.mjs` (2) | (f) the package at /surety/context holds the transcript and the artifact; (d) the raw stream record is redacted | written |
 | M417 | kernel | `M417-save-validates-under-one-idle-generation.test.mjs` (5) | (a)+(e) a checkpoint is saved with the generation unchanged and no baseline change; (b) `diff_violation`; (c) `session_not_idle`; (d) save vs turn and save vs close at `session.admission`; a save while collection is in flight | written |
 | M418 | kernel | `M418-idle-timeout-budget-exhaustion-and-resume.test.mjs` (9) | (a) the idle timeout, saved and refused-save variants; (b) budget exhaustion; (c)+(e) resume; (d) a retained workspace offered `stash` or `discard`; (f) a crash at each of the four settlement facts, then resume | written; (e)'s late callback of the old run's last turn is read as "the old run gains no turn and no entry" |
-| M419 | kernel | `M419-one-session-per-project.test.mjs` (5) | (a)+(b) `session_busy` both ways; (c) `role_memory_max`; (d) a session after a one-shot ends; (e) the race in both orders; (f) no project run counter | written |
+| M419 | kernel | `M419-one-session-per-project.test.mjs` (5) | (a)+(b) `session_busy` both ways; (c) the turn domain's `memory_max` is the configured `domain_memory_max`; (d) a session after a one-shot ends; (e) the race in both orders; (f) no project run counter | written; the 4 GiB `role_memory_max` figure deferred → 37 (the driver's ruling) |
 | M420 (c) | kernel | `M420-session-backends-and-models.test.mjs` (3) | `backend_vision` and `backend_spec_writer`; Q6's `model_<role>` defaults and `model_requested` per turn and run; an entry that is not session_qualified gives `backend_refused` | written (a kernel file beside the sandbox row, approved) |
 | M420 (a)–(c) | sandbox | `M420-the-continuation-canary.test.mjs` (2) | a `session_headless` attempt's continuation canary: two turns, the token answered from the package, `session_qualified`, quiescence; a failing canary | written |
 | M420 (d) | real | `M420-the-continuation-canary-on-the-real-backend.test.mjs` (1) | two real Sonnet turns on the active entry, recording usage and cost; it fails closed on preflight, on the home bound, and when no active entry exists | written; run by the driver only, never here |
