@@ -200,7 +200,7 @@ import { observeHost, paceView } from '../plan/pace.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
-import { previousRepresentation } from '../spec/approval.js';
+import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
 import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
@@ -475,8 +475,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   // gone, M421 (c)); a bundle answer's publication around its barriers
   // (M448 (e)); a decision's effect intents (the answer's settle).
   'spec.previous_representation': (d, a: { project: string }) => previousRepresentation(d, a.project),
-  'spec.withdrawn_keys': (d, a: { project: string }) =>
-    (d.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NOT NULL ORDER BY "key"').all(a.project) as { key: string }[]).map((r) => r.key),
+  'spec.withdrawn_keys': (d, a: { project: string }) => approvedRepresentation(d, a.project).withdrawn,
   'plan.authorized': (d, a: { project: string }) => authorizedBundles(d, a),
   'plan.rebind_due': (d, a: { project: string }) => rebindDue(d, a),
   'decision.intents': (d, a: { decisions: string[]; kind: string }) =>
