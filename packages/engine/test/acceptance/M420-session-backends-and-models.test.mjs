@@ -132,12 +132,13 @@ describe('M420 (c) M1: the model a conversational role launches with', () => {
     assert.deepEqual(standIn.launches(), [], 'nothing launched');
   });
 
-  test('at session open, a model with a leading "-", or one no active entry has: refused 400', async (t) => {
+  test('at session open, a malformed model (a leading "-") is refused 400; a well-formed model no active entry has is refused 409 backend_refused', async (t) => {
+    // The driver's ruling (2026-10-13): the entry set is state that changes, so a valid model no entry has is the dispatch's refusal.
     const { fx, standIn, p } = await claudeSpecWriter(t, 'claude-sonnet-5-5');
-    for (const model of ['--dangerously-skip-permissions', 'claude-haiku-9-9']) {
-      const res = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'spec_writer', model });
-      assert.equal(res.status, 400, `model ${model} refused 400 (→ ${res.status} ${res.text})`);
-    }
+    const malformed = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'spec_writer', model: '--dangerously-skip-permissions' });
+    assert.equal(malformed.status, 400, `a malformed model refused 400 (→ ${malformed.status} ${malformed.text})`);
+    const absent = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'spec_writer', model: 'claude-haiku-9-9' });
+    assert.deepEqual([absent.status, absent.body?.code], [409, 'backend_refused'], `a model no active entry has refused 409 backend_refused (→ ${absent.status} ${absent.text})`);
     assert.deepEqual(standIn.launches(), [], 'nothing launched');
   });
 });
