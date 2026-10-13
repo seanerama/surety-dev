@@ -50,9 +50,11 @@ export function activePlan(db: Db, project: string): { id: string; phase_number:
 // The generation an early replan names: recorded on its subject when the
 // trigger made it (the plan open then and its generation). null for a
 // replan that replaces nothing (§5.6's, or one made while no plan was open).
-export function replacementOf(db: Db, item: { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string }): Replaces | null {
+export function replacementOf(db: Db, item: { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string; trigger_evidence?: string | null }): Replaces | null {
   if (!(EARLY_TRIGGERS as readonly string[]).includes(item.trigger_source)) return null;
-  const s = parseJson<{ phase_plan?: string; generation?: number; evidence?: unknown; stale?: unknown }>(item.subject) ?? {};
+  // The trigger's evidence names the plan and generation; a spec change's
+  // made before it was recorded (slice 31) names the plan on its subject.
+  const s = { ...(parseJson<{ phase_plan?: string }>(item.subject) ?? {}), ...(parseJson<{ phase_plan?: string; generation?: number; evidence?: unknown; stale?: unknown }>(item.trigger_evidence ?? null) ?? {}) } as { phase_plan?: string; generation?: number; evidence?: unknown; stale?: unknown };
   if (typeof s.phase_plan !== 'string') return null;
   // A subject made before the generation was recorded (slice 31's spec
   // change) names the plan's generation of its creation: its first.
@@ -199,8 +201,12 @@ export function supersededWhileRunning(db: Db, stage: string | null | undefined)
 export function requestEarlyReplan(tx: Tx, args: { project: string; source: EarlyTrigger; id: string; evidence: unknown; stale: unknown; label?: Record<string, unknown> }): string {
   const open = activePlan(tx.db, args.project);
   const last = tx.db.prepare('SELECT MAX("trigger_generation") AS g FROM "work_items" WHERE "project" = ? AND "trigger_source" = ? AND "trigger_id" = ?').get(args.project, args.source, args.id) as { g: number | null };
-  const subject = { ...(open ? { phase_plan: open.id, generation: open.generation } : {}), evidence: args.evidence, stale: args.stale };
-  return observeTrigger(tx, { project: args.project, kind: 'replan', trigger_source: args.source, trigger_id: args.id, trigger_generation: (last.g ?? 0) + 1, subject, chain: 0 }, args.label ?? {}).work_item.id;
+  const trigger_evidence = { ...(open ? { phase_plan: open.id, generation: open.generation } : {}), evidence: args.evidence, stale: args.stale };
+  return observeTrigger(
+    tx,
+    { project: args.project, kind: 'replan', trigger_source: args.source, trigger_id: args.id, trigger_generation: (last.g ?? 0) + 1, subject: open ? { phase_plan: open.id } : {}, trigger_evidence, chain: 0 },
+    args.label ?? {},
+  ).work_item.id;
 }
 
 // What a stage's work, parked or waiting on a decision, makes stale when

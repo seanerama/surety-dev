@@ -255,11 +255,11 @@ test('an early replan names the generation recorded on its subject; any other na
   const db = new Database(':memory:');
   db.exec('CREATE TABLE phase_plans (id TEXT PRIMARY KEY, generation INTEGER)');
   db.prepare("INSERT INTO phase_plans VALUES ('p1', 3)").run();
-  const item = (source, subject) => ({ trigger_source: source, trigger_id: 'x', trigger_generation: 1, subject: JSON.stringify(subject) });
+  const item = (source, subject, evidence = null) => ({ trigger_source: source, trigger_id: 'x', trigger_generation: 1, subject: JSON.stringify(subject), trigger_evidence: evidence && JSON.stringify(evidence) });
   assert.equal(replacementOf(db, item('phase_complete', { phase_plan: 'p1' })), null);
-  assert.equal(replacementOf(db, item('spec_change', { phase_plan: 'p1', generation: 2 })).generation, 2);
+  assert.equal(replacementOf(db, item('spec_change', { phase_plan: 'p1' }, { phase_plan: 'p1', generation: 2, evidence: { request: 'r' } })).generation, 2);
   assert.equal(replacementOf(db, item('spec_change', { phase_plan: 'p1' })).generation, 3, 'no generation recorded: the plan\'s');
-  assert.equal(replacementOf(db, item('blocker_replan', { evidence: {} })), null, 'no plan open when it was made');
+  assert.equal(replacementOf(db, item('blocker_replan', {}, { evidence: {} })), null, 'no plan open when it was made');
 });
 
 // ---- carried item (i): an architecture revision with a later phase's plan --------------------
@@ -374,4 +374,18 @@ test('carried (i): an engine commit between the authority and the publication re
   assert.equal(made.published, true);
   assert.equal(getBundle(db, 'rec_bundle').status, 'published');
   assert.equal(db.prepare(`SELECT version FROM architecture_revisions ORDER BY version DESC LIMIT 1`).get().version, 2);
+});
+
+test('an early trigger\'s replan names the active generation on its trigger evidence, its subject D1\'s closed keys only', async (t) => {
+  const { requestEarlyReplan } = await import(join(dist, 'plan', 'replace.js'));
+  const db = store(t);
+  const first = publish(db, [stage(1)]);
+  const id = transact(db, ENGINE_ACTOR, (tx) => requestEarlyReplan(tx, { project: 'prj_1', source: 'blocker_replan', id: 'wi_x', evidence: { decision: 'd' }, stale: { stages: [1] } }));
+  const w = work(db, id);
+  assert.deepEqual(JSON.parse(w.subject), { phase_plan: first.plan.id });
+  assert.deepEqual(JSON.parse(w.trigger_evidence), { phase_plan: first.plan.id, generation: 1, evidence: { decision: 'd' }, stale: { stages: [1] } });
+  assert.deepEqual([w.trigger_source, w.trigger_id, w.trigger_generation], ['blocker_replan', 'wi_x', 1]);
+  const again = transact(db, ENGINE_ACTOR, (tx) => requestEarlyReplan(tx, { project: 'prj_1', source: 'blocker_replan', id: 'wi_x', evidence: null, stale: null }));
+  assert.equal(work(db, again).trigger_generation, 2, 'a repeated trigger takes the next generation');
+  assert.equal(replacementOf(db, w).generation, 1);
 });

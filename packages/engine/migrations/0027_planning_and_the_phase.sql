@@ -68,3 +68,9 @@ ALTER TABLE plan_bundles ADD COLUMN replaces TEXT;
 ALTER TABLE plan_checks ADD COLUMN uncertain TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE plan_checks ADD COLUMN declared TEXT;
 ALTER TABLE plan_checks ADD COLUMN diff TEXT REFERENCES records(id);
+
+-- ---- work_items.trigger_evidence (D6 §5.7: "with the triggering evidence on its trigger") --
+-- An early replan's: {phase_plan, generation} it replaces, the trigger's
+-- evidence, what it made stale, and a rejected proposal's note. Engine-owned;
+-- NULL for every other item. The subject keeps D1 A.3's closed keys.
+ALTER TABLE work_items ADD COLUMN trigger_evidence TEXT;

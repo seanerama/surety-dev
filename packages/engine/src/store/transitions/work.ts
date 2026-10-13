@@ -168,6 +168,9 @@ export interface TriggerInput {
   // §4.1), which the Release Operator (engine code, D4 §8.1) takes on. The
   // API still refuses both kinds, and the scheduler never runs either.
   engineRaised?: boolean;
+  // D6 §5.7: an early replan's triggering evidence (the generation it
+  // replaces, the evidence, what became stale), kept beside the subject.
+  trigger_evidence?: Record<string, unknown>;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization', 'phase_plan', 'request'];
@@ -212,10 +215,24 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   tx.db
     .prepare(
       `INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "depends_on",
-         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile")
-       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile", "trigger_evidence")
+       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)`,
     )
-    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation, input.chain ?? 0, input.profile ?? null);
+    .run(
+      id,
+      tx.at,
+      input.project,
+      seq,
+      input.kind,
+      JSON.stringify(subject),
+      JSON.stringify(dependsOn),
+      input.trigger_source,
+      input.trigger_id,
+      input.trigger_generation,
+      input.chain ?? 0,
+      input.profile ?? null,
+      input.trigger_evidence ? JSON.stringify(input.trigger_evidence) : null,
+    );
   tx.emit('work.created', { project: input.project, work_item: id }, { ...label, to: 'eligible', kind: input.kind, seq });
   return { work_item: { id }, created: true };
 }

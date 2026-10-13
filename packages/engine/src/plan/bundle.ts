@@ -352,12 +352,16 @@ export function approveBundlePart(tx: Tx, args: { bundle: string; kind: 'archite
 function rejectedReplan(tx: Tx, b: BundleRow, decision: string, note: string | null): string | null {
   if (b.run === null) return null;
   const item = tx.db
-    .prepare(`SELECT w."id", w."trigger_source", w."trigger_id", w."subject" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'replan'`)
-    .get(b.run) as { id: string; trigger_source: string; trigger_id: string; subject: string } | undefined;
+    .prepare(`SELECT w."id", w."trigger_source", w."trigger_id", w."subject", w."trigger_evidence" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'replan'`)
+    .get(b.run) as { id: string; trigger_source: string; trigger_id: string; subject: string; trigger_evidence: string | null } | undefined;
   if (!item) return null;
   const { g } = tx.db.prepare('SELECT MAX("trigger_generation") AS g FROM "work_items" WHERE "project" = ? AND "trigger_source" = ? AND "trigger_id" = ?').get(b.project, item.trigger_source, item.trigger_id) as { g: number };
-  const subject = { ...(JSON.parse(item.subject) as Record<string, unknown>), rejected: { bundle: b.id, decision, note, work_item: item.id } };
-  return observeTrigger(tx, { project: b.project, kind: 'replan', trigger_source: item.trigger_source, trigger_id: item.trigger_id, trigger_generation: g + 1, subject, chain: 0 }, { rejected_bundle: b.id, decision }).work_item.id;
+  const trigger_evidence = { ...((item.trigger_evidence ? JSON.parse(item.trigger_evidence) : {}) as Record<string, unknown>), rejected: { bundle: b.id, decision, note, work_item: item.id } };
+  return observeTrigger(
+    tx,
+    { project: b.project, kind: 'replan', trigger_source: item.trigger_source, trigger_id: item.trigger_id, trigger_generation: g + 1, subject: JSON.parse(item.subject) as Record<string, unknown>, trigger_evidence, chain: 0 },
+    { rejected_bundle: b.id, decision },
+  ).work_item.id;
 }
 
 // Whether a proposed bundle's authority is complete: every approval its
@@ -596,8 +600,8 @@ export function replanBaseline(db: Db, args: { project: string; head: string; wo
 
 function replacementFacts(db: Db, workItem: string | undefined): ReplanBaseline['replacement'] {
   if (!workItem) return null;
-  const item = db.prepare('SELECT "trigger_source", "trigger_id", "trigger_generation", "subject" FROM "work_items" WHERE "id" = ?').get(workItem) as
-    | { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string }
+  const item = db.prepare('SELECT "trigger_source", "trigger_id", "trigger_generation", "subject", "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(workItem) as
+    | { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string; trigger_evidence: string | null }
     | undefined;
   const target = item ? replacementOf(db, item) : null;
   if (!target) return null;

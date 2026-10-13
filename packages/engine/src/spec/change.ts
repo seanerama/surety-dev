@@ -655,7 +655,16 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
     const evidence = { request: r.id, impact: r.impact ?? null, spec_revision: made.spec_revision };
     observeTrigger(
       tx,
-      { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, generation: open.generation, request: r.id, evidence, stale } : { request: r.id, evidence, stale }, chain: 0 },
+      {
+        project: op.project,
+        kind: 'replan',
+        trigger_source: 'spec_change',
+        trigger_id: r.id,
+        trigger_generation: 1,
+        subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id },
+        trigger_evidence: { ...(open ? { phase_plan: open.id, generation: open.generation } : {}), evidence, stale },
+        chain: 0,
+      },
       { spec_change_request: r.id },
     );
   }

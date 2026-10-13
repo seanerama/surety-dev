@@ -105,7 +105,7 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
 
 const FINDING_COLUMNS = '"id", "seq", "created_at", "scope", "candidate", "category", "effective_severity" AS "severity", "message", "check", "criterion", "sensitive_area", "status", "disposition", "disposition_at", "defer_target", "linked_issue", "source_role", "remediation"';
 
-export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null }): ReplanFacts {
+export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null }): ReplanFacts {
   const project = item.project;
   const p = db.prepare('SELECT "dev_repo_path", "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(project) as { dev_repo_path: string; spec_evidence_generation: number };
   const spec = db.prepare('SELECT "id", "version", "git_blob", "semantic_digest" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as
@@ -167,7 +167,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
   return {
     repo: p.dev_repo_path,
     trigger: { source: item.trigger_source, id: item.trigger_id, generation: item.trigger_generation },
-    trigger_subject: subjectFacts(item.subject ?? null),
+    trigger_subject: subjectFacts(item.trigger_evidence ?? null),
     generation: {
       spec_revision: spec ?? null,
       architecture_revision: arch ? { id: arch.id, version: arch.version } : null,

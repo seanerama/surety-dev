@@ -105,11 +105,16 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   const effective = effectiveVersion(tx.db, args.project);
   if (!effective) return NONE;
   // The phase scope's checks on this candidate (D6 §5.8): registered once
-  // per candidate, plan and generation. At T1 that is at the phase's own
-  // nomination, beside the held stages' checks and before their
-  // verification (reading 8; B06), not after their stage gates.
+  // per candidate, plan and generation. At T1 the phase-only checks are
+  // registered at the phase's own nomination, beside the held stages'
+  // checks and before their verification (reading 8; B06); the regression
+  // set (the checks listing `stage`) once the held stages' gates are
+  // evaluated, so that no second registration of a stage's own check stands
+  // in front of the result its stage gate reads.
   const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
-  registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
+  const trigger = { source: 'phase' as const, id: plan.id, generation: plan.generation };
+  const phaseOnly = set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage'));
+  registerExecutions(tx, { project: args.project, candidate, checks: phaseOnly, trigger });
   // At T1 the held stages' gates are evaluated on the candidate first (their
   // verification and stage gates run as for any nomination).
   if (tier === 'T1') {
@@ -122,6 +127,7 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // phase waits for it conformed, never for the absence of stage-build work.
   const unconformed = tx.db.prepare(`SELECT 1 FROM "stages" WHERE "phase_plan" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL AND COALESCE("conformance_state", '') <> 'conformed'`).get(plan.id);
   if (unconformed) return NONE;
+  registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger });
   // Every one of them recorded on this candidate before the gate is read.
   const pending = tx.db
     .prepare(
