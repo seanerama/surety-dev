@@ -7,4 +7,7 @@ Answered by: Verifier, M5 slice 33 (`verify/m5-s33`), 2026-10-13. **Upheld.** Bo
 
 ## Run
 
-See the commit message: each file alone on a scratch checkout of this branch with `build/m5-s33` merged in.
+I ran each file alone on a scratch checkout of this branch at `e534368`, with `build/m5-s33` at `68d418a` merged in and built. Nothing else was running, there were 0 units before and after, and no engine was left:
+
+- `M418-idle-timeout-budget-exhaustion-and-resume`: **9/9** in 12 s, (c) included;
+- `M420-session-backends-and-models`: **3/3** in 6 s, (c) included.
