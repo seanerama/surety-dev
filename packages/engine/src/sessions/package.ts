@@ -10,6 +10,17 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { Claim } from '../store/transitions/runs.js';
+import { canaryPromptText } from '../trust/canaries.js';
+
+// The role's artifact as the session's workspace holds it before the turn
+// (D6 §2.2: "the current state of the role's artifact"), read by the main
+// thread (sessions/turn-package.ts).
+export interface ArtifactState {
+  files: { path: string; text: string }[];
+  omitted: { path: string; why: string }[];
+  // Why the state cannot be read at all, or null.
+  unknown: string | null;
+}
 
 export interface SessionContextFacts {
   run: string;
@@ -79,7 +90,14 @@ export const TURN_RESULT_SCHEMA = {
 
 // `texts`: each approved input's text by blob, read from git by the caller;
 // a blob that could not be read is said to be unknown in the package.
-export function writeSessionPackage(dir: string, claim: Claim, facts: SessionContextFacts, texts: Map<string, string | null> = new Map()): void {
+export function writeSessionPackage(
+  dir: string,
+  claim: Claim,
+  facts: SessionContextFacts,
+  texts: Map<string, string | null> = new Map(),
+  artifact: ArtifactState | null = null,
+  canary: Record<string, unknown> | null = null,
+): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: string; source: string | null; sha256: string }[] = [];
   const put = (path: string, kind: string, content: string) => {
@@ -115,8 +133,9 @@ export function writeSessionPackage(dir: string, claim: Claim, facts: SessionCon
       '',
       ...(facts.findings.length > 0 ? ['## What the engine found at the last save', '', ...facts.findings.map((f) => `- ${f.code}${f.path ? ` (${f.path})` : ''}: ${f.message}`), ''] : []),
       ...(facts.approved.length > 0 ? [`The approved inputs you work from are in approved/: ${facts.approved.map((a) => `${a.name} (${a.what})`).join(', ')}. The checkout may hold a newer draft; these are what was approved.`, ''] : []),
-      'The whole conversation so far is in transcript.json. Read instructions.md first.',
+      'The whole conversation so far is in transcript.json, and your artifact as it stands now is under artifact/ (artifact.json lists it). Read instructions.md first.',
       '',
+      ...(canary ? canaryPromptText(canary) : []),
     ].join('\n'),
   );
   put(
@@ -138,6 +157,12 @@ export function writeSessionPackage(dir: string, claim: Claim, facts: SessionCon
     const text = texts.get(a.blob) ?? null;
     put(`approved/${a.name}`, 'approved', text ?? `The ${a.what} (blob ${a.blob}) could not be read; it is unknown to this package.\n`);
   }
+  // The artifact's current state (D6 §2.2; M416 (f)): each file of the
+  // role's paths as the workspace holds it; what was left out, by name.
+  const art = artifact ?? { files: [], omitted: [], unknown: 'not read for this package' };
+  for (const f of art.files) put(`artifact/${f.path}`, 'artifact', f.text);
+  put('artifact.json', 'artifact', `${JSON.stringify({ files: art.files.map((f) => f.path), omitted: art.omitted, ...(art.unknown ? { unknown: art.unknown } : {}) }, null, 2)}\n`);
+  if (canary) put('canary.json', 'instructions', `${JSON.stringify(canary, null, 2)}\n`);
   put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files }, null, 2)}\n`);
 }

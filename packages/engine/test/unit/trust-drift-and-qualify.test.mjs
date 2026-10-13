@@ -49,7 +49,9 @@ test('a qualification request is refused for its form before anything is written
   await assert.rejects(prepareQualify([]), (e) => e.code === 'invalid_value');
   await assert.rejects(prepareQualify({ backend: 'claude', model: 'm', extra: 1 }), (e) => e.code === 'unknown_field' && e.subject.field === 'extra');
   await assert.rejects(prepareQualify({ ...plain, backend: 'scripted-x' }), (e) => e.code === 'invalid_value' && e.subject.field === 'backend');
-  await assert.rejects(prepareQualify({ ...plain, mode: 'session_headless' }), (e) => e.code === 'invalid_value' && e.subject.field === 'mode');
+  // D6 §2.6 (M5 slice 33): session_headless is a mode an attempt runs in (it adds the continuation canary); no other mode is.
+  await assert.rejects(prepareQualify({ ...plain, mode: 'session_resume' }), (e) => e.code === 'invalid_value' && e.subject.field === 'mode');
+  await assert.rejects(prepareQualify({ entry: 'te_1', mode: 'one_shot_headless', model: 'm' }), (e) => e.code === 'invalid_value' && e.subject.field === 'mode');
   await assert.rejects(prepareQualify({ ...plain, model: '--resume' }), (e) => e.subject.field === 'model');
   await assert.rejects(prepareQualify({ ...plain, candidate_egress: ['echo.surety.invalid'] }), (e) => e.code === 'invalid_value' && e.subject.field === 'candidate_egress');
   await assert.rejects(prepareQualify({ ...plain, candidate_egress: 'api.anthropic.com' }), (e) => e.subject.field === 'candidate_egress');

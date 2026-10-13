@@ -5,6 +5,8 @@
 // stand for what a real attempt would have established (M2 plan §2.3).
 
 import { Refusal } from '../../refusal.js';
+import { canaryKindsOf } from '../../trust/canaries.js';
+import { openSession } from '../../sessions/session.js';
 import { notFound } from './common.js';
 import type { CommandResult } from './control.js';
 import { raiseQuestion } from './queue.js';
@@ -22,6 +24,7 @@ import {
   profileWithEgress,
   startAttempt,
   getAttempt,
+  getHostRow,
   writeAttempt,
   writeEntry,
 } from './trust.js';
@@ -56,7 +59,18 @@ export function concludeAttempt(
   label: Record<string, unknown> = {},
 ): { status: 'succeeded' | 'failed'; entry: string | null; decision: string | null } {
   const a = getAttempt(tx.db, args.attempt)!;
-  const passed = args.canaries.length === 3 && args.canaries.every((c) => c.passed);
+  const passed = args.canaries.length === canaryKindsOf(a).length && args.canaries.every((c) => c.passed);
+  // An active entry's session qualification (D6 §2.6): it writes no entry;
+  // its passing continuation canary makes that entry session_qualified.
+  if (a.session_entry) {
+    if (!passed) {
+      finishAttempt(tx, a, { outcome: 'failed', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [] });
+      return { status: 'failed', entry: null, decision: null };
+    }
+    finishAttempt(tx, a, { outcome: 'succeeded', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [], trust_entry: a.session_entry });
+    tx.db.prepare('UPDATE "trust_entries" SET "session_qualified" = 1 WHERE "id" = ? AND "status" = \'active\'').run(a.session_entry);
+    return { status: 'succeeded', entry: a.session_entry, decision: null };
+  }
   if (!passed || !args.entry) {
     finishAttempt(tx, a, { outcome: 'failed', canaries: args.canaries, unexpected_contacts: args.unexpected_contacts ?? [] });
     return { status: 'failed', entry: null, decision: null };
@@ -95,8 +109,32 @@ export function qualify(
     fixture_project: string;
     canary_deadlines: Record<string, number>;
     provider_cap_usd?: number | null;
+    mode_requested?: 'one_shot_headless' | 'session_headless';
+    session_entry?: string | null;
   },
 ): CommandResult {
+  // An entry's session qualification (D6 §2.6): the entry active, not yet
+  // qualified for sessions.
+  if (a.session_entry) {
+    const e = tx.db.prepare('SELECT * FROM "trust_entries" WHERE "id" = ?').get(a.session_entry) as EntryRow | undefined;
+    if (!e) throw notFound('trust entry', a.session_entry);
+    if (e.status !== 'active' || e.session_qualified === 1) {
+      throw new Refusal(409, 'illegal_transition', `Trust entry ${a.session_entry} is ${e.status}${e.session_qualified === 1 ? ' and already qualified for sessions' : ''}: only an active entry not yet qualified for sessions is.`, 'Name an active entry.', { entry: a.session_entry });
+    }
+    // What the entry was qualified with holds now (the review's M2): its
+    // model, binary and help (checked by the route), its profile with its
+    // own egress list, and a host qualification of the same mechanism.
+    const mismatch = (what: string, expected: unknown, found: unknown) =>
+      new Refusal(409, 'backend_refused', `Trust entry ${e.id}'s ${what} is not what it was qualified with: a session qualification runs only on what the entry qualified.`, 'Qualify the entry anew with a new attempt.', { entry: e.id, field: what, expected, found });
+    if (e.model !== a.model) throw mismatch('model', e.model, a.model);
+    if (e.binary_sha256 !== a.binary_sha256 || e.help_sha256 !== a.help_sha256) throw mismatch('binary', e.binary_sha256, a.binary_sha256);
+    const now = currentProfileFingerprint();
+    const profileNow = now === null ? null : profileWithEgress(now, JSON.parse(e.egress_hosts) as string[]);
+    if (profileNow !== e.profile_fingerprint) throw mismatch('profile', e.profile_fingerprint, profileNow);
+    const hqNow = currentHostQualification(tx.db);
+    const then = e.host_qualification === null ? undefined : getHostRow(tx.db, e.host_qualification);
+    if (!hqNow || !then || then.mechanism_fingerprint !== hqNow.mechanism_fingerprint) throw mismatch('host qualification', then?.mechanism_fingerprint ?? null, hqNow?.mechanism_fingerprint ?? null);
+  }
   const project = tx.db.prepare('SELECT "id", "registration_state" FROM "projects" WHERE "id" = ?').get(a.fixture_project) as { id: string; registration_state: string } | undefined;
   if (!project) throw notFound('project', a.fixture_project);
   const hq = currentHostQualification(tx.db);
@@ -112,13 +150,23 @@ export function qualify(
   // The spend (D2 §7.2, Q7; SEAM.md §§148, 161): no M2 mechanism enforces a
   // cap; the figure is an estimate, labelled, under the fixture project's
   // run limit, and null where no price is known (never 0).
-  const estimate = attemptSpendEstimate(a.backend, a.model, projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!);
+  const canaries = a.session_entry ? 2 : a.mode_requested === 'session_headless' ? 5 : 3;
+  const estimate = attemptSpendEstimate(a.backend, a.model, projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!, canaries);
   const spend = {
     cap: null,
     estimate: estimate?.usd ?? null,
     label: 'estimate',
     overshoot: 'deadline',
-    ...(estimate ? { basis: 'three canaries at the fixture project\'s budget_run_billable_tokens, at the model\'s output rate', price_version: estimate.price_version } : {}),
+    ...(estimate
+      ? {
+          basis: a.session_entry
+            ? "the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
+            : a.mode_requested === 'session_headless'
+              ? "three canaries and the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
+              : "three canaries at the fixture project's budget_run_billable_tokens, at the model's output rate",
+          price_version: estimate.price_version,
+        }
+      : {}),
     auth_mode: a.auth_mode ?? 'api_key',
     // A provider-side cap is an API key's only (SEAM.md §160): a subscription
     // has none on its token, its hard limit being its usage limits.
@@ -140,6 +188,8 @@ export function qualify(
     candidate_egress: a.candidate_egress,
     canary_deadlines: a.canary_deadlines,
     spend,
+    mode: a.mode_requested ?? 'one_shot_headless',
+    session_entry: a.session_entry ?? null,
   });
   return { status: 201, body: { qualification_attempt: { id: attempt.id, status: attempt.status }, decision } };
 }
@@ -205,3 +255,37 @@ export function attemptUsage(db: Tx['db'], a: { attempt: string }) {
   return { observations: rows.length, cost: rows.some((r) => /"cost_usd"\s*:/.test(r.raw) || /"total_cost_usd(_estimate)?"\s*:/.test(r.raw)) };
 }
 
+
+// D6 §2.6 (M5 slice 33): the continuation canary's session, opened on the
+// attempt's fixture project under its authority alone (sessions/session.ts).
+export function canarySession(tx: Tx, a: { attempt: string; incarnation: string }): { run: Record<string, unknown> } {
+  const row = getAttempt(tx.db, a.attempt);
+  if (!row || row.fixture_project === null) throw notFound('qualification attempt', a.attempt);
+  return openSession(tx, { project: row.fixture_project, role: 'vision', scripted: null, incarnation: a.incarnation, attempt: row.id });
+}
+
+// What the continuation canary's judgement reads of its session run: each
+// turn's outcome and reply, its domain, when its invocation launched and
+// ended; the provider-files inventories; the models the ledger observed.
+export function continuationFacts(db: Tx['db'], a: { run: string }) {
+  const run = db.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(a.run) as { state: string } | undefined;
+  const turns = (db.prepare('SELECT "number", "invocation", "domain", "outcome", "usage_status", "settled_at", "reply" FROM "turns" WHERE "run" = ? ORDER BY "number"').all(a.run) as {
+    number: number;
+    invocation: string;
+    domain: string;
+    outcome: string | null;
+    usage_status: string | null;
+    settled_at: string | null;
+    reply: string | null;
+  }[]).map((t) => {
+    const at = (status: string[]) =>
+      (db.prepare(`SELECT MIN("at") AS at FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" IN (${status.map(() => '?').join(', ')})`).get(t.invocation, ...status) as { at: string | null }).at;
+    const d = db.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(t.domain) as { status: string } | undefined;
+    return { ...t, domain_status: d?.status ?? null, launched_at: at(['launched']), ended_at: at(['ended', 'unknown']) };
+  });
+  const inventories = db
+    .prepare(`SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at", "id"`)
+    .all(a.run) as { id: string; path: string | null; sha256: string | null; bytes: number | null }[];
+  const models = (db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL').all(a.run) as { model_observed: string }[]).flatMap((r) => r.model_observed.split(','));
+  return { state: run?.state ?? 'unknown', turns, inventories, models_observed: [...new Set(models.map((m) => m.trim()).filter((m) => m !== ''))] };
+}

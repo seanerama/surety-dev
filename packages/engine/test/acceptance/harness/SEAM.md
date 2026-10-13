@@ -6258,6 +6258,100 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387
 | S3 | `M411-a-withdrawn-requirement-stays-withdrawn-across-a-change` | The owner's change request about R2 alone, carried through `spec_change` work and the owner's approval to spec version 2. In full mode, R3 withdrawn by the owner stays `withdrawn`. In scoped mode, R1 has criteria but is unanswered, so it is `descriptive_unverified`, and it stays so. |
 | Q1 | `M409-the-same-repository-under-a-second-name` | Adopting a repository path that an adopted project holds, under another name: **409**, with the refusal's `subject` naming the holding project's id. There is no second project, and the holder's A and branch are unchanged. The code is not pinned (D6 has none): a repository that already carries Surety records is refused for that reason too (§377), so the refusal must name the holder. |
 
+## 388. Slice 33: sessions on the real boundary (the files and what they do not re-test)
+
+(M5 plan §3.3 M415 to M420, M447; BS5 §9.2; D6 §2; the driver's approval of the outline, 2026-10-13. Sections 376 to 387 are slice 32's, on its own branch, so this slice starts at 388.)
+
+**The files.** Ten files under manifest slice `33` (kernel and sandbox), plus one real file:
+- **Kernel:**
+  - `M416-the-transcript-and-its-speakers`;
+  - `M417-save-validates-under-one-idle-generation`;
+  - `M418-idle-timeout-budget-exhaustion-and-resume`;
+  - `M419-one-session-per-project`;
+  - `M420-session-backends-and-models`, a kernel file beside the sandbox row;
+  - `M447-turn-settlement-in-order`.
+- **Sandbox**, also in the `sandbox` list:
+  - `M415-a-session-is-a-run-of-settled-turns`;
+  - `M416-the-next-turns-package-in-the-domain`;
+  - `M420-the-continuation-canary`;
+  - `M447-turn-settlement-in-a-real-domain`.
+- **Real:** `M420-the-continuation-canary-on-the-real-backend`, in the `real` list, run by the driver alone.
+
+**The shared helper** is `harness/session-lane.mjs`: a project at `idea` holding Vision sessions, the barrier names, `untilSettled`, and the raw save, turn and close posts.
+
+**Not re-tested here.** M401 on the project lane (31b) already shows that a turn's result is parsed as its reply, that a second turn launches, and that a turn's writes are materialized at settlement. M415 and M447 read the facts around these: domains, processes, the volatile home, provider files and settlement order.
+
+## 389. The settlement and admission barriers; the clock
+
+- **`session.turn_settling.<fact>`** † for `terminated`, `collected`, `reply_recorded` and `usage_recorded` (D6 §2.1, §2.4; B01). Each fires once, in a turn's settlement, after that fact is established and before the next one is attempted, and takes `pause` or `kill` (§18's rules).
+- **`session.admission`** † fires once, in the admission of a save, a turn, a close or a session's opening, after the idle generation (or, for an opening, the project's admission guard) is read and before its compare-and-swap.
+- **The one-shot side of M419 (e)'s race** is `dispatch.run_created` (§16).
+- **The clock.** The idle timeout is driven by §18's controlled clock (`POST /v1/harness/clock/advance`), which every timestamp, deadline and expiry follows. Nothing new is required beyond `session_idle_timeout` following it.
+
+## 390. The transcript as M416 reads it
+
+- **The owner's entry** is in the record when the turn is admitted (202), before any launch.
+- **A role's reply carrying `speaker` or `turn`** is accepted, and those fields are ignored: the entry is the engine's, `role`, with the turn's number. The 31a reading that refused such a result is replaced by the row's.
+- **A transcript-shaped marker in an artifact** is artifact bytes and makes no entry.
+- **UPDATE and DELETE** on `session_transcripts` are refused by trigger.
+- **A held secret typed by the owner** is redacted before the record, and so is the raw stream record when the role echoes it on stdout (sandbox).
+- **The size bounds.** A turn over `turn_max_bytes` (64 KiB) is answered **413 `turn_too_large`**. **`transcript_max_bytes`** is a project policy key (D6 A.7; in the contract since objection 077, with `turn_max_bytes`, `deadline_vision` and `deadline_spec_writer`), and a turn that would exceed it is refused with a body naming it.
+- **A failed turn** (the role exits 3 with no result) has its failure as the engine's entry and no role entry. A second `result` line appends nothing.
+- **Not written:** (g)'s reconstruction after a restore (M66's choreography). It is recorded in COVERAGE for the driver.
+
+## 391. The conversational roles' backends and every role's model (M420 (c); E139 Q6)
+
+- **`backend_vision` and `backend_spec_writer`** are project keys like the other `backend_*` (default `scripted`; `scripted`, `claude` or `codex`). A session of a role is dispatched to the backend its key names.
+- **An entry that is not `session_qualified`.** A conversational role on `claude` whose active entry is not `session_qualified` is refused `backend_refused`, either at the opening (409) or at its turn, and nothing is launched on the entry (M403's S2 for the Architect).
+- **The trust-entry fixture** (§116) gains the field **`session_qualified`** † (bool, default false), so a kernel case can install an active entry that is, or is not, qualified for sessions.
+- **`model_<role>`** † for the six roles. The defaults are **`opus`** for Vision, Spec Writer and Architect and **`sonnet`** for Builder, Verifier and Reviewer (Claude Code's model aliases). The values are "an active entry's model", and the contract records the unit `model`.
+- **The ledger.** Each session turn's and each one-shot run's `ledger_rows.model_requested` is its role's key, and a project setting changes it.
+
+## 392. The continuation canary on the scripted backend (M420 (a) to (c); D6 §2.6; D2 §7.2)
+
+- **The attempt.** `POST /v1/trust/qualify` with `mode: session_headless` runs, beside §148's three canaries, a fourth of kind **`continuation`** †: one run of kind `session` with two turns on the attempt's fixture project.
+- **`canary.json`** for it is `{kind: "continuation", turn: 1 | 2, edit?: {path, content}, token_pattern?: <regular expression>, result?}` †:
+  - turn 1 is asked to write `edit`, which holds a token;
+  - turn 2 is asked to answer with every match of `token_pattern` it can read in its package, which carries the transcript and the artifact.
+- **The engine's check.** The canary passes only if turn 2's reply carries the token. Quiescence holds: turn 1's domain has terminated before turn 2 launches.
+- **The scripted role program** (`harness/scripted/child.mjs`, `runCanary`) obeys as just described. With mode **`forget`** it answers without looking, which makes a failing canary.
+- **What the entry records.** A passing canary writes the entry with `session_qualified` true. A failing one fails the attempt, and no entry is `session_qualified`.
+
+## 393. The real continuation canary (M420 (d); the driver's, under E144 item 2)
+
+- **The preflight** is §160's with this file's own confirmation, `I accept the M5 slice-33 continuation canary on my Claude subscription, two Sonnet turns, under 0.25 USD as estimated`. Without the run directory, the token file, the pinned binary or the phrase, nothing starts.
+- **The home** is `<run dir>/home`, at most 56 bytes, checked before the engine starts.
+- **An active Claude entry** for the pinned binary must already exist there (an earlier attempt, activated by Sean). Without one the file refuses, and nothing is spent.
+- **The session qualification of that entry** is **`POST /v1/trust/qualify {entry, mode: "session_headless", model: "claude-sonnet-5-5"}`** †: an attempt running the continuation canary alone, which launches nothing before its `qualification_approval` is answered. The test waits for that answer and never gives it.
+- **What it reads:**
+  - exactly two invocation receipts under the attempt, in one session run;
+  - each turn's `model_requested` is Sonnet;
+  - the entry is `session_qualified` exactly when the canary passed.
+- **What it records**, in `observed/M420.json`: each ledger row's usage and `cost_usd`, and their sum, for the driver's report.
+
+## 394. Save, idle, budget and resume as M417 and M418 read them
+
+- **A save at `open_idle`** commits a `checkpoint` revision (`revisions.kind`) whose `sha` is the answer's `revision`. It advances `runs.current_base` and leaves `idle_generation` unchanged: a save takes the generation by compare-and-swap, without advancing it (the row's (a)).
+- **Exhaustion between turns.** The cumulative budget is the run's `budget_run_billable_tokens`. A first turn spending all of it settles; the next turn is not admitted, and the session ends with reason class `budget`, whose public code (the run read's `run.code`) is `budget_exhausted`. That code is not a `RunOutcome` (D6 A.2; the driver's ruling).
+- **The idle timeout.** Past `session_idle_timeout`, the session ends `timed_out` with `reason_class` `deadline`. A differing workspace is saved first. A save the role's paths refuse leaves `workspaces.disposition` `retained`, with the refusal as the engine's entry. Leases are released.
+- **`POST …/sessions/:r/resume`** † answers **201** `{run}`: a new `session` run with `parent_run`, the same role, `current_base` at the last checkpoint, and its transcript beginning with the old run's entries. A retained, uncommitted workspace is offered through the checkout integrity route as an `out_of_band_change` with `stash` or `discard`, never `adopt`.
+- **A crash at each `session.turn_settling.<fact>`** (`kill`), then restart and resume: the interrupted turn is settled `unknown` or `failed` on its own row, with at most one role entry. The new run's transcript holds each owner message once.
+
+## 395. One session per project as M419 reads it
+
+- **A one-shot while a session is open** is left `eligible`, with `work_items.held` naming `session_busy` (N01) and no run created. A second session, or a session while a one-shot runs, is refused **409 `session_busy`** until the run ends.
+- **The session's turn domain** records `execution_domains.memory_max` as the configured `domain_memory_max`, and that is the value the envelope counts. The per-profile maxima (`role_memory_max`, 4 GiB) are slice 37's, by the driver's ruling, and the 4 GiB role figure is carried into its cases.
+- **The race, in both orders** (§389): an opening held at its admission while a tick claims a one-shot, and a claim held at `dispatch.run_created` while the opening is tried. Exactly one is admitted, and a refused opening is `session_busy`.
+- **No project run counter.** `max_concurrent_runs` is not a project policy key.
+
+**The slice-33 review's moderate findings M1 to M6** (2026-10-13; the driver's relay; cases in the existing slice-33 files, kernel and sandbox only):
+- **M1** (M420 kernel; D6 A.7; D2 §4.1). A role whose `model_<role>` names a model no active entry has (`opus`, the only active entry being `claude-sonnet-5-5`) is refused `backend_refused` before any launch. A Claude Code alias (`opus`, `sonnet`, `haiku`) of the entry's family launches with the entry's own model id (`--model claude-opus-5-5`). A single word that is not a family (`claude`) is no alias. At session open, a malformed `model` (a leading `-`) is refused **400**. A well-formed model that no active entry has is refused **409 `backend_refused`** (the driver's ruling, 2026-10-13): this is the dispatch's own refusal, because the policy key accepts such a model and refuses it at launch, and the entry set is state that changes.
+- **M2** (M420 sandbox; D6 §2.6; D2 §7.2). An entry's session qualification naming a model other than the entry's is refused. So is one whose binary's hash differs from the entry's, either at the request or by the attempt never succeeding. The entry never becomes `session_qualified`.
+- **M3** (M420 sandbox). A continuation canary whose first turn's provider inventory is missing does not pass. The screen refuses that inventory because turn 1 left a file holding a registered secret under `/surety/home/notes/` (§152); `/surety/home/.claude` is excluded from the inventory, so the file is not placed there. Its evidence does not claim `carried: false`. A file of the same path and content in both fresh homes is evidence, not carried (the Builder's reading); (d) already pins the first home's inventory being absent from the second.
+- **M4** (M418; D1 §13.3). After earlier turns near the session's budget, a turn whose own usage is under the limit but takes the cumulative total over it is stopped on that usage observation, with reason class `budget` and no reply.
+- **M5** (M418, M415 (f); D1 §13.3). A turn whose settlement spends the budget closes the session at that settlement: reason class `budget`, public code `budget_exhausted`, with no later turn and no idle deadline. M418 (b) and M415 (f) therefore read the spending turn with `say` rather than as settled back to idle. Their later turn is still refused.
+- **M6** (M420 sandbox; D6 §2.7). The engine restarts between the canary's two turns: once turn 1 is settled in the store, it is stopped by its own verified kill and started again, while turn 2 holds at its start. The canary's turns are driven by the attempt, and the `session.turn_settling.*` barriers did not fire for them on `8a033b1`, so they cannot time it. The attempt is invalidated and the canary's session run ended. A next attempt's continuation canary runs and passes on the same fixture project, so it is not held `session_busy`.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a" and "M5 slice 31b".

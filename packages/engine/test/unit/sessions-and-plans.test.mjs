@@ -86,9 +86,10 @@ test('the plan check names an unknown requirement, a stale head and an unvalidat
   assert.ok(stale.reasons.some((x) => x.code === 'PLAN_STALE_BASELINE'));
 });
 
-test("a session turn's reply is B.7's form; a speaker field is refused", () => {
+test("a session turn's reply is B.7's form; a speaker or turn field is ignored (SEAM.md §390)", () => {
   assert.deepEqual(parseSessionReply({ status: 'completed', summary: 's', reply: 'hi', artifact_changed: false, done: true }), { reply: 'hi', artifact_changed: false, done: true });
-  assert.equal(parseSessionReply({ status: 'completed', summary: 's', reply: 'hi', artifact_changed: false, speaker: 'owner' }), null);
+  assert.deepEqual(parseSessionReply({ status: 'completed', summary: 's', reply: 'hi', artifact_changed: false, speaker: 'owner', turn: 9 }), { reply: 'hi', artifact_changed: false });
+  assert.equal(parseSessionReply({ status: 'completed', summary: 's', reply: 'hi', artifact_changed: false, other: 1 }), null);
   assert.equal(parseSessionReply({ status: 'completed', summary: 's' }), null);
 });
 

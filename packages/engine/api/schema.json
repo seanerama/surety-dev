@@ -378,7 +378,8 @@
       "ref",
       "checkout",
       "repository",
-      "environment"
+      "environment",
+      "workspace"
     ],
     "OobDisposition": [
       "discard",
@@ -457,6 +458,10 @@
       "succeeded",
       "failed",
       "invalidated"
+    ],
+    "QualificationAttemptsMode": [
+      "one_shot_headless",
+      "session_headless"
     ],
     "RecordKind": [
       "transcript",
@@ -663,6 +668,14 @@
       "executing",
       "integrating",
       "verifying"
+    ],
+    "HoldReason": [
+      "resource_envelope",
+      "chain_boundary",
+      "depends_on",
+      "authoring_readiness",
+      "open_decision",
+      "session_busy"
     ],
     "WorkspaceDisposition": [
       "active",
@@ -2508,6 +2521,9 @@
         },
         "supervision_lost_at": {
           "required": false
+        },
+        "memory_max": {
+          "required": false
         }
       }
     },
@@ -2879,6 +2895,9 @@
           "references": "qualification_attempts"
         },
         "provider_session_id": {
+          "required": false
+        },
+        "deadline_at": {
           "required": false
         }
       }
@@ -3429,6 +3448,10 @@
         },
         "closed_by": {
           "required": false
+        },
+        "workspace": {
+          "required": false,
+          "references": "workspaces"
         }
       }
     },
@@ -4050,6 +4073,14 @@
         },
         "invalidated_reason": {
           "required": false
+        },
+        "mode": {
+          "required": true,
+          "enum": "QualificationAttemptsMode"
+        },
+        "session_entry": {
+          "required": false,
+          "references": "trust_entries"
         }
       }
     },
@@ -4456,6 +4487,13 @@
         },
         "turn_count": {
           "required": true
+        },
+        "current_base": {
+          "required": false
+        },
+        "qualification_attempt": {
+          "required": false,
+          "references": "qualification_attempts"
         }
       }
     },
@@ -5230,6 +5268,10 @@
         },
         "boundary_passed_at": {
           "required": false
+        },
+        "held": {
+          "required": false,
+          "enum": "HoldReason"
         }
       }
     },
@@ -6952,6 +6994,12 @@
         "min": 100,
         "max": 100000,
         "integer": true
+      },
+      "turn_max_bytes": {
+        "default": 65536,
+        "min": 4096,
+        "max": 1048576,
+        "integer": true
       }
     },
     "project": {
@@ -7013,6 +7061,24 @@
         "default": 1200,
         "min": 60,
         "max": 7200,
+        "integer": true
+      },
+      "transcript_max_bytes": {
+        "default": 8388608,
+        "min": 1048576,
+        "max": 67108864,
+        "integer": true
+      },
+      "deadline_vision": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deadline_spec_writer": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
         "integer": true
       },
       "record_retention_days": {
@@ -7186,6 +7252,56 @@
           "claude",
           "codex"
         ],
+        "widening": "never"
+      },
+      "backend_vision": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_spec_writer": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "model_vision": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_spec_writer": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_architect": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_builder": {
+        "default": "sonnet",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_verifier": {
+        "default": "sonnet",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_reviewer": {
+        "default": "sonnet",
+        "type": "model",
         "widening": "never"
       },
       "autonomy": {

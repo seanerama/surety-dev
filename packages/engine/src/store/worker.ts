@@ -184,6 +184,15 @@ import {
   sessionWorkspace,
   settleTurn,
   turnClaim,
+  turnReply,
+  turnUsage,
+  turnStillOpen,
+  admissionRead,
+  dueCloses,
+  resumeFacts,
+  resumeSession,
+  markSessionHolds,
+  budgetSpent,
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
@@ -193,6 +202,8 @@ import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
   attemptUsage,
+  canarySession,
+  continuationFacts,
   attemptsDue,
   canaryItem,
   canaryRunFacts,
@@ -320,7 +331,6 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // D6 §2 (M5 slice 31; SEAM.md §344): a session opened, a turn admitted
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
-  'session.open': (tx, a) => ({ status: 201, body: openSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
   'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
 };
 
@@ -424,6 +434,17 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'presence.due': (d, a: { project: string }) => presenceDue(d, a),
   'presence.nomination': (d, a: { project: string }) => nominationPresenceDue(d, a),
   // The engine's own qualification fixture project, by its repository.
+  // The engine's fixture projects registered under another path (a home
+  // moved or copied): each with the commit its integration branch is
+  // expected at, for the rebind (trust/fixture.ts).
+  'qualification.moved_fixtures': (d, a: { name: string; repo: string }) =>
+    d
+      .prepare(
+        `SELECT p."id", p."dev_repo_path", r."expected_oid" AS "head" FROM "projects" p
+         JOIN "ref_registry" r ON r."project" = p."id" AND r."kind" = 'integration' AND r."ref" = 'refs/heads/' || p."integration_branch"
+         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p."created_at", p."id"`,
+      )
+      .all(a.name, a.repo),
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
@@ -433,6 +454,16 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.context': (d, a: { run: string }) => sessionContextFacts(d, a.run),
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
   'session.view': (d, a: { project: string; run: string }) => sessionView(d, a.project, a.run),
+  // M5 slice 33: what an admission reads before its barrier; the sessions
+  // the idle protocol closes now; an ended session's workspace at resume.
+  'session.admission_read': (d, a: { project: string; run: string }) => admissionRead(d, a.project, a.run),
+  'session.open_guard': (d, a: { project: string }) =>
+    (d.prepare(`SELECT "id" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ORDER BY "seq" LIMIT 1`).get(a.project) as { id: string } | undefined)?.id ?? null,
+  'session.due_closes': (d, a: { at: string }) => dueCloses(d, a.at),
+  'session.budget_spent': (d, a: { run: string }) => budgetSpent(d, a.run),
+  'session.resume_facts': (d, a: { project: string; run: string }) => resumeFacts(d, a.project, a.run),
+  'session.open_facts': (d, a: { run: string }) =>
+    d.prepare(`SELECT p."dev_repo_path" AS "repo", r."base_revision" AS "base" FROM "runs" r JOIN "projects" p ON p."id" = r."project" WHERE r."id" = ?`).get(a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
@@ -463,6 +494,17 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.paths': (d, a: { project: string; ids: string[] }) => recordPaths(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
+  'qualification.continuation_facts': (d, a: { run: string }) => continuationFacts(d, a),
+  'qualification.orphan_sessions': (d) =>
+    d
+      .prepare(
+        `SELECT r."id" AS "run", a."id" AS "attempt", a."status" FROM "runs" r JOIN "qualification_attempts" a ON a."id" = r."qualification_attempt"
+         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r."created_at"`,
+      )
+      .all(),
+  // D6 §2.6 (SEAM.md §393): the entry a session qualification names.
+  'trust.entry_row': (d, a: { entry: string }) =>
+    (d.prepare('SELECT "id", "status", "backend", "binary_path", "binary_sha256", "help_sha256", "model", "auth_mode", "egress_hosts", "session_qualified" FROM "trust_entries" WHERE "id" = ?').get(a.entry) as Record<string, unknown> | undefined) ?? null,
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
   'boundary.domains': (d) => boundaryDomains(d),
   'boundary.terminated_ids': (d, a: { ids: string[] }) =>
@@ -653,6 +695,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'qualify.artifact': (tx, a) => qualificationArtifact(tx, a),
   'qualify.intend': (tx, a) => intendQualificationOp(tx, a),
   'qualify.close_launch': (tx, a) => closeQualificationLaunch(tx, a),
+  // D6 §2.6 (M5 slice 33): the continuation canary's session.
+  'qualification.canary_session': (tx, a) => canarySession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'qualify.reconciled': (tx, a) => qualificationReconciled(tx, a),
   'qualify.end_op': (tx, a) => endQualificationOp(tx, a),
   'qualify.end': (tx, a) => endQualification(tx, a),
@@ -666,6 +710,17 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
+  // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a
+  // time: its reply or failure, its usage, then the session idle.
+  'session.turn_reply': (tx, a) => turnReply(tx, a),
+  'session.turn_usage': (tx, a) => turnUsage(tx, a),
+  'session.turn_open': (tx, a) => turnStillOpen(tx, a),
+  // D6 §2.1, §2.4 (M5 slice 33; SEAM.md §394): a session's run, grant and
+  // lease (its workspace is made after, through the journal), and a new run
+  // continuing an ended session.
+  'session.open_tx': (tx, a) => openSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
+  'session.resume_tx': (tx, a) => resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
+  'session.mark_holds': (tx) => markSessionHolds(tx),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.

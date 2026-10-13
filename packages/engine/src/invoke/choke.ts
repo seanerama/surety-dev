@@ -56,7 +56,7 @@ import { startBackendSampler } from './sampler.js';
 import { type ContextFacts, writeContextPackage } from './sandbox/context.js';
 import { domainArea } from './sandbox/prepare.js';
 import { recordsDir } from '../records/files.js';
-import { type SessionContextFacts, writeSessionPackage } from '../sessions/package.js';
+import { writeTurnPackage } from '../sessions/turn-package.js';
 import { parseSessionReply } from '../sessions/session.js';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -641,12 +641,7 @@ export class Launcher {
     try {
       mkdirSync(domainArea(this.rt.home, claim.domain), { recursive: true, mode: 0o700 });
       if (claim.session) {
-        const facts = await this.rt.read<SessionContextFacts | null>('session.context', { run: claim.run });
-        if (facts === null) return;
-        const texts = new Map<string, string | null>();
-        const repo = await this.rt.read<{ repo: string } | null>('project.repo', { project: claim.project });
-        for (const a of facts.approved) texts.set(a.blob, repo === null ? null : await gitOk(repoContext(repo.repo), ['cat-file', 'blob', a.blob]));
-        writeSessionPackage(dir, claim, facts, texts);
+        if (!(await writeTurnPackage(this.rt, claim, dir, handle.workspacePath))) return;
       } else {
         const facts = await this.rt.read<ContextFacts | null>('context.facts', { run: claim.run });
         const paths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
@@ -1071,7 +1066,9 @@ export class Launcher {
     // 662cd7f, S3), with no end decided: if it exited 0 by itself, its exit
     // decides the run's end until that end is decided (Q13; S1, S2).
     const report = handle.sandbox?.exitReport ?? null;
-    if (report !== null && report.code === 0 && report.signal === null && report.startFailed !== true) handle.exitedFirst = true;
+    // A session turn's exit decides no run's end (D6 §2.1): a Stop while it
+    // settles ends the session.
+    if (!claim.session && report !== null && report.code === 0 && report.signal === null && report.startFailed !== true) handle.exitedFirst = true;
     handle.collecting = true;
     let terminated = false;
     try {
@@ -1096,6 +1093,17 @@ export class Launcher {
         { afterExit: true },
       );
       return;
+    }
+    // A session turn's first settlement fact (D6 §2.1; SEAM.md §389): its
+    // domain's termination is established; nothing is collected before the
+    // barrier, nor after it for a turn whose run is ending.
+    if (claim.session) {
+      handle.terminatedFired = true;
+      await pausePoint('session.turn_settling.terminated');
+      if (handle.ending || !(await this.rt.engine<boolean>('session.turn_open', { run: claim.run, invocation: claim.invocation }).catch(() => false))) {
+        handle.collecting = false;
+        return;
+      }
     }
     const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain: claim.domain }).catch(() => null);
     const cls = exit?.exit_class ?? 'unknown';
