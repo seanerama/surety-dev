@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387 with slice 32's) (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -6115,6 +6115,148 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12
   - The first re-run read the ruling's "only results of generation 2" literally. It failed on stage gates deciding from `lint`, `smoke`, `accept-r3` and `integration-tally` results of generation 1, none of them listed by CR-1, so this narrower reading is the one D6 states.
   - The generation is cross-checked in the store. D6 A.3 names `check_results.generation`; the engine as built records it on the result's execution (`check_executions.spec_generation`), and the test reads whichever the store has.
 - **(3)** phase 2's `completion_binding.spec_revision` is v2, and the phase sign-off the completion used is bound to v2's spec revision and the completion's protected version. This is where a candidate nominated under v1 legitimately meets the new version (the 31b review's S3).
+## 376. The retrofit journey's fixture (slice 32)
+
+(D6 §8; BS5 §3, "the reference projects of the project lane"; E141 items 3 and 4; M5 plan §3.2 M408 to M414, M452, M453; the driver's confirmation of the slice-32 outline, 2026-10-12.) `harness/retrofit/`:
+
+- **`repo.mjs`**, the adopted repository "Sums": the M4 real run's shape (`server.mjs`, `src/sum.mjs`, dependency-free Node), so that M444's copy of that repository (slice 38) adopts the same kind of thing. It has its own tests (`test/sum.test.mjs` and `test/service.test.mjs`, each importing `test/helpers/expect.mjs`), and a README with four claims. **One claim is false** (E141 item 4): "a request whose `a` or `b` is not a number is refused with 400", where the code answers 200 `{"sum": null}`. It also has a tag `v0.1.0`, a CI file naming `environment: production`, a `Procfile`, `.env.example` and **no Surety records**. A bare `origin` holds the tagged first commit, and the branch is one unpushed commit ahead (E18). The developer's work tree is detached.
+- **`products.mjs`**, what the scripted roles write:
+  - the retrofit specification: TPL with the sixth column `Origin` and §12. R1 to R3 are `observed`; R4 (the false claim) is `intended`, phase 2.
+  - the Architect's products: the module map, one ADR with `reconstructed: true`, a roadmap whose phase 1 is conformance (R1 to R3) and whose phase 2 holds R4, and `phase-1.json` with one `conformance: true` stage with no tasks.
+  - phase 1's authoring: the adopted test copied with its helper under `.surety/checks/adopted/`; R2.1 and R3.1 by the Verifier's own child-process checks; `smoke`; the developer-origin `suite` (`node --test test/` in place); the post-deploy `operation`. Its result carries `adopted_tests` with the dependency boundary (B.7, B13).
+  - phase 2's: `accept-r4`. Phase 2's Builder adds the refusal.
+- **`drive.mjs`**, D6 §8.1 by the owner's routes: `adoptProject` / `adoptByCommand`, `chooseMode`, `retrofitSpecSession`, `confirmAndApprove` (each `requirement_confirm` answered on its own, then `spec_approval`), `retrofitArchitectSession`, `toConformancePublished`, `completeConformance`, `passAlphaBarrier`, and `advance` (the kernel lane's ticks, with a check execution left queued where `exits(x)` is null).
+- **Contract:** `decisions.json` gains `adoption_mode` and `requirement_confirm`; `config.json` gains `adoption_full_max_files` (engine, 2,000, 100 to 100,000) and both kinds' 2-day targets. **M07 and M73 therefore require the engine to accept and export them** (the slice-32 Builder's work).
+
+## 377. Adoption (M409; D6-R01; Sean, 2026-10-12)
+
+- **`POST /v1/projects/adopt`** † (A.8). Its body is the same as `POST /v1/projects`'s, `{name, tier, dev_repo_path, integration_branch, idea?}`, with `idea` the brief's text. It answers **201** `{"project": {"id", ...}}`, as project creation does, and `project.adopted` is emitted.
+  - The bootstrap is journaled as section 23's: a `commit_tree`, then a `ref_update`, on top of A.
+  - **`projects.adoption.pinned_revision`** is A, the branch's local head. It is already recorded when the bootstrap commit is intended (read at `journal.commit_tree.intent_committed`) and is never updated afterwards.
+  - With no idea given, `.surety/idea.md` says the project is adopted (the word `adopted`). Baseline `idea`.
+- **CLI** † `surety project adopt <name> --repo <path> --branch <b> --tier <T> [--idea <file>]`: exit 0, with one JSON line, the route's answer.
+- **`adoption_mode`** about the `project`, options `full` and `scoped`.
+  - Its `evidence` holds `signals` (the same object as `projects.adoption.signals`) and `recommended_mode`.
+  - `signals`: `{files, bytes, commits, languages[], test_files[], ci_files[], deploy_files[]}`. Files, bytes and commits are counted at A as test-side `git ls-tree -r -l` and `rev-list --count` count them; the three lists hold names only.
+  - Recommended `full` at or under `adoption_full_max_files`, otherwise `scoped`.
+- **An unreadable signal** is `{"unknown": <reason>}`, never zero, empty or none. Its fault, armed through the faults route, is **`{"point": "adoption_signal", "signal": <name>}`** †: the next adoption cannot read that signal.
+- **The branch moved:** the barrier **`adoption.observed`** † (`pause`; it fires once, in an adoption, after the branch's head is read and before the compare-and-swap pin and the bootstrap). If the branch moved while held: **409 `adoption_branch_moved`**, no project row, no journaled operation, the branch where the developer left it.
+- **Surety records (Sean, 2026-10-12):** a repository with **`.surety/`** in A's tree, or any **`refs/surety/*`** ref, is refused **409 `adoption_surety_records`** †. `subject` names what was found (the path `.surety/`, each such ref), and nothing is created. Adopting the same repository again under the same name is refused the same way, because the bootstrap left `.surety/` (M409 (f)). The policy route refuses `adoption` and `pinned_revision` as unknown keys. For the slice-38 real run, the copy of the M4 repository first gets one recorded commit removing `.surety/` and `refs/surety/*`, after its recorded head is checked; the run adopts that commit.
+
+## 378. The adopted repository's environments and releases (M409 (d), (e); D6 §8.1 step 1, §8.3)
+
+- **Each environment a CI file names** (`environment: <name>` under `.github/workflows/`) † is an `environments` row of that name. Its `current_config` is null, and `GET …/environments` shows it with **`state` `"unknown"`** †.
+  - It is never read and never deployed to: the scripted adapter's call record for it is empty (`calls: []`, or the route has no record of it); there is no `observation_jobs` or `environment_logs` row for it, and no `deploy_journal_state` row for the project.
+  - After ticks it is still `unknown`.
+- **`releases`** † (a table): one row per tag, `{project, name: <tag>, state: "external_unverified", artifact: null, candidate: null}`. It makes no candidate.
+
+## 379. `requirement_confirm` (M411; D6-R03; K10; D1 §10.3)
+
+- **The rows.** Closing a retrofit Spec Writer session raises `spec_approval`, and in the same batch (`batch_key` equal) one **`requirement_confirm`** per requirement the session produced.
+  - Each row is about a `requirement`, offers `confirm`, `defect` and `withdraw`, and binds **`dependency_manifest`** `{key, text: <the statement>, criteria: [{id, text}], blob}` †. The tests find a row by `dependency_manifest.key`.
+  - Each row is consumed by its own approval.
+  - `requirement.confirmed` is emitted for a confirmation.
+- **Binding to the idea, the Verifier's reading** †. A requirement whose statement is a list item under "## First version" of the idea given at adoption is bound to that approved text: it gets no row, and it is `pending` after approval.
+- **What each answer does.** `confirm`: `pending`, `reverse_engineered` 1. `defect`: `pending`, `defect` 1, its phase later than 1. `withdraw`: `withdrawn`, with `withdrawn_at`. A role's reply carrying `requirement_confirmations` answers nothing.
+- **A save between preview and answer.** A save in a later session that changes a requirement's text makes that row's earlier preview refused: 409 `decision_stale` or `decision_invalidated`. Its next generation binds the new text.
+- **The reads.** `GET …/spec` `requirements[]` gains `origin`, `defect` and `reverse_engineered` †. `GET …/plan` gains **`requirements`** `[{key, status, reverse_engineered, defect, assigned_phase}]` †. The project read shows `adoption.pinned_revision`.
+
+## 380. `Origin` and the claims table (M410; D6-R02; K10)
+
+- A five-column index means `intended` on every row; six columns give `origin` per row. Outside retrofit, nothing is `reverse_engineered` whatever the column says.
+- A sixth value other than `intended` and `observed` is the save's finding **`spec_index_invalid`** naming the row, and `approve` carries a blocker.
+- §12 is parsed into **`spec_claims`** `{spec_revision, claim_source, claim, observed, requirement: <requirements.id>}`, one row per table row, in order, recorded at approval. A claim naming a requirement the specification lacks is the save's finding **`spec_claims_invalid`** †, naming that key, and `approve` carries a blocker.
+- In retrofit mode, every produced requirement is in the confirmation decision whatever the column says.
+- M233's parser cases are unchanged and stay as they pass.
+
+## 381. Retrofit paths and classification (M412; D6-R04; §8.2)
+
+- **The packages.** The retrofit Spec Writer's package says `retrofit`, asks for `Origin` and "Claims and reality", and names the repository's code as its input. The Architect's says `retrofit`, `reconstructed` and `conformance`.
+- **ADRs.** An ADR's front matter `reconstructed: true` is accepted, and the registered text keeps it.
+- **Saves outside the role's paths.** A retrofit session's save touching `src/`, `test/` or `.surety/checks/` is **422 `diff_violation`** naming the path (§344). The branch does not move, and the session stays `open_idle` with its workspace.
+- **The module map.** Both modes record every module with its classification. An Architect module map that drops a module's `sensitive_areas` is refused at close, **422 `plan_refused`**, naming the module.
+
+## 382. The conformance stage (M413; D6-R05, R06; K11; B11, B12; E142 item 3)
+
+- **The stage at publication.**
+  - The plan's `conformance: true` stage is `stages.conformance` 1, with `source_revision` A, a **`conformance_state`** (A.5), a **`conformance_source_digest`**, and `status` `integrated` at publication.
+  - The events are `conformance.source_bound` and `stage.conformance_integrated`.
+- **c-1.** It is the project's first candidate, `nominated_by` `engine_cadence`. Its tree outside `.surety/` (modes and blobs, by `git ls-tree -r`) is A's, and its revision is not A.
+- **Completion.** There is no `stage_build`. While its checks have no result the stage is not `conformed`, and no stage gate is satisfied. Once they pass, it is `conformed`, and any `conformance` work item is `complete`.
+- **`PLAN_CONFORMANCE_MISPLACED`.** It is in the close's `subject` (422) for a conformance stage in a project that is not adopted, and for a second conformance stage.
+- **The defect.** A conformance stage implementing the `defect` R4 is refused at close with a reason naming it. The stage of record implements R1 to R3. `stages.implements` holds requirement ids (§70; objections 066, 075), read back as keys (`keysOf`), in M413 (e) and M408 (c).
+- **`CONFORMANCE_SOURCE_MOVED`** † is a stage-gate reason, read from the last stage evaluation. Each of the following causes it:
+  - an application file changed, or a file's mode changed, by an out-of-band commit the owner adopts (the `out_of_band_change` decision, `adopt`);
+  - the stage's `source_revision` rewritten by a store write. That is **fixture tampering, labelled so**; it is found at the next tick.
+- **A failing required check.** The kernel's exit for `accept-r2` is 1. The Verifier's finding names `accept-r2` and R2.1.
+  - A Reviewer's `fix` disposition carries **`remediation`** †, recorded on `findings.remediation` †. The finding is not resolved, no `fix` work is created, the latest result still fails, and the gate is unsatisfied.
+  - `accept` and `defer` change none of that.
+  - A roadmap revision moving R2 to phase 2 is made by a later Architect session, with phase 1's plan open. That session is architecture-only and raises `architecture_approval` alone (D6 §3.4, §5.2; M404 (e); objection 075), which the owner approves. Roadmap revision 2 is recorded, and it changes neither the stage's `implements`, nor the gate, nor Alpha: no authorization is issued.
+  - The way out is a `check_correction` run whose work item the harness adds (**labelled test setup**) and whose proposal the owner approves. After it, the earlier failed result is invalidated and a fresh one passes, and the gate is satisfied.
+- **A High finding in a sensitive area** (the row names it; the driver's ruling of 2026-10-12). This uses the fixture's sensitive-area variant: `service` is classified `secrets_credentials` (TPL §6 and `modules.json`), the conformance stage validates the area with the kind `sensitivity_floor`, and the floor's check `floor` covers it. The Verifier's High finding on c-1 carries `sensitive_area`; the run's work item is added by the harness, labelled test setup, as in (f). The owner's deployment request for c-1 issues no authorization. The last `alpha_authorize` evaluation for c-1 is not satisfied, and its `FINDING_BLOCKING` names the finding (§70).
+- **Not written, by the driver's ruling of 2026-10-12:**
+  - **the spec-change way out:** it converges on a correction, already covered;
+  - **a conformance stage in phase 2:** it arises through the replan path, so it is carried into slice 35's cases.
+- **The kernel lane's limit.** Check verdicts there are the scripted boundary's. The adopted copy's real verdict, run against the unchanged code, is shown on the project lane by M408 (the journey's (e), and (i)'s failing `accept-r4`). M413 (f)'s correction way out uses a harness-added `check_correction` work item.
+
+## 383. The evidence rules and the dependency boundary (M414; D6-R07, R08; B13)
+
+- **The checks.** They are exactly the Verifier's definitions; none takes the repository's tests, CI file or a prior log as input. A prior CI log (`ci/last-run.log`) yields no result, and every result has an engine execution.
+- **`suite`** is `origin` `developer` and covers nothing.
+- **The authoring proposal** has **`protected_proposals.adopted_tests`** † (JSON, as the Verifier declared it). Its `application` entry `src/sum.mjs` is recorded.
+- **An undeclared import.** A copy that imports `../../../test/helpers/expect.mjs` without declaring it is refused by the proposal check: nothing is applied, and the run's `reason_text` or the proposal names the import.
+- **The Builder's changes.** Phase 2's Builder changes the original test (its expectation), the original helper, and the server. The adopted check's row is unchanged, and every proposal is a Verifier run's. **This is a structural reading:** on the kernel lane verdicts are scripted. The adopted copy's real verdict, that it still detects what it detected whatever the originals become, is shown only on the project lane, by M408.
+- **Scoped mode.** R1 is descriptive and in phase 2. Phase 1 conforms R2 and R3 (`service`), with authoring that has no adopted test.
+  - Phase 2 of the roadmap names both `lib` and `service`, so the stage's modules are inside its phase (objection 075). The first two phase-2 replans touch `lib`: the first with no request, the second with `spec_change_requests` for R1. Each is a `plan_checks` row carrying **`PLAN_DESCRIPTIVE_MODULE_TOUCHED`**. The replans after the owner's approval are prepared against spec version 2 (D6 §5.3 clause 2).
+  - **The engine's reading, recorded and not pinned** (the slice-32 Builder; the driver's question). The engine refuses a stage that *implements* a `descriptive_unverified` requirement; D6 §8.1 step 2, §8.3 and the row say a stage that *touches its module*. The case's stage does both, so it does not tell the two readings apart. A case that did would need a requirement-to-module association, which D6 does not define: TPL's index has no module column, and the roadmap's phases list modules and requirements separately. That is a design question for Sean, not a test written here.
+  - The request is an ordinary `spec_change_requests` row. The harness answers its `spec_change` as the owner.
+  - R1 is then `pending`, and the next replan publishes phase 2.
+
+## 384. Retrofit mode rules at approval (M452; D6-R09; B10)
+
+- **Answering `approve` while blocked** is refused **409**, and the body names each blocking key. Answering the open `spec_approval` (its latest generation) after the rows are answered is accepted.
+- **`full` mode** blocks for an unanswered produced requirement, and for a confirmed one with no criteria (`**Descriptive.**`). A `defect` does not block.
+- **`scoped` mode** accepts with descriptive requirements unanswered. They are **`descriptive_unverified`** in the store and in `GET …/spec`.
+- **One specification in both modes:** blocked in `full`, accepted in `scoped`.
+
+## 385. The conformance Alpha barrier (M453; D6-R10; B11)
+
+- **Completion.** Phase 1 complete under `manual`: `completed_at` and `baseline.phase_complete`. No `replan` before the owner's deploy, nor after a restart. `GET …/plan` carries **`CONFORMANCE_ALPHA_PENDING`** † (anywhere in its body).
+- **The barrier opens** with the owner's deploy of c-1 (`POST …/deployments`) completing `alpha_complete`: c-1 `alpha_deployed`, then one `replan`, and no second.
+- **It stays closed**, with the reason still shown, for a deploy answered `refused`, a deploy answered `uncertain`, and one whose `verify` reads fail (`unavailable`).
+- **(e)** has no acceptance case (the driver's ruling, 2026-10-12: not faked). Before the barrier opens, no production path makes a candidate whose source is not A: phase 1 changes no source, a `fix` creates no work, and an application change refuses conformance (`CONFORMANCE_SOURCE_MOVED`). The guard that only a candidate whose source is A opens the barrier is held to the slice-32 Builder's unit tests.
+- **(f)**, the project that is not adopted, relies on slice 31b's phase completion. It fails on `main` while 31b is unmerged and passes on `build/m5-s31`.
+
+## 386. The retrofit journey on the project lane (M408; D6-J03)
+
+- **The files.** `M408-the-retrofit-journey` holds (a) to (h). `M408-a-confirmed-requirement-that-fails-blocks-conformance` holds (i), split off (the driver's ruling, §357's way). Both are in manifest slice `32` and the `sandbox` list.
+- **The engine.** `journeyEngine` (§356): the real adapter, the runner self-test at every start, `authoritative`. The retrofit scripts are put in place over the journey's, at T1 with `alpha_deploy: manual`.
+- **The owner's acts.**
+  - (a) `surety project adopt`;
+  - (b) an early `approve` refused 409, then the four confirmations, R4 `defect`;
+  - (c) the architecture and the conformance plan;
+  - (d) the toolchain proposal;
+  - (f) `surety qualify-adapter` and `alpha` configured (`alphaByCommand`), then `surety deploy c-1 --env alpha`.
+- **The reads.** (e) reads c-1's projection as §382 does, and every result from the self-tested runner. (h) reads the engine's teardown at the end of the `before` hook: no unit, cgroup or runtime file of the prefix.
+- **Case (i).** R4 is answered `confirm`, the roadmap is phase 1 alone with R1 to R4, and the authoring includes `accept-r4`. It runs for real against A and fails. The scripted Verifier reports the finding. Read: no `fix` work and no Builder; the stage gate unsatisfied, naming `accept-r4` or R4.1; c-1 `developing` with no authorization; `conformance_state` **`blocked`**, and `blocked` shown on `GET …/plan` or `…/spec`. No environment is configured, so there is no unit.
+- **Timing** (the driver's ruling, 2026-10-13). The runner's default of 600 s per file stands. On `mini-hp01`, where the gates run, M401 part 1 took 76 s and part 2 took 140 s; part 2 took 612 to 638 s on the workstation. Case (i) is already its own file. If M408's journey goes over 600 s on `mini-hp01`, it is split further, §357's way.
+
+**Objection 076** (2026-10-13; the driver's ruling, all three parts upheld; the Builder's kept-home runs of M408):
+- **The developer suite's command** is `["node", "--test", "test/*.test.mjs"]`. Since Node 21, `--test` takes file patterns, so a bare `test/` is loaded as a module and fails ("Cannot find module …/test"), and that blocked conformance on `suite`. The fixture's README and CI file name the same command, so the README's one false claim stays the only false one (E141 item 4).
+- **`domain_memory_max` 4 GiB for M408's engine** (`journeyEngine`'s `config`, set before its second start). The envelope as built counts every domain at `domain_memory_max`. With Alpha's service running, the change phase's role domain (the replan, then phase 2's Builder) fits a 15 GiB host only at 4 GiB, Sean's N1 value (E140), which slice 37 makes the default. M408 (i) configures no environment, and M401 deploys Alpha last, so neither is affected, and neither sets the key.
+- **The project lane's stall bound resets on progress only** (the pump, shared with M401). Progress is an event of the work, a run or invocation, a check, a gate, a decision or intent, a stage, a phase, a candidate, a plan, the baseline, the specification, a session, a deployment, conformance, an artifact or a requirement (`PROGRESS_EVENT`, by type prefix). Ticks, observations and API acts do not reset it. A blocked journey therefore fails within 180 s, and its message names what holds it: the unfinished work with its status and blocker, and the open decisions.
+
+## 387. Sean's module-map rule and the slice-32 review's findings (S1 to S3, Q1)
+
+(Sean, 2026-10-13; the driver's relay of the slice-32 review of `build/m5-s32` at `efdc5b3`.) One kernel-lane file per finding, under manifest slice `32`, in the row it belongs to:
+
+| Finding | File | What it requires |
+|---|---|---|
+| Sean's rule | `M414-scoped-touching-is-decided-by-the-module-map` | **Scoped-mode "touching" is decided by the module map.** Each `modules.json` module entry lists the requirements it holds: **`requirements: [keys]`** † (B.3). The retrofit fixture's map now gives `lib` `["R1"]` and `service` `["R2", "R3", "R4"]`. In scoped mode, a stage touching a module that holds a descriptive, criteria-less requirement is refused `PLAN_DESCRIPTIVE_MODULE_TOUCHED`, whatever it implements: (a) a stage touching `lib` while implementing only R2 and R3 is refused, naming `lib`, while the same stage touching `service` alone is published. A map leaving the descriptive R1 unmapped (b), or naming an unknown R9 (c), gives the save a finding naming the key, and the close is refused (422). The finding codes are not pinned. |
+| S1 | `M403-a-settled-turn-leaves-no-failure-entry` | A turn whose role replied with no `requirement_confirmations` leaves the role's entry and no engine entry saying the turn failed. A reply with confirmations gets the engine's note and no failure entry either. |
+| S2 | `M413-a-fix-after-conformance-creates-no-work` | Once the conformance stage is `conformed` (the sensitive-area variant, §382), with the phase's own registrations held unrecorded, so there is no phase gate and no Alpha: the Verifier's High finding in the area on c-1, then a Reviewer's `fix` with `remediation`. The finding stays unresolved with its remediation, there is no `fix` work and no `stage_build`, and the application source is still A. |
+| S3 | `M411-a-withdrawn-requirement-stays-withdrawn-across-a-change` | The owner's change request about R2 alone, carried through `spec_change` work and the owner's approval to spec version 2. In full mode, R3 withdrawn by the owner stays `withdrawn`. In scoped mode, R1 has criteria but is unanswered, so it is `descriptive_unverified`, and it stays so. |
+| Q1 | `M409-the-same-repository-under-a-second-name` | Adopting a repository path that an adopted project holds, under another name: **409**, with the refusal's `subject` naming the holding project's id. There is no second project, and the holder's A and branch are unchanged. The code is not pinned (D6 has none): a repository that already carries Surety records is refused for that reason too (§377), so the refusal must name the holder. |
 
 ## What was run
 
