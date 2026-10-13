@@ -459,6 +459,10 @@
       "failed",
       "invalidated"
     ],
+    "QualificationAttemptsMode": [
+      "one_shot_headless",
+      "session_headless"
+    ],
     "RecordKind": [
       "transcript",
       "tool_output",
@@ -2892,6 +2896,9 @@
         },
         "provider_session_id": {
           "required": false
+        },
+        "deadline_at": {
+          "required": false
         }
       }
     },
@@ -4066,6 +4073,14 @@
         },
         "invalidated_reason": {
           "required": false
+        },
+        "mode": {
+          "required": true,
+          "enum": "QualificationAttemptsMode"
+        },
+        "session_entry": {
+          "required": false,
+          "references": "trust_entries"
         }
       }
     },
@@ -4475,6 +4490,10 @@
         },
         "current_base": {
           "required": false
+        },
+        "qualification_attempt": {
+          "required": false,
+          "references": "qualification_attempts"
         }
       }
     },

@@ -397,10 +397,10 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
     .run(turnId, tx.at, run.project, run.id, turn, invocation, domain, tx.at);
   tx.db
     .prepare(
-      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id", "deadline_at")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(invocation, tx.at, run.project, run.id, turnId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), resolved.kind === 'entry' ? resolved.entry.id : null, canaryOf, session);
+    .run(invocation, tx.at, run.project, run.id, turnId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), resolved.kind === 'entry' ? resolved.entry.id : null, canaryOf, session, addSeconds(tx.at, projectPolicy(tx.db, run.project)[`deadline_${run.role}`]!));
   tx.emit('invocation.receipt', { project: run.project, run: run.id, invocation }, { provider: run.backend, turn, ...(session ? { provider_session_id: session } : {}) });
   const cgroupPath = args.scope ? `${args.scope}/${domain}` : null;
   tx.db

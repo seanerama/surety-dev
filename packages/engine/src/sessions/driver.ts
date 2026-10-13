@@ -12,7 +12,9 @@ import { nowIso } from '../clock.js';
 import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, listTree, treeOf } from '../git/repo.js';
-import { type MetadataBaseline, snapshotTree, validateDiff } from '../git/snapshot.js';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { type MetadataBaseline, captureMetadata, indexHashOfTree, snapshotTree, validateDiff } from '../git/snapshot.js';
 import type { Launcher } from '../invoke/choke.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal } from '../journal/driver.js';
@@ -46,6 +48,81 @@ export class SessionDriver {
     private readonly launcher: Launcher,
     private readonly ender: RunEnder,
   ) {}
+
+  // ---- open and resume (D6 §2.1, §2.4, §2.7; D1 §15.2, §15.3) -------------------------
+
+  // A session is a run with a grant, a workspace and a lease, and no process
+  // (D6-S01): the run, its grant and its lease in one transaction (after
+  // the opening's admission read and barrier, SEAM.md §389), then its
+  // workspace, a worktree of the project at the run's base made through the
+  // journal as any run's is (D1 §7.3). A workspace that cannot be made ends
+  // the run; the opening is refused.
+  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null }): Promise<{ status: number; body: unknown }> {
+    await this.rt.read('session.open_guard', { project });
+    await pausePoint('session.admission');
+    const made = await this.rt.engine<{ run: Record<string, unknown> }>('session.open_tx', { project, ...args });
+    return this.withWorkspace(project, made.run.id as string);
+  }
+
+  async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
+    await this.rt.read('session.open_guard', { project });
+    await pausePoint('session.admission');
+    const made = await this.rt.engine<{ run: Record<string, unknown>; offered: string | null }>('session.resume_tx', { project, run, ...args });
+    const answer = await this.withWorkspace(project, made.run.id as string);
+    return { status: answer.status, body: { ...(answer.body as object), offered: made.offered } };
+  }
+
+  private async withWorkspace(project: string, run: string): Promise<{ status: number; body: unknown }> {
+    let failure: string | null = null;
+    try {
+      failure = await this.makeWorkspace(project, run);
+    } catch (err) {
+      failure = redactText((err as Error).message);
+    }
+    if (failure !== null) {
+      await this.ender.endRun(run, { outcome: 'failed', reason: 'infra_error', reasonText: `the session's workspace could not be made: ${failure}` }).catch((err) => log('session open', err, { run }));
+      throw new Refusal(500, 'infra_error', `The workspace of session ${run} could not be made: ${failure}.`, 'Read the run; open the session again.', { run });
+    }
+    const view = await this.rt.read<{ run: Record<string, unknown> }>('session.view', { project, run });
+    return { status: 201, body: { run: { ...view.run, workspace: view.run.workspace ?? null } } };
+  }
+
+  // The worktree at the run's base (D1 §7.3: `git worktree add --detach`,
+  // journaled), its baseline fixed with the intent and what lies outside its
+  // diff captured, as the choke point does for a one-shot run.
+  private async makeWorkspace(project: string, run: string): Promise<string | null> {
+    const f = await this.rt.read<{ repo: string; base: string }>('session.open_facts', { run });
+    const ctx = repoContext(f.repo);
+    const tree = await treeOf(ctx, f.base).catch(() => null);
+    const index = tree === null ? null : await indexHashOfTree(ctx, tree).catch(() => null);
+    if (tree === null || index === null) return `the base ${f.base} could not be read`;
+    const baseline = { head: f.base, index_hash: index, tracked_tree_hash: tree };
+    const path = join(this.rt.home, 'workspaces', run);
+    mkdirSync(join(this.rt.home, 'workspaces'), { recursive: true, mode: 0o700 });
+    const intent = await this.journal.withProject(project, () =>
+      this.journal.intend(
+        'journal.intend',
+        {
+          project,
+          kind: 'worktree_add',
+          payload: { repo: f.repo, run, path, base: f.base },
+          target: { repo: f.repo, path },
+          subject: { run, action: 'worktree_add' },
+          finalizer: { purpose: 'workspace', run, path, base: f.base, baseline },
+          deadlineSeconds: this.rt.setting('git_deadline'),
+        },
+        'worktree_add',
+      ),
+    );
+    if (!('operation' in intent)) return 'the worktree was not intended';
+    const settled = await this.journal.withProject(project, () => this.journal.drive(intent.operation));
+    const workspace = settled.receipts.workspace as string | undefined;
+    if (settled.end !== 'finalized' || workspace === undefined) return `the worktree was not made (${settled.end})`;
+    const metadata = await captureMetadata(f.repo, path);
+    if (metadata === null) return "what lies outside the workspace's diff could not be captured";
+    await this.rt.engine('workspace.metadata', { workspace, metadata });
+    return null;
+  }
 
   // ---- the tick: admitted turns dispatched (D1 §15.1; SEAM.md §344) -------------------
 

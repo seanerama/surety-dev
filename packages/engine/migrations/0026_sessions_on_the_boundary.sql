@@ -16,6 +16,12 @@ ALTER TABLE runs ADD COLUMN current_base TEXT;
 ALTER TABLE work_items ADD COLUMN held TEXT CHECK (held IN (
   'resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy'));
 
+-- ---- invocation_receipts.deadline_at (D6 §2.1; M415 (b)) --------------------------------
+-- The deadline the invocation was dispatched under: a session turn's
+-- `deadline_<role>` (the run's own deadline_at is the idle deadline between
+-- turns), a one-shot's its run's. NULL for a receipt written before.
+ALTER TABLE invocation_receipts ADD COLUMN deadline_at TEXT;
+
 -- ---- execution_domains.memory_max (D6 A.3; K2) ---------------------------------------------
 -- The memory maximum the domain was admitted at, recorded at admission: the
 -- value the envelope counts for it. Slice 33 records the configured
@@ -97,10 +103,71 @@ ALTER TABLE qualification_attempts ADD COLUMN session_entry TEXT REFERENCES trus
 -- authority alone (K10): its turns' receipts name the attempt, no entry.
 ALTER TABLE runs ADD COLUMN qualification_attempt TEXT REFERENCES qualification_attempts(id);
 -- `session_qualified` is no longer frozen with what one-shot qualification
--- established: it becomes true once, from a succeeded session attempt for
--- that entry whose continuation canary passed, and is never withdrawn in
--- place (a changed dependency revokes the entry, D2 §7.3).
-DROP TRIGGER trust_entries_qualified_fields_frozen;
+-- established, nor held at 0 by the table: it is written true by an attempt
+-- whose continuation canary passed (validateEntry), or set true once on an
+-- active entry by a succeeded session attempt for it, and is never withdrawn
+-- in place (a changed dependency revokes the entry, D2 §7.3). SQLite cannot
+-- relax a CHECK in place: rebuilt as 0011 rebuilt it, every row kept.
+CREATE TABLE trust_entries_0026 (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  version TEXT NOT NULL,
+  binary_path TEXT NOT NULL,
+  binary_sha256 TEXT NOT NULL,
+  help_sha256 TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('one_shot_headless', 'session_headless')),
+  template TEXT NOT NULL,
+  template_version TEXT NOT NULL,
+  model TEXT NOT NULL,
+  auth_mode TEXT NOT NULL CHECK (auth_mode IN ('api_key', 'subscription_token')),
+  capabilities TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  host_qualification TEXT REFERENCES host_qualifications(id),
+  isolation TEXT NOT NULL CHECK (isolation IN ('linux-namespaces-1')),
+  boundary TEXT NOT NULL CHECK (boundary IN ('cgroup2-delegated-scope-1')),
+  profile_fingerprint TEXT NOT NULL,
+  egress_hosts TEXT NOT NULL,
+  usage_granularity TEXT NOT NULL CHECK (usage_granularity IN ('model_call', 'invocation', 'none')),
+  usage_semantics TEXT CHECK (usage_semantics IN ('cumulative', 'delta')),
+  cost_reporting TEXT NOT NULL CHECK (cost_reporting IN ('reported', 'tokens_only', 'none')),
+  enforceable_boundaries TEXT NOT NULL,
+  result_channel TEXT NOT NULL CHECK (result_channel IN ('file')),
+  session_qualified INTEGER NOT NULL CHECK (session_qualified IN (0, 1)),
+  provider_files TEXT NOT NULL,
+  term_to_exit_ms INTEGER,
+  qualification_attempt TEXT NOT NULL REFERENCES qualification_attempts(id),
+  evidence TEXT NOT NULL,
+  evidence_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'revoked')),
+  activated_by TEXT REFERENCES decisions(id),
+  revoked_at TEXT,
+  revoked_reason TEXT,
+  CHECK (status <> 'active' OR activated_by IS NOT NULL),
+  CHECK (status <> 'active' OR mode = 'one_shot_headless'),
+  CHECK (status <> 'active' OR usage_granularity <> 'none'),
+  CHECK (status <> 'revoked' OR revoked_at IS NOT NULL)
+);
+INSERT INTO trust_entries_0026 SELECT * FROM trust_entries;
+DROP TABLE trust_entries;
+ALTER TABLE trust_entries_0026 RENAME TO trust_entries;
+
+CREATE TRIGGER trust_entries_activation BEFORE UPDATE ON trust_entries
+WHEN NEW.status = 'active' AND OLD.status <> 'active'
+BEGIN
+  SELECT RAISE(ABORT, 'trust_entries: only a proposed entry becomes active')
+  WHERE OLD.status <> 'proposed';
+  SELECT RAISE(ABORT, 'trust_entries: active needs the consumed trust_activation decision about this entry')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM decisions d WHERE d.id = NEW.activated_by AND d.kind = 'trust_activation'
+      AND d.subject_type = 'trust_entry' AND d.subject_id = NEW.id AND d.status = 'consumed');
+END;
+CREATE TRIGGER trust_entries_insert_not_active BEFORE INSERT ON trust_entries
+WHEN NEW.status <> 'proposed'
+BEGIN SELECT RAISE(ABORT, 'trust_entries: an entry is written proposed'); END;
+CREATE TRIGGER trust_entries_revoked_final BEFORE UPDATE OF status ON trust_entries
+WHEN OLD.status = 'revoked' AND NEW.status <> 'revoked'
+BEGIN SELECT RAISE(ABORT, 'trust_entries: a revoked entry has no exit'); END;
 CREATE TRIGGER trust_entries_qualified_fields_frozen BEFORE UPDATE OF
   backend, version, binary_path, binary_sha256, help_sha256, mode, template, template_version, model, auth_mode, capabilities,
   host_id, host_qualification, isolation, boundary, profile_fingerprint, egress_hosts, usage_granularity, usage_semantics,
@@ -118,3 +185,12 @@ BEGIN
     WHERE a.session_entry = NEW.id AND a.mode = 'session_headless' AND a.status = 'succeeded'
       AND EXISTS (SELECT 1 FROM json_each(a.canaries) c WHERE json_extract(c.value, '$.kind') = 'continuation' AND json_extract(c.value, '$.passed') = 1));
 END;
+-- An entry written session_qualified names an attempt whose continuation
+-- canary passed (D6 §2.6; D6-S09).
+CREATE TRIGGER trust_entries_insert_session_qualified BEFORE INSERT ON trust_entries
+WHEN NEW.session_qualified = 1 AND NOT EXISTS (
+  SELECT 1 FROM qualification_attempts a, json_each(a.canaries) c
+  WHERE a.id = NEW.qualification_attempt AND json_extract(c.value, '$.kind') = 'continuation' AND json_extract(c.value, '$.passed') = 1)
+BEGIN SELECT RAISE(ABORT, 'trust_entries: session_qualified only from a passing continuation canary'); END;
+CREATE TRIGGER trust_entries_no_delete BEFORE DELETE ON trust_entries
+BEGIN SELECT RAISE(ABORT, 'trust_entries: an entry is revoked, never deleted'); END;

@@ -533,16 +533,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'sessions' && post) {
         return {
           kind: 'prepared',
-          name: 'session.open',
+          name: 'session.reply',
           prepare: async (b) => {
             const body = onlyFields(b, ['role', 'model']);
             if (typeof body.role !== 'string' || body.role === '') throw new Refusal(400, 'invalid_value', '"role" must be one of vision, spec_writer, architect.', 'Open a session for an interactive role.', { field: 'role' });
+            const sessions = runtime().sessions;
+            if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
             // The opening's admission (D6 §2.7; SEAM.md §389): the project's
             // guard read, the barrier, and the transaction's own re-check of
-            // it, so that an opening racing a one-shot's claim admits one.
-            await store().call('read', { name: 'session.open_guard', args: { project } });
-            await pausePoint('session.admission');
-            return { project, role: body.role, model: body.model, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null };
+            // it, so that an opening racing a one-shot's claim admits one;
+            // then its workspace (D6-S01).
+            return sessions.open(project, { role: body.role, model: body.model, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
           },
         };
       }
@@ -557,7 +558,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (run === null) return null;
         return {
           kind: 'prepared',
-          name: 'session.resume',
+          name: 'session.reply',
           prepare: async (b) => {
             onlyFields(b, []);
             if (!(await store().call<boolean>('read', { name: 'session.exists', args: { project, run } }))) {
@@ -566,9 +567,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             const sessions = runtime().sessions;
             if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
             const { dirty } = await sessions.resumeArgs(project, run);
-            await store().call('read', { name: 'session.open_guard', args: { project } });
-            await pausePoint('session.admission');
-            return { project, run, dirty, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null };
+            return sessions.resume(project, run, { dirty, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
           },
         };
       }

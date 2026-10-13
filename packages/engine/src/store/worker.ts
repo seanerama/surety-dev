@@ -330,9 +330,6 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // D6 §2 (M5 slice 31; SEAM.md §344): a session opened, a turn admitted
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
-  'session.open': (tx, a) => ({ status: 201, body: openSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
-  // D6 §2.4 (M5 slice 33; SEAM.md §394): a new run continuing an ended session.
-  'session.resume': (tx, a) => ({ status: 201, body: resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
   'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
 };
 
@@ -452,6 +449,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     (d.prepare(`SELECT "id" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ORDER BY "seq" LIMIT 1`).get(a.project) as { id: string } | undefined)?.id ?? null,
   'session.due_closes': (d, a: { at: string }) => dueCloses(d, a.at),
   'session.resume_facts': (d, a: { project: string; run: string }) => resumeFacts(d, a.project, a.run),
+  'session.open_facts': (d, a: { run: string }) =>
+    d.prepare(`SELECT p."dev_repo_path" AS "repo", r."base_revision" AS "base" FROM "runs" r JOIN "projects" p ON p."id" = r."project" WHERE r."id" = ?`).get(a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
@@ -696,6 +695,11 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.turn_reply': (tx, a) => turnReply(tx, a),
   'session.turn_usage': (tx, a) => turnUsage(tx, a),
   'session.turn_open': (tx, a) => turnStillOpen(tx, a),
+  // D6 §2.1, §2.4 (M5 slice 33; SEAM.md §394): a session's run, grant and
+  // lease (its workspace is made after, through the journal), and a new run
+  // continuing an ended session.
+  'session.open_tx': (tx, a) => openSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
+  'session.resume_tx': (tx, a) => resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'session.mark_holds': (tx) => markSessionHolds(tx),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session

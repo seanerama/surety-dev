@@ -590,10 +590,10 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
   const session = TEMPLATES[run.backend]?.sessionIdOf?.(id) ?? null;
   tx.db
     .prepare(
-      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id")
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id", "deadline_at")
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null, opts.qualificationAttempt ?? null, session);
+    .run(id, tx.at, run.project, runId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), opts.trustEntry ?? null, opts.qualificationAttempt ?? null, session, run.deadline_at);
   if (session !== null) tx.db.prepare('UPDATE "runs" SET "provider_session_id" = ? WHERE "id" = ?').run(session, runId);
   tx.emit('invocation.receipt', { project: run.project, run: runId, invocation: id }, { provider: run.backend, ...(session ? { provider_session_id: session } : {}) });
   return id;

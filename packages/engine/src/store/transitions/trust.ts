@@ -593,7 +593,7 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
          "model", "auth_mode", "capabilities", "host_id", "host_qualification", "isolation", "boundary", "profile_fingerprint", "egress_hosts", "usage_granularity",
          "usage_semantics", "cost_reporting", "enforceable_boundaries", "result_channel", "session_qualified", "provider_files", "term_to_exit_ms",
          "qualification_attempt", "evidence", "evidence_fingerprint", "status")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'proposed')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
     )
     .run(
       id,
@@ -620,6 +620,8 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
       e.cost_reporting,
       JSON.stringify(e.enforceable_boundaries),
       e.result_channel,
+      // validateEntry: true only from a passing continuation canary.
+      e.session_qualified ? 1 : 0,
       JSON.stringify(e.provider_files),
       e.term_to_exit_ms,
       e.qualification_attempt,
