@@ -6,9 +6,9 @@
 // executes nothing and registers nothing: its record is the plan_check row,
 // and publication is bundle.ts's.
 //
-// Slice 31 checks clauses 1 to 4 to the depth the walking journey needs;
-// `PLAN_QUESTION_OPEN`'s phase-hint guard is slice 34's and
-// `PLAN_DESCRIPTIVE_MODULE_TOUCHED` slice 32's (BS5 §9.2).
+// `PLAN_QUESTION_OPEN` names `R<n>:Q<k>`, a hint-less question on an
+// unassigned requirement refusing every plan (slice 34); the sixteen
+// reasons' cases are slice 35's (BS5 §9.2).
 
 import { KIND_INVENTORY, TIER_RANK, type Tier, cadenceTier } from '../checks/scope.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';

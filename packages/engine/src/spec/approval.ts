@@ -5,10 +5,12 @@
 // environments of TPL §7 by name, baseline `spec_ready`, the spec-evidence
 // generation advanced (B05). A checkpoint writes nothing here (B02).
 //
-// Slice 31a blocks `approve` where the representation is unreadable, the
-// index does not parse, or a requirement has neither a criterion nor a
-// mark; slice 34 adds the duplicate, contradiction, renumbering and
-// phase-hint blockers (the driver's ruling on question 4).
+// `approve` is blocked, each blocker named `CODE:subject` (SEAM.md §398),
+// while the representation is unreadable, duplicate, contradictory or
+// uncertain; while an open question blocks a phase-1 requirement, has no
+// phase hint, or blocks a requirement with none (reading 1, strict); while a
+// key is renumbered against the approved revision. The effect runs after
+// the answer, with TPL §11's change log row (spec/approval-effect.ts).
 
 import { Refusal } from '../refusal.js';
 import { type IndexRow } from '../checks/requirement-index.js';
@@ -54,10 +56,10 @@ export function recordSemantics(tx: Tx, args: { project: string; run: string | n
   return id;
 }
 
-// The reason codes that block `approve` (D6 §3.4; A.6 `spec_semantics_invalid`).
-// Slice 31's depth (the driver's ruling on question 4): B.2's forms, the
-// index's agreement with section 4 (a requirement or a criterion in one and
-// not the other), criterion-or-mark, the closed areas and the tier.
+// The reason codes that block `approve` (D6 §3.4; A.6 `spec_semantics_invalid`):
+// B.2's forms, the index's agreement with section 4 (a requirement or a
+// criterion in one and not the other), criterion-or-mark, the closed areas
+// and the tier, duplicates, and any part that could not be read.
 const BLOCKING_CODES = new Set([
   'index_invalid',
   'index_missing',

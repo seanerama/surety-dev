@@ -13,11 +13,9 @@
 // criteria and questions sorted by key: reordering without a change of
 // value changes it by nothing (D6-C03; B04).
 //
-// Slice 31 parses to this depth and reports what does not parse. The
-// duplicate, contradiction and renumbering refusals and the phase-hint guard
-// are slice 34's (the driver's ruling on question 4); this module's
-// `findings` already names what it sees so that approval can block on them
-// then. Pure: it reads only the text.
+// It reports what does not parse; spec/approval.ts decides which findings
+// block approval, and spec/keys.ts compares keys across saves and applies
+// the open questions' guard. Pure: it reads only the text.
 
 import { SENSITIVE_AREAS } from '../checks/schema.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';

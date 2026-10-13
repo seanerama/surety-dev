@@ -11,7 +11,9 @@
 // `spec_tier_invalid`, `spec_header_invalid`; `unknown_field`,
 // `architecture_area_dropped`, `roadmap_requirement_duplicate`,
 // `roadmap_requirement_missing`, `roadmap_phase_cycle`, `adr_key_missing`,
-// `adr_status_invalid`, `machine_file_invalid`.
+// `adr_status_invalid`, `machine_file_invalid`; slice 34:
+// `spec_requirement_duplicate`, `spec_criterion_duplicate`,
+// `spec_keys_renumbered`, `spec_key_withdrawn` (SEAM.md §397).
 
 import { parseIdentityBlock } from '../spec/identity-block.js';
 import { type SemanticFinding, type SemanticResult, type SpecRepresentation, parseSpecification } from '../spec/semantics.js';
