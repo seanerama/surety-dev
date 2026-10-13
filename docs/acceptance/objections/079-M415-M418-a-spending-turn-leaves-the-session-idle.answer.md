@@ -6,4 +6,4 @@ M415 (f) and M418 (b) now read the spending turn with `say` and no longer requir
 
 ## Run
 
-See the slice-33 commit that carries this answer: each file was run alone on a scratch checkout of this branch with `build/m5-s33` at `8a033b1` merged in.
+Each file alone on a scratch checkout of this branch with `build/m5-s33` at `8a033b1` merged in, with nothing else running. `M415-a-session-is-a-run-of-settled-turns` passed **4/4** and `M418-idle-timeout-budget-exhaustion-and-resume` **11/11** (the review's M4 and M5 cases included). There were 0 units before and after, and no engine was left.
