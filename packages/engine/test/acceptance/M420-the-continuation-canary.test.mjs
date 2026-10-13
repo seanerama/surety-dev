@@ -20,8 +20,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { approveAttempt, armedCanary, attemptFixture, canaryOf, canaryRuns, obeyingCanaries, qualify, scriptedBody, waitAttempt } from './harness/sandbox/qualify.mjs';
-import { step } from './harness/scripted.mjs';
+import { approveAttempt, armedCanary, attemptFixture, attemptOf, canaryOf, canaryRuns, obeyingCanaries, postQualify, qualify, scriptedBody, waitAttempt } from './harness/sandbox/qualify.mjs';
+import { waitFor } from './harness/engine.mjs';
+import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
+import { readFileSync } from 'node:fs';
+import { installTrustEntry } from './harness/trust.mjs';
+import { acting, hostNamespaces, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { trustEntries } from './harness/trust.mjs';
 import { domainsOfRun, invocationsOf } from './harness/session-lane.mjs';
@@ -70,5 +74,75 @@ describe('M420 the continuation canary on the scripted backend', () => {
     assert.equal(done.status, 'failed', `the attempt fails (${JSON.stringify(done.canaries)})`);
     assert.ok(canaryOf(done, 'continuation'), 'on the continuation canary');
     assert.ok(trustEntries(fx.home).every((e) => !e.session_qualified), 'no entry session_qualified');
+  });
+});
+
+// The slice-33 review's M2, M3 and M6 (D6 §2.6, §2.7; D2 §7.2; SEAM.md §§392, 393).
+describe('M420 the continuation canary: the review\'s M2, M3 and M6', () => {
+  test('M2: an entry\'s session qualification naming a model other than the entry\'s is refused; a binary whose hash differs from the entry\'s is refused; the entry never session_qualified', async (t) => {
+    const { fx, standIn, fixtureProject } = await attemptFixture(t);
+    obeyingCanaries(fx);
+    fx.scripted.canaryScript('continuation', times({ steps: [step.canary('obey')] }));
+    const entry = await installTrustEntry(fx.engine, standIn, { status: 'active', model: 'claude-sonnet-5-5' });
+    const other = await postQualify(fx, { entry: entry.id, mode: 'session_headless', model: 'claude-opus-5-5', fixture_project: fixtureProject });
+    assert.ok(other.status >= 400 && other.status < 500, `a model other than the entry's refused (→ ${other.status} ${other.text})`);
+    standIn.changeBytes('M420 M2: the binary is not the entry\'s');
+    const changed = await postQualify(fx, { entry: entry.id, mode: 'session_headless', model: 'claude-sonnet-5-5', fixture_project: fixtureProject });
+    if (changed.status === 201) {
+      const id = changed.body.qualification_attempt?.id ?? changed.body.attempt?.id;
+      await approveAttempt(fx, fixtureProject, id).catch(() => null);
+      const done = await waitAttempt(fx.home, id, ['succeeded', 'failed', 'invalidated']).catch(() => attemptOf(fx.home, id));
+      assert.notEqual(done?.status, 'succeeded', `a binary whose hash differs is not qualified (${done?.status})`);
+    } else {
+      assert.ok(changed.status >= 400 && changed.status < 500, `a binary whose hash differs refused (→ ${changed.status} ${changed.text})`);
+    }
+    assert.equal(Boolean(trustEntries(fx.home).find((e) => e.id === entry.id)?.session_qualified), false, 'the entry never session_qualified');
+  });
+
+  test('M3: a continuation canary whose first turn\'s provider inventory is missing does not pass, and its evidence does not claim carried: false', async (t) => {
+    const secret = 'sk-continuation-held-secret-0003';
+    const { fx, standIn, fixtureProject } = await attemptFixture(t);
+    obeyingCanaries(fx);
+    await holdSecret(fx.engine, 'project/canary/token', secret);
+    // Turn 1 leaves a provider file holding a registered secret: the screen refuses its inventory (SEAM.md §152), so none is recorded.
+    const leave = { steps: [acting(hostNamespaces()).volatileShapes({ files: [{ path: '/surety/home/notes/turn1.jsonl', content: `{"key":"${secret}"}\n` }] }), step.canary('obey')] };
+    fx.scripted.canaryScript('continuation', [leave, ...times({ steps: [step.canary('obey')] })]);
+    const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
+    await approveAttempt(fx, fixtureProject, attempt.id);
+    await armedCanary(fx, 'containment');
+    const done = await waitAttempt(fx.home, attempt.id, ['succeeded', 'failed', 'invalidated']);
+    const canary = canaryOf(done, 'continuation');
+    assert.ok(canary, `the continuation canary ran (${JSON.stringify(done.canaries?.map((c) => c.kind))})`);
+    assert.notEqual(canary.passed, true, 'it does not pass without the first turn\'s inventory');
+    const row = canary.evidence ? recordRow(fx.home, canary.evidence) : null;
+    const evidence = row ? readFileSync(recordFile(fx.home, row), 'utf8') : '';
+    assert.doesNotMatch(evidence.replace(/\s/g, ''), /"carried":false/, `its evidence does not claim carried: false (${evidence.slice(0, 400)})`);
+  });
+
+  test('M6: the engine restarts between the canary\'s two turns: the attempt invalidated, the canary\'s session run ended, the fixture project not held session_busy for the next attempt', async (t) => {
+    const { fx, standIn, fixtureProject } = await attemptFixture(t);
+    obeyingCanaries(fx);
+    // Turn 2 holds at its start, so the restart lands before the canary can finish its second turn.
+    fx.scripted.canaryScript('continuation', [{ steps: [step.canary('obey')] }, { steps: [step.hold('gate'), step.canary('obey')] }, ...times({ steps: [step.canary('obey')] })]);
+    const first = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
+    await approveAttempt(fx, fixtureProject, first.id);
+    await armedCanary(fx, 'containment');
+    // The canary's turns are driven by the attempt, not the owner's routes, so the restart is timed by the store:
+    // once turn 1 is settled, the engine is stopped (its own verified kill) and started again.
+    const turnOne = () =>
+      withStore(fx.home, (db) => db.prepare(`SELECT t."settled_at" FROM "turns" t JOIN "runs" r ON r."id" = t."run" WHERE r."project" = ? AND r."kind" = 'session' AND t."number" = 1`).get(fixtureProject));
+    await waitFor(() => (turnOne()?.settled_at ? true : undefined), { what: 'the canary\'s first turn to settle', intervalMs: 50, timeoutMs: 180_000 });
+    await fx.engine.kill();
+    fx.scripted.release('all', 'gate');
+    await fx.start();
+    const invalidated = await waitAttempt(fx.home, first.id, ['succeeded', 'failed', 'invalidated']).catch(() => attemptOf(fx.home, first.id));
+    assert.equal(invalidated?.status, 'invalidated', `the attempt invalidated by the restart (${invalidated?.status})`);
+    const open = withStore(fx.home, (db) => db.prepare(`SELECT "id", "state" FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended'`).all(fixtureProject));
+    assert.deepEqual(open, [], 'the canary\'s session run ended');
+    const second = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
+    await approveAttempt(fx, fixtureProject, second.id);
+    await armedCanary(fx, 'containment');
+    const done = await waitAttempt(fx.home, second.id, ['succeeded', 'failed', 'invalidated']);
+    assert.ok(canaryOf(done, 'continuation')?.passed, `the next attempt's continuation canary runs on the fixture project, not held session_busy (${JSON.stringify(done.canaries)})`);
   });
 });

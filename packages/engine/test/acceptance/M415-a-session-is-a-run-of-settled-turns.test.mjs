@@ -32,7 +32,7 @@ import { changePolicy } from './harness/journal.mjs';
 import { tick } from './harness/runs.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
-import { ledgerRowsOf, openSession, postTurn, runRow, sayAndSettle, scriptTurns, turnResult, turnRows, turnThatSays } from './harness/sessions.mjs';
+import { ledgerRowsOf, openSession, postTurn, runRow, say, sayAndSettle, scriptTurns, turnResult, turnRows, turnThatSays } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { countRows, domainsOfRun, invocationsOf, postTurnRaw, sessionProject, sessionState } from './harness/session-lane.mjs';
 
@@ -93,11 +93,12 @@ describe('M415 a session is a run of settled turns, in real role domains', () =>
     const spend = { steps: [step.usage({ input_tokens: 9990, output_tokens: 10 }), step.result(turnResult({ reply: 'Spent.' }))] };
     const { fx, p, run } = await session(t, [spend, turnThatSays('Never.')]);
     await changePolicy(fx.engine, p.id, { budget_run_billable_tokens: 10000 });
-    await sayAndSettle(fx, p.id, run.id, 'Spend.');
-    await tick(fx.engine, p.id, { rounds: 2 });
+    // The session closes at this settlement (the slice-33 review's M5): read with `say`, not as idle again.
+    await say(fx, p.id, run.id, 'Spend.');
+    // Closed at that settlement (objection 079): no later turn posted, no clock advanced.
+    const ended = await waitFor(() => (runRow(fx.home, run.id).state === 'ended' ? runRow(fx.home, run.id) : undefined), { what: 'the session to close at the settlement' });
     const res = await postTurnRaw(fx, p.id, run.id, 'More.');
     assert.ok(res.status >= 400, `no turn admitted (→ ${res.status} ${res.text})`);
-    const ended = await waitFor(() => (runRow(fx.home, run.id).state === 'ended' ? runRow(fx.home, run.id) : undefined), { what: 'the session to close' });
     // `budget_exhausted` is the public code of reason class `budget`, not a RunOutcome (D6 A.2; the driver's ruling).
     assert.equal(ended.reason_class, 'budget', `ended with reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
     const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
