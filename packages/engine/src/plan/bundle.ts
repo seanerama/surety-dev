@@ -495,9 +495,12 @@ export interface ReplanBaseline {
 export function replanBaseline(db: Db, args: { project: string; head: string }): ReplanBaseline {
   const facts = bundleBaselineFacts(db, { project: args.project, head: args.head, withPlan: true });
   const arch = db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number } | undefined;
-  const road = db.prepare('SELECT "version" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number } | undefined;
+  const road = db.prepare('SELECT "version", "architecture_revision" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number; architecture_revision: string | null } | undefined;
+  // The architecture the approved roadmap was made with: what an unchanged
+  // roadmap.json names.
+  const roadArch = road?.architecture_revision ? ((db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "id" = ?').get(road.architecture_revision) as { version: number } | undefined)?.version ?? null) : null;
   return {
-    baseline: { ...facts.baseline, architecture_version: arch?.version ?? 0, roadmap_version: road?.version ?? 0 },
+    baseline: { ...facts.baseline, architecture_version: arch?.version ?? 0, roadmap_version: road?.version ?? 0, roadmap_architecture_version: roadArch ?? arch?.version ?? 0 },
     spec_revision: facts.spec_revision,
     architecture_revision: facts.architecture_revision,
     roadmap_revision: facts.roadmap_revision,
@@ -806,4 +809,13 @@ export function rebindBundle(tx: Tx, args: { bundle: string; from: string; to: s
   for (const kind of pendingKinds(tx.db, b)) raiseQuestion(tx, { project: b.project, kind, subjectType: 'run', subjectId: b.run!, scope: b.id });
   tx.db.prepare(`UPDATE "decisions" SET "batch_key" = ? WHERE "scope" = ? AND "status" = 'open' AND "kind" IN ('architecture_approval', 'plan_approval')`).run(b.id, b.id);
   return { outcome: 'rebound' };
+}
+
+// A head move known to touch no bound input (a policy commit changes
+// `.surety/policy.json` alone): every proposed bundle on the old head is
+// re-bound to the new one in the move's own transaction, its pending
+// approvals raised as their next generation (B03; the review's gap).
+export function rebindHarmless(tx: Tx, args: { project: string; from: string; to: string }): void {
+  const rows = tx.db.prepare(`SELECT "id" FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' AND "head" = ?`).all(args.project, args.from) as { id: string }[];
+  for (const r of rows) if (pendingKinds(tx.db, getBundle(tx.db, r.id)!).length > 0) rebindBundle(tx, { bundle: r.id, from: args.from, to: args.to, touched: [] });
 }

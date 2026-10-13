@@ -34,6 +34,11 @@ export interface BundleBaseline {
   // The versions the bundle names (the approved ones, or the ones
   // publication will allocate).
   architecture_version: number;
+  // The architecture version an unchanged roadmap.json names: the one the
+  // approved roadmap was made with (a replan that changes the architecture
+  // but not the roadmap keeps it; the review's M4). Default
+  // architecture_version.
+  roadmap_architecture_version?: number;
   roadmap_version: number;
   head: string;
   project_tier: string;
@@ -234,7 +239,8 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   if (plan.prepared_against.roadmap_version !== baseline.roadmap_version) stale.push(`roadmap_version ${plan.prepared_against.roadmap_version} (bundle ${baseline.roadmap_version})`);
   if (plan.prepared_against.revision !== baseline.head) stale.push(`revision ${plan.prepared_against.revision} (head ${baseline.head})`);
   if (a.roadmap.version !== baseline.roadmap_version) stale.push(`roadmap.json version ${a.roadmap.version} (bundle ${baseline.roadmap_version})`);
-  if (a.roadmap.architecture_version !== baseline.architecture_version) stale.push(`roadmap.json architecture_version ${a.roadmap.architecture_version} (bundle ${baseline.architecture_version})`);
+  const roadmapArchitecture = baseline.roadmap_architecture_version ?? baseline.architecture_version;
+  if (a.roadmap.architecture_version !== roadmapArchitecture) stale.push(`roadmap.json architecture_version ${a.roadmap.architecture_version} (bundle ${roadmapArchitecture})`);
   add('PLAN_STALE_BASELINE', stale);
 
   // 3. Dependencies.

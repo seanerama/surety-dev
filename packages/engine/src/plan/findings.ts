@@ -116,7 +116,9 @@ export function blockerOf(f: Finding): string {
 // `prev`: the representation of the project's previous save, against which
 // a key renumbered or gone is named (D6 §3.2; M421 (c)); neither refuses the
 // save, which is committed as a checkpoint like any other.
-export function specFindings(text: string, path = '.surety/spec/spec.md', prev: SpecRepresentation | null = null): { findings: Finding[]; semantics: SemanticResult } {
+// `withdrawn`: the keys the project has withdrawn (by an approved version),
+// none of which a save may use again (TPL §4; the review's N4).
+export function specFindings(text: string, path = '.surety/spec/spec.md', prev: SpecRepresentation | null = null, withdrawn: readonly string[] = []): { findings: Finding[]; semantics: SemanticResult } {
   const semantics = parseSpecification(text);
   const findings: Finding[] = semantics.findings.map((f) => specFinding(f, path));
   if (semantics.representation !== null) {
@@ -133,7 +135,8 @@ export function specFindings(text: string, path = '.surety/spec/spec.md', prev: 
         message: `${k} is no longer in the specification: at approval it is recorded withdrawn, never deleted, and its key is not reused`,
       });
     }
-    for (const k of keys.reused) {
+    const live = new Set(semantics.representation.requirements.filter((r) => r.withdrawn !== true).map((r) => r.key));
+    for (const k of [...new Set([...keys.reused, ...withdrawn.filter((w) => live.has(w))])].sort()) {
       findings.push({ code: 'spec_key_reused', path, subject: { key: k }, message: `${k} was withdrawn and is used again: a key is never reused; give the requirement a new key` });
     }
     // The vanished requirements stay in this save's representation, marked

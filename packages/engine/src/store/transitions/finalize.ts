@@ -20,7 +20,7 @@ import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
-import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
+import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
@@ -189,6 +189,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
       reraiseOnPolicy(tx, op.project);
+      // A pending bundle on the head the policy commit moved stays answerable
+      // (B03): the commit touches none of its bound inputs.
+      if (op.payload.old_oid) rebindHarmless(tx, { project: op.project, from: op.payload.old_oid, to: inputs.new_oid });
       if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }

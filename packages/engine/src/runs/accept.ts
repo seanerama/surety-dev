@@ -458,7 +458,15 @@ export class Acceptor {
     const r0 = pre.changes_roadmap;
     const roadmapChanging = plan.roadmap_revision !== undefined || r0.phases_added.length + r0.phases_removed.length + r0.goals.length + r0.memberships.length + r0.assignments.length + r0.dependencies.length > 0;
     const changing = roadmapChanging || pre.changes_architecture.changed || pre.changes_adrs.added.length + pre.changes_adrs.changed.length + pre.changes_adrs.deleted.length > 0;
-    const against = changing ? { ...b.baseline, architecture_version: b.baseline.architecture_version + 1, roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version } : b.baseline;
+    const against = changing
+      ? {
+          ...b.baseline,
+          architecture_version: b.baseline.architecture_version + 1,
+          roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version,
+          // An unchanged roadmap.json names the architecture it was made with.
+          roadmap_architecture_version: roadmapChanging ? b.baseline.architecture_version + 1 : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
+        }
+      : b.baseline;
     const check = checkPlan(against, artifacts);
     const requests = facts.result?.report?.spec_change_requests ?? [];
     // A retrofit replan's field (D6 §8.3, B.7): carried by any other

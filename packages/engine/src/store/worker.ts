@@ -475,6 +475,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   // gone, M421 (c)); a bundle answer's publication around its barriers
   // (M448 (e)); a decision's effect intents (the answer's settle).
   'spec.previous_representation': (d, a: { project: string }) => previousRepresentation(d, a.project),
+  'spec.withdrawn_keys': (d, a: { project: string }) =>
+    (d.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NOT NULL ORDER BY "key"').all(a.project) as { key: string }[]).map((r) => r.key),
   'plan.authorized': (d, a: { project: string }) => authorizedBundles(d, a),
   'plan.rebind_due': (d, a: { project: string }) => rebindDue(d, a),
   'decision.intents': (d, a: { decisions: string[]; kind: string }) =>

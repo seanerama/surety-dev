@@ -378,7 +378,8 @@ export class SessionDriver {
       // The project's previous save, against which a key renumbered or gone
       // is named (M421 (c)); read before this save's representation exists.
       const prev = await this.rt.read<SpecRepresentation | null>('spec.previous_representation', { project: facts.project });
-      const r = specFindings(text, '.surety/spec/spec.md', prev);
+      const withdrawn = await this.rt.read<string[]>('spec.withdrawn_keys', { project: facts.project });
+      const r = specFindings(text, '.surety/spec/spec.md', prev, withdrawn);
       return {
         blobs,
         findings: r.findings,
