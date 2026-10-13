@@ -113,8 +113,15 @@ describe('M420 (d) the continuation canary on the real backend (real lane, paid,
               path.path === 'continuation_only'
                 ? 'the session qualification of the active Claude entry: the continuation canary alone, two Sonnet turns, paid (under 0.25 USD as estimated)'
                 : 'one full qualification attempt for Claude Code in session_headless mode: the three canaries and the continuation canary\'s two turns, Sonnet, paid (under 0.50 USD as estimated)',
-            facts: { entry: path.entry ?? '(none: a new entry is written if the attempt succeeds)', model: MODEL, canaries: row?.canaries ?? null, spend: row?.spend ?? null, fixture_project: row?.fixture_project ?? fixtureProject },
-            project: row?.fixture_project ?? fixtureProject,
+            facts: {
+              entry: path.entry ?? '(none: a new entry is written if the attempt succeeds)',
+              model: MODEL,
+              canaries: path.path === 'continuation_only' ? 'one: continuation (two turns)' : 'four: positive, cancellation, containment, continuation (two turns)',
+              spend: row?.spend ?? null,
+              fixture_project: row?.fixture_project ?? fixtureProject,
+            },
+            // qualification_approval is engine-scoped (decisions.project null): no project, so the printed
+            // command answers it at /v1/decisions/<id>/answer, as M2's attempt does.
           });
           const limitMs = (Object.values(REAL.canaryDeadlines).reduce((a, b) => a + b, 0) + 2 * CONTINUATION_DEADLINE_S) * 1000 + 20 * 60_000;
           const done = await tickWhile(fx, row?.fixture_project ?? fixtureProject, () => (FINAL.includes(attemptOf(fx.home, attempt)?.status) ? attemptOf(fx.home, attempt) : undefined), { timeoutMs: limitMs, what: `attempt ${attempt} to finish` });
