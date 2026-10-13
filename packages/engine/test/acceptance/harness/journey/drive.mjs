@@ -295,14 +295,29 @@ export const queuedExecutions = (home, project) =>
 export const openDecisions = (home, project) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY "id"`, project).map((r) => ({ ...r, options: json2(r.options) }));
 const json2 = (t) => (t === null || t === undefined ? t : JSON.parse(t));
 
-// The project lane's bounds (objection 071; SEAM §375): a check execution
-// there takes about 10 s (the host qualification before its domain, then the
-// check) and one domain is admitted at a time, so a tick count says nothing
-// about time. A project-lane wait is bounded by time instead: it fails when
-// `projectMs` has passed, or when the engine has recorded no event for
-// `PROJECT_STALL_MS` (a stuck engine fails, it does not hang).
+// The project lane's bounds (objections 071 and 076; SEAM §§375, 386 †):
+// a check execution there takes about 10 s (the host qualification before
+// its domain, then the check) and one domain is admitted at a time, so a tick
+// count says nothing about time. A project-lane wait is bounded by time
+// instead: it fails when `projectMs` has passed, or when the engine has made
+// no progress for `PROJECT_STALL_MS`. Progress is a state change of the work,
+// a run, a check, a gate, a decision, a stage, a phase, a candidate, a plan,
+// the specification or a deployment (`PROGRESS_EVENT`); ticks, observations
+// and API acts are not, so a blocked journey fails within the stall bound,
+// naming what holds it (`blockers`), instead of running to `projectMs`.
 export const PROJECT_WAIT_MS = 1_200_000;
 export const PROJECT_STALL_MS = 180_000;
+export const PROGRESS_EVENT = /^(work|run|invocation|check|gate|decision|intent|stage|phase|candidate|plan|baseline|spec|session|deploy|conformance|artifact|requirement)\./;
+const lastProgressSeq = (home) => {
+  const types = withStore(home, (db) => db.prepare('SELECT DISTINCT "type" FROM "events"').all().map((r) => r.type)).filter((t) => PROGRESS_EVENT.test(t));
+  if (types.length === 0) return 0;
+  return withStore(home, (db) => db.prepare(`SELECT MAX("seq") AS "seq" FROM "events" WHERE "type" IN (${types.map(() => '?').join(', ')})`).get(...types).seq ?? 0);
+};
+// What holds a project: its unfinished work with status, blocker and hold, and its open decisions.
+export const blockers = (home, project) => ({
+  work: rows(home, `SELECT "kind", "status", "blocker" FROM "work_items" WHERE "project" = ? AND "status" NOT IN ('complete', 'cancelled')`, project),
+  decisions: rows(home, `SELECT "kind", "subject_id" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`, project),
+});
 const lastEventSeq = (home) => withStore(home, (db) => db.prepare('SELECT MAX("seq") AS "seq" FROM "events"').get().seq ?? 0);
 
 // Tick the project until `done` answers, doing on the way what the journey's
@@ -324,10 +339,10 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
     if (value !== undefined && value !== null && value !== false) return value;
     if (ctx.lane === 'project') {
       const now = Date.now();
-      const seq = lastEventSeq(fx.home);
+      const seq = lastProgressSeq(fx.home);
       if (seq !== seen.seq) seen = { seq, at: now };
       if (now - started > projectMs) throw new Error(`${what}: not reached within ${Math.round(projectMs / 1000)} s on the project lane (${rounds} ticks; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
-      if (now - seen.at > PROJECT_STALL_MS) throw new Error(`${what}: not reached, and the engine recorded no event for ${Math.round(PROJECT_STALL_MS / 1000)} s (event seq ${seq}, ${rounds} ticks; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+      if (now - seen.at > PROJECT_STALL_MS) throw new Error(`${what}: not reached, and the engine made no progress for ${Math.round(PROJECT_STALL_MS / 1000)} s (progress event seq ${seq}, ${rounds} ticks; what holds it: ${JSON.stringify(blockers(fx.home, project))}; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
     } else if (rounds >= max) {
       throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)})`);
     }

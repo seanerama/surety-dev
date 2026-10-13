@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+Objection 076, 2026-10-13, on `verify/m5-s32`: all three parts upheld, SEAM §386. (1) The developer suite's command is `node --test 'test/*.test.mjs'`, and the README and CI file name it too. (2) M408's engine runs at `domain_memory_max` 4 GiB (N1). (3) The project lane's stall bound resets on progress events only, and its message names the blockers; this is shared with M401. On `build/m5-s32` at `355cf3c`, each file alone: `M408-the-retrofit-journey` 8/8 in 310 s and M408 (i) 1/1 in 278 s, nothing left. The paragraph that follows is the previous pass's.
+
 Sean's module-map rule and the slice-32 review's findings, 2026-10-13, on `verify/m5-s32` (SEAM §387). Five kernel-lane files under manifest slice `32`, each run alone on a scratch copy of `build/m5-s32` at `efdc5b3`, each failing for its finding:
 - **Sean's rule:** `M414-scoped-touching-is-decided-by-the-module-map` (0/3). The engine as built refuses the map's `requirements` (`unknown_field`), so nothing is decided by it.
 - **S1:** `M403-a-settled-turn-leaves-no-failure-entry` (1/2). A settled turn's transcript carries "The turn failed".
